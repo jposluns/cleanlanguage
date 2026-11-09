@@ -2,103 +2,39 @@ name: Release dry run
 
 # Proves the local, side-effect-free part of the release path without publishing: packaging, the site
 # rewrite, the date stamps, and the gates the post-release site pull request
-# must pass. Everything runs inside a throwaway git worktree via
-# tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
-# no credentials after checkout, uses no secrets, and pushes, tags, releases,
-# and merges nothing.
+# must pass. The Python version check and 5 test suites run in the checkout,
+# and the version-consumer tests among them also build in temporary worktrees
+# made from the checkout. The last step, tools/release-dry-run.sh, does the
+# packaging, the rewrite, the stamping, and the gate checks in a throwaway git
+# worktree made from HEAD. This workflow holds read-only permissions, keeps no
+# credentials after checkout, uses no secrets, and pushes, tags, releases, and
+# merges nothing.
 #
 # It runs on the runner's python3. The first step after the checkout runs
 # tools/check-python-version.py, which, on Python 3.7 or later, exits 3 unless
-# that python3 is the release that .python-version names. The two page checks
+# that python3 is the release that .python-version names. The 2 page checks
 # that the dry run runs load tools/check-inline-code.py and exit 3 on a Python
 # version that the gate does not support: from 3.7 on for the instructions page
 # check, and from 3.9 on for the install page check.
+#
+# This workflow carries no paths filter on purpose: the dry run and its gates
+# read files across the repository, the whole site included, and a path list
+# cannot be kept complete against those reads (row 127). So it runs on every
+# pull request and every push to main. tools/test-portable-text-sync-workflow.py
+# fails unless the triggers are exactly a bare pull_request, a push on main and
+# a bare workflow_dispatch, so a filter or any other narrowing under
+# pull_request or push fails. It also fails unless this workflow has exactly 1
+# job, dry-run, whose timeout-minutes is the integer 30, with no if: or
+# continue-on-error on that job and no if:, continue-on-error or
+# timeout-minutes on any of its steps. workflow-isolation.yml runs that test
+# on every pull request, so a filter that a pull request's own files fall
+# outside is still caught.
 
 on:
   pull_request:
-    paths:
-      - "cleanlanguage/**"
-      - "LICENSE"
-      - "NOTICE.md"
-      - ".gitattributes"
-      - "site/_redirects"
-      - "site/install/**"
-      - "site/verify/index.html"
-      - "site-src/**"
-      - ".baseline/**"
-      - "site/sitemap.xml"
-      - "tools/release-package.sh"
-      - "tools/release-dry-run.sh"
-      - "tools/set-release-links.py"
-      - "tools/check-release-links.py"
-      - "tools/check-release-checksum-live.py"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-release-skill-workflow.py"
-      - "tools/test-skill-version-consumers.py"
-      - "tools/test-version-selectors.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-page-metadata.py"
-      - "tools/sitemap_engine.py"
-      - "tools/web_metadata.py"
-      - "tools/generate-sitemap.py"
-      - "tools/sitemap-config.json"
-      - "tools/check-links.py"
-      - "tools/check-install-page.py"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/check-python-version.py"
-      - ".python-version"
-      - "tools/build-site.py"
-      - "tools/check-baseline-pin.py"
-      - ".github/workflows/release-skill.yml"
-      - ".github/workflows/release-dry-run.yml"
   push:
     branches:
       - main
-    paths:
-      - "cleanlanguage/**"
-      - "LICENSE"
-      - "NOTICE.md"
-      - ".gitattributes"
-      - "site/_redirects"
-      - "site/install/**"
-      - "site/verify/index.html"
-      - "site-src/**"
-      - ".baseline/**"
-      - "site/sitemap.xml"
-      - "tools/release-package.sh"
-      - "tools/release-dry-run.sh"
-      - "tools/set-release-links.py"
-      - "tools/check-release-links.py"
-      - "tools/check-release-checksum-live.py"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-release-skill-workflow.py"
-      - "tools/test-skill-version-consumers.py"
-      - "tools/test-version-selectors.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-page-metadata.py"
-      - "tools/sitemap_engine.py"
-      - "tools/web_metadata.py"
-      - "tools/generate-sitemap.py"
-      - "tools/sitemap-config.json"
-      - "tools/check-links.py"
-      - "tools/check-install-page.py"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/check-python-version.py"
-      - ".python-version"
-      - "tools/build-site.py"
-      - "tools/check-baseline-pin.py"
-      - ".github/workflows/release-skill.yml"
-      - ".github/workflows/release-dry-run.yml"
   workflow_dispatch:
 
 permissions:
@@ -107,6 +43,11 @@ permissions:
 jobs:
   dry-run:
     runs-on: ubuntu-latest
+    # A hung step ends the job here instead of holding the runner until the
+    # platform's default job limit (row 117). No recorded run time of this
+    # workflow was looked at, so 30 minutes is an estimate, not a measured run
+    # time: revise it against the recorded run times.
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
