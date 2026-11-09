@@ -10,6 +10,7 @@ gate.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 import unittest
@@ -34,6 +35,29 @@ _load_sibling("web_metadata")
 engine = _load_sibling("sitemap_engine")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+INSTALL_GATE = TOOLS_DIR / "check-install-page.py"
+
+
+def gate_families(path: Path = INSTALL_GATE) -> list[str]:
+    """The families of the install gate's FAMILIES, read from its source by ast, which runs none of it, so this test
+    needs no Python version that the gate needs. The gate must bind FAMILIES exactly once outside every def and class,
+    to a literal list or tuple of strings; anything else fails, so that a computed list cannot pass unread."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bindings = [statement for statement in tree.body
+                if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                and any(isinstance(target, ast.Name) and target.id == "FAMILIES"
+                        for target in (statement.targets if isinstance(statement, ast.Assign) else [statement.target]))]
+    value = None
+    if len(bindings) == 1 and isinstance(bindings[0], ast.Assign) and len(bindings[0].targets) == 1:
+        try:
+            value = ast.literal_eval(bindings[0].value)
+        except (TypeError, ValueError):
+            value = None
+    if not (isinstance(value, (list, tuple)) and value and all(isinstance(fam, str) for fam in value)):
+        raise AssertionError(f"tools/{path.name} has no single literal assignment FAMILIES = [...] of family names "
+                             "outside every def and class, so the families the sitemap must hold cannot be read")
+    return list(value)
+
 
 PAGE = """<!doctype html>
 <html><head>
@@ -201,7 +225,8 @@ class LiveTreeTest(unittest.TestCase):
     def test_committed_config_includes_family_pages(self):
         cfg = engine.load_config(REPO_ROOT / "tools" / "sitemap-config.json")
         urls = {url for url, _ in engine.build_entries(cfg, REPO_ROOT)}
-        for fam in ("claude", "chatgpt", "gemini", "copilot", "other-ai"):
+        # The families come from the install gate, so a family added there must be in the sitemap too.
+        for fam in gate_families():
             self.assertIn(f"{cfg['base_url']}/install/{fam}/", urls)
 
 
