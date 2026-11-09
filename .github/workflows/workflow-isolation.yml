@@ -7,8 +7,8 @@ name: Workflow launch isolation
 # tools/test-workflow-launch-isolation.py for scope and residuals. The fourth
 # step runs tools/test-shell-launch-isolation.py, which checks that each
 # Python launch it reads in the shell scripts the workflows run starts
-# python3 -I; it does not check for a planted sibling. See that scan for its
-# scope and residuals.
+# python3 -I, apart from the lines its exception table names; it does not
+# check for a planted sibling. See that scan for its scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -48,6 +48,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-portable-text-sync-workflow.py
 
-      - name: Check every Python launch in the shell scripts the workflows run is isolated
+      - name: Check that every Python launch the scan reads in the workflows' shell scripts, apart from named exceptions, is isolated
         shell: bash
         run: python3 -I tools/test-shell-launch-isolation.py

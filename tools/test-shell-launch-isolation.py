@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every Python launch in the shell scripts the workflows run is isolated.
+"""Check the Python launches in the shell scripts the workflows run for -I.
 
 tools/test-workflow-launch-isolation.py reads the run text of the workflows.
 This scan reads the shell scripts that run text starts: every tools/<name>.sh
@@ -17,27 +17,35 @@ is #, is not read; the rules also read a comment after a command. A comment,
 on a line of its own or after a command, ends at its line even when it ends
 in a backslash, as in bash, so it joins no line:
 
-1. Every python command name, a lower-case `python` with any digits and dots
-   after it, no dot straight before it and no letter, digit, underscore or
-   hyphen straight after those, starts `python3 -I ` (single spaces),
-   directly after the start of the line, a space, a tab, a quote, a
-   backquote, or one of ( | & ; !. So `python3 -I tools/<name>.py`,
-   `python3 -I -c`, `python3 -I -` and a grep pattern that names the isolated
-   form pass, and `python3 tools/x.py`, `python3 -c`, `"python3" -I`,
-   `${PYTHON:-python3}`, `$bin/python3`, `ipython3` and `python3 -X utf8` are
-   findings. The `python` in docs.python.org or in
-   tools/check-python-version.py is not a command name.
-2. A .py or .pyz path in command position, run by its shebang, is a finding.
-   Command position is the start of the line or what follows ; & | ( ! $( or
-   a backquote, a ) or { followed by a space or tab (a case pattern, a brace
-   group), one of then, do, else, elif, if, while and until, or one of the
-   launchers exec, time, nice, env and command with any option words after
-   it, each option word optionally followed by 1 argument word (`nice -n 5`,
-   `env -u NAME`), and any NAME=value words and redirection words
-   (`2>/dev/null`, `> "$log"`) before the path. A NAME=value word whose value
-   is 1 single- or double-quoted string is 1 word, so its value may hold a
-   space (`LC_X="a b" tools/x.py`). A NAME=value word with no command word
-   after it is an assignment, so `gate=tools/x.py` is not a finding.
+1. Every word that names a Python interpreter, a lower-case `python` or `pypy`
+   with any digits and dots after it, no dot straight before it and no letter,
+   digit, underscore or hyphen straight after those, starts `python3 -I `
+   (single spaces), directly after the start of the line, a space, a tab, a
+   quote, a backquote, or one of ( | & ; !. The word straight after
+   `command -v ` or `command -V ` is not read, since those print where a name
+   resolves and run nothing. So `python3 -I tools/<name>.py`, `python3 -I -c`,
+   `python3 -I -`, `command -v python3` and a grep pattern that names the
+   isolated form pass, and `python3 tools/x.py`, `python3 -c`, `python3.12`,
+   `pypy3`, `"python3" -I`, `${PYTHON:-python3}`, `$bin/python3`, `ipython3`
+   and `python3 -X utf8` are findings. The `python` in docs.python.org or in
+   tools/check-python-version.py is not such a word.
+2. Every token that ends in .py or .pyz, whatever quotes, $(...) or other text
+   surround it, is a finding unless it is the program of a python3 -I launch
+   on the same line: the first word after `python3 -I ` and any option words
+   (a hyphen and letters) after it, where a word may hold quoted parts with no
+   space or tab inside them, so `python3 -I "$(dirname "$0")/x.py"` is a
+   finding. Where the token stands in the shell grammar decides nothing, so
+   quoting and command substitution cannot hide a launch: `"$here"/x.py`,
+   `bash -c 'tools/x.py'`, `$PY tools/x.py` and an argument after the program,
+   such as a path that a `-c` or `-` program reads, are findings. So is a .py
+   path that a line names without running it, as in cp, grep, test -f or an
+   echo, until an exception names that line. LAUNCHERS names each shell
+   function that runs its arguments through a python3 -I launch, and that
+   launch. In tools/pages-build.sh, gate runs its arguments as the launch
+   `python3 -I "$@"`, so a .py path that is the first word after a gate that
+   starts a line of that script is the program of that launch. The scan checks
+   that the script defines the function once and that a line of its body
+   starts with the launch, and gives a finding when either check fails.
 
 A here-document body is read as bash reads it. Bash expands the body of a
 here-document whose delimiter is unquoted (<<X): $(...) and backquotes run,
@@ -69,39 +77,29 @@ a finding, so the table cannot keep an entry for a line that is gone.
 EXPECTED_SCRIPTS names the scripts the discovery must find, so a change that
 stops the discovery from reaching one is a finding.
 
-Residuals: the scan reads shell, an open grammar, as text, to catch honest
-drift. It cannot be complete: it can miss or misread forms that these rules
-and the self-tests do not name, and the known misses and known misreadings
-below are examples, not complete lists. Known misses include a launch held in
-a variable (`$PY tools/x.py`, `"$real_py"`), a launch through a function or
-alias named python3, a `python` spelt in other letter cases, an interpreter
-name with a dot before its `python` or a letter or hyphen after its digits
-(`python3m`), a .py path after a launcher it does not name (such as xargs or
-timeout) or after a launcher option that takes more than 1 argument word, a
-.py path after a redirection word that holds a space (`2> "a b" tools/x.py`)
-or after a NAME=value word whose value holds a space outside 1 quoted string,
-a .py path written straight after a case pattern's ) with no space or tab
-between, a here-document with a quoted delimiter that a later command on
-the line of a `python3 -I -` launch opens, a `python` word or a .py path
-split by a backslash-newline in a body with a quoted delimiter that a
-shell runs (`bash <<'X'`), which the scan does not join, a line outside a
-here-document body after one that ends in an escaped backslash (`echo \\`),
-which the scan joins to it, a -c program that holds a single quote (as
-`'\''`), a case pattern inside $(...) that misleads the quote reading, text
-built at run time, Python launched from Python (such as subprocess with
-sys.executable), and a script that a covered script reaches only through a
-variable or a path the discovery does not match. Known misreadings, each a
-false finding, include a `python` word after a slash or a hyphen in a path
-or URL (`github.com/python/cpython`), a `python` straight after a letter in
-a word that names no interpreter (`cpython`), a `python` word in a comment
-after a command (`true # see python3 docs`), a .py path inside a string
-after a ) and a space (`echo "$(date) tools/x.py"`) or after a word such as
-then (`echo "then tools/x.py runs"`), the first .py path in a bash array
-(`files=(tools/x.py tools/y.py)`), a .py argument after a closing backquote
-or after `&>` (`true &>f x.py`), a `python` word or a .py path outside $(...)
-and backquotes in a here-document body that no shell runs, such as a #! line
-written to a file, and a line inside a quoted string that spans lines, which
-is read as shell.
+Residuals: rule 2 does not depend on where a token stands, so the scan misses
+a launch only in these ways. A launch on a line the scan does not read: a
+comment line, the program of a `python3 -I -c` or `python3 -I -` launch
+named above, which holds Python and not shell, and a line that a shell runs
+but that the scan takes for such a program or a comment because it misjudges
+where a quote or a here-document ends, as with a case pattern inside $(...),
+which misleads the quote reading, or a here-document with a quoted delimiter
+that a later command on the line of a `python3 -I -` launch opens. A launch
+that names neither a word rule 1 reads nor a .py or .pyz token: an
+interpreter held in a variable (`"$real_py" -c`) or reached through a
+function or alias, an interpreter name in other letter cases or with a
+letter or hyphen after its digits (`python3m`), a script run by its shebang
+whose name does not end in .py or .pyz, such a word or token split by a
+backslash-newline in a body with a quoted delimiter that a shell runs
+(`bash <<'X'`), which the scan does not join, and text built at run time. A
+launch from Python, such as subprocess with sys.executable. A launch in a
+script that a covered script reaches only through a variable or a path the
+discovery does not match. The cost of the rules is false findings: a line
+that names a .py or .pyz token or an interpreter word without a python3 -I
+launch of it, such as a message, a cp, grep or test operand, a comment after
+a command, a URL (`github.com/python/cpython`), a word such as cpython, a
+here-document body that no shell runs or a line inside a quoted string that
+spans lines, is a finding until an exception names it.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -133,6 +131,16 @@ EXPECTED_SCRIPTS = (
     "tools/test-version-selectors.sh",
 )
 
+# (file, shell function, the launch line its body must hold): the function runs its arguments
+# through that python3 -I launch, so a .py path that is its first argument is that launch's program.
+LAUNCHERS = (("tools/pages-build.sh", "gate", 'python3 -I "$@"'),)
+
+
+def literal(*lines: str) -> str:
+    """Return a pattern that matches exactly one of the given stripped lines."""
+    return "(?:" + "|".join(re.escape(line) for line in lines) + ")"
+
+
 # (file, pattern of the whole stripped line, opening lines of the quoted here-documents it may sit in, reason)
 EXCEPTIONS = (
     ("tools/pages-build.sh",
@@ -149,29 +157,168 @@ EXCEPTIONS = (
      r'''got="\$\(grep -Ec 'python3\( -I\)\? tools/skill-version\\\.py' "\$\{site\}" \|\| true\)"''', (),
      "a grep pattern that counts the calls of tools/skill-version.py with and without -I, so that an "
      "unisolated call changes the count; the shell does not run it"),
-    ("tools/test-ci-status.sh", r'local (real|swap)_py; \1_py="\$\(command -v python3\)"', (),
-     "finds the real python3 for a stand-in python3 that a case puts first on PATH"),
     ("tools/test-ci-status.sh", r'(?:cat > |chmod \+x )"\$(?:bin|tmp/swapbin)/python3"(?: <<PY| ;;)?', (),
      "writes and marks executable a stand-in python3 that a case puts first on PATH"),
+    ('tools/check-portable-text-sync.sh',
+     literal(
+         'echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2',
+         'echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2',
+         'echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2',
+         '11) echo "tools/skill-release-date.py rejected the version ${sv} as malformed: ${requirement}" >&2; return 1 ;;',
+         'echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2',
+         'echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${sv} needs a Released line." >&2',
+     ),
+     (),
+     'an error message that names the extractor; the line runs no Python'),
+    ('tools/ci-status.sh',
+     literal(
+         '(trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\\n" "${BASH_SOURCE[0]:-}" >&2) || :',
+         'declare __ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ()"',
+         'declare __ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||',
+         '__ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)"',
+         '__ci_status_refuse err "ci-status: cannot read ci-status.py beside the real ci-status.sh ($__ci_status_src)"',
+         '[ ! -f "${__ci_status_here}ci-status.py" ] || [ -L "${__ci_status_here}ci-status.py" ] ||',
+     ),
+     (),
+     'an error message that names ci-status.py, or the test that it is a regular file and not a symlink; the line runs no Python'),
+    ('tools/release-dry-run.sh',
+     literal(
+         '0) [[ "${probe}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || fail "tools/skill-release-date.py is unavailable or broken (probe exit 0)" ;;',
+         'fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})"',
+         '*) fail "tools/skill-release-date.py is unavailable or crashed (exit ${stamped_rc}) reading the stamped SKILL.md" ;;',
+     ),
+     (),
+     'an error message that names the extractor; the line runs no Python'),
+    ('tools/release-package.sh',
+     literal(
+         'fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"',
+         '[[ "${checked}" == "${release_date}" ]]         || fail "tools/skill-release-date.py gave an unexpected answer (${checked:-nothing}) checking --release-date ${release_date}"',
+         'fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}"',
+         '[[ "${released}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]       || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
+         'fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
+         '11) fail "tools/skill-release-date.py rejected the version ${version} as malformed: ${requirement}" ;;',
+         'fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line"',
+         '*) fail "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${version} needs a Released line" ;;',
+     ),
+     (),
+     'an error message that names the extractor; the line runs no Python'),
+    ('tools/test-ci-status.sh',
+     literal(
+         'if [ "$(grep -c -F "_actions_job(\\"$job\\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi',
+         'cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"',
+         'printf "raise SystemExit(7)\\n" > "$tmp/shadow/json.py"',
+         'ln -s "$tools/ci-status.py" "$tmp/elsewhere/ci-status.py"',
+         'run_contract_case "symlinked wrapper in another directory runs the real ci-status.py" 0 "$C1" owner/name owner/name - "wraplink pwd first" "$C1"',
+         'case " $resolve " in *" nopy "*) ;; *) cp "${here}/ci-status.py" "$tools/" ;; esac',
+         'printf "import pathlib\\npathlib.Path(\\"%s\\").touch()\\n" "$tmp/planted-ran" > "$cwd/ci-status.py"',
+         'ln -s "$cwd/ci-status.py" "$tools/ci-status.py"',
+         'cp "$cwd/ci-status.py" "$tmp/other/ci-status.py"',
+         '*" noread "*) chmod 000 "$tools/ci-status.py" ;;',
+         'local msg="ci-status: cannot find ci-status.py beside the real ci-status.sh" msgfile="$tmp/err"',
+         '*" noread "*) msg="ci-status: cannot read ci-status.py beside the real ci-status.sh" ;;',
+         'run_wrapper_case "normal path runs the real gate, not a planted ./ci-status.py" 0 -',
+         'run_wrapper_case "failing readlink does not run a planted ./ci-status.py" 0 noreadlink',
+         'run_wrapper_case "wrapper with no ci-status.py beside it fails closed with exit 3" 3 nopy',
+         'run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink',
+         'run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread',
+         'run_wrapper_case "hard link to the wrapper beside a planted ci-status.py fails closed with exit 3" 3 hardlink',
+         'run_wrapper_case "$opt: wrapper with no ci-status.py beside it fails closed with exit 3" 3 "$opt nopy"',
+         'run_wrapper_case "$opt: symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 "$opt pylink"',
+         'run_wrapper_case "$opt: unreadable ci-status.py fails closed with exit 3" 3 "$opt noread"',
+     ),
+     (),
+     'names ci-status.py or a planted .py file as a case description, an expected message, or an operand of grep, cp, ln, chmod or a printf redirection; the line runs no Python'),
+    ('tools/test-ci-status.sh',
+     literal(
+         '"${here}/ci-status.py" > /dev/null 2>&1 || import_got=$?',
+         '"${here}/ci-status.py" "$C1" > /dev/null 2>&1 || got=$?',
+         '"${here}/ci-status.py" "$C1" "$mode" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?',
+         '"${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?',
+         '"${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?',
+     ),
+     (),
+     'the path is an argument of the python3 -I -c program whose closing quote the line holds; that program '
+     'loads and runs the file in its isolated interpreter'),
+    ('tools/test-portable-text-release-date.sh',
+     literal(
+         'for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py       portable-text-skill-source.sha256 build-site.py check-install-page.py sitemap-config.json; do',
+         'expect_fail_line "an undated version with a 4301-digit part relays the extractor reason"   "tools/skill-release-date.py rejected the version ${long_version} as malformed: skill-release-date: a part of the version has more than 4300 digits: \'${long_version}\'"',
+         'rm -f "${work}/tools/skill-release-date.py"',
+         'expect_fail "a missing extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"',
+         'printf \'def broken(:\\n\' > "${work}/tools/skill-release-date.py"',
+         'expect_fail "a broken extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"',
+         'expect_fail "an extractor internal error is reported as a crash" "tools/skill-release-date.py is unavailable or crashed (exit 16)"',
+         'expect_fail_without "a broken extract reply (${mode}) is reported as unavailable"     "tools/skill-release-date.py is unavailable or crashed (exit 16) reading ${skill}, so its Released line could not be checked."     "Malformed Released"',
+         'expect_fail_without "a broken requires_release_date reply (${mode}) is reported as unavailable"     "tools/skill-release-date.py is unavailable or crashed (exit 16) deciding whether 1.0.14 needs a Released line."     "rejected the version"',
+         'expect_fail "the client reason is relayed at the ${op} call"     "skill-release-date-client: skill-release-date.py exited 1 in ${op}, so the extractor is unavailable"',
+         'mv "${work}/tools/skill-release-date-client.py" "${work}/tools/real-client.py"',
+         'cat > "${work}/tools/skill-release-date-client.py" <<\'PYCLIENT\'',
+         'expect_fail "a value that is not a bare day is not used"   "tools/skill-release-date.py gave an unexpected answer (2026-11-15"',
+         'expect_fail_without "a broken extract reply is reported as unavailable (${mode})"     "tools/skill-release-date.py is unavailable or crashed (exit 16) reading ${skill}, so its Released line could not be checked."     "Malformed Released"',
+         'rm -f "${work}/tools/skill-release-date-client.py"',
+         'expect_fail "a missing client is reported as unavailable" "tools/skill-release-date.py is unavailable or broken (probe exit 2)"',
+         'grep -F -- "skill-release-date.py" "$1" | cmp -s - "${allowed_mentions}"',
+         'grep -F -- "skill-release-date-client.py" "$1" | cmp -s - "${allowed_client}"',
+     ),
+     (),
+     'names the extractor, the client or the files a for loop copies with cp, as an expected message, a loop word, '
+     'an operand of cp, rm, mv, grep or a redirection, or a grep pattern; the line runs no Python'),
+    ('tools/test-portable-text-release-date.sh',
+     literal(
+         'python3 -I - "${work}/tools/skill-release-date.py" "$1" "$2" <<"PYBREAK"',
+         'python3 -I - "${work}/tools/skill-release-date.py" <<"PYCRASH"',
+     ),
+     (),
+     'the extractor path is an argument of the python3 -I - program that the here-document holds'),
+    ('tools/test-portable-text-release-date.sh',
+     literal(
+         '# return 1. The one shared strict extractor, tools/skill-release-date.py, does',
+         'echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2',
+         'echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2',
+         'echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2',
+         '11) echo "tools/skill-release-date.py rejected the version ${sv} as malformed: ${requirement}" >&2; return 1 ;;',
+         'echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2',
+         'echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${sv} needs a Released line." >&2',
+         '# the reading, run in its --json mode by tools/skill-release-date-client.py',
+     ),
+     ('cat > "${allowed_mentions}" <<\'ALLOWED\'', 'cat > "${allowed_client}" <<\'ALLOWEDCLIENT\''),
+     "the expected mention lines written to a fixture file that the test compares with the gate's lines; the shell does not run them"),
+    ('tools/test-portable-text-release-date.sh',
+     literal(
+         'real = os.path.join(os.path.dirname(os.path.abspath(__file__)), "real-client.py")',
+     ),
+     ('cat > "${work}/tools/skill-release-date-client.py" <<\'PYCLIENT\'',),
+     'a line of the Python stand-in client written to a file, which names the real client; the shell does not run it'),
+    ('tools/test-version-selectors.sh',
+     literal(
+         'assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"',
+         'assert_eq "structural: isolated skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"',
+         'cp tools/skill-version.py "${repo}/tools/skill-version.py"',
+         'cp tools/skill-version.py "${dir}/tools/skill-version.py"',
+         'cp tools/skill-version.py "${local_repo}/tools/skill-version.py"',
+     ),
+     (),
+     'names tools/skill-version.py in a check description or as an operand of cp; the line runs no Python'),
 )
 
 SCRIPT_NAME = re.compile(r"([\w.-]+)\.sh(?![\w.-])")
-# A python after a dot is part of a name, such as docs.python.org. A python after a letter is
+# A python or pypy after a dot is part of a name, such as docs.python.org. One after a letter is
 # still read, so that ipython3 is a finding: a false finding is safer than a silent pass.
-PYTHON_WORD = re.compile(r"(?<!\.)python[0-9.]*(?![\w-])")
+PYTHON_WORD = re.compile(r"(?<!\.)(?:python|pypy)[0-9.]*(?![\w-])")
 ISOLATED = "python3 -I "
 LAUNCH_BEFORE = set(" \t(|&;!`\"'")
 AFTER_LAUNCH_BEFORE = r"(?<![^ \t(|&;!`\"'])"
-COMMAND_START = (
-    r"(?:^|[;&|(!`]|\$\(|(?<!\$)[{)](?=[ \t])|(?<![\w-])(?:then|do|else|elif|if|while|until)\s"
-    r"|(?<![\w-])(?:exec|time|nice|env|command)\s+(?:-\S*\s+(?:\S+\s+)?)*)"
-)
-# A redirection word, such as 2>/dev/null, >&2 or < "$f", which may come before the command word.
-REDIRECTION = r"[0-9]*(?:&>>?|<>|>>|>\||[<>]&?)\s*[^\s|;&()<>]+"
-# A word of the form NAME=value is an assignment, not a command, so the path must not start with one.
-# A quoted value may hold a space, as in LC_X="a b", so the word ends at its closing quote.
-ASSIGNMENT = r"\w+=(?:\"[^\"]*\"|'[^']*'|\S*)"
-SHEBANG_RUN = re.compile(COMMAND_START + r"\s*(?:(?:" + ASSIGNMENT + "|" + REDIRECTION + r")\s+)*(?!\w+=)[\"']?[^\s\"'|;&()]*\.pyz?(?![\w.-])")
+# command -v and command -V print where a name resolves and run nothing.
+LOOKUP = re.compile(AFTER_LAUNCH_BEFORE + r"command -[vV] $")
+# A token that ends in .py or .pyz, whatever surrounds it.
+PY_PATH = re.compile(r"\.pyz?(?![\w.-])")
+# A shell word, quoted parts included. A quoted part may not hold a space or tab, so a word that
+# the match starts inside a string cannot run on through the string's closing quote to a later path.
+WORD = r"((?:\"[^\"\s]*\"|'[^'\s]*'|[^\s\"';&|<>()`])+)"
+# The program of a python3 -I launch: the first word after its option words.
+PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I[ \t]+(?:-[A-Za-z]+[ \t]+)*" + WORD)
+INTERPRETER_REASON = "Python interpreter other than python3 -I"
+PATH_REASON = ".py path that is not the program of a python3 -I launch"
 HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_]\w*)\2")
 # A python3 -I launch that reads its program from a here-document on standard input.
 STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-(?=\s|$)")
@@ -179,16 +326,21 @@ STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-(
 C_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-c $")
 
 
-def line_findings(line: str) -> list[str]:
-    """Return the rules one shell line breaks."""
+def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
+    """Return the rules one shell line breaks, given the names of the launcher functions of its script."""
     found = []
     for match in PYTHON_WORD.finditer(line):
         at = match.start()
+        if LOOKUP.search(line[:at]):
+            continue
         if not line.startswith(ISOLATED, at) or (at and line[at - 1] not in LAUNCH_BEFORE):
-            found.append("python other than python3 -I")
+            found.append(INTERPRETER_REASON)
             break
-    if SHEBANG_RUN.search(line):
-        found.append("a .py path run by its shebang")
+    # A .py path passes only where it ends its launch's program word, before any closing quotes.
+    starts = [PROGRAM] + [re.compile(r"^[ \t]*" + re.escape(name) + r"[ \t]+" + WORD) for name in launchers]
+    programs = {m.start(1) + len(m.group(1).rstrip("\"'")) for start in starts for m in start.finditer(line)}
+    if any(m.end() not in programs for m in PY_PATH.finditer(line)):
+        found.append(PATH_REASON)
     return found
 
 
@@ -270,21 +422,20 @@ def script_lines(text: str):
             elif not skip:
                 yield number, line, (opener, quoted)
             continue
-        resumed = in_program
         if in_program:
             if "'" not in line:
                 continue
             in_program = False
-            # The leading quote keeps a path just after the program from reading as a command.
-            line = "'" + line.split("'", 1)[1]
+            # The quote ends the program, so only the shell text after it is read.
+            line = line.split("'", 1)[1]
         # Bash does not continue a comment, so a backslash that ends one joins no line.
-        while line.endswith("\\") and i < len(lines) and comment_start(line[1:] if resumed else line) is None:
+        while line.endswith("\\") and i < len(lines) and comment_start(line) is None:
             line = line[:-1] + lines[i]
             i += 1
         if line.lstrip(" \t").startswith("#"):
             continue
         yield number, line, None
-        shell_text = line[1:] if resumed else line
+        shell_text = line
         # An operator or a launch inside quotes or a comment is text, so it opens no here-document.
         openers = [m for m in HEREDOC.finditer(shell_text) if outside_quotes(shell_text, m.start())]
         stdin = next((m for m in STDIN_PROGRAM.finditer(shell_text) if outside_quotes(shell_text, m.start())), None)
@@ -334,19 +485,32 @@ def discover(root: Path) -> tuple[list[str], list[str]]:
     return sorted(covered), findings
 
 
-def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS) -> tuple[list[str], list[str]]:
+def launcher_holds(text: str, name: str, launch: str) -> bool:
+    """Return whether the script defines the function name once, with a body line that starts with launch."""
+    bodies = re.findall(r"^" + re.escape(name) + r"\(\) \{\n(.*?)^\}$", text, re.M | re.S)
+    return len(bodies) == 1 and any(re.match(re.escape(launch) + r"(?: |$)", body_line.strip())
+                                    for body_line in bodies[0].splitlines())
+
+
+def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS,
+              launchers=LAUNCHERS) -> tuple[list[str], list[str]]:
     """Return (findings, covered scripts)."""
     covered, findings = discover(root)
     findings += [f"{rel}: a script the workflows run that the discovery did not reach"
                  for rel in expected if rel not in covered]
+    findings += [f"{path}: the launcher {name} is in no covered script" for path, name, _ in launchers
+                 if path not in covered]
     used = [False] * len(exceptions)
     for rel in covered:
         try:
             text = (root / rel).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        names = tuple(name for path, name, _ in launchers if path == rel)
+        findings += [f"{rel}: {name}() is not defined once with a body line that starts {launch}"
+                     for path, name, launch in launchers if path == rel and not launcher_holds(text, name, launch)]
         for number, line, heredoc in script_lines(text):
-            reasons = line_findings(line)
+            reasons = line_findings(line, names)
             if not reasons:
                 continue
             excused = False
@@ -376,91 +540,101 @@ LINE_CASES = [
     ("python3  -I tools/x.py", True),
     ("ipython3 -I tools/x.py", True),
     ("python3 --version", True),
+    ("python3.12 -I tools/x.py", True),
+    ("pypy3 tools/x.py", True),
+    ("pypy -c 1", True),
+    ("python3 -I tools/x.py; python3.12 -c 1", True),
     ("tools/x.py --check", True),
-    ("  tools/x.py", True),
-    ('"tools/x.py"', True),
-    ("v=$(tools/x.py)", True),
-    ("true && tools/x.py", True),
-    ("if ! tools/x.py; then exit 1; fi", True),
-    ("LC_ALL=C tools/x.py", True),
-    ('LC_X="a b" tools/x.py', True),
-    ("LC_X='a b' tools/x.py", True),
-    ("exec ./x.py", True),
     ("env A=b tools/x.pyz", True),
-    ("  *) tools/x.py ;;", True),
-    ("{ tools/x.py; }", True),
-    ("nice -n 5 tools/x.py", True),
-    ("env -i A=b tools/x.py", True),
-    ("time -p ./x.py", True),
-    ("python3 -I tools/x.py; python3.12 tools/y.py", True),
-    ("2>/dev/null tools/x.py", True),
-    ("> \"$log\" LC_ALL=C tools/x.py", True),
+    ('"$here"/x.py --check', True),
+    ('"$(dirname "$0")/x.py" --check', True),
+    ("bash -c 'tools/x.py --check'", True),
+    ('sh -c "tools/x.py --check"', True),
+    ("$PY tools/x.py", True),
     ("echo `tools/x.py`", True),
-    ("x=`python3 tools/x.py`", True),
-    ('"gate=tools/x.py"', True),
+    ("python3 -I tools/x.py; tools/y.py", True),
+    ("python3 -I tools/x.py tools/y.py", True),
+    ("python3 -I -c 'print(1)' tools/x.py", True),
+    ('python3 -I - tools/x.py <<\'PY\'', True),
+    ('python3 -I "$(tools/x.py)"', True),
+    ("gate tools/x.py", True),
+    ("gate=tools/x.py", True),
+    ('cp tools/x.py "${dir}/tools/x.py"', True),
+    ("grep -c foo tools/x.py", True),
+    ("test -f tools/x.py", True),
+    ('fail "tools/x.py is unavailable"', True),
+    ("command -v python3 && python3 -c 1", True),
     ("python3 -I tools/check-python-version.py", False),
     ('echo "see https://docs.python.org/3/"', False),
-    ("gate=tools/x.py", False),
-    ("gate=tools/x.py next=tools/y.py", False),
-    ('msg="a b" gate=tools/x.py', False),
-    ('test -f .python-version && python3 -I tools/x.py', False),
-    ('cp "$(dirname "$0")/x.py" "${dir}/x.py"', False),
-    ('case "${tag}" in', False),
+    ("test -f .python-version && python3 -I tools/x.py", False),
     ("nice -n 5 python3 -I tools/x.py", False),
+    ("env -i python3 -I tools/x.py", False),
     ("python3 -I tools/x.py", False),
+    ("python3 -I -B tools/x.pyz --check", False),
     ("python3 -I -c 'print(1)'", False),
     ('python3 -I - "$1" <<\'PY\'', False),
     ("x=$(git show HEAD:f | python3 -I tools/x.py)", False),
     ('entry=(python3 -I "$tmp/x.py")', False),
     ('exec python3 -I "${here}x.py" "$@"', False),
+    ('python3 -I "$(dirname "$0")/x.py" --check', True),
+    ('sh -c "python3 -I a; $0" "tools/x.py"', True),
+    ('python3 -I "$(dirname -- "$0")"', False),
     ('PATH="$bin:$PATH" python3 -I -B -c "$launch"', False),
     ('echo "pages-build: python3 -I $*"', False),
-    ('fail "tools/x.py is unavailable"', False),
-    ('cp tools/x.py "${dir}/tools/x.py"', False),
-    ('[ ! -f "${here}x.py" ] || [ -L "${here}x.py" ]', False),
     ("grep -Fc 'python3 -I tools/x.py' f", False),
     ("PYTHONPATH=x bash tools/a.sh", False),
     ("echo Python 3.11 is required", False),
+    ("command -v python3 >/dev/null", False),
+    ('real_py="$(command -v python3)"', False),
+    ('case "${tag}" in', False),
 ]
 
-# (script text, wanted findings as (line number, rule start)).
+# Lines of a script whose launcher function is gate, which must be refused (True) or must pass (False).
+LAUNCHER_CASES = [
+    ("gate tools/x.py", False),
+    ('  gate "tools/x.py" --check', False),
+    ("gate x tools/y.py", True),
+    ("echo gate tools/x.py", True),
+    ("true; gate tools/x.py", True),
+]
+
+P = INTERPRETER_REASON
+Y = PATH_REASON
+# (script text, wanted findings as (line number, reason)).
 SCRIPT_CASES = [
     ("# python3 tools/x.py\necho ok\n", []),
     ("python3 -I \\\n  tools/x.py\n", []),
-    ("python3 \\\n  -I tools/x.py\n", [(1, "python")]),
-    ("python3 -I - <<'PY'\nimport x\nrun('python3 y.py')\nPY\npython3 y.py\n", [(5, "python")]),
-    ("cat > f <<'EOF'\npython3 tools/x.py\nEOF\n", [(2, "python")]),
-    ("cat > f <<-EOF\n\tpython3 tools/x.py\n\tEOF\npython3 z.py\n", [(2, "python"), (4, "python")]),
-    ("python3 -I -c '\nimport os\nos.system(\"python3 y.py\")\n' tools/x.py\n", []),
-    ("python3 -I -c '\nprint(1)\n' && tools/x.py\n", [(3, "a .py")]),
-    ("python3 -I -c '\nprint(1)' \\\n  \"$f/x.py\" && python3 y.py\n", [(2, "python")]),
-    ("python3 -I -c '\nprint(1)\n' \"$f\" && python3 y.py\n", [(3, "python")]),
-    ("read -r a <<<\"$b\"\npython3 y.py\n", [(2, "python")]),
-    ("case \"$t\" in\n  *) tools/x.py ;;\nesac\n", [(2, "a .py")]),
-    ("echo \"python3 -I can't be skipped\"\npython3 y.py\n", [(2, "python")]),
-    ("python3 -I x.py # it's read\npython3 y.py\n", [(2, "python")]),
-    ("python3 -I x.py; bash -c '\npython3 y.py\n'\n", [(2, "python")]),
+    ("python3 \\\n  -I tools/x.py\n", [(1, P), (1, Y)]),
+    ("python3 -I - <<'PY'\nimport x\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(5, P)]),
+    ("cat > f <<'EOF'\npython3 -c 1\nEOF\n", [(2, P)]),
+    ("cat > f <<-EOF\n\tpython3 -c 1\n\tEOF\npython3 -c 1\n", [(2, P), (4, P)]),
+    ("python3 -I -c '\nimport os\nos.system(\"python3 y.py\")\n' \"$f\"\n", []),
+    ("python3 -I -c '\nprint(1)\n' tools/x.py\n", [(3, Y)]),
+    ("python3 -I -c '\nprint(1)' \\\n  \"$f\" && python3 -c 1\n", [(2, P)]),
+    ("read -r a <<<\"$b\"\npython3 -c 1\n", [(2, P)]),
+    ("echo \"python3 -I can't be skipped\"\npython3 -c 1\n", [(2, P)]),
+    ("python3 -I x.py # it's read\npython3 -c 1\n", [(2, P)]),
+    ("python3 -I x.py; bash -c '\npython3 -c 1\n'\n", [(2, P)]),
     ("v=\"$(python3 -I -c '\nimport os\nos.system(\"python3 y.py\")\n')\"\n", []),
-    ("cat > \"$b/python3\" <<PY\npython3 y.py\nPY\n", [(1, "python"), (2, "python")]),
-    ("python3 -I tools/x.py <<EOF\npython3 y.py\nEOF\n", [(2, "python")]),
+    ("cat > \"$b/python3\" <<PY\npython3 -c 1\nPY\n", [(1, P), (2, P)]),
+    ("python3 -I tools/x.py <<EOF\npython3 -c 1\nEOF\n", [(2, P)]),
     ("python3 -I -B - \"$1\" <<\"PY\"\nimport x\nPY\n", []),
-    ("echo \"usage: python3 -I - <<EOF\"\npython3 tools/y.py\n", [(2, "python")]),
-    ("echo 'python3 -I - <<EOF'\npython3 tools/y.py\n", [(2, "python")]),
-    ("true # python3 -I - <<EOF\npython3 tools/y.py\n", [(2, "python")]),
-    ("echo \"python3 -I - \" <<EOF\npython3 y.py\nEOF\n", [(2, "python")]),
-    ("# note \\\npython3 tools/x.py\n", [(2, "python")]),
-    ("# note \\\ntools/x.py\n", [(2, "a .py")]),
-    ("echo x # note \\\ntools/x.py\n", [(2, "a .py")]),
-    ("python3 -I \\\n  x.py # note \\\npython3 y.py\n", [(3, "python")]),
-    ("python3 -I - <<EOF\nprint(\"$(python3 tools/x.py)\")\nEOF\n", [(2, "python")]),
-    ("python3 -I - <<EOF\nprint(\"`tools/x.py`\")\nEOF\n", [(2, "a .py")]),
+    ("echo \"usage: python3 -I - <<EOF\"\npython3 -c 1\n", [(2, P)]),
+    ("echo 'python3 -I - <<EOF'\npython3 -c 1\n", [(2, P)]),
+    ("true # python3 -I - <<EOF\npython3 -c 1\n", [(2, P)]),
+    ("echo \"python3 -I - \" <<EOF\npython3 -c 1\nEOF\n", [(2, P)]),
+    ("# note \\\npython3 -c 1\n", [(2, P)]),
+    ("# note \\\ntools/x.py\n", [(2, Y)]),
+    ("echo x # note \\\ntools/x.py\n", [(2, Y)]),
+    ("python3 -I \\\n  x.py # note \\\npython3 -c 1\n", [(3, P)]),
+    ("python3 -I - <<EOF\nprint(\"$(python3 -c 1)\")\nEOF\n", [(2, P)]),
+    ("python3 -I - <<EOF\nprint(\"`tools/x.py`\")\nEOF\n", [(2, Y)]),
     ("python3 -I - <<'EOF'\nprint(\"$(python3 tools/x.py)\")\nEOF\n", []),
-    ("cat > /dev/null <<EOF\n# generated by $(python3 tools/x.py)\nEOF\n", [(2, "python")]),
-    ("cat > /dev/null <<EOF\n# generated by `tools/x.py`\nEOF\n", [(2, "a .py")]),
-    ("cat > /dev/null <<EOF\n$(pyth\\\non3 tools/x.py)\nEOF\n", [(2, "python")]),
-    ("cat > /dev/null <<'EOF'\n$(pyth\\\non3 tools/x.py)\nEOF\n", []),
-    ("cat <<EOF\nEO\\\nF\npython3 y.py\n", [(4, "python")]),
-    ("cat <<EOF\nc\\\\\nEOF\npython3 y.py\n", [(4, "python")]),
+    ("cat > /dev/null <<EOF\n# generated by $(python3 -c 1)\nEOF\n", [(2, P)]),
+    ("cat > /dev/null <<EOF\n# generated by `tools/x.py`\nEOF\n", [(2, Y)]),
+    ("cat > /dev/null <<EOF\n$(pyth\\\non3 -c 1)\nEOF\n", [(2, P)]),
+    ("cat <<EOF\nEO\\\nF\npython3 -c 1\n", [(4, P)]),
+    ("cat <<EOF\nc\\\\\nEOF\npython3 -c 1\n", [(4, P)]),
 ]
 
 
@@ -469,9 +643,12 @@ def self_test() -> list[str]:
     for line, want in LINE_CASES:
         if bool(line_findings(line)) != want:
             errors.append(f"self-test: line {line!r}: expected {'a finding' if want else 'none'}")
+    for line, want in LAUNCHER_CASES:
+        if bool(line_findings(line, ("gate",))) != want:
+            errors.append(f"self-test: line {line!r} with launcher gate: expected {'a finding' if want else 'none'}")
     for text, want in SCRIPT_CASES:
         got = [(n, reason) for n, line, _ in script_lines(text) for reason in line_findings(line)]
-        if [(n, r.split()[0]) for n, r in got] != [(n, w.split()[0]) for n, w in want]:
+        if got != want:
             errors.append(f"self-test: script {text!r}: expected {want!r}, got {got!r}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -483,27 +660,40 @@ def self_test() -> list[str]:
         (root / "tools" / "b.sh").write_text("python3 -I tools/x.py\nprobe=$(python3 --version)\n", encoding="utf-8")
         (root / "tools" / "c.sh").write_text("python3 tools/x.py\n", encoding="utf-8")
         exception = (("tools/b.sh", r"probe=\$\(python3 --version\)", (), "r"),)
-        findings, covered = scan_tree(root, ("tools/a.sh", "tools/b.sh"), exception)
+        findings, covered = scan_tree(root, ("tools/a.sh", "tools/b.sh"), exception, ())
         if covered != ["tools/a.sh", "tools/b.sh"] or findings:
             errors.append(f"self-test: discovery gave {covered!r} and {findings!r}")
-        findings, _ = scan_tree(root, ("tools/a.sh", "tools/c.sh"), exception)
+        findings, _ = scan_tree(root, ("tools/a.sh", "tools/c.sh"), exception, ())
         if not any("tools/c.sh: a script the workflows run" in f for f in findings):
             errors.append("self-test: an expected script the discovery missed gave no finding")
-        findings, _ = scan_tree(root, ("tools/a.sh",), ())
-        if not any(f.startswith("tools/b.sh:2: python") for f in findings):
+        findings, _ = scan_tree(root, ("tools/a.sh",), (), ())
+        if not any(f.startswith(f"tools/b.sh:2: {P}") for f in findings):
             errors.append("self-test: a line outside the exceptions gave no finding")
-        findings, _ = scan_tree(root, ("tools/a.sh",), exception + (("tools/b.sh", r"gone", (), "r"),))
+        findings, _ = scan_tree(root, ("tools/a.sh",), exception + (("tools/b.sh", r"gone", (), "r"),), ())
         if not any("matches no line" in f for f in findings):
             errors.append("self-test: an exception that matches no line gave no finding")
         in_heredoc = (("tools/b.sh", r"probe=\$\(python3 --version\)", ("cat > f <<'EOF'",), "r"),)
-        findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc)
+        findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc, ())
         if not any(f.startswith("tools/b.sh:2:") for f in findings):
             errors.append("self-test: an exception for a here-document excused a line outside it")
         for opener, want in (("cat > f <<'EOF'", False), ("bash <<'EOF'", True), ("cat > f <<EOF", True)):
             (root / "tools" / "b.sh").write_text(f"{opener}\nprobe=$(python3 --version)\nEOF\n", encoding="utf-8")
-            findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc)
+            findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc, ())
             if any(f.startswith("tools/b.sh:2:") for f in findings) != want:
                 errors.append(f"self-test: in a here-document that {opener!r} opens, the exception gave {findings!r}")
+        launcher = (("tools/b.sh", "gate", 'python3 -I "$@"'),)
+        for body, want in (('  python3 -I "$@" || exit 1', False), ('  "$@" || exit 1', True),
+                           ('  python3 -I "$1"', True)):
+            (root / "tools" / "b.sh").write_text(f"gate() {{\n{body}\n}}\ngate tools/x.py --check\n", encoding="utf-8")
+            findings, _ = scan_tree(root, ("tools/a.sh",), (), launcher)
+            if bool(findings) != want:
+                errors.append(f"self-test: a gate body {body!r} gave {findings!r}")
+        findings, _ = scan_tree(root, ("tools/a.sh",), (), ())
+        if not any(f.startswith(f"tools/b.sh:4: {Y}") for f in findings):
+            errors.append("self-test: gate in a script that names no launcher gave no finding")
+        findings, _ = scan_tree(root, ("tools/a.sh",), (), (("tools/gone.sh", "gate", 'python3 -I "$@"'),))
+        if not any("is in no covered script" in f for f in findings):
+            errors.append("self-test: a launcher in no covered script gave no finding")
     return errors
 
 
@@ -520,7 +710,8 @@ def main() -> int:
     if findings:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
-    print(f"OK: {len(covered)} shell scripts the workflows run, every Python launch python3 -I")
+    print(f"OK: {len(covered)} shell scripts the workflows run; every Python launch the scan reads starts "
+          f"python3 -I, apart from the lines its {len(EXCEPTIONS)} exceptions name")
     return 0
 
 
