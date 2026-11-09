@@ -805,9 +805,9 @@ run_err_case "boolean total_count is rejected fail-closed" \
 run_err_case "pages declaring different total_count values are rejected fail-closed" \
   "{\"total_count\":4,\"check_runs\":[${PM_OK},${SD_OK}]}"$'\n'"{\"total_count\":5,\"check_runs\":[${APM_OK},${CF}]}" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check-runs pages disagree on total_count"
-# A declared total below the runs received means the payload holds a run the
-# API did not count, so it is as inconsistent as a truncated one. A reader that
-# checked only for truncation would confirm this reading green.
+# A declared total below the runs received means that the payload holds a run
+# the API did not count, so it is as inconsistent as a truncated one. A reader
+# that checked only for truncation would confirm this reading green.
 run_err_case "declared total_count below the runs received is rejected fail-closed" \
   "{\"total_count\":3,\"check_runs\":[${REQ_GA},${CF}]}" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check-runs declared 3 runs but the reading received 4"
