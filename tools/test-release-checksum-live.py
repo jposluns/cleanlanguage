@@ -23,7 +23,7 @@ and checksum it shows: elsewhere the fixture page stands in for that render,
 and WholePageTest runs the real generator on a copy of its inputs, on each
 page form that its cases list. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
-record (G4), checked for the release SKILL.md names whatever version the site
+record, checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
 names counts as not yet published only when its tag is confirmed absent, and an
 undated release at or below the baseline makes no network call for the date
@@ -457,7 +457,7 @@ class ConditionalPassTest(unittest.TestCase):
             code = gate.main()
         return code, buffer.getvalue()
 
-    # --- G4 (item 26): the Released line against the release record ---------
+    # --- The Released line (item 26) against the release record --------------
 
     def test_released_date_matching_published_day_passes(self):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -555,7 +555,7 @@ class ConditionalPassTest(unittest.TestCase):
         ]
 
     def test_date_failure_does_not_hide_checksum_drift(self):
-        # T5: both checks run and both are reported, the more severe code wins.
+        # Both checks run and both are reported, the more severe code wins.
         for label, released, published, immutable, expected, reason in (
             ("date mismatch", "Released: 2026-11-15  ", "2026-11-16T00:00:01Z", "true", 1,
              "Release date inconsistency found"),
@@ -776,8 +776,8 @@ class ConditionalPassTest(unittest.TestCase):
         ) + [self.site_matches()], out)
 
     def test_undated_baseline_beside_an_older_site_release_makes_no_probe(self):
-        # The line and the baseline rule are read first, so an undated
-        # release at or below the baseline makes no network call for G4.
+        # The line and the baseline rule are read first, so an undated release
+        # at or below the baseline makes no network call for the date check.
         self.fixtures("1.0.13", ZIP_SUM, CURRENT)
         self.published("2026-11-15T09:30:00Z")
         self.assertEqual(gate.main(), 0)
