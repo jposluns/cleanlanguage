@@ -145,15 +145,15 @@ brace inside its suffix, which bash runs by its shebang (`tools/x.p''y`,
 whose name does not end in .py or .pyz, such a word or token split by a
 backslash-newline in a body with a quoted delimiter that a shell runs
 (`bash <<'X'`), which the scan does not join, text built at run time, and
-launch text held in an array or in the positional parameters of which an
-expansion runs only the program, as
-`set -- python3 -I tools/x.py; shift 2; "$@"` and `"${a[@]:2}"` do. A launch
-from Python, such as subprocess with sys.executable. A launch in a script that
-a workflow step or a covered script reaches only through a variable or a path
-the discovery does not match. For each <name>.sh that the text names, the
-discovery queues tools/<name>.sh and nothing else, so it does not read a script
-outside tools/ or in a subdirectory of it, such as one that a step runs as
-`bash scripts/build.sh`, or a script whose name does not end in .sh; and for
+launch text that an expansion, an assignment, a shift or a read cuts down to
+the program before it runs, wherever the text is held (a variable, an array or
+the positional parameters), as `${v#* -I }`, `"${a[@]:2}"` and `read -r _ _ p`
+do. A launch from Python, such as subprocess with sys.executable. A launch in a
+script that a workflow step or a covered script reaches only through a variable
+or a path the discovery does not match. For each <name>.sh that the text names,
+the discovery queues tools/<name>.sh and nothing else, so it does not read a
+script outside tools/ or in a subdirectory of it, such as one that a step runs
+as `bash scripts/build.sh`, or a script whose name does not end in .sh; and for
 scripts/<name>.sh, or another path whose base name is <name>.sh, it reads
 tools/<name>.sh when that file exists, not the script that runs. The cost of
 the rules is false findings: a line that names a .py or .pyz token or an
