@@ -41,13 +41,12 @@ The rule:
    a ConstructorError when a built key is `in` the list of the keys built
    before it, and returns
    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`. Loading with
-   UniqueKeyLoader refuses some documents that `yaml.safe_load` loads, and
-   loads others; UniqueKeyLoader's docstring gives examples of each that the
-   self-tests record. Each workflow must have a jobs mapping; a job that is
-   not a mapping, a steps value that is not a list and a step that is not a
-   mapping are findings. A job or step `uses:` value that starts with ./ or
-   ../, a local action or a local reusable workflow, is a finding, since the
-   scan does not read it.
+   UniqueKeyLoader refuses some documents and loads others; UniqueKeyLoader's
+   docstring gives examples of each that the self-tests record. Each workflow
+   must have a jobs mapping; a job that is not a mapping, a steps value that
+   is not a list and a step that is not a mapping are findings. A job or step
+   `uses:` value that starts with ./ or ../, a local action or a local
+   reusable workflow, is a finding, since the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -236,24 +235,27 @@ class UniqueKeyLoader(yaml.SafeLoader):
     appends the key to that list otherwise. Then it returns
     `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`.
 
-    Loading with UniqueKeyLoader refuses some documents that `yaml.safe_load`
-    loads, and loads others. The self-tests hold a case for each document
-    below, with its outcome on PyYAML 6.0.3 and Python 3.14.4; these are
-    examples, not a rule for which documents are refused. Each document is
-    written as its top-level lines joined by "then". How GitHub Actions reads
-    any of these documents is not checked.
+    Loading with UniqueKeyLoader refuses some documents and loads others. The
+    self-tests hold a case for each document below, with its outcome on PyYAML
+    6.0.3 and Python 3.14.4; these are examples, not a rule for which
+    documents are refused. Each document is written as its top-level lines
+    joined by "then". How GitHub Actions reads any of these documents is not
+    checked.
 
-    - Refused with a `duplicate key` error: the keys `1` and `1.0`, `true` and
-      `yes`, `~` and `null`, `a` and `'a'`, and `.nan` and `.nan`, each pair
-      in 1 mapping; and `m: {<<: &b {<<: {p: 1}, p: 2}}` then `n: *b`, with
-      the message `duplicate key 'p'`.
-    - Refused with a ConstructorError that names the tag
-      tag:yaml.org,2002:value: `x: {=: a}`, `x: {!!value a: b}`, and
-      `l: [{<<: &b {=: a}}]` then `n: *b`.
-    - Refused as `duplicate key []`: `x: {? [a]: 1, ? [b]: 2}`.
-    - Refused as a recursive node: `a: &x {b: *x}` and `a: &x {b: {<<: *x}}`.
-    - Refused with RecursionError: `x: {a: {a: ... 1}}`, with mappings nested
-      300 deep.
+    - Refused with a message that holds `duplicate key`: the keys `1` and
+      `1.0`, `true` and `yes`, `~` and `null`, `a` and `'a'`, and `.nan` and
+      `.nan`, each pair in 1 mapping.
+    - Refused with a message that holds `duplicate key 'p'`:
+      `m: {<<: &b {<<: {p: 1}, p: 2}}` then `n: *b`.
+    - Refused with a message that holds `tag:yaml.org,2002:value`:
+      `x: {=: a}`, `x: {!!value a: b}`, and `l: [{<<: &b {=: a}}]` then
+      `n: *b`.
+    - Refused with a message that holds `duplicate key []`:
+      `x: {? [a]: 1, ? [b]: 2}`.
+    - Refused with a message that holds `recursive node`: `a: &x {b: *x}` and
+      `a: &x {b: {<<: *x}}`.
+    - Refused with a message that holds `maximum recursion depth`:
+      `x: {a: {a: ... 1}}`, with mappings nested 300 deep.
     - Loaded: `on` and `'on'`, as 2 keys, True and a string;
       `x: {<<: {p: 1}, p: 2}`; `x: {<<: {p: 1}, <<: {p: 2}}`;
       `x: {<<: {p: 1, p: 2}}`; `x: !!set {a, a}`;
@@ -764,7 +766,7 @@ def self_test() -> list[str]:
             ("keys ~ and null", "x:\n  ~: a\n  null: b\n" + head, "duplicate key"),
             ("keys a and 'a'", "x:\n  a: 1\n  'a': 2\n" + head, "duplicate key"),
             ("an anchored mapping with a merge and an override, merged and then reused as an alias",
-             "m: {<<: &b {<<: {p: 1}, p: 2}}\nn: *b\n" + head, "duplicate key"),
+             "m: {<<: &b {<<: {p: 1}, p: 2}}\nn: *b\n" + head, "duplicate key 'p'"),
             ("a mapping with a repeated key, merged and then reused as an alias",
              "m: {<<: &b {p: 1, p: 2}}\nn: *b\n" + head, "duplicate key"),
             ("an anchored mapping whose 2 merge keys supply the same key, merged and then reused as an alias",
