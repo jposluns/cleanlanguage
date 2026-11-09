@@ -133,7 +133,9 @@ with a $'...' part that holds a backslash escape, which bash decodes and the
 scan does not; and a delimiter with a quoted part that spans lines, which the
 scan does not read as a delimiter. A launch that names neither a word rule 1
 reads nor a .py or .pyz token: an interpreter held in a variable
-(`"$real_py" -c`) or reached through a function or alias, an interpreter whose
+(`"$real_py" -c`) or reached through a function or alias, an interpreter named
+only after `command -v` or `command -V`, whose printed path a command
+substitution then runs (`"$(command -v python3)" -c`), an interpreter whose
 name rule 1 does not read, such as jython or graalpy, an interpreter name in
 other letter cases or with a letter or hyphen after its digits (`python3m`), a
 python word spelt with quoting, a backslash or a brace inside it (`pyth''on3`,
@@ -162,7 +164,9 @@ not all letters (`python3 -I -Xutf8 tools/x.py`) or a long option, and a
 correct launch with blanks other than 1 space around its -I
 (`python3  -I tools/x.py`, or a tab after -I) or with no blank after its -I, as
 at the end of a line or before a `)` (`cmd | python3 -I`,
-`x="$(cmd | python3 -I)"`), since rule 1 passes a python word only where it
+`x="$(cmd | python3 -I)"`), and a correct launch whose -I is not its first
+option or sits in a cluster of options (`python3 -B -I tools/x.py`,
+`python3 -BI tools/x.py`), since rule 1 passes a python word only where it
 starts `python3 -I ` with 1 space before and after the -I.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
@@ -453,7 +457,7 @@ C_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"-
 
 
 def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
-    """Return the rules one shell line breaks, given the names of the launcher functions of its script."""
+    """Return the rules a shell line breaks, given the names of the launcher functions of its script."""
     found = []
     for match in PYTHON_WORD.finditer(line):
         at = match.start()
@@ -1052,9 +1056,10 @@ def main() -> int:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
     print(f"OK: {len(covered)} tools/*.sh scripts found from the workflows' run text; each python or pypy word "
-          f"and each .py or .pyz token on a line the scan reads stands in text that reads as a python3 -I launch, "
-          f"or the token is the first word after a call, at the start of a line, of a function that LAUNCHERS "
-          f"names and checks ({len(LAUNCHERS)} in all), apart from the lines its {len(EXCEPTIONS)} exceptions name")
+          f"that rule 1 reads and each .py or .pyz token on a line the scan reads stands in text that reads as a "
+          f"python3 -I launch, or the token is the first word after a call, at the start of a line, of a function "
+          f"that LAUNCHERS names and checks ({len(LAUNCHERS)} in all), apart from the lines its {len(EXCEPTIONS)} "
+          f"exceptions name")
     return 0
 
 

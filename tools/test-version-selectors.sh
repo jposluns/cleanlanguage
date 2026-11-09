@@ -103,11 +103,12 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   # tools/skill-version.py or the tool run by its shebang, or one added to a
   # line that already holds an isolated call. The 2 scans give a finding for
   # each of these 3 examples: at the 2 shell sites,
-  # tools/test-shell-launch-isolation.py, since its rule 1 reads every python
-  # word and its rule 2 every literal .py token on each line that the scan
-  # reads, and at the workflow site, tools/test-workflow-launch-isolation.py.
-  # Each scan names in its residuals the forms it is known to miss, such as a
-  # .py name spelt with a glob inside its suffix.
+  # tools/test-shell-launch-isolation.py, since each holds a python word that
+  # its rule 1 reads or a literal .py token that its rule 2 reads, on a line
+  # that the scan reads, and at the workflow site,
+  # tools/test-workflow-launch-isolation.py. Each scan names in its residuals
+  # the forms it is known to miss, such as a .py name spelt with a glob inside
+  # its suffix.
   got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
   got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
