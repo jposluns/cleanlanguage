@@ -15,35 +15,40 @@ holds those words, so that a crash, which also exits 1, does not pass for a
 refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
-probe's name, so that a change in any of the 3 readings that the gate rests on
-fails a case. 2 more each run a copy in which the probe of a ``</ script>``
-inside a ``script`` or the probe of markup in a ``title`` reads its ``h1``
-inside an open ``div``, as on a Python whose html.parser opens elements inside
-a ``script`` or a ``title``, with ``tools/check-inline-code.py`` removed,
-expecting exit 3 and the probe's name, which the copy cannot give if that probe
-tries to read that file. The probe of a comment ended by ``--!>`` has no start
-tag before its ``h1``, so no reading starts that ``h1`` inside an open element,
-and parse() reads that file only at a start tag inside one.
-probe_name_problems() fails unless PROBE_NAMES holds the names of the gate's
-``READING_PROBES`` in their order, so that each probe has its copy. 1 case
-gives a family link the class ``btn`` alone and expects the gate's refusal of
-it as not a button, so that the gate cannot accept ``btn`` without ``inline``.
-1 more check asserts that the gate's docstring names exactly the scripts in
-``ALLOWED_SCRIPTS``, and 1 that this file's own source carries no ``?v=`` token
-starting with a digit apart from those KEPT_TOKENS names, since a case writes
-the current baseline version as BASELINE, read from ``.baseline/pin.toml``, and
-1 is version_binding_problems(), whose docstring states what it reports and
-what it passes. A further check, hidden_link_problems(), runs the gate's
-parse() in this process on HIDDEN_LINKS and fails if parse() reads no link of a
-fragment as hidden, if a link it reads as hidden has visible text on a page
-that parse() does not hide as a whole, or if a page that parse() hides as a
-whole has no h1 or an h1 that does not read as hidden, so that, on a page that
-parse() does not hide as a whole, the gate's filter of the links back on not
-hidden stays implied by its filter on visible text. Exit 0 when every case
-passes; 1 otherwise, naming each failing case. Each of RESIDUALS is a fault the
-gate passes, such as markup in which a browser may hide or empty what the gate
-checks; it must exit 0, and the gate's docstring must name it, so that what the
-gate says it checks cannot outgrow its code unnoticed.
+probe's name, as the gate gives them on a Python that reads that probe's
+fragment otherwise. 2 more each run a copy in which the probe of a
+``</ script>`` inside a ``script`` or the probe of markup in a ``title`` reads
+its ``h1`` inside an open ``div``, as on a Python whose html.parser opens
+elements inside a ``script`` or a ``title``, with
+``tools/check-inline-code.py`` removed, expecting exit 3 and the probe's name,
+which the copy cannot give if that probe tries to read that file. The probe of
+a comment ended by ``--!>`` has no ``</br>``, and its only start tag is its
+``h1``'s, with only the comment before it, so no reading of it meets a start
+tag or a ``</br>`` while an element is open, and parse() reads that file only
+at a start tag, a self-closing one included, or a ``</br>`` end tag that it
+meets while it holds an element open. probe_name_problems() fails unless
+PROBE_NAMES holds the names of the gate's ``READING_PROBES`` in their order, so
+that each probe has its copy. 1 case gives a family link the class ``btn``
+alone and expects the gate's refusal of it as not a button, so that the suite
+fails if the gate accepts that link. 1 more check asserts that the gate's
+docstring names exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this
+file's own source carries no ``?v=`` token starting with a digit apart from
+those KEPT_TOKENS names, since a case writes the current baseline version as
+BASELINE, read from ``.baseline/pin.toml``, and 1 is
+version_binding_problems(), whose docstring states what it reports and what it
+passes. A further check, hidden_link_problems(), runs the gate's parse() in
+this process on the 8 fragments of HIDDEN_LINKS and fails if parse() reads no
+link of a fragment as hidden, if a link it reads as hidden has visible text on
+a fragment that parse() does not hide as a whole, or if a fragment that parse()
+hides as a whole has no h1 or an h1 that does not read as hidden. So it fails
+if, on 1 of those fragments that parse() does not hide as a whole, the gate's
+filter of the links back on not hidden stops being implied by its filter on
+visible text, and a drift of the 2 filters that none of them shows passes it.
+Exit 0 when every case passes; 1 otherwise, naming each failing case. Each of
+RESIDUALS is a fault the gate passes, such as markup in which a browser may
+hide or empty what the gate checks; it must exit 0, and the gate's docstring
+must name it, so that what the gate says it checks cannot outgrow its code
+unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -1205,8 +1210,10 @@ CASES = [
     # A copy of the gate whose probe of a </ script> inside a script or of markup inside a title reads its h1 inside an
     # open div, as a Python whose html.parser opens elements inside a script or a title would, with
     # tools/check-inline-code.py removed, must exit 3 naming that probe, which it cannot do if that probe tries to read
-    # that file. The probe of a comment ended by --!> has no start tag before its h1, so no reading starts that h1
-    # inside an open element, and parse() reads that file only at a start tag inside one.
+    # that file. The probe of a comment ended by --!> has no </br>, and its only start tag is its h1's, with only the
+    # comment before it, so no reading of it meets a start tag or a </br> while an element is open, and parse() reads
+    # that file only at a start tag, a self-closing one included, or a </br> end tag that it meets while it holds an
+    # element open.
     ("the gate reading the markup after a </ script> inside a script as elements, without tools/check-inline-code.py",
         both(edit(f"tools/{GATE.name}", '"<script></ script><h1>Probe</h1></script>", 0)',
                   '"<div></ script><h1>Probe</h1></div>", 0)'),
@@ -2172,8 +2179,8 @@ def name_reading_problems() -> list[str]:
 
 
 # Fragments in which the gate's parse() reads a link to #get as hidden: by its own attribute, a hiding ancestor, a
-# hiding class on an ancestor, a details without open and an element of INERT_ELEMENTS, and on a page that parse()
-# hides as a whole, by a hiding body start tag before or after the link or a frameset start tag.
+# hiding class on an ancestor, a details without open and a noscript ancestor, which HIDING_ELEMENTS names, and on a
+# page that parse() hides as a whole, by a hiding body start tag before or after the link or a frameset start tag.
 HIDDEN_LINKS = (
     '<a href="/install/#get" hidden>Back</a>',
     '<div hidden><p><a href="/install/#get"><span>Back</span></a></p></div>',
@@ -2187,11 +2194,13 @@ HIDDEN_LINKS = (
 
 
 def hidden_link_problems() -> list[str]:
-    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as hidden
-    on a page that it does not hide as a whole, so there the filter of the links back on not hidden in family_checked()
-    is implied by its filter on visible text; this fails if the 2 filters drift apart. On a page that parse() hides as a
-    whole, a link that reads as hidden may keep its text, and there the page must have an h1 and every h1 must read as
-    hidden, so that check 4 refuses the page. It also fails if parse() reads no link of a fragment as hidden."""
+    """The gate's parse(), run in this process on the 8 fragments of HIDDEN_LINKS, gives no visible text to a link that
+    it reads as hidden on a fragment that it does not hide as a whole, so on those fragments the filter of the links
+    back on not hidden in family_checked() is implied by its filter on visible text; this fails if, on 1 of them, it
+    gives such a link visible text, and a drift of the 2 filters that none of them shows passes it. On a fragment that
+    parse() hides as a whole, a link that reads as hidden may keep its text, and this fails unless that fragment has an
+    h1 and every h1 reads as hidden, so that check 4 refuses such a page. It also fails if parse() reads no link of a
+    fragment as hidden."""
     problems: list[str] = []
     try:
         gate = load_gate()

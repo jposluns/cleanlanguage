@@ -78,10 +78,12 @@ def gate_families(path: Path = INSTALL_GATE) -> list[str]:
     or deleted, no attribute named FAMILIES of any object, the module included, is used, and the source has no * import.
     So a FAMILIES local to a def or a lambda, which leaves the module's FAMILIES as it is, is refused too: that is the
     price of a reader that cannot misjudge a scope. Anything else fails with a message naming each refusal, so that a
-    list that is computed or changed cannot pass unread. It cannot see a change in which FAMILIES is neither a target,
-    nor the name before an attribute or item, nor an attribute name: one made through another name for the same list, a
-    function the list is passed to, such as operator.iadd() or list.append(), or the name given as a string or keyword,
-    as setattr(), exec(), globals()[...] and globals().update() take it."""
+    list that is computed, or changed in any of those ways, cannot pass unread. It cannot see a change in which FAMILIES
+    is neither a target, nor the name before an attribute or item, nor an attribute name. Examples are a change made
+    through another name for the same list; through an expression that holds the list, such as
+    (FAMILIES or []).append(...) or [FAMILIES][0] += [...]; through a function the list is passed to, such as
+    operator.iadd() or list.append(); and through the name given as a string or keyword, such as the string that
+    setattr(), exec() or globals()[...] takes or the keyword that globals().update() takes."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     bindings, refusals = bindings_anywhere(tree, "FAMILIES")
     for node in ast.walk(tree):
@@ -292,7 +294,8 @@ class LiveTreeTest(unittest.TestCase):
     def test_committed_config_includes_family_pages(self):
         cfg = engine.load_config(REPO_ROOT / "tools" / "sitemap-config.json")
         urls = {url for url, _ in engine.build_entries(cfg, REPO_ROOT)}
-        # The families come from the install gate, so a family added there must be in the sitemap too.
+        # The families come from the literal FAMILIES that gate_families() reads in the install gate, so a family added
+        # to that literal must be in the sitemap too.
         for fam in gate_families():
             self.assertIn(f"{cfg['base_url']}/install/{fam}/", urls)
 

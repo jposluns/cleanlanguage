@@ -713,9 +713,11 @@ or the probe of markup in a ``title`` reads its ``h1`` inside an open ``div``,
 as on a Python that opens elements inside a ``script`` or a ``title``; each
 must exit 3 and name its probe with ``tools/check-inline-code.py`` removed,
 which it cannot do if that probe tries to read that file. The probe of a
-comment ended by ``--!>`` has no start tag before its ``h1``, so no reading
-starts that ``h1`` inside an open element, and ``parse()`` reads that file only
-at a start tag inside one.
+comment ended by ``--!>`` has no ``</br>``, and its only start tag is its
+``h1``'s, with only the comment before it, so no reading of it meets a start
+tag or a ``</br>`` while an element is open, and ``parse()`` reads that file
+only at a start tag, a self-closing one included, or a ``</br>`` end tag that
+it meets while it holds an element open.
 
 Exit codes:
   0  every check above passes
@@ -1141,8 +1143,9 @@ class PageParser(HTMLParser):
     def __init__(self, inert_tags: tuple[str, ...] | None = None) -> None:
         super().__init__()
         # The elements of INERT_ELEMENTS, or None to have inert_elements() read them from tools/check-inline-code.py at
-        # the first start tag inside an open element. They decide only which ids and links count, never which h1
-        # elements count, so a probe of READING_PROBES gives none and reads no file.
+        # each start tag, a self-closing one included, or </br> end tag that the parser meets while it holds an element
+        # open. They decide only which ids and links count, never which h1 elements count, so a probe of READING_PROBES
+        # gives none and reads no file.
         self.inert_tags = inert_tags
         self.stack: list[dict] = []
         self.order = 0
@@ -1943,9 +1946,10 @@ def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict
     reads the family pages through this, so its inventories of the pins have this scope. The refusal names both filters
     of the links back, and on a page that parse() does not hide as a whole the filter on not hidden is implied by the
     filter on visible text: the parser never counts text inside a hiding element, so there a link that it reads as
-    hidden has no visible text, which hidden_link_problems() of tools/test-install-page.py checks. Only on a page that
-    parse() hides as a whole (by a frameset start tag, or a hiding html or body start tag, anywhere) may a link that
-    reads as hidden keep its text, and there every h1 reads as hidden too, so check 4 refuses the page."""
+    hidden has no visible text, which hidden_link_problems() of tools/test-install-page.py checks on the fragments of
+    its HIDDEN_LINKS. Only on a page that parse() hides as a whole (by a frameset start tag, or a hiding html or body
+    start tag, anywhere) may a link that reads as hidden keep its text, and there every h1 reads as hidden too, so
+    check 4 refuses the page."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
     problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
