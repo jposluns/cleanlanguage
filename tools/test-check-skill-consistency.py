@@ -8,21 +8,22 @@ process and asserts its exit code and the fragments the case lists. The case
 named "the committed tree" changes nothing, and the 2 cases named "the skill
 list sorted, and the checklist with it" and "both bullets with 3 spaces after
 the marker, each continued after a blank line by a line indented by 2 spaces",
-the 4 cases whose names start "an ordered item", the 3 cases whose names
-start "the skill bullet under", and the case named "a link title in the skill
-bullet, with the same link in the dash bullet", each make 2 edits, one in
-each file; the case whose name starts "the skill bullet last in its section"
-makes 3, 2 in SKILL.md and 1 in the checklist; each other case makes 1
-change, which edits, rewrites or removes a file. The cases that expect exit 0,
-apart from the committed tree, make edits that keep the 2 files consistent;
-the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
-that the output says the bullet differs and names no item
-beyond the case's list; an exit 3 case lists the structure the message must
-name, or, for a line the gate refuses, the file and the line, counted in the
-file as the case edits it, that the message must name. The case named
-"main's checklist line" restores the exact line the checklist carried before
-row 98 and expects the gate to name the 5 items it lacks and the 2 it adds.
-One further case passes the gate an argument and asserts exit 2.
+the 4 cases whose names start "an ordered item", the 3 cases whose names start
+"the skill bullet under", and the 2 cases named "a link title in the skill
+bullet, with the same link in the dash bullet" and "both bullets continued
+after a blank line by a line indented by 1 space, with the same words", each
+make 2 edits, one in each file; the case whose name starts "the skill bullet
+last in its section" makes 3, 2 in SKILL.md and 1 in the checklist; each other
+case makes 1 change, which edits, rewrites or removes a file. The cases that
+expect exit 0, apart from the committed tree, make edits that keep the 2 files
+consistent; the cases that expect exit 1 or 3 apply a fault. An exit 1 case
+also asserts that the output says the bullet differs and names no item beyond
+the case's list; an exit 3 case lists the structure the message must name, or,
+for a line the gate refuses, the file and the line, counted in the file as the
+case edits it, that the message must name. The case named "main's checklist
+line" restores the exact line the checklist carried before row 98 and expects
+the gate to name the 5 items it lacks and the 2 it adds. One further case
+passes the gate an argument and asserts exit 2.
 
 ITEMS is the carve-out list as SKILL.md states it today, in its order. The
 edits that rewrite a list check that ITEMS is still there first, so a change
@@ -76,8 +77,11 @@ EMPTY_ITEM = "is a list marker with nothing after it, an empty list item"
 SPACED = "is a bullet marker followed by 2 or more spaces"
 UNREAD_LINE = "is not a line this check reads in "
 HTML = 'starts with "<" after 0 to 3 spaces'
+ONE_SPACE = "is indented by 1 space after a blank line under a bullet"
 LEAD_IN = "Do not mechanically delete:\n"
 OTHER_BULLET = "- throat-clearing before the substantive point;\n"
+# A checklist bullet above the heading over the dash bullet, so outside the checklist span.
+CHECKLIST_BULLET = "- Is the required action explicit?\n"
 CHECKLIST_HEADING = "## Mechanics\n"
 # The heading after the carve-out section, which ends the section.
 NEXT_HEADING = "## Match the context\n"
@@ -474,6 +478,20 @@ CASES = [
         [at(SKILL, SKILL_LINE) + SPACED]),
     ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 3,
         [at(CHECKLIST, KEEP, 2) + UNREAD_LINE]),
+    # A line indented by 1 space after a blank line under a bullet. In the spans, item 5 also refuses such a line, so
+    # these cases assert the refusal's own words, which item 5's message lacks.
+    ("both bullets continued after a blank line by a line indented by 1 space, with the same words",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE[:-1] + ",\n\n or code samples;"),
+                 change_dash_line(lambda line: line.rstrip("\n.") + ",\n\n or code samples.\n")),
+        3, [at(SKILL, SKILL_LINE, 2) + ONE_SPACE]),
+    ("the dash bullet continued after a blank line by a line indented by 1 space",
+        change_dash_line(lambda line: line.rstrip("\n.") + ",\n\n or code samples.\n"), 3,
+        [at(CHECKLIST, KEEP, 2) + ONE_SPACE]),
+    ("a bullet above the carve-out section continued after a blank line by a line indented by 1 space",
+        edit(SKILL, OTHER_BULLET, OTHER_BULLET + "\n or after it;\n"), 3, [at(SKILL, OTHER_BULLET, 2) + ONE_SPACE]),
+    ("a checklist bullet above the dash bullet's span continued after a blank line by a line indented by 1 space",
+        edit(CHECKLIST, CHECKLIST_BULLET, CHECKLIST_BULLET + "\n or only implied?\n"), 3,
+        [at(CHECKLIST, CHECKLIST_BULLET, 2) + ONE_SPACE]),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
     ("a carve-out after a mixed-mark line in the dash bullet",
         change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + character("_")]),

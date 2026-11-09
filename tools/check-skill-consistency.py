@@ -58,25 +58,31 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      so the file must hold none.
      A lone "-" under a line that is not blank is refused as a setext
      underline first;
-   - a bullet marker followed by 2 or more spaces: "-", "*" or "+" at the
-     start of the line, then 2 or more spaces. After a blank line, this
-     check reads each line indented by 1 space or more as part of the open
-     bullet. The reason for the refusal: a renderer might read such a line
-     as part of the bullet only when the line is indented at least as far as
-     the bullet's text, which a second, third or fourth space after the
-     marker moves further in, so the file must hold none. A line that holds
-     only the marker and spaces is refused first, as an empty list item or,
-     for a "-" under a line that is not blank, as a setext underline;
+   - a bullet marker followed by 2 or more spaces: "-", "*" or "+" at the start
+     of the line, then 2 or more spaces. After a blank line, this check reads
+     each line indented by 2 spaces or more as part of the open bullet. The
+     reason for the refusal: a renderer might read such a line as part of the
+     bullet only when the line is indented at least as far as the bullet's
+     text, which a second, third or fourth space after the marker moves further
+     in, so the file must hold none. A line that holds only the marker and
+     spaces is refused first, as an empty list item or, for a "-" under a line
+     that is not blank, as a setext underline;
    - a line that starts with "<" after 0 to 3 spaces. The reason for the
-     refusal: a renderer might open an HTML block at such a line, and might
-     run some kinds, such as one opened by "<script>" or "<pre>", on past
-     blank lines and headings until a closing tag, so a block opened above a
-     span could hold the span. A "<" later in a line is refused only in
-     the two spans item 5 covers, and there on every line but the SKILL.md
-     section's own heading line, unless it starts "<!--", which is refused
-     anywhere. Item 5 accepts that heading line without reading its
-     characters, because its text is the section name item 2 matches, not
-     part of the compared bullet.
+     refusal: a renderer might open an HTML block at such a line, and might run
+     some kinds, such as one opened by "<script>" or "<pre>", on past blank
+     lines and headings until a closing tag, so a block opened above a span
+     could hold the span. A "<" later in a line is refused only in the two
+     spans item 5 covers, and there on every line but the SKILL.md section's
+     own heading line, unless it starts "<!--", which is refused anywhere. Item
+     5 accepts that heading line without reading its characters, because its
+     text is the section name item 2 matches, not part of the compared bullet;
+   - a line that starts with exactly 1 space, after a blank line under a
+     bullet. The reason for the refusal: a renderer might start a new paragraph
+     at such a line, because it is indented less than the bullet's text, which
+     starts after the marker and 1 space, while this check would read the line
+     as part of the bullet. This refusal runs after the others in this list
+     have run over both files, so a line they refuse keeps its message, and
+     before any later item reads the file that holds the line.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. Every other refusal
@@ -126,16 +132,17 @@ either file left out, split into blocks (headings, bullets and paragraphs):
 
 A bullet starts with "-", "*" or "+" at the start of a line, followed by a
 space or the end of the line. It runs on over each later line that starts with
-a space, across blank lines too, and over each other line until a blank line
+a space, across blank lines too (after a blank line, item 1 refuses such a line
+that starts with exactly 1 space), and over each other line until a blank line
 or a line that starts with one of: "#" to "######" followed by a space or the
 end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
 a space; or ">". So a line such as "2. text" continues the bullet when no blank
 line comes before it; item 5 refuses such a line in the two spans it covers,
 because a renderer might read it as the start of an ordered list. A line that
-holds only a list marker, such as "2.", "*" or "+", is refused as an empty
-list item when the marker is at the start of the line, as an indented list
-marker after 1 to 3 spaces, and, after 4 or more spaces, only in the two spans
-item 5 covers; a lone "-" under a line that is not blank is refused as a setext
+holds only a list marker, such as "2.", "*" or "+", is refused as an empty list
+item when the marker is at the start of the line, as an indented list marker
+after 1 to 3 spaces, and, after 4 or more spaces, only in the two spans item 5
+covers; a lone "-" under a line that is not blank is refused as a setext
 underline after any number of spaces, in the spans or outside them. The
 generated copies of the checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
@@ -198,17 +205,17 @@ Residuals, named here because the check reads text by fixed rules:
   unseen, so the check stays fail-closed;
 - a checklist block that grants a carve-out without the word "dash" or
   "dashes" is not read;
-- the reader handles a small part of Markdown: a heading or block quote
-  marker indented by 1 or more spaces, a list marker indented by 1 to 3
-  spaces, an empty list item line, a bullet marker followed by 2 or more
-  spaces and a line that starts with "<" after 0 to 3 spaces are refused
-  rather than read, and "<!--" written inside inline code is refused like a
-  comment. Outside the two spans item 5 covers, the reader reads a list
-  item indented by 4 or more spaces under an open bullet, a line indented by
-  1 space after a blank line under a bullet, and a line such as "2. text"
-  directly under a bullet line as part of that bullet, whatever a renderer
-  makes of them. No compared text comes from those lines, but the
-  pointer sentence and the checklist's mentions of a dash are found there;
+- the reader handles a small part of Markdown: a heading or block quote marker
+  indented by 1 or more spaces, a list marker indented by 1 to 3 spaces, an
+  empty list item line, a bullet marker followed by 2 or more spaces, a line
+  that starts with "<" after 0 to 3 spaces and a line that starts with exactly
+  1 space after a blank line under a bullet are refused rather than read, and
+  "<!--" written inside inline code is refused like a comment. Outside the two
+  spans item 5 covers, the reader reads a list item indented by 4 or more
+  spaces under an open bullet and a line such as "2. text" directly under a
+  bullet line as part of that bullet, whatever a renderer makes of them. No
+  compared text comes from those lines, but the pointer sentence and the
+  checklist's mentions of a dash are found there;
 - the items an exit 1 report names come only from the one Keep clause, so a
   carve-out the bullet adds anywhere else, such as in another sentence, is
   named by no item line, and with no Keep clause or more than
@@ -350,14 +357,16 @@ def plain_text(path: Path) -> str:
     return text
 
 
-def blocks(text: str) -> list[tuple[str, str, int]]:
+def blocks(path: Path, text: str) -> list[tuple[str, str, int]]:
     """Each heading, bullet and paragraph of the text, as (kind, text, first line number) with spaces collapsed.
 
     A bullet's text holds every line that continues it and drops its marker. A
     heading's text drops any closing run of "#", found on the line as written,
     before spaces are collapsed, so only a space separates it. plain_text() has
     refused every thematic break the text could hold, apart from the front
-    matter delimiters, which are read as text.
+    matter delimiters, which are read as text. A line that starts with exactly
+    1 space after a blank line under a bullet is refused, as item 1 of the
+    module docstring says.
     """
     found: list[list] = []
     open_kind = ""
@@ -367,6 +376,10 @@ def blocks(text: str) -> list[tuple[str, str, int]]:
             after_blank = True
             continue
         indented = line[:1] == " "
+        if open_kind == "bullet" and after_blank and indented and line[1:2] != " ":
+            raise Unreadable(f"{path}, line {number}: is indented by 1 space after a blank line under a bullet; a "
+                             "renderer might start a new paragraph there, while this check would read the line as "
+                             "part of the bullet, so the file must hold none")
         if open_kind and (indented and (open_kind == "bullet" or not after_blank)
                           or not after_blank and not BLOCK.match(line)):
             found[-1][1] += " " + line
@@ -428,7 +441,7 @@ def items(text: str) -> list[str]:
 
 def carve_out_list(text: str) -> tuple[str, str]:
     """The carve-out section's name and its bullet that lists "quoted language", as SKILL.md writes it."""
-    found = blocks(text)
+    found = blocks(SKILL, text)
     pointers = POINTER.findall("\n".join(words for kind, words, number in found))
     if len(pointers) != 1:
         raise Unreadable(f'{SKILL}: expected exactly one sentence "the carve-outs in <section>.", found {len(pointers)}')
@@ -457,7 +470,7 @@ def carve_out_list(text: str) -> tuple[str, str]:
 
 def dash_bullet(text: str) -> str:
     """The text of the checklist's one block that mentions a dash, which must be a bullet."""
-    found = blocks(text)
+    found = blocks(CHECKLIST, text)
     dashes = [(kind, words, number) for kind, words, number in found if DASH.search(words)]
     # The kind runs first, so a heading or paragraph that mentions a dash is reported as such, not as a line of
     # the span around it.
