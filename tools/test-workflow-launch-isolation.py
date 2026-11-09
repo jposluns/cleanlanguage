@@ -29,17 +29,20 @@ path and ignores the user site directory and every PYTHON* variable.
 
 The rule:
 
-1. Scope. The scan reads .github/workflows/*.yml. Any other .yml or .yaml
-   file anywhere under .github, in any letter case, such as an action.yml or
-   a .YML workflow, is a finding, as is a symbolic link under .github, a
-   folder that cannot be listed, a file that cannot be read as UTF-8 or
-   parsed with PyYAML's safe loader, a repeated key in a mapping that
-   UniqueKeyLoader checks (Residuals names the repeats it does not), and
-   U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2 read differently). Each
-   workflow must have a jobs mapping; a job that is not a mapping, a steps
-   value that is not a list and a step that is not a mapping are findings. A
-   job or step `uses:` value that starts with ./ or ../, a local action or a
-   local reusable workflow, is a finding, since the scan does not read it.
+1. Scope. The scan reads .github/workflows/*.yml. Any other .yml or .yaml file
+   anywhere under .github, in any letter case, such as an action.yml or a .YML
+   workflow, is a finding, as is a symbolic link under .github, a folder that
+   cannot be listed, a file that cannot be read as UTF-8 or parsed with
+   PyYAML's safe loader, a repeated key in a mapping that UniqueKeyLoader
+   checks (Residuals names the repeats it does not), a key that is a plain `=`
+   or is tagged `!!value` and a mapping that holds an alias to itself through
+   mappings alone (the safe loader loads both; UniqueKeyLoader's docstring
+   states when it refuses them), and U+0085, U+2028 or U+2029 (which YAML 1.1
+   and 1.2 read differently). Each workflow must have a jobs mapping; a job
+   that is not a mapping, a steps value that is not a list and a step that is
+   not a mapping are findings. A job or step `uses:` value that starts with ./
+   or ../, a local action or a local reusable workflow, is a finding, since
+   the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -221,15 +224,30 @@ class UniqueKeyLoader(yaml.SafeLoader):
     On PyYAML 6.0.3 it compares the keys of a mapping by the value each key
     builds to, so `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a` and
     `'a'` are repeats, while `on` and `'on'` are 2 keys (True and a string).
-    It does not apply to `!!set`, whose repeated members load. It skips merge
-    keys (`<<`), so a mapping whose own key overrides a merged key loads, as
-    does a mapping with 2 `<<` keys, even when both supply the same key.
+    It also reads 2 `.nan` keys as repeats, since PyYAML builds every `.nan`
+    to the same float object, which the check matches to itself. It does not
+    apply to `!!set`, `!!omap` or `!!pairs`, whose repeated members or keys
+    load. It skips merge keys (`<<`), so a mapping whose own key overrides a
+    merged key loads, as does a mapping with 2 `<<` keys, even when both
+    supply the same key.
 
     It checks a mapping only when it builds that mapping as a value in its own
     right, which for an anchored mapping is at its first use other than as a
     merge source; an alias that reuses it later is not checked again. A
     mapping used only as a merge source is never checked, so the repeated `p`
     of `x: {<<: {p: 1, p: 2}}` and of `x: {<<: [{p: 1, p: 2}]}` loads.
+
+    It refuses 2 forms that PyYAML's safe loader loads. It builds the keys of
+    a mapping it checks before the safe loader's `construct_mapping` calls
+    `flatten_mapping`, which reads a key that is a plain `=` or is tagged
+    `!!value` as a string; before that step such a key has no constructor, so
+    `x: {=: a}` and `x: {!!value a: b}` are refused. A merge flattens its
+    source first, so `m: {<<: &b {=: a}}` followed by `n: *b` loads. It is
+    also a plain function, where the safe loader's `construct_yaml_map` is a
+    generator that yields the empty mapping before it builds the values, so a
+    mapping that holds an alias to itself through mappings alone, such as
+    `a: &x {b: *x}`, is refused as a recursive node, while `a: &x {b: [*x]}`
+    loads.
 
     A merge rewrites its source mapping in place, dropping the source's `<<`
     keys and putting the keys they supply before its own, and a mapping merges
@@ -731,6 +749,10 @@ def self_test() -> list[str]:
              "m: {<<: &b {<<: [{p: 1}, {p: 2}]}}\nn: *b\n" + head, "duplicate key"),
             ("a mapping merged by the mapping that holds it, before it is built",
              "m: {a: &b {<<: {p: 1}, p: 2}, <<: *b}\n" + head, "duplicate key"),
+            ("keys .nan and .nan", "x:\n  .nan: a\n  .nan: b\n" + head, "duplicate key"),
+            ("a plain = key", "x:\n  =: a\n" + head, "tag:yaml.org,2002:value"),
+            ("a key tagged !!value", "x:\n  !!value a: b\n" + head, "tag:yaml.org,2002:value"),
+            ("a mapping that holds an alias to itself", "a: &x {b: *x}\n" + head, "recursive node"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -760,6 +782,10 @@ def self_test() -> list[str]:
              "m: {<<: &b {<<: {p: 1}, p: 2}}\no: {<<: *b}\n" + head),
             ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
             ("keys on and 'on'", "'on': x\n" + head),
+            ("an !!omap with a repeated key", "x: !!omap [{a: 1}, {a: 2}]\n" + head),
+            ("a !!pairs with a repeated key", "x: !!pairs [{a: 1}, {a: 2}]\n" + head),
+            ("a plain = key in a mapping merged before it is built", "m: {<<: &b {=: a}}\nn: *b\n" + head),
+            ("a mapping that holds an alias to itself through a list", "a: &x {b: [*x]}\n" + head),
         ]
         for name, text in clean:
             case.write_text(text, encoding="utf-8")
