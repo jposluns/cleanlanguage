@@ -701,11 +701,15 @@ inside a ``script``, markup inside a ``title``, and a comment ended by
 fragment differs from the number that Python 3.14.4 gives, the gate exits 3 and
 names that probe, so a release that changes a reading stops the gate wherever
 it runs, ``tools/release-dry-run.sh`` included, which runs the gate without the
-suite. The suite puts each reading on a family page: an ``h1`` after a
-``</ script>`` in its JSON-LD and an ``h1`` in its ``title`` pass, and an
-``h1`` after a comment ended by ``--!>`` fails as a second ``h1``. It also
-runs, for each probe, a copy of the gate that expects the other reading of it,
-which must exit 3 and name that probe.
+suite. The probes read no file: ``parse()`` reads
+``tools/check-inline-code.py`` only for its ``INERT_ELEMENTS``, which do not
+change the ``h1`` elements it reads, and a probe gives it none. The suite puts
+each reading on a family page: an ``h1`` after a ``</ script>`` in its JSON-LD
+and an ``h1`` in its ``title`` pass, and an ``h1`` after a comment ended by
+``--!>`` fails as a second ``h1``. It also runs, for each probe, a copy of the
+gate that expects the other reading of it, which must exit 3 and name that
+probe, and a copy whose title probe reads its markup as elements, which must do
+so with ``tools/check-inline-code.py`` removed.
 
 Exit codes:
   0  every check above passes
@@ -713,8 +717,8 @@ Exit codes:
      class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
      doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
   3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
-     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports, or html.parser reads a
-     fragment of READING_PROBES otherwise than Python 3.14.4 does
+     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports, or the number of h1
+     elements that parse() reads in a fragment of READING_PROBES differs from the number that Python 3.14.4 gives
 """
 
 from __future__ import annotations
@@ -1128,8 +1132,12 @@ def name_text(data: str) -> str:
 class PageParser(HTMLParser):
     """Collects the static markup the install pages are checked against."""
 
-    def __init__(self) -> None:
+    def __init__(self, inert_tags: tuple[str, ...] | None = None) -> None:
         super().__init__()
+        # The elements of INERT_ELEMENTS, or None to have inert_elements() read them from tools/check-inline-code.py at
+        # the first start tag inside an open element. They decide only which ids and links count, never which h1
+        # elements count, so a probe of READING_PROBES gives none and reads no file.
+        self.inert_tags = inert_tags
         self.stack: list[dict] = []
         self.order = 0
         self.id_counts: Counter = Counter()
@@ -1200,7 +1208,8 @@ class PageParser(HTMLParser):
         # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on might not
         # render that element's content as page elements, or may render it only as fallback, only in its control or
         # not at all.
-        inert = any(frame["tag"] in inert_elements() for frame in self.stack)
+        inert = any(frame["tag"] in (inert_elements() if self.inert_tags is None else self.inert_tags)
+                    for frame in self.stack)
         if "id" in attrs:
             self.id_counts[attrs["id"]] += 1
             self.id_first.setdefault(attrs["id"], self.order)
@@ -1400,8 +1409,8 @@ class LoadScan(HTMLParser):
             self.head_ended = True
 
 
-def parse(text: str) -> PageParser:
-    parser = PageParser()
+def parse(text: str, inert_tags: tuple[str, ...] | None = None) -> PageParser:
+    parser = PageParser(inert_tags)
     parser.feed(text)
     parser.close()
     if parser.page_hidden:
@@ -2030,8 +2039,10 @@ def main() -> int:
         supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
         die(f"runs only on Python {supported}, the version it is tested on; "
             f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
+    # Each probe gives parse() no inert elements, which decide no h1 element, so that no probe reads a file,
+    # tools/check-inline-code.py included, even on a Python whose html.parser opens elements inside a script or a title.
     for name, fragment, expected in READING_PROBES:
-        found = len(parse(fragment).h1)
+        found = len(parse(fragment, ()).h1)
         if found != expected:
             elements = "1 h1 element" if found == 1 else f"{found} h1 elements"
             die(f"html.parser on this Python reads {name} otherwise than Python 3.14.4 does: it reads {elements} in "

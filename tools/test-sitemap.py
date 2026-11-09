@@ -298,9 +298,9 @@ class LiveTreeTest(unittest.TestCase):
 
 
 # The gate's binding of FAMILIES. Each mutant leaves FAMILIES unbound, binds, deletes or changes it, makes such a change
-# possible, or binds a FAMILIES local to a def or a lambda, which gate_families() refuses because it does not judge
-# scopes, in a form that it cannot accept as the 1 literal that nothing else changes, whether or not that code runs;
-# each pairs with words that the refusal must hold.
+# possible, or binds or annotates a FAMILIES local to a def, a lambda or the type parameters of a def or class, which
+# gate_families() refuses because it does not judge scopes, in a form that it cannot accept as the 1 literal that
+# nothing else changes, whether or not that code runs; each pairs with words that the refusal must hold.
 GATE_FAMILIES = 'FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]\n'
 TWICE = "bound, deleted or annotated 2 times"
 ATTRIBUTE = "uses an attribute named FAMILIES"
@@ -350,7 +350,9 @@ FAMILY_MUTANTS = (
     ("a match rest", GATE_FAMILIES + "match {}:\n    case {**FAMILIES}:\n        pass\n", TWICE),
     ("a match as", GATE_FAMILIES + "match []:\n    case [] as FAMILIES:\n        pass\n", TWICE),
     ("a def of the name", GATE_FAMILIES + "def FAMILIES():\n    pass\n", TWICE),
+    ("an async def of the name", GATE_FAMILIES + "async def FAMILIES():\n    pass\n", TWICE),
     ("a class of the name", GATE_FAMILIES + "class FAMILIES:\n    pass\n", TWICE),
+    ("a dotted import of the name", GATE_FAMILIES + "import FAMILIES.path\n", TWICE),
     ("an append", GATE_FAMILIES + 'FAMILIES.append("sixth")\n', "uses FAMILIES.append"),
     ("an extend inside a def", GATE_FAMILIES + 'def grow():\n    FAMILIES.extend(["sixth"])\n',
      "uses FAMILIES.extend"),
@@ -379,6 +381,15 @@ FAMILY_MUTANTS = (
      "is not a statement of the module"),
     ("no binding", 'OTHER = ["claude"]\n', "bound, deleted or annotated 0 times"),
 )
+# These mutants use the type parameters and the type alias of Python 3.12 and later, which an older Python cannot parse,
+# so test_each_typing_mutant_fails_closed skips them there.
+TYPING_MUTANTS = (
+    ("a type parameter of a def", GATE_FAMILIES + "def grow[FAMILIES]():\n    pass\n", TWICE),
+    ("a type parameter of a class", GATE_FAMILIES + "class Grow[FAMILIES]:\n    pass\n", TWICE),
+    ("a parameter specification of a def", GATE_FAMILIES + "def grow[**FAMILIES]():\n    pass\n", TWICE),
+    ("a type variable tuple of a class", GATE_FAMILIES + "class Grow[*FAMILIES]:\n    pass\n", TWICE),
+    ("a type alias", GATE_FAMILIES + "type FAMILIES = list[str]\n", TWICE),
+)
 
 
 class GateFamiliesTest(unittest.TestCase):
@@ -397,14 +408,21 @@ class GateFamiliesTest(unittest.TestCase):
         self.assertEqual(self.read(GATE_FAMILIES), ["claude", "chatgpt", "gemini", "copilot", "other-ai"])
         self.assertEqual(self.read('FAMILIES = ("claude", "gemini")\n'), ["claude", "gemini"])
 
-    def test_each_mutant_fails_closed(self):
-        for label, source, words in FAMILY_MUTANTS:
+    def assert_each_fails_closed(self, mutants):
+        for label, source, words in mutants:
             with self.subTest(label):
                 with self.assertRaises(AssertionError) as caught:
                     self.read(source)
                 self.assertIn("has no single literal assignment FAMILIES = [...] of family names that nothing else "
                               "changes", str(caught.exception))
                 self.assertIn(words, str(caught.exception))
+
+    def test_each_mutant_fails_closed(self):
+        self.assert_each_fails_closed(FAMILY_MUTANTS)
+
+    @unittest.skipIf(sys.version_info < (3, 12), "type parameters and type aliases parse only on Python 3.12 or later")
+    def test_each_typing_mutant_fails_closed(self):
+        self.assert_each_fails_closed(TYPING_MUTANTS)
 
 
 class FixesTest(unittest.TestCase):

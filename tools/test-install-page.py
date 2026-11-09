@@ -16,21 +16,25 @@ refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
 probe's name, so that a change in any of the 3 readings that the gate rests on
-fails a case. 1 case gives a family link the class ``btn`` alone and expects
-the gate's refusal of it as not a button, so that the gate cannot accept
-``btn`` without ``inline``. 1 more check asserts that the gate's docstring
-names exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own
-source carries no ``?v=`` token starting with a digit apart from those
-KEPT_TOKENS names, since a case writes the current baseline version as
-BASELINE, read from ``.baseline/pin.toml``, and 1 is
-version_binding_problems(), whose docstring states what it reports and what it
-passes. A further check, hidden_link_problems(), runs the gate's parse() in
-this process on HIDDEN_LINKS and fails if parse() reads no link of a fragment
-as hidden, if a link it reads as hidden has visible text on a page that parse()
-does not hide as a whole, or if a page that parse() hides as a whole has no h1
-or an h1 that does not read as hidden, so that the gate's filter of the links
-back on not hidden stays implied by its filter on visible text. Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+fails a case. 1 more runs a copy whose probe of markup in a ``title`` reads
+that markup as elements, with ``tools/check-inline-code.py`` removed, expecting
+exit 3 and the probe's name, so that the probes cannot come to read a file, and
+probe_name_problems() fails unless PROBE_NAMES holds the names of the gate's
+``READING_PROBES`` in their order, so that each probe has its copy. 1 case
+gives a family link the class ``btn`` alone and expects the gate's refusal of
+it as not a button, so that the gate cannot accept ``btn`` without ``inline``.
+1 more check asserts that the gate's docstring names exactly the scripts in
+``ALLOWED_SCRIPTS``, and 1 that this file's own source carries no ``?v=`` token
+starting with a digit apart from those KEPT_TOKENS names, since a case writes
+the current baseline version as BASELINE, read from ``.baseline/pin.toml``, and
+1 is version_binding_problems(), whose docstring states what it reports and
+what it passes. A further check, hidden_link_problems(), runs the gate's
+parse() in this process on HIDDEN_LINKS and fails if parse() reads no link of a
+fragment as hidden, if a link it reads as hidden has visible text on a page
+that parse() does not hide as a whole, or if a page that parse() hides as a
+whole has no h1 or an h1 that does not read as hidden, so that the gate's
+filter of the links back on not hidden stays implied by its filter on visible
+text. Exit 0 when every case passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -614,8 +618,19 @@ def repin(name: str):
     return apply
 
 
-# The names of the gate's READING_PROBES, each of which flip_probe() turns to the other reading in a copy of the gate.
+# The names of the gate's READING_PROBES, each of which flip_probe() turns to the other reading in a copy of the gate;
+# probe_name_problems() fails unless they are those names in their order.
 PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comment ended by --!>")
+
+
+def probe_name_problems() -> list[str]:
+    """A problem unless PROBE_NAMES holds the names of the gate's READING_PROBES in their order, so that a probe added
+    to the gate cannot go without a copy of the gate that expects its other reading."""
+    names = tuple(name for name, _, _ in load_gate().READING_PROBES)
+    if names != PROBE_NAMES:
+        return [f"PROBE_NAMES is {PROBE_NAMES!r}, but the names of the READING_PROBES of tools/{GATE.name} are "
+                f"{names!r}, in that order"]
+    return []
 
 
 def flip_probe(name: str):
@@ -1182,6 +1197,12 @@ CASES = [
     # naming that probe, as the gate does on a Python whose html.parser reads that fragment otherwise.
     *[(f"the gate expecting the other reading of {name}", flip_probe(name), (3, f"reads {name} otherwise"))
       for name in PROBE_NAMES],
+    # A copy of the gate whose probe of markup inside a title reads that markup as elements, as a Python whose
+    # html.parser opens elements inside a title would, exits 3 naming that probe even with tools/check-inline-code.py
+    # removed, since the probes read no file.
+    ("the gate reading markup inside a title as elements, without tools/check-inline-code.py",
+        both(edit(f"tools/{GATE.name}", '"<title><h1>Probe</h1></title>", 0)', '"<div><h1>Probe</h1></div>", 0)'),
+             remove(INLINE_GATE)), (3, "reads markup inside a title otherwise")),
     ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
     ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
     ("a family page whose only link to #test is inside a noscript", both(
@@ -2566,6 +2587,7 @@ def main() -> int:
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
     failures += [f"the hidden links: {problem}" for problem in hidden_link_problems()]
+    failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
