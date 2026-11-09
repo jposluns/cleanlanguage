@@ -555,7 +555,7 @@ class ConditionalPassTest(unittest.TestCase):
         ]
 
     def test_date_failure_does_not_hide_checksum_drift(self):
-        # Both checks run and both are reported, the more severe code wins.
+        # Both checks run and both are reported, and the more severe code wins.
         for label, released, published, immutable, expected, reason in (
             ("date mismatch", "Released: 2026-11-15  ", "2026-11-16T00:00:01Z", "true", 1,
              "Release date inconsistency found"),
