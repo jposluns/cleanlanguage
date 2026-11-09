@@ -16,8 +16,9 @@ no paths filter for the same reason: its dry run and gates read files across
 the repository, the whole site included, and a path list cannot be kept
 complete against those reads (row 127). DryRunTests fails unless the value of
 its on: is exactly a bare pull_request trigger, a push trigger on main and a
-bare workflow_dispatch, so a paths, paths-ignore, branches, branches-ignore,
-tags, tags-ignore or types key under either trigger fails. It also fails
+bare workflow_dispatch, so a key added under either trigger, such as paths,
+branches or types, fails, and so does any branches value under push other
+than [main]; the note on merge keys below applies here too. It also fails
 unless that workflow has exactly 1 job, dry-run, whose timeout-minutes is the
 integer DRY_RUN_TIMEOUT (row 117), so a removed, changed, quoted or moved
 time limit fails, and a change to the limit is made in this test and the
@@ -61,19 +62,21 @@ the following hold, and for release-dry-run.yml unless the first holds:
   condition on that step or its job, continue-on-error or any other key on
   that step, and launch lines outside steps: each fail.
 
-The last 2 checks read the structure after PyYAML applies any merge key,
-so a merge key is not itself a key they see: they compare a merge by its
-effect on the parsed structure, and a merge fails them only if it changes
-what they compare. A merge that adds a filter, or an if: to the guard step
-or its job, fails them. One that the explicit keys override, such as a
+The last 2 checks read the structure after PyYAML applies any merge key, and
+so does DryRunTests for release-dry-run.yml, so a merge key is not itself a
+key they see: they compare a merge by its effect on the parsed structure, and
+a merge fails them only if it changes what they compare. A merge that adds a
+filter, an if: to the guard step or its job, or an if: to the dry-run job or
+one of its steps, fails them. One that the explicit keys override, such as a
 push: that merges branches: [dev] and sets branches: [main], or one that
-brings in no key, leaves the parsed structure unchanged, so they do not
-fail it. A merge key among the top-level keys fails the first check. How
-GitHub Actions handles merge keys is not checked.
+brings in no key, leaves the parsed structure unchanged, so they do not fail
+it. A merge key among the top-level keys fails the first check. How GitHub
+Actions handles merge keys is not checked.
 
 Like those of DryRunTests, the mutation tests of TriggerTests and LaunchTests
-edit the first place in the file that holds the text they look for, leading
-spaces included, even inside a comment or partway along a line. So the suite
+that call edited() edit the first place in the file that holds the text they
+look for, leading spaces included, even inside a comment or partway along a
+line, and fail if that text is missing; the others need no text. So the suite
 also fails unless the text of each of these 10 lines of portable-text-sync.yml
 is in it as written: "name: Portable", "on:", "pull_request:", "- main",
 "permissions:", "contents: read", "jobs:", "runs-on:", and the 2 lines of the
