@@ -23,7 +23,7 @@ and checksum it shows: elsewhere the fixture page stands in for that render,
 and WholePageTest runs the real generator on a copy of its inputs, on each
 page form that its cases list. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
-record (G4), checked for the release SKILL.md names whatever version the site
+record, checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
 names counts as not yet published only when its tag is confirmed absent, and an
 undated release at or below the baseline makes no network call for the date
@@ -191,14 +191,13 @@ TIMEOUT_WRAPPER = (
     "sys.exit(gate.main())\n"
 )
 
-# Row 80, fix round 7: TIMEOUT_WRAPPER, except that the first wait of the
-# gate for each child, the one CHILD_TIMEOUT_SECONDS bounds, starts only once
-# the child has ended or a file named "ready" exists beside the gate copy,
-# polled for at most READY_SECONDS. The fake extractor writes that file only
-# after it has written every file the test reads, so a busy host can slow
-# the child down but cannot make the 1 second timeout fire before the child
-# is ready. The wait the gate then makes, its kill, its reap and its report
-# are the real ones.
+# Row 80: TIMEOUT_WRAPPER, except that the first wait of the gate for each
+# child, the one CHILD_TIMEOUT_SECONDS bounds, starts only once the child has
+# ended or a file named "ready" exists beside the gate copy, polled for at most
+# READY_SECONDS. The fake extractor writes that file only after it has written
+# every file the test reads, so a busy host can slow the child down but cannot
+# make the 1 second timeout fire before the child is ready. The wait the gate
+# then makes, its kill, its reap and its report are the real ones.
 READY_SECONDS = 60
 READY_TIMEOUT_WRAPPER = (
     "import importlib.util, os, sys, time\n"
@@ -284,10 +283,10 @@ def logged_runs(tool: Path) -> list[str]:
 
 
 class ReverseSortedKeys(frozenset):
-    """A key set of REPLY_KEYS that iterates in reverse sorted order. Fix
-    round 10: a report that lists the keys of a set without sorting them
-    then differs from the sorted list under every hash seed, not only under
-    some, so a test that pins the sorted list fails without the sort."""
+    """A key set of REPLY_KEYS that iterates in reverse sorted order. A report
+    that lists the keys of a set without sorting them then differs from the
+    sorted list under every hash seed, not only under some, so a test that pins
+    the sorted list fails without the sort."""
 
     def __iter__(self):
         return iter(sorted(frozenset.__iter__(self), reverse=True))
@@ -295,9 +294,9 @@ class ReverseSortedKeys(frozenset):
 
 def process_state(pid: int) -> str | None:
     """The State letter of process ``pid``, or None when it does not exist.
-    Fix round 11 (mutation sweep): a process reaped between the open and the
-    read of its status file makes the read fail with ESRCH
-    (ProcessLookupError), which also means it no longer exists."""
+    A process reaped between the open and the read of its status file makes the
+    read fail with ESRCH (ProcessLookupError), which also means it no longer
+    exists."""
     try:
         status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
     except (FileNotFoundError, ProcessLookupError):
@@ -353,14 +352,13 @@ class ConditionalPassTest(unittest.TestCase):
 
     @contextlib.contextmanager
     def timeout_when_ready(self, ready: Path):
-        """Within the block, the first wait of the gate for each child, the
-        one CHILD_TIMEOUT_SECONDS bounds, starts only once the child has
-        ended or ``ready`` exists, polled for at most READY_SECONDS, as
+        """Within the block, the first wait of the gate for each child, the one
+        CHILD_TIMEOUT_SECONDS bounds, starts only once the child has ended or
+        ``ready`` exists, polled for at most READY_SECONDS, as
         READY_TIMEOUT_WRAPPER does for a gate in a process of its own; every
-        later wait, and the kill, the reap and the report, are the real
-        ones. Fix round 7: a busy host can then slow a child down without a
-        short timeout firing before the child has reached the state a test
-        needs."""
+        later wait, and the kill, the reap and the report, are the real ones. A
+        busy host can then slow a child down without a short timeout firing
+        before the child has reached the state a test needs."""
         real_wait = gate._wait_unreaped
         seen = set()
         # The monotonic time at which the gate first found ``ready``, so a
@@ -409,8 +407,8 @@ class ConditionalPassTest(unittest.TestCase):
         version = args[2].removeprefix("v")
         target = Path(args[args.index("--dir") + 1])
         (target / f"cleanlanguage-{version}.zip").write_bytes(ZIP_BYTES)
-        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest ends in a
-        # newline, as the one sha256sum writes in tools/release-package.sh.
+        # The manifest ends in a newline, as the one sha256sum writes in
+        # tools/release-package.sh.
         (target / f"cleanlanguage-{version}.zip.sha256").write_text(
             f"{ZIP_SUM}  cleanlanguage-{version}.zip\n", encoding="utf-8"
         )
@@ -459,7 +457,7 @@ class ConditionalPassTest(unittest.TestCase):
             code = gate.main()
         return code, buffer.getvalue()
 
-    # --- G4 (item 26): the Released line against the release record ---------
+    # --- The Released line (item 26) against the release record --------------
 
     def test_released_date_matching_published_day_passes(self):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -467,8 +465,8 @@ class ConditionalPassTest(unittest.TestCase):
         code, out = self.main_output()
         self.assertEqual(code, 0, out)
         self.assertEqual(self.asked, [f"v{AHEAD}"])
-        # VERIFY 5.1 (codex LOW 2): a correctly dated published release
-        # prints no missing-line report and no inconsistency.
+        # A correctly dated published release prints no missing-line report and
+        # no inconsistency.
         self.assertIn(f"matches the publication day of release v{AHEAD}", out)
         self.assertNotIn("has no Released: line", out)
         self.assertNotIn("inconsistency", out)
@@ -479,7 +477,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_mismatch_message_states_both_values_and_defers_to_the_readback(self):
-        # F3: never tell the maintainer to copy a record that may have moved.
+        # Never tell the maintainer to copy a record that may have moved.
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-16T00:00:01Z")
         code, out = self.main_output()
@@ -488,10 +486,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn("published_at reads 2026-11-16T00:00:01Z (UTC day 2026-11-16)", out)
         self.assertIn("first-publication readback", out)
         self.assertNotIn("Correct the line to match the release record", out)
-        # R4: the release is immutable, so the remedy is a corrective new
-        # version; no republish or asset replacement is offered. Row 74: the
-        # wording matches the release workflow, which says corrective new
-        # version.
+        # The release is immutable, so the remedy is a corrective new version;
+        # no republish or asset replacement is offered. Row 74: the wording
+        # matches the release workflow, which says corrective new version.
         self.assertIn("the remedy is a corrective new version", out)
         self.assertNotIn("corrective version", out)
         self.assertNotIn("asset replacement", out)
@@ -558,7 +555,7 @@ class ConditionalPassTest(unittest.TestCase):
         ]
 
     def test_date_failure_does_not_hide_checksum_drift(self):
-        # T5: both checks run and both are reported, the more severe code wins.
+        # Both checks run and both are reported, and the more severe code wins.
         for label, released, published, immutable, expected, reason in (
             ("date mismatch", "Released: 2026-11-15  ", "2026-11-16T00:00:01Z", "true", 1,
              "Release date inconsistency found"),
@@ -584,7 +581,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn("matches the published", out)
 
     def test_dated_baseline_matching_passes(self):
-        # F13: a dated 1.0.14 is compared like any other dated release.
+        # A dated 1.0.14 is compared like any other dated release.
         self.fixtures(CURRENT, ZIP_SUM, CURRENT, "Released: 2026-11-15  ")
         self.published("2026-11-15T09:30:00Z")
         self.assertEqual(gate.main(), 0)
@@ -596,7 +593,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_release_that_is_not_immutable_is_unverifiable(self):
-        # F14: the date comparison relies on an immutable release record.
+        # The date comparison relies on an immutable release record.
         for value in ("false", "null", "", "True", "true "):
             with self.subTest(value):
                 self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -628,10 +625,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
 
     def test_readers_remove_only_one_final_newline(self):
-        # Fix round 12 (VERIFY round 9.1, class sweep): each record reader
-        # returns what gh printed with only one final newline removed, so a
-        # second newline, a carriage return, or a blank on either side stays
-        # in the value and reaches the check that refuses it.
+        # Each record reader returns what gh printed with only 1 final newline
+        # removed, so a second newline, a carriage return, or a blank on either
+        # side stays in the value and reaches the check that refuses it.
         for name, reader, field in (
             ("release_published_at", self._saved[6], "2026-11-15T09:30:00Z"),
             ("release_immutable", self._saved[7], "true"),
@@ -645,11 +641,10 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(reader("v1.0.15"), expected)
 
     def test_the_real_gh_wrapper_fails_closed_on_output_that_does_not_decode(self):
-        # Fix round 12 (VERIFY round 9.1, class sweep): the real gh wrapper
-        # decodes what gh prints strictly, so a byte that is not UTF-8 is
-        # unverifiable (exit 2) in every reader, never replaced or read in
-        # another encoding. The wrapper decodes with the locale encoding,
-        # which this test requires to be UTF-8.
+        # The real gh wrapper decodes what gh prints strictly, so a byte that
+        # is not UTF-8 is unverifiable (exit 2) in every reader, never replaced
+        # or read in another encoding. The wrapper decodes with the locale
+        # encoding, which this test requires to be UTF-8.
         self.assertEqual(codecs.lookup(locale.getpreferredencoding(False)).name, "utf-8")
         bindir = Path(self._tmp.name) / "undecodable-gh"
         bindir.mkdir()
@@ -686,14 +681,14 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(out.getvalue(), "")
 
     def test_undated_release_reads_no_record_field(self):
-        # F9: an undated release at or below the baseline reads neither field.
+        # An undated release at or below the baseline reads neither field.
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
         self.published("2026-11-15T09:30:00Z", immutable="false")
         self.assertEqual(gate.main(), 0)
         self.assertEqual((self.asked, self.immutable_asked), ([], []))
 
     def test_baseline_rule_is_numeric_for_an_undated_published_release(self):
-        # F7: the same rule the extractor applies everywhere.
+        # The same rule the extractor applies everywhere.
         for version, expected in (
             ("1.0.9", 0), ("1.0.14", 0), ("1.00.14", 0),
             ("1.0.15", 1), ("1.0.100", 1), ("1.1.0", 1),
@@ -731,7 +726,7 @@ class ConditionalPassTest(unittest.TestCase):
             gate.main()
         self.assertEqual(caught.exception.code, 3)
 
-    # --- F2: the release SKILL.md names is checked on its own terms ---------
+    # --- The release SKILL.md names is checked on its own terms -------------
 
     def test_site_naming_an_older_release_still_checks_the_newer_date(self):
         # The site still names 1.0.14; v1.0.15 is published on another day.
@@ -756,8 +751,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(self.tag_probed, [f"v{AHEAD}"])
 
     def test_unpublished_newer_release_with_an_existing_tag_is_unverifiable(self):
-        # R2: as on the same-version path, a tag with no release is a deleted
-        # or failed release, never a release not yet published.
+        # As on the same-version path, a tag with no release is a deleted or
+        # failed release, never a release not yet published.
         self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 404}, tags={f"v{AHEAD}": 200})
         with self.assertRaises(SystemExit) as caught:
@@ -781,8 +776,8 @@ class ConditionalPassTest(unittest.TestCase):
         ) + [self.site_matches()], out)
 
     def test_undated_baseline_beside_an_older_site_release_makes_no_probe(self):
-        # R5: the line and the baseline rule are read first, so an undated
-        # release at or below the baseline makes no network call for G4.
+        # The line and the baseline rule are read first, so an undated release
+        # at or below the baseline makes no network call for the date check.
         self.fixtures("1.0.13", ZIP_SUM, CURRENT)
         self.published("2026-11-15T09:30:00Z")
         self.assertEqual(gate.main(), 0)
@@ -794,8 +789,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 503})
         code, out, err = self.main_reports()
         self.assertEqual(code, 2, (out, err))
-        # Fix round 8 (operator sweep): a present Released line is never
-        # reported as missing beside the unverifiable state.
+        # A present Released line is never reported as missing beside the
+        # unverifiable state.
         self.assertNotIn("has no Released: line", out)
         # Claim 6: the gate output is fully determined, so the exact stdout and
         # stderr lines are asserted; each status is reported in exactly one
@@ -832,11 +827,10 @@ class ConditionalPassTest(unittest.TestCase):
         )
 
     def test_readers_fail_closed_on_an_os_or_decode_error(self):
-        # U3: an OSError other than a missing gh, or gh output that does not
+        # An OSError other than a missing gh, or gh output that does not
         # decode, is unverifiable (exit 2), never a traceback read as drift.
-        # DISCOVERY 9 (LOW 1): the report is pinned exactly, including the
-        # OSError or UnicodeError branch of api_status behind release_status
-        # and tag_status.
+        # The report is pinned exactly, including the OSError or UnicodeError
+        # branch of api_status behind release_status and tag_status.
         undecodable_error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
         denied_error = PermissionError(13, "Permission denied")
 
@@ -872,9 +866,9 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(out.getvalue().splitlines(), [], out.getvalue())
 
     def test_readers_report_a_missing_gh_in_exactly_one_line(self):
-        # DISCOVERY 9 (LOW 1): a gh that is absent is unverifiable (exit 2) in
-        # every reader, including the FileNotFoundError branch of api_status
-        # behind release_status and tag_status, both through a gh that raises
+        # A gh that is absent is unverifiable (exit 2) in every reader,
+        # including the FileNotFoundError branch of api_status behind
+        # release_status and tag_status, both through a gh that raises
         # FileNotFoundError and through the real gh wrapper on an empty PATH.
         def absent(*args, check=True):
             raise FileNotFoundError(2, "No such file or directory", "gh")
@@ -916,8 +910,8 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(out.getvalue().splitlines(), [], out.getvalue())
 
     def test_undecodable_immutable_read_does_not_hide_checksum_drift(self):
-        # U3: the date check stops with exit 2 and the checksum drift is
-        # still reported.
+        # The date check stops with exit 2 and the checksum drift is still
+        # reported.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-15T09:30:00Z")
         gate.release_immutable = self._saved[7]
@@ -959,10 +953,10 @@ class ConditionalPassTest(unittest.TestCase):
         return fresh
 
     def test_extractor_load_failure_does_not_hide_checksum_drift(self):
-        # Round 5: the extractor is probed inside main, so a failure to run
-        # it contributes exit 3 while the checksum comparison still runs and
-        # reports the drift. Row 80: each reason is the child outcome, with
-        # the child stderr relayed.
+        # The extractor is probed inside main, so a failure to run it
+        # contributes exit 3 while the checksum comparison still runs and
+        # reports the drift. Row 80: each reason is the child outcome, with the
+        # child stderr relayed.
         for label, body, reasons in (
             ("missing extractor", None, ("exited 2 in baseline", "can't open file")),
             ("syntax-broken extractor", "def broken(:\n", ("exited 1 in baseline", "SyntaxError")),
@@ -986,8 +980,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertIn("Release checksum drift found", out.getvalue())
 
     def test_extractor_load_failure_still_exits_3_in_the_pre_tag_window(self):
-        # The load failure contributes exit 3 on every path, as it did when
-        # the load ran at import, including one that needs no date check.
+        # The load failure contributes exit 3 on every path, including one that
+        # needs no date check.
         with tempfile.TemporaryDirectory() as tmp:
             self.fixtures(AHEAD, OTHER_SUM, AHEAD)
             gate.release_status = lambda tag: 404
@@ -1003,9 +997,10 @@ class ConditionalPassTest(unittest.TestCase):
             self.assertNotIn("Nothing to reconcile", out.getvalue())
 
     def test_unreleased_other_version_does_not_hide_the_date_check(self):
-        # Sibling (a): the site names an unreleased version that is not the
-        # current one; the release SKILL.md names is still checked on its own
-        # terms and the more severe code wins.
+        # The site names an unreleased version that is not the current one, so
+        # the checksum comparison reports an inconsistency; that does not hide
+        # the date check of the release SKILL.md names, which is still checked
+        # on its own terms, and the more severe code wins.
         for label, published, immutable, expected, reason in (
             ("date mismatch", "2026-11-16T00:00:01Z", "true", 1, "Release date inconsistency found"),
             ("record not immutable", "2026-11-15T09:30:00Z", "false", 2,
@@ -1021,9 +1016,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.probed, [f"v{BOGUS}", f"v{AHEAD}"])
 
     def test_unusable_download_does_not_hide_the_date_check(self):
-        # Sibling (b): a failed download or a malformed manifest stops only
-        # the checksum comparison (exit 2); the date check still runs and
-        # reports, and the more severe code wins.
+        # A failed download or a malformed manifest stops only the checksum
+        # comparison (exit 2), so an unusable download does not hide the date
+        # check: it still runs and reports, and the more severe code wins.
         def failed(*args, check=True):
             raise subprocess.CalledProcessError(1, ["gh", *args], "", "HTTP 502")
 
@@ -1055,9 +1050,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertNotIn("Release checksum drift found", out)
 
     def test_extractor_crash_inside_a_call_exits_3(self):
-        # F5: an unexpected failure of the extractor is unavailable (exit 3),
-        # never a drift verdict (exit 1). Row 80: the child exits 6 and its
-        # stderr is relayed.
+        # An unexpected failure of the extractor is unavailable (exit 3), never
+        # a drift verdict (exit 1). Row 80: the child exits 6 and its stderr is
+        # relayed.
         self.fake_extractor(extractor_with(
             "def release_day_from_published_at(value):\n    raise RuntimeError(\"boom\")\n"
         ))
@@ -1075,11 +1070,10 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_extractor_raising_system_exit_exits_3(self):
         # Row 58: an extractor that raises SystemExit, whatever its code, is
-        # unavailable (exit 3), never a pass (0) or a drift (1). Fix round 4
-        # (F2): 2 and 3 too, the codes release_date_code and main absorb as
-        # could not verify. Row 80: the child ends with that code and an
-        # empty stdout, so 0 and None print no result and the others exit
-        # nonzero; no lookup on a module exists any more.
+        # unavailable (exit 3), never a pass (0) or a drift (1). That holds for
+        # 2 and 3 too, the codes release_date_code and main absorb as could not
+        # verify. Row 80: the child ends with that code and an empty stdout, so
+        # 0 and None print no result and the others exit nonzero.
         for stop_code, reason in (
             (0, "did not print a JSON result"), (1, "exited 1"), (2, "exited 2"), (3, "exited 3"),
             (None, "did not print a JSON result"),
@@ -1099,9 +1093,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertIn("matches the published", out)
 
     def test_requires_release_date_is_not_called_when_the_line_is_present(self):
-        # Fix round 8 (operator sweep): with a Released line present, the
-        # baseline rule is not asked, so no extractor code runs for it. Row
-        # 80: a call would run the failing function in a child and exit 3.
+        # With a Released line present, the baseline rule is not asked, so no
+        # extractor code runs for it. Row 80: a call would run the failing
+        # function in a child and exit 3.
         self.fake_extractor(extractor_with(
             "def requires_release_date(version):\n"
             "    raise RuntimeError(\"requires_release_date was called\")\n"
@@ -1113,9 +1107,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err, "")
 
     def test_unreadable_site_status_beside_a_skill_file_with_no_version_exits_3(self):
-        # DISCOVERY 6 (claude LOW 1): a release status for the version the
-        # verify page names that cannot be read (2), beside a SKILL.md with no
-        # Version line (3), exits with the more severe 3 and its report.
+        # A release status for the version the verify page names that cannot be
+        # read (2), beside a SKILL.md with no Version line (3), exits with the
+        # more severe 3 and its report.
         def unreadable(tag):
             gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
 
@@ -1135,10 +1129,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(out.splitlines(), [], out)
 
     def test_undecodable_download_output_is_unverifiable(self):
-        # DISCOVERY 6 (claude LOW 2): download output that does not decode
-        # stops only the checksum comparison (exit 2) with its report, never
-        # an uncaught UnicodeDecodeError read as drift; the date check still
-        # runs and reports.
+        # Download output that does not decode stops only the checksum
+        # comparison (exit 2) with its report, never an uncaught
+        # UnicodeDecodeError read as drift; the date check still runs and
+        # reports.
         def undecodable(*args, check=True):
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
@@ -1201,10 +1195,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Release checksum drift found", out)
 
     def test_extractor_attribute_gone_at_call_time_exits_3(self):
-        # R3: a function missing at call time is unavailable (exit 3), never
-        # an uncaught error (exit 1, drift). Row 80: the child fails with a
-        # NameError (exit 6). A missing Malformed fails only where a verdict
-        # is raised, so its row reads an unusable published_at.
+        # A function missing at call time is unavailable (exit 3), never an
+        # uncaught error (exit 1, drift). Row 80: the child fails with a
+        # NameError (exit 6). A missing Malformed fails only where a verdict is
+        # raised, so its row reads an unusable published_at.
         released = "Released: 2026-11-15  "
         for name, line, published_at, op in (
             ("extract", released, "2026-11-15T09:30:00Z", "extract"),
@@ -1520,10 +1514,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("inconsistency", out)
 
     def test_pre_tag_window_says_nothing_to_reconcile_only_when_clean(self):
-        # Fix round 8 (claude, pre-existing): the pre-tag window says there is
-        # nothing to reconcile only when the gate passes, never beside a
-        # Released line missing above the baseline (exit 1) or a malformed
-        # line (exit 3).
+        # The pre-tag window says there is nothing to reconcile only when the
+        # gate passes, never beside a Released line missing above the baseline
+        # (exit 1) or a malformed line (exit 3).
         for label, version, released, expected in (
             ("valid line", AHEAD, "Released: 2026-11-15  ", 0),
             ("undated baseline", CURRENT, None, 0),
@@ -1539,10 +1532,10 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertNotIn("Nothing to reconcile", out)
 
     def test_pre_tag_window_after_a_failed_first_load_never_says_nothing_to_reconcile(self):
-        # Fix round 8: a probe that fails in main, beside later calls that
-        # succeed, still ends the gate with 3, so the window does not say
-        # there is nothing to reconcile. Row 80: the probe is the first
-        # child, and its failure is reported once.
+        # A probe that fails in main, beside later calls that succeed, still
+        # ends the gate with 3, so the window does not say there is nothing to
+        # reconcile. Row 80: the probe is the first child, and its failure is
+        # reported once.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
         gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
@@ -1557,13 +1550,13 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Nothing to reconcile", out)
 
     def test_failed_first_load_combines_with_a_drift_or_mismatch_verdict(self):
-        # DISCOVERY 9 (LOW 2): main combines the probe result with the check
-        # result through max. The probe result is 0 or 3 and a drift or date
-        # mismatch verdict is 1, so a failed probe (3) wins over the verdict,
-        # and a clean probe (0) leaves the verdict (1). Each later call runs a
-        # child of its own, so the verdict is still reached and reported.
-        # This kills code = code, code = load_code and
-        # code = min(load_code, code) at the combining line of main.
+        # main combines the probe result with the check result through max. The
+        # probe result is 0 or 3 and a drift or date mismatch verdict is 1, so
+        # a failed probe (3) wins over the verdict, and a clean probe (0)
+        # leaves the verdict (1). Each later call runs a child of its own, so
+        # the verdict is still reached and reported. This kills code = code,
+        # code = load_code and code = min(load_code, code) at the combining
+        # line of main.
         drift = "Release checksum drift found:"
         mismatch = "Release date inconsistency found:"
         for label, site_sum, published_at, flaky_load, expected, reports in (
@@ -1700,11 +1693,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.api_status("repos/x/y", "the status"), 404)
 
     def test_a_status_is_three_ascii_digits_after_the_protocol(self):
-        # Fix round 13 (VERIFY round 9.2, finding 1): a status is read only
-        # from a line that starts with "HTTP/" and a version of digits and
-        # dots, then one space and three ASCII digits that end the line or
-        # are followed by a space; the last such line wins. Any other line
-        # is no status, so a gh read with no such line is unverifiable.
+        # A status is read only from a line that starts with "HTTP/" and a
+        # version of digits and dots, then 1 space and 3 ASCII digits that end
+        # the line or are followed by a space; the last such line wins. Any
+        # other line is no status, so a gh read with no such line is
+        # unverifiable.
         for stdout, status in (
             ("HTTP/2.0 404 Not Found\n", 404), ("HTTP/2 404", 404), ("HTTP/1.1 200 OK\nX-Note: HTTP/1.1 500\n", 200),
             ("HTTP/2.0 302 Found\nHTTP/2.0 404 Not Found\n", 404),
@@ -1726,11 +1719,10 @@ class ConditionalPassTest(unittest.TestCase):
                                  (2, self.CV + "could not read the status (gh exit 0)\n"))
 
     def test_every_part_of_the_skill_version_patterns_is_pinned(self):
-        # Fix round 13 (VERIFY round 9.2, finding 1): the version line is the
-        # first line that starts with "Version:", and it is a bare X.Y.Z of
-        # ASCII digits with any run of spaces and tabs, none included, after
-        # the colon and after the version; anything else exits 3 with the
-        # exact report.
+        # The version line is the first line that starts with "Version:", and
+        # it is a bare X.Y.Z of ASCII digits with any run of spaces and tabs,
+        # none included, after the colon and after the version; anything else
+        # exits 3 with the exact report.
         for text, version in (
             ("Version:1.0.14\n", "1.0.14"), ("Version:\t1.0.14\n", "1.0.14"), ("Version: 1.0.14\n", "1.0.14"),
             ("Version: \t 1.0.14 \t \n", "1.0.14"), ("Version: 1234.567.89\n", "1234.567.89"),
@@ -1773,8 +1765,8 @@ class ConditionalPassTest(unittest.TestCase):
             gate.main()
         self.assertEqual(caught.exception.code, 3)
 
-    # --- Fix round 1: no early exit hides the Released line, and every
-    # required read fails closed ---------------------------------------------
+    # --- No early exit hides the Released line, and every required read fails
+    # closed ------------------------------------------------------------------
 
     def offline_reports(self, version, released, tag_state):
         """Run the gate with the site and SKILL.md naming ``version``, its
@@ -1798,10 +1790,10 @@ class ConditionalPassTest(unittest.TestCase):
         return code, out, err
 
     def test_same_version_tag_without_release_still_checks_the_released_line(self):
-        # Codex MEDIUM 2: an existing tag, an unexpected tag status, or one
-        # that cannot be read stops only the release verification (exit 2);
-        # the Released line is still checked offline and the more severe code
-        # wins, so a malformed line (exit 3) is not hidden.
+        # An existing tag, an unexpected tag status, or one that cannot be read
+        # stops only the release verification (exit 2); the Released line is
+        # still checked offline and the more severe code wins, so a malformed
+        # line (exit 3) is not hidden.
         for tag_state in (200, 503, "unreadable"):
             for label, version, released, expected in (
                 ("malformed line", AHEAD, "Released: soon", 3),
@@ -1835,12 +1827,12 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(out.splitlines(), out_lines, out)
 
     def test_unreadable_site_release_status_still_checks_the_released_line(self):
-        # Sibling of MEDIUM 2: a release status for the version the site names
-        # that cannot be read stops only the checksum comparison (exit 2); for
-        # the same version the Released line is still checked offline, with no
-        # further probe. A malformed line is read before any probe of a newer
-        # release SKILL.md names, so it exits 3 with no further probe either;
-        # the probe of a newer release is pinned in the next test (row 62).
+        # A release status for the version the site names that cannot be read
+        # stops only the checksum comparison (exit 2); for the same version the
+        # Released line is still checked offline, with no further probe. A
+        # malformed line is read before any probe of a newer release SKILL.md
+        # names, so it exits 3 with no further probe either; the probe of a
+        # newer release is pinned in the next test (row 62).
         def unreadable(tag):
             self.probed.append(tag)
             gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
@@ -1877,12 +1869,12 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.probed, [f"v{site}"])
 
     def test_unreadable_site_release_status_probes_a_newer_skill_release(self):
-        # Row 62, LOW 1 of DISCOVERY round 2: when the release status of the
-        # version the site names cannot be read and SKILL.md names a newer
-        # version, that newer release was never probed, so its state is not
-        # unknown: the release-date check probes it on its own terms, as the
-        # unexpected-status path does, and a wrong date on it is reported. The
-        # checksum comparison still cannot run, so the exit stays at least 2.
+        # Row 62: when the release status of the version the site names cannot
+        # be read and SKILL.md names a newer version, that newer release was
+        # never probed, so its state is not unknown: the release-date check
+        # probes it on its own terms, as the unexpected-status path does, and a
+        # wrong date on it is reported. The checksum comparison still cannot
+        # run, so the exit stays at least 2.
         def statuses(newer):
             def status(tag):
                 self.probed.append(tag)
@@ -1931,9 +1923,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertNotIn(f"v{CURRENT}", self.tag_probed + self.immutable_asked)
 
     def test_unverifiable_newer_release_still_reports_a_missing_released_line(self):
-        # Sibling of MEDIUM 2 inside the date check: an unverifiable state of
-        # the release SKILL.md names keeps exit 2 but still reports a Released
-        # line missing above the baseline.
+        # Inside the date check, an unverifiable state of the release SKILL.md
+        # names keeps exit 2 but still reports a Released line missing above
+        # the baseline.
         for label, statuses, tags, report in (
             ("tag without release", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 200},
              self.tag_exists(f"v{AHEAD}", ", the version SKILL.md names,")),
@@ -1991,9 +1983,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual((self.tag_probed, self.asked, self.immutable_asked), ([], [], []))
 
     def test_unreadable_verify_page_exits_3(self):
-        # Codex MEDIUM 1: a verify page that cannot be read or decoded is a
-        # required file that cannot be read (exit 3), never an uncaught
-        # traceback (exit 1, drift), and nothing is read over the network.
+        # A verify page that cannot be read or decoded is a required file that
+        # cannot be read (exit 3), never an uncaught traceback (exit 1, drift),
+        # and nothing is read over the network.
         def undecodable():
             gate.VERIFY_PAGE.write_bytes(b"<p>\xff</p>")
 
@@ -2017,8 +2009,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertIn(reason, err)
 
     def test_unreadable_verify_page_beside_an_extractor_load_failure_exits_3(self):
-        # MEDIUM 1: the read failure and the extractor load failure are both
-        # reported, and the most severe code (3) is kept.
+        # The read failure and the extractor load failure are both reported,
+        # and the most severe code (3) is kept.
         with tempfile.TemporaryDirectory() as tmp:
             gate.VERIFY_PAGE.write_bytes(b"<p>\xff</p>")
             gate.SKILL.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
@@ -2056,9 +2048,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def test_unreadable_downloaded_zip_does_not_hide_the_date_check(self):
-        # Sibling of MEDIUM 1: a downloaded zip that cannot be read stops only
-        # the checksum comparison (exit 2), never an uncaught traceback read
-        # as drift; the release-date check still runs and reports.
+        # A downloaded zip that cannot be read stops only the checksum
+        # comparison (exit 2), never an uncaught traceback read as drift; the
+        # release-date check still runs and reports.
         def unreadable_zip(*args, check=True):
             self.fake_download(*args, check=check)
             version = args[2].removeprefix("v")
@@ -2077,15 +2069,15 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Release checksum drift found", out)
 
 
-    # --- Fix round 2: no early return hides a more severe result, and a
-    # required file is reported by its real stat error ------------------------
+    # --- No early return hides a more severe result, and a required file is
+    # reported by its real stat error -----------------------------------------
 
     def test_missing_released_line_does_not_hide_an_immutable_failure(self):
-        # F1 (codex MEDIUM): on the published path a Released line missing
-        # above the baseline (exit 1) does not hide an immutable field that
-        # is not exactly true, or cannot be read (exit 2): both are reported,
-        # the more severe 2 wins, and published_at is not read, since there is
-        # no line to compare it with.
+        # On the published path a Released line missing above the baseline
+        # (exit 1) does not hide an immutable field that is not exactly true,
+        # or cannot be read (exit 2): both are reported, the more severe 2
+        # wins, and published_at is not read, since there is no line to compare
+        # it with.
         def unreadable(tag):
             self.immutable_asked.append(tag)
             gate.cannot_verify(f"could not read the immutable field of release {tag} (gh exit 1)")
@@ -2108,7 +2100,7 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.asked, [])
 
     def test_missing_released_line_beside_an_immutable_release_still_fails(self):
-        # F1: with an immutable release the missing line still exits 1.
+        # With an immutable release the missing line still exits 1.
         self.fixtures(AHEAD, ZIP_SUM, AHEAD)
         self.published("2026-11-15T09:30:00Z")
         code, out, err = self.main_reports()
@@ -2119,9 +2111,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
     def test_required_file_behind_an_unsearchable_directory_is_unreadable_not_missing(self):
-        # F4 (claude LOW): a verify page or SKILL.md that cannot be reached
-        # because its directory cannot be searched is reported by its real
-        # stat error (exit 3), never as a file that does not exist.
+        # A verify page or SKILL.md that cannot be reached because its
+        # directory cannot be searched is reported by its real stat error (exit
+        # 3), never as a file that does not exist.
         root = Path(self._tmp.name)
         for label, target in (("verify page", "verify"), ("SKILL.md", "skill")):
             with self.subTest(label):
@@ -2147,7 +2139,7 @@ class ConditionalPassTest(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
     def test_both_skill_readers_report_an_unsearchable_directory(self):
-        # F4 sweep: skill_released and skill_version each check SKILL.md.
+        # skill_released and skill_version each check SKILL.md.
         folder = Path(self._tmp.name) / "locked"
         folder.mkdir()
         gate.SKILL = folder / "SKILL.md"
@@ -2166,8 +2158,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertNotIn("does not exist", err.getvalue())
 
     def test_required_file_that_is_absent_or_not_a_file_is_named_as_such(self):
-        # F4: an absent required file still reads as missing; a directory in
-        # its place is not a regular file.
+        # An absent required file still reads as missing; a directory in its
+        # place is not a regular file.
         for label, make, reason in (
             ("absent", lambda: None, "index.html does not exist"),
             ("a directory", lambda: gate.VERIFY_PAGE.mkdir(), "index.html is not a regular file"),
@@ -2182,8 +2174,8 @@ class ConditionalPassTest(unittest.TestCase):
 
     @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
     def test_downloaded_asset_behind_an_unsearchable_directory_is_unreadable_not_missing(self):
-        # F4 sweep: the downloaded assets are reported by their real stat
-        # error (exit 2), never as missing from the release.
+        # The downloaded assets are reported by their real stat error (exit 2),
+        # never as missing from the release.
         def locked_download(*args, check=True):
             self.fake_download(*args, check=check)
             Path(args[args.index("--dir") + 1]).chmod(0o600)
@@ -2241,10 +2233,10 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.call_reports(op, arg), (expected, ""))
 
     def test_a_reply_that_breaks_the_contract_exits_3(self):
-        # Row 80 (2.4): each rule of the contract is checked, by exact type
-        # and exact key set, and a breach exits 3 naming the rule. Fix round
-        # 10: the key sets iterate in reverse sorted order here, so the
-        # sorted key list of each report is pinned under every hash seed.
+        # Row 80 (2.4): each rule of the contract is checked, by exact type and
+        # exact key set, and a breach exits 3 naming the rule. The key sets
+        # iterate in reverse sorted order here, so the sorted key list of each
+        # report is pinned under every hash seed.
         self.addCleanup(setattr, gate, "REPLY_KEYS", gate.REPLY_KEYS)
         gate.REPLY_KEYS = {outcome: ReverseSortedKeys(keys) for outcome, keys in gate.REPLY_KEYS.items()}
         self.assertEqual(list(gate.REPLY_KEYS["value"]), ["value", "outcome", "op"])
@@ -2287,8 +2279,8 @@ class ConditionalPassTest(unittest.TestCase):
              day_form),
             ("a day with a five-digit year", "extract", {"op": "extract", "outcome": "value", "value": "2" + day},
              day_form),
-            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the day
-            # form is its exact number of ASCII digits, joined by hyphens.
+            # Each part of the day form is its exact number of ASCII digits,
+            # joined by hyphens.
             *((f"the day {value!r}", "extract", {"op": "extract", "outcome": "value", "value": value}, day_form)
               for value in (
                   "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665", "20261115",
@@ -2314,8 +2306,8 @@ class ConditionalPassTest(unittest.TestCase):
              version),
             ("baseline with a trailing newline", "baseline",
              {"op": "baseline", "outcome": "value", "value": "1.0.14\n"}, version),
-            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the
-            # baseline is one or more ASCII digits, joined by dots.
+            # Each part of the baseline is 1 or more ASCII digits, joined by
+            # dots.
             *((f"baseline {value!r}", "baseline", {"op": "baseline", "outcome": "value", "value": value}, version)
               for value in (
                   "\u0661.0.14", "1.\u0660.14", "1.0.\u0661\u0664", "1x0.14", "1.0x14", "1..14", ".0.14", "1.0.",
@@ -2362,8 +2354,7 @@ class ConditionalPassTest(unittest.TestCase):
     def test_a_valid_reply_with_a_nonzero_exit_exits_3(self):
         # Row 80: a reply counts only when the child exits 0.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
-        # Fix round 10 (mutation sweep): the codes on each side of the
-        # internal-error code are plain exits.
+        # The codes on each side of the internal-error code are plain exits.
         for exit_code, reason in (
             (1, "exited 1"), (2, "exited 2"), (5, "exited 5"), (6, "failed unexpectedly (internal error)"),
             (7, "exited 7"),
@@ -2375,9 +2366,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(err.splitlines(), [self.unavailable(reason, "baseline")])
 
     def test_a_nonzero_exit_is_reported_before_an_oversized_stdout(self):
-        # Fix round 11 (DISCOVERY round 9, finding 3): the exit code is
-        # checked before the size of stdout, so a child that exits 1 with
-        # more than the bound on stdout is reported as exiting 1.
+        # The exit code is checked before the size of stdout, so a child that
+        # exits 1 with more than the bound on stdout is reported as exiting 1.
         self.assertEqual(gate.RESULT_LIMIT, 65536)
         self.fake_extractor(forging({"baseline": b" " * 65537}, code=1))
         result, err = self.call_reports("baseline")
@@ -2385,10 +2375,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err, self.unavailable("exited 1", "baseline") + "\n")
 
     def test_a_reply_followed_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
-        # Fix round 11 (DISCOVERY round 9, finding 2): the reply is parsed
-        # as printed, never stripped first, so a valid reply followed by a
-        # character that JSON does not count as whitespace is no JSON
-        # result.
+        # The reply is parsed as printed, never stripped first, so a valid
+        # reply followed by a character that JSON does not count as whitespace
+        # is no JSON result.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
         for label, output in (
             ("a form feed and a newline", valid + b"\x0c\n"),
@@ -2401,9 +2390,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
 
     def test_a_reply_preceded_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
-        # Fix round 12 (VERIFY round 9.1, finding 3): the reply is not
-        # stripped on the left either, so a valid reply behind a character
-        # that JSON does not count as whitespace is no JSON result.
+        # The reply is not stripped on the left either, so a valid reply behind
+        # a character that JSON does not count as whitespace is no JSON result.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
         for label, output in (
             ("a form feed", b"\x0c" + valid),
@@ -2416,9 +2404,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
 
     def test_a_malformed_message_reaches_the_caller_unchanged(self):
-        # Fix round 11 (mutation sweep): the message of a malformed reply
-        # is raised exactly as the child printed it, never stripped, so a
-        # report quotes the verdict of the extractor as it was given.
+        # The message of a malformed reply is raised exactly as the child
+        # printed it, never stripped, so a report quotes the verdict of the
+        # extractor as it was given.
         message = "  padded verdict \n"
         self.fake_extractor(forging({"extract": json.dumps(
             {"op": "extract", "outcome": "malformed", "message": message}
@@ -2426,9 +2414,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(self.call_reports("extract", "x"), (("malformed", message), ""))
 
     def test_a_sigchld_reset_that_raises_oserror_exits_3_before_any_child(self):
-        # Fix round 11 (DISCOVERY round 9, finding 6): an OSError from the
-        # reset of SIGCHLD, which Linux gives only under a mock, exits 3
-        # naming it, as a ValueError does, and no child is started.
+        # An OSError from the reset of SIGCHLD, which Linux gives only under a
+        # mock, exits 3 naming it, as a ValueError does, and no child is
+        # started.
         tool = self.fake_extractor(logging_extractor(fail_first=False))
         refused = OSError(errno.EINVAL, "Invalid argument")
         err = io.StringIO()
@@ -2444,10 +2432,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertFalse((tool.parent / "runs.log").exists(), "a child was started")
 
     def test_the_relayed_stderr_is_stripped(self):
-        # Fix round 8: the relayed stderr is stripped, so a trailing newline
-        # adds no blank line, and stderr of only whitespace relays nothing.
-        # Fix round 9: it is stripped at both ends, so leading spaces or a
-        # leading newline add nothing before the text either.
+        # The relayed stderr is stripped, so a trailing newline adds no blank
+        # line, and stderr of only whitespace relays nothing. It is stripped at
+        # both ends, so leading spaces or a leading newline add nothing before
+        # the text either.
         for label, printed, expected in (
             ("a trailing newline", b"boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
             ("only whitespace", b"\n", self.unavailable("exited 1", "baseline") + "\n"),
@@ -2466,9 +2454,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(err, expected)
 
     def test_the_relayed_stderr_is_decoded_as_utf_8(self):
-        # Fix round 9 (mutation sweep): the relayed stderr is decoded as
-        # UTF-8, so a character outside ASCII is relayed as itself, never
-        # replaced or read as Latin-1.
+        # The relayed stderr is decoded as UTF-8, so a character outside ASCII
+        # is relayed as itself, never replaced or read as Latin-1.
         self.fake_extractor(extractor_with(
             "def json_main():\n"
             "    sys.stdin.buffer.read()\n"
@@ -2480,11 +2467,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err, self.unavailable("exited 1", "baseline") + "; it printed: \u00e9chec\n")
 
     def test_a_child_that_prints_and_hangs_relays_its_stderr(self):
-        # Fix round 9 (mutation sweep): when the gate sees no end of the
-        # child within the timeout, the report relays what the child
-        # printed to stderr, as it does for every other failure of a child
-        # that ran. The 1 second timeout starts only once the child has
-        # printed and is ready (timeout_when_ready).
+        # When the gate sees no end of the child within the timeout, the report
+        # relays what the child printed to stderr, as it does for every other
+        # failure of a child that ran. The 1 second timeout starts only once
+        # the child has printed and is ready (timeout_when_ready).
         tool = self.fake_extractor(extractor_with(
             "def extract(text):\n"
             "    import time\n"
@@ -2502,9 +2488,8 @@ class ConditionalPassTest(unittest.TestCase):
                          + "; it printed: stuck\n")
 
     def test_the_relayed_gh_stderr_is_stripped(self):
-        # Fix round 9 (mutation sweep): a failed download relays the gh
-        # stderr stripped at both ends, so leading or trailing whitespace
-        # adds nothing to the report line.
+        # A failed download relays the gh stderr stripped at both ends, so
+        # leading or trailing whitespace adds nothing to the report line.
         for label, printed in (
             ("surrounding spaces and a newline", "  HTTP 502\n"),
             ("a leading newline", "\nHTTP 502"),
@@ -2524,10 +2509,9 @@ class ConditionalPassTest(unittest.TestCase):
                 ))
 
     def test_the_verify_page_must_show_a_bare_checksum_and_version(self):
-        # Fix round 10 (mutation sweep): the verify page is read by exact
-        # patterns. An empty checksum block, a checksum one digit short, and
-        # a version that does not start with a digit each exit 3 with their
-        # own report, before any release is read.
+        # The verify page is read by exact patterns. An empty checksum block, a
+        # checksum 1 digit short, and a version that does not start with a
+        # digit each exit 3 with their own report, before any release is read.
         short = ZIP_SUM[:63]
         sha = "is not a 64 character lower-case SHA-256"
         for label, version, checksum, report in (
@@ -2541,17 +2525,16 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
 
     def test_every_part_of_the_verify_page_patterns_is_pinned(self):
-        # Fix round 13 (VERIFY round 9.2, finding 1): the checksum block,
-        # the checksum and the version on the verify page are each read by
-        # an exact pattern, so a page that the shipped pattern and a pattern
-        # with one part changed would answer differently exits 3 with its
-        # own report, before any release is read. The checksum is exactly 64
-        # lower-case hex digits once stripped. The version is the shipped
-        # pattern, as the release tooling writes it (tools/set-release-links.py):
-        # an ASCII digit and then any run of ASCII digits and dots, between
-        # "version " and " is"; a version in that form that is not the
-        # current one is read as such, and reported as a release that is
-        # not published.
+        # The checksum block, the checksum and the version on the verify page
+        # are each read by an exact pattern, so a page that the shipped pattern
+        # and a pattern with 1 part changed would answer differently exits 3
+        # with its own report, before any release is read. The checksum is
+        # exactly 64 lower-case hex digits once stripped. The version is the
+        # shipped pattern, as the release tooling writes it
+        # (tools/set-release-links.py): an ASCII digit and then any run of
+        # ASCII digits and dots, between "version " and " is"; a version in
+        # that form that is not the current one is read as such, and reported
+        # as a release that is not published.
         sha = "is not a 64 character lower-case SHA-256"
         no_block = 'the verify page has no <code class="sum" id="published-checksum"> block'
         unstated = "the verify page does not state which version its checksum belongs to"
@@ -2645,9 +2628,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.main_reports(), (3, "", f"{shown}{report}\n"))
 
     def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
-        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest is read
-        # as lines, so a final newline, which a real manifest ends in, ends
-        # its one line rather than starting a second, empty one.
+        # The manifest is read as lines, so a final newline, which a real
+        # manifest ends in, ends its 1 line rather than starting a second,
+        # empty one.
         for label, ending in (("with a final newline", "\n"), ("without a final newline", "")):
             with self.subTest(label):
                 def manifest(*args, check=True):
@@ -2686,9 +2669,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err.getvalue(), self.CV + f"cleanlanguage-{AHEAD}.zip.sha256 is not exactly one line\n")
 
     def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
-        # Fix round 10 (mutation sweep): the digest of the manifest has
-        # exactly 64 hex digits; one digit short fails its form, before the
-        # zip is hashed.
+        # The digest of the manifest has exactly 64 hex digits; 1 digit short
+        # fails its form, before the zip is hashed.
         short = ZIP_SUM[:63]
 
         def short_manifest(*args, check=True):
@@ -2709,10 +2691,10 @@ class ConditionalPassTest(unittest.TestCase):
         ))
 
     def test_a_refused_stdout_relays_the_stderr(self):
-        # Fix round 9 (mutation sweep): a child that exits 0 but prints a
-        # stdout the gate refuses, one over the bound, one that is not JSON,
-        # or one that breaks the contract, relays what it printed to stderr
-        # with the reason, as every other failure of a child that ran does.
+        # A child that exits 0 but prints a stdout the gate refuses, one over
+        # the bound, one that is not JSON, or one that breaks the contract,
+        # relays what it printed to stderr with the reason, as every other
+        # failure of a child that ran does.
         self.assertEqual(gate.RESULT_LIMIT, 65536)
         for label, output, reason in (
             ("over the bound", "b\" \" * 65537", "printed more than 65536 bytes"),
@@ -2898,14 +2880,13 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIsNotNone(state, "the child was reaped before its group was killed")
 
     def test_an_interrupt_while_waiting_kills_the_group_and_propagates(self):
-        # Row 80: a KeyboardInterrupt while the gate waits, where the group
-        # can be killed, kills the child group, reaps the child, and
-        # propagates unchanged. It is raised here from a stubbed os.waitid,
-        # not by a real signal, which can arrive at any point of the wait; an
-        # Exception while waiting exits 3 instead (see
+        # Row 80: a KeyboardInterrupt while the gate waits, where the group can
+        # be killed, kills the child group, reaps the child, and propagates
+        # unchanged. It is raised here from a stubbed os.waitid, not by a real
+        # signal, which can arrive at any point of the wait; an Exception while
+        # waiting exits 3 instead (see
         # test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3).
-        # Fix round 1: the gate waits with os.waitid, so the interrupt is
-        # raised from there.
+        # The gate waits with os.waitid, so the interrupt is raised from there.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         procs, kills = [], []
         real_popen = subprocess.Popen
@@ -2924,8 +2905,8 @@ class ConditionalPassTest(unittest.TestCase):
         calls = []
 
         def interrupted(*args):
-            # Only the wait is interrupted; the reap after the kill polls
-            # the real os.waitid (DISCOVERY round 4, finding 1).
+            # Only the wait is interrupted; the reap after the kill polls the
+            # real os.waitid.
             calls.append(args)
             if len(calls) == 1:
                 raise KeyboardInterrupt()
@@ -2947,10 +2928,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_malformed_subclass_from_the_published_day_is_a_content_verdict(self):
         # Row 80, verdict change 3, accepted by the maintainer on 2026-11-01:
-        # the child classifies with the same except Malformed the CLI uses,
-        # so a subclass of Malformed raised by a modified
-        # release_day_from_published_at is a content verdict (2), where the
-        # in-process gate exited 3.
+        # the child classifies with the same except Malformed the CLI uses, so
+        # a subclass of Malformed raised by a modified
+        # release_day_from_published_at is a content verdict (2).
         self.fake_extractor(extractor_with(
             "class _Subclass(Malformed):\n    pass\n"
             "def release_day_from_published_at(value):\n    raise _Subclass(\"bad stamp\")\n"
@@ -2966,7 +2946,7 @@ class ConditionalPassTest(unittest.TestCase):
         ], out)
 
 
-    # --- Row 80 fix round 1: the child machinery, its group, its bound -------
+    # --- Row 80: the child machinery, its group, its bound -------------------
 
     MACHINERY = "could not be run, waited for, or read"
 
@@ -2981,12 +2961,11 @@ class ConditionalPassTest(unittest.TestCase):
         return Recording
 
     def test_a_failure_in_the_child_machinery_exits_3(self):
-        # Fix round 1 (finding 1): an Exception (here an OSError or a
-        # RuntimeError) raised while the gate creates the temporary files,
-        # writes or rewinds the request, or rewinds or reads the output exits
-        # 3 naming it, never a traceback (exit 1), and leaves no child
-        # unreaped. A KeyboardInterrupt there is not caught and passes
-        # through (see run_release_date_child).
+        # An Exception (here an OSError or a RuntimeError) raised while the
+        # gate creates the temporary files, writes or rewinds the request, or
+        # rewinds or reads the output exits 3 naming it, never a traceback
+        # (exit 1), and leaves no child unreaped. A KeyboardInterrupt there is
+        # not caught and passes through (see run_release_date_child).
         real_temporary_file = tempfile.TemporaryFile
         real_popen = subprocess.Popen
 
@@ -3049,10 +3028,10 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertTrue(all(proc.returncode is not None for proc in procs), "a child was left unreaped")
 
     def test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3(self):
-        # Fix round 1 (finding 1): an Exception other than ChildProcessError
-        # (here an OSError or a RuntimeError) while the gate waits, where the
-        # group can be killed, kills the child group while the child is
-        # unreaped, reaps the child, and exits 3 naming the exception.
+        # An Exception other than ChildProcessError (here an OSError or a
+        # RuntimeError) while the gate waits, where the group can be killed,
+        # kills the child group while the child is unreaped, reaps the child,
+        # and exits 3 naming the exception.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
@@ -3071,7 +3050,7 @@ class ConditionalPassTest(unittest.TestCase):
 
                 def failing(*args):
                     # Only the wait fails; the reap after the kill polls the
-                    # real os.waitid (DISCOVERY round 4, finding 1).
+                    # real os.waitid.
                     calls.append(args)
                     if len(calls) == 1:
                         raise error
@@ -3094,9 +3073,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(procs[0].returncode, -signal.SIGKILL)
 
     def test_a_child_reaped_elsewhere_is_never_signalled(self):
-        # Fix round 1 (finding 1): when the wait reports that the child is
-        # no longer a child of the gate, its pid and group id may already be
-        # reused, so the gate signals neither and exits 3 naming the error.
+        # When the wait reports that the child is no longer a child of the
+        # gate, its pid and group id may already be reused, so the gate signals
+        # neither and exits 3 naming the error.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
@@ -3129,11 +3108,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(kills, [])
 
     def test_what_a_child_forked_ends_with_it_when_it_exits_normally(self):
-        # Fix round 1 (finding 2): a process the child started that is still
-        # in its group, here a direct child and the grandchild of a double
-        # fork (which keeps the group), is killed once the child has ended
-        # normally, and the group is killed while the ended child is still
-        # unreaped.
+        # A process the child started that is still in its group, here a direct
+        # child and the grandchild of a double fork (which keeps the group), is
+        # killed once the child has ended normally, and the group is killed
+        # while the ended child is still unreaped.
         direct = (
             "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
             "    pid = grandchild.pid\n"
@@ -3195,11 +3173,11 @@ class ConditionalPassTest(unittest.TestCase):
                                 os.kill(pid, signal.SIGKILL)
 
     def test_a_process_that_leaves_the_group_outlives_the_gate(self):
-        # Fix round 2 (VERIFY 1.1): the disclosed residual, observed: a
-        # process that leaves the child's process group, by any means, can
-        # outlive the gate. Here a process the child started calls setpgid
-        # into a new group, so the group kill does not reach it and it is
-        # still running after the gate has returned its reply.
+        # The disclosed residual, observed: a process that leaves the child's
+        # process group, by any means, can outlive the gate. Here a process the
+        # child started calls setpgid into a new group, so the group kill does
+        # not reach it and it is still running after the gate has returned its
+        # reply.
         tool = self.fake_extractor(extractor_with(
             "_real_extract = extract\n"
             "def extract(text):\n"
@@ -3240,10 +3218,10 @@ class ConditionalPassTest(unittest.TestCase):
                     os.killpg(pid, signal.SIGKILL)
 
     def test_a_group_that_cannot_be_killed_exits_3(self):
-        # Fix round 1 (finding 3): an OSError other than ProcessLookupError
-        # from the group kill exits 3 naming it, after the child is killed
-        # directly where it still runs and reaped where it can be; a child
-        # that cannot be killed either is not waited for.
+        # An OSError other than ProcessLookupError from the group kill exits 3
+        # naming it, after the child is killed directly where it still runs and
+        # reaped where it can be; a child that cannot be killed either is not
+        # waited for.
         hung = extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n")
         denied = PermissionError(errno.EPERM, "Operation not permitted")
         named = "PermissionError: [Errno 1] Operation not permitted"
@@ -3261,8 +3239,8 @@ class ConditionalPassTest(unittest.TestCase):
                     gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
                 else:
                     self.fake_extractor(body)
-                # Fix round 7: only a subtest that times out shortens the
-                # timeout, so a normal end on a busy host never races it.
+                # Only a subtest that times out shortens the timeout, so a
+                # normal end on a busy host never races it.
                 gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
                 procs = []
 
@@ -3294,16 +3272,15 @@ class ConditionalPassTest(unittest.TestCase):
                     f"could not kill the process group of its child ({detail})", op
                 )])
                 self.assertEqual(returncodes, [returncode])
-                # Fix round 7: far below the 300 seconds the hung child
-                # sleeps, so a gate that waited for it still fails, with room
-                # for a busy host to start and end a child.
+                # Far below the 300 seconds the hung child sleeps, so a gate
+                # that waited for it still fails, with room for a busy host to
+                # start and end a child.
                 self.assertLess(elapsed, 60)
 
     def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
-        # Fix round 1 (finding 4): the stdout bound grows with the request,
-        # so the malformed messages tested here, which echo a long argument
-        # enlarged by repr and by ASCII JSON escaping, keep the verdict and
-        # the message the extractor gives, as the in-process gate did.
+        # The stdout bound grows with the request, so the malformed messages
+        # tested here, which echo a long argument enlarged by repr and by ASCII
+        # JSON escaping, keep the verdict and the message the extractor gives.
         published = "\u00e9" * 12000
         line = "Released: " + "\u00e9" * 12000
         try:
@@ -3352,9 +3329,9 @@ class ConditionalPassTest(unittest.TestCase):
         ])
 
     def test_the_stdout_bound_of_a_call_with_an_argument_grows_with_it(self):
-        # Fix round 1 (finding 4): the bound is RESULT_LIMIT plus 12 bytes
-        # for each character of the argument; a reply of exactly that size is
-        # accepted and one byte more is refused, naming the bound.
+        # The bound is RESULT_LIMIT plus 12 bytes for each character of the
+        # argument; a reply of exactly that size is accepted and 1 byte more is
+        # refused, naming the bound.
         valid = b'{"op": "extract", "outcome": "absent"}'
         limit = gate.RESULT_LIMIT + 12 * len("xy")
         padded = valid + b" " * (limit - len(valid))
@@ -3374,9 +3351,8 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(result, expected)
 
     def test_a_reply_with_a_repeated_key_exits_3(self):
-        # Fix round 1 (finding 5): a reply is exactly one JSON object that
-        # matches the contract, so a key given twice is refused, never read
-        # with the last value winning.
+        # A reply is exactly 1 JSON object that matches the contract, so a key
+        # given twice is refused, never read with the last value winning.
         rule = "printed a result that does not match the contract (a key appears more than once)"
         for label, output in (
             ("a repeated value", b'{"op": "extract", "outcome": "value", "value": "2026-11-15", "value": "2026-11-16"}\n'),
@@ -3389,15 +3365,15 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(rule, "extract")])
 
-    # A fake extractor whose extract op has a process in another session
-    # seize the child with ptrace (the child names it its tracer first), so
-    # the end of the child is reported to that tracer, which holds it for
-    # HOLD seconds, and not to the gate; the child writes the tracer pid to
-    # tracer.pid beside it and exits 9 when the seize is refused. Fix round
-    # 7: the tracer closes its own copy of the go pipe, so when the child
-    # ends before it says go (as when it is killed first) the tracer reads
-    # the end of the pipe and exits at once instead of waiting for ever in
-    # a session of its own, where no kill of the child group reaches it.
+    # A fake extractor whose extract op has a process in another session seize
+    # the child with ptrace (the child names it its tracer first), so the end
+    # of the child is reported to that tracer, which holds it for HOLD seconds,
+    # and not to the gate; the child writes the tracer pid to tracer.pid beside
+    # it and exits 9 when the seize is refused. The tracer closes its own copy
+    # of the go pipe, so when the child ends before it says go (as when it is
+    # killed first) the tracer reads the end of the pipe and exits at once
+    # instead of waiting for ever in a session of its own, where no kill of the
+    # child group reaches it.
     TRACED = (
         "_real_extract = extract\n"
         "def extract(text):\n"
@@ -3429,15 +3405,14 @@ class ConditionalPassTest(unittest.TestCase):
     )
 
     def test_a_child_whose_end_is_hidden_from_the_gate_ends_the_gate_within_the_bound(self):
-        # DISCOVERY round 4, finding 1: a process of the same uid in another
-        # session seizes the child with ptrace, so the child's end is
-        # reported to it and not to the gate. The gate sees no end within
-        # the timeout, kills the group, then sees no end within the reap
-        # grace either, and exits 3 naming that it could not reap the child,
-        # leaving it, within the two bounds, instead of blocking in a reap
-        # until the tracer exits (30 seconds here). The test skips only where
-        # the host refuses the seize; the next test simulates the same
-        # outcome in-process on every host.
+        # A process of the same uid in another session seizes the child with
+        # ptrace, so the child's end is reported to it and not to the gate. The
+        # gate sees no end within the timeout, kills the group, then sees no
+        # end within the reap grace either, and exits 3 naming that it could
+        # not reap the child, leaving it, within the 2 bounds, instead of
+        # blocking in a reap until the tracer exits (30 seconds here). The test
+        # skips only where the host refuses the seize; the next test simulates
+        # the same outcome in-process on every host.
         tool = self.fake_extractor(extractor_with(self.TRACED.replace("HOLD", "30")))
         gate.CHILD_TIMEOUT_SECONDS = 1
         gate.REAP_GRACE_SECONDS = 1
@@ -3446,11 +3421,10 @@ class ConditionalPassTest(unittest.TestCase):
         gate.subprocess.Popen = self.recording_popen(procs)
         pid_file = tool.parent / "tracer.pid"
         try:
-            # Fix round 7: the 1 second timeout starts only once the seize
-            # has succeeded, so it cannot fire while the child is still
-            # being seized on a busy host.
-            # The bound below is measured from then, so the time a busy host
-            # takes to start the child does not count against it.
+            # The 1 second timeout starts only once the seize has succeeded, so
+            # it cannot fire while the child is still being seized on a busy
+            # host. The bound below is measured from then, so the time a busy
+            # host takes to start the child does not count against it.
             with self.timeout_when_ready(tool.parent / "ready") as ready_state:
                 started = time.monotonic()
                 result, err = self.call_reports("extract", self.ARGS["extract"])
@@ -3483,11 +3457,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(returncodes, [None])
 
     def test_a_child_not_seen_to_end_after_its_kill_is_left_unreaped(self):
-        # DISCOVERY round 4, finding 1, simulated in-process on every host:
-        # os.waitid never reports the end of the child, as when another
-        # process holds it, so after the timeout and the group kill the
-        # gate polls for at most the reap grace, exits 3 naming that it
-        # could not reap the child, and does not reap it.
+        # The outcome of the previous test, simulated in-process on every host:
+        # os.waitid never reports the end of the child, as when another process
+        # holds it, so after the timeout and the group kill the gate polls for
+        # at most the reap grace, exits 3 naming that it could not reap the
+        # child, and does not reap it.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         gate.REAP_GRACE_SECONDS = 1
@@ -3501,8 +3475,8 @@ class ConditionalPassTest(unittest.TestCase):
         guard = time.monotonic()
 
         def hidden(idtype, ident, options):
-            # Fix round 6: a gate whose waits had no bound would poll for
-            # ever; it fails here instead of hanging the suite.
+            # A gate whose waits had no bound would poll for ever; it fails
+            # here instead of hanging the suite.
             if time.monotonic() - guard > 30:
                 raise AssertionError("the gate polled for more than 30 seconds")
             if options & os.WNOHANG:
@@ -3534,21 +3508,18 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertLess(elapsed, 10)
 
     def test_every_mapped_extractor_outcome_reaches_its_exit_and_message_through_main(self):
-        # DISCOVERY round 4, finding 3, at the width of the class: each place
-        # in the gate that turns an outcome of release_date_call into an exit
-        # code or a message (the malformed and absent mapping in
+        # Each place in the gate that turns an outcome of release_date_call
+        # into an exit code or a message (the malformed and absent mapping in
         # release_date_call, the probe in probe_release_date_tool, the
         # malformed handlers in skill_released, released_line, and
-        # check_release_date, and the baseline in
-        # report_missing_released_line) is pinned here through main, with its
-        # exact exit and output. Fix round 6 (DISCOVERY round 5, finding 2):
-        # every value the gate takes from the extractor here, the extracted
-        # day, the baseline rule, the published day, and the baseline itself,
-        # is also given by a fake extractor that answers differently from the
-        # real one (a baseline of 1.0.20, not 1.0.14), so a gate that put
-        # today's real answer in place of any of these calls fails this test
-        # as well as one that dropped a handler. Run as a mutation sweep,
-        # each of those mutants fails here.
+        # check_release_date, and the baseline in report_missing_released_line)
+        # is pinned here through main, with its exact exit and output. Every
+        # value the gate takes from the extractor here, the extracted day, the
+        # baseline rule, the published day, and the baseline itself, is also
+        # given by a fake extractor that answers differently from the real one
+        # (a baseline of 1.0.20, not 1.0.14), so a gate that put today's real
+        # answer in place of any of these calls fails this test as well as one
+        # that dropped a handler.
         def site_matches(version):
             return (f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{version}.zip "
                     f"for release v{version}.")
@@ -3635,7 +3606,7 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual((code, out.splitlines(), err.splitlines()), expected)
 
 
-    # --- Fix round 6: the wait, the reap, and the kill, pinned exactly -------
+    # --- The wait, the reap, and the kill, pinned exactly --------------------
 
     def on_fake_clock(self, end_at):
         """Point the gate at a fake clock that starts at 100 and advances only
@@ -3674,12 +3645,11 @@ class ConditionalPassTest(unittest.TestCase):
         return state, sleeps, waits, restore
 
     def test_the_wait_polls_within_its_deadline_on_a_fake_clock(self):
-        # Fix round 6 (mutation sweep): _wait_unreaped waits exactly its
-        # timeout argument (here 7.25 seconds, no default of the gate), never
-        # sleeps past the deadline or more than 0.05 seconds at a time,
-        # starts at 1 millisecond and doubles, never sleeps for zero, polls
-        # only with WEXITED, WNOWAIT, and WNOHANG for this pid, and returns
-        # True at the first poll that sees the end.
+        # _wait_unreaped waits exactly its timeout argument (here 7.25 seconds,
+        # no default of the gate), never sleeps past the deadline or more than
+        # 0.05 seconds at a time, starts at 1 millisecond and doubles, never
+        # sleeps for 0 seconds, polls only with WEXITED, WNOWAIT, and WNOHANG
+        # for this pid, and returns True at the first poll that sees the end.
         child = types.SimpleNamespace(pid=4242)
         flags = os.WEXITED | os.WNOWAIT | os.WNOHANG
         for label, end_at, expected, low, high in (
@@ -3703,10 +3673,10 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(len(waits), len(sleeps) + 1)
 
     def test_the_reap_waits_only_its_grace_on_a_fake_clock(self):
-        # Fix round 6 (mutation sweep): _reap waits at most
-        # REAP_GRACE_SECONDS (here 2.75, no default of the gate) for the end
-        # of the child and names that grace when it sees no end, without
-        # reaping; it reaps once, with Popen.wait, only after it sees the end.
+        # _reap waits at most REAP_GRACE_SECONDS (here 2.75, no default of the
+        # gate) for the end of the child and names that grace when it sees no
+        # end, without reaping; it reaps once, with Popen.wait, only after it
+        # sees the end.
         gate.REAP_GRACE_SECONDS = 2.75
         for label, end_at, expected, elapsed, reaped in (
             ("no end within the grace", float("inf"),
@@ -3772,11 +3742,10 @@ class ConditionalPassTest(unittest.TestCase):
         raise self.DENIED
 
     def test_a_failed_group_kill_kills_the_child_directly_only_when_it_has_not_ended(self):
-        # Fix round 6 (mutation sweep): when the group kill fails, the gate
-        # kills the child itself, with SIGKILL, only when the child has not
-        # ended (after a timeout), and never after a normal end, even when
-        # that kill would fail too; either way it reaps the child it can and
-        # exits 3 naming the group kill.
+        # When the group kill fails, the gate kills the child itself, with
+        # SIGKILL, only when the child has not ended (after a timeout), and
+        # never after a normal end, even when that kill would fail too; either
+        # way it reaps the child it can and exits 3 naming the group kill.
         problem = f"could not kill the process group of its child ({self.DENIED_NAMED})"
         gate.REAP_GRACE_SECONDS = 1
         for label, body, op, arg, kill, expected_kills, returncodes in (
@@ -3789,25 +3758,25 @@ class ConditionalPassTest(unittest.TestCase):
                     gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
                 else:
                     self.fake_extractor(extractor_with(body))
-                # Fix round 7: only the subtest that times out shortens the
-                # timeout, so a normal end on a busy host never races it.
+                # Only the subtest that times out shortens the timeout, so a
+                # normal end on a busy host never races it.
                 gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
                 result, err, kills, codes, elapsed = self.kill_reports(op, arg, self.denied, kill)
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(problem, op)])
                 self.assertEqual(kills, expected_kills)
                 self.assertEqual(codes, returncodes)
-                # Fix round 7: far below the 300 seconds the hung child
-                # sleeps, so a gate that waited for it still fails, with room
-                # for a busy host to start and end a child.
+                # Far below the 300 seconds the hung child sleeps, so a gate
+                # that waited for it still fails, with room for a busy host to
+                # start and end a child.
                 self.assertLess(elapsed, 60)
 
     def test_a_group_kill_that_finds_no_process_still_reaps_the_child(self):
-        # Fix round 6 (mutation sweep): a group kill that reports no such
-        # process (ProcessLookupError) is not a failure: the gate reaps the
-        # ended child and returns its reply. On Linux this cannot happen
-        # while the child is unreaped, as the child leads its own session and
-        # so stays in its group; it is simulated here.
+        # A group kill that reports no such process (ProcessLookupError) is not
+        # a failure: the gate reaps the ended child and returns its reply. On
+        # Linux this cannot happen while the child is unreaped, as the child
+        # leads its own session and so stays in its group; it is simulated
+        # here.
         def missing(*args):
             raise ProcessLookupError(errno.ESRCH, "No such process")
 
@@ -3818,11 +3787,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(codes, [0])
 
     def test_a_failed_direct_kill_still_reaps_a_child_that_has_ended(self):
-        # Fix round 6 (mutation sweep): when the group kill and the direct
-        # kill both fail, the gate does not wait for the child, but a child
-        # that has already ended (here it is killed, and becomes a zombie,
-        # before the direct kill reports its failure) is still reaped by a
-        # non-blocking poll.
+        # When the group kill and the direct kill both fail, the gate does not
+        # wait for the child, but a child that has already ended (here it is
+        # killed, and becomes a zombie, before the direct kill reports its
+        # failure) is still reaped by a non-blocking poll.
         self.fake_extractor(extractor_with(self.HUNG))
         gate.CHILD_TIMEOUT_SECONDS = 1
         real_kill = os.kill
@@ -3843,12 +3811,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(codes, [-signal.SIGKILL])
 
     def test_a_failed_group_kill_with_a_hidden_end_leaves_the_child_unreaped(self):
-        # DISCOVERY round 5, finding 1: after a failed group kill and a
-        # direct kill, the reap is bounded by REAP_GRACE_SECONDS like every
-        # other reap. Here os.waitid never reports the end of the child, so
-        # the gate names both the group kill and the reap it could not do,
-        # leaves the child unreaped, and returns within the bounds, where an
-        # unbounded wait would have reaped it.
+        # After a failed group kill and a direct kill, the reap is bounded by
+        # REAP_GRACE_SECONDS like every other reap. Here os.waitid never
+        # reports the end of the child, so the gate names both the group kill
+        # and the reap it could not do, leaves the child unreaped, and returns
+        # within the bounds, where an unbounded wait would have reaped it.
         self.fake_extractor(extractor_with(self.HUNG))
         gate.CHILD_TIMEOUT_SECONDS = 1
         gate.REAP_GRACE_SECONDS = 1
@@ -3875,10 +3842,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertLess(elapsed, 10)
 
     def test_an_interrupt_while_waiting_with_a_group_that_cannot_be_killed_exits_3(self):
-        # Fix round 6 (mutation sweep): a KeyboardInterrupt while the gate
-        # waits, when the group cannot be killed, kills the child directly,
-        # as a child that has not ended, reaps it, and exits 3 naming the
-        # group kill instead of passing the interrupt on.
+        # A KeyboardInterrupt while the gate waits, when the group cannot be
+        # killed, kills the child directly, as a child that has not ended,
+        # reaps it, and exits 3 naming the group kill instead of passing the
+        # interrupt on.
         self.fake_extractor(extractor_with(self.HUNG))
         gate.REAP_GRACE_SECONDS = 1
         real_waitid = os.waitid
@@ -3902,14 +3869,14 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertLess(elapsed, 10)
 
     def test_the_output_bounds_follow_the_limits_of_the_gate(self):
-        # Fix round 6 (mutation sweep): the stdout bound is RESULT_LIMIT plus
-        # ECHO_BYTES_PER_CHARACTER bytes for each character of the argument,
-        # and at most STDERR_LIMIT bytes of stderr are read and relayed, each
-        # taken from the gate at the call: with limits other than the
-        # defaults (300, 7, and 33), a reply of exactly the bound is
-        # accepted, one byte more is refused naming the bound, the reads ask
-        # for one byte over the bound and for STDERR_LIMIT bytes, and the
-        # relayed stderr is its first 33 bytes, decoded with replacement.
+        # The stdout bound is RESULT_LIMIT plus ECHO_BYTES_PER_CHARACTER bytes
+        # for each character of the argument, and at most STDERR_LIMIT bytes of
+        # stderr are read and relayed, each taken from the gate at the call:
+        # with limits other than the defaults (300, 7, and 33), a reply of
+        # exactly the bound is accepted, 1 byte more is refused naming the
+        # bound, the reads ask for 1 byte over the bound and for STDERR_LIMIT
+        # bytes, and the relayed stderr is its first 33 bytes, decoded with
+        # replacement.
         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
         limit = 300 + 7 * len("xy")
         valid = b'{"op": "extract", "outcome": "absent"}'
@@ -4223,9 +4190,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(asked, [resource.RLIMIT_FSIZE])
 
     def test_a_child_ended_by_a_signal_with_no_name_exits_3_naming_its_number(self):
-        # Fix round 6 (mutation sweep): a signal that has no name in
-        # signal.Signals, here the real-time signal 40, is named by its
-        # number, never a traceback.
+        # A signal that has no name in signal.Signals, here the real-time
+        # signal 40, is named by its number, never a traceback.
         self.assertNotIn(40, {member.value for member in signal.Signals})
         self.fake_extractor(extractor_with("def extract(text):\n    import os\n    os.kill(os.getpid(), 40)\n"))
         result, err = self.call_reports("extract", "x")
@@ -4233,11 +4199,10 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err.splitlines(), [self.unavailable("was killed by signal 40", "extract")])
 
     def test_a_child_ended_by_signal_1_exits_3_naming_it(self):
-        # Fix round 10 (mutation sweep): signal 1 (SIGHUP), the lowest
-        # signal number, is a signal end like any other, reported by its
-        # name with what the child printed, never as an exit. The child
-        # restores the default action first, as an ignored SIGHUP (under
-        # nohup, for one) is inherited across exec.
+        # Signal 1 (SIGHUP), the lowest signal number, is a signal end like any
+        # other, reported by its name with what the child printed, never as an
+        # exit. The child restores the default action first, as an ignored
+        # SIGHUP (under nohup, for one) is inherited across exec.
         self.assertEqual(signal.SIGHUP.value, 1)
         self.fake_extractor(extractor_with(
             "def extract(text):\n"
@@ -4253,12 +4218,12 @@ class ConditionalPassTest(unittest.TestCase):
 
 
 class ModuleLoadTest(unittest.TestCase):
-    """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
-    cannot be run or its child fails, for each reason tested here. Row 80:
-    each test runs a copy of the gate as a script, so an outcome that would
-    end or hang the gate itself is observed by the test rather than suffered
-    by it. Extractor code that signals the gate itself is the accepted
-    residual, not an exit 3 (see
+    """The gate exits 3 (unavailable), not 1 (drift), when the extractor cannot
+    be run or its child fails, for each reason tested here. Row 80: each test
+    runs a copy of the gate as a script, so an outcome that would end or hang
+    the gate itself is observed by the test rather than suffered by it.
+    Extractor code that signals the gate itself is the accepted residual, not
+    an exit 3 (see
     test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint)."""
 
     def run_with_extractor(self, body, wrapper=None, inspect=None):
@@ -4301,10 +4266,10 @@ class ModuleLoadTest(unittest.TestCase):
             skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
             empty = root / "empty-path"
             empty.mkdir()
-            # Fix round 1: a TMPDIR inside this directory, so the temporary
-            # files of the gate, which its children write to, never go to
-            # bare /tmp. A child runs with an empty environment, so a
-            # temporary file it made itself would not follow TMPDIR.
+            # A TMPDIR inside this directory, so the temporary files of the
+            # gate, which its children write to, never go to bare /tmp. A child
+            # runs with an empty environment, so a temporary file it made
+            # itself would not follow TMPDIR.
             scratch = root / "tmp"
             scratch.mkdir()
             if wrapper is None:
@@ -4341,9 +4306,8 @@ class ModuleLoadTest(unittest.TestCase):
         # Row 80, verdict change 1: a KeyboardInterrupt the extractor raises,
         # at load or in a call, ends only the child, which Python then ends
         # with SIGINT. The gate exits 3 with its report and the checksum
-        # comparison still runs, where the in-process gate ended with the
-        # SIGINT status (fix round 5 residual, now closed for an interrupt the
-        # extractor raises; one it sends to the gate is still a residual, see
+        # comparison still runs. An interrupt the extractor sends to the gate
+        # is still a residual (see
         # test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint).
         for label, body, op in (
             ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", "baseline"),
@@ -4359,9 +4323,9 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn("the gh CLI is not available", err)
 
     def test_extractor_keyboard_interrupt_subclass_exits_3(self):
-        # Fix round 9: a subclass of KeyboardInterrupt the extractor raises,
-        # at load or in a call, exits 3 with its report. Row 80: Python ends
-        # the child with SIGINT for it as for KeyboardInterrupt itself.
+        # A subclass of KeyboardInterrupt the extractor raises, at load or in a
+        # call, exits 3 with its report. Row 80: Python ends the child with
+        # SIGINT for it as for KeyboardInterrupt itself.
         subclass = "class K(KeyboardInterrupt):\n    pass\n"
         for label, body, op in (
             ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n", "baseline"),
@@ -4376,11 +4340,11 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn("the gh CLI is not available", err)
 
     def test_extractor_interrupt_that_is_also_another_class_exits_3(self):
-        # Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
-        # SystemExit, at load or in a call, exits 3 with its report, never the
-        # code the SystemExit carries or an interrupt. Row 80: Python 3.14
-        # ends the child for it with SIGINT, as for a KeyboardInterrupt
-        # (observed), so the report names the signal whatever code it carries.
+        # A KeyboardInterrupt that is also a SystemExit, at load or in a call,
+        # exits 3 with its report, never the code the SystemExit carries or an
+        # interrupt. Row 80: Python 3.14 ends the child for it with SIGINT, as
+        # for a KeyboardInterrupt (observed), so the report names the signal
+        # whatever code it carries.
         hybrid = "class H(KeyboardInterrupt, SystemExit):\n    pass\n"
         cases = [
             (f"an interrupt that is also SystemExit({code}) at load", hybrid + f"raise H({code})\n",
@@ -4405,7 +4369,7 @@ class ModuleLoadTest(unittest.TestCase):
         for label, body, reason in (
             ("SystemExit(0) at load", "raise SystemExit(0)\n", "did not print a JSON result"),
             ("SystemExit(1) at load", "raise SystemExit(1)\n", "exited 1"),
-            # Fix round 4 (F2): the codes main absorbs as could not verify.
+            # The codes main absorbs as could not verify.
             ("SystemExit(2) at load", "raise SystemExit(2)\n", "exited 2"),
             ("SystemExit(3) at load", "raise SystemExit(3)\n", "exited 3"),
             ("bare SystemExit at load", "raise SystemExit\n", "did not print a JSON result"),
@@ -4416,10 +4380,10 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py {reason} in baseline, so the extractor is unavailable", err)
 
     def test_extractor_code_run_while_reporting_a_load_failure_exits_3(self):
-        # Fix round 4 (F1): an error whose repr, str, or class name exits or
-        # raises, a SystemExit whose code does, or an error outside Exception
-        # and SystemExit, still exits 3 with the report, never 0 or 1. Row
-        # 80: that code runs only in the child, while Python reports it.
+        # An error whose repr, str, or class name exits or raises, a SystemExit
+        # whose code does, or an error outside Exception and SystemExit, still
+        # exits 3 with the report, never 0 or 1. Row 80: that code runs only in
+        # the child, while Python reports it.
         hostile_text = "    def __repr__(self):\n        raise SystemExit(0)\n    __str__ = __repr__\n"
         exiting_str = (
             "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
@@ -4449,14 +4413,14 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn(" in baseline, so the extractor is unavailable", err)
 
     def test_incomplete_extractor_api_exits_3_naming_the_attribute(self):
-        # R3: an incomplete or incompatible extractor exits 3 naming what it
-        # lacks. Row 80: a function that is missing or not callable fails the
-        # child that runs it (exit 6, its NameError or TypeError relayed),
-        # and a baseline that is not a bare version breaks the contract. A
-        # missing release_day_from_published_at is reached only on a
-        # published release (see test_extractor_attribute_gone_at_call_time),
-        # and the Malformed class rows have no subject, since no extractor
-        # class reaches the gate.
+        # An incomplete or incompatible extractor exits 3 naming what it lacks.
+        # Row 80: a function that is missing or not callable fails the child
+        # that runs it (exit 6, its NameError or TypeError relayed), and a
+        # baseline that is not a bare version breaks the contract. A missing
+        # release_day_from_published_at is reached only on a published release
+        # (see test_extractor_attribute_gone_at_call_time), and the Malformed
+        # class rows have no subject, since no extractor class reaches the
+        # gate.
         internal = "failed unexpectedly (internal error)"
         version = "printed a result that does not match the contract (the value is not a bare X.Y.Z version string)"
         for label, tail, reason, detail in (
@@ -4465,9 +4429,8 @@ class ModuleLoadTest(unittest.TestCase):
             ("missing requires_release_date", "del requires_release_date\n", f"{internal} in requires_release_date",
              "NameError(\"name 'requires_release_date' is not defined\")"),
             ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", f"{version} in baseline", None),
-            # Fix round 8 (operator sweep): an exact str that is not a bare
-            # version is refused by the gate itself, even beside a baseline
-            # rule that would not reject it.
+            # An exact str that is not a bare version is refused by the gate
+            # itself, even beside a baseline rule that would not reject it.
             ("BASELINE_VERSION an exact str that is not a bare version",
              "BASELINE_VERSION = \"1.0\"\ndef requires_release_date(version):\n    return True\n",
              f"{version} in baseline", None),
@@ -4495,10 +4458,10 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn("the gh CLI is not available", err)
 
     def test_extractor_that_never_returns_exits_3(self):
-        # The wrapper sets a 1 second child timeout; without the child the
-        # gate hangs and the outer timeout fails the test. Fix round 7: the
-        # timeout starts only once the probe has ended and the extract child
-        # is ready, so a busy host cannot make it fire in the probe.
+        # The wrapper sets a 1 second child timeout; without the child the gate
+        # hangs and the outer timeout fails the test. The timeout starts only
+        # once the probe has ended and the extract child is ready, so a busy
+        # host cannot make it fire in the probe.
         code, err, ready = self.run_with_extractor(
             extractor_with("def extract(text):\n    import time\n" + SAY_READY + "    time.sleep(300)\n"),
             wrapper=READY_TIMEOUT_WRAPPER, inspect=lambda tools: (tools / "ready").exists(),
@@ -4510,13 +4473,12 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertIn("the gh CLI is not available", err)
 
     def test_a_hung_extractor_and_what_it_forked_are_killed(self):
-        # A process the hung child started in its group is killed with it:
-        # once the gate has exited it is gone, or a zombie where no process
-        # reaps it, never still running.
-        # Fix round 7: the child writes the pid file whole (a rename) and
-        # then says it is ready, and the 1 second timeout starts only then
-        # (READY_TIMEOUT_WRAPPER), so on a busy host the kill can never come
-        # before the pid file exists.
+        # A process the hung child started in its group is killed with it: once
+        # the gate has exited it is gone, or a zombie where no process reaps
+        # it, never still running. The child writes the pid file whole (a
+        # rename) and then says it is ready, and the 1 second timeout starts
+        # only then (READY_TIMEOUT_WRAPPER), so on a busy host the kill can
+        # never come before the pid file exists.
         body = extractor_with(
             "def extract(text):\n"
             "    import os, subprocess, time\n"
@@ -4612,7 +4574,7 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
                 self.assertIn("the gh CLI is not available", err)
 
-    # --- Fix round 6 (DISCOVERY round 5, finding 3): SIGCHLD ----------------
+    # --- SIGCHLD is reset before any child starts, or the gate exits 3 -------
 
     def test_an_ignored_sigchld_inherited_by_the_gate_keeps_the_verdict(self):
         # A caller that ignores SIGCHLD passes that disposition across exec,
@@ -4667,18 +4629,17 @@ class ModuleLoadTest(unittest.TestCase):
     # --- Row 80: the accepted same-uid residual, observed ---------------------
 
     def test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint(self):
-        # Fix round 3 (DISCOVERY 2, finding 1): the child runs with the uid
-        # of the gate, so extractor code can signal the gate. An interrupt
-        # it sends to its parent, the gate, while the gate waits ends the
-        # gate by SIGINT, with no report and none of its exit codes, after
-        # the gate has killed the child. The probe sleeps first, so the gate
-        # is already waiting. Fix round 4 (DISCOVERY 3, finding 5): the probe
-        # signals its parent only when one argument of that parent resolves
-        # to the gate copy that run_with_extractor started, and otherwise
-        # loads as the real extractor, so on a gate that runs extractor code
-        # in its own process, whose parent is this test runner, the test
-        # fails instead of interrupting the runner. A stop (SIGSTOP) is the
-        # same residual and is not run here, as it would halt the gate.
+        # The child runs with the uid of the gate, so extractor code can signal
+        # the gate. An interrupt it sends to its parent, the gate, while the
+        # gate waits ends the gate by SIGINT, with no report and none of its
+        # exit codes, after the gate has killed the child. The probe sleeps
+        # first, so the gate is already waiting. The probe signals its parent
+        # only when one argument of that parent resolves to the gate copy that
+        # run_with_extractor started, and otherwise loads as the real
+        # extractor, so on a gate that runs extractor code in its own process,
+        # whose parent is this test runner, the test fails instead of
+        # interrupting the runner. A stop (SIGSTOP) is the same residual and is
+        # not run here, as it would halt the gate.
         body = extractor_with(
             "import os, signal, time\n"
             "with open(Path(__file__).resolve().parent / \"child.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
@@ -4719,10 +4680,10 @@ class ModuleLoadTest(unittest.TestCase):
                         os.kill(pid, signal.SIGKILL)
 
     def test_the_gate_keeps_its_temporary_files_in_the_test_directory(self):
-        # Fix round 1 addition: a gate run in this suite is given a TMPDIR
-        # inside the test's own temporary directory, so no temporary file
-        # of the gate, and so none its child writes to, goes to bare /tmp.
-        # An audit hook records where each temporary file is made.
+        # A gate run in this suite is given a TMPDIR inside the test's own
+        # temporary directory, so no temporary file of the gate, and so none
+        # its child writes to, goes to bare /tmp. An audit hook records where
+        # each temporary file is made.
         wrapper = (
             "import importlib.util, json, os, sys\n"
             "made = []\n"
@@ -4761,9 +4722,9 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertEqual(stray, [], f"temporary files made outside the test directory: {stray}")
 
     def test_too_few_file_descriptors_exits_3_with_no_traceback(self):
-        # Fix round 1 (finding 1): with the open-file limit so low that the
-        # temporary files of a child cannot all be created, the probe exits
-        # 3 naming the error, and the gate exits 3, never a traceback (exit 1).
+        # With the open-file limit so low that the temporary files of a child
+        # cannot all be created, the probe exits 3 naming the error, and the
+        # gate exits 3, never a traceback (exit 1).
         wrapper = (
             "import importlib.util, os, resource, sys\n"
             "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
@@ -4817,11 +4778,10 @@ class ModuleLoadTest(unittest.TestCase):
 
 
 class ControlConstantTest(unittest.TestCase):
-    """Fix round 10 (mutation sweep): every control constant of the gate,
-    each bound, timeout, exit code, and table of the extractor contract,
-    is pinned at its shipped value, as a test that shortens or widens one
-    for its own purpose cannot show that the shipped value is the one
-    stated."""
+    """Every control constant of the gate, each bound, timeout, exit code, and
+    table of the extractor contract, is pinned at its shipped value, as a test
+    that shortens or widens one for its own purpose cannot show that the
+    shipped value is the one stated."""
 
     def test_the_child_bounds_keep_their_shipped_values(self):
         self.assertEqual(gate.CHILD_TIMEOUT_SECONDS, 20)
@@ -4846,12 +4806,11 @@ class ControlConstantTest(unittest.TestCase):
 
 
 class ContractRoutingTest(unittest.TestCase):
-    """Row 80 (replaces the R3 attribute routing): every op the gate names is
-    in the contract, every op of the contract is used, and the only calls
-    inside a function of the gate that start a process through an attribute
-    of subprocess or os are in gh and in run_release_date_child. A start at
-    module level, or through another name, an alias, or another module, is
-    not detected."""
+    """Row 80: every op the gate names is in the contract, every op of the
+    contract is used, and the only calls inside a function of the gate that
+    start a process through an attribute of subprocess or os are in gh and in
+    run_release_date_child. A start at module level, or through another name,
+    an alias, or another module, is not detected."""
 
     def setUp(self):
         self.tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
