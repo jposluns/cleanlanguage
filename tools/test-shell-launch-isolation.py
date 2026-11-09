@@ -15,15 +15,15 @@ joined line). A comment, on a line of its own or after a command, ends at its
 line even when it ends in a backslash, as in bash, so it joins no line:
 
 1. Every python command name, a lower-case `python` with any digits and dots
-   after it, no letter or dot straight before it and no letter, digit,
-   underscore or hyphen straight after those, starts `python3 -I ` (single
-   spaces), directly after the start of the line, a space, a tab, a quote, a
+   after it, no dot straight before it and no letter, digit, underscore or
+   hyphen straight after those, starts `python3 -I ` (single spaces),
+   directly after the start of the line, a space, a tab, a quote, a
    backquote, or one of ( | & ; !. So `python3 -I tools/<name>.py`,
    `python3 -I -c`, `python3 -I -` and a grep pattern that names the isolated
    form pass, and `python3 tools/x.py`, `python3 -c`, `"python3" -I`,
-   `${PYTHON:-python3}`, `$bin/python3` and `python3 -X utf8` are findings. A
-   `python` inside a longer name, as in tools/check-python-version.py,
-   docs.python.org or ipython3, is not a command name.
+   `${PYTHON:-python3}`, `$bin/python3`, `ipython3` and `python3 -X utf8` are
+   findings. The `python` in docs.python.org or in
+   tools/check-python-version.py is not a command name.
 2. A .py or .pyz path in command position, run by its shebang, is a finding.
    Command position is the start of the line or what follows ; & | ( ! $(
    or a backquote, a ) or { followed by a space or tab (a case pattern, a
@@ -58,10 +58,10 @@ drift. It cannot be complete: it can miss or misread forms that these rules
 and the self-tests do not name. The known misses are a launch held in a
 variable (`$PY tools/x.py`, `"$real_py"`), a launch through a function or
 alias named python3, a `python` spelt in other letter cases, an interpreter
-name with a letter or dot before its `python` (`ipython3`) or a letter or
-hyphen after its digits (`python3m`), a .py path after a launcher it does
-not name (such as xargs or timeout) or after a launcher option that takes
-more than 1 argument word, a .py path after a redirection word that holds a
+name with a dot before its `python` or a letter or hyphen after its digits
+(`python3m`), a .py path after a launcher it does not name (such as xargs
+or timeout) or after a launcher option that takes more than 1 argument
+word, a .py path after a redirection word that holds a
 space (`2> "a b" tools/x.py`), a .py path written straight after a case
 pattern's ) with no space or tab between, a line after one that ends in an
 escaped backslash (`echo \\`), which the scan joins to it, a -c program that
@@ -70,9 +70,10 @@ the quote reading, text built at run time, Python launched from Python (such
 as subprocess with sys.executable), and a script that a covered script
 reaches only through a variable or a path the discovery does not match. The
 known misreadings, each a false finding, are a `python` word after a slash or
-a hyphen in a path or URL (`github.com/python/cpython`), a .py argument after
-a closing backquote or after `&>` (`true &>f x.py`), and a line inside a
-quoted string that spans lines, which is read as shell.
+a hyphen in a path or URL (`github.com/python/cpython`), a `python` straight
+after a letter in a word that names no interpreter (`cpython`), a .py
+argument after a closing backquote or after `&>` (`true &>f x.py`), and a
+line inside a quoted string that spans lines, which is read as shell.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -126,8 +127,9 @@ EXCEPTIONS = (
 )
 
 SCRIPT_NAME = re.compile(r"([\w.-]+)\.sh(?![\w.-])")
-# A python after a letter or a dot is part of another word, such as docs.python.org.
-PYTHON_WORD = re.compile(r"(?<![A-Za-z.])python[0-9.]*(?![\w-])")
+# A python after a dot is part of a name, such as docs.python.org. A python after a letter is
+# still read, so that ipython3 is a finding: a false finding is safer than a silent pass.
+PYTHON_WORD = re.compile(r"(?<!\.)python[0-9.]*(?![\w-])")
 ISOLATED = "python3 -I "
 LAUNCH_BEFORE = set(" \t(|&;!`\"'")
 AFTER_LAUNCH_BEFORE = r"(?<![^ \t(|&;!`\"'])"
@@ -321,6 +323,7 @@ LINE_CASES = [
     ('cat > "$bin/python3" <<PY', True),
     ("python3 -X utf8 tools/x.py", True),
     ("python3  -I tools/x.py", True),
+    ("ipython3 -I tools/x.py", True),
     ("python3 --version", True),
     ("tools/x.py --check", True),
     ("  tools/x.py", True),
@@ -344,7 +347,6 @@ LINE_CASES = [
     ('"gate=tools/x.py"', True),
     ("python3 -I tools/check-python-version.py", False),
     ('echo "see https://docs.python.org/3/"', False),
-    ("ipython3 -I tools/x.py", False),
     ("gate=tools/x.py", False),
     ("gate=tools/x.py next=tools/y.py", False),
     ('test -f .python-version && python3 -I tools/x.py', False),
