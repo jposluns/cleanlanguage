@@ -34,17 +34,19 @@ The rule:
    workflow, is a finding, as is a symbolic link under .github, a folder that
    cannot be listed, a file that cannot be read as UTF-8 or parsed with
    PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
-   read differently). So is a file that UniqueKeyLoader refuses: one with a
-   repeated key in a mapping that it checks (Residuals names the repeats it
-   does not), with a key that is a plain `=` or is tagged `!!value` that it
-   builds before PyYAML has rewritten that key as a string, or with a mapping
-   that PyYAML meets again while UniqueKeyLoader builds it. UniqueKeyLoader's
-   docstring states when each applies; the safe loader loads `x: {=: a}` and
-   `a: &x {b: *x}`, which UniqueKeyLoader refuses. Each workflow must have a
-   jobs mapping; a job that is not a mapping, a steps value that is not a list
-   and a step that is not a mapping are findings. A job or step `uses:` value
-   that starts with ./ or ../, a local action or a local reusable workflow, is
-   a finding, since the scan does not read it.
+   read differently). The scan loads each workflow with UniqueKeyLoader, and a
+   file whose loading raises a YAML error or RecursionError is a finding.
+   UniqueKeyLoader's own code raises on 2 keys of a mapping that it builds,
+   other than merge keys (`<<`), that build to identical or equal values.
+   Every other outcome of loading with it, such as a recursive node, a key
+   that is a plain `=` or a deeply nested mapping, is PyYAML's own behaviour
+   under this loader, which its docstring does not describe or predict; the
+   self-tests record such outcomes by example, and UniqueKeyLoader's docstring
+   names them. Each workflow must have a jobs mapping; a job that is not a
+   mapping, a steps value that is not a list and a step that is not a mapping
+   are findings. A job or step `uses:` value that starts with ./ or ../, a
+   local action or a local reusable workflow, is a finding, since the scan
+   does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -91,11 +93,12 @@ The rule:
 
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
-`python3 -P -E -s` equivalent, a quoted script path, two spaces before `-I`, a
+`python3 -P -E -s` equivalent, a quoted script path, 2 spaces before `-I`, a
 launch whose words are split across continued lines, `(python3)` and other
-case arms naming python, a message or comment that names python or a .py
-file, and `shell: sh` or `bash -e {0}`. Write a launch as
-`python3 -I tools/<name>.py`.
+case arms naming python, a message or comment that names python or a .py file,
+an expression such as `${{ env.PY }}`, `${{ matrix.Py }}` or
+`${{ vars.PYW }}`, which rule 3 reads as a `.py` or `.pyw` name, and
+`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
@@ -107,9 +110,9 @@ Residuals, named here because the scan reads text the pull request controls:
   author who means to run python without -I can write a line whose text the
   scan sees but misreads, and can also edit this scan, which only review
   catches;
-- a repeated mapping key that UniqueKeyLoader does not check, as its docstring
-  states, such as one in a mapping used only as a merge source
-  (`x: {<<: {p: 1, p: 2}}`);
+- a repeated mapping key that loading with UniqueKeyLoader does not refuse,
+  such as one in a mapping used only as a merge source
+  (`x: {<<: {p: 1, p: 2}}`), which the self-tests record as loading;
 - a PATH or ENV assignment whose name is quoted or escaped, such as
   `export 'PATH'=x`;
 - a shell run with -c whose shell is not a shell word on the line: a shell
@@ -223,48 +226,36 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
 class UniqueKeyLoader(yaml.SafeLoader):
     """A safe loader refusing a repeated non-merge key in a mapping it builds.
 
-    On PyYAML 6.0.3 its mapping constructor, the plain function
-    `_construct_mapping`, builds each key of a mapping other than its merge
-    keys (`<<`) and refuses 2 keys that build to equal values, so `1` and
-    `1.0`, `true` and `yes`, `~` and `null`, and `a` and `'a'` are repeats,
-    while `on` and `'on'` are 2 keys (True and a string). It also reads 2
-    `.nan` keys as repeats, since PyYAML builds every `.nan` to the same float
-    object, which the check matches to itself. It does not apply to `!!set`,
-    `!!omap` or `!!pairs`, whose repeated members or keys load. It never
-    checks a mapping used only as a merge source, so `x: {<<: {p: 1, p: 2}}`
-    loads, and an alias to a mapping that it has built reuses that mapping
-    without a second check.
+    Its own code is the mapping constructor `_construct_mapping`. When it is
+    called to build a mapping, it builds each key other than a merge key
+    (`<<`), raises a ConstructorError when a key is identical or equal to an
+    earlier one, and otherwise has the safe loader build the mapping. The scan
+    reports that error as a file that cannot be parsed. Every other outcome of
+    loading with UniqueKeyLoader, including recursive nodes, keys that are a
+    plain `=` or are tagged `!!value`, deep nesting, and the interaction of
+    merges, aliases and anchors, is PyYAML's own behaviour under this loader,
+    which this docstring does not describe or predict.
 
-    The safe loader flattens a mapping when it builds it and when it merges it
-    into another: it removes the mapping's merge keys, adds the keys that
-    their sources supply, and rewrites each key that is a plain `=` or is
-    tagged `!!value` as a string. The constructor checks a mapping's keys
-    before it has the safe loader flatten and build that mapping. So when it
-    builds a mapping that no merge has flattened, a key that overrides a
-    merged key and 2 `<<` keys that supply the same key are not repeats:
-    `x: {<<: {p: 1}, p: 2}` and `x: {<<: {p: 1}, <<: {p: 2}}` load. When a
-    merge has flattened a mapping before the constructor builds it, the
-    constructor checks the keys that the mapping's merge keys supplied as well
-    as its own, so `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b` is
-    refused for a repeated `p`, although the document is valid YAML.
+    The self-tests record outcomes measured on PyYAML 6.0.3 and Python 3.14.4
+    by example, and hold a case for each form named here. They record that
+    these keys are refused as repeats: `1` and `1.0`, `true` and `yes`, `~`
+    and `null`, `a` and `'a'`, and 2 `.nan` keys; and that `on` and `'on'`
+    load as 2 keys, True and a string. They record that a merge with an
+    override, `x: {<<: {p: 1}, p: 2}`, 2 `<<` keys,
+    `x: {<<: {p: 1}, <<: {p: 2}}`, a repeated key in a merge source,
+    `x: {<<: {p: 1, p: 2}}`, and a repeated member or key in a `!!set`,
+    `!!omap` or `!!pairs` load. They record that
+    `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b`, an anchored mapping
+    holding `<<` that is merged and then reused as an alias, is refused for a
+    repeated `p`, although that document is valid YAML.
 
-    Beyond repeated keys, the constructor refuses 2 forms. A key that is a
-    plain `=` or is tagged `!!value` has no constructor until a flattening
-    rewrites it as a string, so the constructor refuses such a key that it
-    builds before then: `x: {=: a}` and `x: {!!value a: b}` are refused, while
-    `x: {<<: {=: a}}` loads. A mapping that PyYAML meets again while the
-    constructor builds it is refused as a recursive node: `a: &x {b: *x}` and
-    `a: &x {b: {<<: *x}}` are refused, while `a: &x {<<: *x}` and
-    `a: &x {b: [*x]}` load. PyYAML's safe loader loads every document that
-    this docstring names.
-
-    Which mappings the constructor builds, in what order, and whether a merge
-    has flattened a mapping before the constructor builds it depend on
-    PyYAML's internal order, which this docstring does not describe, so a
-    document with merges, aliases or anchors may load or be refused depending
-    on that order. The self-tests record the measured outcome of each form
-    they hold, and hold a case for each form named here. How GitHub Actions
-    reads any of these documents is not checked.
+    They record that `x: {=: a}`, `x: {!!value a: b}`, `a: &x {b: *x}` and
+    `a: &x {b: {<<: *x}}` are refused, and that loading a mapping nested 300
+    deep, `x: {a: {a: ... 1}}`, raises RecursionError, while
+    `x: {<<: {=: a}}`, `a: &x {b: [*x]}`, `a: &x {<<: *x}`,
+    `a: &x {b: 1, <<: *x}` and `a: &x {<<: [*x]}` load. They record further
+    documents with merges, aliases and anchors, some refused and some loaded.
+    How GitHub Actions reads any of these documents is not checked.
     """
 
 
@@ -389,7 +380,7 @@ def scan_tree(root: Path, floor: int, probe_scripts) -> tuple[list[str], int]:
                 findings.append(f"{rel}: holds {name}, which YAML 1.1 and 1.2 read differently")
         try:
             doc = yaml.load(text, Loader=UniqueKeyLoader)
-        except yaml.YAMLError as exc:
+        except (yaml.YAMLError, RecursionError) as exc:
             findings.append(f"{rel}: cannot be parsed as YAML ({str(exc).splitlines()[0]})")
             continue
         found: list[str] = []
@@ -634,6 +625,11 @@ RUN_CASES = [
     ("./tools/x.pyw", True),
     ("./tools/x.PY", True),
     ("./tools/x.PYZ", True),
+    # Rule 3 reads these names in any letter case, so it also refuses an
+    # expression that names a property PY, Py or PYW.
+    ('echo "${{ env.PY }}"', True),
+    ('echo "${{ matrix.Py }}"', True),
+    ('echo "${{ vars.PYW }}"', True),
     # Rule 4 drops a $ directly before either quote, so p$"y"thon3 and
     # p$'y'thon3 read as python3, and keeps any other $, so py$thon3 does not.
     ('p$"y"thon3 -c \'x\'', True),
@@ -780,6 +776,8 @@ def self_test() -> list[str]:
              "l: [{<<: &b {=: a}}]\nn: *b\n" + head, "tag:yaml.org,2002:value"),
             ("a mapping with a merge and an override in a sequence in a mapping, merged by a later key",
              "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
+            ("a mapping nested 300 deep", "x: " + "{a: " * 300 + "1" + "}" * 300 + "\n" + head,
+             "cannot be parsed as YAML (maximum recursion depth"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -808,7 +806,7 @@ def self_test() -> list[str]:
             ("a mapping with a merge and an override, merged by 2 mappings and never built",
              "m: {<<: &b {<<: {p: 1}, p: 2}}\no: {<<: *b}\n" + head),
             ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
-            ("keys on and 'on'", "'on': x\n" + head),
+            ("keys on and 'on'", "'on': x\n" + head, {True: "push", "on": "x"}),
             ("an !!omap with a repeated key", "x: !!omap [{a: 1}, {a: 2}]\n" + head),
             ("a !!pairs with a repeated key", "x: !!pairs [{a: 1}, {a: 2}]\n" + head),
             ("a plain = key in a mapping merged before it is built", "m: {<<: &b {=: a}}\nn: *b\n" + head,
