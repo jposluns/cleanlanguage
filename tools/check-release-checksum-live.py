@@ -1196,7 +1196,8 @@ def download_block(version: str, checksum: str) -> str:
     # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
     # (exit 3), never as the generator's own exit code.
     except (Exception, SystemExit) as error:
-        raise LookupError(f"tools/build-site.py could not render the verify page's download block: {error}") from error
+        raise LookupError(
+            f"tools/build-site.py could not render the verify page's download block: {error!r}") from error
 
 
 def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
@@ -1262,7 +1263,7 @@ def rendered_verify_page(version: str, checksum: str) -> bytes:
     # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
     # (exit 3), never as the generator's own exit code.
     except (Exception, SystemExit) as error:
-        raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
+        raise LookupError(f"tools/build-site.py could not render the verify page: {error!r}") from error
 
 
 def staged_draft() -> str | None:

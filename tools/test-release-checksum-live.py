@@ -5002,7 +5002,7 @@ class WholePageTest(unittest.TestCase):
                 code, output = self.gate_run()
                 self.assertEqual(code, 3, output)
                 # The checksum comes from the page, not release.json, which holds SUM.
-                self.assertIn(f"tools/build-site.py could not render the verify page: the checksum "
+                self.assertIn(f"tools/build-site.py could not render the verify page: BuildError('the checksum "
                               f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
                               output)
                 self.assertNotIn("release.json", output)
@@ -5107,12 +5107,14 @@ class WholePageTest(unittest.TestCase):
 
 
 def load_faults(defined: str, renamed: str) -> list[tuple[str, object, type]]:
-    """6 of the ways tools/build-site.py can fail to load, each a fault on 1 copy of it with the exception the load
-    raises: the file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition
-    defined renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
-    comparing it with the source (an unchecked hash-based file). A gate that always reads the source gives that
-    exception; one that runs a cached file in its place does not. Root reads a file whatever its mode, so under root the
-    2 mode-000 faults skip their case instead."""
+    """6 faults, each on its own copy of tools/build-site.py and each with the exception that the gate's LookupError
+    carries as its cause: the file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the
+    definition that starts with ``defined`` changed to start with ``renamed``, and a syntax error beside a cached file
+    of the unbroken source that the normal loader runs without comparing it with the source (an unchecked hash-based
+    file). For each fault but the renaming, that cause is the exception the load raises; the renamed copy loads, and the
+    cause is the AttributeError that the render call raises when it reads the missing name. Beside a cached file, a gate
+    that always reads the source gives that cause, and one that runs the cached file in its place does not. Root reads a
+    file whatever its mode, so under root the 2 mode-000 faults skip their case instead."""
     def missing(path: Path) -> None:
         path.unlink()
 
@@ -5148,9 +5150,9 @@ def load_faults(defined: str, renamed: str) -> list[tuple[str, object, type]]:
 
 
 class GeneratorLoadTest(unittest.TestCase):
-    """A tools/build-site.py that fails to load in each way load_faults() gives is a generator that cannot render,
-    which the gate raises as LookupError and main() refuses with exit 3; the gate never runs a cached file in place
-    of the source. No case reads the network."""
+    """A tools/build-site.py with each fault that load_faults() gives is a generator that cannot render, which the gate
+    raises as LookupError and main() refuses with exit 3; the gate never runs a cached file in place of the source. No
+    case reads the network."""
 
     GENERATOR = Path(__file__).resolve().parent / "build-site.py"
 
@@ -5170,15 +5172,18 @@ class GeneratorLoadTest(unittest.TestCase):
 
     def test_a_generator_that_exits_while_it_loads_cannot_render(self):
         for render in (gate.download_block, gate.rendered_verify_page):
-            for code in (0, 1):
-                with self.subTest(f"{render.__name__}: SystemExit({code}) at import"), \
-                        tempfile.TemporaryDirectory() as tmp:
+            for code, statement, shown in ((0, "raise SystemExit(0)", "SystemExit(0)"),
+                                           (1, "raise SystemExit(1)", "SystemExit(1)"),
+                                           (None, "raise SystemExit", "SystemExit()")):
+                with self.subTest(f"{render.__name__}: {shown} at import"), tempfile.TemporaryDirectory() as tmp:
                     path = Path(tmp) / "build-site.py"
-                    path.write_bytes(self.GENERATOR.read_bytes() + f"\nraise SystemExit({code})\n".encode("ascii"))
+                    path.write_bytes(self.GENERATOR.read_bytes() + f"\n{statement}\n".encode("ascii"))
                     with mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
                         render(CURRENT, ZIP_SUM)
                     self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
                                     raised.exception)
+                    # The message names the exception, so that the exit is never shown as a bare code or as nothing.
+                    self.assertTrue(str(raised.exception).endswith(f": {shown}"), raised.exception)
                     self.assertIsInstance(raised.exception.__cause__, SystemExit)
                     self.assertEqual(raised.exception.__cause__.code, code)
 
