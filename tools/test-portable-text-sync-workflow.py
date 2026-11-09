@@ -25,10 +25,17 @@ workflow together. It also fails unless that job carries no if: or
 continue-on-error and its steps are a list of mappings, none of which carries
 an if:, continue-on-error or timeout-minutes, so any condition on the job or
 a step, a failure that does not fail the job, or a time limit on a step
-fails. It checks no other key of that job or its steps. The dry run
-does not run this test: workflow-isolation.yml does, with no filter, so a
-pull request that adds a filter to the dry run which its own changed files
-fall outside still runs it.
+fails. Its mutation tests find each line they edit by that line's exact
+text, leading spaces included, so the suite also fails unless the text of
+each of these 7 lines of that workflow is in it as written: "pull_request:",
+"- main", "jobs:", "runs-on: ubuntu-latest", "timeout-minutes: 30", the
+"steps:" line straight after it, and "- name: Run the release dry run". A
+rewrite that removes that text fails the suite, even one that GitHub Actions
+reads the same way, such as "pull_request: ~". Apart from those lines,
+the test checks no other key of that job or its steps. The dry run does not
+run this test: workflow-isolation.yml does, with no filter, so a pull request
+that adds a filter to the dry run which its own changed files fall outside
+still runs it.
 
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
