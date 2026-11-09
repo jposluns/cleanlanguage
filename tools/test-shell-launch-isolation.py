@@ -9,12 +9,13 @@ names in a line the rules read, until no new script is found.
 Threat model: honest drift, as in the workflow scan. An author who sets out to
 run python without -I can also edit this scan.
 
-The rules, applied to each line of a covered script except its comment lines,
-with every backslash-newline removed (a finding names the first line of the
-joined line). A comment line is one whose first character other than a space
-or tab is #, inside a here-document or not; the rules also read a comment
-after a command. A comment, on a line of its own or after a command, ends at
-its line even when it ends in a backslash, as in bash, so it joins no line:
+The rules, applied to each line of a covered script that the scan reads, with
+the joins this docstring names (a finding names the first line of the joined
+line). Outside a here-document body, a line that ends in a backslash joins the
+next, and a comment line, one whose first character other than a space or tab
+is #, is not read; the rules also read a comment after a command. A comment,
+on a line of its own or after a command, ends at its line even when it ends
+in a backslash, as in bash, so it joins no line:
 
 1. Every python command name, a lower-case `python` with any digits and dots
    after it, no dot straight before it and no letter, digit, underscore or
@@ -38,27 +39,35 @@ its line even when it ends in a backslash, as in bash, so it joins no line:
    space (`LC_X="a b" tools/x.py`). A NAME=value word with no command word
    after it is an assignment, so `gate=tools/x.py` is not a finding.
 
-The body of a here-document is read as shell text, line by line, except its
-comment lines, unless it is the first here-document that its opening line
-opens after a `python3 -I` launch with `-` as the program, so that the body
-is the program that launch reads; the opening line is always read, and the
-line that ends a here-document, its delimiter alone, is not. A here-document
-operator or a `python3 -I -` launch inside quotes or a comment is text: it
-opens no here-document and skips no body. When a line opens no here-document
-and leaves a single quote open, and that quote follows `python3 -I` options
-ending in `-c`, the lines up to the next one holding a single quote are the
-program of that -c launch and are not read; of that next line, only the text
-after its first single quote is read. No other line is skipped. Whether a
-quote is left open follows the shell's rules for single quotes, double
-quotes, $'...', a backslash, a $(...) inside double quotes, and a # that
-starts a comment, so an apostrophe inside double quotes opens nothing.
+A here-document body is read as bash reads it. Bash expands the body of a
+here-document whose delimiter is unquoted (<<X): $(...) and backquotes run,
+a # in the body is text, not a comment, and a backslash-newline is removed.
+So every line of such a body is read, # lines included, and a line of it that
+ends in an odd number of backslashes joins the next, as in bash, before the
+scan looks for the delimiter. A quoted delimiter (<<'X' or <<"X") leaves the
+body literal, so each line of it is read as it stands, # lines included, with
+no join, unless it is the first here-document that its opening line opens
+after a `python3 -I` launch with `-` as the program, so that the body is the
+program that launch reads and is not read. An unquoted body is never skipped.
+The opening line is always read, and the line that ends a here-document,
+its delimiter alone after any join, is not. A here-document operator or
+a `python3 -I -` launch inside quotes or a comment is text: it opens no
+here-document and skips no body. When a line opens no here-document and leaves
+a single quote open, and that quote follows `python3 -I` options ending in
+`-c`, the lines up to the next one holding a single quote are the program of
+that -c launch and are not read; of that next line, only the text after its
+first single quote is read. No other line is skipped. Whether a quote is left
+open follows the shell's rules for single quotes, double quotes, $'...', a
+backslash, a $(...) inside double quotes, and a # that starts a comment, so an
+apostrophe inside double quotes opens nothing.
 
-EXCEPTIONS names each line that breaks a rule on purpose, with its file, the
-pattern the whole line must match, the here-documents it may sit in (none
-means outside any here-document), and the reason. An exception that matches
-no line is a finding, so the table cannot keep an entry for a line that is
-gone. EXPECTED_SCRIPTS names the scripts the discovery must find, so a change
-that stops the discovery from reaching one is a finding.
+EXCEPTIONS names each line that breaks a rule on purpose, with its file,
+the pattern the whole line must match, the stripped opening lines of the
+here-documents with a quoted delimiter that it may sit in (none means outside
+any here-document), and the reason. An exception that matches no line is
+a finding, so the table cannot keep an entry for a line that is gone.
+EXPECTED_SCRIPTS names the scripts the discovery must find, so a change that
+stops the discovery from reaching one is a finding.
 
 Residuals: the scan reads shell, an open grammar, as text, to catch honest
 drift. It cannot be complete: it can miss or misread forms that these rules
@@ -72,22 +81,27 @@ timeout) or after a launcher option that takes more than 1 argument word, a
 .py path after a redirection word that holds a space (`2> "a b" tools/x.py`)
 or after a NAME=value word whose value holds a space outside 1 quoted string,
 a .py path written straight after a case pattern's ) with no space or tab
-between, a here-document that a later command on the line of a `python3 -I -`
-launch opens, a line after one that ends in an escaped backslash (`echo \\`),
+between, a here-document with a quoted delimiter that a later command on
+the line of a `python3 -I -` launch opens, a `python` word or a .py path
+split by a backslash-newline in a body with a quoted delimiter that a
+shell runs (`bash <<'X'`), which the scan does not join, a line outside a
+here-document body after one that ends in an escaped backslash (`echo \\`),
 which the scan joins to it, a -c program that holds a single quote (as
 `'\''`), a case pattern inside $(...) that misleads the quote reading, text
 built at run time, Python launched from Python (such as subprocess with
 sys.executable), and a script that a covered script reaches only through a
 variable or a path the discovery does not match. Known misreadings, each a
-false finding, include a `python` word after a slash or a hyphen in a path or
-URL (`github.com/python/cpython`), a `python` straight after a letter in a
-word that names no interpreter (`cpython`), a `python` word in a comment
-after a command (`true # see python3 docs`), a .py path inside a string after
-a ) and a space (`echo "$(date) tools/x.py"`) or after a word such as then
-(`echo "then tools/x.py runs"`), the first .py path in a bash array
+false finding, include a `python` word after a slash or a hyphen in a path
+or URL (`github.com/python/cpython`), a `python` straight after a letter in
+a word that names no interpreter (`cpython`), a `python` word in a comment
+after a command (`true # see python3 docs`), a .py path inside a string
+after a ) and a space (`echo "$(date) tools/x.py"`) or after a word such as
+then (`echo "then tools/x.py runs"`), the first .py path in a bash array
 (`files=(tools/x.py tools/y.py)`), a .py argument after a closing backquote
-or after `&>` (`true &>f x.py`), and a line inside a quoted string that spans
-lines, which is read as shell.
+or after `&>` (`true &>f x.py`), a `python` word or a .py path outside $(...)
+and backquotes in a here-document body that no shell runs, such as a #! line
+written to a file, and a line inside a quoted string that spans lines, which
+is read as shell.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -119,7 +133,7 @@ EXPECTED_SCRIPTS = (
     "tools/test-version-selectors.sh",
 )
 
-# (file, pattern of the whole stripped line, here-documents it may sit in, reason)
+# (file, pattern of the whole stripped line, opening lines of the quoted here-documents it may sit in, reason)
 EXCEPTIONS = (
     ("tools/pages-build.sh",
      r'echo "pages-build: Python 3\.11 or later is required \(tomllib\); found \$\(python3 --version 2>&1\)\." >&2',
@@ -127,7 +141,8 @@ EXCEPTIONS = (
     ("tools/pages-build.sh", r'echo "pages-build: \$\(python3 --version 2>&1\)"', (),
      "python3 --version prints the interpreter version and runs no script"),
     ("tools/test-portable-text-release-date.sh",
-     r'(?:.* )?tools/skill-release-date(?:-client)?\.py (?:--)?baseline', ("PROBES", "CLIENTPROBES"),
+     r'(?:.* )?tools/skill-release-date(?:-client)?\.py (?:--)?baseline',
+     ("""cat > "${launch_probes}" <<'PROBES'""", """cat > "${client_probes}" <<'CLIENTPROBES'"""),
      "launch forms written to a fixture file that the test appends to a copy of the sync gate and expects "
      "its mention check to refuse; the shell does not run them"),
     ("tools/test-version-selectors.sh",
@@ -228,10 +243,15 @@ def quote_state(line: str) -> tuple[list[tuple[str, int]], int | None]:
     return stack, None
 
 
+def ends_in_join(line: str) -> bool:
+    """Return whether an unquoted here-document line ends in a backslash that escapes its newline."""
+    return (len(line) - len(line.rstrip("\\"))) % 2 == 1
+
+
 def script_lines(text: str):
-    """Yield (line number, line, here-document delimiter or None) for each line read as shell."""
+    """Yield (line number, line, None or (here-document opening line, delimiter quoted)) for each line read."""
     lines = text.split("\n")
-    heredocs: list[tuple[str, bool, bool]] = []
+    heredocs: list[tuple[str, bool, bool, bool, str]] = []
     in_program = False
     i = 0
     while i < len(lines):
@@ -239,11 +259,16 @@ def script_lines(text: str):
         number = i + 1
         i += 1
         if heredocs:
-            delim, strip_tabs, skip = heredocs[0]
+            delim, strip_tabs, quoted, skip, opener = heredocs[0]
+            # Bash expands an unquoted body: it joins each backslash-newline before it looks for
+            # the delimiter, and a # in the body starts no comment, so every line is read.
+            while not quoted and ends_in_join(line) and i < len(lines):
+                line = line[:-1] + lines[i]
+                i += 1
             if (line.lstrip("\t") if strip_tabs else line) == delim:
                 heredocs.pop(0)
-            elif not skip and not line.lstrip(" \t").startswith("#"):
-                yield number, line, delim
+            elif not skip:
+                yield number, line, (opener, quoted)
             continue
         resumed = in_program
         if in_program:
@@ -264,7 +289,9 @@ def script_lines(text: str):
         openers = [m for m in HEREDOC.finditer(shell_text) if outside_quotes(shell_text, m.start())]
         stdin = next((m for m in STDIN_PROGRAM.finditer(shell_text) if outside_quotes(shell_text, m.start())), None)
         first = next((m for m in openers if stdin and m.start() > stdin.start()), None)
-        heredocs += [(m.group(3), m.group(1) == "-", m is first) for m in openers]
+        # Only a quoted body is literal, so only a quoted body can be skipped as the program.
+        heredocs += [(m.group(3), m.group(1) == "-", bool(m.group(2)), m is first and bool(m.group(2)),
+                      shell_text.strip()) for m in openers]
         quote = open_single_quote(shell_text)
         if not openers and quote is not None and C_PROGRAM.search(shell_text[:quote]):
             in_program = True
@@ -323,8 +350,9 @@ def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS) -> t
             if not reasons:
                 continue
             excused = False
-            for n, (path, pattern, heredocs, _) in enumerate(exceptions):
-                if path == rel and re.fullmatch(pattern, line.strip()) and (heredoc in heredocs if heredocs else heredoc is None):
+            for n, (path, pattern, openers, _) in enumerate(exceptions):
+                inside = heredoc is not None and heredoc[1] and heredoc[0] in openers
+                if path == rel and re.fullmatch(pattern, line.strip()) and (inside if openers else heredoc is None):
                     used[n] = excused = True
             if not excused:
                 findings += [f"{rel}:{number}: {reason}: {line.strip()[:100]}" for reason in reasons]
@@ -424,6 +452,15 @@ SCRIPT_CASES = [
     ("# note \\\ntools/x.py\n", [(2, "a .py")]),
     ("echo x # note \\\ntools/x.py\n", [(2, "a .py")]),
     ("python3 -I \\\n  x.py # note \\\npython3 y.py\n", [(3, "python")]),
+    ("python3 -I - <<EOF\nprint(\"$(python3 tools/x.py)\")\nEOF\n", [(2, "python")]),
+    ("python3 -I - <<EOF\nprint(\"`tools/x.py`\")\nEOF\n", [(2, "a .py")]),
+    ("python3 -I - <<'EOF'\nprint(\"$(python3 tools/x.py)\")\nEOF\n", []),
+    ("cat > /dev/null <<EOF\n# generated by $(python3 tools/x.py)\nEOF\n", [(2, "python")]),
+    ("cat > /dev/null <<EOF\n# generated by `tools/x.py`\nEOF\n", [(2, "a .py")]),
+    ("cat > /dev/null <<EOF\n$(pyth\\\non3 tools/x.py)\nEOF\n", [(2, "python")]),
+    ("cat > /dev/null <<'EOF'\n$(pyth\\\non3 tools/x.py)\nEOF\n", []),
+    ("cat <<EOF\nEO\\\nF\npython3 y.py\n", [(4, "python")]),
+    ("cat <<EOF\nc\\\\\nEOF\npython3 y.py\n", [(4, "python")]),
 ]
 
 
@@ -458,9 +495,15 @@ def self_test() -> list[str]:
         findings, _ = scan_tree(root, ("tools/a.sh",), exception + (("tools/b.sh", r"gone", (), "r"),))
         if not any("matches no line" in f for f in findings):
             errors.append("self-test: an exception that matches no line gave no finding")
-        findings, _ = scan_tree(root, ("tools/a.sh",), (("tools/b.sh", r"probe=\$\(python3 --version\)", ("EOF",), "r"),))
+        in_heredoc = (("tools/b.sh", r"probe=\$\(python3 --version\)", ("cat > f <<'EOF'",), "r"),)
+        findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc)
         if not any(f.startswith("tools/b.sh:2:") for f in findings):
             errors.append("self-test: an exception for a here-document excused a line outside it")
+        for opener, want in (("cat > f <<'EOF'", False), ("bash <<'EOF'", True), ("cat > f <<EOF", True)):
+            (root / "tools" / "b.sh").write_text(f"{opener}\nprobe=$(python3 --version)\nEOF\n", encoding="utf-8")
+            findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc)
+            if any(f.startswith("tools/b.sh:2:") for f in findings) != want:
+                errors.append(f"self-test: in a here-document that {opener!r} opens, the exception gave {findings!r}")
     return errors
 
 

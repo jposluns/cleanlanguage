@@ -72,10 +72,13 @@ version_of() {
 # is reported as that, never as malformed content. Every exit but 0 and 13
 # fails closed.
 # The client writes to one stream only: on exit 0 the value on stdout, and on
-# any other exit its message on stderr with nothing on stdout. Each call
-# below captures both streams, so an unavailable branch can relay the
-# line in which the client names its reason (relay_client) before its own
-# message, and a value is checked for its form before it is used.
+# any other exit its message on stderr with nothing on stdout. The first read
+# in released_of, the baseline probe and the requires-date call below capture
+# both streams, so an unavailable branch can relay the line in which the
+# client names its reason (relay_client) before its own message, and a value
+# is checked for its form before it is used. The second read in released_of,
+# for a malformed line (exit 11) or an unreadable file (exit 14), captures
+# stderr only, where the client writes its reason, and discards stdout.
 relay_client() {
   [ -z "$1" ] || printf '%s\n' "$1" >&2
 }
