@@ -17,7 +17,9 @@ site-palette.css under site/draft/assets/, beside a clean copy there and the
 clean palettes under site/, exits 1. An invalid base, a missing base, a JSON
 list and invalid JSON each exit 3. The pinned gate also reads the baseline.css
 beside the palettes, so the copies carry it, and a missing baseline.css or one
-lacking a component token exits 1.
+lacking a component token exits 1. The case named "the pinned gate as a link
+to a byte-identical copy" exits 3: the wrapper refuses a pinned gate that is
+not a regular file, even when the file the link names matches the pin.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -78,6 +80,15 @@ def drop_pin_entry(root: Path) -> None:
 
 def delete_tool(root: Path) -> None:
     (root / TOOL).unlink()
+
+
+def link_tool(root: Path) -> None:
+    """A link to a byte-identical copy of the pinned gate: the digest matches, so only the regular-file check refuses it."""
+    path = root / TOOL
+    copy = path.with_name("check_palette_copy.py")
+    shutil.copyfile(path, copy)
+    path.unlink()
+    path.symlink_to(copy.name)
 
 
 def dark_text_muted_on_bg(root: Path, palettes: str = PALETTES) -> None:
@@ -154,6 +165,7 @@ CASES = [
     ("the pinned gate with a harmless edit", edit_tool, 1),
     ("the pinned gate's pin entry removed", drop_pin_entry, 3),
     ("the pinned gate deleted", delete_tool, 3),
+    ("the pinned gate as a link to a byte-identical copy", link_tool, 3),
     ("dark --text-muted set to the dark --bg", dark_text_muted_on_bg, 1),
     ("a site-palette.css under site/assets/", plant_site_palette, 1),
     ("baseline.css missing beside the palettes", remove_baseline_css, 1),
