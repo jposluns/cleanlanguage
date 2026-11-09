@@ -180,7 +180,7 @@ PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
-SHELL_WORD = re.compile(r"(?<![\w.-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
+SHELL_WORD = re.compile(r"(?<![\w.-])(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
 C_CLUSTER = re.compile(r"(?<![\w-])-[A-Za-z]*c[A-Za-z]*(?![\w-])")
 LOCAL_USES = ("./", "../")
 
@@ -560,8 +560,10 @@ RUN_CASES = [
     ("bash -c-x", False),
     ("bash a-c", False),
     ("bash x-c", False),
-    # A shell word as the last part of a path, and a quote directly after a
-    # -c cluster.
+    # A shell word as the last part of a path, whose folders may hold a dot
+    # or a hyphen, and a quote directly after a -c cluster. These pin
+    # behaviour rather than a part of either pattern: a slash may stand
+    # directly before a shell word, and a quote directly after a cluster.
     ("./bash -c true", True),
     ("/opt/a.b/bash -c true", True),
     ("/opt/my-tools/bash -c true", True),
