@@ -25,17 +25,21 @@ workflow together. It also fails unless that job carries no if: or
 continue-on-error and its steps are a list of mappings, none of which carries
 an if:, continue-on-error or timeout-minutes, so any condition on the job or
 a step, a failure that does not fail the job, or a time limit on a step
-fails. Its mutation tests find each line they edit by that line's exact
-text, leading spaces included, so the suite also fails unless the text of
-each of these 7 lines of that workflow is in it as written: "pull_request:",
-"- main", "jobs:", "runs-on: ubuntu-latest", "timeout-minutes: 30", the
-"steps:" line straight after it, and "- name: Run the release dry run". A
-rewrite that removes that text fails the suite, even one that GitHub Actions
-reads the same way, such as "pull_request: ~". Apart from those lines,
-the test checks no other key of that job or its steps. The dry run does not
-run this test: workflow-isolation.yml does, with no filter, so a pull request
-that adds a filter to the dry run which its own changed files fall outside
-still runs it.
+fails. Each of its mutation tests edits the first place in the file that holds
+the text it looks for, leading spaces included, even inside a comment or
+partway along a line. So the suite also fails unless the text of each of these
+7 lines of that workflow is in it as written, and it needs no earlier line to
+hold that text, since such a line takes the edit: "pull_request:", "- main",
+"jobs:", "runs-on: ubuntu-latest", "timeout-minutes: 30", the "steps:" line
+straight after it, and "- name: Run the release dry run". For example, a
+comment line above "jobs:" that ends in "jobs:" fails the suite. A rewrite
+that removes that text fails the suite, even "pull_request: ~", which holds
+the same value as "pull_request:" under YAML rules; that GitHub Actions
+therefore reads it the same way is an inference, not checked. Apart from those
+lines, the test checks no other key of that job or its steps. The dry run does
+not run this test: workflow-isolation.yml does, with no filter, so a pull
+request that adds a filter to the dry run which its own changed files fall
+outside still runs it.
 
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
@@ -68,20 +72,28 @@ fail it. A merge key among the top-level keys fails the first check. How
 GitHub Actions handles merge keys is not checked.
 
 Like those of DryRunTests, the mutation tests of TriggerTests and LaunchTests
-find each line they edit by that line's exact text, leading spaces included.
-So the suite also fails unless the text of each of these 10 lines of
-portable-text-sync.yml is in it as written: "name: Portable", "on:",
-"pull_request:", "- main", "permissions:", "contents: read", "jobs:",
-"runs-on:", and the 2 lines of the step that runs this test, "shell: bash"
-and, straight after it, "run:" with the Usage line. It also fails unless the
-text of each of these 5 lines of workflow-isolation.yml is in it as written:
-"runs-on:", "steps:", and the 3 lines of the step that runs this test, its
-"- name:" line with the name in full, "shell: bash", and "run:" with the Usage
-line, each straight after the one before. Only the text quoted is needed from
-the first line of portable-text-sync.yml and from the runs-on: line of these 2
-workflows, so "runs-on: ubuntu-24.04" passes there. A rewrite that removes any
-of this text fails the suite, even one that GitHub Actions reads the same way,
-such as "pull_request: ~" or "- 'main'".
+edit the first place in the file that holds the text they look for, leading
+spaces included, even inside a comment or partway along a line. So the suite
+also fails unless the text of each of these 10 lines of portable-text-sync.yml
+is in it as written: "name: Portable", "on:", "pull_request:", "- main",
+"permissions:", "contents: read", "jobs:", "runs-on:", and the 2 lines of the
+step that runs this test, "shell: bash" and, straight after it, "run:" with
+the Usage line. It also fails unless the text of each of these 5 lines of
+workflow-isolation.yml is in it as written: "runs-on:", "steps:", and the 3
+lines of the step that runs this test, its "- name:" line with the name in
+full, "shell: bash", and "run:" with the Usage line, each straight after the
+one before. Only the text quoted is needed from the first line of
+portable-text-sync.yml and from the runs-on: line of these 2 workflows, so
+"runs-on: ubuntu-24.04" passes there. The suite also needs no earlier line in
+the file to hold any of this text, since such a line takes the edit; only
+"name: Portable", which starts its file, has no line before it. So a comment
+line of portable-text-sync.yml that ends in "reason:", which holds the text of
+"on:", or in "jobs:", above the line with that text, fails the suite, and so
+does a comment line of workflow-isolation.yml that ends in "#    steps:" above
+its steps: line. A rewrite that removes any of this text fails the suite, even
+"pull_request: ~" or "- 'main'", which hold the same values as the lines they
+replace under YAML rules; that GitHub Actions therefore reads them the same
+way is an inference, not checked.
 
 Apart from those lines, the test checks no other key of a job that runs it,
 such as needs: or continue-on-error, no condition on any other job or step of
