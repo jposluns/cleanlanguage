@@ -57,7 +57,7 @@ opening="This is the Clean Language skill, written out as rules. Apply it to the
 # printing the version on success and nothing on any failure (2>/dev/null || true
 # absorbs the extractor's error message and non-zero exit).
 version_of() {
-  python3 tools/skill-version.py "$1" 2>/dev/null || true
+  python3 -I tools/skill-version.py "$1" 2>/dev/null || true
 }
 
 # released_of FILE: print the Released date of FILE, or nothing when it has no
@@ -72,10 +72,13 @@ version_of() {
 # is reported as that, never as malformed content. Every exit but 0 and 13
 # fails closed.
 # The client writes to one stream only: on exit 0 the value on stdout, and on
-# any other exit its message on stderr with nothing on stdout. Each call
-# below captures both streams, so an unavailable branch can relay the
-# line in which the client names its reason (relay_client) before its own
-# message, and a value is checked for its form before it is used.
+# any other exit its message on stderr with nothing on stdout. The first read
+# in released_of, the baseline probe and the requires-date call below capture
+# both streams, so an unavailable branch can relay the line in which the
+# client names its reason (relay_client) before its own message, and a value
+# is checked for its form before it is used. The second read in released_of,
+# for a malformed line (exit 11) or an unreadable file (exit 14), captures
+# stderr only, where the client writes its reason, and discards stdout.
 relay_client() {
   [ -z "$1" ] || printf '%s\n' "$1" >&2
 }
@@ -194,16 +197,16 @@ if [ "${1:-}" = "--update" ]; then
       fi
     done
   fi
-  python3 tools/build-portable-text.py >/dev/null
+  python3 -I tools/build-portable-text.py >/dev/null
   python3 -I tools/build-site.py >/dev/null
   check_common || { echo "Refusing to record: the portable files failed a common check." >&2; exit 1; }
-  python3 tools/build-portable-text.py --check || { echo "Refusing to record: a generated file is out of date." >&2; exit 1; }
+  python3 -I tools/build-portable-text.py --check || { echo "Refusing to record: a generated file is out of date." >&2; exit 1; }
   printf '%s\n' "${computed}" > "${recorded_file}"
   echo "Recorded skill-source hash ${computed}. Reconcile the condensed files with the skill before committing."
   exit 0
 fi
 
-python3 tools/build-portable-text.py --check
+python3 -I tools/build-portable-text.py --check
 check_common
 
 [ -f "${recorded_file}" ] || { echo "Missing ${recorded_file}. Record with --update." >&2; exit 1; }

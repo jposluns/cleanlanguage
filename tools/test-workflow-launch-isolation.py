@@ -121,9 +121,10 @@ Residuals, named here because the scan reads text the pull request controls:
   multi-line GITHUB_ENV write, or a PATH change made by other means (for
   example `read`) can change what `python3` runs, and the scan does not
   catch it;
-- the shell scripts the workflows run, such as tools/release-dry-run.sh and
-  tools/check-portable-text-sync.sh, which launch python3 without -I in
-  places and are carried as a separate backlog row;
+- the shell scripts the workflows run, such as tools/release-dry-run.sh;
+  tools/test-shell-launch-isolation.py reads the tools/*.sh scripts among
+  them that it finds by name, and names in its residuals those it does not
+  read;
 - other launchers, such as `uv run`, pytest, pipx or an extensionless script;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;

@@ -65,7 +65,7 @@ refs_before="$(git for-each-ref | sha256sum)"
 # NUL, which the old capture-then-sed form silently stripped). The raw blob is
 # piped straight in: skill-version.py reads ALL of stdin, so git show completes
 # and can take no SIGPIPE, and the ~64KB-pipe exit-141 regression cannot recur.
-if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"; then
   fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
 fi
 patch="${version##*.}"
@@ -95,7 +95,7 @@ grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/ski
 # Version line: insert the line when HEAD carries none (the undated baseline)
 # and replace its value otherwise, keeping the two-space hard break. The
 # shared extractor then confirms the stamped value.
-python3 - "${dry_date}" <<'PYDATE'
+python3 -I - "${dry_date}" <<'PYDATE'
 import sys
 from pathlib import Path
 d = sys.argv[1]
@@ -138,7 +138,7 @@ esac
 # The plugin manifest carries the same version, and release-package.sh asserts the
 # two agree. A real release bumps both together, so the dry run must too, or it
 # would fail on a mismatch it created itself.
-python3 - "${dry_version}" <<'PYVER'
+python3 -I - "${dry_version}" <<'PYVER'
 import json, pathlib, sys
 v = sys.argv[1]
 p = pathlib.Path("cleanlanguage/.claude-plugin/plugin.json")
@@ -146,7 +146,7 @@ d = json.loads(p.read_text(encoding="utf-8"))
 d["version"] = v
 p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
 PYVER
-python3 -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/plugin.json"))["version"]; sys.exit(0 if v==sys.argv[1] else 1)' "${dry_version}" \
+python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/plugin.json"))["version"]; sys.exit(0 if v==sys.argv[1] else 1)' "${dry_version}" \
   || fail "could not set the dry-run version in cleanlanguage/.claude-plugin/plugin.json"
 GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
   git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
@@ -157,7 +157,7 @@ GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:
 # and verify pages in site-src/site.json, which the generator stamps into the
 # pages, and the same stamps in the committed pages and the sitemap. Publish
 # dates are left untouched.
-python3 - "${seed_date}" <<'PYSEED'
+python3 -I - "${seed_date}" <<'PYSEED'
 import sys, re, pathlib
 d = sys.argv[1]
 sj = pathlib.Path("site-src/site.json"); t = sj.read_text(encoding="utf-8")
@@ -213,13 +213,13 @@ esac
 #    post-release flip does,
 #    including the real checksum of the zip just built.
 checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${dry_version}.zip.sha256")"
-tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
+python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}"
 
 # The sitemap is regenerated from the restamped pages, repairing the sentinel
 # dates seeded above. set-release-links no longer edits the sitemap; the
 # generator owns it.
-python3 tools/generate-sitemap.py --write
+python3 -I tools/generate-sitemap.py --write
 
 # 3. The writer's own gate, then these gates that the site pull request
 #    also triggers: link check, page metadata, the sitemap, and the install
@@ -232,11 +232,11 @@ python3 tools/generate-sitemap.py --write
 #    request. Of that workflow's steps, only the instructions page gate runs
 #    below. check-page-metadata can only pass if the writer restamped the
 #    sentinel dates seeded above.
-tools/check-release-links.py
-python3 tools/check-page-metadata.py
-python3 tools/generate-sitemap.py
-python3 tools/check-links.py
-python3 tools/check-install-page.py
+python3 -I tools/check-release-links.py
+python3 -I tools/check-page-metadata.py
+python3 -I tools/generate-sitemap.py
+python3 -I tools/check-links.py
+python3 -I tools/check-install-page.py
 # The pages under site/ are generated from site-src/release.json and site-src/site.json,
 # which the writer above rewrote and then regenerated from; the generator's check mode
 # proves the output now matches a fresh build, and the pin is untouched.
@@ -300,7 +300,7 @@ for name in install verify; do
 done
 
 # 5. A second run must find nothing left to change.
-tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
+python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}" --check
 
 # 6. Prove nothing here moved a repository ref.
