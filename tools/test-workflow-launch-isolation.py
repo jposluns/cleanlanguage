@@ -33,12 +33,13 @@ The rule:
    file anywhere under .github, in any letter case, such as an action.yml or
    a .YML workflow, is a finding, as is a symbolic link under .github, a
    folder that cannot be listed, a file that cannot be read as UTF-8 or
-   parsed with PyYAML's safe loader, a repeated mapping key, and U+0085,
-   U+2028 or U+2029 (which YAML 1.1 and 1.2 read differently). Each workflow
-   must have a jobs mapping; a job that is not a mapping, a steps value that
-   is not a list and a step that is not a mapping are findings. A job or step
-   `uses:` value that starts with ./ or ../, a local action or a local
-   reusable workflow, is a finding, since the scan does not read it.
+   parsed with PyYAML's safe loader, a repeated key in a mapping that
+   UniqueKeyLoader checks (Residuals names the repeats it does not), and
+   U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2 read differently). Each
+   workflow must have a jobs mapping; a job that is not a mapping, a steps
+   value that is not a list and a step that is not a mapping are findings. A
+   job or step `uses:` value that starts with ./ or ../, a local action or a
+   local reusable workflow, is a finding, since the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -59,9 +60,9 @@ The rule:
    cluster is a hyphen and letters that include a lower-case c
    (`-[A-Za-z]*c[A-Za-z]*`, such as `-c`, `-ec` or `-ce`), with no letter,
    digit, underscore or hyphen directly before or after it (so `--norc` and
-   `-cache-dir` are not one). The two may stand anywhere on the line, in
-   either order: the rule does not read command position, so it refuses some
-   honest lines, such as `shfmt -ln bash -ci`, `bash tools/a.sh -c config`,
+   `-cache-dir` are not one). Both may stand anywhere on the line, in either
+   order: the rule does not read command position, so it refuses some honest
+   lines, such as `shfmt -ln bash -ci`, `bash tools/a.sh -c config`,
    `grep bash -c file` or a message that mentions `bash -c`, and an author
    rephrases such a line. These are cheap checks of the common ways to
    redirect `python3` or hide a launch; they are not complete, and Residuals
@@ -101,6 +102,9 @@ Residuals, named here because the scan reads text the pull request controls:
   author who means to run python without -I can write a line whose text the
   scan sees but misreads, and can also edit this scan, which only review
   catches;
+- a repeated mapping key that UniqueKeyLoader does not check, as its docstring
+  states, such as one in a mapping used only as a merge source
+  (`x: {<<: {p: 1, p: 2}}`);
 - a PATH or ENV assignment whose name is quoted or escaped, such as
   `export 'PATH'=x`;
 - a shell run with -c whose shell is not a shell word on the line: a shell
@@ -215,15 +219,33 @@ class UniqueKeyLoader(yaml.SafeLoader):
     """A safe loader that refuses a mapping with a repeated key.
 
     On PyYAML 6.0.3 it compares the keys of a mapping by the value each key
-    builds to, so `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a`
-    and `'a'` are repeats, while `on` and `'on'` are 2 keys (True and a
-    string). It skips merge keys (`<<`), so a mapping whose own key overrides
-    a merged key loads, as does a mapping with 2 `<<` keys. It does not apply
-    to `!!set`, whose repeated members load. It refuses a mapping that holds
-    `<<` and a key the merge also supplies when that mapping is anchored,
-    merged into another mapping and then reused as an alias, although
-    PyYAML's safe loader loads the same document. How GitHub Actions reads
-    any of these is not checked. The self-tests hold a case for each.
+    builds to, so `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a` and
+    `'a'` are repeats, while `on` and `'on'` are 2 keys (True and a string).
+    It does not apply to `!!set`, whose repeated members load. It skips merge
+    keys (`<<`), so a mapping whose own key overrides a merged key loads, as
+    does a mapping with 2 `<<` keys, even when both supply the same key.
+
+    It checks a mapping only when it builds that mapping as a value in its own
+    right, which for an anchored mapping is at its first use other than as a
+    merge source; an alias that reuses it later is not checked again. A
+    mapping used only as a merge source is never checked, so the repeated `p`
+    of `x: {<<: {p: 1, p: 2}}` and of `x: {<<: [{p: 1, p: 2}]}` loads.
+
+    A merge rewrites its source mapping in place, dropping the source's `<<`
+    keys and putting the keys they supply before its own, and a mapping merges
+    its sources before it builds its own values. So when a mapping is merged
+    before it is built, the check reads the merged keys with the mapping's own
+    and refuses any repeat among them: it refuses `m: {<<: &b {p: 1, p: 2}}`,
+    `m: {<<: &b {<<: {p: 1}, p: 2}}`, `m: {<<: &b {<<: {p: 1}, <<: {p: 2}}}`
+    and `m: {<<: &b {<<: [{p: 1}, {p: 2}]}}`, each followed by `n: *b`, and
+    `m: {a: &b {<<: {p: 1}, p: 2}, <<: *b}`, although PyYAML's safe loader
+    loads each. A merge never checks its source, so when the source is built
+    before it is merged, or is never built, a repeat that the merge leaves in
+    it is not refused: `a: &b {<<: {p: 1}, p: 2}` followed by `m: {<<: *b}`
+    and `n: *b`, and `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by
+    `o: {<<: *b}`, load. Whether such a document loads therefore depends on
+    the order of its merges and aliases. How GitHub Actions reads any of these
+    is not checked. The self-tests hold a case for each.
     """
 
 
@@ -555,6 +577,7 @@ RUN_CASES = [
     ("bash -cE true", True),
     ("bash -xec true", True),
     ("bash -cex true", True),
+    ("bash -AZazcAZaz true", True),
     ("bash --c", False),
     ("bash -c_x", False),
     ("bash -c-x", False),
@@ -574,12 +597,14 @@ RUN_CASES = [
     ("./tools/x.pyw", True),
     ("./tools/x.PY", True),
     ("./tools/x.PYZ", True),
-    # Rule 4 drops a $ directly before a quote, so p$"y"thon3 reads as
-    # python3, and keeps any other $.
+    # Rule 4 drops a $ directly before either quote, so p$"y"thon3 and
+    # p$'y'thon3 read as python3, and keeps any other $, so py$thon3 does not.
     ('p$"y"thon3 -c \'x\'', True),
+    ("p$'y'thon3 -c 'x'", True),
     ('cp a.p$"y" b', True),
     ('echo "$HOME"', False),
     ("echo $'a b'", False),
+    ("echo py$thon3", False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -698,6 +723,14 @@ def self_test() -> list[str]:
             ("keys a and 'a'", "x:\n  a: 1\n  'a': 2\n" + head, "duplicate key"),
             ("an anchored mapping with a merge and an override, merged and then reused as an alias",
              "m: {<<: &b {<<: {p: 1}, p: 2}}\nn: *b\n" + head, "duplicate key"),
+            ("a mapping with a repeated key, merged and then reused as an alias",
+             "m: {<<: &b {p: 1, p: 2}}\nn: *b\n" + head, "duplicate key"),
+            ("an anchored mapping whose 2 merge keys supply the same key, merged and then reused as an alias",
+             "m: {<<: &b {<<: {p: 1}, <<: {p: 2}}}\nn: *b\n" + head, "duplicate key"),
+            ("an anchored mapping whose merge list repeats a key, merged and then reused as an alias",
+             "m: {<<: &b {<<: [{p: 1}, {p: 2}]}}\nn: *b\n" + head, "duplicate key"),
+            ("a mapping merged by the mapping that holds it, before it is built",
+             "m: {a: &b {<<: {p: 1}, p: 2}, <<: *b}\n" + head, "duplicate key"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -718,6 +751,13 @@ def self_test() -> list[str]:
              two_jobs.replace("  b:\n    steps:", "  b:\n    defaults:\n      run:\n        shell: bash\n    steps:")),
             ("a merge with an override", "x: {<<: {p: 1}, p: 2}\n" + head),
             ("a mapping with 2 merge keys", "x: {<<: {p: 1}, <<: {q: 2}}\n" + head),
+            ("a mapping with 2 merge keys that supply the same key", "x: {<<: {p: 1}, <<: {p: 2}}\n" + head),
+            ("a repeated key in a merge source", "x: {<<: {p: 1, p: 2}}\n" + head),
+            ("a repeated key in a merge list's source", "x: {<<: [{p: 1, p: 2}]}\n" + head),
+            ("a mapping with a merge and an override, built, then merged and reused as an alias",
+             "a: &b {<<: {p: 1}, p: 2}\nm: {<<: *b}\nn: *b\n" + head),
+            ("a mapping with a merge and an override, merged by 2 mappings and never built",
+             "m: {<<: &b {<<: {p: 1}, p: 2}}\no: {<<: *b}\n" + head),
             ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
             ("keys on and 'on'", "'on': x\n" + head),
         ]
