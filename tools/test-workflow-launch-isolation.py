@@ -36,17 +36,18 @@ The rule:
    PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
    read differently). The scan loads each workflow with UniqueKeyLoader, and a
    file whose loading raises a YAML error or RecursionError is a finding.
-   UniqueKeyLoader's own code raises on 2 keys of a mapping that it builds,
-   other than merge keys (`<<`), that build to identical or equal values.
-   Every other outcome of loading with it, such as a recursive node, a key
-   that is a plain `=` or a deeply nested mapping, is PyYAML's own behaviour
-   under this loader, which its docstring does not describe or predict; the
-   self-tests record such outcomes by example, and UniqueKeyLoader's docstring
-   names them. Each workflow must have a jobs mapping; a job that is not a
-   mapping, a steps value that is not a list and a step that is not a mapping
-   are findings. A job or step `uses:` value that starts with ./ or ../, a
-   local action or a local reusable workflow, is a finding, since the scan
-   does not read it.
+   UniqueKeyLoader's mapping constructor skips merge keys (`<<`), builds each
+   other key without deep construction and before the mapping's merges are
+   flattened, raises when a key as built is identical or equal to an earlier
+   one, and returns the finished mapping rather than an empty one first. With
+   the comparison, these properties make it refuse some documents that
+   `yaml.safe_load` loads, such as a recursive node, a key that is a plain `=`
+   or a deeply nested mapping; UniqueKeyLoader's docstring describes its code
+   and names the outcomes that the self-tests record. Each workflow must have
+   a jobs mapping; a job that is not a mapping, a steps value that is not a
+   list and a step that is not a mapping are findings. A job or step `uses:`
+   value that starts with ./ or ../, a local action or a local reusable
+   workflow, is a finding, since the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -224,38 +225,57 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader refusing a repeated non-merge key in a mapping it builds.
+    """A safe loader refusing a key that matches an earlier key as built.
 
-    Its own code is the mapping constructor `_construct_mapping`. When it is
-    called to build a mapping, it builds each key other than a merge key
-    (`<<`), raises a ConstructorError when a key is identical or equal to an
-    earlier one, and otherwise has the safe loader build the mapping. The scan
-    reports that error as a file that cannot be parsed. Every other outcome of
-    loading with UniqueKeyLoader, including recursive nodes, keys that are a
-    plain `=` or are tagged `!!value`, deep nesting, and the interaction of
-    merges, aliases and anchors, is PyYAML's own behaviour under this loader,
-    which this docstring does not describe or predict.
+    Its own code is `_construct_mapping`, registered as the constructor for
+    the plain mapping tag, tag:yaml.org,2002:map, and for no other tag. Called
+    on a mapping node, it skips each key whose tag is tag:yaml.org,2002:merge
+    (`<<`). It builds each other key with
+    `loader.construct_object(key_node, deep=deep)`, where `deep` keeps its
+    default of false because the loader passes only the node, so without deep
+    construction, and before the safe loader flattens the node's merges. It
+    compares each built key with the earlier ones by `key in keys`, which
+    matches a key that is identical or equal to one of them, and raises a
+    ConstructorError on a match. Then it calls
+    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)` and returns
+    the finished mapping that call builds, never an empty mapping first. The
+    scan reports the ConstructorError, like any YAML error, as a file that
+    cannot be parsed.
 
-    The self-tests record outcomes measured on PyYAML 6.0.3 and Python 3.14.4
-    by example, and hold a case for each form named here. They record that
-    these keys are refused as repeats: `1` and `1.0`, `true` and `yes`, `~`
-    and `null`, `a` and `'a'`, and 2 `.nan` keys; and that `on` and `'on'`
-    load as 2 keys, True and a string. They record that a merge with an
-    override, `x: {<<: {p: 1}, p: 2}`, 2 `<<` keys,
+    These properties, with the comparison, make UniqueKeyLoader refuse some
+    documents that `yaml.safe_load` loads. Because it returns a finished
+    mapping rather than an empty one that is filled later, a mapping it builds
+    is not available to an alias until it is finished, and a mapping nested in
+    it is built before it returns. So a mapping that is reached again while it
+    is being built is refused as a recursive node, as in `a: &x {b: *x}` and
+    `a: &x {b: {<<: *x}}`, and loading a mapping nested 300 deep,
+    `x: {a: {a: ... 1}}`, raises RecursionError. Because it builds a key
+    before the merges are flattened, a key that is a plain `=` or is tagged
+    `!!value`, as in `x: {=: a}` and `x: {!!value a: b}`, is refused with a
+    ConstructorError that names the tag tag:yaml.org,2002:value, and so is
+    `l: [{<<: &b {=: a}}]` followed by `n: *b`. Because it builds a key
+    without deep construction, a key that is a sequence is still empty when it
+    is compared, so `x: {? [a]: 1, ? [b]: 2}` is refused as `duplicate key []`
+    although its keys are neither identical nor equal; `yaml.safe_load`
+    refuses that document too, as an unhashable key. The comparison also
+    refuses an anchored mapping holding `<<` that is merged and then reused as
+    an alias, such as `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b`,
+    for a repeated `p`, although that document is valid YAML and
+    `yaml.safe_load` loads it.
+
+    The self-tests record these outcomes, measured on PyYAML 6.0.3 and Python
+    3.14.4, and hold a case for each document named here. They record that the
+    keys `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a` and `'a'`
+    are refused as equal, and 2 `.nan` keys as identical; that `on` and `'on'`
+    load as 2 keys, True and a string, which are neither identical nor equal;
+    and that a merge with an override, `x: {<<: {p: 1}, p: 2}`, 2 `<<` keys,
     `x: {<<: {p: 1}, <<: {p: 2}}`, a repeated key in a merge source,
     `x: {<<: {p: 1, p: 2}}`, and a repeated member or key in a `!!set`,
-    `!!omap` or `!!pairs` load. They record that
-    `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b`, an anchored mapping
-    holding `<<` that is merged and then reused as an alias, is refused for a
-    repeated `p`, although that document is valid YAML.
-
-    They record that `x: {=: a}`, `x: {!!value a: b}`, `a: &x {b: *x}` and
-    `a: &x {b: {<<: *x}}` are refused, and that loading a mapping nested 300
-    deep, `x: {a: {a: ... 1}}`, raises RecursionError, while
-    `x: {<<: {=: a}}`, `a: &x {b: [*x]}`, `a: &x {<<: *x}`,
-    `a: &x {b: 1, <<: *x}` and `a: &x {<<: [*x]}` load. They record further
-    documents with merges, aliases and anchors, some refused and some loaded.
-    How GitHub Actions reads any of these documents is not checked.
+    `!!omap` or `!!pairs` load. They record that `x: {<<: {=: a}}`,
+    `a: &x {b: [*x]}`, `a: &x {<<: *x}`, `a: &x {b: 1, <<: *x}` and
+    `a: &x {<<: [*x]}` load, and further documents with merges, aliases and
+    anchors, some refused and some loaded. How GitHub Actions reads any of
+    these documents is not checked.
     """
 
 
@@ -767,6 +787,10 @@ def self_test() -> list[str]:
             ("keys .nan and .nan", "x:\n  .nan: a\n  .nan: b\n" + head, "duplicate key"),
             ("a plain = key", "x:\n  =: a\n" + head, "tag:yaml.org,2002:value"),
             ("a key tagged !!value", "x:\n  !!value a: b\n" + head, "tag:yaml.org,2002:value"),
+            ("a plain = key in a flow mapping", "x: {=: a}\n" + head, "tag:yaml.org,2002:value"),
+            ("a key tagged !!value in a flow mapping", "x: {!!value a: b}\n" + head, "tag:yaml.org,2002:value"),
+            ("2 sequence keys, compared before they are filled", "x: {? [a]: 1, ? [b]: 2}\n" + head,
+             "duplicate key []"),
             ("a mapping that holds an alias to itself", "a: &x {b: *x}\n" + head, "recursive node"),
             ("a mapping that merges its holder into one of its values", "a: &x {b: {<<: *x}}\n" + head,
              "recursive node"),
