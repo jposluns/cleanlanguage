@@ -3,27 +3,30 @@
 
 Each case copies the gate and every HTML page and SVG file under site/ into a
 temporary repository (under $TMPDIR), applies 1 fault to 1 file, runs the gate
-there as a separate process and asserts its exit code (and, for the switch
-rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases named I1 to I7,
-I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
-N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
-1 otherwise, naming each failing case. Two further cases run the gate under a
-faked Python version tuple, 1 below and 1 above its supported set, with the 17
-entry points that the comment above ``VERSION_PROBE`` names replaced by a
-function that exits 97, and assert exit 3, no stdout and 1 stderr line naming
-the supported version and the faked one, so a guard placed after a result is
-printed fails them. The probe replaces these 17 attributes (14 of modules, 3 of
-the class pathlib.Path) with a function that writes 1 line to stderr if it can
-and then exits 97, so a version guard placed after the point where the gate,
-directly or inside another function, looks up one of these attributes and calls
-it, fails both cases. The probe installs the trap by rebinding these attributes
-in the gate's own process, to catch a version guard placed too late by mistake.
-It makes no claim about a call made in any other process, about a gate written
-to stop the trap (for example by rebinding os._exit or changing the trap), or
+there as a separate process and asserts its exit code. A case that expects exit
+1 also requires the gate's refusal heading on stdout, because an uncaught
+exception also ends the gate with exit 1, and some cases also require a text
+that the refusal must hold (for the switch rules in ``SWITCH_RULES``, the
+switch's place). The cases named I1 to I7, I2 and I2B are the inline-code
+mutants of the PR 206 review, and the cases named N1, N2 and N4 are the probes
+of its first verification round. Exit 0 when every case passes; 1 otherwise,
+naming each failing case. Two further cases run the gate under a faked Python
+version tuple, 1 below and 1 above its supported set, with the 17 entry points
+that the comment above ``VERSION_PROBE`` names replaced by a function that
+exits 97, and assert exit 3, no stdout and 1 stderr line naming the supported
+version and the faked one, so a guard placed after a result is printed fails
+them. The probe replaces these 17 attributes (14 of modules, 3 of the class
+pathlib.Path) with a function that writes 1 line to stderr if it can and then
+exits 97, so a version guard placed after the point where the gate, directly or
+inside another function, looks up one of these attributes and calls it, fails
+both cases. The probe installs the trap by rebinding these attributes in the
+gate's own process, to catch a version guard placed too late by mistake. It
+makes no claim about a call made in any other process, about a gate written to
+stop the trap (for example by rebinding os._exit or changing the trap), or
 about any other file access. Two more cases each put 1 read, through
 ``os.open`` or through ``io.FileIO``, before the version check in the gate's
-main() and assert that the probe stops it with exit 97.
-SUPPORTED_PYTHONS in the gate must equal the one here exactly.
+main() and assert that the probe stops it with exit 97. SUPPORTED_PYTHONS in
+the gate must equal the one here exactly.
 """
 
 from __future__ import annotations
@@ -170,6 +173,9 @@ def remove_pages(root: Path) -> None:
 
 
 JSON_LD = '<script type="application/ld+json">{"@context": "https://schema.org"}</script>'
+# The heading the gate prints before its refusals. An uncaught exception also ends the gate with exit 1, so every case
+# that expects exit 1 also requires this heading on stdout. A case may add a 4th item: text its refusal must also hold.
+REFUSED = "Inline code found ("
 
 CASES = [
     ("the committed tree", None, 0),
@@ -320,13 +326,17 @@ CASES = [
     ("a protocol-relative script on a page", before_main_end(LICENSE, '<script src="//example.com/x.js"></script>'), 1),
     ("a backslash script path on a page", before_main_end(LICENSE, '<script src="/\\example.com/x.js"></script>'), 1),
     ("a relative script path on a page", before_main_end(LICENSE, '<script src="js/x.js"></script>'), 1),
-    ("a tab inside a script path on a page", before_main_end(LICENSE, '<script src="/\t/example.com/x.js"></script>'), 1),
+    ("a tab inside a script path on a page", before_main_end(LICENSE, '<script src="/\t/example.com/x.js"></script>'), 1,
+        "loads '/\\t/example.com/x.js', which is not a same-origin path"),
     ("a newline inside a script path on a page",
-        before_main_end(LICENSE, '<script src="/\n/example.com/x.js"></script>'), 1),
+        before_main_end(LICENSE, '<script src="/\n/example.com/x.js"></script>'), 1,
+        "loads '/\\n/example.com/x.js', which is not a same-origin path"),
     ("an encoded tab inside a script path on a page",
-        before_main_end(LICENSE, '<script src="/&#9;/example.com/x.js"></script>'), 1),
-    ("an entity-encoded protocol-relative script on a page",
-        before_main_end(LICENSE, '<script src="&#47;&#47;example.com/x.js"></script>'), 1),
+        before_main_end(LICENSE, '<script src="/&#9;/example.com/x.js"></script>'), 1,
+        "loads '/\\t/example.com/x.js', which is not a same-origin path"),
+    ("a script path whose second slash is entity-encoded on a page",
+        before_main_end(LICENSE, '<script src="/&#47;example.com/x.js"></script>'), 1,
+        "loads '//example.com/x.js', which is not a same-origin path"),
     ("a script from another origin inside noscript on a page",
         before_main_end(DEMO, '<noscript><script src="https://example.com/x.js"></script></noscript>'), 1),
     ("a script from another origin on the 404 page",
@@ -385,14 +395,16 @@ def main() -> int:
         failures.append("SCHEME_SWITCH in tools/check-inline-code.py is not the 7.33 switch of the reference pages")
     if (REPO_ROOT / INSTALL).read_text(encoding="utf-8").count(switch) != 1:
         failures.append(f"{INSTALL} does not carry the switch exactly once")
-    for name, fault, expected, says in [(*case, "") for case in CASES] + [(*rule, 1, PLACE) for rule in SWITCH_RULES]:
+    for name, fault, expected, *says in CASES + [(*rule, 1, PLACE) for rule in SWITCH_RULES]:
+        needles = ([REFUSED] if expected == 1 else []) + says
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            if result.returncode != expected or says not in result.stdout:
-                failures.append(f"{name}: exit {result.returncode}, expected {expected}{' with ' + repr(says) if says else ''}: "
+            if result.returncode != expected or not all(needle in result.stdout for needle in needles):
+                failures.append(f"{name}: exit {result.returncode}, expected {expected}"
+                                f"{' with ' + ' and '.join(map(repr, needles)) if needles else ''}: "
                                 f"{(result.stdout + result.stderr).strip()[:300]}")
     if load_gate().SUPPORTED_PYTHONS != SUPPORTED_PYTHONS:
         failures.append(f"SUPPORTED_PYTHONS in tools/check-inline-code.py is not exactly {SUPPORTED_PYTHONS}")
