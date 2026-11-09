@@ -1,22 +1,59 @@
 #!/usr/bin/env python3
-"""Tests that .github/workflows/portable-text-sync.yml carries no path filter on either trigger.
+"""Tests the triggers of 3 workflows, the steps that run this test, and the dry run's limits and conditions.
 
-The steps of that workflow read files across the repository, and a path list
-cannot be kept complete against those reads, so the workflow runs on every
-pull request and every push to main (row 119). This test fails if a paths or
-paths-ignore filter comes back under either trigger.
+The steps of .github/workflows/portable-text-sync.yml read files across the
+repository, and a path list cannot be kept complete against those reads, so
+the workflow runs on every pull request and every push to main (row 119).
+This test fails if a paths or paths-ignore filter comes back under either
+trigger.
 
 That workflow runs this test, and so does workflow-isolation.yml, so a pull
 request that adds a filter to that workflow which its own changed files fall
 outside still runs it.
+
+The release dry run workflow, .github/workflows/release-dry-run.yml, carries
+no paths filter for the same reason: its dry run and gates read files across
+the repository, the whole site included, and a path list cannot be kept
+complete against those reads (row 127). DryRunTests fails unless the value of
+its on: is exactly a bare pull_request trigger, a push trigger on main and a
+bare workflow_dispatch, so a key added under either trigger, such as paths,
+branches or types, fails, and so does any branches value under push other than
+[main]; the note on merge keys below applies here too. It also fails unless
+that workflow has exactly 1 job, dry-run, whose timeout-minutes is the integer
+DRY_RUN_TIMEOUT (row 117), so a removed, changed, quoted or moved time limit
+fails, and a change to the limit is made in this test and the workflow
+together. It also fails unless that job carries no if: or continue-on-error
+and its steps are a list of mappings, none of which carries an if:,
+continue-on-error or timeout-minutes, so any condition on the job or a step, a
+failure that does not fail the job, or a time limit on a step fails. Its
+mutation tests call edited(), which finds the text that an edit looks for (1
+needed line, or a needed line together with the lines next to it) at the first
+place in the file that holds it, leading spaces included, even inside a
+comment or partway along a line, and fails if that text is missing. So the
+suite also fails unless the text of each of these 7 lines of that workflow is
+in it as written: "pull_request:", "- main", "jobs:",
+"runs-on: ubuntu-latest", "timeout-minutes: 30", the "steps:" line straight
+after it, and "- name: Run the release dry run". These lines change only
+together with this test. An earlier place that holds the whole text an edit
+looks for changes where that edit lands, so what the suite then does is not
+defined and depends on the placement. A rewrite that removes one of these
+texts fails the suite, since edited() then finds it nowhere in the file, even
+"pull_request: ~", which holds the same value as "pull_request:" under YAML
+rules. That GitHub Actions reads "pull_request: ~" the same way as
+"pull_request:" is an inference, not checked. Apart from those lines, the test
+checks no other key of that job or its steps. The dry run does not run this
+test: workflow-isolation.yml does, with no filter, so a pull request that adds
+a filter to the dry run which its own changed files fall outside still runs
+it.
 
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
 return (a CRLF line end included) fails. It then parses the text with the
 UniqueKeyLoader of tools/test-workflow-launch-isolation.py, a safe PyYAML
 loader (that file says what the loader refuses), and fails unless the text
-is one YAML document that the loader accepts. From the parsed structure, it
-fails for either workflow unless:
+is 1 YAML document that the loader accepts. From the parsed structure, it
+fails for portable-text-sync.yml or workflow-isolation.yml unless all 3 of
+the following hold, and for release-dry-run.yml unless the first holds:
 
 - its top-level keys are exactly name, on, permissions and jobs, each written
   as a plain key, in that order, so a quoted "on" fails, and so do ON and yes,
@@ -24,30 +61,56 @@ fails for either workflow unless:
 - the value of on: is exactly a bare pull_request trigger and a push trigger
   on main. So a filter in any form fails, and so does any other change to the
   triggers, which is then made in this test and the workflow together;
-- exactly one step under the steps: of a job with no if: holds, apart from
+- exactly 1 step under the steps: of a job with no if: holds, apart from
   its name, exactly shell: bash and a run of the Usage line below. So a
   condition on that step or its job, continue-on-error or any other key on
   that step, and launch lines outside steps: each fail.
 
-The last two checks read the structure after PyYAML applies any merge key,
-so a merge key is not itself a key they see: they compare a merge by its
-effect on the parsed structure, and a merge fails them only if it changes
-what they compare. A merge that adds a filter, or an if: to the guard step
-or its job, fails them. One that the explicit keys override, such as a
+The last 2 checks read the structure after PyYAML applies any merge key, and
+so does DryRunTests for release-dry-run.yml, so a merge key is not itself a
+key they see: they compare a merge by its effect on the parsed structure, and
+a merge fails them only if it changes what they compare. A merge that adds a
+filter, an if: to the guard step or its job, or an if: to the dry-run job or
+one of its steps, fails them. One that the explicit keys override, such as a
 push: that merges branches: [dev] and sets branches: [main], or one that
-brings in no key, leaves the parsed structure unchanged, so they do not
-fail it. A merge key among the top-level keys fails the first check. How
-GitHub Actions handles merge keys is not checked.
+brings in no key, leaves the parsed structure unchanged, so they do not fail
+it. A merge key among the top-level keys fails the first check. How GitHub
+Actions handles merge keys is not checked.
 
-The test checks no other key of a job that runs it, such as needs: or
-continue-on-error, no condition on any other job or step, and nothing that
-GitHub Actions reads differently from PyYAML. A deliberate edit that defeats
-this test is caught only by review: a pull request can edit both workflows
-and this test, and no check inside them can stop it. Such edits include, for
-example, a filter on both workflows that the pull request's own files fall
-outside, which starts neither run of this test; a needs: on a job that is
-skipped; a step before this one that changes the files this test reads; and
-an edit to this test.
+Like those of DryRunTests, the mutation tests of TriggerTests and LaunchTests
+that call edited() find the text that an edit looks for (1 needed line, or a
+needed line together with the lines next to it) at the first place in the file
+that holds it, leading spaces included, even inside a comment or partway along
+a line, and fail if that text is missing; the others need no text. So the
+suite also fails unless the text of each of these 10 lines of
+portable-text-sync.yml is in it as written: "name: Portable", "on:",
+"pull_request:", "- main", "permissions:", "contents: read", "jobs:",
+"runs-on:", and the 2 lines of the step that runs this test, "shell: bash"
+and, straight after it, "run:" with the Usage line. It also fails unless the
+text of each of these 5 lines of workflow-isolation.yml is in it as written:
+"runs-on:", "steps:", and the 3 lines of the step that runs this test, its
+"- name:" line with the name in full, "shell: bash", and "run:" with the Usage
+line, each straight after the one before. Only the text quoted is needed from
+the first line of portable-text-sync.yml and from the runs-on: line of these 2
+workflows, so "runs-on: ubuntu-24.04" passes there. As for
+release-dry-run.yml, these lines change only together with this test, and an
+earlier place in the file that holds the whole text an edit looks for changes
+where that edit lands, so what the suite then does is not defined and depends
+on the placement. A rewrite that removes any of this text fails the suite,
+since edited() then finds it nowhere in the file, even "pull_request: ~" or
+"- 'main'", which hold the same values as the lines they replace under YAML
+rules. That GitHub Actions reads them the same way as the lines they replace
+is an inference, not checked.
+
+Apart from those lines, the test checks no other key of a job that runs it,
+such as needs: or continue-on-error, no condition on any other job or step of
+the 2 workflows that run it, and nothing that GitHub Actions reads differently
+from PyYAML. A deliberate edit that defeats this test is caught only by
+review: a pull request can edit both workflows and this test, and no check
+inside them can stop it. Such edits include, for example, a filter on both
+workflows that the pull request's own files fall outside, which starts neither
+run of this test; a needs: on a job that is skipped; a step before this one
+that changes the files this test reads; and an edit to this test.
 
 Usage:
   python3 -I tools/test-portable-text-sync-workflow.py
@@ -64,6 +127,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "portable-text-sync.yml"
 ISOLATION = REPO_ROOT / ".github" / "workflows" / "workflow-isolation.yml"
+DRY_RUN = REPO_ROOT / ".github" / "workflows" / "release-dry-run.yml"
 
 # The loader of the launch isolation scan, loaded by its explicit path; it exits if PyYAML is missing.
 ISOLATION_SCAN = REPO_ROOT / "tools" / "test-workflow-launch-isolation.py"
@@ -76,6 +140,10 @@ TOP_KEYS = ["name", "on", "permissions", "jobs"]
 TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
 LAUNCH = {"shell": "bash", "run": "python3 -I tools/test-portable-text-sync-workflow.py"}
 STEP = "        shell: bash\n        run: python3 -I tools/test-portable-text-sync-workflow.py"
+DRY_RUN_TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}, "workflow_dispatch": None}
+# The time limit of the dry-run job in minutes. The comment above timeout-minutes in release-dry-run.yml
+# says why the job has a limit and that the value is an estimate.
+DRY_RUN_TIMEOUT = 30
 
 
 def read(path: Path) -> str:
@@ -93,7 +161,7 @@ def parse(text: str) -> dict:
     """The workflow, parsed with UniqueKeyLoader.
 
     Raises ValueError for a character other than a line feed outside printable
-    ASCII, text that is not one YAML document or that the loader refuses, or
+    ASCII, text that is not 1 YAML document or that the loader refuses, or
     top-level keys other than the plain keys name, on, permissions and jobs
     in that order.
     """
@@ -125,6 +193,28 @@ def launches(doc: dict) -> int:
             count += sum(isinstance(step, dict) and {k: v for k, v in step.items() if k != "name"} == LAUNCH
                          for step in job["steps"])
     return count
+
+
+def timeout_holds(doc: dict) -> bool:
+    """Whether the jobs are exactly dry-run and its timeout-minutes is the integer DRY_RUN_TIMEOUT."""
+    jobs = doc["jobs"] if isinstance(doc["jobs"], dict) else {}
+    job = jobs.get("dry-run")
+    limit = job.get("timeout-minutes") if isinstance(job, dict) else None
+    return list(jobs) == ["dry-run"] and type(limit) is int and limit == DRY_RUN_TIMEOUT
+
+
+def unconditional(doc: dict) -> bool:
+    """Whether the dry-run job carries neither if nor continue-on-error, and none of its steps carries either.
+
+    False also if the steps are not a list of mappings, or if any step carries timeout-minutes.
+    """
+    jobs = doc["jobs"] if isinstance(doc["jobs"], dict) else {}
+    job = jobs.get("dry-run")
+    steps = job.get("steps") if isinstance(job, dict) else None
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        return False
+    return not {"if", "continue-on-error"} & set(job) and not any(
+        {"if", "continue-on-error", "timeout-minutes"} & set(step) for step in steps)
 
 
 def edited(text: str, old: str, new: str) -> str:
@@ -206,10 +296,70 @@ class LaunchTests(unittest.TestCase):
                     self.assertEqual(launches(parse(edited(text, old, new))), 0)
 
     def test_launch_lines_outside_the_steps_fail(self):
-        name = "\n      - name: Check the portable text sync triggers carry no path filter\n"
+        name = ("\n      - name: Check the portable text sync, release dry run and this workflow's triggers, "
+                "and the dry run's limits and conditions\n")
         text = edited(read(ISOLATION), name + STEP + "\n", "")
         text = edited(text, "    steps:\n", "    env:\n      GUARD: |\n" + STEP + "\n    steps:\n")
         self.assertEqual(launches(parse(text)), 0)
+
+
+class DryRunTests(unittest.TestCase):
+    PULL = "  pull_request:\n"
+    MAIN = "      - main\n"
+    LIMIT = f"    timeout-minutes: {DRY_RUN_TIMEOUT}\n"
+    RUNS_ON = "    runs-on: ubuntu-latest\n"
+    LAST = "      - name: Run the release dry run\n"
+
+    def test_both_triggers_carry_no_filter(self):
+        self.assertEqual(triggers(parse(read(DRY_RUN))), DRY_RUN_TRIGGERS)
+
+    def test_a_filter_or_narrowing_under_either_trigger_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.PULL, self.PULL + '    paths:\n      - "site-src/**"\n'),
+                         (self.PULL, self.PULL + "    paths-ignore:\n      - docs/**\n"),
+                         (self.PULL, self.PULL + "    branches: [main]\n"),
+                         (self.PULL, self.PULL + "    branches-ignore: [dev]\n"),
+                         (self.PULL, self.PULL + "    tags: [v*]\n"),
+                         (self.PULL, self.PULL + "    types: [opened]\n"),
+                         (self.PULL, "  pull_request: {paths: [tools/**]}\n"),
+                         (self.MAIN, self.MAIN + '    paths:\n      - "tools/**"\n'),
+                         (self.MAIN, self.MAIN + "    paths-ignore: [docs/**]\n"),
+                         (self.MAIN, self.MAIN + "    branches-ignore: [dev]\n"),
+                         (self.MAIN, self.MAIN + "    tags: [v*]\n"),
+                         (self.MAIN, self.MAIN + "    tags-ignore: [v*]\n"),
+                         (self.MAIN, self.MAIN + '    "paths": ["tools/**"]\n')):
+            with self.subTest(new):
+                self.assertNotEqual(triggers(parse(edited(text, old, new))), DRY_RUN_TRIGGERS)
+
+    def test_the_job_carries_its_time_limit(self):
+        self.assertTrue(timeout_holds(parse(read(DRY_RUN))))
+
+    def test_a_removed_changed_or_moved_time_limit_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.LIMIT, ""), (self.LIMIT, "    timeout-minutes: 360\n"),
+                         (self.LIMIT, f'    timeout-minutes: "{DRY_RUN_TIMEOUT}"\n'),
+                         (self.LIMIT, f"    timeout-minutes: {DRY_RUN_TIMEOUT}.0\n"),
+                         (self.LIMIT, "    timeout-minutes: true\n"),
+                         (self.LIMIT, f"    # timeout-minutes: {DRY_RUN_TIMEOUT}\n"),
+                         (self.LIMIT, "    timeout-minutes: ${{ inputs.limit }}\n"),
+                         (self.LIMIT + "    steps:\n", f"    steps:\n      - timeout-minutes: {DRY_RUN_TIMEOUT}\n"
+                                                        "        shell: bash\n        run: echo ok\n"),
+                         ("jobs:\n", "jobs:\n  other:\n    runs-on: ubuntu-latest\n")):
+            with self.subTest(new):
+                self.assertFalse(timeout_holds(parse(edited(text, old, new))))
+
+    def test_the_job_and_its_steps_carry_no_condition(self):
+        self.assertTrue(unconditional(parse(read(DRY_RUN))))
+
+    def test_a_condition_or_a_step_limit_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.RUNS_ON, "    if: github.event_name != 'pull_request'\n" + self.RUNS_ON),
+                         (self.RUNS_ON, "    continue-on-error: true\n" + self.RUNS_ON),
+                         (self.LAST, self.LAST + "        if: false\n"),
+                         (self.LAST, self.LAST + "        continue-on-error: true\n"),
+                         (self.LAST, self.LAST + "        timeout-minutes: 1\n")):
+            with self.subTest(new):
+                self.assertFalse(unconditional(parse(edited(text, old, new))))
 
 
 if __name__ == "__main__":

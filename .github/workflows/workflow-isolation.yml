@@ -13,12 +13,19 @@ name: Workflow launch isolation
 # The third step runs tools/test-portable-text-sync-workflow.py, which fails
 # if the triggers of portable-text-sync.yml or of this workflow are anything
 # but a bare pull_request and a push on main, so a paths or paths-ignore
-# filter on either fails, and fails unless each workflow holds exactly one
-# step that runs the test, with no key but name, shell and run, in a job with
-# no if:. See that test for what it does not catch. portable-text-sync.yml
+# filter on either fails, and fails unless each of those 2 workflows holds
+# exactly 1 step that runs the test, with no key but name, shell and run,
+# in a job with no if:. It also fails unless the triggers of
+# release-dry-run.yml are exactly a bare pull_request, a push on main and a
+# bare workflow_dispatch, and that workflow has exactly 1 job, dry-run,
+# whose timeout-minutes is the integer 30, with no if: or continue-on-error
+# on that job and no if:, continue-on-error or timeout-minutes on any of its
+# steps. See that test for what it does not catch. portable-text-sync.yml
 # also runs it, but a pull request that adds a filter to that workflow which
 # its own changed files fall outside never starts that run, so the test runs
-# here as well.
+# here as well. release-dry-run.yml does not run the test, so this run and
+# the one in portable-text-sync.yml catch a filter, a changed time limit or
+# such a key there.
 
 on:
   pull_request:
@@ -40,6 +47,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-workflow-launch-isolation.py
 
-      - name: Check the portable text sync triggers carry no path filter
+      - name: Check the portable text sync, release dry run and this workflow's triggers, and the dry run's limits and conditions
         shell: bash
         run: python3 -I tools/test-portable-text-sync-workflow.py
