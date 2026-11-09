@@ -3,16 +3,25 @@
 
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page,
-site/_headers or site/_redirects, runs the gate there as a separate process
-and asserts its exit code and, where a case gives them as (code, words), that
-its output holds those words, so that a crash, which also exits 1, does not
-pass for a refusal. 1 more check asserts that the gate's docstring names
-exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
-carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
-names, since a case writes the current baseline version as BASELINE, read
-from ``.baseline/pin.toml``, and 1 is version_binding_problems(), whose
-docstring states what it reports and what it passes. Exit 0 when every case
-passes; 1 otherwise, naming each failing case.
+site/_headers, site/_redirects or the copy of the gate, runs the gate there as
+a separate process and asserts its exit code and, where a case gives them as
+(code, words), that its output holds those words, so that a crash, which also
+exits 1, does not pass for a refusal. 3 cases put a ``</ script>``, markup in
+a ``title`` and a comment ended by ``--!>`` on a family page, and 3 run a copy
+of the gate that expects the other reading of 1 of its ``READING_PROBES``,
+expecting exit 3 and the probe's name, so that a change in any of the 3
+readings that the gate rests on fails a case. 1 more check asserts that the
+gate's docstring names exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that
+this file's own source carries no ``?v=`` token starting with a digit apart
+from those KEPT_TOKENS names, since a case writes the current baseline version
+as BASELINE, read from ``.baseline/pin.toml``, and 1 is
+version_binding_problems(), whose docstring states what it reports and what it
+passes. A further check, hidden_link_problems(), runs the gate's parse() in
+this process on HIDDEN_LINKS and fails unless each link it reads as hidden has
+no visible text, or, on a page that parse() hides as a whole, every h1 reads
+as hidden too, so that the gate's filter of the links back on not hidden stays
+implied by its filter on visible text. Exit 0 when every case passes; 1
+otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -596,6 +605,26 @@ def repin(name: str):
     return apply
 
 
+# The names of the gate's READING_PROBES, each of which flip_probe() turns to the other reading in a copy of the gate.
+PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comment ended by --!>")
+
+
+def flip_probe(name: str):
+    """Turn the number of h1 elements that the copy of the gate expects for the probe name in its READING_PROBES
+    from 0 to 1 or from 1 to 0, so that the copy expects the reading that Python 3.14 does not give."""
+    def apply(root: Path) -> None:
+        path = root / "tools" / GATE.name
+        lines = path.read_text(encoding="utf-8").split("\n")
+        at = [index for index, line in enumerate(lines)
+              if line.startswith(f'    ("{name}", ') and line.endswith((", 0),", ", 1),"))]
+        if len(at) != 1:
+            raise AssertionError(f"READING_PROBES of tools/{GATE.name} has no 1 line for {name!r}")
+        line = lines[at[0]]
+        lines[at[0]] = line[:-3] + ("1" if line[-3] == "0" else "0") + "),"
+        path.write_text("\n".join(lines), encoding="utf-8")
+    return apply
+
+
 # The ChatGPT page's link to #test in its prose, its required link back to #test; dropped, its a.start is its only
 # link to #test.
 PROSE_TEST = '<a href="/install/#test">Test it</a>'
@@ -610,6 +639,9 @@ CASES = [
     ("a family id removed", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'href="/install/gemini/"'), 1),
     ("a family link duplicated", edit(PAGE, OTHER_LINK, OTHER_LINK + ' <a class="btn inline" id="copilot" href="/install/copilot/">Copilot</a>'), 1),
     ("a family link that is not a button", edit(PAGE, '<a class="btn inline" id="copilot"', '<a id="copilot"'), 1),
+    # A button needs both classes, so a family link with btn alone fails.
+    ("a family link with the class btn only", edit(PAGE, '<a class="btn inline" id="copilot"', '<a class="btn" id="copilot"'),
+        (1, "the copilot family link is not a button (the classes btn and inline)")),
     # HTML splits class names on ASCII whitespace only: btn U+00A0 inline is 1 class, and x U+00A0 vh is not vh.
     ("a family link whose btn and inline are joined by a no-break space",
         edit(PAGE, '<a class="btn inline" id="copilot"', '<a class="btn\u00a0inline" id="copilot"'), 1),
@@ -633,7 +665,7 @@ CASES = [
     # With the get id moved above the pick label, the h1, the label and the row stay in place, so only the order
     # check refuses.
     ("the get id moved above the pick label", both(edit(PAGE, '<h2 id="get">', "<h2>"),
-        edit(PAGE, '<p class="meta">', '<p class="meta" id="get">')), 1),
+        edit(PAGE, '<p class="meta">', '<p class="meta" id="get">')), (1, 'comes after the "get" id')),
     ("the h1, the pick label and the button row after the get id", both(edit(PAGE, HERO + "\n", ""),
         edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>',
         '<h2 id="get">Get Clean Language</h2>\n' + HERO + "\n" + PICK + "\n" + ROW_LINE)), 1),
@@ -1128,6 +1160,18 @@ CASES = [
     ("a family page with a later html start tag with the class vh", edit(CLAUDE, "</main>", '</main><html class="vh">'), 1),
     ("the install page with a frameset start tag", edit(PAGE, "</head>", "</head><frameset></frameset>"), 1),
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
+    # The 3 readings of html.parser that the gate's READING_PROBES test, on a family page: on Python 3.14 a
+    # "</ script>" does not close a script and a title holds its markup as text, so neither h1 counts, while "--!>"
+    # ends a comment, so the h1 after it counts.
+    ("an h1 after a </ script> in a family page's JSON-LD",
+        edit(CLAUDE, '"@type": "WebPage",', '"@type": "WebPage", "x": "</ script><h1>Again</h1>",'), 0),
+    ("an h1 in a family page's title", edit(CLAUDE, "<title>", "<title><h1>Again</h1>"), 0),
+    ("an h1 after a comment ended by --!> on a family page",
+        edit(CLAUDE, "</main>", "<!-- an earlier heading --!><h1>Again</h1> --></main>"), (1, "2 <h1> elements")),
+    # A copy of the gate that expects the other reading of 1 of its READING_PROBES exits 3 before it reads a file,
+    # naming that probe, as the gate does on a Python whose html.parser reads that fragment otherwise.
+    *[(f"the gate expecting the other reading of {name}", flip_probe(name), (3, f"reads {name} otherwise"))
+      for name in PROBE_NAMES],
     ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
     ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
     ("a family page whose only link to #test is inside a noscript", both(
@@ -2085,6 +2129,45 @@ def name_reading_problems() -> list[str]:
     return problems
 
 
+# Fragments in which the gate's parse() reads a link to #get as hidden: by its own attribute, a hiding ancestor, a
+# hiding class on an ancestor, a details without open and an element of INERT_ELEMENTS, and on a page that parse()
+# hides as a whole, by a hiding body start tag after the link or a frameset start tag.
+HIDDEN_LINKS = (
+    '<a href="/install/#get" hidden>Back</a>',
+    '<div hidden><p><a href="/install/#get"><span>Back</span></a></p></div>',
+    '<p class="vh"><a href="/install/#get">Back</a></p>',
+    '<details><summary>More</summary><a href="/install/#get">Back</a></details>',
+    '<noscript><a href="/install/#get">Back</a></noscript>',
+    '<h1>Claude</h1><a href="/install/#get">Back</a><body hidden>',
+    '<frameset><h1>Claude</h1><a href="/install/#get">Back</a>',
+)
+
+
+def hidden_link_problems() -> list[str]:
+    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as
+    hidden, so the filter of the links back on not hidden in family_checked() is implied by its filter on visible
+    text; this fails if the 2 filters drift apart. On a page that parse() hides as a whole, a link that reads as hidden
+    keeps its text, and there every h1 must read as hidden too, so that check 4 refuses the page."""
+    problems: list[str] = []
+    try:
+        gate = load_gate()
+        for markup in HIDDEN_LINKS:
+            parser = gate.parse(markup)
+            hidden = [anchor for anchor in parser.anchors if anchor["hidden"]]
+            if not hidden:
+                problems.append(f"parse() reads no link in {markup!r} as hidden.")
+            elif parser.page_hidden:
+                if not parser.h1 or not all(heading["hidden"] for heading in parser.h1):
+                    problems.append(f"parse() hides the page {markup!r} as a whole but not its h1.")
+            elif any(anchor["text"] for anchor in hidden):
+                problems.append(f"parse() gives visible text to a link that it reads as hidden in {markup!r}, so the "
+                                "filter of the links back on not hidden is no longer implied by the filter on visible "
+                                "text.")
+    except Exception as error:
+        return [f"the hidden links of tools/{GATE.name} could not be checked: {error!r}"]
+    return problems
+
+
 def end_tag_problems() -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
@@ -2468,6 +2551,7 @@ def main() -> int:
     failures += [f"the page attribute pin: {problem}" for problem in page_attribute_pin_problems()]
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
+    failures += [f"the hidden links: {problem}" for problem in hidden_link_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]

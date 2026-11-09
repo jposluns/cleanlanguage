@@ -539,10 +539,11 @@ What it does NOT verify (the reviewer's and cross-family QA's job)
 
 It does not apply any stylesheet or run any script, and it does NOT judge
 whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
-checked element: check 8 and the rule pin of ``tools/test-install-page.py``
-keep the rules that can reach one to those a reviewer has pinned (see
-below). Of the elements that the HTML standard's rendering rules may hide
-with no stylesheet, it does not list the void elements (``area``, ``base``,
+checked element, such as a ``clip-path`` or a height with overflow that cuts
+it off: check 8 and the rule pin of ``tools/test-install-page.py`` keep the
+rules that can reach one to those a reviewer has pinned (see below). Of the
+elements that the HTML standard's rendering rules may hide with no
+stylesheet, it does not list the void elements (``area``, ``base``,
 ``basefont``, ``link``, ``meta``, ``param``, and ``input`` with
 ``type=hidden``), which the parser never holds open, so none can hold a
 checked element or its text, nor ``head``, which the parser holds open as it
@@ -697,11 +698,18 @@ exception would end the gate with exit 1.
 
 ``tools/test-install-page.py`` runs every case on the Python that runs it, and
 ``.github/workflows/install-page.yml`` runs it before the gate in the same job.
-It does not detect a change in any of the 3 readings above: no case contains
-``</ script>`` or ``--!>``, and a case that puts markup in a ``title`` makes
-the gate exit 1 whether it reads that markup as text or as hidden elements.
-``.github/workflows/release-dry-run.yml`` runs ``tools/release-dry-run.sh``,
-which runs the gate without the suite.
+Before it reads a file, ``main()`` runs ``parse()`` on each fragment of
+``READING_PROBES``, 1 for each of the 3 readings above: a ``</ script>``
+inside a ``script``, markup inside a ``title``, and a comment ended by
+``--!>``. Where the number of ``h1`` elements that ``parse()`` reads in a
+fragment differs from the number that Python 3.14.4 gives, the gate exits 3
+and names that probe, so a release that changes a reading stops the gate
+wherever it runs, ``tools/release-dry-run.sh`` included, which runs the gate
+without the suite. The suite puts each reading on a family page: an ``h1``
+after a ``</ script>`` in its JSON-LD and an ``h1`` in its ``title`` pass,
+and an ``h1`` after a comment ended by ``--!>`` fails as a second ``h1``.
+It also runs, for each probe, a copy of the gate that expects the other
+reading of it, which must exit 3 and name that probe.
 
 Exit codes:
   0  every check above passes
@@ -709,7 +717,8 @@ Exit codes:
      class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
      doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
   3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
-     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports
+     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports, or html.parser reads a
+     fragment of READING_PROBES otherwise than Python 3.14.4 does
 """
 
 from __future__ import annotations
@@ -752,6 +761,15 @@ DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
+# A listed version does not fix how html.parser reads raw text and comments, which a patch release can change, so
+# main() runs parse() on each of these fragments before it reads a file, and exits 3 naming the probe when the number
+# of h1 elements read differs from the number given here, which Python 3.14.4 reads: a "</ script>" does not close a
+# script, a title holds its markup as text, and "--!>" ends a comment (see Python versions).
+READING_PROBES = (
+    ("a </ script> inside a script", "<script></ script><h1>Probe</h1></script>", 0),
+    ("markup inside a title", "<title><h1>Probe</h1></title>", 0),
+    ("a comment ended by --!>", "<!-- probe --!><h1>Probe</h1>", 1),
+)
 # The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
@@ -1911,7 +1929,12 @@ def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict
     the problems of the pins and of the links back. Check 8 holds every checked element but the links back; of those
     it holds, for each target, the required link back, the first that is not hidden, has visible text and passes the
     pins, and leaves the rest to the pins of any checked element that holds them (a step, say).
-    tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope."""
+    tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope.
+    The filter of the links back on not hidden is implied by the filter on visible text, and the refusal names both:
+    the parser never counts text inside a hiding element, so a link that it reads as hidden has no visible text, which
+    hidden_link_problems() of tools/test-install-page.py checks. Only on a page that parse() hides as a whole (by a
+    frameset start tag anywhere, or a hiding html or body start tag after the link) does a link that reads as hidden
+    keep its text, and there every h1 reads as hidden too, so check 4 refuses the page."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
     problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
@@ -2011,6 +2034,11 @@ def main() -> int:
         supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
         die(f"runs only on Python {supported}, the version it is tested on; "
             f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
+    for name, fragment, expected in READING_PROBES:
+        found = len(parse(fragment).h1)
+        if found != expected:
+            die(f"html.parser on this Python reads {name} otherwise than Python 3.14.4 does: it reads {found} h1 "
+                f"elements in {fragment!r}, not {expected} (READING_PROBES)")
     for path in (PAGE, *FAMILY_PAGES.values(), HEADERS, REDIRECTS):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
