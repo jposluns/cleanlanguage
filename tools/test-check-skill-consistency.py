@@ -82,6 +82,13 @@ LEAD_IN = "Do not mechanically delete:\n"
 OTHER_BULLET = "- throat-clearing before the substantive point;\n"
 # A checklist bullet above the heading over the dash bullet, so outside the checklist span.
 CHECKLIST_BULLET = "- Is the required action explicit?\n"
+# A paragraph and a heading in each file, outside the spans.
+SKILL_PARAGRAPH = "Never sacrifice correctness to satisfy a stylistic heuristic.\n"
+SKILL_HEADING = "## Select the operating mode\n"
+CHECKLIST_PARAGRAPH = "Review finished prose against these questions.\n"
+CHECKLIST_TOP_HEADING = "## Accuracy\n"
+# A blank line, then a line that is not blank and starts with exactly 1 space.
+ONE_SPACE_LINE = "\n Read this first.\n"
 CHECKLIST_HEADING = "## Mechanics\n"
 # The heading after the carve-out section, which ends the section.
 NEXT_HEADING = "## Match the context\n"
@@ -478,8 +485,8 @@ CASES = [
         [at(SKILL, SKILL_LINE) + SPACED]),
     ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 3,
         [at(CHECKLIST, KEEP, 2) + UNREAD_LINE]),
-    # A line indented by 1 space after a blank line under a bullet. In the spans, item 5 also refuses such a line, so
-    # these cases assert the refusal's own words, which item 5's message lacks.
+    # A line that is not blank and starts with exactly 1 space, after a blank line under a bullet. In the spans, item 5
+    # also refuses such a line, so these cases assert the refusal's own words, which item 5's message lacks.
     ("both bullets continued after a blank line by a line indented by 1 space, with the same words",
         together(edit(SKILL, SKILL_LINE, SKILL_LINE[:-1] + ",\n\n or code samples;"),
                  change_dash_line(lambda line: line.rstrip("\n.") + ",\n\n or code samples.\n")),
@@ -492,6 +499,26 @@ CASES = [
     ("a checklist bullet above the dash bullet's span continued after a blank line by a line indented by 1 space",
         edit(CHECKLIST, CHECKLIST_BULLET, CHECKLIST_BULLET + "\n or only implied?\n"), 3,
         [at(CHECKLIST, CHECKLIST_BULLET, 2) + ONE_SPACE]),
+    # The refusal covers only a line under a bullet: after a blank line under a heading or a paragraph, the gate reads
+    # such a line as the start of a new paragraph, so it passes outside the spans and item 5 refuses it inside them.
+    ("a line indented by 1 space after a blank line under a SKILL.md paragraph",
+        edit(SKILL, SKILL_PARAGRAPH, SKILL_PARAGRAPH + ONE_SPACE_LINE), 0, []),
+    ("a line indented by 1 space after a blank line under a SKILL.md heading",
+        edit(SKILL, SKILL_HEADING, SKILL_HEADING + ONE_SPACE_LINE), 0, []),
+    ("a line indented by 1 space after a blank line under a checklist paragraph",
+        edit(CHECKLIST, CHECKLIST_PARAGRAPH, CHECKLIST_PARAGRAPH + ONE_SPACE_LINE), 0, []),
+    ("a line indented by 1 space after a blank line under a checklist heading above the dash bullet's span",
+        edit(CHECKLIST, CHECKLIST_TOP_HEADING, CHECKLIST_TOP_HEADING + ONE_SPACE_LINE), 0, []),
+    ("a line indented by 1 space after a blank line under the carve-out section's lead-in paragraph",
+        edit(SKILL, LEAD_IN, LEAD_IN + ONE_SPACE_LINE), 3, [at(SKILL, LEAD_IN, 2) + UNREAD_LINE]),
+    ("a line indented by 1 space after a blank line under the heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + ONE_SPACE_LINE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 2) + UNREAD_LINE]),
+    # A line of only 1 space is blank, so after a blank line under a bullet the gate reads it as blank.
+    ("a line of only 1 space after a blank line under a bullet above the carve-out section",
+        edit(SKILL, OTHER_BULLET, OTHER_BULLET + "\n \n"), 0, []),
+    ("a line of only 1 space after a blank line under the dash bullet", change_dash_line(lambda line: line + "\n \n"),
+        0, []),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
     ("a carve-out after a mixed-mark line in the dash bullet",
         change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + character("_")]),
