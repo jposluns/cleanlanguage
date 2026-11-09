@@ -36,16 +36,15 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       # The advice for a published release whose tag may lack the publish
       # step, from one source: the determine and publish steps print this
-      # value and the force input description repeats it verbatim, so the
-      # three copies cannot drift. Whatever the run ref, at the tag or away
-      # from it, the determine step prints it when the published_at of an
-      # existing release cannot be read and its tag is on origin, and the
-      # publish step prints it when it refuses the force input against a
-      # published release whose tag is on origin, or when that tag is on
-      # origin at a commit other than the one this run built. It names the
-      # authority, the workflow at that tag, and gives no procedure: asset
-      # names, zip layout and checks differ by era, and each recipe written
-      # here missed a case.
+      # value and the force input description repeats it verbatim, so the 3
+      # copies cannot drift. Whatever the run ref, at the tag or away from it,
+      # the determine step prints it when the published_at of an existing
+      # release cannot be read and its tag is on origin, and the publish step
+      # prints it when it refuses the force input against a published release
+      # whose tag is on origin, or when that tag is on origin at a commit
+      # other than the one this run built. It names the authority, the
+      # workflow at that tag, and gives no procedure: asset names, zip layout
+      # and checks differ by era, and each recipe written here missed a case.
       OLDER_TAG_ADVICE: "A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable, it has every asset the workflow at that tag publishes, each published checksum matches its asset, and each asset passes the checks that workflow made on it, in its packaging steps as well as its release step. The check is against what that workflow verified when it published, never against a fresh rebuild: a rebuild with another toolchain can differ, so a mismatch proves nothing. A command that fails to run is run again and says nothing about the release. If the release fails that check, turn on immutable releases if they are off, then cut a corrective new version."
       # What both steps print when the tag of a published release is no
       # longer on origin, with <tag> replaced by the release tag.
@@ -118,20 +117,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Item 26 (G3): the SKILL.md Released line must name the UTC day the
+          # Item 26: the SKILL.md Released line must name the UTC day the
           # release is first published, and that is checked BEFORE anything is
           # published. A new release (HTTP 404) is published today, so the
           # expected date is the UTC day now, read once here. An existing
-          # release (HTTP 200: a re-run) keeps its first
-          # publication day, so the expected date is the UTC day of its
-          # published_at, interpreted only by the release_day_from_published_at
-          # op of the release-date extractor, the one place that states the
-          # assumption about
-          # that field. Any other status fails closed. The packager compares
-          # this date with the Released line at HEAD. This probe duplicates the
-          # one in the publish step on purpose (one purpose each), and the
-          # publish step re-checks the UTC day immediately before it creates a
-          # release and reads the publication day back afterwards.
+          # release (HTTP 200: a re-run) keeps its first publication day, so
+          # the expected date is the UTC day of its published_at, interpreted
+          # only by the release_day_from_published_at op of the release-date
+          # extractor, the one place that states the assumption about that
+          # field. Any other status fails closed. The packager compares this
+          # date with the Released line at HEAD. This probe duplicates the one
+          # in the publish step on purpose (one purpose each), and the publish
+          # step re-checks the UTC day immediately before it creates a release
+          # and reads the publication day back afterwards.
           #
           # An undated release (no Released line, at or below the undated
           # baseline) checks no date at all, exactly as before item 26:
@@ -283,13 +281,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Item 26 (G3) helpers. The publication-window check is used only
-          # for a dated release (RELEASE_DATED=1): check_publish_window
-          # refuses to start publishing unless the UTC clock, read at the
-          # call, is still on the day RELEASE_DATE with at least 10 minutes
-          # left before UTC midnight (the publish_window op of
-          # the release-date extractor, through the release-date client,
-          # decides that).
+          # Item 26 helpers. The publication-window check is used only for a
+          # dated release (RELEASE_DATED=1): check_publish_window refuses to
+          # start publishing unless the UTC clock, read at the call, is still
+          # on the day RELEASE_DATE with at least 10 minutes left before UTC
+          # midnight (the publish_window op of the release-date extractor,
+          # through the release-date client, decides that).
           release_date_tool_failed() { # exit-code what
             echo "The release-date extractor is unavailable or crashed (exit $1) while $2." >&2
             exit 1
@@ -503,7 +500,7 @@ jobs:
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
                 || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ. This workflow never republishes a published release; cut a corrective new version." >&2; echo "${SUPERSEDED_RELEASE_ADVICE}" >&2; exit 1; }
               rm -rf "${verify_dir}"; trap - EXIT
-              # Item 26 (G3), item 57: a re-run ends green only on the same
+              # Item 26, item 57: a re-run ends green only on the same
               # readback as the first publication, dated or not.
               confirm_published_release "Re-run readback"
               echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete and self-consistent; kept its assets. The orchestrator flips the site checksum post-release."
@@ -517,9 +514,9 @@ jobs:
             fi
           fi
           if [ "${release_exists}" -eq 0 ] && [ "${RELEASE_DATED}" = "1" ]; then
-            # Item 26 (G3): an early window check, before any tag operation,
-            # so a run that is already too late does not push a tag it cannot
-            # use. The binding window check is the one immediately before the
+            # Item 26: an early window check, before any tag operation, so a
+            # run that is already too late does not push a tag it cannot use.
+            # The binding window check is the one immediately before the
             # create call.
             check_publish_window
           fi
@@ -550,9 +547,9 @@ jobs:
           # release, because this workflow never republishes a published
           # release.
           if [ "${RELEASE_DATED}" = "1" ]; then
-            # Item 26 (G3): the binding publication-window check, after every
-            # tag operation and immediately before the create call, so the
-            # tag push cannot carry the run past UTC midnight unchecked. The
+            # Item 26: the binding publication-window check, after every tag
+            # operation and immediately before the create call, so the tag
+            # push cannot carry the run past UTC midnight unchecked. The
             # 10-minute margin covers the create call and its asset uploads;
             # the readback below confirms the day that GitHub recorded.
             check_publish_window
@@ -564,8 +561,7 @@ jobs:
             "dist/cleanlanguage-${VERSION}.zip.sha256" \
             --title "Clean Language ${RELEASE_TAG}" \
             --generate-notes
-          # Item 26 (G3), item 57: the first-publication readback, dated or
-          # not.
+          # Item 26, item 57: the first-publication readback, dated or not.
           confirm_published_release "First-publication readback"
 
       # No site step follows. Publishing the release is this workflow's last act.

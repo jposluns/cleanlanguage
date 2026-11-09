@@ -151,23 +151,22 @@ Behaviour:
     does not hash to it stops only this comparison, and the release-date
     check below still runs.
   - Separately, and whatever version the site names, checks the release for
-    the version SKILL.md names on its own terms (item 26, G4): it probes that
-    release; on 200 it requires the SKILL.md ``Released:`` line to name the UTC
-    day of the release ``published_at`` record and requires the release record
-    to be immutable (``immutable`` exactly true, so its assets and record
-    cannot have been replaced since publication); on 404 it checks the tag
-    exactly as the same-version path does, so only a confirmed absent tag
-    means the release is not published yet and the date comparison is
-    skipped (a line missing above the undated baseline still fails there, as
-    in the pre-tag window), while an existing tag, or a tag whose status
-    cannot be read or is neither 200 nor 404, cannot be verified; any other
-    release status cannot be verified. The line may be
-    absent only when that version is at or below the undated baseline
-    declared in ``tools/skill-release-date.py``; the line and that rule are
-    read first, and then no network call is made for the date check at all.
-    An undated release at or below that baseline is therefore not checked for
-    immutability either.
-    The meaning of ``published_at`` is an assumption,
+    the version SKILL.md names on its own terms (item 26): it probes that
+    release; on 200 it requires the SKILL.md ``Released:`` line to name the
+    UTC day of the release ``published_at`` record and requires the release
+    record to be immutable (``immutable`` exactly true, so its assets and
+    record cannot have been replaced since publication); on 404 it checks the
+    tag exactly as the same-version path does, so only a confirmed absent tag
+    means the release is not published yet and the date comparison is skipped
+    (a line missing above the undated baseline still fails there, as in the
+    pre-tag window), while an existing tag, or a tag whose status cannot be
+    read or is neither 200 nor 404, cannot be verified; any other release
+    status cannot be verified. The line may be absent only when that version
+    is at or below the undated baseline declared in
+    ``tools/skill-release-date.py``; the line and that rule are read first,
+    and then no network call is made for the date check at all. An undated
+    release at or below that baseline is therefore not checked for
+    immutability either. The meaning of ``published_at`` is an assumption,
     isolated in ``release_day_from_published_at`` in that tool; see its
     docstring.
 
@@ -362,13 +361,13 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # kill, the gate waits at most REAP_GRACE_SECONDS to see the child end before
 # it reaps it, and exits 3, leaving it unreaped, when it sees no end, so no
 # reap blocks the gate. Of what the child prints, the gate reads at most
-# STDERR_LIMIT bytes of stderr and one byte more than the stdout bound, which
-# is RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER bytes for each character
-# of the request argument, so a longer stdout is refused and the memory a
-# reply takes stays bounded by the request the gate already holds.
+# STDERR_LIMIT bytes of stderr and 1 byte more than the stdout bound, which is
+# RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER bytes for each character of
+# the request argument, so a longer stdout is refused and the memory a reply
+# takes stays bounded by the request the gate already holds.
 # ECHO_BYTES_PER_CHARACTER is the most bytes one character can take through
 # repr and then ASCII JSON (a printable character outside the basic plane
-# becomes a surrogate pair of two \uXXXX escapes, 12 bytes); the allowance is
+# becomes a surrogate pair of 2 \uXXXX escapes, 12 bytes); the allowance is
 # there so that a malformed message that echoes the argument keeps its verdict
 # (see test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while
 # the child runs, an ordinary write cannot grow a file past
@@ -909,7 +908,7 @@ def offline_release_line_code(situation: str) -> int:
 
 
 def check_release_date(site_version: str, site_status: int | None) -> bool:
-    """G4 (item 26): check the release SKILL.md names, on its own terms.
+    """Item 26: check the release SKILL.md names, on its own terms.
 
     The release probed is the one for the SKILL.md version, whatever version
     the site names, so a site that still names the previous release cannot
@@ -1494,7 +1493,7 @@ def check_site_checksum(load_code: int = 0) -> int:
         )
         claimed = None
 
-    # Item 26 (G4): the release SKILL.md names is checked on its own terms,
+    # Item 26: the release SKILL.md names is checked on its own terms,
     # whatever version the site names (see check_release_date). A date edited
     # after release goes red here; a release that slipped past UTC midnight is
     # refused or caught by the release workflow itself, and goes red here too.

@@ -2,20 +2,21 @@
 """Tests for tools/skill-release-date.py, the strict Released-line extractor.
 
 Item 26 adds a ``Released: YYYY-MM-DD`` meta line directly after the
-``Version:`` line of the skill and its portable renderings. Every gate reads it
-through one extractor, so these tests pin that extractor grammar: the first
-line carrying the key is authoritative, the value is a real calendar date, the
-line sits directly after the first ``Version:`` line, a duplicate is rejected
-(also behind Markdown markers or invisible format characters), absence (exit
-3) is distinct from malformed (exit 1), and an internal error of the extractor
-has its own exit (6), distinct from an unreadable input (4). They also pin the one
-function that interprets a release ``published_at`` value, (T2) that the
-portable-text builder carries the line into the generated rendering, and (row
-80) the ``--json`` mode the live checksum gate runs as a separate child: its
-exact replies, its bad requests (exit 2), its internal error (exit 6), and its
-agreement with the functions and the other modes, including (row 89) the ops
-parse_date, publish_window and confirm_published and the refused outcome that
-the shell callers reach through tools/skill-release-date-client.py.
+``Version:`` line of the skill and its portable renderings. Every gate reads
+it through one extractor, so these tests pin that extractor grammar: the
+first line carrying the key is authoritative, the value is a real calendar
+date, the line sits directly after the first ``Version:`` line, a duplicate
+is rejected (also behind Markdown markers or invisible format characters),
+absence (exit 3) is distinct from malformed (exit 1), and an internal error
+of the extractor has its own exit (6), distinct from an unreadable input (4).
+They also pin the one function that interprets a release ``published_at``
+value, that the portable-text builder carries the line into the generated
+rendering, and (row 80) the ``--json`` mode the live checksum gate runs as a
+separate child: its exact replies, its bad requests (exit 2), its internal
+error (exit 6), and its agreement with the functions and the other modes,
+including (row 89) the ops parse_date, publish_window and confirm_published
+and the refused outcome that the shell callers reach through
+tools/skill-release-date-client.py.
 
 The tests run offline and touch only throwaway directories.
 """
@@ -48,7 +49,7 @@ RELEASED = "Released: 2026-11-15  \n"
 TAIL = "Author: Jeff Posluns  \nLicence: CC BY-SA 4.0\n\nBody text.\n"
 VALID = HEAD + VERSION + RELEASED + TAIL
 
-# R8: stale copies of the key that the duplicate rule must still see.
+# Stale copies of the key that the duplicate rule must still see.
 DECORATED = (
     ("bold", "**Released:** 2026-11-01"),
     ("bold key", "**Released**: 2026-11-01"),
@@ -68,7 +69,7 @@ DECORATED = (
     ("word joiner", "\u2060Released: 2026-11-01"),
     ("bidirectional control", "\u202aReleased: 2026-11-01"),
     ("soft hyphen inside the key", "Rele\u00adased: 2026-11-01"),
-    # U4: a table row, a bracket, and the full-width colon.
+    # A table row, a bracket, and the full-width colon.
     ("table row", "| Released: 2026-11-01 |"),
     ("bold table cell", "| **Released:** 2026-11-01 |"),
     ("second table cell", "| | Released: 2026-11-01 |"),
@@ -105,7 +106,7 @@ UNDETECTED = (
     ("a dot with no number", ". Released: 2026-11-01"),
     ("a list number of non-ASCII digits", "\u0661. Released: 2026-11-01"),
     ("a no-break space before the colon", "Released\u00a0: 2026-11-01"),
-    # A colon other than the two the rule names, and an angle bracket before
+    # A colon other than the 2 the rule names, and an angle bracket before
     # the word.
     ("a small colon", "Released\ufe55 2026-11-01"),
     ("an angle bracket", "<Released: 2026-11-01"),
@@ -307,8 +308,8 @@ class ExtractorCliTest(unittest.TestCase):
         self.assertRejects(VALID + "Released: 2026-11-15\n", "more than one Released line")
 
     def test_decorated_duplicate_lines_are_rejected(self):
-        # R8: a stale copy behind Markdown markers or format characters is
-        # still a second Released line.
+        # A stale copy behind Markdown markers or format characters is still
+        # a second Released line.
         for label, line in DECORATED:
             with self.subTest(label):
                 self.assertRejects(VALID + line + "\n", "more than one Released line")
@@ -326,7 +327,7 @@ class ExtractorCliTest(unittest.TestCase):
                 self.assertAccepts(VALID + line + "\n")
 
     def test_internal_error_exits_6_not_4(self):
-        # R6: an internal failure is not an unreadable input.
+        # An internal failure is not an unreadable input.
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "SKILL.md"
             path.write_text(VALID, encoding="utf-8")
@@ -403,8 +404,8 @@ class ExtractorCliTest(unittest.TestCase):
                 )
 
     def test_released_beside_a_malformed_version_line_is_rejected(self):
-        # F12: the Version line value is validated before the placement rule.
-        # A no-break space is not a blank.
+        # The Version line value is validated before the placement rule. A
+        # no-break space is not a blank.
         for version in ("Version: draft", "Version: 1.0", "Version: 1.0.15 beta", "Version:\u00a01.0.15"):
             with self.subTest(version):
                 self.assertRejects(HEAD + version + "\n" + RELEASED + TAIL, "is not a bare X.Y.Z version")
@@ -417,7 +418,7 @@ class ExtractorCliTest(unittest.TestCase):
         self.assertIn("could not read", err)
 
     def test_requires_date(self):
-        # F7: one numeric baseline rule for every caller.
+        # One numeric baseline rule for every caller.
         for version, answer in (
             ("1.0.9", "optional"), ("1.0.14", "optional"), ("1.00.14", "optional"),
             ("1.0.15", "required"), ("1.0.100", "required"), ("1.1.0", "required"),
@@ -436,8 +437,8 @@ class ExtractorCliTest(unittest.TestCase):
                 )
 
     def test_publish_window(self):
-        # F1: same UTC day with at least 10 minutes left passes; anything else
-        # is refused with exit 5, and a malformed value is exit 1.
+        # Same UTC day with at least 10 minutes left passes; anything else is
+        # refused with exit 5, and a malformed value is exit 1.
         for now in ("2026-11-15T00:00:00Z", "2026-11-15T12:00:00Z", "2026-11-15T23:50:00Z"):
             with self.subTest(now):
                 self.assertEqual(run(None, "--publish-window", "2026-11-15", now)[:2], (0, "2026-11-15\n"))
@@ -1432,7 +1433,7 @@ class PatternPinTest(unittest.TestCase):
 
 
 class BuilderCarriesReleasedTest(unittest.TestCase):
-    """T2: the portable-text builder copies the meta block, Released included.
+    """The portable-text builder copies the meta block, Released included.
 
     It builds from a throwaway copy of the skill source with a Released line
     inserted after Version, so a future narrowing of the builder meta-block
