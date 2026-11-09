@@ -620,7 +620,8 @@ def report(checks, stream=sys.stdout) -> None:
 
 def main() -> int:
     full_sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
-    # Create the deadline before the preflight call, gh repo view.
+    # Create the deadline before the preflight call, gh repo view, so that the
+    # wait window bounds that call too.
     deadline = time.time() + timeout
     # The sha is printed before any gh call, so the caller sees which commit is read
     # even when the repository lookup fails.

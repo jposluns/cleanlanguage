@@ -475,9 +475,9 @@ def finish(code, why, facts):
 # 1002.0, is such a delay. With the wall clock moving and gh started before
 # 1002.0, the kill, return and exit times do not assert a delay in read_checks
 # or _gh before _gh reads started. Such a delay leaves gh a bound below LEFT,
-# which changes the tenths the message names in the slow case, the 1-second
-# start case and the case with LEFT 0.5, so the message check catches it in
-# those 3 cases.
+# which changes the tenths the message names in the case with LEFT 0.5 and in
+# the 2 cases with LEFT 2, STARTS 0 or 1 and FROZEN 0, so the message check
+# catches it in those 3 cases.
 run_cut_off_case() {
   local name="$1" left="$2" want_bound="$3" starts="${4:-0}" killed="${5:-1002.0}" frozen="${6:-0}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
@@ -954,9 +954,11 @@ CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   run_clock_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
-# The fake clock above starts and kills no real process, so this case keeps a
-# real hung gh that is killed and reaped. Its first read hangs, so only
-# the start of that 1 gh call has to fall inside the 5-second window.
+# The fake clock above starts and kills no real process, so this case runs a
+# real hung gh that is killed and reaped. Its first read hangs, so the tool
+# must start that 1 gh call inside the 5-second window, and the fake gh must
+# start and record its read (CASE_READS) before the tool kills it at the
+# deadline.
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=1 \
   run_case "a real gh that hangs from the first read is killed and reaped -> unreadable" \
   "$GA_PRESENT" "" "s" 3 --wait --timeout 5
@@ -2738,16 +2740,17 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # run_final_reap_case: once that wait has seen gh repo view end, time.time and
 # time.monotonic read 30 seconds ahead, so the gate's next clock read finds the
 # deadline passed and kills and reaps gh at once through its own code, and the
-# case does not wait out the window. So it is not a call the deadline cut off:
-# the repository is inferred and printed on standard output, and the read after
-# it, finding the window closed, exits 3 with that on standard error, never the
-# line saying the repository could not be inferred, and never makes a
-# check-runs call. The replaced os.waitpid also requires the status it reaps
-# after the kill to be that exit 0, not the kill, so the case does not pass
-# without reaching it. Because gh repo view has always ended before the kill,
-# the case does not cover one still running when it is killed or a gate that
-# reads a kill as gh's own end. The shift moves the gate's clock away from the
-# host's, so it asserts no time.
+# case does not wait out the window. Because gh repo view has ended on its own
+# before the kill, it is not a call the deadline cut off: the repository is
+# inferred and printed on standard output, and the read after it, finding the
+# window closed, exits 3 with that on standard error, never the line saying the
+# repository could not be inferred, and never makes a check-runs call. The
+# replaced os.waitpid also requires the status it reaps after the kill to be
+# that exit 0, not the kill, so the case does not pass without reaching it.
+# Because gh repo view has always ended before the kill, the case does not
+# cover one still running when it is killed or a gate that reads a kill as gh's
+# own end. The shift moves the gate's clock away from the host's, so it asserts
+# no time.
 run_final_reap_view_case() {
   local name="$1" flag="$2"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -2818,8 +2821,10 @@ run_final_reap_view_case "gh repo view exiting 0 just before the kill without --
 # run_closed_window_case NAME: the gate runs in process in wait mode with the
 # wall clock it reads (time.time) replaced by a fixed one, and time.monotonic
 # by the same fixed value 500 seconds lower. Its sleeps stay real, so the case,
-# not the host's speed, fixes when the window closes. The first fake gh call
-# returns at once. The first check-runs call serves a pending reading, a
+# not the host's speed, fixes when the window closes. time.monotonic does not
+# move while gh runs, so _gh never kills gh in this case and the first gh call
+# has no bound; that call ends only when the fake gh returns on its own, which
+# it does at once. The first check-runs call serves a pending reading, a
 # successful unsettled one. When main calls read_checks again, after the
 # top-of-loop guard has found time left, the fixed clock is moved to the
 # deadline, so read_checks finds the window closed before the read and raises
@@ -2828,8 +2833,8 @@ run_final_reap_view_case "gh repo view exiting 0 just before the kill without --
 # line "ci-status: waiting, 10 seconds left"; standard error must hold the
 # cut-off line, here giving the reason that the window closed before the read,
 # and the still-unsettled line, but no read-failure line; and the fake gh must
-# serve exactly one check-runs call. Each expected line is matched whole by its
-# own grep, so the order of the two standard-error lines is not checked. The
+# serve exactly 1 check-runs call. Each expected line is matched whole by its
+# own grep, so the order of the 2 standard-error lines is not checked. The
 # zero-timeout cases and the run_final_reap_view_case cases reach the same
 # raise with no successful reading before it, so they exit 3.
 run_closed_window_case() {
@@ -2879,15 +2884,15 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || 
 
 run_closed_window_case "pending reading then the window closing before the next read -> not green, timed out"
 
-# run_late_pass_case NAME: the gate runs in process in wait mode with a fixed
-# wall clock, as in run_closed_window_case, and both check-runs calls serve the
-# same green reading. When the second read has returned, before main checks the
-# deadline, the fixed clock is moved to the deadline, so the pass is confirmed
-# only after the window closed. The case must exit 2; standard error must hold
-# the line saying that the checks passed only after the window closed; standard
-# output must hold the first reading's line asking for a confirmation reading
-# but no confirmed-pass line; and the fake gh must serve exactly 2 check-runs
-# calls.
+# run_late_pass_case NAME: the gate runs in process in wait mode with time.time
+# and time.monotonic fixed as in run_closed_window_case, so _gh never kills gh
+# in this case, and both check-runs calls serve the same green reading. When
+# the second read has returned, before main checks the deadline, the fixed
+# clock is moved to the deadline, so the pass is confirmed only after the
+# window closed. The case must exit 2; standard error must hold the line saying
+# that the checks passed only after the window closed; standard output must
+# hold the first reading's line asking for a confirmation reading but no
+# confirmed-pass line; and the fake gh must serve exactly 2 check-runs calls.
 run_late_pass_case() {
   local name="$1"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
