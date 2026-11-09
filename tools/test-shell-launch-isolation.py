@@ -310,11 +310,28 @@ EXCEPTIONS = (
          '"${here}/ci-status.py" "$C1" "$mode" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?',
          '"${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?',
          '"${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?',
+         '"${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?',
      ),
      (),
      'the path is an argument of a python3 -I -c program whose closing quote is on the line, or on the line '
      'before it, which ends in a backslash that joins the 2; that program loads and runs the file in its '
      'isolated interpreter'),
+    ('tools/test-ci-status.sh',
+     literal(
+         '% (show(starts), show(deadlines), show(gh_deadlines), show(kills), show(returns), now()))\'     '
+         '"${here}/ci-status.py" "$C1" "$tmp" "$left" "$starts" "$killed" "$frozen" > "$tmp/out" 2> "$tmp/err" '
+         '|| got=$?',
+         '% (show(deadlines), show(gh_deadlines), show(kills), show(returns), clock()))\'     '
+         '"${here}/ci-status.py" "$C1" "$tmp" > "$tmp/out" 2> "$tmp/err" || got=$?',
+         'finish(code, why, "reads at %s, killed at %s, exit at %.6f" % (show(starts), show(kills), now()))\'     '
+         '"${here}/ci-status.py" 0000000000000000000000000000000000000000 "$tmp" "$plan" "$@" > "$tmp/out" '
+         '2> "$tmp/err" || got=$?',
+     ),
+     (),
+     'the last line of the text of a python3 -I -c program, made of "$FAKE_CLOCK_GATE" and a single-quoted '
+     'part, ends in that part\'s closing quote and a backslash that joins the next line, which names the path '
+     'as an argument of the program; the scan reads the program as shell, since the variable stands between '
+     '-c and the quote, and the program loads and runs the file in its isolated interpreter'),
     ('tools/test-portable-text-release-date.sh',
      literal(
          'for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py       portable-text-skill-source.sha256 build-site.py check-install-page.py sitemap-config.json; do',
