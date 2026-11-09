@@ -25,6 +25,10 @@ Clean Language is developed independently. If you know of another project workin
 
 Site template: the shared site template (baseline 1.11.4, https://posluns.ca/baseline/) is dedicated to the public domain under CC0 1.0 Universal, with 2 exceptions. The fonts Newsreader, Public Sans, JetBrains Mono and Dancing Script are licensed by their authors under the SIL Open Font License 1.1; their licence files are in assets/baseline/fonts/. The GitHub Invertocat, the LinkedIn [in] bug and the ORCID iD icon in assets/baseline/marks/ are trademarks of their owners, used under their owners' published terms as recorded in assets/baseline/marks/NOTICE.md, and are not covered by the CC0 grant.
 
+## Card builder fonts
+
+The Inter font files in `.baseline/card-fonts/` (Inter 4.000, Copyright 2016 The Inter Project Authors), copied byte for byte from the baseline's `tools/card-fonts/`, are licensed under the SIL Open Font License 1.1. Their licence is `.baseline/card-fonts/inter-LICENSE.txt` and must travel with them. They are used only by `.baseline/build_card.js` to render link-preview images, and are not served.
+
 ## Adopted governance rules
 
 The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under the Apache License 2.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`.
