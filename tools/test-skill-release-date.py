@@ -394,7 +394,7 @@ class ExtractorCliTest(unittest.TestCase):
         for value in ("2026-02-30", "2026-11-15 ", "2026-1-15", "", "today"):
             with self.subTest(value):
                 self.assertEqual(run(None, "--check-date", value)[0], 1)
-        # A month or day of one digit fails the date form itself, before any
+        # A month or day of 1 digit fails the date form itself, before any
         # calendar check.
         for value in ("2026-11-5", "2026-1-15"):
             with self.subTest(value):
@@ -816,7 +816,7 @@ class JsonModeTest(unittest.TestCase):
             # makes it no JSON value; and an empty object names no op.
             ("a request wrapped in vertical tabs", b"\x0b" + request("baseline") + b"\x0b", None),
             ("a request wrapped in form feeds", b"\x0c" + request("baseline") + b"\x0c", None),
-            # One such character on either side alone is enough.
+            # A single such character on either side alone is enough.
             ("a request followed by a vertical tab", request("baseline") + b"\x0b", None),
             ("a request followed by a form feed", request("baseline") + b"\x0c", None),
             ("a request behind a vertical tab", b"\x0b" + request("baseline"), None),
@@ -1243,7 +1243,7 @@ class PatternPinTest(unittest.TestCase):
             "02026-11-15", "202-11-15", "2026-011-15", "2026-1-15", "2026-11-015", "2026-11-5",
             "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
             "2026/11/15", "2026-11/15", "2026.11.15",
-            # No hyphen, or one.
+            # No hyphen, or 1.
             "20261115", "2026-1115", "202611-15",
         ):
             line = "Released: " + value
@@ -1268,7 +1268,7 @@ class PatternPinTest(unittest.TestCase):
             run(None, "--check-date", "02026-11-15"),
             (1, "", "skill-release-date: not a bare YYYY-MM-DD date: '02026-11-15'\n"),
         )
-        # A date with no hyphen or one hyphen fails the form, so
+        # A date with no hyphen or 1 hyphen fails the form, so
         # date.fromisoformat, which takes the basic form 20261115, never sees
         # it, in every mode that takes a bare date.
         for value in ("20261115", "2026-1115", "202611-15"):
@@ -1309,7 +1309,7 @@ class PatternPinTest(unittest.TestCase):
             "2026-01-\u0660\u0661T00:00:00Z", "2026-01-01T\u0660\u0661:00:00Z", "2026-01-01T00:\u0660\u0661:00Z",
             "2026-01-01T00:00:\u0660\u0661Z", "2026-01-01 00:00:00Z", "2026-01-01t00:00:00Z",
             "2026-01-01T00:00:00z", "2026/01/01T00:00:00Z", "2026-01-01T00-00-00Z", "2026-01-01T00:00:00Z ",
-            # No hyphen or one, no colon or one, fractional seconds, and a
+            # No hyphen or 1, no colon or 1, fractional seconds, and a
             # leading blank.
             "20260101T00:00:00Z", "2026-0101T00:00:00Z", "202601-01T00:00:00Z", "2026-01-01T000000Z",
             "2026-01-01T0000:00Z", "2026-01-01T00:0000Z", "2026-01-01T00:00:00.123Z", "2026-01-01T00:00:00.5Z",
