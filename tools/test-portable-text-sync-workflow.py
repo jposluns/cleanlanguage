@@ -26,23 +26,25 @@ together. It also fails unless that job carries no if: or continue-on-error
 and its steps are a list of mappings, none of which carries an if:,
 continue-on-error or timeout-minutes, so any condition on the job or a step, a
 failure that does not fail the job, or a time limit on a step fails. Its
-mutation tests call edited(), which finds each line they edit by its text, the
-first place in the file that holds it, leading spaces included, even inside a
+mutation tests call edited(), which finds the text that an edit looks for (1
+needed line, or a needed line together with the lines next to it) at the first
+place in the file that holds it, leading spaces included, even inside a
 comment or partway along a line, and fails if that text is missing. So the
 suite also fails unless the text of each of these 7 lines of that workflow is
 in it as written: "pull_request:", "- main", "jobs:",
 "runs-on: ubuntu-latest", "timeout-minutes: 30", the "steps:" line straight
 after it, and "- name: Run the release dry run". These lines change only
-together with this test. An earlier line that holds the same text changes
-where an edit lands, so what the suite then does is not defined and depends on
-the placement. A rewrite that removes one of these texts fails the suite,
-since edited() then finds it nowhere in the file, even "pull_request: ~",
-which holds the same value as "pull_request:" under YAML rules. That GitHub
-Actions reads "pull_request: ~" the same way as "pull_request:" is an
-inference, not checked. Apart from those lines, the test checks no other key
-of that job or its steps. The dry run does not run this test:
-workflow-isolation.yml does, with no filter, so a pull request that adds a
-filter to the dry run which its own changed files fall outside still runs it.
+together with this test. An earlier place that holds the whole text an edit
+looks for changes where that edit lands, so what the suite then does is not
+defined and depends on the placement. A rewrite that removes one of these
+texts fails the suite, since edited() then finds it nowhere in the file, even
+"pull_request: ~", which holds the same value as "pull_request:" under YAML
+rules. That GitHub Actions reads "pull_request: ~" the same way as
+"pull_request:" is an inference, not checked. Apart from those lines, the test
+checks no other key of that job or its steps. The dry run does not run this
+test: workflow-isolation.yml does, with no filter, so a pull request that adds
+a filter to the dry run which its own changed files fall outside still runs
+it.
 
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
@@ -76,10 +78,11 @@ it. A merge key among the top-level keys fails the first check. How GitHub
 Actions handles merge keys is not checked.
 
 Like those of DryRunTests, the mutation tests of TriggerTests and LaunchTests
-that call edited() find each line they edit by its text, the first place in
-the file that holds it, leading spaces included, even inside a comment or
-partway along a line, and fail if that text is missing; the others need no
-text. So the suite also fails unless the text of each of these 10 lines of
+that call edited() find the text that an edit looks for (1 needed line, or a
+needed line together with the lines next to it) at the first place in the file
+that holds it, leading spaces included, even inside a comment or partway along
+a line, and fail if that text is missing; the others need no text. So the
+suite also fails unless the text of each of these 10 lines of
 portable-text-sync.yml is in it as written: "name: Portable", "on:",
 "pull_request:", "- main", "permissions:", "contents: read", "jobs:",
 "runs-on:", and the 2 lines of the step that runs this test, "shell: bash"
@@ -91,13 +94,13 @@ line, each straight after the one before. Only the text quoted is needed from
 the first line of portable-text-sync.yml and from the runs-on: line of these 2
 workflows, so "runs-on: ubuntu-24.04" passes there. As for
 release-dry-run.yml, these lines change only together with this test, and an
-earlier line in the file that holds the same text changes where an edit lands,
-so what the suite then does is not defined and depends on the placement. A
-rewrite that removes any of this text fails the suite, since edited() then
-finds it nowhere in the file, even "pull_request: ~" or "- 'main'", which hold
-the same values as the lines they replace under YAML rules. That GitHub
-Actions reads them the same way as the lines they replace is an inference, not
-checked.
+earlier place in the file that holds the whole text an edit looks for changes
+where that edit lands, so what the suite then does is not defined and depends
+on the placement. A rewrite that removes any of this text fails the suite,
+since edited() then finds it nowhere in the file, even "pull_request: ~" or
+"- 'main'", which hold the same values as the lines they replace under YAML
+rules. That GitHub Actions reads them the same way as the lines they replace
+is an inference, not checked.
 
 Apart from those lines, the test checks no other key of a job that runs it,
 such as needs: or continue-on-error, no condition on any other job or step of
