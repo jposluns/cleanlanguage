@@ -12,33 +12,70 @@ Exit codes:
   1  the committed sitemap drifted, or an input was invalid
   2  the command line was wrong
   3  the check could not run: the config, the site root, or a page could not
-     be read, or the config is invalid
+     be read, the config is invalid, or tools/web_metadata.py or
+     tools/sitemap_engine.py could not be loaded
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import os
+import stat
 import sys
+import types
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 
 
-def _load_sibling(name: str):
-    """Load tools/<name>.py by its explicit path, leaving sys.path unchanged."""
-    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
+def _refuse(message: str) -> None:
+    print(f"generate-sitemap: {message}", file=sys.stderr)
+    raise SystemExit(3)
+
+
+def _load_sibling(name: str, needs: tuple[str, ...]):
+    """Load tools/<name>.py by its explicit path, leaving sys.path unchanged.
+
+    The source is always read, compiled and run as a fresh module, so no cached
+    bytecode stands in for it. The module is in sys.modules under name while it
+    runs, so a later sibling can import it by that name, and is removed from it
+    when the load fails. A source that is not a regular file, or that cannot be
+    read, compiled or run, or that lacks any name in needs, means the check
+    could not run (exit 3).
+    """
+    path = TOOLS_DIR / f"{name}.py"
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        _refuse(f"tools/{path.name} could not be read: {error}")
+    if not stat.S_ISREG(info.st_mode):
+        _refuse(f"tools/{path.name} is not a regular file")
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        _refuse(f"tools/{path.name} could not be read: {error}")
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        sys.modules.pop(name, None)
+        _refuse(f"tools/{path.name} could not be loaded: {error!r}")
+    for attribute in needs:
+        if not hasattr(module, attribute):
+            sys.modules.pop(name, None)
+            _refuse(f"tools/{path.name} defines no {attribute}")
     return module
 
 
 # The sibling modules load by explicit path, so sys.path never names the tools
 # folder and no file planted there can be imported. web_metadata loads first
 # under its own name, because sitemap_engine imports it by that name.
-_load_sibling("web_metadata")
-engine = _load_sibling("sitemap_engine")
+_load_sibling("web_metadata",
+              ("UrlError", "parse_origin", "meta_tags", "link_tags", "contained"))
+engine = _load_sibling("sitemap_engine",
+                       ("EngineError", "EngineRunError", "load_config", "write", "verify"))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"

@@ -3,13 +3,17 @@
 
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
-asserts its exit code. Exit 0 when every case passes; 1 otherwise. One further
-case runs the gate under a faked Python version tuple outside the supported set
-of tools/check-inline-code.py and asserts exit 3 with the gate's own message.
+asserts its exit code and, where the case names them, the words of the gate's
+refusal. Exit 0 when every case passes; 1 otherwise. One further case runs the
+gate under a faked Python version tuple outside the supported set of
+tools/check-inline-code.py and asserts exit 3 with the gate's own message.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import os
+import py_compile
 import shutil
 import subprocess
 import sys
@@ -49,6 +53,44 @@ def edit(relative: str, old: str, new: str):
     return apply
 
 
+def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
+    """The 6 ways a sibling tool can fail to load, each a fault on 1 file with the words of the refusal it gives: the
+    file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition of attribute
+    renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
+    comparing it with the source (an unchecked hash-based file). The tool must always read the source, so that no
+    cached file stands in for it."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    return [("missing", missing, "could not be read"), ("with mode 000", locked, "could not be read"),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read"),
+            ("with a syntax error", broken, "could not be loaded"),
+            (f"with {attribute} renamed", rename, f"defines no {attribute}"),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
+
+
 CASES = [
     ("the committed tree", None, 0),
     ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
@@ -70,7 +112,10 @@ CASES = [
         "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
     ("the page missing", lambda root: (root / PAGE).unlink(), 3),
     ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
-]
+] + [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: fault(root / "tools/check-inline-code.py"),
+      (3, f"check-instructions-page: tools/check-inline-code.py {words}"))
+     for name, fault, words in load_faults("def inline_code_problems(", "def inline_code_problems_unused(",
+                                           "inline_code_problems")]
 
 
 def main() -> int:
@@ -81,8 +126,10 @@ def main() -> int:
             if fault:
                 fault(root)
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            if result.returncode != expected:
-                failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+            code, words = expected if isinstance(expected, tuple) else (expected, "")
+            if result.returncode != code or words not in result.stderr:
+                failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
+                                + f": {(result.stdout + result.stderr).strip()[:300]}")
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],

@@ -296,7 +296,6 @@ error text it reported was before.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -307,6 +306,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import urllib.parse
 from html.parser import HTMLParser
 from pathlib import Path
@@ -1189,11 +1189,9 @@ def download_block(version: str, checksum: str) -> str:
     3, or, for the zero placeholder, the not-yet-published note. Raises LookupError when the generator cannot
     render it. Both gates carry this function verbatim, as download_block_problems says."""
     try:
-        spec = importlib.util.spec_from_file_location("build_site", GENERATOR)
-        if spec is None or spec.loader is None:
-            raise ImportError("no loader")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType("build_site")
+        module.__file__ = str(GENERATOR)
+        exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         return module.verify_download_block(module.REPO_ROOT, version, f"v{version}", checksum)
     except Exception as error:
         raise LookupError(f"tools/build-site.py could not render the verify page's download block: {error}") from error
@@ -1254,11 +1252,9 @@ def rendered_verify_page(version: str, checksum: str) -> bytes:
     the tag v``version`` and ``checksum`` (verify_page), whatever version SKILL.md names: the page the gate requires
     byte for byte. Raises LookupError when the generator cannot render it, which a refusal on any page causes."""
     try:
-        spec = importlib.util.spec_from_file_location("build_site_page", GENERATOR)
-        if spec is None or spec.loader is None:
-            raise ImportError("no loader")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType("build_site_page")
+        module.__file__ = str(GENERATOR)
+        exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         release = {"version": version, "tag": f"v{version}", "checksum": checksum}
         return module.verify_page(module.REPO_ROOT, release)
     except Exception as error:

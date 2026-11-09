@@ -11,7 +11,12 @@ gate.
 from __future__ import annotations
 
 import importlib.util
+import os
+import py_compile
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -455,6 +460,67 @@ class SharedParserTest(unittest.TestCase):
                                encoding="utf-8")
             with self.assertRaises(engine.EngineRunError):
                 engine.load_config(cfgfile)
+
+
+def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
+    """The 6 ways a sibling tool can fail to load, each a fault on 1 file with the words of
+    the refusal it gives: the file missing, its mode 000, its mode 000 beside a valid cached
+    file, a syntax error, the definition of attribute renamed, and a syntax error beside a
+    cached file of the unbroken source that the normal loader runs without comparing it with
+    the source (an unchecked hash-based file). The tool must always read the source, so that
+    no cached file stands in for it."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cache(path: Path, mode: py_compile.PycInvalidationMode) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)),
+                           doraise=True, invalidation_mode=mode)
+
+    def cached_locked(path: Path) -> None:
+        cache(path, py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        cache(path, py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    return [("missing", missing, "could not be read"),
+            ("with mode 000", locked, "could not be read"),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read"),
+            ("with a syntax error", broken, "could not be loaded"),
+            (f"with {attribute} renamed", rename, f"defines no {attribute}"),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
+
+
+class SiblingLoadTest(unittest.TestCase):
+    """tools/generate-sitemap.py, run with tools/sitemap_engine.py failing to load in each way
+    load_faults() gives, exits 3 with its own refusal naming that file, and never runs a
+    cached file in its place."""
+
+    def test_each_load_failure_is_refused(self):
+        for name, fault, words in load_faults("def verify(", "def verify_unused(", "verify"):
+            with self.subTest(name), tempfile.TemporaryDirectory() as scratch:
+                tools = Path(scratch) / "tools"
+                tools.mkdir()
+                for file in ("generate-sitemap.py", "web_metadata.py", "sitemap_engine.py"):
+                    shutil.copyfile(Path(__file__).resolve().parent / file, tools / file)
+                fault(tools / "sitemap_engine.py")
+                result = subprocess.run([sys.executable, "-I", str(tools / "generate-sitemap.py")],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 3, result.stderr[-300:])
+                self.assertIn(f"generate-sitemap: tools/sitemap_engine.py {words}", result.stderr)
 
 
 if __name__ == "__main__":

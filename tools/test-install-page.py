@@ -169,6 +169,8 @@ import ast
 import difflib
 import hashlib
 import importlib.util
+import os
+import py_compile
 import re
 import shutil
 import subprocess
@@ -2448,6 +2450,50 @@ def version_binding_problems() -> list[str]:
                        f"pinned assignment {name} = pinned_baseline() may bind; remove it or use another name")
                       for name in names if name in pinned]
     return problems + [problem for _, problem in sorted(found)]
+
+
+def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
+    """The 6 ways a sibling tool can fail to load, each a fault on 1 file with the words of the refusal it gives: the
+    file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition of attribute
+    renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
+    comparing it with the source (an unchecked hash-based file). The tool must always read the source, so that no
+    cached file stands in for it."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    return [("missing", missing, "could not be read"), ("with mode 000", locked, "could not be read"),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read"),
+            ("with a syntax error", broken, "could not be loaded"),
+            (f"with {attribute} renamed", rename, f"defines no {attribute}"),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
+
+
+CASES += [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: fault(root / INLINE_GATE),
+           (3, f"check-install-page: {INLINE_GATE} {words}"))
+          for name, fault, words in load_faults("def inline_code_problems(", "def inline_code_problems_unused(",
+                                                "inline_code_problems")]
 
 
 def main() -> int:

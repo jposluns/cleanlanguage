@@ -53,6 +53,7 @@ import io
 import json
 import locale
 import os
+import py_compile
 import resource
 import shutil
 import signal
@@ -5103,6 +5104,66 @@ class WholePageTest(unittest.TestCase):
                 site_json.write_text(original, encoding="utf-8")
                 sitemap_config.write_text(original_sitemap, encoding="utf-8")
                 self.page.write_text(page, encoding="utf-8")
+
+
+def load_faults(defined: str, renamed: str) -> list[tuple[str, object, type]]:
+    """The 6 ways tools/build-site.py can fail to load, each a fault on 1 copy of it with the exception the load
+    raises: the file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition
+    defined renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs
+    without comparing it with the source (an unchecked hash-based file). A gate that always reads the source gives
+    that exception; one that runs a cached file in its place does not."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    name = defined.removeprefix("def ").removesuffix("(")
+    return [("missing", missing, FileNotFoundError), ("with mode 000", locked, PermissionError),
+            ("with mode 000 beside a valid cached file", cached_locked, PermissionError),
+            ("with a syntax error", broken, SyntaxError), (f"with {name} renamed", rename, AttributeError),
+            ("with a syntax error beside a stale cached file", stale, SyntaxError)]
+
+
+class GeneratorLoadTest(unittest.TestCase):
+    """A tools/build-site.py that fails to load in each way load_faults() gives is a generator that cannot render,
+    which the gate raises as LookupError and main() refuses with exit 3; the gate never runs a cached file in place
+    of the source. No case reads the network."""
+
+    GENERATOR = Path(__file__).resolve().parent / "build-site.py"
+
+    def test_each_load_failure_is_a_generator_that_cannot_render(self):
+        for render, defined in ((gate.download_block, "def verify_download_block("),
+                                (gate.rendered_verify_page, "def verify_page(")):
+            for name, fault, cause in load_faults(defined, defined.replace("(", "_unused(")):
+                with self.subTest(f"{defined}: tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "build-site.py"
+                    shutil.copyfile(self.GENERATOR, path)
+                    fault(path)
+                    with mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render(CURRENT, ZIP_SUM)
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, cause)
 
 
 if __name__ == "__main__":

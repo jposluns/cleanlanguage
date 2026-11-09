@@ -25,6 +25,7 @@ import importlib.util
 import io
 import json
 import os
+import py_compile
 import re
 import shutil
 import tempfile
@@ -1246,6 +1247,85 @@ class WorkflowPathsTest(unittest.TestCase):
             for relative, pattern in self.COVERING.items():
                 with self.subTest(f"{name}: {relative}"):
                     self.assertIn(f'      - "{pattern}"\n', part)
+
+
+def load_faults(defined: str, renamed: str) -> list[tuple[str, object, str, type]]:
+    """The 6 ways tools/build-site.py can fail to load, each a fault on 1 copy of it with the words of the writer's
+    refusal and the exception the load raises: the file missing, its mode 000, its mode 000 beside a valid cached
+    file, a syntax error, the definition defined renamed, and a syntax error beside a cached file of the unbroken
+    source that the normal loader runs without comparing it with the source (an unchecked hash-based file). A tool
+    that always reads the source gives that exception; one that runs a cached file in its place does not."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    name = defined.removeprefix("def ").removesuffix("(")
+    return [("missing", missing, "could not be read", FileNotFoundError),
+            ("with mode 000", locked, "could not be read", PermissionError),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read", PermissionError),
+            ("with a syntax error", broken, "could not be loaded", SyntaxError),
+            (f"with {name} renamed", rename, f"defines no {name}", AttributeError),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded", SyntaxError)]
+
+
+class GeneratorLoadTest(unittest.TestCase):
+    """A tools/build-site.py that fails to load in each way load_faults() gives is a generator that cannot render, which
+    the gate raises as LookupError and main() refuses with exit 3, and the writer refuses with exit 2. Neither runs a
+    cached file in place of the source."""
+
+    GENERATOR = Path(__file__).resolve().parent / "build-site.py"
+
+    def faulted(self, root: Path, fault) -> Path:
+        path = root / "tools" / "build-site.py"
+        path.parent.mkdir()
+        shutil.copyfile(self.GENERATOR, path)
+        fault(path)
+        return path
+
+    def test_the_gate_raises_each_load_failure(self):
+        for render, defined in ((lambda: gate.download_block("1.0.0", ZEROS), "def verify_download_block("),
+                                (gate.rendered_verify_page, "def verify_page(")):
+            for name, fault, _, cause in load_faults(defined, defined.replace("(", "_unused(")):
+                with self.subTest(f"{defined}: tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                    path = self.faulted(Path(tmp), fault)
+                    with unittest.mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render()
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, cause)
+
+    def test_the_writer_refuses_each_load_failure(self):
+        release = {"version": "1.0.0", "tag": "v1.0.0", "checksum": ZEROS}
+        for name, fault, words, _ in load_faults("def build(", "def build_unused("):
+            with self.subTest(f"tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                self.faulted(Path(tmp), fault)
+                stderr = io.StringIO()
+                with (unittest.mock.patch.object(writer, "REPO_ROOT", Path(tmp)), contextlib.redirect_stderr(stderr),
+                      self.assertRaises(SystemExit) as raised):
+                    writer.site_pages(release, "2026-11-04")
+                self.assertEqual(raised.exception.code, 2, stderr.getvalue())
+                self.assertIn(f"set-release-links: tools/build-site.py {words}", stderr.getvalue())
 
 
 if __name__ == "__main__":
