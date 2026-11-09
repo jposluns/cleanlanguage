@@ -699,17 +699,17 @@ exception would end the gate with exit 1.
 ``tools/test-install-page.py`` runs every case on the Python that runs it, and
 ``.github/workflows/install-page.yml`` runs it before the gate in the same job.
 Before it reads a file, ``main()`` runs ``parse()`` on each fragment of
-``READING_PROBES``, 1 for each of the 3 readings above: a ``</ script>``
-inside a ``script``, markup inside a ``title``, and a comment ended by
-``--!>``. Where the number of ``h1`` elements that ``parse()`` reads in a
-fragment differs from the number that Python 3.14.4 gives, the gate exits 3
-and names that probe, so a release that changes a reading stops the gate
-wherever it runs, ``tools/release-dry-run.sh`` included, which runs the gate
-without the suite. The suite puts each reading on a family page: an ``h1``
-after a ``</ script>`` in its JSON-LD and an ``h1`` in its ``title`` pass,
-and an ``h1`` after a comment ended by ``--!>`` fails as a second ``h1``.
-It also runs, for each probe, a copy of the gate that expects the other
-reading of it, which must exit 3 and name that probe.
+``READING_PROBES``, 1 for each of the 3 readings above: a ``</ script>`` inside
+a ``script``, markup inside a ``title``, and a comment ended by ``--!>``. Where
+the number of ``h1`` elements that ``parse()`` reads in a fragment differs from
+the number that Python 3.14.4 gives, the gate exits 3 and names that probe, so
+a release that changes a reading stops the gate wherever it runs,
+``tools/release-dry-run.sh`` included, which runs the gate without the suite.
+The suite puts each reading on a family page: an ``h1`` after a ``</ script>``
+in its JSON-LD and an ``h1`` in its ``title`` pass, and an ``h1`` after a
+comment ended by ``--!>`` fails as a second ``h1``. It also runs, for each
+probe, a copy of the gate that expects the other reading of it, which must exit
+3 and name that probe.
 
 Exit codes:
   0  every check above passes
@@ -1931,10 +1931,10 @@ def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict
     pins, and leaves the rest to the pins of any checked element that holds them (a step, say).
     tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope.
     The filter of the links back on not hidden is implied by the filter on visible text, and the refusal names both:
-    the parser never counts text inside a hiding element, so a link that it reads as hidden has no visible text, which
-    hidden_link_problems() of tools/test-install-page.py checks. Only on a page that parse() hides as a whole (by a
-    frameset start tag anywhere, or a hiding html or body start tag after the link) does a link that reads as hidden
-    keep its text, and there every h1 reads as hidden too, so check 4 refuses the page."""
+    the parser never counts text inside a hiding element, so a link that it reads as hidden has no visible text,
+    which hidden_link_problems() of tools/test-install-page.py checks. Only on a page that parse() hides as a whole
+    (by a frameset start tag, or a hiding html or body start tag, anywhere) may a link that reads as hidden keep its
+    text, and there every h1 reads as hidden too, so check 4 refuses the page."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
     problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
@@ -2037,8 +2037,9 @@ def main() -> int:
     for name, fragment, expected in READING_PROBES:
         found = len(parse(fragment).h1)
         if found != expected:
-            die(f"html.parser on this Python reads {name} otherwise than Python 3.14.4 does: it reads {found} h1 "
-                f"elements in {fragment!r}, not {expected} (READING_PROBES)")
+            elements = "1 h1 element" if found == 1 else f"{found} h1 elements"
+            die(f"html.parser on this Python reads {name} otherwise than Python 3.14.4 does: it reads {elements} in "
+                f"{fragment!r}, not {expected} (READING_PROBES)")
     for path in (PAGE, *FAMILY_PAGES.values(), HEADERS, REDIRECTS):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")

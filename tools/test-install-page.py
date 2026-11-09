@@ -2131,7 +2131,7 @@ def name_reading_problems() -> list[str]:
 
 # Fragments in which the gate's parse() reads a link to #get as hidden: by its own attribute, a hiding ancestor, a
 # hiding class on an ancestor, a details without open and an element of INERT_ELEMENTS, and on a page that parse()
-# hides as a whole, by a hiding body start tag after the link or a frameset start tag.
+# hides as a whole, by a hiding body start tag before or after the link or a frameset start tag.
 HIDDEN_LINKS = (
     '<a href="/install/#get" hidden>Back</a>',
     '<div hidden><p><a href="/install/#get"><span>Back</span></a></p></div>',
@@ -2139,15 +2139,16 @@ HIDDEN_LINKS = (
     '<details><summary>More</summary><a href="/install/#get">Back</a></details>',
     '<noscript><a href="/install/#get">Back</a></noscript>',
     '<h1>Claude</h1><a href="/install/#get">Back</a><body hidden>',
+    '<h1>Claude</h1><div><body hidden></body><a href="/install/#get">Back</a></div>',
     '<frameset><h1>Claude</h1><a href="/install/#get">Back</a>',
 )
 
 
 def hidden_link_problems() -> list[str]:
-    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as
-    hidden, so the filter of the links back on not hidden in family_checked() is implied by its filter on visible
-    text; this fails if the 2 filters drift apart. On a page that parse() hides as a whole, a link that reads as hidden
-    keeps its text, and there every h1 must read as hidden too, so that check 4 refuses the page."""
+    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as hidden,
+    so the filter of the links back on not hidden in family_checked() is implied by its filter on visible text; this
+    fails if the 2 filters drift apart. On a page that parse() hides as a whole, a link that reads as hidden may keep
+    its text, and there every h1 must read as hidden too, so that check 4 refuses the page."""
     problems: list[str] = []
     try:
         gate = load_gate()
