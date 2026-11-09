@@ -625,10 +625,9 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
 
     def test_readers_remove_only_one_final_newline(self):
-        # Each record reader returns what gh printed with only one final
-        # newline removed, so a second newline, a carriage return, or a blank
-        # on either side stays in the value and reaches the check that refuses
-        # it.
+        # Each record reader returns what gh printed with only 1 final newline
+        # removed, so a second newline, a carriage return, or a blank on either
+        # side stays in the value and reaches the check that refuses it.
         for name, reader, field in (
             ("release_published_at", self._saved[6], "2026-11-15T09:30:00Z"),
             ("release_immutable", self._saved[7], "true"),
@@ -1555,9 +1554,9 @@ class ConditionalPassTest(unittest.TestCase):
         # probe result is 0 or 3 and a drift or date mismatch verdict is 1, so
         # a failed probe (3) wins over the verdict, and a clean probe (0)
         # leaves the verdict (1). Each later call runs a child of its own, so
-        # the verdict is still reached and reported.
-        # This kills code = code, code = load_code and
-        # code = min(load_code, code) at the combining line of main.
+        # the verdict is still reached and reported. This kills code = code,
+        # code = load_code and code = min(load_code, code) at the combining
+        # line of main.
         drift = "Release checksum drift found:"
         mismatch = "Release date inconsistency found:"
         for label, site_sum, published_at, flaky_load, expected, reports in (
@@ -1695,9 +1694,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_status_is_three_ascii_digits_after_the_protocol(self):
         # A status is read only from a line that starts with "HTTP/" and a
-        # version of digits and dots, then one space and three ASCII digits
-        # that end the line or are followed by a space; the last such line
-        # wins. Any other line is no status, so a gh read with no such line is
+        # version of digits and dots, then 1 space and 3 ASCII digits that end
+        # the line or are followed by a space; the last such line wins. Any
+        # other line is no status, so a gh read with no such line is
         # unverifiable.
         for stdout, status in (
             ("HTTP/2.0 404 Not Found\n", 404), ("HTTP/2 404", 404), ("HTTP/1.1 200 OK\nX-Note: HTTP/1.1 500\n", 200),
@@ -2307,7 +2306,7 @@ class ConditionalPassTest(unittest.TestCase):
              version),
             ("baseline with a trailing newline", "baseline",
              {"op": "baseline", "outcome": "value", "value": "1.0.14\n"}, version),
-            # Each part of the baseline is one or more ASCII digits, joined by
+            # Each part of the baseline is 1 or more ASCII digits, joined by
             # dots.
             *((f"baseline {value!r}", "baseline", {"op": "baseline", "outcome": "value", "value": value}, version)
               for value in (
@@ -2511,7 +2510,7 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_the_verify_page_must_show_a_bare_checksum_and_version(self):
         # The verify page is read by exact patterns. An empty checksum block, a
-        # checksum one digit short, and a version that does not start with a
+        # checksum 1 digit short, and a version that does not start with a
         # digit each exit 3 with their own report, before any release is read.
         short = ZIP_SUM[:63]
         sha = "is not a 64 character lower-case SHA-256"
@@ -2528,7 +2527,7 @@ class ConditionalPassTest(unittest.TestCase):
     def test_every_part_of_the_verify_page_patterns_is_pinned(self):
         # The checksum block, the checksum and the version on the verify page
         # are each read by an exact pattern, so a page that the shipped pattern
-        # and a pattern with one part changed would answer differently exits 3
+        # and a pattern with 1 part changed would answer differently exits 3
         # with its own report, before any release is read. The checksum is
         # exactly 64 lower-case hex digits once stripped. The version is the
         # shipped pattern, as the release tooling writes it
@@ -2630,7 +2629,7 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
         # The manifest is read as lines, so a final newline, which a real
-        # manifest ends in, ends its one line rather than starting a second,
+        # manifest ends in, ends its 1 line rather than starting a second,
         # empty one.
         for label, ending in (("with a final newline", "\n"), ("without a final newline", "")):
             with self.subTest(label):
@@ -2670,7 +2669,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(err.getvalue(), self.CV + f"cleanlanguage-{AHEAD}.zip.sha256 is not exactly one line\n")
 
     def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
-        # The digest of the manifest has exactly 64 hex digits; one digit short
+        # The digest of the manifest has exactly 64 hex digits; 1 digit short
         # fails its form, before the zip is hashed.
         short = ZIP_SUM[:63]
 
@@ -2881,11 +2880,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIsNotNone(state, "the child was reaped before its group was killed")
 
     def test_an_interrupt_while_waiting_kills_the_group_and_propagates(self):
-        # Row 80: a KeyboardInterrupt while the gate waits, where the group
-        # can be killed, kills the child group, reaps the child, and
-        # propagates unchanged. It is raised here from a stubbed os.waitid,
-        # not by a real signal, which can arrive at any point of the wait; an
-        # Exception while waiting exits 3 instead (see
+        # Row 80: a KeyboardInterrupt while the gate waits, where the group can
+        # be killed, kills the child group, reaps the child, and propagates
+        # unchanged. It is raised here from a stubbed os.waitid, not by a real
+        # signal, which can arrive at any point of the wait; an Exception while
+        # waiting exits 3 instead (see
         # test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3).
         # The gate waits with os.waitid, so the interrupt is raised from there.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
@@ -3331,8 +3330,8 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_the_stdout_bound_of_a_call_with_an_argument_grows_with_it(self):
         # The bound is RESULT_LIMIT plus 12 bytes for each character of the
-        # argument; a reply of exactly that size is accepted and one byte more
-        # is refused, naming the bound.
+        # argument; a reply of exactly that size is accepted and 1 byte more is
+        # refused, naming the bound.
         valid = b'{"op": "extract", "outcome": "absent"}'
         limit = gate.RESULT_LIMIT + 12 * len("xy")
         padded = valid + b" " * (limit - len(valid))
@@ -3352,8 +3351,8 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(result, expected)
 
     def test_a_reply_with_a_repeated_key_exits_3(self):
-        # A reply is exactly one JSON object that matches the contract, so a
-        # key given twice is refused, never read with the last value winning.
+        # A reply is exactly 1 JSON object that matches the contract, so a key
+        # given twice is refused, never read with the last value winning.
         rule = "printed a result that does not match the contract (a key appears more than once)"
         for label, output in (
             ("a repeated value", b'{"op": "extract", "outcome": "value", "value": "2026-11-15", "value": "2026-11-16"}\n'),
@@ -3410,7 +3409,7 @@ class ConditionalPassTest(unittest.TestCase):
         # ptrace, so the child's end is reported to it and not to the gate. The
         # gate sees no end within the timeout, kills the group, then sees no
         # end within the reap grace either, and exits 3 naming that it could
-        # not reap the child, leaving it, within the two bounds, instead of
+        # not reap the child, leaving it, within the 2 bounds, instead of
         # blocking in a reap until the tracer exits (30 seconds here). The test
         # skips only where the host refuses the seize; the next test simulates
         # the same outcome in-process on every host.
@@ -3424,9 +3423,8 @@ class ConditionalPassTest(unittest.TestCase):
         try:
             # The 1 second timeout starts only once the seize has succeeded, so
             # it cannot fire while the child is still being seized on a busy
-            # host.
-            # The bound below is measured from then, so the time a busy host
-            # takes to start the child does not count against it.
+            # host. The bound below is measured from then, so the time a busy
+            # host takes to start the child does not count against it.
             with self.timeout_when_ready(tool.parent / "ready") as ready_state:
                 started = time.monotonic()
                 result, err = self.call_reports("extract", self.ARGS["extract"])
@@ -3650,8 +3648,8 @@ class ConditionalPassTest(unittest.TestCase):
         # _wait_unreaped waits exactly its timeout argument (here 7.25 seconds,
         # no default of the gate), never sleeps past the deadline or more than
         # 0.05 seconds at a time, starts at 1 millisecond and doubles, never
-        # sleeps for zero, polls only with WEXITED, WNOWAIT, and WNOHANG for
-        # this pid, and returns True at the first poll that sees the end.
+        # sleeps for 0 seconds, polls only with WEXITED, WNOWAIT, and WNOHANG
+        # for this pid, and returns True at the first poll that sees the end.
         child = types.SimpleNamespace(pid=4242)
         flags = os.WEXITED | os.WNOWAIT | os.WNOHANG
         for label, end_at, expected, low, high in (
@@ -3875,8 +3873,8 @@ class ConditionalPassTest(unittest.TestCase):
         # for each character of the argument, and at most STDERR_LIMIT bytes of
         # stderr are read and relayed, each taken from the gate at the call:
         # with limits other than the defaults (300, 7, and 33), a reply of
-        # exactly the bound is accepted, one byte more is refused naming the
-        # bound, the reads ask for one byte over the bound and for STDERR_LIMIT
+        # exactly the bound is accepted, 1 byte more is refused naming the
+        # bound, the reads ask for 1 byte over the bound and for STDERR_LIMIT
         # bytes, and the relayed stderr is its first 33 bytes, decoded with
         # replacement.
         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
@@ -4475,13 +4473,12 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertIn("the gh CLI is not available", err)
 
     def test_a_hung_extractor_and_what_it_forked_are_killed(self):
-        # A process the hung child started in its group is killed with it:
-        # once the gate has exited it is gone, or a zombie where no process
-        # reaps it, never still running.
-        # The child writes the pid file whole (a rename) and then says it is
-        # ready, and the 1 second timeout starts only then
-        # (READY_TIMEOUT_WRAPPER), so on a busy host the kill can never come
-        # before the pid file exists.
+        # A process the hung child started in its group is killed with it: once
+        # the gate has exited it is gone, or a zombie where no process reaps
+        # it, never still running. The child writes the pid file whole (a
+        # rename) and then says it is ready, and the 1 second timeout starts
+        # only then (READY_TIMEOUT_WRAPPER), so on a busy host the kill can
+        # never come before the pid file exists.
         body = extractor_with(
             "def extract(text):\n"
             "    import os, subprocess, time\n"
