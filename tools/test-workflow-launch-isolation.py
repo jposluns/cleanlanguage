@@ -628,12 +628,17 @@ RUN_CASES = [
     ("bash -c'true'", True),
     ('bash -c"true"', True),
     # Rule 3 reads .pyw as well as .py and .pyz, in any letter case, and only
-    # when no letter, digit or underscore follows the suffix, so x.pyc and a
-    # property named pyenv pass.
+    # when no letter, digit or underscore follows the suffix, so x.pyc, x.py3,
+    # x.py_, x.py followed by U+00E9 (a non-ASCII letter) and a property named
+    # pyenv pass. Each passing case fails when the `\w` of the lookahead no
+    # longer holds the class of the character after the suffix.
     ("./tools/x.pyw", True),
     ("./tools/x.PY", True),
     ("./tools/x.PYZ", True),
     ("echo x.pyc", False),
+    ("echo x.py3", False),
+    ("echo x.py_", False),
+    ("echo x.py\u00e9", False),
     ('echo "${{ steps.pyenv.outputs.v }}"', False),
     # Rule 3 reads these names in any letter case, so it also refuses an
     # expression that names a property PY, Py, PYZ or PYW.
@@ -783,13 +788,13 @@ def self_test() -> list[str]:
             ("2 sequence keys", "x: {? [a]: 1, ? [b]: 2}\n" + head,
              "duplicate key []"),
             ("a mapping that holds an alias to itself", "a: &x {b: *x}\n" + head, "recursive node"),
-            ("a mapping that merges its holder into one of its values", "a: &x {b: {<<: *x}}\n" + head,
+            ("a mapping merged into one of its own values", "a: &x {b: {<<: *x}}\n" + head,
              "recursive node"),
-            ("a mapping in a sequence with a merge and an override, merged by a later key",
+            ("a mapping with a merge and an override, held in a sequence and merged by a later key",
              "m: [&b {<<: {p: 1}, p: 2}]\no: {<<: *b}\n" + head, "duplicate key 'p'"),
             ("a plain = key in a mapping merged in a sequence and reused as a later alias",
              "l: [{<<: &b {=: a}}]\nn: *b\n" + head, "tag:yaml.org,2002:value"),
-            ("a mapping with a merge and an override in a sequence in a mapping, merged by a later key",
+            ("a mapping with a merge and an override, held in a sequence in a mapping and merged by a later key",
              "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
             ("a mapping nested 300 deep", "x: " + "{a: " * 300 + "1" + "}" * 300 + "\n" + head,
              "cannot be parsed as YAML (maximum recursion depth"),
@@ -828,13 +833,13 @@ def self_test() -> list[str]:
              {"m": {"=": "a"}, "n": {"=": "a"}}),
             ("a mapping that holds an alias to itself through a list", "a: &x {b: [*x]}\n" + head),
             ("a mapping that is its own merge source", "a: &x {<<: *x}\n" + head, {"a": {}}),
-            ("a mapping with a key that is its own merge source", "a: &x {b: 1, <<: *x}\n" + head, {"a": {"b": 1}}),
+            ("a mapping that holds a key and is its own merge source", "a: &x {b: 1, <<: *x}\n" + head, {"a": {"b": 1}}),
             ("a mapping whose merge list holds only itself", "a: &x {<<: [*x]}\n" + head, {"a": {}}),
             ("a mapping with a merge and an override, merged in a sequence and reused as a later alias",
              "l: [{<<: &b {<<: {p: 1}, p: 2}}]\nn: *b\n" + head, {"l": [{"p": 2}], "n": {"p": 2}}),
             ("a mapping with a merge and an override, merged in a sequence in a mapping and reused as a later alias",
              "m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}\nn: *b\n" + head, {"m": {"s": [{"p": 2}]}, "n": {"p": 2}}),
-            ("a mapping with a merge and an override in a sequence, reused as an alias and merged in the same mapping",
+            ("a mapping with a merge and an override, held in a sequence, reused as an alias and merged in the same mapping",
              "m: {s: [&b {<<: {p: 1}, p: 2}], t: *b, u: {<<: *b}}\n" + head,
              {"m": {"s": [{"p": 2}], "t": {"p": 2}, "u": {"p": 2}}}),
             ("a plain = key in a merge source", "x: {<<: {=: a}}\n" + head, {"x": {"=": "a"}}),
