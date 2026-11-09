@@ -93,9 +93,14 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   else
     pass "structural: no hand-rolled first-line sed selector in ${site}"
   fi
-  # Each site must call the shared extractor the expected number of times,
-  # counting calls with and without -I, and every one of those calls must
-  # launch it isolated (python3 -I).
+  # Each site must call the shared extractor the expected number of times, with
+  # -I. grep -c counts lines, not calls, so the first count is of the lines that
+  # call it with or without -I and the second of the lines that call it with -I,
+  # and an unisolated call added to a line that already holds an isolated one
+  # changes neither. At the 2 shell sites, tools/test-shell-launch-isolation.py
+  # gives a finding for that call, since its rule 1 reads every python word on
+  # each line that the scan reads; tools/test-workflow-launch-isolation.py reads
+  # the workflow site.
   got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
   got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"

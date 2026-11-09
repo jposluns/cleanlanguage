@@ -31,17 +31,19 @@ in a backslash, as in bash, so it joins no line:
    tools/check-python-version.py is not such a word.
 2. Every token that ends in .py or .pyz, whatever quotes, $(...) or other text
    surround it, is a finding unless it is the program of a python3 -I launch
-   on the same line: the first word after `python3 -I ` and any option words
-   (a hyphen and letters) after it, where a word may hold quoted parts with no
-   space or tab inside them, so `python3 -I "$(dirname "$0")/x.py"` is a
-   finding. Where the token stands in the shell grammar decides nothing, so
-   quoting and command substitution cannot hide a launch: `"$here"/x.py`,
-   `bash -c 'tools/x.py'`, `$PY tools/x.py` and an argument after the program,
-   such as a path that a `-c` or `-` program reads, are findings. So is a .py
-   path that a line names without running it, as in cp, grep, test -f or an
-   echo, until an exception names that line. LAUNCHERS names each shell
-   function that runs its arguments through a python3 -I launch, and that
-   launch. In tools/pages-build.sh, gate runs its arguments as the launch
+   on the same line: the first word after `python3 -I `, any options (a hyphen
+   and letters, or -X or -W and the word after it) and a `--` that ends them,
+   where a word may hold quoted parts with no space or tab inside them, so
+   `python3 -I -X utf8 tools/x.py` and `python3 -I -- tools/x.py` pass and
+   `python3 -I "$(dirname "$0")/x.py"` is a finding. Where the token stands in
+   the shell grammar decides nothing, so quoting and command substitution
+   cannot hide a launch: `"$here"/x.py`, `bash -c 'tools/x.py'`,
+   `$PY tools/x.py` and an argument after the program, such as a path that a
+   `-c` or `-` program reads, are findings. So is a .py path that a line names
+   without running it, as in cp, grep, test -f or an echo, until an exception
+   names that line. LAUNCHERS names each shell function that runs its
+   arguments through a python3 -I launch, and that launch. In
+   tools/pages-build.sh, gate runs its arguments as the launch
    `python3 -I "$@"`, so a .py path that is the first word after a gate that
    starts a line of that script is the program of that launch. The scan checks
    that the script defines the function once and that a line of its body
@@ -78,29 +80,34 @@ finding, so the table cannot keep a pattern for a line that is gone.
 EXPECTED_SCRIPTS names the scripts the discovery must find, so a change that
 stops the discovery from reaching one is a finding.
 
-Residuals: rule 2 does not depend on where a token stands, so the scan misses
-a launch only in these ways. A launch on a line the scan does not read: a
-comment line, the program of a `python3 -I -c` or `python3 -I -` launch
-named above, which holds Python and not shell, and a line that a shell runs
-but that the scan takes for such a program or a comment because it misjudges
-where a quote or a here-document ends, as with a case pattern inside $(...),
-which misleads the quote reading, or a here-document with a quoted delimiter
-that a later command on the line of a `python3 -I -` launch opens. A launch
-that names neither a word rule 1 reads nor a .py or .pyz token: an
-interpreter held in a variable (`"$real_py" -c`) or reached through a
-function or alias, an interpreter name in other letter cases or with a
-letter or hyphen after its digits (`python3m`), a script run by its shebang
-whose name does not end in .py or .pyz, such a word or token split by a
-backslash-newline in a body with a quoted delimiter that a shell runs
-(`bash <<'X'`), which the scan does not join, and text built at run time. A
-launch from Python, such as subprocess with sys.executable. A launch in a
-script that a covered script reaches only through a variable or a path the
-discovery does not match. The cost of the rules is false findings: a line
-that names a .py or .pyz token or an interpreter word without a python3 -I
-launch of it, such as a message, a cp, grep or test operand, a comment after
-a command, a URL (`github.com/python/cpython`), a word such as cpython, a
-here-document body that no shell runs or a line inside a quoted string that
-spans lines, is a finding until an exception names it.
+Residuals: rule 2 does not depend on where a token stands, but the scan still
+misses a launch in the ways below, which are the known misses and not a
+complete list. A launch on a line the scan does not read: a comment line, the
+program of a `python3 -I -c` or `python3 -I -` launch named above, which holds
+Python and not shell, and a line that a shell runs but that the scan takes for
+such a program or a comment because it misjudges where a quote or a
+here-document ends, as with a case pattern inside $(...), which misleads the
+quote reading, or a here-document with a quoted delimiter that a later command
+on the line of a `python3 -I -` launch opens. A launch that names neither a
+word rule 1 reads nor a .py or .pyz token: an interpreter held in a variable
+(`"$real_py" -c`) or reached through a function or alias, an interpreter whose
+name rule 1 does not read, such as jython or graalpy, an interpreter name in
+other letter cases or with a letter or hyphen after its digits (`python3m`), a
+python word spelt with quoting, a backslash or a brace inside it (`pyth''on3`,
+`pytho{n3,}`), a script run by its shebang whose name does not end in .py or
+.pyz, such a word or token split by a backslash-newline in a body with a
+quoted delimiter that a shell runs (`bash <<'X'`), which the scan does not
+join, and text built at run time. A launch from Python, such as subprocess
+with sys.executable. A launch in a script that a covered script reaches only
+through a variable or a path the discovery does not match. The cost of the
+rules is false findings: a line that names a .py or .pyz token or an
+interpreter word without a python3 -I launch of it, such as a message, a cp,
+grep or test operand, a comment after a command, a URL
+(`github.com/python/cpython`), a word such as cpython, a here-document body
+that no shell runs or a line inside a quoted string that spans lines, is a
+finding until an exception names it, and so is a correct launch with an option
+that the scan does not read as one, such as an option joined to a value that
+is not all letters (`python3 -I -Xutf8 tools/x.py`) or a long option.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -156,8 +163,8 @@ EXCEPTIONS = (
      "its mention check to refuse; the shell does not run them"),
     ("tools/test-version-selectors.sh",
      r'''got="\$\(grep -Ec 'python3\( -I\)\? tools/skill-version\\\.py' "\$\{site\}" \|\| true\)"''', (),
-     "a grep pattern that counts the calls of tools/skill-version.py with and without -I, so that an "
-     "unisolated call changes the count; the shell does not run it"),
+     "a grep pattern that counts the lines that call tools/skill-version.py with or without -I; the shell does "
+     "not run it"),
     ("tools/test-ci-status.sh", r'(?:cat > |chmod \+x )"\$(?:bin|tmp/swapbin)/python3"(?: <<PY| ;;)?', (),
      "writes and marks executable a stand-in python3 that a case puts first on PATH"),
     ('tools/check-portable-text-sync.sh',
@@ -228,7 +235,7 @@ EXCEPTIONS = (
          'run_wrapper_case "$opt: unreadable ci-status.py fails closed with exit 3" 3 "$opt noread"',
      ),
      (),
-     'names ci-status.py or a planted .py file as a case description, an expected message, or an operand of grep, cp, ln, chmod or a printf redirection; the line runs no Python'),
+     'names ci-status.py or a planted .py file as a case description, an expected message, or an operand of grep, cp, ln, chmod or a printf redirection; no .py token on the line is a launch'),
     ('tools/test-ci-status.sh',
      literal(
          '"${here}/ci-status.py" > /dev/null 2>&1 || import_got=$?',
@@ -263,7 +270,7 @@ EXCEPTIONS = (
      ),
      (),
      'names the extractor, the client or the files a for loop copies with cp, as an expected message, a loop word, '
-     'an operand of cp, rm, mv, grep or a redirection, or a grep pattern; the line runs no Python'),
+     'an operand of cp, rm, mv, grep or a redirection, or a grep pattern; no .py token on the line is a launch'),
     ('tools/test-portable-text-release-date.sh',
      literal(
          'python3 -I - "${work}/tools/skill-release-date.py" "$1" "$2" <<"PYBREAK"',
@@ -316,15 +323,27 @@ PY_PATH = re.compile(r"\.pyz?(?![\w.-])")
 # A shell word, quoted parts included. A quoted part may not hold a space or tab, so a word that
 # the match starts inside a string cannot run on through the string's closing quote to a later path.
 WORD = r"((?:\"[^\"\s]*\"|'[^'\s]*'|[^\s\"';&|<>()`])+)"
-# The program of a python3 -I launch: the first word after its option words.
-PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I[ \t]+(?:-[A-Za-z]+[ \t]+)*" + WORD)
+
+
+def options(sep: str) -> str:
+    """Return a pattern for the option words of a launch, each followed by sep.
+
+    An option is -X or -W with its value word, or a hyphen and letters. A -X or -W followed by
+    a space or tab is read only with its value, so that value is never taken for the program.
+    """
+    value = WORD.replace("(", "(?:", 1)
+    return r"(?:(?:-[XW]" + sep + value + r"|-(?![XW][ \t])[A-Za-z]+)" + sep + r")*"
+
+
+# The program of a python3 -I launch: the first word after its options and a -- that ends them.
+PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I[ \t]+" + options(r"[ \t]+") + r"(?:--[ \t]+)?" + WORD)
 INTERPRETER_REASON = "Python interpreter other than python3 -I"
 PATH_REASON = ".py path that is not the program of a python3 -I launch"
 HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_]\w*)\2")
 # A python3 -I launch that reads its program from a here-document on standard input.
-STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-(?=\s|$)")
+STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"(?:-- )?-(?=\s|$)")
 # The text before a single quote that opens the program of a python3 -I -c launch.
-C_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-c $")
+C_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"-c $")
 
 
 def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
@@ -560,6 +579,9 @@ LINE_CASES = [
     ("echo `tools/x.py`", True),
     ("python3 -I tools/x.py; tools/y.py", True),
     ("python3 -I tools/x.py tools/y.py", True),
+    ("python3 -I -X utf8 tools/x.py tools/y.py", True),
+    ("python3 -I -X tools/y.py", True),
+    ("python3 -I -Xutf8 tools/x.py", True),
     ("python3 -I -c 'print(1)' tools/x.py", True),
     ('python3 -I - tools/x.py <<\'PY\'', True),
     ('python3 -I "$(tools/x.py)"', True),
@@ -577,6 +599,10 @@ LINE_CASES = [
     ("env -i python3 -I tools/x.py", False),
     ("python3 -I tools/x.py", False),
     ("python3 -I -B tools/x.pyz --check", False),
+    ("python3 -I -X utf8 tools/x.py", False),
+    ("python3 -I -W error tools/x.py", False),
+    ("python3 -I -- tools/x.py", False),
+    ("python3 -I -B -X dev -- tools/x.py --check", False),
     ("python3 -I -c 'print(1)'", False),
     ('python3 -I - "$1" <<\'PY\'', False),
     ("x=$(git show HEAD:f | python3 -I tools/x.py)", False),
@@ -625,6 +651,8 @@ SCRIPT_CASES = [
     ("cat > \"$b/python3\" <<PY\npython3 -c 1\nPY\n", [(1, P), (2, P)]),
     ("python3 -I tools/x.py <<EOF\npython3 -c 1\nEOF\n", [(2, P)]),
     ("python3 -I -B - \"$1\" <<\"PY\"\nimport x\nPY\n", []),
+    ("python3 -I -X utf8 -- - <<'PY'\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(4, P)]),
+    ("python3 -I -W error -c '\nos.system(\"python3 y.py\")\n' \"$f\"\n", []),
     ("echo \"usage: python3 -I - <<EOF\"\npython3 -c 1\n", [(2, P)]),
     ("echo 'python3 -I - <<EOF'\npython3 -c 1\n", [(2, P)]),
     ("true # python3 -I - <<EOF\npython3 -c 1\n", [(2, P)]),
@@ -720,8 +748,9 @@ def main() -> int:
     if findings:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
-    print(f"OK: {len(covered)} shell scripts the workflows run; every Python launch the scan reads starts "
-          f"python3 -I, apart from the lines its {len(EXCEPTIONS)} exceptions name")
+    print(f"OK: {len(covered)} shell scripts the workflows run; every python or pypy word that the scan reads "
+          f"starts python3 -I and every .py or .pyz token that it reads is the program of a python3 -I launch, "
+          f"apart from the lines its {len(EXCEPTIONS)} exceptions name")
     return 0
 
 

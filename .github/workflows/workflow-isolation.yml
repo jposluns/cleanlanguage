@@ -1,14 +1,16 @@
 name: Workflow launch isolation
 
-# Checks that every Python launch in .github/workflows runs isolated, with
-# the -I option, so a file beside a script cannot shadow a standard-library
-# import and no PYTHON* environment variable steers the run, and that a file
-# planted beside a script that imports a sibling cannot run. See
+# Checks that every Python launch in .github/workflows runs isolated, with the
+# -I option, so a file beside a script cannot shadow a standard-library import
+# and no PYTHON* environment variable steers the run, and that a file planted
+# beside a script that imports a sibling cannot run. See
 # tools/test-workflow-launch-isolation.py for scope and residuals. The fourth
-# step runs tools/test-shell-launch-isolation.py, which checks that each
-# Python launch it reads in the shell scripts the workflows run starts
-# python3 -I, apart from the lines its exception table names; it does not
-# check for a planted sibling. See that scan for its scope and residuals.
+# step runs tools/test-shell-launch-isolation.py, which checks that, in the
+# shell scripts the workflows run, every python or pypy word that it reads
+# starts python3 -I and every .py or .pyz token that it reads is the program
+# of a python3 -I launch, apart from the lines its exception table names; it
+# does not check for a planted sibling. See that scan for its scope and
+# residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -48,6 +50,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-portable-text-sync-workflow.py
 
-      - name: Check that every Python launch the scan reads in the workflows' shell scripts, apart from named exceptions, is isolated
+      - name: Check that every python or pypy word and .py or .pyz token that the scan reads in the workflows' shell scripts is part of a python3 -I launch, apart from named exceptions
         shell: bash
         run: python3 -I tools/test-shell-launch-isolation.py
