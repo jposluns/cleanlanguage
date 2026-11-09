@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the Python words and .py tokens in the workflows' shell scripts for -I.
+"""Check the Python words and .py tokens in the workflows' tools/*.sh for -I.
 
 tools/test-workflow-launch-isolation.py reads the run text of the workflows.
 This scan reads the shell scripts that run text starts: every tools/<name>.sh
@@ -53,10 +53,10 @@ in a backslash, as in bash, so it joins no line:
    definitions of the function in the forms `name()`, `name ()`,
    `function name` and `function name()`, wherever the body starts, in the
    script as it stands and with each backslash-newline removed, and gives a
-   finding unless each count is exactly 1 and the definition is `name() {` on a
-   line of its own with a body, up to the first line that is `}` alone, that
-   holds a line starting with the launch. Each line of the script that uses the
-   arguments ("$@", "$*", "$1" to "$9", the same unquoted, or a ${...}
+   finding unless each count is exactly 1 and the definition is `name() {` on
+   a line of its own with a body, up to the first line that is `}` alone, that
+   holds a line starting with the launch. Each line of the script that uses
+   the arguments ("$@", "$*", "$1" to "$9", the same unquoted, or a ${...}
    expansion of one of them) must start with the launch and use them nowhere
    after it, or be 1 of the named data lines, each of which must match exactly
    1 line; any other such line is a finding, so a second launch of the
@@ -64,10 +64,14 @@ in a backslash, as in bash, so it joins no line:
    the script for that rule, since it does not parse where the body ends. It
    does not read a definition whose name is spelt with quoting or a backslash,
    a header split across lines other than by a backslash-newline, a definition
-   built at run time (eval, a sourced file, or text written and then run) or an
-   alias, nor an argument reached in another way, such as `${!i}` or BASH_ARGV.
-   tools/test-pages-build.py pins the SHA-256 of tools/pages-build.sh
-   (SCRIPT_SHA256), so any edit of that script fails that test as well.
+   built at run time (eval, a sourced file, or text written and then run) or
+   an alias, an argument reached in another way, such as `${!i}` or BASH_ARGV,
+   nor the function removed, or otherwise made not to be the function the scan
+   checks, between its definition and a call, as `unset -f gate` before the
+   first gate call does, after which each gate line runs whatever gate
+   resolves to through PATH. tools/test-pages-build.py pins the SHA-256 of
+   tools/pages-build.sh (SCRIPT_SHA256), so any edit of that script, such as
+   that unset line, fails that test as well.
 
 The scan recognizes a here-document operator, << or <<-, outside $((...)) and
 ((...)), where << is a shift, and reads the delimiter word after it as bash
@@ -135,17 +139,23 @@ run by its shebang whose name does not end in .py or .pyz, such a word or token
 split by a backslash-newline in a body with a quoted delimiter that a shell
 runs (`bash <<'X'`), which the scan does not join, and text built at run time.
 A launch from Python, such as subprocess with sys.executable. A launch in a
-script that a covered script reaches only through a variable or a path the
-discovery does not match. The cost of the rules is false findings: a line that
-names a .py or .pyz token or an interpreter word in text that does not read as
-a python3 -I launch, such as a message, a cp, grep or test operand, a comment
-after a command, a URL (`github.com/python/cpython`), a word such as cpython, a
-here-document body that no shell runs or a line inside a quoted string that
-spans lines, is a finding until an exception names it, and so is a correct
-launch with an option that the scan does not read as one, such as an option
-joined to a value that is not all letters (`python3 -I -Xutf8 tools/x.py`) or
-a long option, and a correct launch with blanks other than 1 space around its
--I (`python3  -I tools/x.py`, or a tab after -I), since rule 1 reads only
+script that a workflow step or a covered script reaches only through a variable
+or a path the discovery does not match. For each <name>.sh that the text names,
+the discovery queues tools/<name>.sh and nothing else, so it does not read a
+script outside tools/ or in a subdirectory of it, such as one that a step runs
+as `bash scripts/build.sh`, or a script whose name does not end in .sh; and for
+scripts/<name>.sh, or another path whose base name is <name>.sh, it reads
+tools/<name>.sh when that file exists, not the script that runs. The cost of
+the rules is false findings: a line that names a .py or .pyz token or an
+interpreter word in text that does not read as a python3 -I launch, such as a
+message, a cp, grep or test operand, a comment after a command, a URL
+(`github.com/python/cpython`), a word such as cpython, a here-document body
+that no shell runs or a line inside a quoted string that spans lines, is a
+finding until an exception names it, and so is a correct launch with an option
+that the scan does not read as one, such as an option joined to a value that is
+not all letters (`python3 -I -Xutf8 tools/x.py`) or a long option, and a
+correct launch with blanks other than 1 space around its -I
+(`python3  -I tools/x.py`, or a tab after -I), since rule 1 reads only
 `python3 -I ` with single spaces.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
@@ -1033,10 +1043,10 @@ def main() -> int:
     if findings:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
-    print(f"OK: {len(covered)} shell scripts the workflows run; each python or pypy word and each .py or .pyz "
-          f"token on a line the scan reads stands in text that reads as a python3 -I launch, or the token is the "
-          f"first word after a call, at the start of a line, of a function that LAUNCHERS names and checks "
-          f"({len(LAUNCHERS)} in all), apart from the lines its {len(EXCEPTIONS)} exceptions name")
+    print(f"OK: {len(covered)} tools/*.sh scripts found from the workflows' run text; each python or pypy word "
+          f"and each .py or .pyz token on a line the scan reads stands in text that reads as a python3 -I launch, "
+          f"or the token is the first word after a call, at the start of a line, of a function that LAUNCHERS "
+          f"names and checks ({len(LAUNCHERS)} in all), apart from the lines its {len(EXCEPTIONS)} exceptions name")
     return 0
 
 
