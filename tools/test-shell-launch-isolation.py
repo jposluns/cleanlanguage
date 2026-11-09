@@ -29,47 +29,50 @@ in a backslash, as in bash, so it joins no line:
    `pypy3`, `"python3" -I`, `${PYTHON:-python3}`, `$bin/python3`, `ipython3`
    and `python3 -X utf8` are findings. The `python` in docs.python.org or in
    tools/check-python-version.py is not such a word.
-2. Every token that ends in .py or .pyz, whatever quotes, $(...) or other text
-   surround it, is a finding unless it ends the program word of text on the
-   same line that reads as a python3 -I launch: the first word after
-   `python3 -I `, any options (a hyphen and letters, or -X or -W and the word
-   after it) and a `--` that ends them, where a word may hold quoted parts
-   with no space or tab inside them, so `python3 -I -X utf8 tools/x.py` and
-   `python3 -I -- tools/x.py` pass and `python3 -I "$(dirname "$0")/x.py"` is
-   a finding. The rules read text, not what runs. Where the token stands in
-   the shell grammar decides nothing, so quoting and command substitution
-   cannot hide a launch: `"$here"/x.py`, `bash -c 'tools/x.py'`,
-   `$PY tools/x.py` and an argument after the program, such as a path that a
-   `-c` or `-` program reads, are findings. Text that reads as a launch passes
-   even when nothing runs it, as in `grep -Fc 'python3 -I tools/x.py' f`; a
-   .py path that a line names in any other text, as in cp, test -f, an echo or
-   another grep pattern, is a finding until an exception names that line.
-   LAUNCHERS names each shell function that runs its arguments through a
-   python3 -I launch, that launch, and the lines of its script that may name
-   the arguments as data. In tools/pages-build.sh, gate runs its arguments as
-   the launch `python3 -I "$@"`, so a .py path that is the first word after a
-   gate that starts a line of that script is the program of that launch; the 6
-   gate lines of that script pass rule 2 this way. The scan counts the
-   definitions of the function in the forms `name()`, `name ()`,
-   `function name` and `function name()`, wherever the body starts, in the
-   script as it stands and with each backslash-newline removed, and gives a
-   finding unless each count is exactly 1 and the definition is `name() {` on
-   a line of its own with a body, up to the first line that is `}` alone, that
-   holds a line starting with the launch. Each line of the script that uses
-   the arguments ("$@", "$*", "$1" to "$9", the same unquoted, or a ${...}
-   expansion of one of them) must start with the launch and use them nowhere
-   after it, or be 1 of the named data lines, each of which must match exactly
-   1 line; any other such line is a finding, so a second launch of the
-   arguments, such as a body line `"$@"`, fails. The scan reads every line of
-   the script for that rule, since it does not parse where the body ends. It
-   does not read a definition whose name is spelt with quoting or a backslash,
-   a header split across lines other than by a backslash-newline, a definition
-   built at run time (eval, a sourced file, or text written and then run) or
-   an alias, an argument reached in another way, such as `${!i}` or BASH_ARGV,
-   nor the function removed, or otherwise made not to be the function the scan
-   checks, between its definition and a call, as `unset -f gate` before the
-   first gate call does, after which each gate line runs whatever gate
-   resolves to through PATH. tools/test-pages-build.py pins the SHA-256 of
+2. Every token whose text ends in a literal .py or .pyz, with no letter,
+   digit, underscore, dot or hyphen after it, is a finding unless it ends the
+   program word of text on the same line that reads as a python3 -I launch:
+   the first word after `python3 -I `, any options (a hyphen and letters, or
+   -X or -W and the word after it) and a `--` that ends them, where a word may
+   hold quoted parts with no space or tab inside them, so
+   `python3 -I -X utf8 tools/x.py` and `python3 -I -- tools/x.py` pass and
+   `python3 -I "$(dirname "$0")/x.py"` is a finding. The rules read text, not
+   what runs. Rule 2 reads such a token inside quotes, a command substitution
+   or other text, so `"$here"/x.py`, `bash -c 'tools/x.py'`, `$PY tools/x.py`
+   and an argument after the program, such as a path that a `-c` or `-`
+   program reads, are findings. A .py or .pyz name spelt with quoting, a
+   backslash, a glob or a brace inside its suffix holds no such token;
+   Residuals names it with the other known misses. Text that reads as a launch
+   passes even when nothing runs it, as in
+   `grep -Fc 'python3 -I tools/x.py' f`; a .py path that a line names in any
+   other text, as in cp, test -f, an echo or another grep pattern, is a
+   finding until an exception names that line. LAUNCHERS names each shell
+   function that runs its arguments through a python3 -I launch, that launch,
+   and the lines of its script that may name the arguments as data. In
+   tools/pages-build.sh, gate runs its arguments as the launch
+   `python3 -I "$@"`, so a .py path that is the first word after a gate that
+   starts a line of that script is the program of that launch; the 6 gate
+   lines of that script pass rule 2 this way. The scan counts the definitions
+   of the function in the forms `name()`, `name ()`, `function name` and
+   `function name()`, wherever the body starts, in the script as it stands and
+   with each backslash-newline removed, and gives a finding unless each count
+   is exactly 1 and the definition is `name() {` on a line of its own with a
+   body, up to the first line that is `}` alone, that holds a line starting
+   with the launch. Each line of the script that uses the arguments ("$@",
+   "$*", "$1" to "$9", the same unquoted, or a ${...} expansion of one of
+   them) must start with the launch and use them nowhere after it, or be 1 of
+   the named data lines, each of which must match exactly 1 line; any other
+   such line is a finding, so a second launch of the arguments, such as a body
+   line `"$@"`, fails. The scan reads every line of the script for that rule,
+   since it does not parse where the body ends. It does not read a definition
+   whose name is spelt with quoting or a backslash, a header split across
+   lines other than by a backslash-newline, a definition built at run time
+   (eval, a sourced file, or text written and then run) or an alias, an
+   argument reached in another way, such as `${!i}` or BASH_ARGV, nor the
+   function removed, or otherwise made not to be the function the scan checks,
+   between its definition and a call, as `unset -f gate` before the first gate
+   call does, after which each gate line runs whatever gate resolves to
+   through PATH. tools/test-pages-build.py pins the SHA-256 of
    tools/pages-build.sh (SCRIPT_SHA256), so any edit of that script, such as
    that unset line, fails that test as well.
 
@@ -115,30 +118,32 @@ breaks a rule is also a finding, so the table cannot keep a pattern for a line
 that is gone. EXPECTED_SCRIPTS names the scripts the discovery must find, so a
 change that stops the discovery from reaching one is a finding.
 
-Residuals: rule 2 does not depend on where a token stands, but the scan still
-misses a launch in the ways below, which are the known misses and not a
-complete list. A launch on a line the scan does not read: a comment line, the
-program of a `python3 -I -c` or `python3 -I -` launch named above, which holds
-Python and not shell, and a line that a shell runs but that the scan takes for
-such a program or a comment, since the scan reads shell as text and can
-misjudge where a quote, a comment or a here-document ends. Examples of that
-misjudgement: a case pattern inside $(...), which misleads the quote reading; a
-here-document with a quoted delimiter that a later command on the line of a
-`python3 -I -` launch opens; a line that starts with # inside a string that
-spans lines, which the scan skips as a comment though bash runs a $(...) in it
-(`msg="`, then `# $(python3 tools/x.py)`, then `"`); a delimiter with a $'...'
-part that holds a backslash escape, which bash decodes and the scan does not;
-and a delimiter with a quoted part that spans lines, which the scan does not
-read as a delimiter. A launch that names neither a word rule 1 reads nor a .py
-or .pyz token: an interpreter held in a variable (`"$real_py" -c`) or reached
-through a function or alias, an interpreter whose name rule 1 does not read,
-such as jython or graalpy, an interpreter name in other letter cases or with a
-letter or hyphen after its digits (`python3m`), a python word spelt with
-quoting, a backslash or a brace inside it (`pyth''on3`, `pytho{n3,}`), a script
-run by its shebang whose name does not end in .py or .pyz, such a word or token
-split by a backslash-newline in a body with a quoted delimiter that a shell
-runs (`bash <<'X'`), which the scan does not join, and text built at run time.
-A launch from Python, such as subprocess with sys.executable. A launch in a
+Residuals: the scan misses a launch in the ways below, which are the known
+misses and not a complete list. A launch on a line the scan does not read: a
+comment line, the program of a `python3 -I -c` or `python3 -I -` launch named
+above, which holds Python and not shell, and a line that a shell runs but that
+the scan takes for such a program or a comment, since the scan reads shell as
+text and can misjudge where a quote, a comment or a here-document ends.
+Examples of that misjudgement: a case pattern inside $(...), which misleads the
+quote reading; a here-document with a quoted delimiter that a later command on
+the line of a `python3 -I -` launch opens; a line that starts with # inside a
+string that spans lines, which the scan skips as a comment though bash runs a
+$(...) in it (`msg="`, then `# $(python3 tools/x.py)`, then `"`); a delimiter
+with a $'...' part that holds a backslash escape, which bash decodes and the
+scan does not; and a delimiter with a quoted part that spans lines, which the
+scan does not read as a delimiter. A launch that names neither a word rule 1
+reads nor a .py or .pyz token: an interpreter held in a variable
+(`"$real_py" -c`) or reached through a function or alias, an interpreter whose
+name rule 1 does not read, such as jython or graalpy, an interpreter name in
+other letter cases or with a letter or hyphen after its digits (`python3m`), a
+python word spelt with quoting, a backslash or a brace inside it (`pyth''on3`,
+`pytho{n3,}`), a .py or .pyz name spelt with quoting, a backslash, a glob or a
+brace inside its suffix, which bash runs by its shebang (`tools/x.p''y`,
+`tools/x.p"y"`, `tools/x.p?`, `tools/x.{py,}`), a script run by its shebang
+whose name does not end in .py or .pyz, such a word or token split by a
+backslash-newline in a body with a quoted delimiter that a shell runs
+(`bash <<'X'`), which the scan does not join, and text built at run time. A
+launch from Python, such as subprocess with sys.executable. A launch in a
 script that a workflow step or a covered script reaches only through a variable
 or a path the discovery does not match. For each <name>.sh that the text names,
 the discovery queues tools/<name>.sh and nothing else, so it does not read a
@@ -155,8 +160,10 @@ finding until an exception names it, and so is a correct launch with an option
 that the scan does not read as one, such as an option joined to a value that is
 not all letters (`python3 -I -Xutf8 tools/x.py`) or a long option, and a
 correct launch with blanks other than 1 space around its -I
-(`python3  -I tools/x.py`, or a tab after -I), since rule 1 reads only
-`python3 -I ` with single spaces.
+(`python3  -I tools/x.py`, or a tab after -I) or with no blank after its -I, as
+at the end of a line or before a `)` (`cmd | python3 -I`,
+`x="$(cmd | python3 -I)"`), since rule 1 passes a python word only where it
+starts `python3 -I ` with 1 space before and after the -I.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -413,7 +420,8 @@ LAUNCH_BEFORE = set(" \t(|&;!`\"'")
 AFTER_LAUNCH_BEFORE = r"(?<![^ \t(|&;!`\"'])"
 # command -v and command -V print where a name resolves and run nothing.
 LOOKUP = re.compile(AFTER_LAUNCH_BEFORE + r"command -[vV] $")
-# A token that ends in .py or .pyz, whatever surrounds it.
+# A token whose text ends in a literal .py or .pyz, inside quotes or not. A suffix spelt with quoting, a
+# backslash, a glob or a brace, such as .p''y or .p?, is not one, so the scan does not read it.
 PY_PATH = re.compile(r"\.pyz?(?![\w.-])")
 # A shell word, quoted parts included. A quoted part may not hold a space or tab, so a word that
 # the match starts inside a string cannot run on through the string's closing quote to a later path.
