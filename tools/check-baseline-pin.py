@@ -5,7 +5,7 @@
 version into ``<output root>/assets/baseline/`` and records each file's SHA-256
 in ``.baseline/pin.toml``, in the baseline README's format: a ``version`` key
 and a ``[files]`` table of path to digest, the paths under ``assets/baseline/``
-relative to the output root and the build tool's key relative to the repository
+relative to the output root and the build tools' keys relative to the repository
 root. The output root follows the base path in ``site-src/site.json``
 (``site/draft/`` while staged, ``site/`` after promotion). The copied files are
 never edited. This gate makes an edit, a replacement, a deletion or an addition
@@ -17,28 +17,50 @@ What it verifies
 
 1. ``.baseline/pin.toml`` parses as TOML and holds exactly ``version`` (X.Y.Z)
    and a non-empty ``[files]`` table whose every key is a relative path under
-   ``assets/baseline/``, or exactly the build tool key
-   ``.baseline/check_palette.py`` (``TOOLS``), and whose every value is a
-   lower-case SHA-256. Any other key is malformed. A malformed pin is a
-   failure (exit 3), never a pass.
+   ``assets/baseline/``, or exactly 1 of the build tool keys (``TOOLS``):
+   ``.baseline/check_palette.py``, the card builder
+   ``.baseline/build_card.js``, and its 3 Inter fonts and their licence in
+   ``.baseline/card-fonts/``; and whose every value is a lower-case SHA-256.
+   The version, each key and each value are matched whole, as are the base
+   path in ``site-src/site.json`` and each ``SHA256SUMS`` line, so a value
+   that ends in a newline is malformed. Only a newline ends a ``SHA256SUMS``
+   line, and the last line must end in one, so a line that ends in a
+   carriage return (CRLF) or in another character that ``str.splitlines()``
+   takes as a line end, such as U+2028, is malformed, and so is a last line
+   without its newline. Any other key, such as
+   ``.baseline/site-card.toml``, is malformed: the card's data file and
+   illustration are the site's own, not the version's.
+   A malformed pin is a failure, never a pass: exit 3, or exit 1 when a
+   folder that item 4 checks is refused first.
 2. Each pinned file appears in the version's ``SHA256SUMS`` (kept as
    ``.baseline/SHA256SUMS``) under its name within the package, with the same
    digest, so the pin cannot name a file or a digest the published version
-   does not have. The build tool's name within the package is
-   ``tools/check_palette.py``.
+   does not have. A build tool's name within the package is its key with
+   ``.baseline/`` replaced by ``tools/``, such as ``tools/check_palette.py``.
 3. Each pinned file exists under the output root as a regular file, not a
-   link, and hashes to its pinned digest. The build tool is checked the same
-   way at its path from the repository root, ``.baseline/check_palette.py``.
-4. No file under ``<output root>/assets/baseline/`` is missing from the pin,
-   and no file named ``check_palette.py`` exists anywhere under ``site/``: the
-   build tool is pinned but never served.
+   link, and hashes to its pinned digest. The build tools are checked the
+   same way at their paths from the repository root, such as
+   ``.baseline/check_palette.py``.
+4. No file under ``<output root>/assets/baseline/`` or under
+   ``.baseline/card-fonts/`` is missing from the pin, and no file or link under
+   ``site/`` has the file name of a pinned build tool (``check_palette.py``,
+   ``build_card.js``, or the name of a pinned font or of its licence): the
+   build tools are pinned and not meant to be served, and one served under
+   its own name fails. ``.baseline/``, ``site/`` and,
+   when present, ``.baseline/card-fonts/`` must be folders, not links, and
+   nothing under ``site/`` or ``.baseline/card-fonts/`` may be a link, since
+   the files that a link leads to would not be checked. The card builder
+   reads its fonts from that folder by fixed names, so an unpinned file
+   there is not read today; the folder is checked so that it holds no file
+   the pin does not list. A subfolder there is not refused as such: an empty
+   one passes, and a file in one is reported as unpinned.
 5. The pin holds these files of the README's runtime and licence set
    (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
    leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
    ``NOTICE.md`` and
-   ``marks/NOTICE.md``, and the build tool key ``.baseline/check_palette.py``,
-   so a copy that drops one, such as ``rail.js``, fails even when the files
-   present match.
+   ``marks/NOTICE.md``, and every build tool key in ``TOOLS``, so a copy that
+   drops one, such as ``rail.js`` or ``.baseline/build_card.js``, fails even
+   when the files present match.
 6. The pin's version is the version that ``SHA256SUMS`` belongs to:
    ``SHA256SUMS`` lines carry no version, so the gate reads it from the
    version's own README, copied unserved to ``.baseline/README.md``, which
@@ -80,6 +102,15 @@ What it verifies
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
 
+Each problem and each error it prints is 1 line, whatever the file names in
+it: a character that is not printable, such as a newline, a carriage return
+or an escape, is written as Python writes it in a string literal (``\\n``,
+``\\r``, ``\\x1b``). A backslash is printed as it is, so a printed ``\\n`` can
+also stand for a backslash followed by ``n``. Any other error, such as a
+RecursionError from a deeply nested pin or ``site-src/site.json``, ends the run
+with exit 3 and 1 line that names it, rather than a traceback. An interrupt
+(Ctrl-C) ends the run with Python's own traceback.
+
 What it does not verify
 -----------------------
 
@@ -93,13 +124,22 @@ learn the new form.
 
 Exit codes:
   0  every copied file matches the pin
-  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; the
-     pin's version is not the README's; or NOTICE.md's Site template entry
+  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; a
+     file of the runtime and licence set or a build tool is not pinned; a
+     file or link under site/ has a pinned build tool's file name; a
+     checked folder is a link or not a folder, or a link is under site/ or
+     .baseline/card-fonts/; the pin's version is not the README's; or
+     NOTICE.md's Site template entry
      is not the one the README prescribes, or NOTICE.md has another line that
      reads as its heading, or a comment opener or code fence line anywhere
-  3  the pin or a file could not be read, the pin is malformed, or the README
+  3  the pin or a file could not be read, or a file it reads whole is not a
+     regular file or not UTF-8; a folder could not be listed; the pin, a
+     SHA256SUMS line, or site-src/site.json or its base path is malformed;
+     the copy folder under the output root is missing; the README
      lacks its version heading or a step 7 NOTICE entry in the form item 7
-     gives, or holds a carriage return
+     gives, or holds a carriage return; Python is older than 3.11; or any
+     other error stops the run, such as a RecursionError from a deeply nested
+     pin or site-src/site.json
 """
 
 from __future__ import annotations
@@ -143,18 +183,48 @@ SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
 COMMENT = "<!--"
 FENCE = re.compile(r"^ {0,3}(?:`{3}|~{3})")
 PREFIX = "assets/baseline/"
-# The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
-TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
+# The pinned build tools, which item 4 keeps out of site/ by name: each key in the pin, from the repository root, and
+# its name in SHA256SUMS. tools/copy-baseline.py copies and pins exactly these. The card builder reads its fonts from
+# card-fonts/ beside itself.
+TOOLS = {
+    ".baseline/check_palette.py": "tools/check_palette.py",
+    ".baseline/build_card.js": "tools/build_card.js",
+    ".baseline/card-fonts/Inter-Bold.otf": "tools/card-fonts/Inter-Bold.otf",
+    ".baseline/card-fonts/Inter-ExtraBold.otf": "tools/card-fonts/Inter-ExtraBold.otf",
+    ".baseline/card-fonts/Inter-Regular.otf": "tools/card-fonts/Inter-Regular.otf",
+    ".baseline/card-fonts/inter-LICENSE.txt": "tools/card-fonts/inter-LICENSE.txt",
+}
+# The card builder's font folder, which must hold no unpinned file (item 4).
+CARD_FONTS = Path(".baseline/card-fonts")
+# Folders the gate reads from or lists, each checked before anything is read through it: a linked folder would let the
+# files reached through it pass as if they were in place. site-src/, which holds the site.json that it reads, is not
+# among them. An absent one is reported later: the pin's folder and site/ as unreadable (exit 3), the font folder as
+# each pinned file in it missing.
+FOLDERS = (PIN.parent, CARD_FONTS, Path("site"))
 REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
                  "scheme.js", "LICENSE", "NOTICE.md", "marks/NOTICE.md")
 ] + list(TOOLS)
 
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-REL_PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
-SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
+# Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
+# would accept a value that ends in one.
+HEX64 = re.compile(r"[0-9a-f]{64}")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+REL_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
+SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)\n")
+BASE = re.compile(r"/[a-z0-9-]+/")
+# Each line of a text with its "\n", and a last line without one as it is, so that SUM_LINE refuses it. Only "\n" ends
+# a line here: str.splitlines() also ends one at a carriage return and at other characters, such as U+2028, so a
+# SHA256SUMS with CRLF line ends would pass although each of its lines holds more than the digest and the name.
+LINE = re.compile(r"[^\n]*\n|[^\n]+")
+
+
+def one_line(text: str) -> str:
+    """text with each character that is not printable written as Python writes it in a string literal, such as \\n
+    for a newline, so that a file name or other outside text in a message can neither end its line nor send the
+    terminal a control sequence."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
 
 
 class Unreadable(Exception):
@@ -183,16 +253,16 @@ def load_pin(root: Path) -> tuple[str, dict[str, str]]:
     if set(pin) != {"version", "files"}:
         raise Unreadable(f"{PIN} must hold exactly version and [files], found {sorted(pin)}")
     version, files = pin["version"], pin["files"]
-    if not isinstance(version, str) or not VERSION.match(version):
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
         raise Unreadable(f"{PIN} version {version!r} is not X.Y.Z")
     if not isinstance(files, dict) or not files:
         raise Unreadable(f"{PIN} pins no [files]")
     for path, digest in files.items():
         if path in TOOLS:
             pass
-        elif not path.startswith(PREFIX) or not REL_PATH.match(path) or ".." in path.split("/"):
+        elif not path.startswith(PREFIX) or not REL_PATH.fullmatch(path) or ".." in path.split("/"):
             raise Unreadable(f"{PIN} pins {path!r}, which is not a relative path under {PREFIX} or a pinned build tool")
-        if not isinstance(digest, str) or not HEX64.match(digest):
+        if not isinstance(digest, str) or not HEX64.fullmatch(digest):
             raise Unreadable(f"{PIN} pins {path} with a malformed sha256")
     return version, files
 
@@ -204,13 +274,32 @@ def output_root(root: Path) -> Path:
         raise Unreadable(f"{SITE_JSON} is not a JSON object with a base: {error}") from error
     if base == "/":
         return root / "site"
-    if not isinstance(base, str) or not re.match(r"^/[a-z0-9-]+/$", base):
+    if not isinstance(base, str) or not BASE.fullmatch(base):
         raise Unreadable(f"{SITE_JSON} base {base!r} must be / or a single folder such as /draft/")
     return root / "site" / base.strip("/")
 
 
-def list_tree(directory: Path) -> list[str]:
+def folder_problems(root: Path) -> list[str]:
+    """The first of FOLDERS that is a link or not a folder, so that nothing is read through it."""
+    for folder in FOLDERS:
+        try:
+            mode = os.lstat(root / folder).st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise Unreadable(f"{folder.as_posix()} could not be read: {error}") from error
+        if stat.S_ISLNK(mode):
+            return [f"{folder.as_posix()} is a link, not a folder."]
+        if not stat.S_ISDIR(mode):
+            return [f"{folder.as_posix()} is not a folder."]
+    return []
+
+
+def list_tree(directory: Path) -> tuple[list[str], list[str]]:
+    """The files and, apart, the links under directory, each relative to it. A link under directory is listed, never
+    followed, so that the caller can refuse it: a linked folder would otherwise hide the files it leads to."""
     found: list[str] = []
+    links: list[str] = []
     stack = [directory]
     while stack:
         current = stack.pop()
@@ -226,8 +315,8 @@ def list_tree(directory: Path) -> list[str]:
             if stat.S_ISDIR(mode):
                 stack.append(Path(entry.path))
             else:
-                found.append(Path(entry.path).relative_to(directory).as_posix())
-    return sorted(found)
+                (links if stat.S_ISLNK(mode) else found).append(Path(entry.path).relative_to(directory).as_posix())
+    return sorted(found), sorted(links)
 
 
 def notice_entry(readme: str) -> str | None:
@@ -317,16 +406,18 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
 
 
 def check(root: Path) -> list[str]:
+    problems = folder_problems(root)
+    if problems:
+        return problems
     version, files = load_pin(root)
     out = output_root(root)
-    problems: list[str] = []
     published: dict[str, str] = {}
     try:
         sums_text = read_bytes(root / SUMS).decode("utf-8")
     except UnicodeError as error:
         raise Unreadable(f"{SUMS} is not UTF-8: {error}") from error
-    for number, line in enumerate(sums_text.splitlines(), start=1):
-        match = SUM_LINE.match(line)
+    for number, line in enumerate(LINE.findall(sums_text), start=1):
+        match = SUM_LINE.fullmatch(line)
         if match is None:
             raise Unreadable(f"{SUMS} line {number} is malformed")
         published[match.group(2)] = match.group(1)
@@ -359,34 +450,58 @@ def check(root: Path) -> list[str]:
     copied = out / PREFIX
     if not copied.is_dir():
         raise Unreadable(f"{shown}/{PREFIX} is missing")
-    for name in list_tree(copied):
+    # A link at or under the copy folder is reported below with every link under site/, which holds the folder.
+    for name in list_tree(copied)[0]:
         if PREFIX + name not in files:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
 
+    # folder_problems() has refused a font folder that is a link or a file; a missing one is already reported above,
+    # as each pinned file in it missing.
+    fonts = CARD_FONTS.as_posix()
+    if (root / CARD_FONTS).is_dir():
+        font_files, font_links = list_tree(root / CARD_FONTS)
+        for name in font_files:
+            if f"{fonts}/{name}" not in files:
+                problems.append(f"{fonts}/{name} is not in the pin.")
+        for name in font_links:
+            problems.append(f"{fonts}/{name} is a link; the font folder holds no link.")
+
     served = root / "site"
     tool_names = {Path(key).name for key in TOOLS}
-    for name in list_tree(served):
+    served_files, served_links = list_tree(served)
+    for name in sorted(served_files + served_links):
         if Path(name).name in tool_names:
             problems.append(f"site/{name} is a pinned build tool under the served tree; it is never served.")
+    for name in served_links:
+        problems.append(f"site/{name} is a link; nothing under the served tree may be a link, since the files it "
+                        "leads to are not checked.")
     return problems + document_problems(root, version, published)
 
 
 def main(argv: list[str]) -> int:
-    root = Path(argv[1]).resolve() if len(argv) > 1 else REPO_ROOT
     try:
+        root = Path(argv[1]).resolve() if len(argv) > 1 else REPO_ROOT
         problems = check(root)
+        if problems:
+            print("Baseline pin problems found:")
+            for problem in problems:
+                print(f"  - {one_line(problem)}")
+            return 1
+        version, files = load_pin(root)
+        print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "
+              f"its README names {version} and NOTICE.md carries its Site template entry.")
+        return 0
     except Unreadable as error:
-        print(f"check-baseline-pin: {error}", file=sys.stderr)
+        print(f"check-baseline-pin: {one_line(str(error))}", file=sys.stderr)
         return 3
-    if problems:
-        print("Baseline pin problems found:")
-        for problem in problems:
-            print(f"  - {problem}")
-        return 1
-    version, files = load_pin(root)
-    print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "
-          f"its README names {version} and NOTICE.md carries its Site template entry.")
-    return 0
+    except Exception as error:
+        # Any other error, such as a RecursionError from a deeply nested pin or site-src/site.json, which the parsers
+        # do not report as malformed, also ends the run with exit 3 and 1 line rather than a traceback, so that the
+        # exit codes and the 1-line rule hold whatever raised it. An interrupt or a SystemExit is not an Exception and
+        # passes through.
+        print(f"check-baseline-pin: stopped by an unexpected {one_line(f'{type(error).__name__}: {error}')}",
+              file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

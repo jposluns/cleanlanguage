@@ -1,7 +1,7 @@
 # Baseline pin, in the format of the baseline README ("Adoption in a repository", step 3).
 # Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under
 # assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after
-# promotion), and .baseline/check_palette.py is relative to the repository root, outside site/.
+# promotion), and each build tool's key under .baseline/ is relative to the repository root, outside site/.
 # Source: https://posluns.ca/baseline/baseline-1.11.4.tar.gz, archive sha256 3186dbc5b3d31fdd0027529258cac5fac6227602c0fe2717286ddb4378538f8f;
 # SHA256SUMS sha256 1e425e316748cb905f2b618ba406ecfda2b28bdcc34726ef0a0d34704f763703, copied to .baseline/SHA256SUMS.
 # Never edit a copied file; a new version arrives as a new copy and a new pin.
@@ -66,3 +66,8 @@ version = "1.11.4"
 "assets/baseline/search.js" = "ff39a504d988c51510be466b2ad7e5eb2edf8299eead35b4070a20ac768359bb"
 "assets/baseline/select.js" = "2c4e1f1a2cc00c49dc013fd421b16c14cdc89eb873fc57f7768be90604d4bf90"
 ".baseline/check_palette.py" = "00ed3de3eed31bdc2e0cebfaca3f8c9a7a407c32bf0f39ee212cd2d22acbdea0"
+".baseline/build_card.js" = "c7e3e2b46311ffe508fcf79af600caea99d8ef586b5c146710feceeabe385f56"
+".baseline/card-fonts/Inter-Bold.otf" = "00fd6f4691ee8884a33b46bf45851b341927c37c30064f558e1befb242971c49"
+".baseline/card-fonts/Inter-ExtraBold.otf" = "2012ceaf1470372c415f95c00495a1ad1ebdcd1cd6a6225808f011d459a9b12a"
+".baseline/card-fonts/Inter-Regular.otf" = "be6d709dcb730ddaf050cbdae6fe89bd56d5d14dc66885639bbf6f06bd03521b"
+".baseline/card-fonts/inter-LICENSE.txt" = "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
