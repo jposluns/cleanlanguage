@@ -10,11 +10,13 @@ exits 1, does not pass for a refusal. 3 cases put a ``</ script>``, markup in
 a ``title`` and a comment ended by ``--!>`` on a family page, and 3 run a copy
 of the gate that expects the other reading of 1 of its ``READING_PROBES``,
 expecting exit 3 and the probe's name, so that a change in any of the 3
-readings that the gate rests on fails a case. 1 more check asserts that the
-gate's docstring names exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that
-this file's own source carries no ``?v=`` token starting with a digit apart
-from those KEPT_TOKENS names, since a case writes the current baseline version
-as BASELINE, read from ``.baseline/pin.toml``, and 1 is
+readings that the gate rests on fails a case. 1 case gives a family link the
+class ``btn`` alone and expects the gate's refusal of it as not a button, so
+that the gate cannot accept ``btn`` without ``inline``. 1 more check asserts
+that the gate's docstring names exactly the scripts in ``ALLOWED_SCRIPTS``,
+and 1 that this file's own source carries no ``?v=`` token starting with a
+digit apart from those KEPT_TOKENS names, since a case writes the current
+baseline version as BASELINE, read from ``.baseline/pin.toml``, and 1 is
 version_binding_problems(), whose docstring states what it reports and what it
 passes. A further check, hidden_link_problems(), runs the gate's parse() in
 this process on HIDDEN_LINKS and fails unless each link it reads as hidden has
@@ -610,15 +612,16 @@ PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comme
 
 
 def flip_probe(name: str):
-    """Turn the number of h1 elements that the copy of the gate expects for the probe name in its READING_PROBES
-    from 0 to 1 or from 1 to 0, so that the copy expects the reading that Python 3.14 does not give."""
+    """Turn the number of h1 elements that the copy of the gate expects for the probe name in its READING_PROBES from 0
+    to 1 or from 1 to 0, so that the copy expects the reading that Python 3.14 does not give."""
     def apply(root: Path) -> None:
         path = root / "tools" / GATE.name
         lines = path.read_text(encoding="utf-8").split("\n")
         at = [index for index, line in enumerate(lines)
               if line.startswith(f'    ("{name}", ') and line.endswith((", 0),", ", 1),"))]
         if len(at) != 1:
-            raise AssertionError(f"READING_PROBES of tools/{GATE.name} has no 1 line for {name!r}")
+            raise AssertionError(f"READING_PROBES of tools/{GATE.name} has {len(at)} lines that start with the probe "
+                                 f"{name!r} and end with an expected count of 0 or 1, not exactly 1")
         line = lines[at[0]]
         lines[at[0]] = line[:-3] + ("1" if line[-3] == "0" else "0") + "),"
         path.write_text("\n".join(lines), encoding="utf-8")
