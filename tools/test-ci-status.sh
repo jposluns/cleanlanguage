@@ -2629,12 +2629,12 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # deadline. The gate's time name is replaced by one whose time() and
 # monotonic() are the real clocks plus a shift, and whose other attributes,
 # sleep included, are the real ones. Once that wait has seen gh end, the
-# replaced os.waitpid sets the shift to the whole 30-second window, so at its
-# next clock read, the one after that poll, the gate finds the deadline passed
-# and kills and reaps gh at once through its own code, and the case does not
-# wait out the window. No sleep of the gate is skipped, and every clock read
-# before that poll is the real time. None of the ends of the second gh is a
-# read the deadline cut off, so each case must exit WANT, never 2 as a
+# replaced os.waitpid sets the shift to the whole 30-second window, so the
+# gate, at its next clock read (the one after that poll), finds the deadline
+# passed and kills and reaps gh at once through its own code, and the case does
+# not wait out the window. No sleep of the gate is skipped, and every clock
+# read before that poll is the real time. None of the ends of the second gh is
+# a read the deadline cut off, so each case must exit WANT, never 2 as a
 # timed-out wait: 3 with NEEDLE on standard error, or for MODE red the red
 # verdict, 1 with NEEDLE on standard output. The replaced os.waitpid also
 # requires the status it reaps after the kill to be that end of gh, not the
@@ -2738,7 +2738,7 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # repo view starts, including the clock read in infer_repo, have 30 seconds
 # before the deadline. The gate's time name is replaced as in
 # run_final_reap_case: once that wait has seen gh repo view end, time.time and
-# time.monotonic read 30 seconds ahead, so at its next clock read the gate
+# time.monotonic read 30 seconds ahead, so the gate, at its next clock read,
 # finds the deadline passed and kills and reaps gh at once through its own
 # code, and the case does not wait out the window. Because gh repo view has
 # ended on its own before the kill, it is not a call the deadline cut off: the
