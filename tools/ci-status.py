@@ -299,10 +299,11 @@ def _gh(args, deadline: float):
     and an end other than a normal exit gives returncode -1, so neither can read
     as success. Output goes to unnamed temporary files, so gh never blocks on a
     full pipe while it is polled. OSError and TimeoutExpired reach the caller.
-    TimeoutExpired means the reap after the kill found gh ended by SIGKILL, which
-    is the kill itself unless something else sent gh a SIGKILL just before it.
-    A gh that ended any other way just before the kill gives its own result, and a
-    status lost at that last reap raises ChildProcessError, as at any other reap."""
+    TimeoutExpired means that the reap after the kill found that gh ended by
+    SIGKILL, which is the kill itself unless something else sent gh a SIGKILL
+    just before it. A gh that ended any other way just before the kill gives its
+    own result, and a status lost at that last reap raises ChildProcessError, as
+    at any other reap."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
