@@ -37,13 +37,13 @@ what it passes. A further check, hidden_link_problems(), runs the gate's
 parse() in this process on HIDDEN_LINKS and fails if parse() reads no link of a
 fragment as hidden, if a link it reads as hidden has visible text on a page
 that parse() does not hide as a whole, or if a page that parse() hides as a
-whole has no h1 or an h1 that does not read as hidden, so that the gate's
-filter of the links back on not hidden stays implied by its filter on visible
-text. Exit 0 when every case passes; 1 otherwise, naming each failing case.
-Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
-may hide or empty what the gate checks; it must exit 0, and the gate's
-docstring must name it, so that what the gate says it checks cannot outgrow its
-code unnoticed.
+whole has no h1 or an h1 that does not read as hidden, so that, on a page that
+parse() does not hide as a whole, the gate's filter of the links back on not
+hidden stays implied by its filter on visible text. Exit 0 when every case
+passes; 1 otherwise, naming each failing case. Each of RESIDUALS is a fault the
+gate passes, such as markup in which a browser may hide or empty what the gate
+checks; it must exit 0, and the gate's docstring must name it, so that what the
+gate says it checks cannot outgrow its code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -2187,11 +2187,11 @@ HIDDEN_LINKS = (
 
 
 def hidden_link_problems() -> list[str]:
-    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as hidden,
-    so the filter of the links back on not hidden in family_checked() is implied by its filter on visible text; this
-    fails if the 2 filters drift apart. On a page that parse() hides as a whole, a link that reads as hidden may keep
-    its text, and there the page must have an h1 and every h1 must read as hidden, so that check 4 refuses the page. It
-    also fails if parse() reads no link of a fragment as hidden."""
+    """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as hidden
+    on a page that it does not hide as a whole, so there the filter of the links back on not hidden in family_checked()
+    is implied by its filter on visible text; this fails if the 2 filters drift apart. On a page that parse() hides as a
+    whole, a link that reads as hidden may keep its text, and there the page must have an h1 and every h1 must read as
+    hidden, so that check 4 refuses the page. It also fails if parse() reads no link of a fragment as hidden."""
     problems: list[str] = []
     try:
         gate = load_gate()

@@ -1937,15 +1937,15 @@ def check_family_page(fam: str, text: str) -> list[str]:
 
 def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict]], list[str]]:
     """Checks 4 and 8: the checked elements of a family page that the pins hold, each with its kind in CLASS_PIN, and
-    the problems of the pins and of the links back. Check 8 holds every checked element but the links back; of those
-    it holds, for each target, the required link back, the first that is not hidden, has visible text and passes the
-    pins, and leaves the rest to the pins of any checked element that holds them (a step, say).
-    tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope.
-    The filter of the links back on not hidden is implied by the filter on visible text, and the refusal names both:
-    the parser never counts text inside a hiding element, so a link that it reads as hidden has no visible text,
-    which hidden_link_problems() of tools/test-install-page.py checks. Only on a page that parse() hides as a whole
-    (by a frameset start tag, or a hiding html or body start tag, anywhere) may a link that reads as hidden keep its
-    text, and there every h1 reads as hidden too, so check 4 refuses the page."""
+    the problems of the pins and of the links back. Check 8 holds every checked element but the links back; of those it
+    holds, for each target, the required link back, the first that is not hidden, has visible text and passes the pins,
+    and leaves the rest to the pins of any checked element that holds them (a step, say). tools/test-install-page.py
+    reads the family pages through this, so its inventories of the pins have this scope. The refusal names both filters
+    of the links back, and on a page that parse() does not hide as a whole the filter on not hidden is implied by the
+    filter on visible text: the parser never counts text inside a hiding element, so there a link that it reads as
+    hidden has no visible text, which hidden_link_problems() of tools/test-install-page.py checks. Only on a page that
+    parse() hides as a whole (by a frameset start tag, or a hiding html or body start tag, anywhere) may a link that
+    reads as hidden keep its text, and there every h1 reads as hidden too, so check 4 refuses the page."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
     problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
