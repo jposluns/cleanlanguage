@@ -67,15 +67,31 @@ brings in no key, leaves the parsed structure unchanged, so they do not
 fail it. A merge key among the top-level keys fails the first check. How
 GitHub Actions handles merge keys is not checked.
 
-The test checks no other key of a job that runs it, such as needs: or
-continue-on-error, no condition on any other job or step of the 2 workflows
-that run it, and nothing that GitHub Actions reads differently from PyYAML.
-A deliberate edit that defeats this test is caught only by review: a pull
-request can edit both workflows and this test, and no check inside them can
-stop it. Such edits include, for example, a filter on both workflows that
-the pull request's own files fall outside, which starts neither run of this
-test; a needs: on a job that is skipped; a step before this one that changes
-the files this test reads; and an edit to this test.
+Like those of DryRunTests, the mutation tests of TriggerTests and LaunchTests
+find each line they edit by that line's exact text, leading spaces included.
+So the suite also fails unless the text of each of these 10 lines of
+portable-text-sync.yml is in it as written: "name: Portable", "on:",
+"pull_request:", "- main", "permissions:", "contents: read", "jobs:",
+"runs-on:", and the 2 lines of the step that runs this test, "shell: bash"
+and, straight after it, "run:" with the Usage line. It also fails unless the
+text of each of these 5 lines of workflow-isolation.yml is in it as written:
+"runs-on:", "steps:", and the 3 lines of the step that runs this test, its
+"- name:" line with the name in full, "shell: bash", and "run:" with the Usage
+line, each straight after the one before. Only the text quoted is needed from
+the first line of portable-text-sync.yml and from the runs-on: line of these 2
+workflows, so "runs-on: ubuntu-24.04" passes there. A rewrite that removes any
+of this text fails the suite, even one that GitHub Actions reads the same way,
+such as "pull_request: ~" or "- 'main'".
+
+Apart from those lines, the test checks no other key of a job that runs it,
+such as needs: or continue-on-error, no condition on any other job or step of
+the 2 workflows that run it, and nothing that GitHub Actions reads differently
+from PyYAML. A deliberate edit that defeats this test is caught only by
+review: a pull request can edit both workflows and this test, and no check
+inside them can stop it. Such edits include, for example, a filter on both
+workflows that the pull request's own files fall outside, which starts neither
+run of this test; a needs: on a job that is skipped; a step before this one
+that changes the files this test reads; and an edit to this test.
 
 Usage:
   python3 -I tools/test-portable-text-sync-workflow.py
