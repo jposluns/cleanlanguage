@@ -16,9 +16,14 @@ refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
 probe's name, so that a change in any of the 3 readings that the gate rests on
-fails a case. 1 more runs a copy whose probe of markup in a ``title`` reads
-that markup as elements, with ``tools/check-inline-code.py`` removed, expecting
-exit 3 and the probe's name, so that the probes cannot come to read a file, and
+fails a case. 2 more each run a copy in which the probe of a ``</ script>``
+inside a ``script`` or the probe of markup in a ``title`` reads its ``h1``
+inside an open ``div``, as on a Python whose html.parser opens elements inside
+a ``script`` or a ``title``, with ``tools/check-inline-code.py`` removed,
+expecting exit 3 and the probe's name, which the copy cannot give if that probe
+tries to read that file. The probe of a comment ended by ``--!>`` has no start
+tag before its ``h1``, so no reading starts that ``h1`` inside an open element,
+and parse() reads that file only at a start tag inside one.
 probe_name_problems() fails unless PROBE_NAMES holds the names of the gate's
 ``READING_PROBES`` in their order, so that each probe has its copy. 1 case
 gives a family link the class ``btn`` alone and expects the gate's refusal of
@@ -36,9 +41,9 @@ whole has no h1 or an h1 that does not read as hidden, so that the gate's
 filter of the links back on not hidden stays implied by its filter on visible
 text. Exit 0 when every case passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
-may hide or empty what the gate checks; it must exit 0, and the gate's docstring
-must name it, so that what the gate says it checks cannot outgrow its code
-unnoticed.
+may hide or empty what the gate checks; it must exit 0, and the gate's
+docstring must name it, so that what the gate says it checks cannot outgrow its
+code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -1197,9 +1202,15 @@ CASES = [
     # naming that probe, as the gate does on a Python whose html.parser reads that fragment otherwise.
     *[(f"the gate expecting the other reading of {name}", flip_probe(name), (3, f"reads {name} otherwise"))
       for name in PROBE_NAMES],
-    # A copy of the gate whose probe of markup inside a title reads that markup as elements, as a Python whose
-    # html.parser opens elements inside a title would, exits 3 naming that probe even with tools/check-inline-code.py
-    # removed, since the probes read no file.
+    # A copy of the gate whose probe of a </ script> inside a script or of markup inside a title reads its h1 inside an
+    # open div, as a Python whose html.parser opens elements inside a script or a title would, with
+    # tools/check-inline-code.py removed, must exit 3 naming that probe, which it cannot do if that probe tries to read
+    # that file. The probe of a comment ended by --!> has no start tag before its h1, so no reading starts that h1
+    # inside an open element, and parse() reads that file only at a start tag inside one.
+    ("the gate reading the markup after a </ script> inside a script as elements, without tools/check-inline-code.py",
+        both(edit(f"tools/{GATE.name}", '"<script></ script><h1>Probe</h1></script>", 0)',
+                  '"<div></ script><h1>Probe</h1></div>", 0)'),
+             remove(INLINE_GATE)), (3, "reads a </ script> inside a script otherwise")),
     ("the gate reading markup inside a title as elements, without tools/check-inline-code.py",
         both(edit(f"tools/{GATE.name}", '"<title><h1>Probe</h1></title>", 0)', '"<div><h1>Probe</h1></div>", 0)'),
              remove(INLINE_GATE)), (3, "reads markup inside a title otherwise")),

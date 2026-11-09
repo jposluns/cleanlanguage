@@ -708,8 +708,14 @@ each reading on a family page: an ``h1`` after a ``</ script>`` in its JSON-LD
 and an ``h1`` in its ``title`` pass, and an ``h1`` after a comment ended by
 ``--!>`` fails as a second ``h1``. It also runs, for each probe, a copy of the
 gate that expects the other reading of it, which must exit 3 and name that
-probe, and a copy whose title probe reads its markup as elements, which must do
-so with ``tools/check-inline-code.py`` removed.
+probe, and 2 copies in which the probe of a ``</ script>`` inside a ``script``
+or the probe of markup in a ``title`` reads its ``h1`` inside an open ``div``,
+as on a Python that opens elements inside a ``script`` or a ``title``; each
+must exit 3 and name its probe with ``tools/check-inline-code.py`` removed,
+which it cannot do if that probe tries to read that file. The probe of a
+comment ended by ``--!>`` has no start tag before its ``h1``, so no reading
+starts that ``h1`` inside an open element, and ``parse()`` reads that file only
+at a start tag inside one.
 
 Exit codes:
   0  every check above passes
