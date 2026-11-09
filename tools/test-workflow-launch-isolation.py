@@ -33,16 +33,18 @@ The rule:
    anywhere under .github, in any letter case, such as an action.yml or a .YML
    workflow, is a finding, as is a symbolic link under .github, a folder that
    cannot be listed, a file that cannot be read as UTF-8 or parsed with
-   PyYAML's safe loader, a repeated key in a mapping that UniqueKeyLoader
-   checks (Residuals names the repeats it does not), a key that is a plain `=`
-   or is tagged `!!value` and a mapping that UniqueKeyLoader meets again while
-   it builds that mapping's values (the safe loader loads both;
-   UniqueKeyLoader's docstring states why it refuses them), and U+0085, U+2028
-   or U+2029 (which YAML 1.1 and 1.2 read differently). Each workflow must
-   have a jobs mapping; a job that is not a mapping, a steps value that is not
-   a list and a step that is not a mapping are findings. A job or step `uses:`
-   value that starts with ./ or ../, a local action or a local reusable
-   workflow, is a finding, since the scan does not read it.
+   PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
+   read differently). So is a file that UniqueKeyLoader refuses: one with a
+   repeated key in a mapping that it checks (Residuals names the repeats it
+   does not), with a key that is a plain `=` or is tagged `!!value` that it
+   builds before PyYAML has rewritten that key as a string, or with a mapping
+   that PyYAML meets again while UniqueKeyLoader builds it. UniqueKeyLoader's
+   docstring states when each applies; the safe loader loads `x: {=: a}` and
+   `a: &x {b: *x}`, which UniqueKeyLoader refuses. Each workflow must have a
+   jobs mapping; a job that is not a mapping, a steps value that is not a list
+   and a step that is not a mapping are findings. A job or step `uses:` value
+   that starts with ./ or ../, a local action or a local reusable workflow, is
+   a finding, since the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -219,50 +221,50 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader that refuses a mapping with a repeated key.
+    """A safe loader refusing a repeated non-merge key in a mapping it builds.
 
-    On PyYAML 6.0.3 it compares the keys of a mapping by the value each key
-    builds to, so `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a` and
-    `'a'` are repeats, while `on` and `'on'` are 2 keys (True and a string).
-    It also reads 2 `.nan` keys as repeats, since PyYAML builds every `.nan`
-    to the same float object, which the check matches to itself. It does not
-    apply to `!!set`, `!!omap` or `!!pairs`, whose repeated members or keys
-    load. It skips merge keys (`<<`), so a mapping whose own key overrides a
-    merged key loads, as does a mapping with 2 `<<` keys, even when both
-    supply the same key.
+    On PyYAML 6.0.3 its mapping constructor, the plain function
+    `_construct_mapping`, builds each key of a mapping other than its merge
+    keys (`<<`) and refuses 2 keys that build to equal values, so `1` and
+    `1.0`, `true` and `yes`, `~` and `null`, and `a` and `'a'` are repeats,
+    while `on` and `'on'` are 2 keys (True and a string). It also reads 2
+    `.nan` keys as repeats, since PyYAML builds every `.nan` to the same float
+    object, which the check matches to itself. It does not apply to `!!set`,
+    `!!omap` or `!!pairs`, whose repeated members or keys load. It never
+    checks a mapping used only as a merge source, so `x: {<<: {p: 1, p: 2}}`
+    loads, and an alias to a mapping that it has built reuses that mapping
+    without a second check.
 
-    It checks a mapping when PyYAML builds it, and only then. Its mapping
-    constructor, the plain function `_construct_mapping`, builds the mapping's
-    keys, other than its merge keys, and refuses 2 keys that build to equal
-    values; the safe loader's `construct_mapping` then flattens the merge keys
-    in place, dropping each source's own `<<` keys and putting the keys the
-    sources supply before the mapping's own, and builds the mapping's values;
-    and the constructor returns the mapping only once those values are built.
-    A mapping used only as a merge source is never built, and an alias to a
-    mapping already built reuses it without a second check. PyYAML builds the
-    members of a sequence after the other values of the mapping that holds the
-    sequence, so the order in which mappings are built and merged is PyYAML's,
-    not the document's.
+    The safe loader flattens a mapping when it builds it and when it merges it
+    into another: it removes the mapping's merge keys, adds the keys that
+    their sources supply, and rewrites each key that is a plain `=` or is
+    tagged `!!value` as a string. The constructor checks a mapping's keys
+    before it has the safe loader flatten and build that mapping. So when it
+    builds a mapping that no merge has flattened, a key that overrides a
+    merged key and 2 `<<` keys that supply the same key are not repeats:
+    `x: {<<: {p: 1}, p: 2}` and `x: {<<: {p: 1}, <<: {p: 2}}` load. When a
+    merge has flattened a mapping before the constructor builds it, the
+    constructor checks the keys that the mapping's merge keys supplied as well
+    as its own, so `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b` is
+    refused for a repeated `p`, although the document is valid YAML.
 
-    A mapping that serves as a merge source before it is built has by then
-    been flattened, so it is checked with the keys that its own merge keys
-    supply as its own: `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b` is
-    refused for a repeated `p`, although the document is valid YAML. Beyond
-    repeated keys, it refuses 2 forms. A key that is a plain `=` or is tagged
-    `!!value` has no constructor until flattening reads it as a string, so
-    `x: {=: a}` and `x: {!!value a: b}` are refused. A mapping that PyYAML
-    meets again while it builds that mapping's values is refused as a
-    recursive node, as in `a: &x {b: *x}` and `a: &x {b: {<<: *x}}`, while
-    `a: &x {<<: *x}`, whose only way back to itself is a merge key that
-    flattening removes, and `a: &x {b: [*x]}`, whose way back runs through a
-    sequence, load. PyYAML's safe loader loads every document that this
-    paragraph names.
+    Beyond repeated keys, the constructor refuses 2 forms. A key that is a
+    plain `=` or is tagged `!!value` has no constructor until a flattening
+    rewrites it as a string, so the constructor refuses such a key that it
+    builds before then: `x: {=: a}` and `x: {!!value a: b}` are refused, while
+    `x: {<<: {=: a}}` loads. A mapping that PyYAML meets again while the
+    constructor builds it is refused as a recursive node: `a: &x {b: *x}` and
+    `a: &x {b: {<<: *x}}` are refused, while `a: &x {<<: *x}` and
+    `a: &x {b: [*x]}` load. PyYAML's safe loader loads every document that
+    this docstring names.
 
-    Whether a document with merges, with aliases, or with anchors inside
-    sequences loads therefore depends on PyYAML's build order, which the
-    self-tests pin for some forms and this docstring does not predict form by
-    form. How GitHub Actions reads any of these is not checked. The self-tests
-    hold a case for each form named here.
+    Which mappings the constructor builds, in what order, and whether a merge
+    has flattened a mapping before the constructor builds it depend on
+    PyYAML's internal order, which this docstring does not describe, so a
+    document with merges, aliases or anchors may load or be refused depending
+    on that order. The self-tests record the measured outcome of each form
+    they hold, and hold a case for each form named here. How GitHub Actions
+    reads any of these documents is not checked.
     """
 
 
@@ -600,6 +602,24 @@ RUN_CASES = [
     ("bash -c-x", False),
     ("bash a-c", False),
     ("bash x-c", False),
+    # An upper-case letter, a digit, a non-ASCII letter or an underscore
+    # directly before or after a shell word or a -c cluster: each case fails
+    # when the `\w` of the lookaround that decides it no longer holds that
+    # class. In `bash -cA1` the 1 keeps `-cA` from being a cluster, so the A
+    # after `-c` decides the case.
+    ("Abash -c true", False),
+    ("1bash -c true", False),
+    ("\u00e9bash -c true", False),
+    ("bashA -c true", False),
+    ("bash1 -c true", False),
+    ("bash\u00e9 -c true", False),
+    ("bash A-c", False),
+    ("bash 1-c", False),
+    ("bash \u00e9-c", False),
+    ("bash _-c", False),
+    ("bash -cA1", False),
+    ("bash -c1", False),
+    ("bash -c\u00e9", False),
     # A shell word as the last part of a path, whose folders may hold a dot
     # or a hyphen, and a quote directly after a -c cluster. These pin
     # behaviour rather than a part of either pattern: a slash may stand
@@ -758,6 +778,8 @@ def self_test() -> list[str]:
              "m: [&b {<<: {p: 1}, p: 2}]\no: {<<: *b}\n" + head, "duplicate key 'p'"),
             ("a plain = key in a mapping merged in a sequence, built as a later alias before it is merged",
              "l: [{<<: &b {=: a}}]\nn: *b\n" + head, "tag:yaml.org,2002:value"),
+            ("a mapping with a merge and an override in a sequence in a mapping, merged by a later key",
+             "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -797,6 +819,14 @@ def self_test() -> list[str]:
             ("a mapping whose merge list holds only itself", "a: &x {<<: [*x]}\n" + head, {"a": {}}),
             ("a mapping with a merge and an override, merged in a sequence and built first as a later alias",
              "l: [{<<: &b {<<: {p: 1}, p: 2}}]\nn: *b\n" + head, {"l": [{"p": 2}], "n": {"p": 2}}),
+            ("a mapping with a merge and an override, merged in a sequence in a mapping and reused as a later alias",
+             "m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}\nn: *b\n" + head, {"m": {"s": [{"p": 2}]}, "n": {"p": 2}}),
+            ("a mapping with a merge and an override in a sequence, reused as an alias and merged in the same mapping",
+             "m: {s: [&b {<<: {p: 1}, p: 2}], t: *b, u: {<<: *b}}\n" + head,
+             {"m": {"s": [{"p": 2}], "t": {"p": 2}, "u": {"p": 2}}}),
+            ("a plain = key in a merge source", "x: {<<: {=: a}}\n" + head, {"x": {"=": "a"}}),
+            ("a plain = key in a mapping held and merged by the same mapping", "x: {y: &b {=: a}, <<: *b}\n" + head,
+             {"x": {"=": "a", "y": {"=": "a"}}}),
         ]
         # A third member maps top-level keys to the values they must load to,
         # since a case can pass the scan and still load to another value.
