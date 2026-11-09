@@ -35,7 +35,8 @@ The rule:
    cannot be listed, a file that cannot be read as UTF-8 or parsed with
    PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
    read differently). The scan loads each workflow with UniqueKeyLoader, and a
-   file whose loading raises a YAML error or RecursionError is a finding.
+   file whose loading raises a YAML error, RecursionError, ValueError,
+   IndexError, KeyError, AttributeError or TypeError is a finding.
    UniqueKeyLoader's mapping constructor skips each merge key (`<<`), builds
    each other key with `loader.construct_object(key_node, deep=deep)`, raises
    a ConstructorError when a built key is `in` the list of the keys built
@@ -141,6 +142,8 @@ Residuals, named here because the scan reads text the pull request controls:
 - other launchers, such as `uv run`, pytest or pipx;
 - a script run by its shebang whose name ends in none of `.py`, `.pyz` and
   `.pyw`, such as an extensionless script;
+- a compiled file run directly, such as a `.pyc` file, which the scan does not
+  read;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
@@ -386,7 +389,7 @@ def scan_tree(root: Path, floor: int, probe_scripts) -> tuple[list[str], int]:
                 findings.append(f"{rel}: holds {name}, which YAML 1.1 and 1.2 read differently")
         try:
             doc = yaml.load(text, Loader=UniqueKeyLoader)
-        except (yaml.YAMLError, RecursionError) as exc:
+        except (yaml.YAMLError, RecursionError, ValueError, IndexError, KeyError, AttributeError, TypeError) as exc:
             findings.append(f"{rel}: cannot be parsed as YAML ({str(exc).splitlines()[0]})")
             continue
         found: list[str] = []
@@ -798,6 +801,19 @@ def self_test() -> list[str]:
              "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
             ("a mapping nested 300 deep", "x: " + "{a: " * 300 + "1" + "}" * 300 + "\n" + head,
              "cannot be parsed as YAML (maximum recursion depth"),
+            # Loading these raises, in turn, a ValueError, a ValueError, an
+            # IndexError, a KeyError, an AttributeError and a TypeError, none
+            # of them a YAML error, and scan_tree catches each type.
+            ("an impossible date", "x: 2001-02-30\n" + head,
+             "cannot be parsed as YAML (day 30 must be in range 1..28 for month 2 in year 2001)"),
+            ("a !!int tag on a word", "x: !!int a\n" + head,
+             "cannot be parsed as YAML (invalid literal for int() with base 10: 'a')"),
+            ("a !!int tag on an empty string", "x: !!int ''\n" + head, "cannot be parsed as YAML (string index out of range)"),
+            ("a !!bool tag on a word", "x: !!bool a\n" + head, "cannot be parsed as YAML ('a')"),
+            ("a !!timestamp tag on a word", "x: !!timestamp a\n" + head,
+             "cannot be parsed as YAML ('NoneType' object has no attribute 'groupdict')"),
+            ("a !!map tag on a sequence", "x: !!map [a]\n" + head,
+             "cannot be parsed as YAML (cannot unpack non-iterable ScalarNode object)"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
