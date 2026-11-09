@@ -70,10 +70,11 @@ backslash, a $(...) inside double quotes, and a # that starts a comment, so an
 apostrophe inside double quotes opens nothing.
 
 EXCEPTIONS names each line that breaks a rule on purpose, with its file,
-the pattern the whole line must match, the stripped opening lines of the
-here-documents with a quoted delimiter that it may sit in (none means outside
-any here-document), and the reason. An exception that matches no line is
-a finding, so the table cannot keep an entry for a line that is gone.
+the pattern the whole line must match (an entry may hold 1 such pattern for
+each of several lines), the stripped opening lines of the here-documents
+with a quoted delimiter that it may sit in (none means outside any
+here-document), and the reason. A pattern that matches no line is a
+finding, so the table cannot keep a pattern for a line that is gone.
 EXPECTED_SCRIPTS names the scripts the discovery must find, so a change that
 stops the discovery from reaching one is a finding.
 
@@ -136,12 +137,12 @@ EXPECTED_SCRIPTS = (
 LAUNCHERS = (("tools/pages-build.sh", "gate", 'python3 -I "$@"'),)
 
 
-def literal(*lines: str) -> str:
-    """Return a pattern that matches exactly one of the given stripped lines."""
-    return "(?:" + "|".join(re.escape(line) for line in lines) + ")"
+def literal(*lines: str) -> tuple[str, ...]:
+    """Return a whole-line pattern for each of the given stripped lines."""
+    return tuple(re.escape(line) for line in lines)
 
 
-# (file, pattern of the whole stripped line, opening lines of the quoted here-documents it may sit in, reason)
+# (file, pattern of the whole stripped line or a tuple of such patterns, opening lines of the quoted here-documents it may sit in, reason)
 EXCEPTIONS = (
     ("tools/pages-build.sh",
      r'echo "pages-build: Python 3\.11 or later is required \(tomllib\); found \$\(python3 --version 2>&1\)\." >&2',
@@ -500,7 +501,8 @@ def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS,
                  for rel in expected if rel not in covered]
     findings += [f"{path}: the launcher {name} is in no covered script" for path, name, _ in launchers
                  if path not in covered]
-    used = [False] * len(exceptions)
+    patterns = [(pattern,) if isinstance(pattern, str) else pattern for _, pattern, _, _ in exceptions]
+    used = [[False] * len(group) for group in patterns]
     for rel in covered:
         try:
             text = (root / rel).read_text(encoding="utf-8")
@@ -514,14 +516,18 @@ def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS,
             if not reasons:
                 continue
             excused = False
-            for n, (path, pattern, openers, _) in enumerate(exceptions):
+            for n, (path, _, openers, _) in enumerate(exceptions):
                 inside = heredoc is not None and heredoc[1] and heredoc[0] in openers
-                if path == rel and re.fullmatch(pattern, line.strip()) and (inside if openers else heredoc is None):
-                    used[n] = excused = True
+                if path != rel or not (inside if openers else heredoc is None):
+                    continue
+                for k, pattern in enumerate(patterns[n]):
+                    if re.fullmatch(pattern, line.strip()):
+                        used[n][k] = excused = True
             if not excused:
                 findings += [f"{rel}:{number}: {reason}: {line.strip()[:100]}" for reason in reasons]
-    findings += [f"{path}: the exception for {pattern!r} matches no line" for (path, pattern, _, _), hit
-                 in zip(exceptions, used) if not hit]
+    findings += [f"{path}: the exception for {pattern!r} matches no line"
+                 for (path, _, _, _), group, hits in zip(exceptions, patterns, used)
+                 for pattern, hit in zip(group, hits) if not hit]
     return findings, covered
 
 
@@ -672,6 +678,10 @@ def self_test() -> list[str]:
         findings, _ = scan_tree(root, ("tools/a.sh",), exception + (("tools/b.sh", r"gone", (), "r"),), ())
         if not any("matches no line" in f for f in findings):
             errors.append("self-test: an exception that matches no line gave no finding")
+        grouped = (("tools/b.sh", literal("probe=$(python3 --version)", "gone"), (), "r"),)
+        findings, _ = scan_tree(root, ("tools/a.sh",), grouped, ())
+        if findings != ["tools/b.sh: the exception for 'gone' matches no line"]:
+            errors.append(f"self-test: a stale line in an entry of several lines gave {findings!r}")
         in_heredoc = (("tools/b.sh", r"probe=\$\(python3 --version\)", ("cat > f <<'EOF'",), "r"),)
         findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc, ())
         if not any(f.startswith("tools/b.sh:2:") for f in findings):
