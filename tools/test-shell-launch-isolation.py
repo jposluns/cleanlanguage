@@ -122,8 +122,10 @@ after a command, a URL (`github.com/python/cpython`), a word such as cpython, a
 here-document body that no shell runs or a line inside a quoted string that
 spans lines, is a finding until an exception names it, and so is a correct
 launch with an option that the scan does not read as one, such as an option
-joined to a value that is not all letters (`python3 -I -Xutf8 tools/x.py`) or a
-long option.
+joined to a value that is not all letters (`python3 -I -Xutf8 tools/x.py`) or
+a long option, and a correct launch with blanks other than 1 space around its
+-I (`python3  -I tools/x.py`, or a tab after -I), since rule 1 reads only
+`python3 -I ` with single spaces.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
