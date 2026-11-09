@@ -75,9 +75,8 @@ DECORATED = (
     ("bracket", "[Released: 2026-11-01]"),
     ("full-width colon", "Released\uff1a 2026-11-01"),
     ("table row with a full-width colon", "| Released\uff1a2026-11-01 |"),
-    # Fix round 12 (VERIFY round 9.1, finding 1): emphasis markers and
-    # blanks after the word, a leading form feed or ideographic space, and a
-    # list number of 0.
+    # Emphasis markers and blanks after the word, a leading form feed or
+    # ideographic space, and a list number of 0.
     ("underscore emphasis after the key", "__Released__: 2026-11-01"),
     ("space before the colon", "Released : 2026-11-01"),
     ("tab before the colon", "Released\t: 2026-11-01"),
@@ -86,8 +85,8 @@ DECORATED = (
     ("ordered list from zero", "0. Released: 2026-11-01"),
 )
 
-# Fix round 12 (VERIFY round 9.1, finding 1): every character the leading
-# \s of the key pattern matches, other than the newline that ends a line.
+# Every character the leading \s of the key pattern matches, other than the
+# newline that ends a line.
 LEADING_WHITESPACE = (
     "\t", "\x0b", "\x0c", "\r", "\x1c", "\x1d", "\x1e", "\x1f", " ", "\x85", "\xa0", "\u1680",
     "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009",
@@ -95,10 +94,10 @@ LEADING_WHITESPACE = (
 )
 
 # Decorations outside the rule, which the docstring states are not detected.
-# Fix round 11 (DISCOVERY round 9, finding 1): a list marker with no number,
-# a list number of another script's digits, and a no-break space before the
-# colon are outside it too, as the key pattern takes only ASCII digits and
-# only spaces, tabs and emphasis markers between the word and the colon.
+# A list marker with no number, a list number of another script's digits, and
+# a no-break space before the colon are outside it too, as the key pattern
+# takes only ASCII digits and only spaces, tabs and emphasis markers between
+# the word and the colon.
 UNDETECTED = (
     ("inline code", "`Released: 2026-11-01`"),
     ("HTML tag", "<b>Released:</b> 2026-11-01"),
@@ -106,8 +105,8 @@ UNDETECTED = (
     ("a dot with no number", ". Released: 2026-11-01"),
     ("a list number of non-ASCII digits", "\u0661. Released: 2026-11-01"),
     ("a no-break space before the colon", "Released\u00a0: 2026-11-01"),
-    # Fix round 12 (VERIFY round 9.1, class sweep): a colon other than the
-    # two the rule names, and an angle bracket before the word.
+    # A colon other than the two the rule names, and an angle bracket before
+    # the word.
     ("a small colon", "Released\ufe55 2026-11-01"),
     ("an angle bracket", "<Released: 2026-11-01"),
 )
@@ -236,8 +235,8 @@ class ExtractorCliTest(unittest.TestCase):
         self.assertAccepts(HEAD + "Version: 1.0.15\nReleased: 2026-11-15\n" + TAIL)
 
     def test_a_dash_reads_stdin(self):
-        # Fix round 11 (DISCOVERY round 9, finding 5): "-" names standard
-        # input, as the module docstring states, never a usage error.
+        # "-" names standard input, as the module docstring states, never a
+        # usage error.
         self.assertEqual(run(VALID.encode("utf-8"), "-", stdin=True), (0, "2026-11-15\n", ""))
         self.assertEqual(
             run((HEAD + VERSION + TAIL).encode("utf-8"), "-", stdin=True),
@@ -245,12 +244,12 @@ class ExtractorCliTest(unittest.TestCase):
         )
 
     def test_the_input_is_read_as_given_never_stripped(self):
-        # Fix round 12 (VERIFY round 9.1, class sweep): a file and stdin are
-        # read whole and decoded as Path.read_text(encoding="utf-8") reads
-        # them, never stripped and with no byte order mark removed, so a
-        # blank line before the content keeps the line numbers, a form feed
-        # at the very end stays in the last line, and a byte order mark
-        # before the Version line keeps it from being one.
+        # A file and stdin are read whole and decoded as
+        # Path.read_text(encoding="utf-8") reads them, never stripped and
+        # with no byte order mark removed, so a blank line before the content
+        # keeps the line numbers, a form feed at the very end stays in the
+        # last line, and a byte order mark before the Version line keeps it
+        # from being one.
         last = "Released: 2026-11-15\x0c"
         for label, text, expected in (
             ("a blank first line", "\n" + VALID + "Released: 2026-11-16\n",
@@ -267,9 +266,8 @@ class ExtractorCliTest(unittest.TestCase):
                     )
 
     def test_an_argument_with_one_leading_dash_is_a_file(self):
-        # Fix round 12 (VERIFY round 9.1, mutant X23): only an argument that
-        # starts with "--" is an option, so any other argument, one that
-        # starts with a single "-" included, names a file.
+        # Only an argument that starts with "--" is an option, so any other
+        # argument, one that starts with a single "-" included, names a file.
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "-SKILL.md").write_text(VALID, encoding="utf-8")
             proc = subprocess.run([sys.executable, "-I", str(EXTRACTOR), "-SKILL.md"], cwd=tmp, capture_output=True)
@@ -346,8 +344,8 @@ class ExtractorCliTest(unittest.TestCase):
         self.assertRejects(HEAD + VERSION + "Released : 2026-11-15\n" + TAIL, "not spelled exactly")
 
     def test_trailing_non_blank_space_is_rejected(self):
-        # Fix round 10 (mutation sweep): only spaces and tabs may follow the
-        # date; a no-break space or a form feed is trailing text.
+        # Only spaces and tabs may follow the date; a no-break space or a
+        # form feed is trailing text.
         for space in ("\u00a0", "\x0c"):
             with self.subTest(space=space):
                 self.assertRejects(HEAD + VERSION + "Released: 2026-11-15" + space + "\n" + TAIL,
@@ -395,8 +393,8 @@ class ExtractorCliTest(unittest.TestCase):
         for value in ("2026-02-30", "2026-11-15 ", "2026-1-15", "", "today"):
             with self.subTest(value):
                 self.assertEqual(run(None, "--check-date", value)[0], 1)
-        # Fix round 10 (mutation sweep): a month or day of one digit fails
-        # the date form itself, before any calendar check.
+        # A month or day of one digit fails the date form itself, before any
+        # calendar check.
         for value in ("2026-11-5", "2026-1-15"):
             with self.subTest(value):
                 self.assertEqual(
@@ -406,7 +404,7 @@ class ExtractorCliTest(unittest.TestCase):
 
     def test_released_beside_a_malformed_version_line_is_rejected(self):
         # F12: the Version line value is validated before the placement rule.
-        # Fix round 10 (mutation sweep): a no-break space is not a blank.
+        # A no-break space is not a blank.
         for version in ("Version: draft", "Version: 1.0", "Version: 1.0.15 beta", "Version:\u00a01.0.15"):
             with self.subTest(version):
                 self.assertRejects(HEAD + version + "\n" + RELEASED + TAIL, "is not a bare X.Y.Z version")
@@ -429,8 +427,7 @@ class ExtractorCliTest(unittest.TestCase):
         for value in ("1.0", "v1.0.15", ""):
             with self.subTest(value):
                 self.assertEqual(run(None, "--requires-date", value)[0], 1)
-        # Fix round 10 (mutation sweep): an empty part is malformed (exit 1),
-        # never an internal error.
+        # An empty part is malformed (exit 1), never an internal error.
         for value in ("1.0.", "1..15", ".0.15"):
             with self.subTest(value):
                 self.assertEqual(
@@ -579,8 +576,7 @@ class ExtractorCliTest(unittest.TestCase):
         ):
             with self.subTest(value):
                 self.assertEqual(run(None, "--published-day", value)[0], 1)
-        # Fix round 10 (mutation sweep): an instant with no Z fails the
-        # instant form itself.
+        # An instant with no Z fails the instant form itself.
         value = "2026-11-15T09:30:00"
         self.assertEqual(
             run(None, "--published-day", value),
@@ -596,8 +592,7 @@ class FunctionTest(unittest.TestCase):
         self.assertEqual(srd.INTERNAL_ERROR_EXIT, 6)
 
     def test_publish_margin_constant(self):
-        # Fix round 10 (mutation sweep): every control constant is pinned
-        # at its shipped value.
+        # Every control constant is pinned at its shipped value.
         self.assertEqual(srd.PUBLISH_MARGIN_SECONDS, 600)
 
     def test_json_ops_constant(self):
@@ -815,14 +810,12 @@ class JsonModeTest(unittest.TestCase):
             ("an encoded surrogate inside a JSON string", b'{"op": "extract", "arg": "\xed\xa0\x80"}', None),
             ("a byte order mark before the request", b"\xef\xbb\xbf" + request("baseline"), None),
             ("a UTF-16 request", '{"op": "baseline"}'.encode("utf-16"), None),
-            # Fix round 11 (DISCOVERY round 9, finding 4): the request is
-            # parsed as sent, never stripped, so a vertical tab or a form
-            # feed, which JSON does not count as whitespace, makes it no JSON
-            # value; and an empty object names no op.
+            # The request is parsed as sent, never stripped, so a vertical
+            # tab or a form feed, which JSON does not count as whitespace,
+            # makes it no JSON value; and an empty object names no op.
             ("a request wrapped in vertical tabs", b"\x0b" + request("baseline") + b"\x0b", None),
             ("a request wrapped in form feeds", b"\x0c" + request("baseline") + b"\x0c", None),
-            # Fix round 12 (VERIFY round 9.1, finding 4): one such character
-            # on either side alone is enough.
+            # One such character on either side alone is enough.
             ("a request followed by a vertical tab", request("baseline") + b"\x0b", None),
             ("a request followed by a form feed", request("baseline") + b"\x0c", None),
             ("a request behind a vertical tab", b"\x0b" + request("baseline"), None),
@@ -945,10 +938,10 @@ class JsonModeTest(unittest.TestCase):
                 self.assertEqual(results[1], results[0])
 
     def test_an_op_with_no_branch_is_an_internal_error(self):
-        # Fix round 10: each op in JSON_OPS is answered by its own branch, so
-        # an op added to JSON_OPS without one exits 6 with nothing on stdout,
-        # never answered as another op. A copy of the extractor with such an
-        # op added to JSON_OPS, just before its __main__ guard, shows it; the
+        # Each op in JSON_OPS is answered by its own branch, so an op added
+        # to JSON_OPS without one exits 6 with nothing on stdout, never
+        # answered as another op. A copy of the extractor with such an op
+        # added to JSON_OPS, just before its __main__ guard, shows it; the
         # argument is one release_day_from_published_at would answer.
         guard = '\nif __name__ == "__main__":\n'
         source = EXTRACTOR.read_text(encoding="utf-8")
@@ -1103,14 +1096,14 @@ class JsonModeTest(unittest.TestCase):
 
 
 class PatternPinTest(unittest.TestCase):
-    """Fix round 11 (DISCOVERY round 9, finding 1): every character class,
-    width and anchor of every pattern of the extractor is pinned by inputs
-    that the shipped pattern and a pattern with that part changed answer
-    differently, with the exact message where one is given. The digits of
-    every pattern are ASCII digits only, so a digit of another script fails
-    the pattern itself; each part has its exact width; and the blanks of
-    the Released and Version line patterns are spaces and tabs only, so a
-    no-break space, a form feed or a vertical tab is not one."""
+    """Every character class, width and anchor of every pattern of the
+    extractor is pinned by inputs that the shipped pattern and a pattern with
+    that part changed answer differently, with the exact message where one is
+    given. The digits of every pattern are ASCII digits only, so a digit of
+    another script fails the pattern itself; each part has its exact width;
+    and the blanks of the Released and Version line patterns are spaces and
+    tabs only, so a no-break space, a form feed or a vertical tab is not
+    one."""
 
     def malformed(self, function, value):
         with self.assertRaises(srd.Malformed) as caught:
@@ -1129,13 +1122,13 @@ class PatternPinTest(unittest.TestCase):
                 )
 
     def test_every_unicode_whitespace_may_lead_a_key_like_line(self):
-        # Fix round 12 (VERIFY round 9.1, finding 1): the leading blanks of
-        # the key pattern are every character \s matches, so a stale copy
-        # behind any one of them is still a second Released line, and a first
-        # key-like line behind one is malformed. The list is checked against
-        # every code point, so it cannot miss one. A file or stdin read ends
-        # a line at a carriage return, which reaches extract only through
-        # --json, so it is checked through the function alone.
+        # The leading blanks of the key pattern are every character \s
+        # matches, so a stale copy behind any one of them is still a second
+        # Released line, and a first key-like line behind one is malformed.
+        # The list is checked against every code point, so it cannot miss
+        # one. A file or stdin read ends a line at a carriage return, which
+        # reaches extract only through --json, so it is checked through the
+        # function alone.
         self.assertEqual(
             LEADING_WHITESPACE,
             tuple(ch for ch in map(chr, range(sys.maxunicode + 1)) if ch != "\n" and re.fullmatch(r"\s", ch)),
@@ -1156,10 +1149,10 @@ class PatternPinTest(unittest.TestCase):
                     )
 
     def test_each_leading_marker_and_each_mark_before_the_colon_is_key_like(self):
-        # Fix round 12 (VERIFY round 9.1, finding 1): each leading Markdown
-        # marker, alone and with no blank after it, and each blank and
-        # emphasis marker between the word and the colon, alone and in a
-        # run, marks a key-like line, in any case and with either colon.
+        # Each leading Markdown marker, alone and with no blank after it, and
+        # each blank and emphasis marker between the word and the colon,
+        # alone and in a run, marks a key-like line, in any case and with
+        # either colon.
         for line in (
             ">Released: 2025-01-01", "#Released: 2025-01-01", "*Released: 2025-01-01", "_Released: 2025-01-01",
             "+Released: 2025-01-01", "|Released: 2025-01-01", "[Released: 2025-01-01", "-Released: 2025-01-01",
@@ -1178,12 +1171,12 @@ class PatternPinTest(unittest.TestCase):
         )
 
     def test_every_character_that_folds_onto_a_letter_of_the_key_is_key_like(self):
-        # Fix round 13 (VERIFY round 9.2, finding 2): the key word matches in
-        # any case, and re.IGNORECASE also folds a character outside ASCII
-        # onto a letter of it: the long s (U+017F) onto s, the only one, as
-        # the list, checked against every code point, states. A stale copy
-        # written with it is still a second Released line, and a first
-        # key-like line written with it is malformed.
+        # The key word matches in any case, and re.IGNORECASE also folds a
+        # character outside ASCII onto a letter of it: the long s (U+017F)
+        # onto s, the only one, as the list, checked against every code
+        # point, states. A stale copy written with it is still a second
+        # Released line, and a first key-like line written with it is
+        # malformed.
         letters = re.compile("[adelrs]", re.IGNORECASE)
         self.assertEqual(
             tuple(
@@ -1249,7 +1242,7 @@ class PatternPinTest(unittest.TestCase):
             "02026-11-15", "202-11-15", "2026-011-15", "2026-1-15", "2026-11-015", "2026-11-5",
             "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
             "2026/11/15", "2026-11/15", "2026.11.15",
-            # Fix round 12 (VERIFY round 9.1, finding 6): no hyphen, or one.
+            # No hyphen, or one.
             "20261115", "2026-1115", "202611-15",
         ):
             line = "Released: " + value
@@ -1274,10 +1267,9 @@ class PatternPinTest(unittest.TestCase):
             run(None, "--check-date", "02026-11-15"),
             (1, "", "skill-release-date: not a bare YYYY-MM-DD date: '02026-11-15'\n"),
         )
-        # Fix round 12 (VERIFY round 9.1, finding 2): a date with no hyphen
-        # or one hyphen fails the form, so date.fromisoformat, which takes
-        # the basic form 20261115, never sees it, in every mode that takes a
-        # bare date.
+        # A date with no hyphen or one hyphen fails the form, so
+        # date.fromisoformat, which takes the basic form 20261115, never sees
+        # it, in every mode that takes a bare date.
         for value in ("20261115", "2026-1115", "202611-15"):
             message = f"skill-release-date: not a bare YYYY-MM-DD date: {value!r}\n"
             for args in (
@@ -1316,8 +1308,8 @@ class PatternPinTest(unittest.TestCase):
             "2026-01-\u0660\u0661T00:00:00Z", "2026-01-01T\u0660\u0661:00:00Z", "2026-01-01T00:\u0660\u0661:00Z",
             "2026-01-01T00:00:\u0660\u0661Z", "2026-01-01 00:00:00Z", "2026-01-01t00:00:00Z",
             "2026-01-01T00:00:00z", "2026/01/01T00:00:00Z", "2026-01-01T00-00-00Z", "2026-01-01T00:00:00Z ",
-            # Fix round 12 (VERIFY round 9.1, finding 6): no hyphen or one,
-            # no colon or one, fractional seconds, and a leading blank.
+            # No hyphen or one, no colon or one, fractional seconds, and a
+            # leading blank.
             "20260101T00:00:00Z", "2026-0101T00:00:00Z", "202601-01T00:00:00Z", "2026-01-01T000000Z",
             "2026-01-01T0000:00Z", "2026-01-01T00:0000Z", "2026-01-01T00:00:00.123Z", "2026-01-01T00:00:00.5Z",
             " 2026-01-01T00:00:00Z",
@@ -1349,11 +1341,10 @@ class PatternPinTest(unittest.TestCase):
         )
 
     def test_an_instant_has_exactly_two_digits_of_seconds(self):
-        # Fix round 14 (VERIFY round 9.3, finding 1): PUBLISHED_AT_FORM
-        # requires the seconds, as exactly 2 ASCII digits, so an instant
-        # with no seconds, or with 1 or 3 digits of them, fails the form,
-        # never the strptime check, through the function, --published-day
-        # and --json alike.
+        # PUBLISHED_AT_FORM requires the seconds, as exactly 2 ASCII digits,
+        # so an instant with no seconds, or with 1 or 3 digits of them, fails
+        # the form, never the strptime check, through the function,
+        # --published-day and --json alike.
         for value in ("2026-01-01T00:00Z", "2026-01-01T00:00:1Z", "2026-01-01T00:00:000Z"):
             with self.subTest(value):
                 message = f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}"
@@ -1396,8 +1387,7 @@ class PatternPinTest(unittest.TestCase):
         for line in (
             "Version:1.0.15", "Version:\t1.0.15", "Version:  1.0.15", "Version: 1.0.15 ", "Version: 1.0.15\t",
             "Version: 1.0.15 \t ",
-            # Fix round 12 (VERIFY round 9.1, finding 5): a part of any
-            # width.
+            # A part of any width.
             "Version: 1.0.100", "Version: 100.0.15", "Version: 1.100.15", "Version: 1234.5678.9012",
         ):
             with self.subTest(line):
@@ -1406,7 +1396,7 @@ class PatternPinTest(unittest.TestCase):
             "Version: 1.0.15\u00a0", "Version: 1.0.15\x0c", "Version: 1.0.15\x0b", "Version:\x0c1.0.15",
             "Version:\x0b1.0.15", "Version: \u0661.0.15", "Version: 1.\u0660.15", "Version: 1.0.\u0661\u0665",
             "Version: .0.15", "Version: 1..15", "Version: 1.0.", "Version: 1x0x15", "Version: 1.0x15",
-            # Fix round 12 (VERIFY round 9.1, class sweep): each dot alone.
+            # Each dot alone.
             "Version: 1x0.15",
         ):
             with self.subTest(line):
@@ -1421,11 +1411,10 @@ class PatternPinTest(unittest.TestCase):
         )
 
     def test_the_version_line_is_the_first_line_that_starts_with_the_key_and_colon(self):
-        # Fix round 13 (VERIFY round 9.2, finding 3): a line that starts with
-        # "Version" but not "Version:", one that starts with the key in
-        # another case, one that holds the key after other text, and one
-        # that holds it after a blank are not the Version line, so the
-        # Released line after the real one is accepted.
+        # A line that starts with "Version" but not "Version:", one that
+        # starts with the key in another case, one that holds the key after
+        # other text, and one that holds it after a blank are not the Version
+        # line, so the Released line after the real one is accepted.
         for lead in ("Versioning notes", "version: 9.9.9", "See Version: 9.9.9", " Version: 9.9.9"):
             with self.subTest(lead):
                 text = HEAD + lead + "\n" + VERSION + RELEASED + TAIL

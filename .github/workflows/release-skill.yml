@@ -34,11 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      # Fix round 8: the advice for a published release whose tag may lack
-      # the publish step, from one source: the determine and publish steps
-      # print this value and the force input description repeats it
-      # verbatim, so the three copies cannot drift. Whatever the run ref,
-      # at the tag or away from it, the determine step prints it when the published_at of an
+      # The advice for a published release whose tag may lack the publish
+      # step, from one source: the determine and publish steps print this
+      # value and the force input description repeats it verbatim, so the
+      # three copies cannot drift. Whatever the run ref, at the tag or away
+      # from it, the determine step prints it when the published_at of an
       # existing release cannot be read and its tag is on origin, and the
       # publish step prints it when it refuses the force input against a
       # published release whose tag is on origin, or when that tag is on
@@ -84,8 +84,8 @@ jobs:
           fi
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
             echo "SKILL.md version (${version}) does not match the release tag (${RELEASE_TAG})." >&2
-            # Fix round 8: this step does not read the release record, so the
-            # advice is right whether or not the tag is already published.
+            # This step does not read the release record, so the advice is
+            # right whether or not the tag is already published.
             echo "This step does not check whether ${RELEASE_TAG} is already published. If it is not, set the Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
             echo "If it is, do not change the Version line: this workflow never republishes a published release. See the description of the force input of this workflow." >&2
             exit 1
@@ -209,9 +209,9 @@ jobs:
             200)
               if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
                 echo "Could not read published_at for the existing release ${RELEASE_TAG}." >&2
-                # Fix round 4: as in published_release_remedy, a tag gone from
-                # origin cannot be selected as the run ref. The lookup is the
-                # one the publish step uses, and a failed lookup stops the step.
+                # As in published_release_remedy, a tag gone from origin
+                # cannot be selected as the run ref. The lookup is the one the
+                # publish step uses, and a failed lookup stops the step.
                 remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
                 if [ -z "${remote_tag_sha}" ]; then
                   echo "${TAG_GONE_ADVICE//<tag>/${RELEASE_TAG}}" >&2
@@ -241,9 +241,9 @@ jobs:
                   ;;
                 *) release_date_tool_failed "${rc}" "reading the published_at of ${RELEASE_TAG}" ;;
               esac
-              # Fix round 3: the packager would refuse this mismatch with its
-              # re-stamp advice, which cannot help a published release, so the
-              # right remedy is named here, before the packager runs.
+              # The packager would refuse this mismatch with its re-stamp
+              # advice, which cannot help a published release, so the right
+              # remedy is named here, before the packager runs.
               if [ -n "${released}" ] && [ "${released}" != "${release_date}" ]; then
                 echo "Release ${RELEASE_TAG} IS PUBLISHED on ${release_date} (UTC, published_at ${published_at}), but the Released line at this commit names ${released}." >&2
                 echo "Re-stamping the Released line cannot fix this: the published zip carries the Released line of the commit it was built from, and an immutable release cannot be republished. If the line at this commit was edited after the release, restore the value the published zip carries; otherwise the remedy is a corrective new version whose Released line names its own publication day." >&2
@@ -416,18 +416,18 @@ jobs:
           # line (^{}) explicitly so an annotated tag resolves to its commit
           # regardless of output order. Tag moves are governed independently.
           remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
-          # Fix round 2: the next step for a published release that this run
-          # refuses before verifying it. The verifying dispatch needs the tag
-          # on origin as its run ref. When the tag is gone the remedy is a
-          # corrective new version, not a restored tag: the workflow never
-          # records which commit it published, and the verification compares
-          # the published assets with their own checksums, not with a build,
-          # so a tag restored at a guessed commit could verify green.
-          # Fix round 3: a dispatch at the tag runs the workflow stored at the
-          # tag, and a workflow older than item 57 (no step named Create or
-          # verify GitHub Release) can republish, so the verifying dispatch is
-          # named only for a tag that carries that step. The readback refusals
-          # in confirm_published_release run at the tag commit, which carries
+          # The next step for a published release that this run refuses before
+          # verifying it. The verifying dispatch needs the tag on origin as
+          # its run ref. When the tag is gone the remedy is a corrective new
+          # version, not a restored tag: the workflow never records which
+          # commit it published, and the verification compares the published
+          # assets with their own checksums, not with a build, so a tag
+          # restored at a guessed commit could verify green.
+          # A dispatch at the tag runs the workflow stored at the tag, and a
+          # workflow older than item 57 (no step named Create or verify GitHub
+          # Release) can republish, so the verifying dispatch is named only
+          # for a tag that carries that step. The readback refusals in
+          # confirm_published_release run at the tag commit, which carries
           # this workflow, so they name the dispatch unconditionally.
           published_release_remedy() {
             if [ -z "${remote_tag_sha}" ]; then

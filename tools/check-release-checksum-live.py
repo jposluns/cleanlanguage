@@ -361,22 +361,21 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # kills the process group of the child where it can, and exits 3. After a
 # kill, the gate waits at most REAP_GRACE_SECONDS to see the child end before
 # it reaps it, and exits 3, leaving it unreaped, when it sees no end, so no
-# reap blocks the gate (DISCOVERY round 4, finding 1). Of what the
-# child prints, the gate reads at most STDERR_LIMIT bytes of stderr and one
-# byte more than the stdout bound, which is RESULT_LIMIT bytes plus
-# ECHO_BYTES_PER_CHARACTER bytes for each character of the request argument,
-# so a longer stdout is refused and the memory a reply takes stays bounded by
-# the request the gate already holds. ECHO_BYTES_PER_CHARACTER is the most
-# bytes one character can take through repr and then ASCII JSON (a printable
-# character outside the basic plane becomes a surrogate pair of two \uXXXX
-# escapes, 12 bytes); the allowance is there so that a malformed message that
-# echoes the argument keeps its verdict (see
-# test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while the
-# child runs, an ordinary write cannot grow a file past
+# reap blocks the gate. Of what the child prints, the gate reads at most
+# STDERR_LIMIT bytes of stderr and one byte more than the stdout bound, which
+# is RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER bytes for each character
+# of the request argument, so a longer stdout is refused and the memory a
+# reply takes stays bounded by the request the gate already holds.
+# ECHO_BYTES_PER_CHARACTER is the most bytes one character can take through
+# repr and then ASCII JSON (a printable character outside the basic plane
+# becomes a surrogate pair of two \uXXXX escapes, 12 bytes); the allowance is
+# there so that a malformed message that echoes the argument keeps its verdict
+# (see test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while
+# the child runs, an ordinary write cannot grow a file past
 # applied_cap(output_cap(limit)) bytes (RLIMIT_FSIZE, soft and hard), and
-# after the wait a stdout or stderr file whose final size, checked with
-# fstat, reached the cap exits 3 naming the cap (see the module docstring
-# for what this does not bound).
+# after the wait a stdout or stderr file whose final size, checked with fstat,
+# reached the cap exits 3 naming the cap (see the module docstring for what
+# this does not bound).
 CHILD_TIMEOUT_SECONDS = 20
 REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
@@ -1460,9 +1459,9 @@ def check_site_checksum(load_code: int = 0) -> int:
         )
         # The release and its tag are confirmed absent, so the Released line
         # is checked offline: a malformed line, or one missing above the
-        # undated baseline, is still reported in this window. Fix round 8:
-        # the window says there is nothing to reconcile only when that check
-        # and the extractor probe both pass, so the gate then exits 0.
+        # undated baseline, is still reported in this window. The window says
+        # there is nothing to reconcile only when that check and the extractor
+        # probe both pass, so the gate then exits 0.
         code = offline_release_line_code(situation)
         if max(load_code, code) == 0:
             print("Nothing to reconcile.")
