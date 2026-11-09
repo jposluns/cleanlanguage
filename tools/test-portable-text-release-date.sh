@@ -63,7 +63,7 @@ release_matches_skill() {
   python3 -I - "${work}" <<'PYREL'
 import json, subprocess, sys
 work = sys.argv[1]
-version = subprocess.run([sys.executable, work + "/tools/skill-version.py", work + "/cleanlanguage/skills/cleanlanguage/SKILL.md"],
+version = subprocess.run([sys.executable, "-I", work + "/tools/skill-version.py", work + "/cleanlanguage/skills/cleanlanguage/SKILL.md"],
                          capture_output=True, text=True, check=True).stdout.strip()
 path = work + "/site-src/release.json"
 release = json.load(open(path, encoding="utf-8"))
