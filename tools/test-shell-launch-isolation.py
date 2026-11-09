@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the Python launches in the shell scripts the workflows run for -I.
+"""Check the Python words and .py tokens in the workflows' shell scripts for -I.
 
 tools/test-workflow-launch-isolation.py reads the run text of the workflows.
 This scan reads the shell scripts that run text starts: every tools/<name>.sh
@@ -30,46 +30,56 @@ in a backslash, as in bash, so it joins no line:
    and `python3 -X utf8` are findings. The `python` in docs.python.org or in
    tools/check-python-version.py is not such a word.
 2. Every token that ends in .py or .pyz, whatever quotes, $(...) or other text
-   surround it, is a finding unless it is the program of a python3 -I launch
-   on the same line: the first word after `python3 -I `, any options (a hyphen
-   and letters, or -X or -W and the word after it) and a `--` that ends them,
-   where a word may hold quoted parts with no space or tab inside them, so
-   `python3 -I -X utf8 tools/x.py` and `python3 -I -- tools/x.py` pass and
-   `python3 -I "$(dirname "$0")/x.py"` is a finding. Where the token stands in
+   surround it, is a finding unless it ends the program word of text on the
+   same line that reads as a python3 -I launch: the first word after
+   `python3 -I `, any options (a hyphen and letters, or -X or -W and the word
+   after it) and a `--` that ends them, where a word may hold quoted parts
+   with no space or tab inside them, so `python3 -I -X utf8 tools/x.py` and
+   `python3 -I -- tools/x.py` pass and `python3 -I "$(dirname "$0")/x.py"` is
+   a finding. The rules read text, not what runs. Where the token stands in
    the shell grammar decides nothing, so quoting and command substitution
    cannot hide a launch: `"$here"/x.py`, `bash -c 'tools/x.py'`,
    `$PY tools/x.py` and an argument after the program, such as a path that a
-   `-c` or `-` program reads, are findings. So is a .py path that a line names
-   without running it, as in cp, grep, test -f or an echo, until an exception
-   names that line. LAUNCHERS names each shell function that runs its
-   arguments through a python3 -I launch, and that launch. In
-   tools/pages-build.sh, gate runs its arguments as the launch
-   `python3 -I "$@"`, so a .py path that is the first word after a gate that
-   starts a line of that script is the program of that launch. The scan checks
-   that the script defines the function once and that a line of its body
-   starts with the launch, and gives a finding when either check fails.
+   `-c` or `-` program reads, are findings. Text that reads as a launch passes
+   even when nothing runs it, as in `grep -Fc 'python3 -I tools/x.py' f`; a
+   .py path that a line names in any other text, as in cp, test -f, an echo or
+   another grep pattern, is a finding until an exception names that line.
+   LAUNCHERS names each shell function that runs its arguments through a
+   python3 -I launch, and that launch. In tools/pages-build.sh, gate runs its
+   arguments as the launch `python3 -I "$@"`, so a .py path that is the first
+   word after a gate that starts a line of that script is the program of that
+   launch. The scan checks that the script defines the function once and that
+   a line of its body starts with the launch, and gives a finding when either
+   check fails.
 
-A here-document body is read as bash reads it. Bash expands the body of a
-here-document whose delimiter is unquoted (<<X): $(...) and backquotes run,
-a # in the body is text, not a comment, and a backslash-newline is removed.
-So every line of such a body is read, # lines included, and a line of it that
-ends in an odd number of backslashes joins the next, as in bash, before the
-scan looks for the delimiter. A quoted delimiter (<<'X' or <<"X") leaves the
-body literal, so each line of it is read as it stands, # lines included, with
-no join, unless it is the first here-document that its opening line opens
-after a `python3 -I` launch with `-` as the program, so that the body is the
-program that launch reads and is not read. An unquoted body is never skipped.
-The opening line is always read, and the line that ends a here-document,
-its delimiter alone after any join, is not. A here-document operator or
-a `python3 -I -` launch inside quotes or a comment is text: it opens no
-here-document and skips no body. When a line opens no here-document and leaves
-a single quote open, and that quote follows `python3 -I` options ending in
-`-c`, the lines up to the next one holding a single quote are the program of
-that -c launch and are not read; of that next line, only the text after its
-first single quote is read. No other line is skipped. Whether a quote is left
-open follows the shell's rules for single quotes, double quotes, $'...', a
-backslash, a $(...) inside double quotes, and a # that starts a comment, so an
-apostrophe inside double quotes opens nothing.
+The scan recognizes a here-document operator, << or <<-, outside $((...)) and
+((...)), where << is a shift, and reads the delimiter word after it as bash
+does: a word of any characters but a space, a tab and | & ; ( ) < >, not
+starting with #, whose quoted parts, '...', "...", $'...', $"..." and a
+backslash before a character, lose their quotes. A word with any quoted part,
+as in <<'X', <<"X" or a word with a backslash before any of its characters, is
+a quoted delimiter. The body of a here-document whose opening the scan
+recognizes is read as bash reads it. Bash expands the body of a here-document
+whose delimiter is unquoted (<<X): $(...) and backquotes run, a # in the body
+is text, not a comment, and a backslash-newline is removed. So every line of
+such a body is read, # lines included, and a line of it that ends in an odd
+number of backslashes joins the next, as in bash, before the scan looks for
+the delimiter. A quoted delimiter leaves the body literal, so each line of it
+is read as it stands, # lines included, with no join, unless it is the first
+here-document that its opening line opens after a `python3 -I` launch with `-`
+as the program, so that the body is the program that launch reads and is not
+read. An unquoted body is never skipped. The opening line is always read, and
+the line that ends a here-document, its delimiter alone after any join, is
+not. A here-document operator or a `python3 -I -` launch inside quotes or a
+comment is text: it opens no here-document and skips no body. When a line
+opens no here-document and leaves a single quote open, and that quote follows
+`python3 -I` options ending in `-c`, the lines up to the next one holding a
+single quote are the program of that -c launch and are not read; of that next
+line, only the text after its first single quote is read. No other line is
+skipped. Whether a quote is left open follows the shell's rules for single
+quotes, double quotes, $'...', a backslash, a $(...) inside double quotes, and
+a # that starts a comment, so an apostrophe inside double quotes opens
+nothing.
 
 EXCEPTIONS names each line that breaks a rule on purpose, with its file,
 the pattern the whole line must match (an entry may hold 1 such pattern for
@@ -85,29 +95,35 @@ misses a launch in the ways below, which are the known misses and not a
 complete list. A launch on a line the scan does not read: a comment line, the
 program of a `python3 -I -c` or `python3 -I -` launch named above, which holds
 Python and not shell, and a line that a shell runs but that the scan takes for
-such a program or a comment because it misjudges where a quote or a
-here-document ends, as with a case pattern inside $(...), which misleads the
-quote reading, or a here-document with a quoted delimiter that a later command
-on the line of a `python3 -I -` launch opens. A launch that names neither a
-word rule 1 reads nor a .py or .pyz token: an interpreter held in a variable
-(`"$real_py" -c`) or reached through a function or alias, an interpreter whose
-name rule 1 does not read, such as jython or graalpy, an interpreter name in
-other letter cases or with a letter or hyphen after its digits (`python3m`), a
-python word spelt with quoting, a backslash or a brace inside it (`pyth''on3`,
-`pytho{n3,}`), a script run by its shebang whose name does not end in .py or
-.pyz, such a word or token split by a backslash-newline in a body with a
-quoted delimiter that a shell runs (`bash <<'X'`), which the scan does not
-join, and text built at run time. A launch from Python, such as subprocess
-with sys.executable. A launch in a script that a covered script reaches only
-through a variable or a path the discovery does not match. The cost of the
-rules is false findings: a line that names a .py or .pyz token or an
-interpreter word without a python3 -I launch of it, such as a message, a cp,
-grep or test operand, a comment after a command, a URL
-(`github.com/python/cpython`), a word such as cpython, a here-document body
-that no shell runs or a line inside a quoted string that spans lines, is a
-finding until an exception names it, and so is a correct launch with an option
-that the scan does not read as one, such as an option joined to a value that
-is not all letters (`python3 -I -Xutf8 tools/x.py`) or a long option.
+such a program or a comment, since the scan reads shell as text and can
+misjudge where a quote, a comment or a here-document ends. Examples of that
+misjudgement: a case pattern inside $(...), which misleads the quote reading; a
+here-document with a quoted delimiter that a later command on the line of a
+`python3 -I -` launch opens; a line that starts with # inside a string that
+spans lines, which the scan skips as a comment though bash runs a $(...) in it
+(`msg="`, then `# $(python3 tools/x.py)`, then `"`); a delimiter with a $'...'
+part that holds a backslash escape, which bash decodes and the scan does not;
+and a delimiter with a quoted part that spans lines, which the scan does not
+read as a delimiter. A launch that names neither a word rule 1 reads nor a .py
+or .pyz token: an interpreter held in a variable (`"$real_py" -c`) or reached
+through a function or alias, an interpreter whose name rule 1 does not read,
+such as jython or graalpy, an interpreter name in other letter cases or with a
+letter or hyphen after its digits (`python3m`), a python word spelt with
+quoting, a backslash or a brace inside it (`pyth''on3`, `pytho{n3,}`), a script
+run by its shebang whose name does not end in .py or .pyz, such a word or token
+split by a backslash-newline in a body with a quoted delimiter that a shell
+runs (`bash <<'X'`), which the scan does not join, and text built at run time.
+A launch from Python, such as subprocess with sys.executable. A launch in a
+script that a covered script reaches only through a variable or a path the
+discovery does not match. The cost of the rules is false findings: a line that
+names a .py or .pyz token or an interpreter word in text that does not read as
+a python3 -I launch, such as a message, a cp, grep or test operand, a comment
+after a command, a URL (`github.com/python/cpython`), a word such as cpython, a
+here-document body that no shell runs or a line inside a quoted string that
+spans lines, is a finding until an exception names it, and so is a correct
+launch with an option that the scan does not read as one, such as an option
+joined to a value that is not all letters (`python3 -I -Xutf8 tools/x.py`) or a
+long option.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -245,8 +261,9 @@ EXCEPTIONS = (
          '"${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?',
      ),
      (),
-     'the path is an argument of the python3 -I -c program whose closing quote the line holds; that program '
-     'loads and runs the file in its isolated interpreter'),
+     'the path is an argument of a python3 -I -c program whose closing quote is on the line, or on the line '
+     'before it, which ends in a backslash that joins the 2; that program loads and runs the file in its '
+     'isolated interpreter'),
     ('tools/test-portable-text-release-date.sh',
      literal(
          'for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py       portable-text-skill-source.sha256 build-site.py check-install-page.py sitemap-config.json; do',
@@ -335,11 +352,14 @@ def options(sep: str) -> str:
     return r"(?:(?:-[XW]" + sep + value + r"|-(?![XW][ \t])[A-Za-z]+)" + sep + r")*"
 
 
-# The program of a python3 -I launch: the first word after its options and a -- that ends them.
+# The program word of python3 -I launch text: the first word after its options and a -- that ends them.
 PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I[ \t]+" + options(r"[ \t]+") + r"(?:--[ \t]+)?" + WORD)
-INTERPRETER_REASON = "Python interpreter other than python3 -I"
-PATH_REASON = ".py path that is not the program of a python3 -I launch"
-HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_]\w*)\2")
+INTERPRETER_REASON = "python or pypy word that does not start python3 -I"
+PATH_REASON = ".py path that does not end the program word of python3 -I launch text"
+# A here-document operator and the blanks after it; heredoc_word reads the delimiter word that follows.
+HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*")
+# The characters that end an unquoted shell word.
+WORD_END = set(" \t|&;()<>")
 # A python3 -I launch that reads its program from a here-document on standard input.
 STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"(?:-- )?-(?=\s|$)")
 # The text before a single quote that opens the program of a python3 -I -c launch.
@@ -415,6 +435,69 @@ def quote_state(line: str) -> tuple[list[tuple[str, int]], int | None]:
     return stack, None
 
 
+def heredoc_word(line: str, i: int) -> tuple[str, bool] | None:
+    """Return (delimiter, quoted) for the delimiter word at offset i, or None when no word starts there.
+
+    Bash removes the quotes from the word and leaves the body literal when any part of it is quoted.
+    A $'...' part is kept as it stands, though bash decodes its backslash escapes.
+    """
+    if i >= len(line) or line[i] in WORD_END or line[i] == "#":
+        return None
+    out: list[str] = []
+    quoted = False
+    while i < len(line) and line[i] not in WORD_END:
+        c = line[i]
+        if c == "\\":
+            if i + 1 == len(line):
+                return None
+            out.append(line[i + 1])
+            quoted = True
+            i += 2
+        elif c == "'" or line.startswith("$'", i):
+            start = i + (2 if c == "$" else 1)
+            end = line.find("'", start)
+            if end < 0:
+                return None
+            out.append(line[start:end])
+            quoted = True
+            i = end + 1
+        elif c == '"' or line.startswith('$"', i):
+            i += 2 if c == "$" else 1
+            while i < len(line) and line[i] != '"':
+                if line[i] == "\\" and i + 1 < len(line) and line[i + 1] in '$`"\\':
+                    i += 1
+                out.append(line[i])
+                i += 1
+            if i == len(line):
+                return None
+            quoted = True
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out), quoted
+
+
+def in_arithmetic(line: str, at: int) -> bool:
+    """Return whether offset at lies inside ((...)) or $((...)), where << is a shift."""
+    stack, _ = quote_state(line[:at])
+    opens = [p for kind, p in stack if kind == "("]
+    return any(line[a:b + 1] in ("((", "$((") for a, b in zip(opens, opens[1:]))
+
+
+def heredoc_openers(line: str) -> list[tuple[int, str, bool, bool]]:
+    """Return (offset, delimiter, strips tabs, quoted) for each here-document the line opens."""
+    found = []
+    for m in HEREDOC.finditer(line):
+        # An operator inside quotes or a comment is text, so it opens no here-document.
+        if not outside_quotes(line, m.start()) or in_arithmetic(line, m.start()):
+            continue
+        word = heredoc_word(line, m.end())
+        if word is not None:
+            found.append((m.start(), word[0], m.group(1) == "-", word[1]))
+    return found
+
+
 def ends_in_join(line: str) -> bool:
     """Return whether an unquoted here-document line ends in a backslash that escapes its newline."""
     return (len(line) - len(line.rstrip("\\"))) % 2 == 1
@@ -456,13 +539,12 @@ def script_lines(text: str):
             continue
         yield number, line, None
         shell_text = line
-        # An operator or a launch inside quotes or a comment is text, so it opens no here-document.
-        openers = [m for m in HEREDOC.finditer(shell_text) if outside_quotes(shell_text, m.start())]
+        # A launch inside quotes or a comment is text, so its here-document is not its program.
+        openers = heredoc_openers(shell_text)
         stdin = next((m for m in STDIN_PROGRAM.finditer(shell_text) if outside_quotes(shell_text, m.start())), None)
-        first = next((m for m in openers if stdin and m.start() > stdin.start()), None)
+        first = next((o for o in openers if stdin and o[0] > stdin.start()), None)
         # Only a quoted body is literal, so only a quoted body can be skipped as the program.
-        heredocs += [(m.group(3), m.group(1) == "-", bool(m.group(2)), m is first and bool(m.group(2)),
-                      shell_text.strip()) for m in openers]
+        heredocs += [(o[1], o[2], o[3], o is first and o[3], shell_text.strip()) for o in openers]
         quote = open_single_quote(shell_text)
         if not openers and quote is not None and C_PROGRAM.search(shell_text[:quote]):
             in_program = True
@@ -669,6 +751,27 @@ SCRIPT_CASES = [
     ("cat > /dev/null <<EOF\n$(pyth\\\non3 -c 1)\nEOF\n", [(2, P)]),
     ("cat <<EOF\nEO\\\nF\npython3 -c 1\n", [(4, P)]),
     ("cat <<EOF\nc\\\\\nEOF\npython3 -c 1\n", [(4, P)]),
+    # Each quoted delimiter form leaves the body literal, so the body is read as it stands and
+    # opens nothing, and the line after the delimiter is read.
+    ("cat > /dev/null <<\\EOF\npython3 -c 1\npython3 -I - <<'PY'\nEOF\npython3 tools/x.py\nPY\n",
+     [(2, P), (5, P), (5, Y)]),
+    ("cat > /dev/null <<'END-X'\npython3 -c 1\npython3 -I - <<'PY'\nEND-X\npython3 tools/x.py\nPY\n",
+     [(2, P), (5, P), (5, Y)]),
+    ("cat > /dev/null <<\"END.X\"\npython3 -c 1\npython3 -I - <<'PY'\nEND.X\npython3 tools/x.py\nPY\n",
+     [(2, P), (5, P), (5, Y)]),
+    ("cat > /dev/null <<E\\OF\npython3 -c 1\npython3 -I - <<'PY'\nEOF\npython3 tools/x.py\nPY\n",
+     [(2, P), (5, P), (5, Y)]),
+    ("cat > /dev/null <<E\"O\"F; true\n$(python3 -c 1)\nEOF\npython3 -c 1\n", [(2, P), (4, P)]),
+    ("python3 -I - <<\\PY\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(4, P)]),
+    ("python3 -I - <<$'PY'\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(4, P)]),
+    ("python3 -I - <<''\nrun('python3 y.py')\n\npython3 -c 1\n", [(4, P)]),
+    ("cat <<-\"A\\\"B\"\n\tpython3 -c 1\n\tA\"B\npython3 -c 1\n", [(2, P), (4, P)]),
+    # An unquoted delimiter may hold other characters; its body is expanded and read.
+    ("cat <<$Z\n# $(python3 -c 1)\n$Z\npython3 -c 1\n", [(2, P), (4, P)]),
+    ("cat <<1\n`tools/x.py`\n1\npython3 -c 1\n", [(2, Y), (4, P)]),
+    # A << inside ((...)) or $((...)) is a shift and opens no here-document.
+    ("(( y = 1 << 2 ))\npython3 -I - <<'PY'\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(5, P)]),
+    ("echo \"$((1<<2))\"\npython3 -I - <<'PY'\nrun('python3 y.py')\nPY\npython3 -c 1\n", [(5, P)]),
 ]
 
 
@@ -748,9 +851,9 @@ def main() -> int:
     if findings:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
-    print(f"OK: {len(covered)} shell scripts the workflows run; every python or pypy word that the scan reads "
-          f"starts python3 -I and every .py or .pyz token that it reads is the program of a python3 -I launch, "
-          f"apart from the lines its {len(EXCEPTIONS)} exceptions name")
+    print(f"OK: {len(covered)} shell scripts the workflows run; each python or pypy word and each .py or .pyz "
+          f"token on a line the scan reads stands in text that reads as a python3 -I launch, apart from the lines "
+          f"its {len(EXCEPTIONS)} exceptions name")
     return 0
 
 
