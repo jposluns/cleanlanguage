@@ -6,14 +6,14 @@ name: Workflow launch isolation
 # beside a script that imports a sibling cannot run. See
 # tools/test-workflow-launch-isolation.py for scope and residuals. The fourth
 # step runs tools/test-shell-launch-isolation.py, which checks that, in the
-# shell scripts the workflows run, each python or pypy word and each .py or .pyz
-# token on a line the scan reads stands in text that reads as a python3 -I
-# launch, apart from the lines its exception table names. A .py or .pyz token
-# may instead be the first word after a call, at the start of a line, of a
-# function that its LAUNCHERS table names and whose definition it checks; the 6
-# gate lines of tools/pages-build.sh pass that way. It reads text, so such text
-# passes even where nothing runs it, and it does not check for a planted
-# sibling. See that scan for its scope and residuals.
+# shell scripts the workflows run, each python or pypy word and each .py or
+# .pyz token on a line the scan reads stands in text that reads as a python3
+# -I launch, apart from the lines its exception table names. A .py or .pyz
+# token may instead be the first word after a call, at the start of a line, of
+# a function that its LAUNCHERS table names and whose definition it checks;
+# the 6 gate lines of tools/pages-build.sh pass that way. It reads text, so
+# such text passes even where nothing runs it, and it does not check for a
+# planted sibling. See that scan for its scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
