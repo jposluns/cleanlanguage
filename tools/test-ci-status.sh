@@ -41,9 +41,10 @@
 # (CASE_ABSENT); some assert how many check-runs calls the fake gh served
 # (CASE_READS); and some assert that the only gh call made is the paginated
 # check-runs read of the commit (CASE_ONLY_CALLS and run_log_case). The timed
-# case also bounds the elapsed time; the cut-off and deadline-stop cases
-# (run_cut_off_case and run_deadline_stop_case) serve check-runs from a fake gh
-# in process on 1 fake clock, and their gh on PATH only refuses; and the
+# case also bounds the elapsed time; the cut-off, deadline-stop and plan-clock
+# cases (run_cut_off_case, run_deadline_stop_case and run_clock_case) serve
+# check-runs from a fake gh in process on 1 fake clock, and their gh on PATH
+# only refuses; and the
 # paginate case serves page 2 only to a --paginate call. The later sections,
 # the workflow shape check, the commit sha and repository contract, the wrapper
 # path resolution, and the output, signal, pipe, import, lost-status,
@@ -325,8 +326,8 @@ GH
   rm -rf "$tmp"
 }
 
-# FAKE_CLOCK_GATE is the start of the Python program that run_cut_off_case and
-# run_deadline_stop_case run. It loads tools/ci-status.py in process and gives
+# FAKE_CLOCK_GATE is the start of the Python program that run_cut_off_case,
+# run_deadline_stop_case and run_clock_case run. It loads tools/ci-status.py in process and gives
 # it 1 fake clock, a count of whole nanoseconds that starts at 1000.0 seconds.
 # time.time reads it, time.sleep moves it by the time asked for without
 # waiting, and time.monotonic reads it 500 seconds lower. While wall is set,
@@ -337,8 +338,9 @@ GH
 # os.waitpid and os.kill, not a real process (its pid is above any pid the
 # kernel assigns). Starting it moves the clock by GH_STARTS seconds, as
 # starting a real gh takes time. It records its call in TMP/reads, writes
-# GH_OUTPUT, and ends with exit 0 once the clock reaches GH_ENDS seconds after
-# it has started, unless a SIGKILL ends it first; a blocking wait moves the
+# GH_OUTPUT, and ends with the wait status GH_STATUS (0, an exit 0, unless a
+# case sets it) once the clock reaches GH_ENDS seconds after it has started,
+# unless a SIGKILL ends it first; a blocking wait moves the
 # clock to that end. A gate that polls it 100000 times without an end is
 # stopped with an error, so a gate that polls without sleeping cannot hang the
 # suite. The program records each deadline read_checks is given, each deadline
@@ -371,13 +373,14 @@ def sleep(seconds):
 def monotonic():
     return now() - 500  # a fixed offset, so the 2 clocks never agree
 mod.time = types.SimpleNamespace(time=clock, monotonic=monotonic, sleep=sleep)
-GH_STARTS, GH_ENDS, GH_OUTPUT = 0.0, 60.0, b""
+GH_STARTS, GH_ENDS, GH_OUTPUT, GH_STATUS = 0.0, 60.0, b"", 0
 deadlines, gh_deadlines, kills, returns, procs, polls = [], [], [], [], {}, [0]
 class Gh:
     def __init__(self, args, stdout):
         ticks[0] += round(GH_STARTS * NS)  # the time starting gh takes
         self.args, self.pid, self.returncode = args, PID - len(procs), None
         self.ends, self.status, self.reaped = ticks[0] + round(GH_ENDS * NS), None, False
+        self.code = GH_STATUS  # the wait status gh ends with on its own
         with open(tmp + "/reads", "a") as f:
             f.write("read\n")
         stdout.write(GH_OUTPUT)
@@ -398,14 +401,14 @@ class Os:
     def waitpid(self, pid, options):
         p = child(pid, ChildProcessError)
         if p.status is None and ticks[0] >= p.ends:
-            p.status = 0  # the wait status of exit 0
+            p.status = p.code
         if p.status is None:
             if options & os.WNOHANG:
                 polls[0] += 1
                 if polls[0] > 100000:
                     raise RuntimeError("gh polled 100000 times without an end")
                 return 0, 0
-            ticks[0], p.status = p.ends, 0  # a blocking wait lasts until gh ends
+            ticks[0], p.status = p.ends, p.code  # a blocking wait lasts until gh ends
         p.reaped = True
         return p.pid, p.status
     def kill(self, pid, sig):
@@ -571,6 +574,66 @@ finish(code, why, "deadline %s, gh deadline %s, killed at %s, returned at %s, ex
   [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 1 ] || why="$why reads"
   if [ -z "$why" ]; then printf "ok   %s (exit %s, %s)\n" "$name" "$got" "$facts";
   else printf "FAIL %s (got exit %s, %s; want exit 2, deadline and gh deadline 1010.000000, return at 1003.000000, exit at 1010.000000;%s)\n" "$name" "$got" "${facts:-?}" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+# run_clock_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]: run_case
+# for a plan that ends in a read the deadline cuts off, on the fake clock of
+# FAKE_CLOCK_GATE with --interval 1, so a slow host cannot close the window
+# before that read starts. Each read takes 0.5 seconds on that clock: g serves
+# DEFAULT, a serves ALT, f ends with exit 1, and s would end only 60 seconds
+# after it has started; the last token repeats once the plan runs out. Exit,
+# CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as run_case checks them,
+# and gh must be killed exactly once, at the deadline of the --timeout given.
+run_clock_case() {
+  local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf '%s' "$def" > "$tmp/def.json"
+  printf '%s' "$alt" > "$tmp/alt.json"
+  # The fake gh is in process; a gh on PATH is reached only if the gate
+  # bypasses it.
+  printf '#!/usr/bin/env bash\necho "unexpected gh call" >&2; exit 1\n' > "$bin/gh"
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c "$FAKE_CLOCK_GATE"'
+plan, flags = sys.argv[4].split(), sys.argv[5:]
+DEADLINE = 1000.0 + float(flags[flags.index("--timeout") + 1])
+payloads = {}
+for tok, file in (("g", "/def.json"), ("a", "/alt.json")):
+    with open(tmp + file, "rb") as f:
+        payloads[tok] = f.read()
+starts = []
+def before_read():
+    global GH_OUTPUT, GH_ENDS, GH_STATUS
+    starts.append(clock())
+    tok = plan[min(len(starts), len(plan)) - 1]
+    GH_OUTPUT = payloads.get(tok, b"")
+    GH_ENDS = 60.0 if tok == "s" else 0.5
+    GH_STATUS = 256 if tok == "f" else 0  # 256 is the wait status of exit 1
+code = run_gate("--interval", "1", *flags)
+why = [w for w, ok in (("kill", near(kills, [DEADLINE])),) if not ok]
+finish(code, why, "reads at %s, killed at %s, exit at %.6f" % (show(starts), show(kills), now()))' \
+    "${here}/ci-status.py" 0000000000000000000000000000000000000000 "$tmp" "$plan" "$@" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why="" facts
+  facts="$(cat "$tmp/facts" 2>/dev/null)"
+  if [ -f "$tmp/why" ]; then why="$(cat "$tmp/why")"; else why=" clocks"; fi
+  [ "$got" -eq "$want" ] || why="$why exit"
+  if [ -n "${CASE_NEEDLE:-}" ]; then
+    local needle
+    while IFS= read -r needle; do
+      if ! grep -q -F -- "$needle" "$tmp/err"; then why="$why message"; break; fi
+    done <<< "$CASE_NEEDLE"
+  fi
+  if [ -n "${CASE_READS:-}" ] && [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" != "$CASE_READS" ]; then
+    why="$why reads"
+  fi
+  if [ -n "${CASE_ABSENT:-}" ]; then
+    grep -q -F -- "$CASE_ABSENT" "$tmp/err"
+    case $? in 1) ;; *) why="$why absent" ;; esac
+  fi
+  if [ -z "$why" ]; then printf 'ok   %s (exit %s, %s)\n' "$name" "$got" "$facts";
+  else printf 'FAIL %s (got %s, want %s, %s;%s)\n' "$name" "$got" "$want" "${facts:-?}" "$why"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
 }
 
@@ -852,42 +915,50 @@ run_case "unfinished required check with --wait stays not green at the deadline"
 # unsettled is the wait timing out (exit 2), not an unreadable result (exit 3): a
 # loaded host can start a read with little of the window left (TODO row 103). The
 # plan token s is a gh call that hangs until the tool ends it at the deadline.
-# Each case requires the line naming the cut-off of that hanging call, and
-# requires the fake gh to have served it (CASE_READS), so a case whose window
-# runs out before that call starts fails rather than passing through the
-# top-of-loop guard or the closed-window check before the read; only the earlier
-# readings must arrive within the window. After a failed read, a read cut off at
-# the deadline still reports the read failure (exit 3), and so does one after a
-# good reading and then a failed read.
+# These cases run on the fake clock of run_clock_case, because in real time the
+# earlier reads and the 1-second sleeps between them must all fit inside the
+# 5-second window, which a heavily loaded host can exceed before the hanging
+# call starts. Each case requires the line naming the cut-off of that hanging
+# call, and requires the fake gh to have served it (CASE_READS), so a gate whose
+# window runs out before that call starts fails rather than passing through the
+# top-of-loop guard or the closed-window check before the read. After a failed
+# read, a read cut off at the deadline still reports the read failure (exit 3),
+# and so does one after a good reading and then a failed read.
 CUT_OFF="ci-status: the wait window cut off the last read (gh api did not return within"
 HUNG_READ_FAILED="check read failed for 0000000000000000000000000000000000000000: gh api did not return within"
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
   CASE_ABSENT="check read failed" CASE_READS=2 \
-  run_case "pending reading then a read cut off at the deadline -> not green, timed out" \
+  run_clock_case "pending reading then a read cut off at the deadline -> not green, timed out" \
   "$GA_IN_PROGRESS" "" "g s" 2 --wait --timeout 5
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
   CASE_ABSENT="check read failed" CASE_READS=2 \
-  run_case "green reading then a confirmation read cut off at the deadline -> not green, timed out" \
+  run_clock_case "green reading then a confirmation read cut off at the deadline -> not green, timed out" \
   "$GA_PRESENT" "" "g s" 2 --wait --timeout 5
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
-  run_case "failed read then a read cut off at the deadline -> unreadable" \
+  run_clock_case "failed read then a read cut off at the deadline -> unreadable" \
   "$GA_PRESENT" "" "f s" 3 --wait --timeout 5
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=3 \
-  run_case "pending reading, a failed read, then a read cut off at the deadline -> unreadable" \
+  run_clock_case "pending reading, a failed read, then a read cut off at the deadline -> unreadable" \
   "$GA_IN_PROGRESS" "" "g f s" 3 --wait --timeout 5
 # An empty reading (no checks) is a successful reading too, so a read cut off at
 # the deadline after it is the wait timing out (exit 2), as the top-of-loop guard
 # gives for the same reading.
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
   CASE_ABSENT="check read failed" CASE_READS=2 \
-  run_case "empty reading then a read cut off at the deadline -> not green, timed out" \
+  run_clock_case "empty reading then a read cut off at the deadline -> not green, timed out" \
   '{"total_count":0,"check_runs":[]}' "" "g s" 2 --wait --timeout 5
 # Without --wait, the confirmation read after a green reading is the only second
 # read, and it is bounded by the same deadline. A cut-off there keeps its old
 # result, the read failure (exit 3), not a timed-out wait.
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
-  run_case "green reading then a confirmation read cut off without --wait -> unreadable" \
+  run_clock_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
+# The fake clock above starts and kills no real process, so this case keeps a
+# real hung gh killed and reaped at the deadline. Its first read hangs, so only
+# the start of that one gh call has to fall inside the 5-second window.
+CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=1 \
+  run_case "a real gh that hangs from the first read is killed at the deadline -> unreadable" \
+  "$GA_PRESENT" "" "s" 3 --wait --timeout 5
 run_cut_off_case "a read cut off with under a second left names its real bound" 0.500 "0.5 seconds"
 run_cut_off_case "a read cut off with 1.96 seconds left names 1.9 seconds, not a longer bound" \
   1.960 "1.9 seconds"
@@ -2549,7 +2620,7 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # red has it print a red reading and exit 0. At the first poll of that gh, the
 # replaced os.waitpid waits with os.waitid and WNOWAIT until gh has ended,
 # without reaping it, and then reports it unfinished as at every other poll. So
-# that gh has ended on its own before the kill. The gate runs with --timeout
+# gh has ended on its own before the kill. The gate runs with --timeout
 # 30, so the first read, served by a fake gh script run as its own process, has
 # about 29 seconds to end with time left for the second read to start before
 # the deadline. The gate's time name is replaced by one whose time() and
