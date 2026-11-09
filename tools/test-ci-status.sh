@@ -44,11 +44,11 @@
 # case also bounds the elapsed time; the cut-off, deadline-stop and plan-clock
 # cases (run_cut_off_case, run_deadline_stop_case and run_clock_case) serve
 # check-runs from a fake gh in process on 1 fake clock, and their gh on PATH
-# only refuses; and the
-# paginate case serves page 2 only to a --paginate call. The later sections,
-# the workflow shape check, the commit sha and repository contract, the wrapper
-# path resolution, and the output, signal, pipe, import, lost-status,
-# final-reap, closed-window and late-pass cases, each say what they assert.
+# only refuses; and the paginate case serves page 2 only to a --paginate call.
+# The later sections, the workflow shape check, the commit sha and repository
+# contract, the wrapper path resolution, and the output, signal, pipe, import,
+# lost-status, final-reap, closed-window and late-pass cases, each say what
+# they assert.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -327,31 +327,30 @@ GH
 }
 
 # FAKE_CLOCK_GATE is the start of the Python program that run_cut_off_case,
-# run_deadline_stop_case and run_clock_case run. It loads tools/ci-status.py in process and gives
-# it 1 fake clock, a count of whole nanoseconds that starts at 1000.0 seconds.
-# time.time reads it, time.sleep moves it by the time asked for without
-# waiting, and time.monotonic reads it 500 seconds lower. While wall is set,
-# time.time reads that fixed value and time.monotonic moves on, as when the
-# wall clock stands still or steps; kills, returns and the exit are recorded on
-# the moving clock (now). Counting whole nanoseconds makes every sum of sleeps
-# exact. gh is a fake child on the same clock, reached through Popen,
-# os.waitpid and os.kill, not a real process (its pid is above any pid the
-# kernel assigns). Starting it moves the clock by GH_STARTS seconds, as
+# run_deadline_stop_case and run_clock_case run. It loads tools/ci-status.py in
+# process and gives it 1 fake clock, a count of whole nanoseconds that starts
+# at 1000.0 seconds. time.time reads it, time.sleep moves it by the time asked
+# for without waiting, and time.monotonic reads it 500 seconds lower. While
+# wall is set, time.time reads that fixed value and time.monotonic moves on, as
+# when the wall clock stands still or steps; kills, returns and the exit are
+# recorded on the moving clock (now). Counting whole nanoseconds makes every
+# sum of sleeps exact. gh is a fake child on the same clock, reached through
+# Popen, os.waitpid and os.kill, not a real process (its pid is above any pid
+# the kernel assigns). Starting it moves the clock by GH_STARTS seconds, as
 # starting a real gh takes time. It records its call in TMP/reads, writes
 # GH_OUTPUT, and ends with the wait status GH_STATUS (0, an exit 0, unless a
 # case sets it) once the clock reaches GH_ENDS seconds after it has started,
-# unless a SIGKILL ends it first; a blocking wait moves the
-# clock to that end. A gate that polls it 100000 times without an end is
-# stopped with an error, so a gate that polls without sleeping cannot hang the
-# suite. The program records each deadline read_checks is given, each deadline
-# _gh is given, the clock at each kill and at each return of _gh, and calls
-# before_read as each read starts. Every clock read and sleep the gate makes
-# through its time name is fake, so the speed of the host cannot change any
-# time these cases read. A wait the gate makes outside that name, such as
-# __import__("time").sleep or a sleep in another module, does not move the fake
-# clock, so no case here asserts it. finish writes what the case observed to
-# TMP/facts and the names of the failed expectations to TMP/why, and exits with
-# the code of the gate.
+# unless a SIGKILL ends it first; a blocking wait moves the clock to that end.
+# A gate that polls it 100000 times without an end is stopped with an error, so
+# a gate that polls without sleeping cannot hang the suite. The program records
+# each deadline read_checks is given, each deadline _gh is given, the clock at
+# each kill and at each return of _gh, and calls before_read as each read
+# starts. Every clock read and sleep the gate makes through its time name is
+# fake, so the speed of the host cannot change any time these cases read. A
+# wait the gate makes outside that name, such as __import__("time").sleep or a
+# sleep in another module, does not move the fake clock, so no case here
+# asserts it. finish writes what the case observed to TMP/facts and the names
+# of the failed expectations to TMP/why, and exits with the code of the gate.
 FAKE_CLOCK_GATE='import importlib.util, os, signal, subprocess, sys, types
 path, sha, tmp = sys.argv[1:4]
 NS = 10 ** 9
@@ -580,11 +579,12 @@ finish(code, why, "deadline %s, gh deadline %s, killed at %s, returned at %s, ex
 # run_clock_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]: run_case
 # for a plan that ends in a read the deadline cuts off, on the fake clock of
 # FAKE_CLOCK_GATE with --interval 1, so a slow host cannot close the window
-# before that read starts. Each read takes 0.5 seconds on that clock: g serves
-# DEFAULT, a serves ALT, f ends with exit 1, and s would end only 60 seconds
-# after it has started; the last token repeats once the plan runs out. Exit,
-# CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as run_case checks them,
-# and gh must be killed exactly once, at the deadline of the --timeout given.
+# before that read starts. Each read other than s takes 0.5 seconds on that
+# clock: g serves DEFAULT, a serves ALT, f ends with exit 1, and s would end
+# only 60 seconds after it has started; the last token repeats once the plan
+# runs out. Exit, CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as
+# run_case checks them, and gh must be killed exactly once, at the deadline of
+# the --timeout given.
 run_clock_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -795,7 +795,7 @@ run_case "null total_count is rejected fail-closed" "$TOTAL_NULL" "" "" 3
 # total_count present on only one page is inconsistent.
 run_case "inconsistent total_count presence is rejected fail-closed" "$INCONSISTENT_TOTAL" "" "" 3
 # A total_count of true is not a whole number, though Python treats a bool as
-# the integer 1: read as 1, it would match the single run received.
+# the integer 1: read as 1, it would match the 1 run received.
 run_err_case "boolean total_count is rejected fail-closed" \
   "{\"total_count\":true,\"check_runs\":[${PM_OK}]}" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check-runs total_count is not a whole number"
@@ -919,11 +919,12 @@ run_case "unfinished required check with --wait stays not green at the deadline"
 # earlier reads and the 1-second sleeps between them must all fit inside the
 # 5-second window, which a heavily loaded host can exceed before the hanging
 # call starts. Each case requires the line naming the cut-off of that hanging
-# call, and requires the fake gh to have served it (CASE_READS), so a gate whose
-# window runs out before that call starts fails rather than passing through the
-# top-of-loop guard or the closed-window check before the read. After a failed
-# read, a read cut off at the deadline still reports the read failure (exit 3),
-# and so does one after a good reading and then a failed read.
+# call, and requires the fake gh to have served it (CASE_READS), so a gate
+# whose window runs out before that call starts fails rather than passing
+# through the top-of-loop guard or the closed-window check before the read.
+# After a failed read, a read cut off at the deadline still reports the read
+# failure (exit 3), and so does one after a good reading and then a failed
+# read.
 CUT_OFF="ci-status: the wait window cut off the last read (gh api did not return within"
 HUNG_READ_FAILED="check read failed for 0000000000000000000000000000000000000000: gh api did not return within"
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
@@ -955,7 +956,7 @@ CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
 # The fake clock above starts and kills no real process, so this case keeps a
 # real hung gh killed and reaped at the deadline. Its first read hangs, so only
-# the start of that one gh call has to fall inside the 5-second window.
+# the start of that 1 gh call has to fall inside the 5-second window.
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=1 \
   run_case "a real gh that hangs from the first read is killed at the deadline -> unreadable" \
   "$GA_PRESENT" "" "s" 3 --wait --timeout 5
@@ -2620,10 +2621,10 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # red has it print a red reading and exit 0. At the first poll of that gh, the
 # replaced os.waitpid waits with os.waitid and WNOWAIT until gh has ended,
 # without reaping it, and then reports it unfinished as at every other poll. So
-# gh has ended on its own before the kill. The gate runs with --timeout
-# 30, so the first read, served by a fake gh script run as its own process, has
-# about 29 seconds to end with time left for the second read to start before
-# the deadline. The gate's time name is replaced by one whose time() and
+# gh has ended on its own before the kill. The gate runs with --timeout 30, so
+# the first read, served by a fake gh script run as its own process, has about
+# 29 seconds to end with time left for the second read to start before the
+# deadline. The gate's time name is replaced by one whose time() and
 # monotonic() are the real clocks plus a shift, and whose other attributes,
 # sleep included, are the real ones. Once that wait has seen gh end, the
 # replaced os.waitpid sets the shift to the whole 30-second window, so the
