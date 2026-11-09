@@ -539,132 +539,128 @@ What it does NOT verify (the reviewer's and cross-family QA's job)
 
 It does not apply any stylesheet or run any script, and it does NOT judge
 whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
-checked element, such as a ``clip-path`` or a height with overflow that cuts
-it off: check 8 and the rule pin of ``tools/test-install-page.py`` keep the
-rules that can reach one to those a reviewer has pinned (see below). Of the
-elements that the HTML standard's rendering rules may hide with no
-stylesheet, it does not list the void elements (``area``, ``base``,
-``basefont``, ``link``, ``meta``, ``param``, and ``input`` with
-``type=hidden``), which the parser never holds open, so none can hold a
-checked element or its text, nor ``head``, which the parser holds open as it
-holds any element that is not void, but inside which check 8's tag pin
-refuses a checked element (``PIN_ANCESTOR_TAGS`` omits ``head``), as check 1
-does on ``/install/`` in ``html > head`` (``HEAD_TAGS``); check 5 refuses
-``style``,
-``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
-also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
-switch) and ``math``, which hold text a browser might
-not render (an iframe's raw text; an SVG ``title``, ``desc`` or ``metadata``,
-the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
-element; a MathML ``annotation`` or ``annotation-xml``). It does
-not model a script that opens a popover, a dialog or a ``details``, or a
-browser's find-in-page that reveals ``hidden=until-found`` content.
-Among the descendant wipes, baseline.css declares, each at some widths,
-``display: none`` for ``.figure .stack``, ``.figure .wide``, and
-``.family .sig .pre`` and ``.family .sig .post``, and ``clip: rect(0 0 0 0)``
-with ``width: 1px`` and ``height: 1px``, as for ``.vh``, for
-``.family .cards .cname``; none of those classes is in
-``CLASS_PIN``, so no checked element, ancestor or element it holds may carry
-one. ``tools/test-install-page.py`` pins, verbatim after normalizing only CSS
-whitespace and comments, every rule of fonts.css, palettes.css and
-baseline.css whose selector can match an element with the names and classes
-of ``CLASS_PIN`` (any element may carry no class), read by the last compound
-selector of each selector and conservatively: an attribute selector, an id, a
-pseudo-class, ``:has()``, ``:is()`` and ``:not()`` among them, and a
-pseudo-element count as matching, inside an at-rule or not. It also pins
-every keyframe and ``@font-face`` rule, and every rule that sets a custom
-property that a pinned rule names in ``var()``, compared with regard to case.
-A change to the 3 stylesheets that adds, changes, moves or removes such a rule
+checked element, such as a ``clip-path`` or a height with overflow that cuts it
+off: check 8 and the rule pin of ``tools/test-install-page.py`` keep the rules
+that can reach one to those a reviewer has pinned (see below). Of the elements
+that the HTML standard's rendering rules may hide with no stylesheet, it does
+not list the void elements (``area``, ``base``, ``basefont``, ``link``,
+``meta``, ``param``, and ``input`` with ``type=hidden``), which the parser
+never holds open, so none can hold a checked element or its text, nor ``head``,
+which the parser holds open as it holds any element that is not void, but
+inside which check 8's tag pin refuses a checked element (``PIN_ANCESTOR_TAGS``
+omits ``head``), as check 1 does on ``/install/`` in ``html > head``
+(``HEAD_TAGS``); check 5 refuses ``style``, ``template``, ``noembed`` and
+``noframes`` anywhere on the 6 pages. Check 5 also refuses ``iframe``, ``svg``
+(other than the 2 in the exact light and dark switch) and ``math``, which hold
+text a browser might not render (an iframe's raw text; an SVG ``title``,
+``desc`` or ``metadata``, the content of ``defs`` or ``symbol``, and SVG text
+outside a ``text`` element; a MathML ``annotation`` or ``annotation-xml``). It
+does not model a script that opens a popover, a dialog or a ``details``, or a
+browser's find-in-page that reveals ``hidden=until-found`` content. Among the
+descendant wipes, baseline.css declares, each at some widths, ``display: none``
+for ``.figure .stack``, ``.figure .wide``, and ``.family .sig .pre`` and
+``.family .sig .post``, and ``clip: rect(0 0 0 0)`` with ``width: 1px`` and
+``height: 1px``, as for ``.vh``, for ``.family .cards .cname``; none of those
+classes is in ``CLASS_PIN``, so no checked element, ancestor or element it
+holds may carry one. ``tools/test-install-page.py`` pins, verbatim after
+normalizing only CSS whitespace and comments, every rule of fonts.css,
+palettes.css and baseline.css whose selector can match an element with the
+names and classes of ``CLASS_PIN`` (any element may carry no class), read by
+the last compound selector of each selector and conservatively: an attribute
+selector, an id, a pseudo-class, ``:has()``, ``:is()`` and ``:not()`` among
+them, and a pseudo-element count as matching, inside an at-rule or not. It also
+pins every keyframe and ``@font-face`` rule, and every rule that sets a custom
+property that a pinned rule names in ``var()``, compared with regard to case. A
+change to the 3 stylesheets that adds, changes, moves or removes such a rule
 fails that test, naming the rule, until a reviewer updates the pin as its
-docstring says, and ``tools/check-baseline-pin.py`` hash-pins the 3 files. So
-a rule for a new class, such as ``.fresh { padding: 0 var(--PAD); }``, cannot
+docstring says, and ``tools/check-baseline-pin.py`` hash-pins the 3 files. So a
+rule for a new class, such as ``.fresh { padding: 0 var(--PAD); }``, cannot
 reach a checked element, which may not carry that class, and a new or changed
-rule for a pinned name or class, such as ``.btn { writing-mode:
-vertical-rl; }``, fails the rule pin. These residuals are accepted: what a
-pinned rule does is what a reviewer accepted when it was pinned, and neither
-the gate nor the test judges it (the negative top margin of ``.verified``, or
-a colour that matches what is behind the text in some scheme, say); a pinned
-rule that a checked element comes to match by something that neither the
-class pin nor ``RULE_ATTRIBUTES`` holds: an id, its place among its siblings,
-or the class or an attribute of a sibling or an earlier element (a pinned
-rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right after an
-element with the class ``lbl``); the font files and images that a pinned rule
-names, which the test does not read, so a font whose glyphs show nothing
-passes it (``tools/check-baseline-pin.py`` hash-pins every file under
-``site/assets/baseline/`` to ``.baseline/pin.toml``, so only a change of
-the baseline pin can bring one); and a box that is neither a checked element, an ancestor nor an
-element it holds (a sibling or an earlier element, say), which can cover a
-checked element (positioned, or given an outline or a shadow) or move it by
-its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
-``p.meta`` loses to ``.doc .meta { ... margin: 0 0 1.6rem; ... }`` in
-baseline.css, which is more specific, but ``.doc .meta.fresh {
-margin-bottom: 300vh; }`` outweighs that rule and may move the "Pick your AI"
-label and the family links 3 screen heights down): neither pin reaches it, so
-a rule for its class need not be pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
-refuses that change to a stylesheet. Check 8 reads the names of the
-attributes of such a box (``PAGE_ATTRIBUTES``) and its tag (``PAGE_TAGS``),
-but not the values of its attributes or its classes, so another value of an
-attribute that the committed pages give its tag passes, and so does a further
-class (see ``p.meta`` above); a ``marquee`` around ``Scope``'s label
-fails ``PAGE_TAGS``. Check 5 allows only the 2 ``svg`` elements of the exact
-light and dark switch, so a larger ``width`` on 1 of them fails. The test reads
-comments and strings as CSS does, a backslash in a string escaping the
-character after it, so a brace in either delimits no rule, and a bracket, a
-comma or a class name in a string counts for no selector. It refuses a
-stylesheet with what it does not model, such as a backslash outside a
-string, a line break in a string, a comment, or a run of adjacent comments,
-between 2 characters of names in a selector, a brace inside brackets, a rule
-inside a rule or an unlisted
-at-rule. Of text it reads only whether the headings, the
-"Pick your AI" label, each family link, each ``p.verified``, each step list's
-steps and the required links back to the downloads and the test have visible
-text, whether text sits above
+rule for a pinned name or class, such as
+``.btn { writing-mode: vertical-rl; }``, fails the rule pin. These residuals
+are accepted: what a pinned rule does is what a reviewer accepted when it was
+pinned, and neither the gate nor the test judges it (the negative top margin of
+``.verified``, or a colour that matches what is behind the text in some scheme,
+say); a pinned rule that a checked element comes to match by something that
+neither the class pin nor ``RULE_ATTRIBUTES`` holds: an id, its place among its
+siblings, or the class or an attribute of a sibling or an earlier element (a
+pinned rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right
+after an element with the class ``lbl``); the font files and images that a
+pinned rule names, which the test does not read, so a font whose glyphs show
+nothing passes it (``tools/check-baseline-pin.py`` hash-pins every file under
+``site/assets/baseline/`` to ``.baseline/pin.toml``, so only a change of the
+baseline pin can bring one); and a box that is neither a checked element, an
+ancestor nor an element it holds (a sibling or an earlier element, say), which
+can cover a checked element (positioned, or given an outline or a shadow) or
+move it by its own size or place in the flow
+(``.fresh { margin-bottom: 300vh; }`` on ``p.meta`` loses to
+``.doc .meta { ... margin: 0 0 1.6rem; ... }`` in baseline.css, which is more
+specific, but ``.doc .meta.fresh { margin-bottom: 300vh; }`` outweighs that
+rule and may move the "Pick your AI" label and the family links 3 screen
+heights down): neither pin reaches it, so a rule for its class need not be
+pinned, and only the whole-file pin of ``tools/check-baseline-pin.py`` refuses
+that change to a stylesheet. Check 8 reads the names of the attributes of such
+a box (``PAGE_ATTRIBUTES``) and its tag (``PAGE_TAGS``), but not the values of
+its attributes or its classes, so another value of an attribute that the
+committed pages give its tag passes, and so does a further class (see
+``p.meta`` above); a ``marquee`` around ``Scope``'s label fails ``PAGE_TAGS``.
+Check 5 allows only the 2 ``svg`` elements of the exact light and dark switch,
+so a larger ``width`` on 1 of them fails. The test reads comments and strings
+as CSS does, a backslash in a string escaping the character after it, so a
+brace in either delimits no rule, and a bracket, a comma or a class name in a
+string counts for no selector. It refuses a stylesheet with what it does not
+model, such as a backslash outside a string, a line break in a string, a
+comment, or a run of adjacent comments, between 2 characters of names in a
+selector, a brace inside brackets, a rule inside a rule or an unlisted at-rule.
+Of text it reads only whether the headings, the "Pick your AI" label, each
+family link, each ``p.verified``, each step list's steps and the required links
+back to the downloads and the test have visible text, whether text sits above
 the family links or directly in their paragraph, whether the visible text of
-the hero's ``h1``, a family page's ``h1``, the "Pick your AI" label or a
-family link holds a bidi control, whether a family page heading's visible
-text holds its family's name, and whether each family link's visible text is
-its family's name, so a ``p.verified`` with the wrong date passes, as does a
-heading that names another family beside its own; it checks that a step list has at
-least 1 step with visible text, not its steps or their wording, which
+the hero's ``h1``, a family page's ``h1``, the "Pick your AI" label or a family
+link holds a bidi control, whether a family page heading's visible text holds
+its family's name, and whether each family link's visible text is its family's
+name, so a ``p.verified`` with the wrong date passes, as does a heading that
+names another family beside its own; it checks that a step list has at least 1
+step with visible text, not its steps or their wording, which
 ``tools/build-site.py --check`` ties to ``site-src/pages``. Those are content
-regressions that a browser check, a reviewer, or the tri-family QA catches. Text
-made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (the rest of
+regressions that a browser check, a reviewer, or the tri-family QA catches.
+Text made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (the rest of
 Unicode's Default_Ignorable_Code_Point set, U+034F, the Hangul fillers U+115F,
 U+1160, U+3164 and U+FFA0, the Mongolian free variation selectors, the
-variation selectors and the tag characters among them, and U+2800, the
-Braille pattern blank), whitespace and U+0000 has no visible text. The gate
-reads every other character as visible, so a heading, the "Pick your AI"
-label, a family link label, a ``p.verified``, a step, or a link back to the
-downloads or the test made only of a character outside them that a browser
-or a font may show as nothing passes the visible-text check, which all 6 share;
-a family link label made only of one fails the check of its name. A ``dir`` on any element fails check
-8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` anywhere on the 6 pages
-fails its page tag pin (``PAGE_TAGS``), as it does its tag pin (``TAG_PIN``)
-in a checked element. The gate applies no stylesheet; a
-rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
-ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
+variation selectors and the tag characters among them, and U+2800, the Braille
+pattern blank), whitespace and U+0000 has no visible text. The gate reads every
+other character as visible, so a heading, the "Pick your AI" label, a family
+link label, a ``p.verified``, a step, or a link back to the downloads or the
+test made only of a character outside them that a browser or a font may show as
+nothing passes the visible-text check, which all 6 share; a family link label
+made only of one fails the check of its name. A ``dir`` on any element fails
+check 8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` anywhere on the 6
+pages fails its page tag pin (``PAGE_TAGS``), as it does its tag pin
+(``TAG_PIN``) in a checked element. The gate applies no stylesheet; a rule that
+sets ``direction`` or ``unicode-bidi`` on a checked element or an ancestor,
+such as ``main { direction: rtl; }``, fails the rule pin of
 ``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
-here the open element it names and every element opened inside it, and
-check 8 refuses an end tag that closes an element other than the innermost,
-so it refuses these end tags, whose possible browser repairs can hide markup
-that the gate reads as visible: an end tag a browser may ignore because its element is not
-in scope (``</div>`` inside a table cell, which can leave a hiding ``div``
-outside the table open) or, for an element outside the HTML standard's
-special category, because a special element such as ``div`` is open inside
-it (``<span class="vh"><div></span>``, after which a browser may keep the
-``span`` open); an end tag whose element a browser may already have closed by
-an implied end tag (``<p><div class="vh"></p>``, after which a browser
-may keep the ``div`` open); and an end tag that closes a formatting element
-(``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
-``small``, ``strike``, ``strong``, ``tt`` or ``u``) out of order, which a
-browser may reopen with its attributes (``<p><a class="vh">x</p>``, after which
-a browser can hide the text of a later heading). The gate does not model the
-other possible browser repairs, among them an implied end tag (see above; check 8
-reads 1 only where ``IMPLIED_ENDS`` holds it) and a
-formatting element that a browser may reopen after an implied end tag closed
-it. The
-inline-code checks, and the load reading of check 6, share the residual that
-``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
+here the open element it names and every element opened inside it, and check 8
+refuses an end tag that closes an element other than the innermost, so it
+refuses these end tags, whose possible browser repairs can hide markup that the
+gate reads as visible: an end tag a browser may ignore because its element is
+not in scope (``</div>`` inside a table cell, which can leave a hiding ``div``
+outside the table open) or, for an element outside the HTML standard's special
+category, because a special element such as ``div`` is open inside it
+(``<span class="vh"><div></span>``, after which a browser may keep the ``span``
+open); an end tag whose element a browser may already have closed by an implied
+end tag (``<p><div class="vh"></p>``, after which a browser may keep the
+``div`` open); and an end tag that closes a formatting element (``a``, ``b``,
+``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``, ``small``,
+``strike``, ``strong``, ``tt`` or ``u``) out of order, which a browser may
+reopen with its attributes (``<p><a class="vh">x</p>``, after which a browser
+can hide the text of a later heading). The gate does not model the other
+possible browser repairs, among them an implied end tag (see above; check 8
+reads 1 only where ``IMPLIED_ENDS`` holds it) and a formatting element that a
+browser may reopen after an implied end tag closed it. The inline-code checks,
+and the load reading of check 6, share the residual that
+``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's
+parser.
 
 Python versions
 ---------------

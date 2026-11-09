@@ -38,33 +38,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INSTALL_GATE = TOOLS_DIR / "check-install-page.py"
 
 
-def module_scope(node: ast.AST):
-    """Every node beneath node that runs in the module's own scope: the walk enters a def, class or lambda only for what
-    the module evaluates when it defines one (decorators, default values, bases and keywords), never its body."""
-    # Every part comes back here as node, so a lambda that is itself a default value or decorator is entered only for
-    # its own default values, never its body, which does not run in the module's scope.
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        parts = [*getattr(node, "decorator_list", []), *node.args.defaults,
-                 *[value for value in node.args.kw_defaults if value is not None]]
-    elif isinstance(node, ast.ClassDef):
-        parts = [*node.decorator_list, *node.bases, *node.keywords]
-    else:
-        parts = list(ast.iter_child_nodes(node))
-    for part in parts:
-        yield part
-        yield from module_scope(part)
+# The ast classes of a type parameter, each of which binds its name; a Python older than 3.12 has none of them.
+TYPE_PARAMETERS = tuple(getattr(ast, kind) for kind in ("TypeVar", "ParamSpec", "TypeVarTuple") if hasattr(ast, kind))
 
 
-def module_bindings(tree: ast.Module, name: str) -> tuple[list[ast.AST], list[str]]:
-    """The nodes that bind or delete name in the module's own scope, and a refusal for each * import there, which can
-    bind any name unseen."""
+def bindings_anywhere(tree: ast.Module, name: str) -> tuple[list[ast.AST], list[str]]:
+    """The nodes that bind, delete or annotate name anywhere in the source, in any scope, a def, class or lambda body
+    included, in the order of the source, and a refusal for each * import, which can bind any name unseen."""
     bindings: list[ast.AST] = []
     refusals: list[str] = []
-    for node in module_scope(tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
             bindings.append(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler,
-                               ast.MatchAs, ast.MatchStar)) and node.name == name:
+                               ast.MatchAs, ast.MatchStar, *TYPE_PARAMETERS)) and node.name == name:
+            bindings.append(node)
+        elif isinstance(node, ast.arg) and node.arg == name:
             bindings.append(node)
         elif isinstance(node, ast.MatchMapping) and node.rest == name:
             bindings.append(node)
@@ -74,26 +63,27 @@ def module_bindings(tree: ast.Module, name: str) -> tuple[list[ast.AST], list[st
                     refusals.append(f"line {node.lineno} imports *, which can bind {name} unseen")
                 elif (alias.asname or alias.name.split(".")[0]) == name:
                     bindings.append(node)
-    return bindings, refusals
+    return sorted(bindings, key=lambda node: (node.lineno, node.col_offset)), refusals
 
 
 def gate_families(path: Path = INSTALL_GATE) -> list[str]:
     """The families of the install gate's FAMILIES, read from its source by ast, which runs none of it, so this test
-    needs no Python version that the gate needs. It walks every node that runs in the module's own scope, entering a
-    def, class or lambda only for its decorators, default values, bases and keywords, and counts there each binding or
-    deletion of the name FAMILIES: a plain, annotated or augmented assignment, a tuple, list or starred target, a for or
-    with target, :=, an import, del, an except or match name, and a def or class name. It returns the families only if
-    there is exactly 1 of them and it is a statement of the module of the form FAMILIES = [...] or (...) holding 1 or
-    more strings and nothing else, and only if nowhere in the source, def and class bodies included, a global or
-    nonlocal statement names FAMILIES, an attribute of FAMILIES is used, an item of FAMILIES is assigned or deleted, or
-    an attribute named FAMILIES of any object, the module included, is used, and no * import runs in the module's own
-    scope. Anything else fails with a message naming each refusal, so that a list that is computed or changed cannot
-    pass unread. It cannot see a change in which FAMILIES is neither a target, nor the name before an attribute or item,
-    nor an attribute name: one made through another name for the same list, a function the list is passed to, such as
-    operator.iadd() or list.append(), or the name given as a string or keyword, as setattr(), exec(), globals()[...] and
-    globals().update() take it."""
+    needs no Python version that the gate needs. It does not judge scopes: it walks the whole source, every def, class
+    and lambda body included, and counts each binding, deletion or annotation of the name FAMILIES in any scope: a
+    plain, annotated or augmented assignment or a bare annotation, a tuple, list or starred target, a for, with or
+    comprehension target, :=, a parameter, an import, del, an except name, a match capture, star or rest name, a def,
+    class or type parameter name, and a type alias. It returns the families only if there is exactly 1 of them and it is
+    a statement of the module of the form FAMILIES = [...] or (...) holding 1 or more strings and nothing else, and only
+    if no global or nonlocal statement names FAMILIES, no attribute of FAMILIES is used, no item of FAMILIES is assigned
+    or deleted, no attribute named FAMILIES of any object, the module included, is used, and the source has no * import.
+    So a FAMILIES local to a def or a lambda, which leaves the module's FAMILIES as it is, is refused too: that is the
+    price of a reader that cannot misjudge a scope. Anything else fails with a message naming each refusal, so that a
+    list that is computed or changed cannot pass unread. It cannot see a change in which FAMILIES is neither a target,
+    nor the name before an attribute or item, nor an attribute name: one made through another name for the same list, a
+    function the list is passed to, such as operator.iadd() or list.append(), or the name given as a string or keyword,
+    as setattr(), exec(), globals()[...] and globals().update() take it."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    bindings, refusals = module_bindings(tree, "FAMILIES")
+    bindings, refusals = bindings_anywhere(tree, "FAMILIES")
     for node in ast.walk(tree):
         if isinstance(node, ast.Global) and "FAMILIES" in node.names:
             refusals.append(f"line {node.lineno} declares FAMILIES global, so the code in that scope can rebind it")
@@ -112,15 +102,15 @@ def gate_families(path: Path = INSTALL_GATE) -> list[str]:
             # The module's own object, reached through sys.modules[__name__] or an imported __main__, say, rebinds,
             # deletes or changes FAMILIES through this attribute, and the source cannot show which object is the module.
             refusals.append(f"line {node.lineno} uses an attribute named FAMILIES, which on the module's own object "
-                            "can rebind or change it")
+                            "can rebind, delete or change it")
     value = None
     if len(bindings) != 1:
         lines = ", ".join(str(node.lineno) for node in bindings)
-        refusals.append(f"it is bound or deleted {len(bindings)} times in the module's own scope"
+        refusals.append(f"it is bound, deleted or annotated {len(bindings)} times in the source, in any scope"
                         + (f" (lines {lines})" if bindings else "") + ", not once")
     else:
         plain = [statement for statement in tree.body if isinstance(statement, ast.Assign)
-                 and statement.targets == [bindings[0]]]
+                 and len(statement.targets) == 1 and statement.targets[0] is bindings[0]]
         if plain:
             try:
                 value = ast.literal_eval(plain[0].value)
@@ -307,11 +297,12 @@ class LiveTreeTest(unittest.TestCase):
             self.assertIn(f"{cfg['base_url']}/install/{fam}/", urls)
 
 
-# The gate's binding of FAMILIES. Each mutant leaves FAMILIES unbound, or binds, deletes or changes it, or makes such a
-# change possible, in a form that gate_families() cannot accept as the 1 literal that nothing else changes, whether or
-# not that code runs; each pairs with words that the refusal must hold.
+# The gate's binding of FAMILIES. Each mutant leaves FAMILIES unbound, binds, deletes or changes it, makes such a change
+# possible, or binds a FAMILIES local to a def or a lambda, which gate_families() refuses because it does not judge
+# scopes, in a form that it cannot accept as the 1 literal that nothing else changes, whether or not that code runs;
+# each pairs with words that the refusal must hold.
 GATE_FAMILIES = 'FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]\n'
-TWICE = "bound or deleted 2 times"
+TWICE = "bound, deleted or annotated 2 times"
 ATTRIBUTE = "uses an attribute named FAMILIES"
 GLOBAL = "declares FAMILIES global, so the code in that scope can rebind it"
 NONLOCAL = "declares FAMILIES nonlocal, and this test does not resolve which scope's FAMILIES that names"
@@ -334,11 +325,30 @@ FAMILY_MUTANTS = (
     ("an assignment expression", GATE_FAMILIES + 'if (FAMILIES := ["sixth"]):\n    pass\n', TWICE),
     ("an assignment expression in a default value",
      GATE_FAMILIES + 'def grow(families=(FAMILIES := ["sixth"])):\n    return families\n', TWICE),
+    ("an augmented assignment in a class body", GATE_FAMILIES + 'class Grow:\n    FAMILIES += ["sixth"]\n', TWICE),
+    ("a multiplying augmented assignment in a class body", GATE_FAMILIES + "class Grow:\n    FAMILIES *= 2\n",
+     TWICE),
+    ("an augmented assignment in a class body in a module-level if",
+     GATE_FAMILIES + 'if True:\n    class Grow:\n        FAMILIES += ["sixth"]\n', TWICE),
+    ("an assignment local to a def", GATE_FAMILIES + 'def grow():\n    FAMILIES = ["sixth"]\n    return FAMILIES\n',
+     TWICE),
+    ("an assignment expression in a lambda body", GATE_FAMILIES + 'grow = lambda: (FAMILIES := ["sixth"])\n', TWICE),
+    # Each := below binds only inside its lambda when the lambda is called, so it leaves the module's FAMILIES as it is,
+    # but a reader that does not judge scopes refuses it with every other binding outside the 1 literal.
+    ("an assignment expression in the body of a lambda that is a default value",
+     GATE_FAMILIES + "def grow(f=lambda: (FAMILIES := 1)):\n    pass\n", TWICE),
+    ("an assignment expression in the body of a lambda that is a decorator",
+     GATE_FAMILIES + "@(lambda f: (FAMILIES := f))\ndef grow():\n    pass\n", TWICE),
+    ("a parameter of the name", GATE_FAMILIES + "def grow(FAMILIES):\n    return FAMILIES\n", TWICE),
+    ("a bare annotation in a def", GATE_FAMILIES + "def grow():\n    FAMILIES: list\n", TWICE),
     ("an import as", GATE_FAMILIES + "import json as FAMILIES\n", TWICE),
     ("a from import as", GATE_FAMILIES + "from os import sep as FAMILIES\n", TWICE),
     ("a del", GATE_FAMILIES + "del FAMILIES\n", TWICE),
     ("an except name", GATE_FAMILIES + "try:\n    pass\nexcept ValueError as FAMILIES:\n    pass\n", TWICE),
     ("a match capture", GATE_FAMILIES + "match 1:\n    case FAMILIES:\n        pass\n", TWICE),
+    ("a match star", GATE_FAMILIES + "match []:\n    case [*FAMILIES]:\n        pass\n", TWICE),
+    ("a match rest", GATE_FAMILIES + "match {}:\n    case {**FAMILIES}:\n        pass\n", TWICE),
+    ("a match as", GATE_FAMILIES + "match []:\n    case [] as FAMILIES:\n        pass\n", TWICE),
     ("a def of the name", GATE_FAMILIES + "def FAMILIES():\n    pass\n", TWICE),
     ("a class of the name", GATE_FAMILIES + "class FAMILIES:\n    pass\n", TWICE),
     ("an append", GATE_FAMILIES + 'FAMILIES.append("sixth")\n', "uses FAMILIES.append"),
@@ -367,7 +377,7 @@ FAMILY_MUTANTS = (
     ("a member that is not a string", 'FAMILIES = ["claude", 1]\n', "is not a statement of the module"),
     ("the only binding inside a module-level if", 'if True:\n    FAMILIES = ["claude"]\n',
      "is not a statement of the module"),
-    ("no binding", 'OTHER = ["claude"]\n', "bound or deleted 0 times"),
+    ("no binding", 'OTHER = ["claude"]\n', "bound, deleted or annotated 0 times"),
 )
 
 
@@ -386,13 +396,6 @@ class GateFamiliesTest(unittest.TestCase):
     def test_single_literal_list_or_tuple_is_read(self):
         self.assertEqual(self.read(GATE_FAMILIES), ["claude", "chatgpt", "gemini", "copilot", "other-ai"])
         self.assertEqual(self.read('FAMILIES = ("claude", "gemini")\n'), ["claude", "gemini"])
-
-    def test_a_lambda_body_in_a_default_value_or_decorator_is_not_read(self):
-        # Such a body runs in the lambda's own scope when the lambda is called, so its := leaves FAMILIES unchanged.
-        for source in (GATE_FAMILIES + "def grow(f=lambda: (FAMILIES := 1)):\n    pass\n",
-                       GATE_FAMILIES + "@(lambda f: (FAMILIES := f))\ndef grow():\n    pass\n"):
-            with self.subTest(source):
-                self.assertEqual(self.read(source), ["claude", "chatgpt", "gemini", "copilot", "other-ai"])
 
     def test_each_mutant_fails_closed(self):
         for label, source, words in FAMILY_MUTANTS:

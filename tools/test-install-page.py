@@ -6,29 +6,31 @@ Each case copies the gate and the files it reads into a temporary repository
 changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
 tools/check-headers.py or tools/check-inline-code.py, swaps 2 family pages, or
-adds a file that Cloudflare Pages runs or reads, such as package.json,
-functions/_middleware.js, site/_worker.js, a Wrangler configuration or
-runtime.txt. It runs the gate there as a separate process and asserts its exit
-code and, where a case gives them as (code, words), that its output holds
-those words, so that a crash, which also exits 1, does not pass for a refusal.
-3 cases put a ``</ script>``, markup in a ``title`` and a comment ended by
-``--!>`` on a family page, and 3 run a copy of the gate that expects the other
-reading of 1 of its ``READING_PROBES``, expecting exit 3 and the probe's name,
-so that a change in any of the 3 readings that the gate rests on fails a case.
-1 case gives a family link the class ``btn`` alone and expects the gate's
-refusal of it as not a button, so that the gate cannot accept ``btn`` without
-``inline``. 1 more check asserts that the gate's docstring names exactly the
-scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source carries no
-``?v=`` token starting with a digit apart from those KEPT_TOKENS names, since
-a case writes the current baseline version as BASELINE, read from
-``.baseline/pin.toml``, and 1 is version_binding_problems(), whose docstring
-states what it reports and what it passes. A further check,
-hidden_link_problems(), runs the gate's parse() in this process on
-HIDDEN_LINKS and fails unless each link it reads as hidden has no visible
-text, or, on a page that parse() hides as a whole, every h1 reads as hidden
-too, so that the gate's filter of the links back on not hidden stays implied
-by its filter on visible text. Exit 0 when every case passes; 1 otherwise,
-naming each failing case.
+adds a file that Cloudflare Pages runs or reads: package.json,
+functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
+wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
+Pipfile or Gemfile. It runs the gate there as a separate process and asserts
+its exit code and, where a case gives them as (code, words), that its output
+holds those words, so that a crash, which also exits 1, does not pass for a
+refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
+ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
+the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
+probe's name, so that a change in any of the 3 readings that the gate rests on
+fails a case. 1 case gives a family link the class ``btn`` alone and expects
+the gate's refusal of it as not a button, so that the gate cannot accept
+``btn`` without ``inline``. 1 more check asserts that the gate's docstring
+names exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own
+source carries no ``?v=`` token starting with a digit apart from those
+KEPT_TOKENS names, since a case writes the current baseline version as
+BASELINE, read from ``.baseline/pin.toml``, and 1 is
+version_binding_problems(), whose docstring states what it reports and what it
+passes. A further check, hidden_link_problems(), runs the gate's parse() in
+this process on HIDDEN_LINKS and fails if parse() reads no link of a fragment
+as hidden, if a link it reads as hidden has visible text on a page that parse()
+does not hide as a whole, or if a page that parse() hides as a whole has no h1
+or an h1 that does not read as hidden, so that the gate's filter of the links
+back on not hidden stays implied by its filter on visible text. Exit 0 when
+every case passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -618,7 +620,7 @@ PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comme
 
 def flip_probe(name: str):
     """Turn the number of h1 elements that the copy of the gate expects for the probe name in its READING_PROBES from 0
-    to 1 or from 1 to 0, so that the copy expects the reading that Python 3.14 does not give."""
+    to 1 or from 1 to 0, so that the copy expects the reading that Python 3.14.4 does not give."""
     def apply(root: Path) -> None:
         path = root / "tools" / GATE.name
         lines = path.read_text(encoding="utf-8").split("\n")
@@ -1168,9 +1170,9 @@ CASES = [
     ("a family page with a later html start tag with the class vh", edit(CLAUDE, "</main>", '</main><html class="vh">'), 1),
     ("the install page with a frameset start tag", edit(PAGE, "</head>", "</head><frameset></frameset>"), 1),
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
-    # The 3 readings of html.parser that the gate's READING_PROBES test, on a family page: on Python 3.14 a
-    # "</ script>" does not close a script and a title holds its markup as text, so neither h1 counts, while "--!>"
-    # ends a comment, so the h1 after it counts.
+    # The 3 readings of html.parser that the gate's READING_PROBES test, on a family page: on Python 3.14.4 a
+    # "</ script>" does not close a script and a title holds its markup as text, so neither h1 counts, while "--!>" ends
+    # a comment, so the h1 after it counts.
     ("an h1 after a </ script> in a family page's JSON-LD",
         edit(CLAUDE, '"@type": "WebPage",', '"@type": "WebPage", "x": "</ script><h1>Again</h1>",'), 0),
     ("an h1 in a family page's title", edit(CLAUDE, "<title>", "<title><h1>Again</h1>"), 0),
@@ -2156,7 +2158,8 @@ def hidden_link_problems() -> list[str]:
     """The gate's parse(), run in this process on HIDDEN_LINKS, gives no visible text to a link that it reads as hidden,
     so the filter of the links back on not hidden in family_checked() is implied by its filter on visible text; this
     fails if the 2 filters drift apart. On a page that parse() hides as a whole, a link that reads as hidden may keep
-    its text, and there every h1 must read as hidden too, so that check 4 refuses the page."""
+    its text, and there the page must have an h1 and every h1 must read as hidden, so that check 4 refuses the page. It
+    also fails if parse() reads no link of a fragment as hidden."""
     problems: list[str] = []
     try:
         gate = load_gate()
@@ -2166,8 +2169,10 @@ def hidden_link_problems() -> list[str]:
             if not hidden:
                 problems.append(f"parse() reads no link in {markup!r} as hidden.")
             elif parser.page_hidden:
-                if not parser.h1 or not all(heading["hidden"] for heading in parser.h1):
-                    problems.append(f"parse() hides the page {markup!r} as a whole but not its h1.")
+                if not parser.h1:
+                    problems.append(f"parse() hides the page {markup!r} as a whole but it has no h1.")
+                elif not all(heading["hidden"] for heading in parser.h1):
+                    problems.append(f"parse() hides the page {markup!r} as a whole but not every h1 reads as hidden.")
             elif any(anchor["text"] for anchor in hidden):
                 problems.append(f"parse() gives visible text to a link that it reads as hidden in {markup!r}, so the "
                                 "filter of the links back on not hidden is no longer implied by the filter on visible "
