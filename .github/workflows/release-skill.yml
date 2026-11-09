@@ -44,7 +44,7 @@ jobs:
       # whose tag is on origin, or when that tag is on origin at a commit
       # other than the one this run built. It names the authority, the
       # workflow at that tag, and gives no procedure: asset names, zip layout
-      # and checks differ by era, and each recipe written here missed a case.
+      # and checks differ by era, so a recipe written here would miss a case.
       OLDER_TAG_ADVICE: "A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable, it has every asset the workflow at that tag publishes, each published checksum matches its asset, and each asset passes the checks that workflow made on it, in its packaging steps as well as its release step. The check is against what that workflow verified when it published, never against a fresh rebuild: a rebuild with another toolchain can differ, so a mismatch proves nothing. A command that fails to run is run again and says nothing about the release. If the release fails that check, turn on immutable releases if they are off, then cut a corrective new version."
       # What both steps print when the tag of a published release is no
       # longer on origin, with <tag> replaced by the release tag.
