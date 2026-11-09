@@ -955,10 +955,10 @@ CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   run_clock_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
 # The fake clock above starts and kills no real process, so this case keeps a
-# real hung gh killed and reaped at the deadline. Its first read hangs, so only
+# real hung gh that is killed and reaped. Its first read hangs, so only
 # the start of that 1 gh call has to fall inside the 5-second window.
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=1 \
-  run_case "a real gh that hangs from the first read is killed at the deadline -> unreadable" \
+  run_case "a real gh that hangs from the first read is killed and reaped -> unreadable" \
   "$GA_PRESENT" "" "s" 3 --wait --timeout 5
 run_cut_off_case "a read cut off with under a second left names its real bound" 0.500 "0.5 seconds"
 run_cut_off_case "a read cut off with 1.96 seconds left names 1.9 seconds, not a longer bound" \
