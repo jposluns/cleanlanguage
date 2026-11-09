@@ -53,29 +53,30 @@ The rule:
    since a shell run with -c takes its command text as a string the scan
    cannot read as commands. A shell word is bash, sh, dash, zsh or ksh,
    alone or as the last part of a path such as /bin/bash, with no letter,
-   digit, underscore, dot, slash or hyphen directly before the word or
-   directly after it (so sha256sum, ssh, fish and a.sh are not shell
-   words, and a quoted `"bash"` is one). A -c cluster is a hyphen and
-   letters that include a lower-case c (`-[A-Za-z]*c[A-Za-z]*`, such as
-   `-c`, `-ec` or `-ce`), with no letter, digit, underscore or hyphen
-   directly before or after it (so `--norc` and `-cache-dir` are not one).
-   The two may stand anywhere on the line, in either order: the rule does
-   not read command position, so it refuses some honest lines, such as
-   `shfmt -ln bash -ci`, `bash tools/a.sh -c config`, `grep bash -c file`
-   or a message that mentions `bash -c`, and an author rephrases such a
-   line. These are cheap checks of the common ways to redirect `python3`
-   or hide a launch; they are not complete, and Residuals names what they
-   miss.
+   digit, underscore, dot or hyphen directly before the word, and no letter,
+   digit, underscore, dot, slash or hyphen directly after it (so sha256sum,
+   ssh, fish and a.sh are not shell words, and a quoted `"bash"` is one). A -c
+   cluster is a hyphen and letters that include a lower-case c
+   (`-[A-Za-z]*c[A-Za-z]*`, such as `-c`, `-ec` or `-ce`), with no letter,
+   digit, underscore or hyphen directly before or after it (so `--norc` and
+   `-cache-dir` are not one). The two may stand anywhere on the line, in
+   either order: the rule does not read command position, so it refuses some
+   honest lines, such as `shfmt -ln bash -ci`, `bash tools/a.sh -c config`,
+   `grep bash -c file` or a message that mentions `bash -c`, and an author
+   rephrases such a line. These are cheap checks of the common ways to
+   redirect `python3` or hide a launch; they are not complete, and Residuals
+   names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
    spaces, `<name>` holding no `/`, no character of a path and no `$`
    directly before `python3`, and no character of a path after `.py`, is a
    launch (so `$python3 -I tools/x.py` is not one). With the launches
-   removed, a line that still holds the word python in any case, or a `.py`
-   or `.pyz` name, is a finding, whether it is a command, a comment or a
-   message.
-4. A word that holds python or a `.py` name only once its quotes and
-   backslashes are removed is a finding.
+   removed, a line that still holds the word python or a `.py`, `.pyz` or
+   `.pyw` name, in any letter case, is a finding, whether it is a command, a
+   comment or a message.
+4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
+   quotes, its backslashes and each `$` directly before a quote are removed is
+   a finding (so `p$"y"thon3` is one).
 5. Every launched script must exist, and the launches on lines that are not
    shell comments must number at least LAUNCH_FLOOR.
 6. Tempfile.py, msvcrt.py, nt.py and _winapi.py are planted beside a copy of
@@ -125,12 +126,14 @@ Residuals, named here because the scan reads text the pull request controls:
   tools/test-shell-launch-isolation.py reads the tools/*.sh scripts among
   them that it finds by name, and names in its residuals those it does not
   read;
-- other launchers, such as `uv run`, pytest, pipx or an extensionless script;
+- other launchers, such as `uv run`, pytest or pipx;
+- a script run by its shebang whose name ends in none of `.py`, `.pyz` and
+  `.pyw`, such as an extensionless script;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
-  expands it, such as an ANSI-C string, a glob, brace or parameter expansion,
-  or a `${{ }}` expression;
+  expands it, such as an escape in an ANSI-C string, a glob, brace or
+  parameter expansion, or a `${{ }}` expression;
 - remote actions and remote reusable workflows, including composite ones,
   which are outside this repository;
 - a correct launch in a context that never runs, such as an echo message or a
@@ -174,10 +177,10 @@ PLANT_MARKER = "PLANTED-MODULE-RAN"
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
 LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
 PYTHON = re.compile(r"python", re.IGNORECASE)
-PY_NAME = re.compile(r"\.pyz?(?![\w])")
+PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
-SHELL_WORD = re.compile(r"(?<![\w./-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
+SHELL_WORD = re.compile(r"(?<![\w.-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
 C_CLUSTER = re.compile(r"(?<![\w-])-[A-Za-z]*c[A-Za-z]*(?![\w-])")
 LOCAL_USES = ("./", "../")
 
@@ -202,14 +205,26 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
         if PYTHON.search(rest) or PY_NAME.search(rest):
             refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip()))
         for word in line.split():
-            plain = re.sub(r"[\"'\\]", "", word)
+            plain = re.sub(r"\$(?=[\"'])|[\"'\\]", "", word)
             if (PYTHON.search(plain) and not PYTHON.search(word)) or (PY_NAME.search(plain) and not PY_NAME.search(word)):
                 refused.append(("a quote or backslash inside python or a .py name", line.strip()))
     return refused, launches
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader that refuses a mapping with a repeated key."""
+    """A safe loader that refuses a mapping with a repeated key.
+
+    On PyYAML 6.0.3 it compares the keys of a mapping by the value each key
+    builds to, so `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a`
+    and `'a'` are repeats, while `on` and `'on'` are 2 keys (True and a
+    string). It skips merge keys (`<<`), so a mapping whose own key overrides
+    a merged key loads, as does a mapping with 2 `<<` keys. It does not apply
+    to `!!set`, whose repeated members load. It refuses a mapping that holds
+    `<<` and a key the merge also supplies when that mapping is anchored,
+    merged into another mapping and then reused as an alias, although
+    PyYAML's safe loader loads the same document. How GitHub Actions reads
+    any of these is not checked. The self-tests hold a case for each.
+    """
 
 
 def _construct_mapping(loader, node, deep=False):
@@ -526,6 +541,43 @@ RUN_CASES = [
     ("OLD_ENV=x", False),
     ('echo "$PATH=x"', False),
     ('echo "$ENV="', False),
+    # The characters before and after a shell word or a -c cluster, and the
+    # letters of a cluster: each case fails when the part of SHELL_WORD or
+    # C_CLUSTER that decides it is removed or weakened.
+    ("x_bash -c true", False),
+    ("a.bash -c true", False),
+    ("a-bash -c true", False),
+    ("bash_x -c true", False),
+    ("bash.x -c true", False),
+    ("bash/x -c true", False),
+    ("bash-x -c true", False),
+    ("bash -Ec true", True),
+    ("bash -cE true", True),
+    ("bash -xec true", True),
+    ("bash -cex true", True),
+    ("bash --c", False),
+    ("bash -c_x", False),
+    ("bash -c-x", False),
+    ("bash a-c", False),
+    ("bash x-c", False),
+    # A shell word as the last part of a path, and a quote directly after a
+    # -c cluster.
+    ("./bash -c true", True),
+    ("/opt/a.b/bash -c true", True),
+    ("/opt/my-tools/bash -c true", True),
+    ("/a/b/c/bash -c true", True),
+    ("bash -c'true'", True),
+    ('bash -c"true"', True),
+    # Rule 3 reads .pyw as well as .py and .pyz, in any letter case.
+    ("./tools/x.pyw", True),
+    ("./tools/x.PY", True),
+    ("./tools/x.PYZ", True),
+    # Rule 4 drops a $ directly before a quote, so p$"y"thon3 reads as
+    # python3, and keeps any other $.
+    ('p$"y"thon3 -c \'x\'', True),
+    ('cp a.p$"y" b', True),
+    ('echo "$HOME"', False),
+    ("echo $'a b'", False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -638,6 +690,12 @@ def self_test() -> list[str]:
             ("a second job without the first job's shell", two_jobs, "jobs.b.steps[0]: run text with no explicit shell"),
             ("a job that uses a local reusable workflow", head + "  k:\n    uses: ./.github/workflows/w.yml\n",
              "jobs.k.uses: './.github/workflows/w.yml' is a local action"),
+            ("keys 1 and 1.0", "x:\n  1: a\n  1.0: b\n" + head, "duplicate key"),
+            ("keys true and yes", "x:\n  true: a\n  yes: b\n" + head, "duplicate key"),
+            ("keys ~ and null", "x:\n  ~: a\n  null: b\n" + head, "duplicate key"),
+            ("keys a and 'a'", "x:\n  a: 1\n  'a': 2\n" + head, "duplicate key"),
+            ("an anchored mapping with a merge and an override, merged and then reused as an alias",
+             "m: {<<: &b {<<: {p: 1}, p: 2}}\nn: *b\n" + head, "duplicate key"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -656,6 +714,10 @@ def self_test() -> list[str]:
              head + "  k:\n    uses: octo/repo/.github/workflows/w.yml@" + "a" * 40 + "\n"),
             ("a job-level shell: bash for each of two jobs",
              two_jobs.replace("  b:\n    steps:", "  b:\n    defaults:\n      run:\n        shell: bash\n    steps:")),
+            ("a merge with an override", "x: {<<: {p: 1}, p: 2}\n" + head),
+            ("a mapping with 2 merge keys", "x: {<<: {p: 1}, <<: {q: 2}}\n" + head),
+            ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
+            ("keys on and 'on'", "'on': x\n" + head),
         ]
         for name, text in clean:
             case.write_text(text, encoding="utf-8")
