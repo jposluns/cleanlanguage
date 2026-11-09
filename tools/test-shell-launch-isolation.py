@@ -45,12 +45,29 @@ in a backslash, as in bash, so it joins no line:
    .py path that a line names in any other text, as in cp, test -f, an echo or
    another grep pattern, is a finding until an exception names that line.
    LAUNCHERS names each shell function that runs its arguments through a
-   python3 -I launch, and that launch. In tools/pages-build.sh, gate runs its
-   arguments as the launch `python3 -I "$@"`, so a .py path that is the first
-   word after a gate that starts a line of that script is the program of that
-   launch. The scan checks that the script defines the function once and that
-   a line of its body starts with the launch, and gives a finding when either
-   check fails.
+   python3 -I launch, that launch, and the lines of its script that may name
+   the arguments as data. In tools/pages-build.sh, gate runs its arguments as
+   the launch `python3 -I "$@"`, so a .py path that is the first word after a
+   gate that starts a line of that script is the program of that launch; the 6
+   gate lines of that script pass rule 2 this way. The scan counts the
+   definitions of the function in the forms `name()`, `name ()`,
+   `function name` and `function name()`, wherever the body starts, in the
+   script as it stands and with each backslash-newline removed, and gives a
+   finding unless each count is exactly 1 and the definition is `name() {` on a
+   line of its own with a body, up to the first line that is `}` alone, that
+   holds a line starting with the launch. Each line of the script that uses the
+   arguments ("$@", "$*", "$1" to "$9", the same unquoted, or a ${...}
+   expansion of one of them) must start with the launch and use them nowhere
+   after it, or be 1 of the named data lines, each of which must match exactly
+   1 line; any other such line is a finding, so a second launch of the
+   arguments, such as a body line `"$@"`, fails. The scan reads every line of
+   the script for that rule, since it does not parse where the body ends. It
+   does not read a definition whose name is spelt with quoting or a backslash,
+   a header split across lines other than by a backslash-newline, a definition
+   built at run time (eval, a sourced file, or text written and then run) or an
+   alias, nor an argument reached in another way, such as `${!i}` or BASH_ARGV.
+   tools/test-pages-build.py pins the SHA-256 of tools/pages-build.sh
+   (SCRIPT_SHA256), so any edit of that script fails that test as well.
 
 The scan recognizes a here-document operator, << or <<-, outside $((...)) and
 ((...)), where << is a shift, and reads the delimiter word after it as bash
@@ -81,14 +98,18 @@ quotes, double quotes, $'...', a backslash, a $(...) inside double quotes, and
 a # that starts a comment, so an apostrophe inside double quotes opens
 nothing.
 
-EXCEPTIONS names each line that breaks a rule on purpose, with its file,
-the pattern the whole line must match (an entry may hold 1 such pattern for
-each of several lines), the stripped opening lines of the here-documents
-with a quoted delimiter that it may sit in (none means outside any
-here-document), and the reason. A pattern that matches no line is a
-finding, so the table cannot keep a pattern for a line that is gone.
-EXPECTED_SCRIPTS names the scripts the discovery must find, so a change that
-stops the discovery from reaching one is a finding.
+EXCEPTIONS names each line that breaks a rule on purpose, with its file, a
+pattern that the whole stripped line must match (an entry holds 1 pattern for
+each line it names, built with literal() from that line), the stripped opening
+lines of the here-documents with a quoted delimiter that it may sit in (none
+means outside any here-document), and the reason. Before it reads a script, the
+scan checks that each pattern matches exactly as many of the stripped lines
+that it reads in the pattern's file as the table lists that pattern for that
+file, so each listing stands for exactly 1 line; a line whose stripped text
+occurs twice in its file is listed twice. A pattern that excuses no line that
+breaks a rule is also a finding, so the table cannot keep a pattern for a line
+that is gone. EXPECTED_SCRIPTS names the scripts the discovery must find, so a
+change that stops the discovery from reaching one is a finding.
 
 Residuals: rule 2 does not depend on where a token stands, but the scan still
 misses a launch in the ways below, which are the known misses and not a
@@ -157,9 +178,17 @@ EXPECTED_SCRIPTS = (
     "tools/test-version-selectors.sh",
 )
 
-# (file, shell function, the launch line its body must hold): the function runs its arguments
+# (file, shell function, the launch line its body must hold, the whole stripped lines of the script that may
+# name the function's arguments as data without starting with the launch): the function runs its arguments
 # through that python3 -I launch, so a .py path that is its first argument is that launch's program.
-LAUNCHERS = (("tools/pages-build.sh", "gate", 'python3 -I "$@"'),)
+LAUNCHERS = (
+    ("tools/pages-build.sh", "gate", 'python3 -I "$@"', (
+        'if [ ! -f "$1" ]; then',
+        'echo "pages-build: gate $1 is missing; failing the build." >&2',
+        'echo "pages-build: python3 -I $*"',
+        'echo "pages-build: $1 failed with exit ${status}; failing the build." >&2',
+    )),
+)
 
 
 def literal(*lines: str) -> tuple[str, ...]:
@@ -167,24 +196,43 @@ def literal(*lines: str) -> tuple[str, ...]:
     return tuple(re.escape(line) for line in lines)
 
 
-# (file, pattern of the whole stripped line or a tuple of such patterns, opening lines of the quoted here-documents it may sit in, reason)
+# (file, a tuple of patterns, 1 for each whole stripped line that the entry names, opening lines of the quoted
+# here-documents it may sit in, reason). A line whose stripped text occurs twice in its file is listed twice.
 EXCEPTIONS = (
     ("tools/pages-build.sh",
-     r'echo "pages-build: Python 3\.11 or later is required \(tomllib\); found \$\(python3 --version 2>&1\)\." >&2',
+     literal('echo "pages-build: Python 3.11 or later is required (tomllib); found $(python3 --version 2>&1)." >&2'),
      (), "python3 --version prints the interpreter version and runs no script"),
-    ("tools/pages-build.sh", r'echo "pages-build: \$\(python3 --version 2>&1\)"', (),
+    ("tools/pages-build.sh", literal('echo "pages-build: $(python3 --version 2>&1)"'), (),
      "python3 --version prints the interpreter version and runs no script"),
     ("tools/test-portable-text-release-date.sh",
-     r'(?:.* )?tools/skill-release-date(?:-client)?\.py (?:--)?baseline',
+     literal(
+         'python3 -X utf8 tools/skill-release-date.py --baseline',
+         'tools/skill-release-date.py --baseline',
+         'tools/skill-release-date.py --baseline',
+         '"${PYTHON:-python3}" tools/skill-release-date.py --baseline',
+         '"python3" tools/skill-release-date.py --baseline',
+         'python3 tools/skill-release-date-client.py baseline',
+         '"python3" -I tools/skill-release-date-client.py baseline',
+         'python3 -X utf8 tools/skill-release-date-client.py baseline',
+         'tools/skill-release-date-client.py baseline',
+         'tools/skill-release-date-client.py baseline',
+         '"${PYTHON:-python3}" -I tools/skill-release-date-client.py baseline',
+     ),
      ("""cat > "${launch_probes}" <<'PROBES'""", """cat > "${client_probes}" <<'CLIENTPROBES'"""),
      "launch forms written to a fixture file that the test appends to a copy of the sync gate and expects "
      "its mention check to refuse; the shell does not run them"),
     ("tools/test-version-selectors.sh",
-     r'''got="\$\(grep -Ec 'python3\( -I\)\? tools/skill-version\\\.py' "\$\{site\}" \|\| true\)"''', (),
-     "a grep pattern that counts the lines that call tools/skill-version.py with or without -I; the shell does "
-     "not run it"),
-    ("tools/test-ci-status.sh", r'(?:cat > |chmod \+x )"\$(?:bin|tmp/swapbin)/python3"(?: <<PY| ;;)?', (),
-     "writes and marks executable a stand-in python3 that a case puts first on PATH"),
+     literal('''got="$(grep -Ec 'python3( -I)? tools/skill-version\\.py' "${site}" || true)"'''), (),
+     "a grep pattern that counts the lines that hold python3 tools/skill-version.py or python3 -I "
+     "tools/skill-version.py; the shell does not run it"),
+    ("tools/test-ci-status.sh",
+     literal(
+         'cat > "$bin/python3" <<PY',
+         'chmod +x "$bin/python3" ;;',
+         'cat > "$tmp/swapbin/python3" <<PY',
+         'chmod +x "$tmp/swapbin/python3"',
+     ),
+     (), "writes and marks executable a stand-in python3 that a case puts first on PATH"),
     ('tools/check-portable-text-sync.sh',
      literal(
          'echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2',
@@ -198,6 +246,7 @@ EXCEPTIONS = (
      'an error message that names the extractor; the line runs no Python'),
     ('tools/ci-status.sh',
      literal(
+         '(trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\\n" "${BASH_SOURCE[0]:-}" >&2) || :',
          '(trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\\n" "${BASH_SOURCE[0]:-}" >&2) || :',
          'declare __ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ()"',
          'declare __ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||',
@@ -589,20 +638,82 @@ def discover(root: Path) -> tuple[list[str], list[str]]:
     return sorted(covered), findings
 
 
-def launcher_holds(text: str, name: str, launch: str) -> bool:
-    """Return whether the script defines the function name once, with a body line that starts with launch."""
+# A use of a function's arguments: $@, $*, $1 to $9, quoted or not, or a ${...} expansion of one of them.
+ARGUMENT = re.compile(r"\$(?:[@*1-9]|\{[#!]?[@*1-9])")
+
+
+def definition_header(name: str) -> re.Pattern[str]:
+    """Return a pattern for a definition header of the function name in each form that the scan reads.
+
+    The forms are name(), name (), function name and function name(), with any blanks inside the
+    parentheses; the body may start on the same line or a later one, so the header alone is counted.
+    """
+    n = re.escape(name)
+    return re.compile(r"(?<![\w.:-])(?:function[ \t]+" + n + r"(?:[ \t]*\([ \t]*\))?|" + n
+                      + r"[ \t]*\([ \t]*\))(?![\w.:-])")
+
+
+def launcher_problems(text: str, name: str, launch: str, data: tuple[str, ...]) -> list[str]:
+    """Return why the script does not hold the launcher function name as LAUNCHERS describes it."""
+    problems = []
+    header = definition_header(name)
+    counts = (len(header.findall(text)), len(header.findall(text.replace("\\\n", ""))))
+    if counts != (1, 1):
+        problems.append(f"{name} has {counts[0]} definitions, or {counts[1]} with each backslash-newline "
+                        f"removed, not exactly 1")
     bodies = re.findall(r"^" + re.escape(name) + r"\(\) \{\n(.*?)^\}$", text, re.M | re.S)
-    return len(bodies) == 1 and any(re.match(re.escape(launch) + r"(?: |$)", body_line.strip())
-                                    for body_line in bodies[0].splitlines())
+    if len(bodies) != 1 or not any(re.match(re.escape(launch) + r"(?: |$)", body_line.strip())
+                                   for body_line in bodies[0].splitlines()):
+        problems.append(f"{name}() is not defined as `{name}() {{` on a line of its own with a body line "
+                        f"that starts {launch}")
+    lines = [line.strip() for line in text.split("\n")]
+    # The scan does not parse where the body ends, so it reads every line of the script for this rule.
+    for number, line in enumerate(lines, 1):
+        if not ARGUMENT.search(line) or line in data:
+            continue
+        rest = line[len(launch):] if line.startswith(launch) else None
+        if rest is None or not (rest == "" or rest.startswith(" ")) or ARGUMENT.search(rest):
+            problems.append(f"line {number} uses the arguments of {name} other than once, at its start, "
+                            f"as {launch}: {line[:100]}")
+    problems += [f"the data line {line!r} of {name} matches {lines.count(line)} lines, not exactly 1"
+                 for line in data if lines.count(line) != 1]
+    return problems
+
+
+def table_findings(root: Path, exceptions) -> list[str]:
+    """Return a finding for each exception pattern that does not match as many lines as the table lists it.
+
+    The count is of the stripped lines that the scan reads in the pattern's file, so each listing of a
+    pattern stands for exactly 1 line of the tree.
+    """
+    listed: dict[tuple[str, str], int] = {}
+    for path, group, _, _ in exceptions:
+        for pattern in (group,) if isinstance(group, str) else group:
+            listed[(path, pattern)] = listed.get((path, pattern), 0) + 1
+    read: dict[str, list[str]] = {}
+    findings = []
+    for (path, pattern), want in listed.items():
+        if path not in read:
+            try:
+                read[path] = [line.strip() for _, line, _ in script_lines((root / path).read_text(encoding="utf-8"))]
+            except (OSError, UnicodeDecodeError):
+                read[path] = []
+        got = sum(1 for line in read[path] if re.fullmatch(pattern, line))
+        if got != want:
+            findings.append(f"{path}: the exception for {pattern!r} matches {got} lines that the scan reads, "
+                            f"not {want}")
+    return findings
 
 
 def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS,
               launchers=LAUNCHERS) -> tuple[list[str], list[str]]:
     """Return (findings, covered scripts)."""
-    covered, findings = discover(root)
+    findings = table_findings(root, exceptions)
+    covered, discovered = discover(root)
+    findings += discovered
     findings += [f"{rel}: a script the workflows run that the discovery did not reach"
                  for rel in expected if rel not in covered]
-    findings += [f"{path}: the launcher {name} is in no covered script" for path, name, _ in launchers
+    findings += [f"{path}: the launcher {name} is in no covered script" for path, name, _, _ in launchers
                  if path not in covered]
     patterns = [(pattern,) if isinstance(pattern, str) else pattern for _, pattern, _, _ in exceptions]
     used = [[False] * len(group) for group in patterns]
@@ -611,9 +722,9 @@ def scan_tree(root: Path, expected=EXPECTED_SCRIPTS, exceptions=EXCEPTIONS,
             text = (root / rel).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        names = tuple(name for path, name, _ in launchers if path == rel)
-        findings += [f"{rel}: {name}() is not defined once with a body line that starts {launch}"
-                     for path, name, launch in launchers if path == rel and not launcher_holds(text, name, launch)]
+        names = tuple(name for path, name, _, _ in launchers if path == rel)
+        findings += [f"{rel}: {problem}" for path, name, launch, data in launchers if path == rel
+                     for problem in launcher_problems(text, name, launch, data)]
         for number, line, heredoc in script_lines(text):
             reasons = line_findings(line, names)
             if not reasons:
@@ -714,6 +825,41 @@ LAUNCHER_CASES = [
     ("true; gate tools/x.py", True),
 ]
 
+# The definition of gate in tools/pages-build.sh and a call of it, which must hold as LAUNCHERS describes.
+GATE = '''gate() {
+  if [ ! -f "$1" ]; then
+    echo "pages-build: gate $1 is missing; failing the build." >&2
+    exit 3
+  fi
+  echo "pages-build: python3 -I $*"
+  python3 -I "$@" || {
+    status=$?
+    echo "pages-build: $1 failed with exit ${status}; failing the build." >&2
+    exit "${status}"
+  }
+}
+
+gate tools/check-baseline-pin.py
+'''
+LAUNCH_LINE = '  python3 -I "$@" || {\n'
+# Scripts with gate, each of which must give a launcher finding (True) or none (False).
+GATE_CASES = [
+    (GATE, False),
+    (GATE.replace("\n\ngate tools/", '\ngate() { "$1"; }\n\ngate tools/'), True),
+    (GATE.replace("\n\ngate tools/", '\nfunction gate {\n  "$@"\n}\n\ngate tools/'), True),
+    (GATE.replace(LAUNCH_LINE, '  "$@"\n' + LAUNCH_LINE), True),
+    (GATE.replace("\n\ngate tools/", "\ngate () { :; }\n\ngate tools/"), True),
+    (GATE.replace("\n\ngate tools/", "\nfunction gate() { :; }\n\ngate tools/"), True),
+    (GATE.replace("\n\ngate tools/", "\ngate()\n{\n  :\n}\n\ngate tools/"), True),
+    (GATE.replace("\n\ngate tools/", "\ngate \\\n() { :; }\n\ngate tools/"), True),
+    (GATE.replace("gate() {\n", "function gate {\n"), True),
+    (GATE.replace(LAUNCH_LINE, '  python3 -I "$@" || $1 || {\n'), True),
+    (GATE.replace(LAUNCH_LINE, "  ${@:1}\n" + LAUNCH_LINE), True),
+    (GATE.replace(LAUNCH_LINE, "  x=$1\n" + LAUNCH_LINE), True),
+    (GATE.replace("    exit 3\n", '    echo "$1" >&2\n    exit 3\n'), True),
+    (GATE.replace('  echo "pages-build: python3 -I $*"\n', ""), True),
+]
+
 P = INTERPRETER_REASON
 Y = PATH_REASON
 # (script text, wanted findings as (line number, reason)).
@@ -785,6 +931,10 @@ def self_test() -> list[str]:
     for line, want in LAUNCHER_CASES:
         if bool(line_findings(line, ("gate",))) != want:
             errors.append(f"self-test: line {line!r} with launcher gate: expected {'a finding' if want else 'none'}")
+    _, name, launch, data = LAUNCHERS[0]
+    for text, want in GATE_CASES:
+        if bool(launcher_problems(text, name, launch, data)) != want:
+            errors.append(f"self-test: gate script {text!r}: expected {'a finding' if want else 'none'}")
     for text, want in SCRIPT_CASES:
         got = [(n, reason) for n, line, _ in script_lines(text) for reason in line_findings(line)]
         if got != want:
@@ -813,8 +963,21 @@ def self_test() -> list[str]:
             errors.append("self-test: an exception that matches no line gave no finding")
         grouped = (("tools/b.sh", literal("probe=$(python3 --version)", "gone"), (), "r"),)
         findings, _ = scan_tree(root, ("tools/a.sh",), grouped, ())
-        if findings != ["tools/b.sh: the exception for 'gone' matches no line"]:
+        if findings != ["tools/b.sh: the exception for 'gone' matches 0 lines that the scan reads, not 1",
+                        "tools/b.sh: the exception for 'gone' matches no line"]:
             errors.append(f"self-test: a stale line in an entry of several lines gave {findings!r}")
+        # Each listing of a pattern stands for exactly 1 line that the scan reads in its file.
+        twice = (("tools/b.sh", literal("probe=$(python3 --version)", "probe=$(python3 --version)"), (), "r"),)
+        for text, table, want in (("probe=$(python3 --version)\n", exception, []),
+                                  ("probe=$(python3 --version)\nprobe=$(python3 --version)\n", exception, [2]),
+                                  ("probe=$(python3 --version)\nprobe=$(python3 --version)\n", twice, []),
+                                  ("probe=$(python3 --version)\n", twice, [1]),
+                                  ("true\n", exception, [0])):
+            (root / "tools" / "b.sh").write_text(text, encoding="utf-8")
+            got = [int(f.split(" matches ")[1].split()[0]) for f in table_findings(root, table)]
+            if got != want:
+                errors.append(f"self-test: the table check on {text!r} gave counts {got!r}, expected {want!r}")
+        (root / "tools" / "b.sh").write_text("python3 -I tools/x.py\nprobe=$(python3 --version)\n", encoding="utf-8")
         in_heredoc = (("tools/b.sh", r"probe=\$\(python3 --version\)", ("cat > f <<'EOF'",), "r"),)
         findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc, ())
         if not any(f.startswith("tools/b.sh:2:") for f in findings):
@@ -824,7 +987,7 @@ def self_test() -> list[str]:
             findings, _ = scan_tree(root, ("tools/a.sh",), in_heredoc, ())
             if any(f.startswith("tools/b.sh:2:") for f in findings) != want:
                 errors.append(f"self-test: in a here-document that {opener!r} opens, the exception gave {findings!r}")
-        launcher = (("tools/b.sh", "gate", 'python3 -I "$@"'),)
+        launcher = (("tools/b.sh", "gate", 'python3 -I "$@"', ()),)
         for body, want in (('  python3 -I "$@" || exit 1', False), ('  "$@" || exit 1', True),
                            ('  python3 -I "$1"', True)):
             (root / "tools" / "b.sh").write_text(f"gate() {{\n{body}\n}}\ngate tools/x.py --check\n", encoding="utf-8")
@@ -834,7 +997,7 @@ def self_test() -> list[str]:
         findings, _ = scan_tree(root, ("tools/a.sh",), (), ())
         if not any(f.startswith(f"tools/b.sh:4: {Y}") for f in findings):
             errors.append("self-test: gate in a script that names no launcher gave no finding")
-        findings, _ = scan_tree(root, ("tools/a.sh",), (), (("tools/gone.sh", "gate", 'python3 -I "$@"'),))
+        findings, _ = scan_tree(root, ("tools/a.sh",), (), (("tools/gone.sh", "gate", 'python3 -I "$@"', ()),))
         if not any("is in no covered script" in f for f in findings):
             errors.append("self-test: a launcher in no covered script gave no finding")
     return errors
@@ -854,8 +1017,9 @@ def main() -> int:
         print(f"FAIL: {len(findings)} finding(s) in {len(covered)} shell scripts")
         return 1
     print(f"OK: {len(covered)} shell scripts the workflows run; each python or pypy word and each .py or .pyz "
-          f"token on a line the scan reads stands in text that reads as a python3 -I launch, apart from the lines "
-          f"its {len(EXCEPTIONS)} exceptions name")
+          f"token on a line the scan reads stands in text that reads as a python3 -I launch, or the token is the "
+          f"first word after a call, at the start of a line, of a function that LAUNCHERS names and checks "
+          f"({len(LAUNCHERS)} in all), apart from the lines its {len(EXCEPTIONS)} exceptions name")
     return 0
 
 

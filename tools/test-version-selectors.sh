@@ -94,13 +94,18 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
     pass "structural: no hand-rolled first-line sed selector in ${site}"
   fi
   # Each site must call the shared extractor the expected number of times, with
-  # -I. grep -c counts lines, not calls, so the first count is of the lines that
-  # call it with or without -I and the second of the lines that call it with -I,
-  # and an unisolated call added to a line that already holds an isolated one
-  # changes neither. At the 2 shell sites, tools/test-shell-launch-isolation.py
-  # gives a finding for that call, since its rule 1 reads every python word on
-  # each line that the scan reads; tools/test-workflow-launch-isolation.py reads
-  # the workflow site.
+  # -I. grep -c counts lines, not calls. The first count is of the lines that
+  # hold python3 tools/skill-version.py or python3 -I tools/skill-version.py,
+  # and the second of the lines that hold the isolated form, so a python3
+  # tools/skill-version.py call on a line of its own fails the first count and a
+  # call that loses -I on a line with no other call fails the second. Neither
+  # count sees an unisolated call in another form, such as python3 -B
+  # tools/skill-version.py or the tool run by its shebang, or one added to a
+  # line that already holds an isolated call. The 2 scans give a finding for
+  # each of those: at the 2 shell sites, tools/test-shell-launch-isolation.py,
+  # since its rule 1 reads every python word and its rule 2 every .py token on
+  # each line that the scan reads, and at the workflow site,
+  # tools/test-workflow-launch-isolation.py.
   got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
   got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
