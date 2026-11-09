@@ -5107,17 +5107,20 @@ class WholePageTest(unittest.TestCase):
 
 
 def load_faults(defined: str, renamed: str) -> list[tuple[str, object, type]]:
-    """The 6 ways tools/build-site.py can fail to load, each a fault on 1 copy of it with the exception the load
+    """6 of the ways tools/build-site.py can fail to load, each a fault on 1 copy of it with the exception the load
     raises: the file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition
-    defined renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs
-    without comparing it with the source (an unchecked hash-based file). A gate that always reads the source gives
-    that exception; one that runs a cached file in its place does not."""
+    defined renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
+    comparing it with the source (an unchecked hash-based file). A gate that always reads the source gives that
+    exception; one that runs a cached file in its place does not. Root reads a file whatever its mode, so under root the
+    2 mode-000 faults skip their case instead."""
     def missing(path: Path) -> None:
         path.unlink()
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def locked(path: Path) -> None:
         os.chmod(path, 0)
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def cached_locked(path: Path) -> None:
         py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
                            invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
@@ -5164,6 +5167,20 @@ class GeneratorLoadTest(unittest.TestCase):
                     self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
                                     raised.exception)
                     self.assertIsInstance(raised.exception.__cause__, cause)
+
+    def test_a_generator_that_exits_while_it_loads_cannot_render(self):
+        for render in (gate.download_block, gate.rendered_verify_page):
+            for code in (0, 1):
+                with self.subTest(f"{render.__name__}: SystemExit({code}) at import"), \
+                        tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "build-site.py"
+                    path.write_bytes(self.GENERATOR.read_bytes() + f"\nraise SystemExit({code})\n".encode("ascii"))
+                    with mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render(CURRENT, ZIP_SUM)
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, SystemExit)
+                    self.assertEqual(raised.exception.__cause__.code, code)
 
 
 if __name__ == "__main__":

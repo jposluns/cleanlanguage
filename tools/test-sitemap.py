@@ -463,15 +463,18 @@ class SharedParserTest(unittest.TestCase):
 
 
 def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
-    """The 6 ways a sibling tool can fail to load, each a fault on 1 file with the words of
-    the refusal it gives: the file missing, its mode 000, its mode 000 beside a valid cached
-    file, a syntax error, the definition of attribute renamed, and a syntax error beside a
-    cached file of the unbroken source that the normal loader runs without comparing it with
-    the source (an unchecked hash-based file). The tool must always read the source, so that
-    no cached file stands in for it."""
+    """6 of the ways a sibling tool can fail to load, each a fault on 1 file
+    with the words of the refusal it gives: the file missing, its mode 000, its
+    mode 000 beside a valid cached file, a syntax error, the definition of
+    attribute renamed, and a syntax error beside a cached file of the unbroken
+    source that the normal loader runs without comparing it with the source (an
+    unchecked hash-based file). The tool must always read the source, so that no
+    cached file stands in for it. Root reads a file whatever its mode, so under
+    root the 2 mode-000 faults skip their case instead."""
     def missing(path: Path) -> None:
         path.unlink()
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def locked(path: Path) -> None:
         os.chmod(path, 0)
 
@@ -479,6 +482,7 @@ def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, o
         py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)),
                            doraise=True, invalidation_mode=mode)
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def cached_locked(path: Path) -> None:
         cache(path, py_compile.PycInvalidationMode.TIMESTAMP)
         os.chmod(path, 0)
@@ -505,9 +509,9 @@ def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, o
 
 
 class SiblingLoadTest(unittest.TestCase):
-    """tools/generate-sitemap.py, run with tools/sitemap_engine.py failing to load in each way
-    load_faults() gives, exits 3 with its own refusal naming that file, and never runs a
-    cached file in its place."""
+    """tools/generate-sitemap.py, run with tools/sitemap_engine.py failing to
+    load in each way load_faults() gives, exits 3 with its own refusal naming
+    that file, and never runs a cached file in its place."""
 
     def test_each_load_failure_is_refused(self):
         for name, fault, words in load_faults("def verify(", "def verify_unused(", "verify"):

@@ -11,8 +11,8 @@ Exit codes:
   0  the committed sitemap matches (verify), or it was written (--write)
   1  the committed sitemap drifted, or an input was invalid
   2  the command line was wrong
-  3  the check could not run: the config, the site root, or a page could not
-     be read, the config is invalid, or tools/web_metadata.py or
+  3  the check could not run: the config, the site root, or a page could not be
+     read, the config is invalid, or tools/web_metadata.py or
      tools/sitemap_engine.py could not be loaded
 """
 
@@ -40,8 +40,8 @@ def _load_sibling(name: str, needs: tuple[str, ...]):
     bytecode stands in for it. The module is in sys.modules under name while it
     runs, so a later sibling can import it by that name, and is removed from it
     when the load fails. A source that is not a regular file, or that cannot be
-    read, compiled or run, or that lacks any name in needs, means the check
-    could not run (exit 3).
+    read, compiled or run, or that lacks any name in needs, means that the
+    check could not run (exit 3).
     """
     path = TOOLS_DIR / f"{name}.py"
     try:

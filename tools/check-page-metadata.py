@@ -100,7 +100,7 @@ def _load_sibling(name: str, needs: tuple[str, ...]):
     bytecode stands in for it. The module is in sys.modules under name while it
     runs, so a later sibling can import it by that name, and is removed from it
     when the load fails. A source that is not a regular file, or that cannot be
-    read, compiled or run, or that lacks any name in needs, means the check
+    read, compiled or run, or that lacks any name in needs, means that the check
     could not run (exit 3).
     """
     path = TOOLS_DIR / f"{name}.py"

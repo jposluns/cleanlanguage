@@ -54,11 +54,15 @@ def edit(relative: str, old: str, new: str):
 
 
 def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
-    """The 6 ways a sibling tool can fail to load, each a fault on 1 file with the words of the refusal it gives: the
-    file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition of attribute
-    renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
-    comparing it with the source (an unchecked hash-based file). The tool must always read the source, so that no
-    cached file stands in for it."""
+    """6 of the ways a sibling tool can fail to load, each a fault on 1 file
+    with the words of the refusal it gives: the file missing, its mode 000, its
+    mode 000 beside a valid cached file, a syntax error, the definition of
+    attribute renamed, and a syntax error beside a cached file of the unbroken
+    source that the normal loader runs without comparing it with the source (an
+    unchecked hash-based file). The tool must always read the source, so that
+    no cached file stands in for it. Root reads a file whatever its mode, so
+    under root the 2 mode-000 cases are not run, and main() names them as
+    skipped."""
     def missing(path: Path) -> None:
         path.unlink()
 
@@ -112,10 +116,16 @@ CASES = [
         "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
     ("the page missing", lambda root: (root / PAGE).unlink(), 3),
     ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
-] + [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: fault(root / "tools/check-inline-code.py"),
-      (3, f"check-instructions-page: tools/check-inline-code.py {words}"))
-     for name, fault, words in load_faults("def inline_code_problems(", "def inline_code_problems_unused(",
-                                           "inline_code_problems")]
+]
+LOAD_CASES = [(f"tools/check-inline-code.py {name}",
+               lambda root, fault=fault: fault(root / "tools/check-inline-code.py"),
+               (3, f"check-instructions-page: tools/check-inline-code.py {words}"))
+              for name, fault, words in load_faults("def inline_code_problems(",
+                                                    "def inline_code_problems_unused(", "inline_code_problems")]
+# Root reads a file whatever its mode, so under root a mode-000 case cannot
+# fail to read: it is left out of CASES, and main() names it as skipped.
+SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
+CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
 
 
 def main() -> int:
@@ -137,6 +147,8 @@ def main() -> int:
         if result.returncode != 3 or not result.stderr.startswith("check-instructions-page: "):
             failures.append(f"another Python version: exit {result.returncode}, expected 3 from check-instructions-page: "
                             f"{(result.stdout + result.stderr).strip()[:300]}")
+    for name in SKIPPED:
+        print(f"test-instructions-page: skipped {name}: root reads a file whatever its mode")
     if failures:
         print("test-instructions-page: failures:")
         for failure in failures:

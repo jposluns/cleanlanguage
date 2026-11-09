@@ -873,10 +873,10 @@ REUSED_NAMES = {
 
 @functools.cache
 def load_tool(name: str):
-    """Load a sibling gate as a module, so this gate applies exactly its logic. The source is always read, compiled
-    and run as a fresh module, so no cached bytecode stands in for it; a source that is not a regular file, or that
-    cannot be read, compiled or run, or that lacks any name REUSED_NAMES lists for it, is a gate it reuses that cannot
-    be loaded (exit 3)."""
+    """Load a sibling gate as a module, so this gate applies exactly its logic. The source is always read, compiled and
+    run as a fresh module, so no cached bytecode stands in for it; a source that is not a regular file, or that cannot
+    be read, compiled or run, or that lacks any name REUSED_NAMES lists for it, is a gate it reuses that cannot be
+    loaded (exit 3)."""
     path = Path(__file__).resolve().parent / name
     try:
         info = os.lstat(path)

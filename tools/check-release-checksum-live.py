@@ -1193,7 +1193,9 @@ def download_block(version: str, checksum: str) -> str:
         module.__file__ = str(GENERATOR)
         exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         return module.verify_download_block(module.REPO_ROOT, version, f"v{version}", checksum)
-    except Exception as error:
+    # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
+    # (exit 3), never as the generator's own exit code.
+    except (Exception, SystemExit) as error:
         raise LookupError(f"tools/build-site.py could not render the verify page's download block: {error}") from error
 
 
@@ -1257,7 +1259,9 @@ def rendered_verify_page(version: str, checksum: str) -> bytes:
         exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         release = {"version": version, "tag": f"v{version}", "checksum": checksum}
         return module.verify_page(module.REPO_ROOT, release)
-    except Exception as error:
+    # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
+    # (exit 3), never as the generator's own exit code.
+    except (Exception, SystemExit) as error:
         raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
 
 
