@@ -95,18 +95,24 @@ def gate_families(path: Path = INSTALL_GATE) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     bindings, refusals = module_bindings(tree, "FAMILIES")
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and "FAMILIES" in node.names:
-            refusals.append(f"line {node.lineno} declares FAMILIES {type(node).__name__.lower()}, so a def can "
-                            "rebind it")
+        if isinstance(node, ast.Global) and "FAMILIES" in node.names:
+            refusals.append(f"line {node.lineno} declares FAMILIES global, so the code in that scope can rebind it")
+        elif isinstance(node, ast.Nonlocal) and "FAMILIES" in node.names:
+            # A nonlocal FAMILIES names the FAMILIES of an enclosing def, never the module's, but this test does not
+            # resolve scopes, so it refuses every nonlocal FAMILIES.
+            refusals.append(f"line {node.lineno} declares FAMILIES nonlocal, and this test does not resolve which "
+                            "scope's FAMILIES that names")
         elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "FAMILIES":
-            refusals.append(f"line {node.lineno} uses FAMILIES.{node.attr}, which can change it in place")
+            refusals.append(f"line {node.lineno} uses FAMILIES.{node.attr}, and an attribute of FAMILIES, such as "
+                            "append, can change it in place")
         elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "FAMILIES"
               and isinstance(node.ctx, (ast.Store, ast.Del))):
             refusals.append(f"line {node.lineno} assigns or deletes an item of FAMILIES")
         elif isinstance(node, ast.Attribute) and node.attr == "FAMILIES":
             # The module's own object, reached through sys.modules[__name__] or an imported __main__, say, rebinds,
             # deletes or changes FAMILIES through this attribute, and the source cannot show which object is the module.
-            refusals.append(f"line {node.lineno} uses an attribute named FAMILIES, which can rebind or change it")
+            refusals.append(f"line {node.lineno} uses an attribute named FAMILIES, which on the module's own object "
+                            "can rebind or change it")
     value = None
     if len(bindings) != 1:
         lines = ", ".join(str(node.lineno) for node in bindings)
@@ -307,6 +313,8 @@ class LiveTreeTest(unittest.TestCase):
 GATE_FAMILIES = 'FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]\n'
 TWICE = "bound or deleted 2 times"
 ATTRIBUTE = "uses an attribute named FAMILIES"
+GLOBAL = "declares FAMILIES global, so the code in that scope can rebind it"
+NONLOCAL = "declares FAMILIES nonlocal, and this test does not resolve which scope's FAMILIES that names"
 FAMILY_MUTANTS = (
     ("a rebinding in a module-level if", GATE_FAMILIES + 'if True:\n    FAMILIES = FAMILIES + ["sixth"]\n',
      TWICE),
@@ -339,7 +347,12 @@ FAMILY_MUTANTS = (
     ("an item assignment", GATE_FAMILIES + 'FAMILIES[0] = "sixth"\n', "assigns or deletes an item"),
     ("an item deletion", GATE_FAMILIES + "del FAMILIES[0]\n", "assigns or deletes an item"),
     ("a global rebinding inside a def", GATE_FAMILIES + 'def grow():\n    global FAMILIES\n    FAMILIES = ["sixth"]\n',
-     "declares FAMILIES global"),
+     GLOBAL),
+    ("a global rebinding in a class body",
+     GATE_FAMILIES + 'class Grow:\n    global FAMILIES\n    FAMILIES = ["sixth"]\n', GLOBAL),
+    ("a nonlocal in a def nested in a def",
+     GATE_FAMILIES + 'def outer():\n    FAMILIES = []\n\n    def grow():\n        nonlocal FAMILIES\n'
+     '        FAMILIES = ["sixth"]\n', NONLOCAL),
     ("a * import", GATE_FAMILIES + "from os.path import *\n", "imports *"),
     ("an attribute assignment through sys.modules",
      GATE_FAMILIES + 'import sys\nsys.modules[__name__].FAMILIES = FAMILIES + ["sixth"]\n', ATTRIBUTE),

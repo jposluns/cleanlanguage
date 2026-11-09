@@ -2,28 +2,33 @@
 """Tests for tools/check-install-page.py: the install pages' contract and the site-wide policy.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault to the install page, a family page,
-site/_headers, site/_redirects or the copy of the gate, runs the gate there as
-a separate process and asserts its exit code and, where a case gives them as
-(code, words), that its output holds those words, so that a crash, which also
-exits 1, does not pass for a refusal. 3 cases put a ``</ script>``, markup in
-a ``title`` and a comment ended by ``--!>`` on a family page, and 3 run a copy
-of the gate that expects the other reading of 1 of its ``READING_PROBES``,
-expecting exit 3 and the probe's name, so that a change in any of the 3
-readings that the gate rests on fails a case. 1 case gives a family link the
-class ``btn`` alone and expects the gate's refusal of it as not a button, so
-that the gate cannot accept ``btn`` without ``inline``. 1 more check asserts
-that the gate's docstring names exactly the scripts in ``ALLOWED_SCRIPTS``,
-and 1 that this file's own source carries no ``?v=`` token starting with a
-digit apart from those KEPT_TOKENS names, since a case writes the current
-baseline version as BASELINE, read from ``.baseline/pin.toml``, and 1 is
-version_binding_problems(), whose docstring states what it reports and what it
-passes. A further check, hidden_link_problems(), runs the gate's parse() in
-this process on HIDDEN_LINKS and fails unless each link it reads as hidden has
-no visible text, or, on a page that parse() hides as a whole, every h1 reads
-as hidden too, so that the gate's filter of the links back on not hidden stays
-implied by its filter on visible text. Exit 0 when every case passes; 1
-otherwise, naming each failing case.
+(under $TMPDIR) and, the committed tree aside, applies 1 fault there: it
+changes or removes the install page, a family page, site/_headers,
+site/_redirects, .baseline/pin.toml, the copy of the gate,
+tools/check-headers.py or tools/check-inline-code.py, swaps 2 family pages, or
+adds a file that Cloudflare Pages runs or reads, such as package.json,
+functions/_middleware.js, site/_worker.js, a Wrangler configuration or
+runtime.txt. It runs the gate there as a separate process and asserts its exit
+code and, where a case gives them as (code, words), that its output holds
+those words, so that a crash, which also exits 1, does not pass for a refusal.
+3 cases put a ``</ script>``, markup in a ``title`` and a comment ended by
+``--!>`` on a family page, and 3 run a copy of the gate that expects the other
+reading of 1 of its ``READING_PROBES``, expecting exit 3 and the probe's name,
+so that a change in any of the 3 readings that the gate rests on fails a case.
+1 case gives a family link the class ``btn`` alone and expects the gate's
+refusal of it as not a button, so that the gate cannot accept ``btn`` without
+``inline``. 1 more check asserts that the gate's docstring names exactly the
+scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source carries no
+``?v=`` token starting with a digit apart from those KEPT_TOKENS names, since
+a case writes the current baseline version as BASELINE, read from
+``.baseline/pin.toml``, and 1 is version_binding_problems(), whose docstring
+states what it reports and what it passes. A further check,
+hidden_link_problems(), runs the gate's parse() in this process on
+HIDDEN_LINKS and fails unless each link it reads as hidden has no visible
+text, or, on a page that parse() hides as a whole, every h1 reads as hidden
+too, so that the gate's filter of the links back on not hidden stays implied
+by its filter on visible text. Exit 0 when every case passes; 1 otherwise,
+naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code

@@ -698,18 +698,18 @@ exception would end the gate with exit 1.
 
 ``tools/test-install-page.py`` runs every case on the Python that runs it, and
 ``.github/workflows/install-page.yml`` runs it before the gate in the same job.
-Before it reads a file, ``main()`` runs ``parse()`` on each fragment of
-``READING_PROBES``, 1 for each of the 3 readings above: a ``</ script>`` inside
-a ``script``, markup inside a ``title``, and a comment ended by ``--!>``. Where
-the number of ``h1`` elements that ``parse()`` reads in a fragment differs from
-the number that Python 3.14.4 gives, the gate exits 3 and names that probe, so
-a release that changes a reading stops the gate wherever it runs,
-``tools/release-dry-run.sh`` included, which runs the gate without the suite.
-The suite puts each reading on a family page: an ``h1`` after a ``</ script>``
-in its JSON-LD and an ``h1`` in its ``title`` pass, and an ``h1`` after a
-comment ended by ``--!>`` fails as a second ``h1``. It also runs, for each
-probe, a copy of the gate that expects the other reading of it, which must exit
-3 and name that probe.
+Before the gate reads a file, its ``main()`` runs ``parse()`` on each fragment
+of ``READING_PROBES``, 1 for each of the 3 readings above: a ``</ script>``
+inside a ``script``, markup inside a ``title``, and a comment ended by
+``--!>``. Where the number of ``h1`` elements that ``parse()`` reads in a
+fragment differs from the number that Python 3.14.4 gives, the gate exits 3 and
+names that probe, so a release that changes a reading stops the gate wherever
+it runs, ``tools/release-dry-run.sh`` included, which runs the gate without the
+suite. The suite puts each reading on a family page: an ``h1`` after a
+``</ script>`` in its JSON-LD and an ``h1`` in its ``title`` pass, and an
+``h1`` after a comment ended by ``--!>`` fails as a second ``h1``. It also
+runs, for each probe, a copy of the gate that expects the other reading of it,
+which must exit 3 and name that probe.
 
 Exit codes:
   0  every check above passes
