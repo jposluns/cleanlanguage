@@ -36,18 +36,18 @@ The rule:
    PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
    read differently). The scan loads each workflow with UniqueKeyLoader, and a
    file whose loading raises a YAML error or RecursionError is a finding.
-   UniqueKeyLoader's mapping constructor skips merge keys (`<<`), builds each
-   other key without deep construction and before the mapping's merges are
-   flattened, raises when a key as built is identical or equal to an earlier
-   one, and returns the finished mapping rather than an empty one first. With
-   the comparison, these properties make it refuse some documents that
-   `yaml.safe_load` loads, such as a recursive node, a key that is a plain `=`
-   or a deeply nested mapping; UniqueKeyLoader's docstring describes its code
-   and names the outcomes that the self-tests record. Each workflow must have
-   a jobs mapping; a job that is not a mapping, a steps value that is not a
-   list and a step that is not a mapping are findings. A job or step `uses:`
-   value that starts with ./ or ../, a local action or a local reusable
-   workflow, is a finding, since the scan does not read it.
+   UniqueKeyLoader's mapping constructor skips each merge key (`<<`), builds
+   each other key with `loader.construct_object(key_node, deep=deep)`, raises
+   a ConstructorError when a built key is `in` the list of the keys built
+   before it, and returns
+   `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`. Loading with
+   UniqueKeyLoader refuses some documents that `yaml.safe_load` loads, and
+   loads others; UniqueKeyLoader's docstring gives examples of each that the
+   self-tests record. Each workflow must have a jobs mapping; a job that is
+   not a mapping, a steps value that is not a list and a step that is not a
+   mapping are findings. A job or step `uses:` value that starts with ./ or
+   ../, a local action or a local reusable workflow, is a finding, since the
+   scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
@@ -77,12 +77,13 @@ The rule:
    names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
-   spaces, `<name>` holding no `/`, no character of a path and no `$`
-   directly before `python3`, and no character of a path after `.py`, is a
-   launch (so `$python3 -I tools/x.py` is not one). With the launches
-   removed, a line that still holds the word python or a `.py`, `.pyz` or
-   `.pyw` name, in any letter case, is a finding, whether it is a command, a
-   comment or a message.
+   spaces, `<name>` holding no `/`, no character of a path and no `$` directly
+   before `python3`, and no character of a path after `.py`, is a launch (so
+   `$python3 -I tools/x.py` is not one). With the launches removed, a line
+   that still holds the word python, or a `.py`, `.pyz` or `.pyw` name with no
+   letter, digit or underscore directly after it (so `x.pyc` is not one), in
+   any letter case, is a finding, whether it is a command, a comment or a
+   message.
 4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
    quotes, its backslashes and each `$` directly before a quote are removed is
    a finding (so `p$"y"thon3` is one).
@@ -97,8 +98,8 @@ Refused by design, although some of them would run isolated: `python3.12 -I`,
 `python3 -P -E -s` equivalent, a quoted script path, 2 spaces before `-I`, a
 launch whose words are split across continued lines, `(python3)` and other
 case arms naming python, a message or comment that names python or a .py file,
-an expression such as `${{ env.PY }}`, `${{ matrix.Py }}` or
-`${{ vars.PYW }}`, which rule 3 reads as a `.py` or `.pyw` name, and
+an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
+`${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
 `shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
@@ -112,8 +113,7 @@ Residuals, named here because the scan reads text the pull request controls:
   scan sees but misreads, and can also edit this scan, which only review
   catches;
 - a repeated mapping key that loading with UniqueKeyLoader does not refuse,
-  such as one in a mapping used only as a merge source
-  (`x: {<<: {p: 1, p: 2}}`), which the self-tests record as loading;
+  such as `x: {<<: {p: 1, p: 2}}`, which the self-tests record as loading;
 - a PATH or ENV assignment whose name is quoted or escaped, such as
   `export 'PATH'=x`;
 - a shell run with -c whose shell is not a shell word on the line: a shell
@@ -225,57 +225,41 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader refusing a key that matches an earlier key as built.
+    """A safe loader whose mapping constructor checks each key that it builds.
 
     Its own code is `_construct_mapping`, registered as the constructor for
     the plain mapping tag, tag:yaml.org,2002:map, and for no other tag. Called
     on a mapping node, it skips each key whose tag is tag:yaml.org,2002:merge
     (`<<`). It builds each other key with
-    `loader.construct_object(key_node, deep=deep)`, where `deep` keeps its
-    default of false because the loader passes only the node, so without deep
-    construction, and before the safe loader flattens the node's merges. It
-    compares each built key with the earlier ones by `key in keys`, which
-    matches a key that is identical or equal to one of them, and raises a
-    ConstructorError on a match. Then it calls
-    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)` and returns
-    the finished mapping that call builds, never an empty mapping first. The
-    scan reports the ConstructorError, like any YAML error, as a file that
-    cannot be parsed.
+    `loader.construct_object(key_node, deep=deep)`, raises a ConstructorError
+    when the built key is `in` the list of the keys built before it, and
+    appends the key to that list otherwise. Then it returns
+    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`.
 
-    These properties, with the comparison, make UniqueKeyLoader refuse some
-    documents that `yaml.safe_load` loads. Because it returns a finished
-    mapping rather than an empty one that is filled later, a mapping it builds
-    is not available to an alias until it is finished, and a mapping nested in
-    it is built before it returns. So a mapping that is reached again while it
-    is being built is refused as a recursive node, as in `a: &x {b: *x}` and
-    `a: &x {b: {<<: *x}}`, and loading a mapping nested 300 deep,
-    `x: {a: {a: ... 1}}`, raises RecursionError. Because it builds a key
-    before the merges are flattened, a key that is a plain `=` or is tagged
-    `!!value`, as in `x: {=: a}` and `x: {!!value a: b}`, is refused with a
-    ConstructorError that names the tag tag:yaml.org,2002:value, and so is
-    `l: [{<<: &b {=: a}}]` followed by `n: *b`. Because it builds a key
-    without deep construction, a key that is a sequence is still empty when it
-    is compared, so `x: {? [a]: 1, ? [b]: 2}` is refused as `duplicate key []`
-    although its keys are neither identical nor equal; `yaml.safe_load`
-    refuses that document too, as an unhashable key. The comparison also
-    refuses an anchored mapping holding `<<` that is merged and then reused as
-    an alias, such as `m: {<<: &b {<<: {p: 1}, p: 2}}` followed by `n: *b`,
-    for a repeated `p`, although that document is valid YAML and
-    `yaml.safe_load` loads it.
+    Loading with UniqueKeyLoader refuses some documents that `yaml.safe_load`
+    loads, and loads others. The self-tests hold a case for each document
+    below, with its outcome on PyYAML 6.0.3 and Python 3.14.4; these are
+    examples, not a rule for which documents are refused. Each document is
+    written as its top-level lines joined by "then". How GitHub Actions reads
+    any of these documents is not checked.
 
-    The self-tests record these outcomes, measured on PyYAML 6.0.3 and Python
-    3.14.4, and hold a case for each document named here. They record that the
-    keys `1` and `1.0`, `true` and `yes`, `~` and `null`, and `a` and `'a'`
-    are refused as equal, and 2 `.nan` keys as identical; that `on` and `'on'`
-    load as 2 keys, True and a string, which are neither identical nor equal;
-    and that a merge with an override, `x: {<<: {p: 1}, p: 2}`, 2 `<<` keys,
-    `x: {<<: {p: 1}, <<: {p: 2}}`, a repeated key in a merge source,
-    `x: {<<: {p: 1, p: 2}}`, and a repeated member or key in a `!!set`,
-    `!!omap` or `!!pairs` load. They record that `x: {<<: {=: a}}`,
-    `a: &x {b: [*x]}`, `a: &x {<<: *x}`, `a: &x {b: 1, <<: *x}` and
-    `a: &x {<<: [*x]}` load, and further documents with merges, aliases and
-    anchors, some refused and some loaded. How GitHub Actions reads any of
-    these documents is not checked.
+    - Refused with a `duplicate key` error: the keys `1` and `1.0`, `true` and
+      `yes`, `~` and `null`, `a` and `'a'`, and `.nan` and `.nan`, each pair
+      in 1 mapping; and `m: {<<: &b {<<: {p: 1}, p: 2}}` then `n: *b`, with
+      the message `duplicate key 'p'`.
+    - Refused with a ConstructorError that names the tag
+      tag:yaml.org,2002:value: `x: {=: a}`, `x: {!!value a: b}`, and
+      `l: [{<<: &b {=: a}}]` then `n: *b`.
+    - Refused as `duplicate key []`: `x: {? [a]: 1, ? [b]: 2}`.
+    - Refused as a recursive node: `a: &x {b: *x}` and `a: &x {b: {<<: *x}}`.
+    - Refused with RecursionError: `x: {a: {a: ... 1}}`, with mappings nested
+      300 deep.
+    - Loaded: `on` and `'on'`, as 2 keys, True and a string;
+      `x: {<<: {p: 1}, p: 2}`; `x: {<<: {p: 1}, <<: {p: 2}}`;
+      `x: {<<: {p: 1, p: 2}}`; `x: !!set {a, a}`;
+      `l: [{<<: &b {<<: {p: 1}, p: 2}}]` then `n: *b`;
+      `m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}` then `n: *b`;
+      `m: {<<: &b {=: a}}` then `n: *b`; and `x: {y: &b {=: a}, <<: *b}`.
     """
 
 
@@ -641,14 +625,19 @@ RUN_CASES = [
     ("/a/b/c/bash -c true", True),
     ("bash -c'true'", True),
     ('bash -c"true"', True),
-    # Rule 3 reads .pyw as well as .py and .pyz, in any letter case.
+    # Rule 3 reads .pyw as well as .py and .pyz, in any letter case, and only
+    # when no letter, digit or underscore follows the suffix, so x.pyc and a
+    # property named pyenv pass.
     ("./tools/x.pyw", True),
     ("./tools/x.PY", True),
     ("./tools/x.PYZ", True),
+    ("echo x.pyc", False),
+    ('echo "${{ steps.pyenv.outputs.v }}"', False),
     # Rule 3 reads these names in any letter case, so it also refuses an
-    # expression that names a property PY, Py or PYW.
+    # expression that names a property PY, Py, PYZ or PYW.
     ('echo "${{ env.PY }}"', True),
     ('echo "${{ matrix.Py }}"', True),
+    ('echo "${{ env.PYZ }}"', True),
     ('echo "${{ vars.PYW }}"', True),
     # Rule 4 drops a $ directly before either quote, so p$"y"thon3 and
     # p$'y'thon3 read as python3, and keeps any other $, so py$thon3 does not.
@@ -782,21 +771,21 @@ def self_test() -> list[str]:
              "m: {<<: &b {<<: {p: 1}, <<: {p: 2}}}\nn: *b\n" + head, "duplicate key"),
             ("an anchored mapping whose merge list repeats a key, merged and then reused as an alias",
              "m: {<<: &b {<<: [{p: 1}, {p: 2}]}}\nn: *b\n" + head, "duplicate key"),
-            ("a mapping merged by the mapping that holds it, before it is built",
+            ("a mapping with a merge and an override, held and merged by the same mapping",
              "m: {a: &b {<<: {p: 1}, p: 2}, <<: *b}\n" + head, "duplicate key"),
             ("keys .nan and .nan", "x:\n  .nan: a\n  .nan: b\n" + head, "duplicate key"),
             ("a plain = key", "x:\n  =: a\n" + head, "tag:yaml.org,2002:value"),
             ("a key tagged !!value", "x:\n  !!value a: b\n" + head, "tag:yaml.org,2002:value"),
             ("a plain = key in a flow mapping", "x: {=: a}\n" + head, "tag:yaml.org,2002:value"),
             ("a key tagged !!value in a flow mapping", "x: {!!value a: b}\n" + head, "tag:yaml.org,2002:value"),
-            ("2 sequence keys, compared before they are filled", "x: {? [a]: 1, ? [b]: 2}\n" + head,
+            ("2 sequence keys", "x: {? [a]: 1, ? [b]: 2}\n" + head,
              "duplicate key []"),
             ("a mapping that holds an alias to itself", "a: &x {b: *x}\n" + head, "recursive node"),
             ("a mapping that merges its holder into one of its values", "a: &x {b: {<<: *x}}\n" + head,
              "recursive node"),
-            ("a mapping in a sequence with a merge and an override, merged by a later key before it is built",
+            ("a mapping in a sequence with a merge and an override, merged by a later key",
              "m: [&b {<<: {p: 1}, p: 2}]\no: {<<: *b}\n" + head, "duplicate key 'p'"),
-            ("a plain = key in a mapping merged in a sequence, built as a later alias before it is merged",
+            ("a plain = key in a mapping merged in a sequence and reused as a later alias",
              "l: [{<<: &b {=: a}}]\nn: *b\n" + head, "tag:yaml.org,2002:value"),
             ("a mapping with a merge and an override in a sequence in a mapping, merged by a later key",
              "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
@@ -825,21 +814,21 @@ def self_test() -> list[str]:
             ("a mapping with 2 merge keys that supply the same key", "x: {<<: {p: 1}, <<: {p: 2}}\n" + head),
             ("a repeated key in a merge source", "x: {<<: {p: 1, p: 2}}\n" + head),
             ("a repeated key in a merge list's source", "x: {<<: [{p: 1, p: 2}]}\n" + head),
-            ("a mapping with a merge and an override, built, then merged and reused as an alias",
+            ("a top-level mapping with a merge and an override, then merged and reused as an alias",
              "a: &b {<<: {p: 1}, p: 2}\nm: {<<: *b}\nn: *b\n" + head),
-            ("a mapping with a merge and an override, merged by 2 mappings and never built",
+            ("a mapping with a merge and an override, merged by 2 mappings",
              "m: {<<: &b {<<: {p: 1}, p: 2}}\no: {<<: *b}\n" + head),
             ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
             ("keys on and 'on'", "'on': x\n" + head, {True: "push", "on": "x"}),
             ("an !!omap with a repeated key", "x: !!omap [{a: 1}, {a: 2}]\n" + head),
             ("a !!pairs with a repeated key", "x: !!pairs [{a: 1}, {a: 2}]\n" + head),
-            ("a plain = key in a mapping merged before it is built", "m: {<<: &b {=: a}}\nn: *b\n" + head,
+            ("a plain = key in a merged mapping reused as an alias", "m: {<<: &b {=: a}}\nn: *b\n" + head,
              {"m": {"=": "a"}, "n": {"=": "a"}}),
             ("a mapping that holds an alias to itself through a list", "a: &x {b: [*x]}\n" + head),
             ("a mapping that is its own merge source", "a: &x {<<: *x}\n" + head, {"a": {}}),
             ("a mapping with a key that is its own merge source", "a: &x {b: 1, <<: *x}\n" + head, {"a": {"b": 1}}),
             ("a mapping whose merge list holds only itself", "a: &x {<<: [*x]}\n" + head, {"a": {}}),
-            ("a mapping with a merge and an override, merged in a sequence and built first as a later alias",
+            ("a mapping with a merge and an override, merged in a sequence and reused as a later alias",
              "l: [{<<: &b {<<: {p: 1}, p: 2}}]\nn: *b\n" + head, {"l": [{"p": 2}], "n": {"p": 2}}),
             ("a mapping with a merge and an override, merged in a sequence in a mapping and reused as a later alias",
              "m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}\nn: *b\n" + head, {"m": {"s": [{"p": 2}]}, "n": {"p": 2}}),
