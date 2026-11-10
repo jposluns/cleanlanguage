@@ -338,6 +338,18 @@ CASES = [
     (chain("actions/checkout@v4"), True),
     ("jobs:\n  a:\n    steps:\n      - name: x\n        uses: actions/checkout@v4\n", True),
     ("jobs:\n  a:\n    steps:\n      - name: x\n      - uses: actions/checkout@v4\n      - name: y\n", True),
+    # In these cases and some above, a `uses` key, a key whose value holds
+    # one, and a list item that holds one each stand first of 2, in the middle
+    # of 3 and last of 2 in their mapping or list, so a walk that reads only
+    # some positions misses one.
+    ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n    timeout-minutes: 5\n", True),
+    ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\nconcurrency: x\n", True),
+    (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n  b:\n    steps:\n      - uses: actions/checkout@{SHA}\n", True),
+    ("jobs:\n  a:\n    env: {A: '1'}\n    steps:\n      - uses: actions/checkout@v4\n    timeout-minutes: 5\n", True),
+    ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        name: x\n", True),
+    ("jobs:\n  a:\n    steps:\n      - name: x\n        uses: actions/checkout@v4\n        with: {a: b}\n", True),
+    (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/checkout@{SHA}\n", True),
+    (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA}\n      - uses: actions/checkout@v4\n", True),
     (step(f"actions/checkout@{SHA}"), False),
     (f"jobs:\n  a:\n    steps:\n      - !!omap [{{uses: actions/checkout@{SHA}}}]\n", False),
     (f"jobs:\n  a:\n    steps:\n      - !!pairs [{{uses: actions/checkout@{SHA}}}]\n", False),
@@ -613,6 +625,19 @@ def self_test(loader) -> list[str]:
         findings, _ = scan_tree(root, loader)
         if not any(".github/workflows/bad.yml: cannot be read" in f for f in findings):
             errors.append("self-test: a workflow that is not UTF-8 gave no finding")
+    # second.yml above sorts last of 2. Here the workflow whose uses is not
+    # pinned sorts first of 2 and then in the middle of 3; it alone must give
+    # a finding, and the uses of every workflow must be counted.
+    for bad, total in ((0, 2), (1, 3)):
+        with tempfile.TemporaryDirectory() as tmp:
+            workflows = Path(tmp) / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            for n in range(total):
+                uses = "actions/checkout@v4" if n == bad else f"actions/checkout@{SHA}"
+                (workflows / f"w{n}.yml").write_text(step(uses), encoding="utf-8")
+            findings, count = scan_tree(Path(tmp), loader)
+            if len(findings) != 1 or not findings[0].startswith(f".github/workflows/w{bad}.yml: ") or count != total:
+                errors.append(f"self-test: an unpinned workflow {bad + 1} of {total} gave {findings}, {count} uses")
     errors += load_self_test()
     return errors
 

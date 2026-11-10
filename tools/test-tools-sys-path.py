@@ -344,6 +344,30 @@ CASES = [
     ("import sys\nmatch sys:\n    case object(flags=f, path=p, x=y):\n        pass\n", True),
     ("import sys\nmatch sys:\n    case object(flags=f):\n        pass\n"
      "    case object(path=p):\n        pass\n    case object(x=y):\n        pass\n", True),
+    # In these cases and some above, the item that a loop over a list or a
+    # walk of the tree needs, a name of an import, a case, a sub-pattern, a
+    # class-pattern keyword or a statement, stands first of 2, in the middle
+    # of 3 and last of 2, so a loop that reads only some positions gets a
+    # verdict wrong.
+    ("import sys as s, os\ns.path.append('x')\n", True),
+    ("import sys, sys as s\ns.path.append('x')\n", True),
+    ("from sys import path, argv\n", True),
+    ("import site, os\n", True),
+    ("import sys\nmatch sys:\n    case object(path=p, flags=f):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(path=p):\n        pass\n    case object(flags=f):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=p) | object(path=p) | object(x=p):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=p) | object(path=p):\n        pass\n", True),
+    ("match sys:\n    case object(path=p):\n        pass\nmatch sys:\n    case object(flags=f):\n        pass\n", True),
+    ("match sys:\n    case object(flags=f):\n        pass\nmatch sys:\n    case object(path=p):\n        pass\n"
+     "match sys:\n    case object(x=y):\n        pass\n", True),
+    ("import os\nimport sys as s\ns.path.append('x')\n", True),
+    ("def f():\n    return s.path\nimport sys as s\n", True),
+    ("import sys\nsys.path.append('x')\nsys.exit(0)\n", True),
+    ("x = vars(sys)['flags']\ny = 1\n", False),
+    ("x = a[0]\ny = sys.__dict__['flags']\nz = 1\n", False),
+    # sys reached through a chain of attributes that is not os alone.
+    ("import os\nos.path.sys.path.insert(0, 'x')\n", True),
+    ("import a.b\nmatch a.b.sys:\n    case object(path=p):\n        pass\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match x:\n    case C(__class__=c):\n        pass\n", False),
     ("from os import __name__\n", False),
@@ -436,6 +460,12 @@ def self_test() -> list[str]:
         findings, _ = scan_tree(root)
         if not any("tools/bad.py: cannot be parsed" in f for f in findings):
             errors.append("self-test: a tools/*.py that does not parse gave no finding")
+        # folder.py sorted last of 2 and bad.py first of 2; cb.py sorts in the
+        # middle of 3, between bad.py and clean.py.
+        (tools / "cb.py").write_text("import site\n", encoding="utf-8")
+        findings, _ = scan_tree(root)
+        if not any(f.startswith("tools/cb.py:1: ") for f in findings):
+            errors.append("self-test: a tools/*.py that imports site, in the middle of 3, gave no finding")
     return errors
 
 
