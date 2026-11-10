@@ -14,12 +14,16 @@ docstrings and comments are not read:
 
 1. Any reference, read or write, to sys.path, sys.meta_path, sys.path_hooks or
    sys.path_importer_cache is a finding. Here sys is the name sys, any name
-   that `import sys as <alias>` binds, and any attribute named sys, such as
-   `os.sys`. An attribute named meta_path, path_hooks, path_importer_cache or
-   addsitedir is a finding on any object.
+   that `import sys as <alias>` binds, any name that
+   `from <module> import sys` binds, with or without `as`, whatever that
+   module is, and any attribute named sys, such as `os.sys`. An attribute
+   named meta_path, path_hooks, path_importer_cache or addsitedir is a finding
+   on any object.
 2. `from sys import` of any of those 4 names, or of `*`, is a finding.
 3. `import site`, in any form, and `from site import` are findings.
-4. A call to setattr or delattr whose first argument is sys is a finding.
+4. A call to setattr or delattr whose first argument is sys is a finding. A
+   call to setattr, delattr, getattr or vars whose first argument is starred,
+   such as `getattr(*args)`, is a finding whatever the starred value holds.
 5. A call to getattr whose first argument is sys is a finding unless its
    second argument is a string literal other than the 4 names, so
    `getattr(sys, "get_int_max_str_digits", None)` passes. `vars(sys)` and
@@ -38,10 +42,14 @@ Residuals:
 - `exec`, `eval` and `compile` of text, and Python held in strings and run by
   `-c`, such as the runner text of tools/test-skill-release-date.py;
 - sys reached by other means: `__import__("sys")`,
-  `importlib.import_module("sys")`, `sys.modules["sys"]`, a plain assignment
-  such as `s = sys`, sys passed to a function, and `getattr(sys, "__dict__")`;
-- computed attribute names, and setattr, getattr, delattr or vars reached
-  under another name, such as `builtins.setattr` or `f = setattr`;
+  `importlib.import_module("sys")`, `sys.modules["sys"]`,
+  `getattr(os, "sys")`, `globals()["sys"]`, a name bound to sys other than by
+  an import, such as `s = sys`, `(s := sys)`, a for, comprehension, `with` or
+  match target, or a lambda default, sys passed to a function, and
+  `getattr(sys, "__dict__")`;
+- computed attribute names, such as `sys.__getattribute__("path")`, and
+  setattr, getattr, delattr or vars reached under another name, such as
+  `builtins.setattr` or `f = setattr`;
 - site reached without an import statement, such as `__import__("site")`;
 - .pth files in site-packages, which -I does not stop;
 - third-party and C-extension code;
@@ -65,16 +73,21 @@ REPO = Path(__file__).resolve().parent.parent
 GUARDED = ("path", "meta_path", "path_hooks", "path_importer_cache")
 ANY_OBJECT = ("meta_path", "path_hooks", "path_importer_cache", "addsitedir")
 SETTERS = ("setattr", "delattr")
+STARRED = ("setattr", "delattr", "getattr", "vars")
 
 
 def sys_names(tree: ast.AST) -> set[str]:
-    """Return the names bound to the sys module: sys and each alias."""
+    """Return the names taken as the sys module.
+
+    These are sys and each name that an import of the name sys binds, such as
+    `import sys as s` or `from os import sys as s`.
+    """
     names = {"sys"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
             for alias in node.names:
-                if alias.name == "sys" and alias.asname:
-                    names.add(alias.asname)
+                if alias.name == "sys":
+                    names.add(alias.asname or alias.name)
     return names
 
 
@@ -125,7 +138,9 @@ def check_source(source: bytes, label: str) -> list[str]:
                     found.append((node.lineno, "an import of site"))
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.args:
             func = node.func.id
-            if func in SETTERS and is_sys(node.args[0], names):
+            if func in STARRED and isinstance(node.args[0], ast.Starred):
+                found.append((node.lineno, f"{func} with a starred first argument"))
+            elif func in SETTERS and is_sys(node.args[0], names):
                 found.append((node.lineno, f"{func} on sys"))
             elif func == "getattr" and is_sys(node.args[0], names):
                 if not (len(node.args) > 1 and literal_clean(node.args[1])):
@@ -195,6 +210,25 @@ CASES = [
     ("import sys\nsys.__dict__['path'].insert(0, 'x')\n", True),
     ("import sys\nsys.__dict__.get('path')\n", True),
     ("def broken(:\n", True),
+    ("import site.x\n", True),
+    ("from site.x import y\n", True),
+    ("import sys\ngetattr(sys, b'path')\n", True),
+    ("from os import sys as s\ns.path.insert(0, 'x')\n", True),
+    ("import sys\nsetattr(*(sys, 'path'), ['x'])\n", True),
+    ("import sys\ndelattr(*(sys, 'path'))\n", True),
+    ("import sys\ngetattr(*(sys, 'path')).insert(0, 'x')\n", True),
+    ("import sys\nvars(*(sys,))['path'].insert(0, 'x')\n", True),
+    ("a.b.path.join('x')\n", False),
+    ("d = obj.__dict__\n", False),
+    ("setattr(obj, 'x', 1)\n", False),
+    ("getattr(obj, name)\n", False),
+    ("d = vars(obj)\n", False),
+    ("x = vars()\n", False),
+    ("print(*args)\n", False),
+    ("import os as s\ns.path.join('a', 'b')\n", False),
+    ("from .sys import path\n", False),
+    ("from .site import x\n", False),
+    ("from os import path\n", False),
     ("import sys\nget_limit = getattr(sys, \"get_int_max_str_digits\", None)\n", False),
     ("import sys\nvars(sys)['flags']\n", False),
     ("import sys\nsys.__dict__['flags']\n", False),

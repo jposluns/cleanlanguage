@@ -9,17 +9,20 @@ evasion is a named residual.
 
 The rule: each .github/workflows/*.yml file is loaded with UniqueKeyLoader,
 taken from tools/test-workflow-launch-isolation.py as described below, and
-every value of a mapping key `uses`, at any depth, so a step `uses`, a job
-`uses` and one that an alias or a merge key brings in, must be text of the
-form `owner/repo[/path]@<sha>`, where `<sha>` is exactly 40 lower-case hex
-digits. The owner starts with a letter or digit and holds only letters, digits
-and hyphens; the repo and each path part hold only letters, digits, `_`, `.`
-and `-` and are not `.` or `..`. Anything else is a finding: a tag or a
-branch, a short, long or upper-case hex ref, a local `./` or `../` path, any
-`docker://` value, an expression such as `${{ matrix.action }}`, and a `uses`
-that is not text. A workflow that cannot be read as UTF-8, one whose loading
-raises any exception, such as a duplicate key, and a recursive node are
-findings, and an empty .github/workflows/*.yml listing is a failure.
+every value of a key `uses`, in a mapping or in a key and value pair of an
+`!!omap` or `!!pairs` list, at any depth of mappings, lists and pairs, so a
+step `uses`, a job `uses` and one that an alias or a merge key brings in, must
+be text of the form `owner/repo[/path]@<sha>`, where `<sha>` is exactly 40
+lower-case hex digits. A mapping, list or pair that aliases bring in more than
+once is checked once. The owner starts with an ASCII letter or digit and holds
+only ASCII letters, digits and hyphens; the repo and each path part hold only
+ASCII letters, digits, `_`, `.` and `-` and are not `.` or `..`. Anything else
+is a finding: a tag or a branch, a short, long or upper-case hex ref, a local
+`./` or `../` path, any `docker://` value, an expression such as
+`${{ matrix.action }}`, an owner that holds `_` or `.`, and a `uses` that is
+not text. A workflow that cannot be read as UTF-8, one whose loading raises an
+Exception, such as a duplicate key, and a recursive node are findings, and an
+empty .github/workflows/*.yml listing is a failure.
 tools/test-workflow-launch-isolation.py separately refuses local actions and
 local reusable workflows, and any .yml or .yaml file under .github outside
 .github/workflows/*.yml, such as an action.yml.
@@ -31,10 +34,12 @@ folder; reads the source bytes; compiles them with `dont_inherit=True`; and
 runs them in a fresh module namespace whose `__file__` is that path, so no
 cached bytecode file in tools/__pycache__ stands in for the source. It leaves
 sys.path unchanged and adds no entry for the scan to sys.modules. An lstat or
-read error, a compile error, any exception or SystemExit raised while the
+read error, a compile error, an Exception or a SystemExit raised while the
 scan's module body runs, and a scan that defines no UniqueKeyLoader each stop
 the gate before its self-tests, with one FAIL line that names the exception's
-type and message, and exit status 1.
+type and message, and exit status 1. Any other BaseException, such as
+KeyboardInterrupt or GeneratorExit, is not caught: it stops the gate with a
+traceback and no FAIL line, so an interrupt stays an interrupt.
 
 Residuals:
 
@@ -45,6 +50,10 @@ Residuals:
   holds it;
 - GitHub Actions' own YAML reading is not checked, so a key that GitHub
   Actions reads as `uses` but PyYAML builds as other text passes;
+- an owner, repo or path name that fits the form above but that GitHub may not
+  accept, such as an owner with a trailing hyphen or 2 hyphens in a row, a
+  long owner or repo name, or a repo named `...` or `.git`; the gate does not
+  check GitHub's naming rules;
 - what a pinned action does, including the actions and images it fetches in
   turn.
 
@@ -81,12 +90,15 @@ def load_scan(path: Path = SCAN) -> tuple[type | None, str]:
 
     A path that `os.lstat` does not report as a regular file, such as a
     symbolic link or a folder, is refused. Otherwise the source bytes are
-    read, compiled with `dont_inherit=True` and run in a fresh module
-    namespace whose `__file__` is path, so no cached bytecode stands in for
-    the source; sys.path is not changed and no entry is added to sys.modules.
-    Any exception or SystemExit raised by those steps, and a module that
+    read, compiled with `dont_inherit=True`, so the future imports of this
+    gate do not apply to the scan, and run in a fresh module namespace whose
+    `__file__` is path, so no cached bytecode stands in for the source.
+    sys.path is not changed and no entry for the scan is added to sys.modules;
+    the modules that the scan imports are added there as any import adds them.
+    An Exception or a SystemExit raised by those steps, and a module that
     defines no UniqueKeyLoader, give (None, why), where why is the exception's
-    type, a colon, a space and its message.
+    type, a colon, a space and its message. Any other BaseException, such as
+    KeyboardInterrupt, is not caught.
     """
     try:
         info = os.lstat(path)
@@ -112,24 +124,48 @@ def check_uses(value) -> str | None:
     return None
 
 
-def walk(node, where: str, found: list[str], checked: list[str], seen: tuple = ()) -> None:
-    """Check every `uses` key in node, at any depth; record each in checked."""
-    if isinstance(node, (dict, list)):
-        if any(node is item for item in seen):
+def walk(doc, found: list[str], checked: list[str]) -> None:
+    """Check every `uses` key in doc, at any depth; record each in checked.
+
+    A `uses` key is a mapping key or the first item of a 2-item tuple, the
+    form in which PyYAML builds each key and value pair of an `!!omap` or
+    `!!pairs` list. The walk keeps its own stack instead of recursing, so an
+    alias chain deeper than the interpreter's recursion limit does not stop
+    it. A mapping, list or tuple met again inside itself is a recursive node,
+    a finding; one already walked, which an alias brings in again, is not
+    walked again.
+    """
+    stack: list[tuple[object, str, bool]] = [(doc, "", False)]
+    open_ids: set[int] = set()
+    done: set[int] = set()
+    while stack:
+        node, where, leaving = stack.pop()
+        if leaving:
+            open_ids.discard(id(node))
+            done.add(id(node))
+            continue
+        if not isinstance(node, (dict, list, tuple)):
+            continue
+        if id(node) in open_ids:
             found.append(f"{where}: a recursive node")
-            return
-        seen = seen + (node,)
-    if isinstance(node, dict):
-        for key, value in node.items():
+            continue
+        if id(node) in done:
+            continue
+        open_ids.add(id(node))
+        stack.append((node, where, True))
+        if isinstance(node, dict):
+            pairs = list(node.items())
+            children = [(value, f"{where}.{key}") for key, value in pairs]
+        else:
+            pairs = [tuple(node)] if isinstance(node, tuple) and len(node) == 2 else []
+            children = [(item, f"{where}[{n}]") for n, item in enumerate(node)]
+        for key, value in pairs:
             if key == "uses":
                 checked.append(where)
                 reason = check_uses(value)
                 if reason:
                     found.append(f"{where}.uses: {reason}")
-            walk(value, f"{where}.{key}", found, checked, seen)
-    elif isinstance(node, list):
-        for n, item in enumerate(node):
-            walk(item, f"{where}[{n}]", found, checked, seen)
+        stack.extend((child, label, False) for child, label in reversed(children))
 
 
 def check_text(text: str, label: str, loader) -> tuple[list[str], int]:
@@ -141,7 +177,7 @@ def check_text(text: str, label: str, loader) -> tuple[list[str], int]:
         return [f"{label}: cannot be parsed as YAML ({first})"], 0
     found: list[str] = []
     checked: list[str] = []
-    walk(doc, "", found, checked)
+    walk(doc, found, checked)
     return [f"{label}: {reason.lstrip('.')}" for reason in found], len(checked)
 
 
@@ -174,6 +210,13 @@ def step(uses: str) -> str:
     return f"jobs:\n  a:\n    steps:\n      - uses: {uses}\n"
 
 
+def chain(uses: str) -> str:
+    """Return a workflow whose aliases nest twice as deep as the recursion limit."""
+    lines = [f"a0: &a0 {{uses: {uses}}}"]
+    lines += [f"a{n}: &a{n} {{k: *a{n - 1}}}" for n in range(1, 2 * sys.getrecursionlimit())]
+    return "\n".join(lines) + "\n"
+
+
 # Workflow text that must be refused (True) or must pass (False).
 CASES = [
     (step("actions/checkout@v4"), True),
@@ -204,7 +247,26 @@ CASES = [
     ("x: &s {name: n}\njobs:\n  a:\n    steps:\n      - <<: [*s, {uses: actions/checkout@v4}]\n", True),
     ("jobs:\n  a:\n    steps: &x\n      - *x\n", True),
     (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA}\n        uses: actions/checkout@{SHA}\n", True),
+    (step(f"owner/..@{SHA}"), True),
+    (step(f"owner/repo/.@{SHA}"), True),
+    (step(f"owner/r\u00e9po@{SHA}"), True),
+    (step(f"owner/re+po@{SHA}"), True),
+    (step(f"_owner/repo@{SHA}"), True),
+    (step(f"own_er/repo@{SHA}"), True),
+    (step(f"own.er/repo@{SHA}"), True),
+    (step(f"ow\u00f1er/repo@{SHA}"), True),
+    ("jobs:\n  a:\n    steps:\n      - !!omap [{uses: actions/checkout@v4}]\n", True),
+    ("jobs:\n  a:\n    steps:\n      - !!pairs [{uses: actions/checkout@v4}]\n", True),
+    ("jobs:\n  a: !!omap [{steps: [{uses: actions/checkout@v4}]}]\n", True),
+    ("jobs:\n  a: !!pairs [{uses: owner/repo/.github/workflows/w.yml@v1}]\n", True),
+    ("jobs:\n  a: &x !!pairs [{k: *x}]\n", True),
+    (chain("actions/checkout@v4"), True),
     (step(f"actions/checkout@{SHA}"), False),
+    (f"jobs:\n  a:\n    steps:\n      - !!omap [{{uses: actions/checkout@{SHA}}}]\n", False),
+    (f"jobs:\n  a:\n    steps:\n      - !!pairs [{{uses: actions/checkout@{SHA}}}]\n", False),
+    (f"jobs:\n  a: !!omap [{{steps: [{{uses: actions/checkout@{SHA}}}]}}]\n", False),
+    (f"jobs:\n  a: !!pairs [{{uses: owner/repo/.github/workflows/w.yml@{SHA}}}]\n", False),
+    (chain(f"actions/checkout@{SHA}"), False),
     (step(f"actions/checkout@{SHA} # v4.4.0"), False),
     (f"jobs:\n  a:\n    uses: owner/repo/.github/workflows/w.yml@{SHA}\n", False),
     (f"jobs:\n  a:\n    uses: octo-org/.github/.github/workflows/w.yml@{SHA}\n", False),
@@ -218,7 +280,14 @@ def self_test(loader) -> list[str]:
     for text, refused in CASES:
         found, _ = check_text(text, "case.yml", loader)
         if bool(found) != refused:
-            errors.append(f"self-test: {text!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
+            errors.append(f"self-test: {text[:200]!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
+    for text in (step("actions/checkout@v4"), "jobs:\n  a:\n    steps:\n      - !!pairs [{uses: actions/checkout@v4}]\n"):
+        _, count = check_text(text, "case.yml", loader)
+        if count != 1:
+            errors.append(f"self-test: {text!r} gave {count} uses, expected 1")
+    found, count = check_text(f"a: &s {{uses: actions/checkout@{SHA}}}\nb: *s\nc: *s\n", "case.yml", loader)
+    if found or count != 1:
+        errors.append(f"self-test: a mapping that aliases bring in 3 times gave {found}, {count} uses, expected 1")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"
@@ -239,7 +308,7 @@ def self_test(loader) -> list[str]:
 
 
 def try_load(path: Path) -> tuple[type | None, str]:
-    """Call load_scan(path); an exception or SystemExit that escapes it becomes why."""
+    """Call load_scan(path); an Exception or a SystemExit that escapes it becomes why."""
     try:
         return load_scan(path)
     except (Exception, SystemExit) as exc:
@@ -266,6 +335,9 @@ def load_self_test() -> list[str]:
             ("none.py", b"X = 1\n", "ImportError: defines no UniqueKeyLoader"),
             ("broken.py", b"def broken(:\n", "SyntaxError: "),
             ("absent.py", None, "FileNotFoundError: "),
+            # Compiled with this gate's `from __future__ import annotations`,
+            # the annotation would be kept as text and raise no NameError.
+            ("future.py", b"def f(x: missing): pass\nf.__annotations__\n", "NameError: "),
         ]
         for name, text, want in cases:
             if text is not None:
