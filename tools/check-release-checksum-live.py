@@ -12,8 +12,13 @@ band under a user token (see the release runbook), matching the rest of the
 fleet, which keeps pull request authorship out of Actions. If that flip is
 forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
-check goes red on exactly that drift. It runs in CI on pushes to main and on a
-daily schedule, and the orchestrator runs it as the final step of the runbook.
+check goes red on that drift (exit 1) when it can download and read the
+published release's zip and ``.sha256`` and the zip hashes to a well-formed
+manifest; when it cannot, it goes red as a release it could not verify (exit 2)
+and reports no drift (see Exit codes). It runs in CI on a pull request or a
+push to main that changes a file it or its tests read, which the workflow's
+path filters name, on a daily schedule and on manual dispatch, and the
+orchestrator runs it as the final step of the runbook.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.

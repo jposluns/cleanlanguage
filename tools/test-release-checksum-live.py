@@ -5197,5 +5197,111 @@ class GeneratorLoadTest(unittest.TestCase):
                     self.assertEqual(raised.exception.__cause__.code, code)
 
 
+# The audit hook of WorkflowPathsTest records the path of each file opened while TRACE is a list. An audit hook cannot
+# be removed, so it is installed once (TRACE_HOOK_INSTALLED) and does nothing while TRACE is None, as it is outside the
+# trace.
+TRACE: list[str] | None = None
+TRACE_HOOK_INSTALLED = False
+
+
+def trace_opens(event: str, args: tuple) -> None:
+    """Record the absolute path of each file opened while TRACE is a list, and ignore every other event."""
+    if event == "open" and TRACE is not None and isinstance(args[0], (str, bytes, os.PathLike)):
+        TRACE.append(os.path.abspath(os.fsdecode(args[0])))
+
+
+class WorkflowPathsTest(unittest.TestCase):
+    """.github/workflows/release-checksum-live.yml runs these tests and the gate on a pull request or a push to main
+    that changes a file they read, so its push and pull_request triggers each carry a path filter that names every such
+    file: each of OWN_FILES, and each of GENERATOR_INPUTS, a directory as its path followed by /**. The daily schedule
+    and manual dispatch run the gate whatever changed, so a change to main that a path filter misses is still checked at
+    the next scheduled run."""
+
+    WORKFLOW = MODULE_PATH.parent.parent / ".github/workflows/release-checksum-live.yml"
+    # The files the gate or its tests read that GENERATOR_INPUTS does not list: the page the gate checks, the gate,
+    # these tests and the workflow that runs them, the Released-line extractor the gate runs as a child, the other gate
+    # whose shared functions these tests compare with the gate's, and the generator the gate renders the page with.
+    OWN_FILES = ("site/verify/index.html", "tools/check-release-checksum-live.py",
+                 "tools/test-release-checksum-live.py", ".github/workflows/release-checksum-live.yml",
+                 "tools/skill-release-date.py", "tools/check-release-links.py", "tools/build-site.py")
+
+    @classmethod
+    def expected(cls) -> set[str]:
+        """The entries each trigger must name: each of OWN_FILES, and each of GENERATOR_INPUTS, a directory as its path
+        followed by /**."""
+        root = MODULE_PATH.parent.parent
+        return set(cls.OWN_FILES) | {f"{entry}/**" if (root / entry).is_dir() else entry for entry in GENERATOR_INPUTS}
+
+    def path_lists(self) -> dict[str, list[str]]:
+        """The entries of each path filter under the workflow's on key, by trigger and in order, read as text: a list
+        starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs while each line
+        starts with 6 spaces, a hyphen and a space. An entry in double quotes is read without them, and any other entry
+        line is kept whole, so that it never equals an expected entry."""
+        lists: dict[str, list[str]] = {}
+        section = trigger = None
+        listing: list[str] | None = None
+        for line in self.WORKFLOW.read_text(encoding="utf-8").splitlines():
+            if listing is not None and line.startswith("      - "):
+                entry = line.removeprefix("      - ")
+                listing.append(entry[1:-1] if len(entry) > 1 and entry[0] == entry[-1] == '"' else line)
+                continue
+            listing = None
+            if line and not line[0].isspace() and not line.startswith("#"):
+                section, trigger = line, None
+            elif section == "on:" and line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
+                trigger = line.strip().removesuffix(":")
+            elif section == "on:" and trigger is not None and line == "    paths:":
+                listing = lists.setdefault(trigger, [])
+        return lists
+
+    def test_each_trigger_names_exactly_the_files_the_gate_reads(self):
+        """Each trigger names exactly the entries of expected(), each once, and the workflow has no paths-ignore filter,
+        which could exclude a file that a list names. path_lists reads the workflow's layout, not its YAML, so an
+        equivalent workflow laid out otherwise fails here until path_lists is updated."""
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        lists = self.path_lists()
+        self.assertEqual(sorted(lists), ["pull_request", "push"])
+        for trigger in ("push", "pull_request"):
+            with self.subTest(trigger):
+                self.assertNotIn("paths-ignore", text)
+                entries = lists[trigger]
+                self.assertEqual(len(entries), len(set(entries)), f"{trigger} names an entry more than once: {entries}")
+                self.assertEqual(set(entries), self.expected())
+
+    def test_each_trigger_covers_every_file_the_render_opens(self):
+        """Each trigger covers every repository file that the gate's render opens: the download block and the whole
+        page, for the committed release and for the zero placeholder, rendered through the gate as it renders them,
+        while an audit hook records each file opened. An entry covers the file it names, and an entry that ends in /**
+        covers every file under its directory; this matcher is not GitHub's, so how GitHub matches ** under a directory
+        whose name starts with a dot, as in site/.well-known/**, is not checked here. Residuals: the extractor
+        tools/skill-release-date.py runs in a child process, which the hook does not see, so OWN_FILES lists it by hand;
+        the render runs on the committed sources, so a file that it opens only while site-src/site.json stages a draft
+        is not traced; and a new generator input that a copy of GENERATOR_INPUTS can do without, so that WholePageTest
+        still passes, and that neither traced render opens, is seen by neither test."""
+        global TRACE, TRACE_HOOK_INSTALLED
+        root = MODULE_PATH.parent.parent
+        release = json.loads((root / "site-src/release.json").read_text(encoding="utf-8"))
+        if not TRACE_HOOK_INSTALLED:
+            sys.addaudithook(trace_opens)
+            TRACE_HOOK_INSTALLED = True
+        TRACE = []
+        try:
+            for checksum in (release["checksum"], "0" * 64):
+                gate.download_block(release["version"], checksum)
+                gate.rendered_verify_page(release["version"], checksum)
+            opened = TRACE
+        finally:
+            TRACE = None
+        files = sorted({path.relative_to(root).as_posix() for path in map(Path, opened) if path.is_relative_to(root)})
+        self.assertIn("tools/build-site.py", files)
+        self.assertIn("site-src/pages/verify.html", files)
+        lists = self.path_lists()
+        for trigger in ("push", "pull_request"):
+            for relative in files:
+                with self.subTest(f"{trigger}: {relative}"):
+                    self.assertTrue(any(entry == relative or (entry.endswith("/**") and relative.startswith(entry[:-2]))
+                                        for entry in lists.get(trigger, ())), f"no {trigger} entry covers {relative}")
+
+
 if __name__ == "__main__":
     unittest.main()
