@@ -6,21 +6,20 @@ Each case copies the gate and the files it reads into a temporary repository
 changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
 tools/check-headers.py or tools/check-inline-code.py (in 2 cases adding a
-cached file of it too), swaps 2 family pages, or
-adds a file that Cloudflare Pages runs or reads: package.json,
-functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
-wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
-Pipfile or Gemfile. It runs the gate there as a separate process and asserts
-its exit code and, where a case gives them as (code, words), that its output
-holds those words, so that a crash, which also exits 1, does not pass for a
-refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
-ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
-the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
-probe's name, as the gate gives them on a Python that reads that probe's
-fragment otherwise. 2 more each run a copy in which the probe of a
-``</ script>`` inside a ``script`` or the probe of markup in a ``title`` reads
-its ``h1`` inside an open ``div``, as on a Python whose html.parser opens
-elements inside a ``script`` or a ``title``, with
+cached file of it too), swaps 2 family pages, or adds a file that Cloudflare
+Pages runs or reads: package.json, functions/_middleware.js, site/_worker.js,
+site/_worker.js/index.js, wrangler.json, wrangler.jsonc, wrangler.toml,
+runtime.txt, requirements.txt, Pipfile or Gemfile. It runs the gate there as a
+separate process and asserts its exit code and, where a case gives them as
+(code, words), that its output holds those words, so that a crash, which also
+exits 1, does not pass for a refusal. 3 cases put a ``</ script>``, markup in a
+``title`` and a comment ended by ``--!>`` on a family page, and 3 run a copy of
+the gate that expects the other reading of 1 of its ``READING_PROBES``,
+expecting exit 3 and the probe's name, as the gate gives them on a Python that
+reads that probe's fragment otherwise. 2 more each run a copy in which the
+probe of a ``</ script>`` inside a ``script`` or the probe of markup in a
+``title`` reads its ``h1`` inside an open ``div``, as on a Python whose
+html.parser opens elements inside a ``script`` or a ``title``, with
 ``tools/check-inline-code.py`` removed, expecting exit 3 and the probe's name,
 which the copy cannot give if that probe tries to read that file. The probe of
 a comment ended by ``--!>`` has no ``</br>``, and its only start tag is its
