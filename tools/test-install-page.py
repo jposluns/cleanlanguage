@@ -48,15 +48,26 @@ never calls the gate's family_checked(), which holds the 2 filters of the links
 back, on not hidden and on visible text. hidden_link_exit_problems() fails
 unless hidden_link_problems(), given a stand-in for the gate whose parse()
 raises SystemExit(3), as the gate's die() does, returns the problem that names
-SystemExit(3). Exit 0 when every case passes; 1 otherwise, naming each failing
-case. A check that the gate's die() ends with SystemExit(3), as it does in this
-process when tools/check-inline-code.py is missing, is a named failure, never a
-silent exit 3; a scratch copy that make_root() cannot build is named once, and
-the inventories, the Python version checks and the cases, which need it, are
-not run. Each of RESIDUALS is a fault the gate passes, such as markup in which a
-browser may hide or empty what the gate checks; it must exit 0, and the gate's
-docstring must name it, so that what the gate says it checks cannot outgrow its
-code unnoticed.
+SystemExit(3). gate_exit_problems() fails unless each check of its tuple, given
+exiting_gate(), the gate as load_gate() loads it with parse() and load_tool()
+replaced by functions that raise SystemExit(3), returns 1 problem that names
+SystemExit(3). in_process_run_problems() reads this file's syntax tree and
+fails on a function that loads or runs the gate or a sibling in this process
+and is neither in that tuple nor in RUN_EXEMPT with a reason, on such a load or
+run that no try with a handler naming SystemExit holds, and on a handler that
+is bare or names BaseException or KeyboardInterrupt. copy_exit_problems() fails
+unless copy_problems() and pin_case_problems(), each given a missing file or a
+directory to copy, name it in 1 problem. Exit 0 when every case passes; 1
+otherwise, naming each failing case. A load or run of the gate or a sibling in
+this process that raises SystemExit, as the gate's die() does when
+tools/check-inline-code.py is missing, is a named failure and never a silent
+exit 3. A scratch copy that make_root() cannot build is named once, and the
+inventories, the Python version checks and the cases, which need it, are not
+run; a copy of the stylesheets and the rule pin that pin_case_problems() cannot
+make is named once, and its cases are not run. Each of RESIDUALS is a fault the
+gate passes, such as markup in which a browser may hide or empty what the gate
+checks; it must exit 0, and the gate's docstring must name it, so that what the
+gate says it checks cannot outgrow its code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -237,7 +248,7 @@ def pinned_baseline() -> str:
 # the baseline needs no edit here; a pin that cannot be read fails this test with exit 1, rather than with a traceback.
 try:
     BASELINE = pinned_baseline()
-except Exception as error:
+except (Exception, SystemExit) as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
 # The names that hold the version read from the pin. version_binding_problems() reads this file's syntax tree for
@@ -543,16 +554,21 @@ def copy_problems(files: list[str] = FILES) -> list[str]:
 
 
 def copy_exit_problems() -> list[str]:
-    """A problem unless copy_problems(), given a file list that names a missing file, returns 1 problem that names
-    that file, so that its catch cannot be removed unnoticed."""
-    missing = "tools/no-such-file.py"
-    try:
-        found = copy_problems([missing])
-    except OSError as error:
-        return [f"copy_problems() let {error!r} through for a missing file"]
-    if len(found) != 1 or missing not in found[0]:
-        return [f"copy_problems(), given the missing file {missing}, returns {found!r}, not 1 problem naming it"]
-    return []
+    """A problem unless copy_problems() and pin_case_problems(), each given a file list that names a missing file or a
+    directory, return 1 problem that names it, so that neither catch can be removed, or narrowed to FileNotFoundError or
+    to IsADirectoryError alone, unnoticed."""
+    problems: list[str] = []
+    for copier in (copy_problems, pin_case_problems):
+        for source, kind in (("tools/no-such-file.py", "a missing file"), ("site/install", "a directory")):
+            try:
+                found = copier([source])
+            except OSError as error:
+                problems.append(f"{copier.__name__}() let {error!r} through for {kind}")
+                continue
+            if len(found) != 1 or source not in found[0]:
+                problems.append(f"{copier.__name__}(), given {kind}, {source}, returns {found!r}, not 1 problem "
+                                "naming it")
+    return problems
 
 
 def edit(relative: str, old: str, new: str, every: bool = False):
@@ -672,7 +688,10 @@ PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comme
 def probe_name_problems() -> list[str]:
     """A problem unless PROBE_NAMES holds the names of the gate's READING_PROBES in their order, so that a probe added
     to the gate cannot go without a copy of the gate that expects its other reading."""
-    names = tuple(name for name, _, _ in load_gate().READING_PROBES)
+    try:
+        names = tuple(name for name, _, _ in load_gate().READING_PROBES)
+    except (Exception, SystemExit) as error:
+        return [f"READING_PROBES could not be read from tools/{GATE.name}: {error!r}"]
     if names != PROBE_NAMES:
         return [f"PROBE_NAMES is {PROBE_NAMES!r}, but the names of the READING_PROBES of tools/{GATE.name} are "
                 f"{names!r}, in that order"]
@@ -1935,7 +1954,7 @@ def committed_rules(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
     them."""
     try:
         classes = pinned_classes(load_gate())
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [], [f"CLASS_PIN could not be read from tools/{GATE.name}: {error!r}"]
     sheets: list[tuple[str, str]] = []
     problems: list[str] = []
@@ -1960,16 +1979,22 @@ def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
                         for problem in diff_problems(pin, held)]
 
 
-def pin_case_problems() -> list[str]:
-    """stylesheet_problems(), on a copy of STYLESHEETS and PIN_FILE with the fault of each of PIN_CASES, gives problems
-    that hold each of its words, or none where it gives none; a fault whose text the copy does not hold is a problem."""
+def pin_case_problems(files: list[str] = STYLESHEETS + [PIN_FILE]) -> list[str]:
+    """stylesheet_problems(), on a copy of files (STYLESHEETS and PIN_FILE by default) with the fault of each of
+    PIN_CASES, gives problems that hold each of its words, or none where it gives none; a fault whose text the copy does
+    not hold is a problem. A copy that cannot be made, of a file that is missing or unreadable, say, is named once, as 1
+    problem rather than a traceback, and no further case is run."""
     problems: list[str] = []
     for name, fault, words in PIN_CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
-            for relative in (*STYLESHEETS, PIN_FILE):
-                (root / relative).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPO_ROOT / relative, root / relative)
+            try:
+                for relative in files:
+                    (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(REPO_ROOT / relative, root / relative)
+            except OSError as error:
+                return problems + [f"the scratch copy of the stylesheets and the rule pin could not be made: {error}; "
+                                   "the cases of the rule pin's comparison were not run"]
             # A committed stylesheet that no longer holds the text a fault edits is a problem, not a crash, so the
             # comparison of the committed stylesheets with the pin still runs and names the rule.
             try:
@@ -2104,7 +2129,7 @@ def attribute_pin_problems() -> list[str]:
         return problems
     try:
         recorded = set(load_gate().RULE_ATTRIBUTES)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"RULE_ATTRIBUTES could not be read from tools/{GATE.name}: {error!r}"]
     named = rule_attributes(held) - {HIDING_ATTRIBUTE}
     if recorded != named:
@@ -2282,9 +2307,9 @@ def hidden_link_exit_problems() -> list[str]:
 
 
 def exiting_gate():
-    """The gate as load_gate() loads it, with parse() and load_tool() replaced by functions that raise SystemExit(3),
-    as the gate's die() does when tools/check-inline-code.py cannot be read; the other names stay, so that a check
-    that reads them before it parses reaches parse()."""
+    """The gate as load_gate() loads it, with parse() and load_tool() replaced by functions that raise SystemExit(3), as
+    the gate's die() does when tools/check-inline-code.py cannot be read; the other names stay, so that a check that
+    reads them before it parses reaches parse()."""
     def exit_now(*args, **kwargs):
         raise SystemExit(3)
 
@@ -2295,12 +2320,12 @@ def exiting_gate():
 
 
 def gate_exit_problems() -> list[str]:
-    """A problem for each check that runs the gate in this process unless, given exiting_gate() as its loader, it
-    returns exactly 1 problem, which names SystemExit(3), so that no catch of those checks can narrow to Exception
-    unnoticed."""
-    checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems,
-              page_attribute_pin_problems, page_tag_pin_problems, name_reading_problems, end_tag_problems,
-              loaded_segment_problems)
+    """A problem for each check of its tuple unless, given exiting_gate() as its loader, it returns exactly 1 problem,
+    which names SystemExit(3), so that no catch of those checks can narrow to Exception unnoticed;
+    in_process_run_problems() fails on a function that runs the gate or a sibling in this process and is neither in the
+    tuple nor in RUN_EXEMPT."""
+    checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems, page_attribute_pin_problems,
+              page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
     problems: list[str] = []
     for check in checks:
         try:
@@ -2312,6 +2337,103 @@ def gate_exit_problems() -> list[str]:
         if len(found) != 1 or "SystemExit(3)" not in found[0]:
             problems.append(f"{check.__name__}(), given a gate whose parse() and load_tool() raise SystemExit(3), "
                             f"returns {found!r}, not 1 problem naming SystemExit(3)")
+    return problems
+
+
+# The functions that load or run the gate or a sibling in this process and are not in the tuple of gate_exit_problems(),
+# each with the reason; in_process_run_problems() fails on any other such function.
+RUN_EXEMPT = {
+    "pinned_baseline": "a loader: the module-level read of BASELINE runs it",
+    "load_gate": "a loader: each function that runs the gate calls it or takes it as its loader",
+    "exiting_gate": "a loader: the stand-in that gate_exit_problems() hands each check of its tuple",
+    "hidden_link_problems": "hidden_link_exit_problems() holds its catch with its own stand-in gate",
+    "probe_name_problems": "it reads only READING_PROBES, which exiting_gate() leaves as the gate binds it",
+    "committed_rules": "it reads only CLASS_PIN, which exiting_gate() leaves as the gate binds it",
+    "attribute_pin_problems": "it reads only RULE_ATTRIBUTES, which exiting_gate() leaves as the gate binds it",
+    "workflow_path_problems": "it reads only SERVER_ENTRIES, which exiting_gate() leaves as the gate binds it",
+    "statement_problems": "it loads the gate itself and reads only its docstring and ALLOWED_SCRIPTS",
+    "version_problems": f"it loads the gate and {INLINE_GATE} itself and reads only their SUPPORTED_PYTHONS",
+}
+
+
+def in_process_run_problems() -> list[str]:
+    """A problem for each function in this file's syntax tree that loads or runs the gate or a sibling in this process
+    and is neither in the tuple of gate_exit_problems() nor in RUN_EXEMPT with a reason, for each name of RUN_EXEMPT
+    that names no such function or names 1 in that tuple, for each such load or run that no try with a handler naming
+    SystemExit holds, and for each handler that is bare or names BaseException or KeyboardInterrupt, so that none of
+    these can be added unnoticed. A load or run is a call of load_gate(), loader(), pinned_baseline(), exiting_gate(),
+    exec() or __import__(), or of an attribute exec_module(), load_tool(), run_path(), import_module() or parse(),
+    ast.parse() aside. The body of load_gate(), pinned_baseline() or exiting_gate(), each call of which is itself a
+    load, needs no try, and no try outside a def or a lambda holds what runs inside it. It reads names only, so a load
+    through another name, or a handler that names another name bound to BaseException, passes unnoticed."""
+    names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
+    attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
+    loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
+
+    def run_name(node: ast.AST) -> str | None:
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in names:
+            return func.id
+        if (isinstance(func, ast.Attribute) and func.attr in attributes
+                and not (func.attr == "parse" and isinstance(func.value, ast.Name) and func.value.id == "ast")):
+            return func.attr
+        return None
+
+    def handler_names(handler: ast.ExceptHandler) -> set[str]:
+        if handler.type is None:
+            return {"BaseException"}
+        caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        return {node.id if isinstance(node, ast.Name) else getattr(node, "attr", "") for node in caught}
+
+    runs: list[tuple[str | None, int, str, bool]] = []
+
+    def visit(node: ast.AST, owner: str | None, held: bool) -> None:
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            catches = any("SystemExit" in handler_names(handler) for handler in node.handlers)
+            for child in node.body:
+                visit(child, owner, held or catches)
+            for child in [*node.handlers, *node.orelse, *node.finalbody]:
+                visit(child, owner, held)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            held = False
+        name = run_name(node)
+        if name:
+            runs.append((owner, node.lineno, name, held))
+        for child in ast.iter_child_nodes(node):
+            visit(child, owner, held)
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in statement.body:
+                visit(child, statement.name, statement.name in loaders)
+        else:
+            visit(statement, None, False)
+    exits = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "gate_exit_problems"]
+    tuples = [node.value for check in exits for node in ast.walk(check) if isinstance(node, ast.Assign)
+              and [ast.unparse(target) for target in node.targets] == ["checks"] and isinstance(node.value, ast.Tuple)]
+    held_checks = {element.id for value in tuples for element in value.elts if isinstance(element, ast.Name)}
+    problems = [] if tuples else ["gate_exit_problems() assigns no tuple to checks, so its checks cannot be read"]
+    runners: dict[str, int] = {}
+    for owner, line, name, held in runs:
+        if owner:
+            runners.setdefault(owner, line)
+        if not held:
+            problems.append(f"line {line}: {owner or 'the module level'} calls {name}() outside every try with a "
+                            "handler that names SystemExit, so a SystemExit there would end this test unnamed")
+    problems += [f"{owner}() loads or runs the gate or a sibling in this process (line {line}) and is neither in the "
+                 "tuple of gate_exit_problems() nor in RUN_EXEMPT with its reason"
+                 for owner, line in runners.items() if owner not in held_checks and not RUN_EXEMPT.get(owner)]
+    problems += [f"RUN_EXEMPT names {name}, which is not a function that loads or runs the gate or a sibling in this "
+                 "process, or is also in the tuple of gate_exit_problems()"
+                 for name in RUN_EXEMPT if name not in runners or name in held_checks]
+    problems += [f"line {node.lineno}: a handler that is bare or names BaseException or KeyboardInterrupt; catch "
+                 "(Exception, SystemExit) and let KeyboardInterrupt through"
+                 for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
+                 and handler_names(node) & {"BaseException", "KeyboardInterrupt"}]
     return problems
 
 
@@ -2443,7 +2565,7 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
         gate = load_gate()
         entries = [path for name in gate.SERVER_ENTRIES for path in (name, f"{name}/index.js", f"{name}/a/b/index.js")]
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"{WORKFLOW} could not be checked: {error!r}"]
     lists: list[list[str]] = []
     unread: list[str] = []
@@ -2548,7 +2670,7 @@ def version_problems() -> list[str]:
         spec.loader.exec_module(gate)
         if gate.SUPPORTED_PYTHONS != ((3, 14),):
             problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} is {gate.SUPPORTED_PYTHONS!r}, not ((3, 14),).")
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         problems.append(f"SUPPORTED_PYTHONS could not be read from tools/{GATE.name}: {error!r}")
     else:
         try:
@@ -2559,7 +2681,7 @@ def version_problems() -> list[str]:
             if missing:
                 problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} lists {missing!r}, which {INLINE_GATE} "
                                 "does not support, so the gate would exit 3 only after it reads the pages.")
-        except Exception as error:
+        except (Exception, SystemExit) as error:
             problems.append(f"SUPPORTED_PYTHONS could not be read from {INLINE_GATE}: {error!r}")
     for version in FAKED_VERSIONS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -2591,9 +2713,12 @@ def version_problems() -> list[str]:
 
 def statement_problems() -> list[str]:
     """The gate's docstring names exactly the scripts that ALLOWED_SCRIPTS holds."""
-    spec = importlib.util.spec_from_file_location("check_install_page", GATE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (Exception, SystemExit) as error:
+        return [f"ALLOWED_SCRIPTS could not be read from tools/{GATE.name}: {error!r}"]
     listed = re.search(r"``ALLOWED_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
     names = tuple(re.findall(r"``([a-z]+\.js)``", listed.group(1))) if listed else ()
     if names != module.ALLOWED_SCRIPTS:
@@ -2755,6 +2880,7 @@ def main() -> int:
     failures += [f"the hidden link exit: {problem}" for problem in hidden_link_exit_problems()]
     failures += [f"the gate exit: {problem}" for problem in gate_exit_problems()]
     failures += [f"the copy exit: {problem}" for problem in copy_exit_problems()]
+    failures += [f"the in-process runs: {problem}" for problem in in_process_run_problems()]
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
