@@ -79,12 +79,25 @@ The rule:
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
    spaces, `<name>` holding no `/`, no character of a path and no `$` directly
-   before `python3`, and no character of a path after `.py`, is a launch (so
-   `$python3 -I tools/x.py` is not one). With the launches removed, a line
-   that still holds the word python, or a `.py`, `.pyz` or `.pyw` name with no
-   letter, digit or underscore directly after it (so `x.pyc` is not one), in
-   any letter case, is a finding, whether it is a command, a comment or a
-   message.
+   before `python3`, and `.py` directly followed by the end of the line, a
+   space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<` or `>` not directly
+   followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
+   nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
+   `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
+   of a process substitution). The rule reads the form before each character
+   of that list as a launch, and refuses the line at a `<(` or `>(` and at
+   every other character directly after `.py`, among them a character that
+   closes a construct holding the launch: for example a closing backquote,
+   which ends a command substitution written with backquotes, a `}` that ends
+   a parameter expansion, or a `"` or `'` that ends a quoted string. For
+   `${v:+python3 -I tools/x.py} --flag`, with `v=1`, and for
+   `eval "python3 -I tools/x.py"`, bash passes tools/x.py as the script, and
+   for `${v:+python3 -I tools/x.py}w`, with `v=1`, and for
+   `eval "python3 -I tools/x.py"w`, it passes tools/x.pyw. With the launches
+   removed, a line that still holds the word python, or a `.py`, `.pyz` or
+   `.pyw` name with no letter, digit or underscore directly after it (so
+   `x.pyc` is not one), in any letter case, is a finding, whether it is a
+   command, a comment or a message.
 4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
    quotes, its backslashes and each `$` directly before a quote are removed is
    a finding (so `p$"y"thon3` is one).
@@ -96,12 +109,21 @@ The rule:
 
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
-`python3 -P -E -s` equivalent, a quoted script path, 2 spaces before `-I`, a
-launch whose words are split across continued lines, `(python3)` and other
-case arms naming python, a message or comment that names python or a .py file,
-an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
-`${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
-`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
+`python3 -P -E -s` equivalent, a quoted script path, a character directly
+after `.py` that is not in rule 3's list, as in `tools/x.py''` or
+`tools/x.py$EMPTY`, among them a character that closes a construct holding the
+launch (such as a closing backquote, which ends a command substitution written
+with backquotes, a `}` that ends a parameter expansion, as in
+`${v:+python3 -I tools/x.py} --flag`, or a `"` or `'` that ends a quoted
+string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
+subshell is in that list, and the form before it reads as a launch), 2 spaces
+before `-I`, a launch whose words are split across continued lines,
+`(python3)` and other case arms naming python, a message or comment that names
+python or a .py file, an expression such as `${{ env.PY }}`,
+`${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
+as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or `bash -e {0}`. Write a
+launch as `python3 -I tools/<name>.py`, and a command substitution that holds
+one as `$(...)`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
@@ -151,6 +173,24 @@ Residuals, named here because the scan reads text the pull request controls:
   traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
+- a launch written inside a parameter expansion, such as
+  `${v:+python3 -I tools/x.py|w}`, which the scan counts as a launch of
+  tools/x.py, while with `v=1` bash passes `tools/x.py|w` as the script; with
+  `;`, `&`, `<`, `>`, `(` or `)` in place of `|`, the scan also counts
+  tools/x.py, and bash passes tools/x.py followed by that character and `w`;
+- an edit to rule 3's right edge that the self-tests do not reach. The
+  character and pair self-tests put after `.py` each character of a sample
+  (each ASCII character, each code point that `str.isspace()` accepts or whose
+  Unicode category is Cf, and 6 non-ASCII letters of 6 scripts, whose UTF-8
+  lengths span 2 to 4 bytes), and each character of the edge followed by each
+  character of the sample, each time followed by `w`. An edit whose verdict
+  differs from the edge's only on text after `.py` that no self-test scans
+  passes every self-test. Such an edit can, for example, change the verdict
+  only for a code point outside the sample, only where the text beyond the
+  second character after `.py` differs, or only where a character outside the
+  edge is followed by anything but `w`, if no case holds that text, and the
+  scan can then count a launch while bash passes another script word, or
+  refuse an honest one;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
   expands it, such as an escape in an ANSI-C string, a glob, brace or
   parameter expansion, or a `${{ }}` expression;
@@ -171,6 +211,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 try:
@@ -195,7 +236,7 @@ PLANTED_MODULES = ("tempfile", "msvcrt", "nt", "_winapi")
 PLANT_MARKER = "PLANTED-MODULE-RAN"
 
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
-LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
+LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()]|[<>](?!\()|\Z)")
 PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
@@ -456,6 +497,12 @@ def planted_module_runs(root: Path, script: str) -> str | None:
 
 X = "tools/x.py"
 
+# The sample that the character and pair self-tests of rule 3's right edge put
+# after `.py`, which the comment on the character self-test describes. It is
+# built once, at import, since building it reads every code point.
+EDGE_WIDE = [c for c in map(chr, range(128, sys.maxunicode + 1)) if c.isspace() or unicodedata.category(c) == "Cf"]
+EDGE_SAMPLE = [chr(n) for n in range(128)] + EDGE_WIDE + ["\u00e9", "\u03b1", "\u0436", "\u05d0", "\u4e00", "\U00010400"]
+
 # Run text that must be refused (True) or must pass (False).
 RUN_CASES = [
     # Round 4 misses
@@ -663,6 +710,65 @@ RUN_CASES = [
     ('echo "$HOME"', False),
     ("echo $'a b'", False),
     ("echo py$thon3", False),
+    # Rule 3's right edge. The scan refuses a character directly after `.py`
+    # that is not in the edge, rather than read what bash would run:
+    # tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs tools/x.py. That
+    # includes a backquote, since the scan cannot tell a closing backquote
+    # from an opening one: v=`python3 -I tools/x.py` runs tools/x.py, and
+    # tools/x.py`echo w` runs tools/x.pyw. It also refuses a `<(` or `>(`
+    # directly after `.py`: tools/x.py<(echo w) runs a script whose name ends
+    # with the path of a process substitution. `python3 -I tools/x.py`
+    # directly followed by the end of the line, a space, a tab, `|`, `&`, `;`,
+    # `(`, `)`, or a `<` or `>` not directly followed by `(`, still reads as a
+    # launch, as it does before an operator that starts with one of them, such
+    # as `>>`, `<<<`, `>&`, `|&`, `&>` or `;;`.
+    (f'python3 -I {X}"w"', True),
+    (f"python3 -I {X}'w'", True),
+    (f"python3 -I {X}$'w'", True),
+    (f'python3 -I {X}"c"', True),
+    (f'python3 -I {X}$"w"', True),
+    (f"python3 -I {X}$W", True),
+    (f"python3 -I {X}*", True),
+    (f"python3 -I {X}?", True),
+    (f"python3 -I {X}[w]", True),
+    (f"python3 -I {X}{{,w}}", True),
+    (f"python3 -I {X}`echo w`", True),
+    (f"python3 -I {X}~", True),
+    (f"python3 -I {X},w", True),
+    (f"python3 -I {X}#w", True),
+    (f"python3 -I {X}:w", True),
+    (f"python3 -I {X}''", True),
+    (f"python3 -I {X}\u00a0w", True),
+    (f"python3 -I {X}<(echo w)", True),
+    (f"python3 -I {X}>(cat)", True),
+    (f"v=`python3 -I {X}`", True),
+    (f"python3 -I {X}\tw", False),
+    (f"python3 -I {X}|cat", False),
+    (f"python3 -I {X}&", False),
+    (f"python3 -I {X}<f", False),
+    (f"python3 -I {X}>f", False),
+    (f"python3 -I {X}(", False),
+    (f"python3 -I {X}>>f", False),
+    (f"python3 -I {X}<<EOF\nw\nEOF", False),
+    (f"python3 -I {X}<<<w", False),
+    (f"python3 -I {X}>&2", False),
+    (f"python3 -I {X}<&0", False),
+    (f"python3 -I {X}>|f", False),
+    (f"python3 -I {X}|&cat", False),
+    (f"python3 -I {X}&>f", False),
+    (f'case "$v" in a) python3 -I {X};; esac', False),
+    (f"python3 -I {X}>2", False),
+    # A character of the edge directly after `.py`, then text that bash reads
+    # as another command, an argument or the body of a process substitution.
+    # The pair self-test follows each pair with `w`, so these cases fail under
+    # edits that it passes, such as one that refuses `&&` only before `t`, or
+    # one that counts a `<(` before a space.
+    (f"python3 -I {X}&&true", False),
+    (f"python3 -I {X}|xargs echo", False),
+    (f"python3 -I {X} -x", False),
+    (f"python3 -I {X}<( echo w)", True),
+    (f"python3 -I {X}>( echo w)", True),
+    (f"python3 -I {X}<(xargs echo)", True),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -697,6 +803,11 @@ STEP_CASES = [
     ("env:\n          PATH: /x\n        run: echo ok", True),
     ("env:\n          FOO: bar\n        run: echo ok", False),
     ("run: echo ok\n        run: python3 tools/x.py", True),
+    # A carriage return reaches run text only through a YAML double-quoted
+    # escape. The scan refuses one directly after `.py`: for
+    # `python3 -I tools/x.py` followed by a carriage return and `w`, bash
+    # passes tools/x.py, the carriage return and `w` as the script.
+    ('run: "python3 -I tools/x.py\\rw"', True),
     ("uses: ./tools/action", True),
     ("uses: ../other/action", True),
     ("uses: actions/checkout@" + "a" * 40, False),
@@ -753,6 +864,57 @@ def self_test() -> list[str]:
         case.write_text(head + "      - run: python3 -I tools/gone.py\n", encoding="utf-8")
         if not any("does not exist" in f for f in scan()):
             errors.append("self-test: a missing launched script gave no finding")
+        for text in (f"python3 -I {X}", f"python3 -I {X} --flag", f'v="$(python3 -I {X})"'):
+            if check_run(text) != ([], [(X, True)]):
+                errors.append(f"self-test: {text!r}: expected no finding and exactly 1 counted launch of {X}")
+        # Rule 3's right edge, character by character, over a sample: each
+        # ASCII character, each code point that str.isspace() accepts or whose
+        # Unicode category is Cf (format), as the Python that runs this reads
+        # its Unicode data, and 6 non-ASCII letters of 6 scripts, whose UTF-8
+        # lengths span 2 to 4 bytes. Each character of the edge, and a
+        # newline, which check_run reads as the end of a line, gives no
+        # finding and exactly 1 counted launch, and every other character of
+        # the sample gives a finding and no counted launch. The whitespace and
+        # format code points are there so that an edit that widens the class
+        # by `\s`, which matches what str.isspace() accepts, or by any
+        # whitespace or format code point but a newline, fails here. A newline
+        # added to the class passes every self-test, an equivalent edit:
+        # check_run splits the run text on newlines before LAUNCH reads a
+        # line. The loop pins the verdict on each sampled character before
+        # `w`, not on every edit: the comment on the pair self-test below
+        # names the edits that can pass it, a residual.
+        edge = " \t|&;()<>\n"
+        for c in EDGE_SAMPLE:
+            refused, launches = check_run(f"python3 -I {X}{c}w")
+            if c in edge and (refused, launches) != ([], [(X, True)]):
+                errors.append(f"self-test: {c!r} after {X}: expected no finding and exactly 1 counted launch of {X}")
+            elif c not in edge and (not refused or (X, True) in launches):
+                errors.append(f"self-test: {c!r} after {X}: expected a finding and no counted launch of {X}")
+        # Rule 3's right edge, pair by pair, over the same sample. As written,
+        # the edge reads at most 2 characters after `.py`: a character of its
+        # class, or a `<` or `>` and then the character that its lookahead
+        # tests. This loop puts each character of the edge, followed by each
+        # character of the sample, between `python3 -I tools/x.py` and `w`,
+        # and so pins the verdict on each such pair before `w`, not on every
+        # edit. An edit whose verdict differs from the edge's only on text
+        # after `.py` that no self-test scans passes every self-test, a
+        # residual. Such an edit can, for example, change the verdict only for
+        # a code point outside the sample, only where the text beyond the
+        # second character after `.py` differs, or only where a character
+        # outside the edge is followed by anything but `w`, if no case holds
+        # that text. Each pair gives no finding and exactly 1 counted launch,
+        # except `<(` and `>(`, which give a finding and no counted launch.
+        # The edge here leaves out the newline: check_run splits the run text
+        # on newlines before LAUNCH reads a line, so the edge never reads a
+        # character after one.
+        for e in " \t|&;()<>":
+            for c in EDGE_SAMPLE:
+                refused, launches = check_run(f"python3 -I {X}{e}{c}w")
+                pair = f"self-test: {e!r} then {c!r} after {X}"
+                if e + c not in ("<(", ">(") and (refused, launches) != ([], [(X, True)]):
+                    errors.append(f"{pair}: expected no finding and exactly 1 counted launch of {X}")
+                elif e + c in ("<(", ">(") and (not refused or (X, True) in launches):
+                    errors.append(f"{pair}: expected a finding and no counted launch of {X}")
 
         two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
                     "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")
