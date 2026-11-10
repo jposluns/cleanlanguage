@@ -58,7 +58,8 @@ Residuals:
   turn.
 
 Usage: python3 -I tools/test-action-pins.py
-Exit status: 0 when every check passes, 1 on any finding or failure.
+Exit status: 0 when every check passes, 1 on any finding or failure, except
+for the BaseException described above, which ends the gate with a traceback.
 """
 
 from __future__ import annotations
