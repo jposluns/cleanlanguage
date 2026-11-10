@@ -338,6 +338,12 @@ CASES = [
     ("import os, sys as s\ns.path.append('x')\n", True),
     ("import sys\nmatch sys:\n    case object(flags=f, path=p):\n        pass\n", True),
     ("import sys\nmatch sys:\n    case object(flags=f):\n        pass\n    case object(path=p):\n        pass\n", True),
+    ("from sys import argv, path, exit\n", True),
+    ("import os, site, re\n", True),
+    ("import os, sys as s, re\ns.path.append('x')\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=f, path=p, x=y):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=f):\n        pass\n"
+     "    case object(path=p):\n        pass\n    case object(x=y):\n        pass\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match x:\n    case C(__class__=c):\n        pass\n", False),
     ("from os import __name__\n", False),
