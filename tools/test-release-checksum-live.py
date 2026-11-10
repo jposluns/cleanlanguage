@@ -5199,13 +5199,19 @@ class GeneratorLoadTest(unittest.TestCase):
 
 # The audit hook of WorkflowPathsTest records the path of each file opened while TRACE is a list. An audit hook cannot
 # be removed, so it is installed once (TRACE_HOOK_INSTALLED) and does nothing while TRACE is None, as it is outside the
-# trace.
+# trace. No test outcome depends on installing it once: were it installed on each run, a second run of the coverage test
+# in the same process would add a second hook, which records the same files again, and the test reads them as a set; so
+# no test pins it.
 TRACE: list[str] | None = None
 TRACE_HOOK_INSTALLED = False
 
 
 def trace_opens(event: str, args: tuple) -> None:
-    """Record the absolute path of each file opened while TRACE is a list, and ignore every other event."""
+    """Record the absolute path of each file opened while TRACE is a list, and ignore every other event. No broken
+    workflow or generator fails the tests only because of the isinstance test or os.fsdecode: they keep a correct
+    generator from making the coverage test error, since a file opened by its descriptor (os.open, then open on the
+    descriptor) gives the hook an int, which os.fsdecode refuses, and a file opened by a bytes path gives the hook
+    bytes, which Path refuses unless os.fsdecode turns them into text."""
     if event == "open" and TRACE is not None and isinstance(args[0], (str, bytes, os.PathLike)):
         TRACE.append(os.path.abspath(os.fsdecode(args[0])))
 
@@ -5239,7 +5245,12 @@ class WorkflowPathsTest(unittest.TestCase):
         starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs while each line
         starts with 6 spaces, a hyphen and a space. An entry in double quotes is read without them, and any other entry
         line is kept whole, so that it never equals an expected entry: an entry that the reader cannot read exactly,
-        such as one written without quotes, fails the list test even when it names an expected entry."""
+        such as one written without quotes, fails the list test even when it names an expected entry. No broken workflow
+        fails the tests only because of 4 of its tests. The length test makes an empty entry a failure, not an
+        IndexError, and the test that a trigger key was read skips a paths key under no trigger key, which would
+        otherwise be read under None, so that the list test could raise a TypeError rather than fail. The test that the
+        section is on: is in both branches, though either alone would do, since each top-level key resets the trigger;
+        without both, a list under a mistyped on key would be read."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
@@ -5260,7 +5271,8 @@ class WorkflowPathsTest(unittest.TestCase):
     def test_each_trigger_names_exactly_the_files_the_gate_reads(self):
         """Each trigger names exactly the entries of expected(), each once, and the workflow has no paths-ignore filter,
         which could exclude a file that a list names. path_lists reads the workflow's layout, not its YAML, so an
-        equivalent workflow laid out otherwise fails here until path_lists is updated."""
+        equivalent workflow laid out otherwise fails here until path_lists is updated. Its subtests change only how a
+        failure is reported."""
         text = self.WORKFLOW.read_text(encoding="utf-8")
         lists = self.path_lists()
         self.assertEqual(sorted(lists), ["pull_request", "push"])
@@ -5287,7 +5299,11 @@ class WorkflowPathsTest(unittest.TestCase):
         neither file fail, such as one whose hook records nothing, since the loop that follows then checks nothing. The
         finally sets TRACE back to None so that the hook does nothing for the rest of the process and the trace stops
         growing; no test outcome depends on it, since the test reads the trace only to compute files and no file is
-        opened between the end of the render and that computation, so no test pins it."""
+        opened between the end of the render and that computation, so no test pins it. The test checks both triggers,
+        which catches no broken workflow when the list test also runs, since that test requires both lists to name the
+        same entries; it is kept so that the test run alone still fails on a file missing from 1 list. The default of
+        lists.get makes a trigger with no list fail on each file, not raise a KeyError. The subtests, and the sorting
+        and the set that give files, change only how a failure is reported."""
         global TRACE, TRACE_HOOK_INSTALLED
         root = MODULE_PATH.parent.parent
         release = json.loads((root / "site-src/release.json").read_text(encoding="utf-8"))
