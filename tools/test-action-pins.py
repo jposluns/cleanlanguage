@@ -66,7 +66,9 @@ Residuals:
 
 Usage: python3 -I tools/test-action-pins.py
 Exit status: 0 when every check passes, 1 on any finding or failure, except
-for the BaseException described above, which ends the gate with a traceback.
+for the BaseException described above, and a MemoryError raised after the
+self-tests outside a workflow's load, such as while a workflow is read or
+walked, each of which ends the gate with a traceback.
 """
 
 from __future__ import annotations
