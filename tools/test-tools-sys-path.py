@@ -13,9 +13,11 @@ The rule, over the syntax tree of every tools/*.py file, so string literals,
 docstrings and comments are not read:
 
 1. Any reference, read or write, to sys.path, sys.meta_path, sys.path_hooks or
-   sys.path_importer_cache is a finding, including a keyword of one of those 4
-   names in any class pattern of a `match` statement whose subject is sys,
-   such as `case types.ModuleType(path=p)`. Here sys is any attribute named
+   sys.path_importer_cache is a finding. So is a keyword of one of those 4
+   names, or of `__dict__`, in any class pattern, at any depth, of a case of a
+   `match` statement whose subject is sys, such as
+   `case types.ModuleType(path=p)`, `case object(flags=Flags(path=p))` or
+   `case object(path=p) | object(flags=p)`. Here sys is any attribute named
    sys, such as `os.sys`, and each of these names wherever it stands in the
    file, whatever its scope: the name sys, any name that
    `import sys as <alias>` binds, and any name that `from <module> import sys`
@@ -46,11 +48,15 @@ Residuals:
   `-c`, such as the runner text of tools/test-skill-release-date.py;
 - sys reached by other means: `__import__("sys")`,
   `importlib.import_module("sys")`, `sys.modules["sys"]`,
-  `getattr(os, "sys")`, `globals()["sys"]`, a name bound to sys other than by
-  an import, such as `s = sys`, `(s := sys)`, a for, comprehension, `with` or
-  match target, or a lambda default, sys passed to a function,
-  `getattr(sys, "__dict__")`, and a class pattern that reaches sys through a
-  keyword named sys, such as `case object(sys=object(path=p))`;
+  `getattr(os, "sys")`, `globals()["sys"]`, `vars()["sys"]`,
+  `locals()["sys"]`, sys held inside another expression, such as
+  `[sys][0].path` or `(sys or 0).path`, a match subject that holds sys inside
+  a tuple, list, mapping, conditional or starred expression, such as
+  `match (sys, 1):`, a name bound to sys other than by an import, such as
+  `s = sys`, `(s := sys)`, a for, comprehension, `with` or match target, or a
+  lambda default, sys passed to a function, `getattr(sys, "__dict__")`, and a
+  class pattern that reaches sys through a keyword named sys, such as
+  `case object(sys=object(path=p))`;
 - computed attribute names, such as `sys.__getattribute__("path")`, and
   setattr, getattr, delattr or vars reached under another name, such as
   `builtins.setattr` or `f = setattr`;
@@ -115,7 +121,10 @@ def check_source(source: bytes, label: str) -> list[str]:
         return [f"{label}: cannot be parsed ({type(exc).__name__}: {exc})"]
     names = sys_names(tree)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    # A class-pattern keyword reads that attribute of the match subject.
+    # A top-level class-pattern keyword reads that attribute of the match
+    # subject, and a nested one reads an attribute of an object reached from
+    # it, so every class pattern at any depth of a case under a sys subject is
+    # collected.
     on_sys = {
         pattern
         for node in ast.walk(tree)
@@ -140,8 +149,8 @@ def check_source(source: bytes, label: str) -> list[str]:
                 dict_access(node, "sys.__dict__")
         elif isinstance(node, ast.MatchClass):
             for name in node.kwd_attrs:
-                if name in GUARDED and node in on_sys:
-                    found.append((node.lineno, f"a reference to sys.{name} in a class pattern"))
+                if (name in GUARDED or name == "__dict__") and node in on_sys:
+                    found.append((node.lineno, f"a class-pattern keyword named {name} in a case whose match subject is sys"))
                 elif name in ANY_OBJECT:
                     found.append((node.lineno, f"a class-pattern keyword named {name}"))
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
@@ -244,6 +253,9 @@ CASES = [
     ("import sys\nmatch sys:\n    case object(path_hooks=h):\n        pass\n", True),
     ("match x:\n    case C(path_importer_cache=c):\n        pass\n", True),
     ("match x:\n    case C(addsitedir=a):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(path=p) | object(flags=p):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(__dict__=d):\n        d['path'].insert(0, 'x')\n", True),
+    ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match p:\n    case Point(x=0):\n        pass\n", False),
     ("match request:\n    case Request(path=p):\n        pass\n", False),
     ("a.b.path.join('x')\n", False),
@@ -276,14 +288,26 @@ def self_test() -> list[str]:
         found = check_source(source.encode("utf-8"), "case.py")
         if bool(found) != refused:
             errors.append(f"self-test: {source!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
-    # The parser raises MemoryError, not SyntaxError, on a source this deep,
-    # so this case holds the parse catch at Exception.
-    try:
-        found = check_source(b"x = " + b"-" * 100000 + b"1\n", "deep.py")
-    except Exception as exc:
-        found = [f"{type(exc).__name__} escaped check_source"]
-    if len(found) != 1 or not found[0].startswith("deep.py: cannot be parsed (MemoryError: "):
-        errors.append(f"self-test: a source too complex to parse gave {found}")
+    nested = "import sys\nmatch sys:\n    case object(flags=Flags(path=p)):\n        pass\n"
+    want = ["case.py:3: a class-pattern keyword named path in a case whose match subject is sys"]
+    found = check_source(nested.encode("utf-8"), "case.py")
+    if found != want:
+        errors.append(f"self-test: {nested!r} gave {found}, expected {want}")
+    # ast.parse raises MemoryError on the first source and RecursionError on
+    # the second, neither of them a SyntaxError, so these cases fail when the
+    # parse catch misses either type; they do not tell that catch apart from
+    # one at Exception.
+    deep = [
+        ("deep.py", b"x = " + b"-" * 100000 + b"1\n", "MemoryError"),
+        ("chain.py", b"x = " + b"1+" * 99999 + b"1\n", "RecursionError"),
+    ]
+    for label, source, kind in deep:
+        try:
+            found = check_source(source, label)
+        except Exception as exc:
+            found = [f"{type(exc).__name__} escaped check_source"]
+        if len(found) != 1 or not found[0].startswith(f"{label}: cannot be parsed ({kind}: "):
+            errors.append(f"self-test: a source on which ast.parse raises {kind} gave {found}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         tools = root / "tools"

@@ -15,17 +15,19 @@ step `uses`, a job `uses` and one that an alias or a merge key brings in, must
 be text of the form `owner/repo[/path]@<sha>`, where `<sha>` is exactly 40
 lower-case hex digits. A mapping, list or pair that aliases bring in more than
 once is checked once. The owner starts with an ASCII letter or digit and holds
-only ASCII letters, digits and hyphens; the repo and each path part hold only
-ASCII letters, digits, `_`, `.` and `-` and are not `.` or `..`. Anything else
-is a finding: a tag or a branch, a short, long or upper-case hex ref, a local
-`./` or `../` path, any `docker://` value, an expression such as
-`${{ matrix.action }}`, an owner that holds `_` or `.`, and a `uses` that is
-not text. A workflow that cannot be read as UTF-8, one whose loading raises an
-Exception, such as a duplicate key, or a SystemExit, and a recursive node are
-findings, and an empty .github/workflows/*.yml listing is a failure.
-tools/test-workflow-launch-isolation.py separately refuses local actions and
-local reusable workflows, and any .yml or .yaml file under .github outside
-.github/workflows/*.yml, such as an action.yml.
+only ASCII letters, digits and hyphens; the repo and each path part are not
+empty, hold only ASCII letters, digits, `_`, `.` and `-`, and are not `.` or
+`..`. Anything else is a finding: a tag or a branch, a short, long or
+upper-case hex ref, a local `./` or `../` path, any `docker://` value, an
+expression such as `${{ matrix.action }}`, an owner that holds `_` or `.`, an
+empty repo or path part, such as `owner/@<sha>`, and a `uses` that is not
+text. A workflow that cannot be read as UTF-8, one whose loading raises an
+Exception, such as the error on a duplicate key or the RecursionError on
+mappings nested as deep as the recursion limit, or a SystemExit, and a
+recursive node are findings, and an empty .github/workflows/*.yml listing is a
+failure. tools/test-workflow-launch-isolation.py separately refuses local
+actions and local reusable workflows, and any .yml or .yaml file under .github
+outside .github/workflows/*.yml, such as an action.yml.
 
 The gate takes UniqueKeyLoader from the launch scan without importing the
 scan. It calls `os.lstat` on tools/test-workflow-launch-isolation.py and
@@ -36,7 +38,7 @@ cached bytecode file in tools/__pycache__ stands in for the source. It leaves
 sys.path unchanged and adds no entry for the scan to sys.modules. An lstat or
 read error, a compile error, an Exception or a SystemExit raised while the
 scan's module body runs, and a scan that defines no UniqueKeyLoader each stop
-the gate before its self-tests, with one FAIL line that names the exception's
+the gate before its self-tests, with 1 FAIL line that names the exception's
 type and message, and exit status 1. Any other BaseException, such as
 KeyboardInterrupt or GeneratorExit, raised while the scan's module body runs
 or while UniqueKeyLoader loads a workflow, is not caught: it stops the gate
@@ -262,6 +264,9 @@ CASES = [
     (step(f"ow\u00f1er/repo@{SHA}"), True),
     (step(f"\u00f1wner/repo@{SHA}"), True),
     (step("owner/repo@" + "g" * 40), True),
+    (step(f"owner/@{SHA}"), True),
+    (step(f"owner/repo/@{SHA}"), True),
+    (step(f"owner/repo//x@{SHA}"), True),
     ("jobs:\n  a:\n    steps:\n      - !!omap [{uses: actions/checkout@v4}]\n", True),
     ("jobs:\n  a:\n    steps:\n      - !!pairs [{uses: actions/checkout@v4}]\n", True),
     ("jobs:\n  a: !!omap [{steps: [{uses: actions/checkout@v4}]}]\n", True),
@@ -310,6 +315,13 @@ def self_test(loader) -> list[str]:
         found = [f"{type(exc).__name__} escaped check_text"]
     if found != ["case.yml: cannot be parsed as YAML (SystemExit: 0)"]:
         errors.append(f"self-test: a loader whose mapping constructor raises SystemExit(0) gave {found}")
+    depth = sys.getrecursionlimit()
+    try:
+        found, _ = check_text("a: " + "{a: " * depth + "1" + "}" * depth + "\n", "case.yml", loader)
+    except Exception as exc:
+        found = [f"{type(exc).__name__} escaped check_text"]
+    if len(found) != 1 or not found[0].startswith("case.yml: cannot be parsed as YAML (RecursionError: "):
+        errors.append(f"self-test: mappings nested {depth} deep gave {found}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"
