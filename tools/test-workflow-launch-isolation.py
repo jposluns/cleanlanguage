@@ -145,9 +145,10 @@ Residuals, named here because the scan reads text the pull request controls:
   `.pyw`, such as an extensionless script;
 - a compiled file run directly, such as a `.pyc` file, which the scan does not
   read;
-- a workflow whose job id, step `run` value or `shell` value cannot be turned
-  into text, such as an integer written in hex whose value has more than 4300
-  decimal digits, which stops the scan with a traceback rather than a finding;
+- a workflow whose job id or `shell` value, or whose step `run` value given as
+  a number, cannot be turned into text, such as an integer written in hex
+  whose value has more than 4300 decimal digits, which stops the scan with a
+  traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
