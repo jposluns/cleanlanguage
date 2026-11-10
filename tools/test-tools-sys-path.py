@@ -14,8 +14,9 @@ docstrings and comments are not read:
 
 1. Any reference, read or write, to sys.path, sys.meta_path, sys.path_hooks or
    sys.path_importer_cache is a finding. So is a keyword of one of those 4
-   names, or of `__dict__`, in any class pattern, at any depth, of a case of a
-   `match` statement whose subject is sys, such as
+   names, or of any name that starts and ends with 2 underscores, such as
+   `__dict__` or `__getattribute__`, in any class pattern, at any depth, of a
+   case of a `match` statement whose subject is sys, such as
    `case types.ModuleType(path=p)`, `case object(flags=Flags(path=p))` or
    `case object(path=p) | object(flags=p)`. Here sys is any attribute named
    sys, such as `os.sys`, and each of these names wherever it stands in the
@@ -24,7 +25,9 @@ docstrings and comments are not read:
    binds, with or without `as`, whatever that module is. An attribute named
    meta_path, path_hooks, path_importer_cache or addsitedir, and a keyword of
    one of those names in any class pattern, are findings on any object.
-2. `from sys import` of any of those 4 names, or of `*`, is a finding.
+2. `from sys import` of any of those 4 names, of any name that starts and ends
+   with 2 underscores, such as `__dict__` or `__getattribute__`, or of `*`, is
+   a finding.
 3. `import site`, in any form, and `from site import` are findings.
 4. A call to setattr or delattr whose first argument is sys is a finding. A
    call to setattr, delattr, getattr or vars whose first argument is starred,
@@ -43,7 +46,8 @@ named file and adds no folder to the search path.
 
 Residuals:
 
-- deliberate evasion of any kind, including an edit to this gate;
+- deliberate evasion of any kind, including an edit to this gate, such as a
+  check added to it that tells a self-test source from a real file;
 - `exec`, `eval` and `compile` of text, and Python held in strings and run by
   `-c`, such as the runner text of tools/test-skill-release-date.py;
 - sys reached by other means: `__import__("sys")`,
@@ -124,6 +128,15 @@ def literal_clean(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value not in GUARDED
 
 
+def dunder(name: str) -> bool:
+    """True when name starts and ends with 2 underscores, such as `__dict__`.
+
+    Such a name on sys, such as `__dict__` or `__getattribute__`, can reach
+    sys.path without naming it.
+    """
+    return name.startswith("__") and name.endswith("__")
+
+
 def check_source(source: bytes, label: str) -> list[str]:
     """Return the findings for one file's source."""
     try:
@@ -163,14 +176,14 @@ def check_source(source: bytes, label: str) -> list[str]:
                 dict_access(node, "sys.__dict__")
         elif isinstance(node, ast.MatchClass):
             for name in node.kwd_attrs:
-                if (name in GUARDED or name == "__dict__") and node in on_sys:
+                if (name in GUARDED or dunder(name)) and node in on_sys:
                     found.append((node.lineno, f"a class-pattern keyword named {name} in a case whose match subject is sys"))
                 elif name in ANY_OBJECT:
                     found.append((node.lineno, f"a class-pattern keyword named {name}"))
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
             if node.module == "sys":
                 for alias in node.names:
-                    if alias.name in GUARDED or alias.name == "*":
+                    if alias.name in GUARDED or alias.name == "*" or dunder(alias.name):
                         found.append((node.lineno, f"from sys import {alias.name}"))
             if node.module == "site" or (node.module or "").startswith("site."):
                 found.append((node.lineno, "an import from site"))
@@ -304,7 +317,14 @@ CASES = [
     ("import sys\nmatch sys:\n    case {\"k\": object(path=p)}:\n        pass\n", True),
     ("import sys\nmatch sys:\n    case C(object(path=p)):\n        pass\n", True),
     ("import sys\nmatch sys:\n    case object(__dict__=d):\n        d['path'].insert(0, 'x')\n", True),
+    ("import sys\nmatch sys:\n    case object(__getattribute__=ga):\n        ga('path').insert(0, 'x')\n", True),
+    ("from sys import __dict__ as d\nd['path'].insert(0, 'x')\n", True),
+    ("from sys import __dict__\n__dict__['path'].append('x')\n", True),
+    ("from sys import __getattribute__ as ga\nga('path').insert(0, 'x')\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
+    ("match x:\n    case C(__class__=c):\n        pass\n", False),
+    ("from os import __name__\n", False),
+    ("from sys import argv, exit\n", False),
     ("match p:\n    case Point(x=0):\n        pass\n", False),
     ("match request:\n    case Request(path=p):\n        pass\n", False),
     ("a.b.path.join('x')\n", False),

@@ -9,22 +9,23 @@ evasion is a named residual.
 
 The rule: each .github/workflows/*.yml file is loaded with UniqueKeyLoader,
 taken from tools/test-workflow-launch-isolation.py as described below, and
-every value of a key `uses`, in a mapping or in a key and value pair of an
-`!!omap` or `!!pairs` list, at any depth of mappings, lists and pairs, so a
-step `uses`, a job `uses` and one that an alias or a merge key brings in, must
-be text of the form `owner/repo[/path]@<sha>`, where `<sha>` is exactly 40
-lower-case hex digits. A mapping, list or pair that aliases bring in more than
-once is checked once. The owner starts with an ASCII letter or digit and holds
-only ASCII letters, digits and hyphens; the repo and each path part are not
-empty, hold only ASCII letters, digits, `_`, `.` and `-`, and are not `.` or
-`..`. Anything else is a finding: a tag or a branch, a short, long or
-upper-case hex ref, a local `./` or `../` path, any `docker://` value, an
-expression such as `${{ matrix.action }}`, an owner that holds `_` or `.`, an
-empty repo or path part, such as `owner/@<sha>`, and a `uses` that is not
-text. A workflow that cannot be read as UTF-8, one whose loading raises an
-Exception of any type, such as the error on a duplicate key, the ValueError on
-`!!int abc` or the RecursionError on mappings nested as deep as the recursion
-limit, or a SystemExit, and a recursive node are findings, and an empty
+every value of a key `uses` in the document as PyYAML builds it, in a mapping
+or in a key and value pair of an `!!omap` or `!!pairs` list, at any depth of
+mappings, lists and pairs, so a step `uses`, a job `uses` and one that an
+alias or a merge key brings in, must be text of the form
+`owner/repo[/path]@<sha>`, where `<sha>` is exactly 40 lower-case hex digits.
+A mapping, list or pair that aliases bring in more than once is checked once.
+The owner starts with an ASCII letter or digit and holds only ASCII letters,
+digits and hyphens; the repo and each path part are not empty, hold only ASCII
+letters, digits, `_`, `.` and `-`, and are not `.` or `..`. Anything else is a
+finding: a tag or a branch, a short, long or upper-case hex ref, a local `./`
+or `../` path, any `docker://` value, an expression such as
+`${{ matrix.action }}`, an owner that holds `_` or `.`, an empty repo or path
+part, such as `owner/@<sha>`, and a `uses` that is not text. A workflow that
+cannot be read as UTF-8, one whose loading raises an Exception of any type,
+such as the error on a duplicate key, the ValueError on `!!int abc` or the
+RecursionError on mappings nested as deep as the recursion limit, or a
+SystemExit, and a recursive node are findings, and an empty
 .github/workflows/*.yml listing is a failure. A finding's path writes each
 mapping key as key_text does, by no call that raises, so an integer key of
 more than 4300 digits, whose decimal text raises ValueError under the default
@@ -42,21 +43,28 @@ cached bytecode file in tools/__pycache__ stands in for the source. It leaves
 sys.path unchanged and adds no entry for the scan to sys.modules. An lstat or
 read error, a compile error, an Exception or a SystemExit raised while the
 scan's module body runs, and a scan that defines no UniqueKeyLoader each stop
-the gate before its self-tests, with 1 FAIL line that names the exception's
-type and message, and exit status 1. Any other BaseException, such as
-KeyboardInterrupt or GeneratorExit, raised while the scan's module body runs
-or while UniqueKeyLoader loads a workflow, is not caught: it stops the gate
-with a traceback and no FAIL line, so an interrupt stays an interrupt.
+the gate before its self-tests, with 1 FAIL line that names the first line of
+the exception's type and message, or its type alone when that text cannot be
+built, and exit status 1. Any other BaseException, such as KeyboardInterrupt
+or GeneratorExit, raised while the scan's module body runs or while
+UniqueKeyLoader loads a workflow, is not caught: it stops the gate with a
+traceback and no FAIL line, so an interrupt stays an interrupt.
 
 Residuals:
 
-- deliberate evasion of any kind, including an edit to this gate;
+- deliberate evasion of any kind, including an edit to this gate, such as a
+  catch added to it that tells a self-test's stand-in loader from a real one,
+  for example by the traceback, `__cause__` or `__context__` of what it
+  catches;
 - files outside .github/workflows/*.yml, which the launch scan refuses;
 - a 40-hex commit that is the commit of a tag, or a commit in a fork, is
   accepted; the gate does not check that the commit exists or which repository
   holds it;
 - GitHub Actions' own YAML reading is not checked, so a key that GitHub
   Actions reads as `uses` but PyYAML builds as other text passes;
+- a `uses` that PyYAML drops while it builds the document passes, such as one
+  in a `!!set` or one under a duplicate key in a merge source; the gate does
+  not check how GitHub Actions reads such a form;
 - an owner, repo or path name that fits the form above but that GitHub may not
   accept, such as an owner with a trailing hyphen or 2 hyphens in a row, a
   long owner or repo name, or a repo named `...` or `.git`; the gate does not
@@ -81,6 +89,7 @@ import string
 import sys
 import tempfile
 import types
+import unicodedata
 from pathlib import Path
 
 try:
@@ -347,11 +356,16 @@ def self_test(loader) -> list[str]:
         if bool(found) != refused:
             errors.append(f"self-test: {text[:200]!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
     # PIN must give the verdict of the rule in the docstring, as allowed
-    # applies that rule from its text rather than from PIN, for every ASCII
-    # character and some others, such as non-ASCII digits and letters, as the
-    # owner's first or a later character, inside or as the whole of the repo
-    # and a path part, and as a character of the ref. A `/` or an `@` that
-    # splits a name is judged as the rule judges the whole value.
+    # applies that rule from its text rather than from PIN. Each code point 0
+    # to 127, each Unicode decimal digit, up to 32 of the other code points
+    # that `str.isalnum` accepts in each general category, spread evenly from
+    # its first to its last, and some others, such as a no-break space, are
+    # tried as the first, a middle and the last character of the owner, the
+    # repo and a path part, as the whole of the repo and a path part, as each
+    # of the 40 characters of the ref, and after the ref. `.` and `..` as the
+    # whole of the repo and a path part, and a second `@<sha>` after the ref,
+    # are tried too. A `/` or an `@` that splits a name is judged as the rule
+    # judges the whole value.
     alnum = string.ascii_letters + string.digits
 
     def allowed(value: str) -> bool:
@@ -368,11 +382,24 @@ def self_test(loader) -> list[str]:
             and all(part not in ("", ".", "..") and all(char in alnum + "_.-" for char in part) for part in parts)
         )
 
-    chars = [chr(n) for n in range(128)]
+    by_category: dict[str, list[str]] = {}
+    for point in range(128, sys.maxunicode + 1):
+        if chr(point).isalnum():
+            by_category.setdefault(unicodedata.category(chr(point)), []).append(chr(point))
+    chars = [chr(n) for n in range(128)] + by_category.pop("Nd", [])
+    for group in by_category.values():
+        chars += [group[n * (len(group) - 1) // 31] for n in range(32)] if len(group) > 32 else group
     chars += ["\u00a0", "\u00e9", "\u0130", "\u0131", "\u0663", "\u017f", "\u2028", "\u212a", "\uff10", "\uff21"]
-    forms = ["{}wner/repo@", "o{}ner/repo@", "owner/r{}po@", "owner/{}@", "owner/repo/p{}th@", "owner/repo/{}@"]
-    values = [form.format(char) + SHA for form in forms for char in chars]
-    values += [f"owner/repo@{char}{SHA[1:]}" for char in chars]
+    forms = [f"{{}}/repo@{SHA}", f"owner/{{}}@{SHA}", f"owner/repo/{{}}@{SHA}"]
+    names = ["owner", "repo", "path"]
+    values = [f"owner/{name}@{SHA}" for name in (".", "..")] + [f"owner/repo/{name}@{SHA}" for name in (".", "..")]
+    values.append(f"owner/repo@{SHA}@{SHA}")
+    for char in dict.fromkeys(chars):
+        for form, name in zip(forms, names):
+            values.append(form.format(char))
+            values += [form.format(name[:at] + char + name[at + 1 :]) for at in (0, len(name) // 2, len(name) - 1)]
+        values += [f"owner/repo@{SHA[:at]}{char}{SHA[at + 1 :]}" for at in range(40)]
+        values.append(f"owner/repo@{SHA}{char}")
     for value in values:
         if (check_uses(value) is None) != allowed(value):
             errors.append(f"self-test: {value!r} gave {check_uses(value) or 'no finding'}, but the rule {'allows' if allowed(value) else 'refuses'} it")
@@ -408,13 +435,16 @@ def self_test(loader) -> list[str]:
     # A stand-in loader whose mapping constructor raises an instance of every
     # Exception subclass present when this self-test runs, found by walking
     # `type.__subclasses__` from Exception, must give 1 finding that names the
-    # instance's type. Each instance is made by calling its class with no
-    # arguments or, when that raises or gives another type, without calling
-    # `__init__`; a subclass of BaseExceptionGroup needs a message and a list
-    # of exceptions, so it is also called with them. A class that no route
-    # makes is a self-test failure. Unlisted, whose finding is checked in
-    # full, and Unprintable, whose `__str__` raises, are also raised on their
-    # own.
+    # instance's type, so a catch that misses a type fails. Every instance is
+    # raised from this stand-in, so a catch that tells it from a real load
+    # passes; the residuals name that as a deliberate change to the gate. Each
+    # instance is made by calling its class with no arguments or, when that
+    # raises or gives another type, without calling `__init__`; a subclass of
+    # BaseExceptionGroup needs a message and a list of exceptions, so it is
+    # also called with them. A class that no route makes is a self-test
+    # failure. Unlisted, whose finding is checked in full, with a message of 1
+    # line and of 2 lines, and Unprintable, whose `__str__` raises, are also
+    # raised on their own.
     class Unlisted(Exception):
         pass
 
@@ -433,6 +463,7 @@ def self_test(loader) -> list[str]:
     Raises.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, raises)
     for exc, want in (
         (Unlisted("defined in the self-test"), "Unlisted: defined in the self-test"),
+        (Unlisted("first line\nsecond line"), "Unlisted: first line"),
         (Unprintable(), "Unprintable"),
     ):
         raised[:] = [exc]
@@ -517,6 +548,42 @@ def self_test(loader) -> list[str]:
             found = [f"{type(exc).__name__} escaped check_text"]
         if found != want:
             errors.append(f"self-test: an integer of more than 4300 digits gave {[f[:200] for f in found]}, expected {[w[:200] for w in want]}")
+    # Under a limit of 4300 digits, key_text must write an integer key of 3
+    # times 4300 bits as its digits and one of 1 bit more, or 60 ** 2450, of
+    # 14472 bits, whose text raises ValueError, as its bit length; with no
+    # limit, it must write each as its digits. Any other key must be written
+    # as its type's name, also in a finding's path.
+    previous = sys.get_int_max_str_digits()
+    try:
+        for limit, key, want in (
+            (4300, 2**12899, None),
+            (4300, 2**12900, "<int of 12901 bits>"),
+            (4300, 60**2450, "<int of 14472 bits>"),
+            (0, 2**12900, None),
+            (0, 60**2450, None),
+            (4300, 5, "5"),
+            (4300, True, "<bool>"),
+            (4300, 1.5, "<float>"),
+            (4300, None, "<NoneType>"),
+        ):
+            sys.set_int_max_str_digits(limit)
+            want = str(key) if want is None else want
+            try:
+                got = key_text(key)
+            except Exception as exc:
+                got = f"{type(exc).__name__} escaped key_text"
+            if got != want:
+                errors.append(f"self-test: key_text of a {type(key).__name__} key under a limit of {limit} gave {got[:80]!r}, expected {want[:80]!r}")
+    finally:
+        sys.set_int_max_str_digits(previous)
+    found, _ = check_text("? true\n: {uses: actions/checkout@v4}\n", "case.yml", loader)
+    if found != [f"case.yml: <bool>.uses: {check_uses('actions/checkout@v4')}"]:
+        errors.append(f"self-test: a key true with a uses under it gave {found}")
+    # main sets stdout to write a character that its encoding cannot hold as a
+    # backslash escape before the self-tests run, so a finding that holds a
+    # lone surrogate prints instead of raising.
+    if getattr(sys.stdout, "errors", None) != "backslashreplace":
+        errors.append(f"self-test: stdout writes a character it cannot encode with {getattr(sys.stdout, 'errors', None)!r}, expected 'backslashreplace'")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"
@@ -562,6 +629,7 @@ def load_self_test() -> list[str]:
         cases = [
             ("exits.py", source + b"\nraise SystemExit(0)\n", "SystemExit: 0"),
             ("unprintable.py", source + b"\nclass Unprintable(Exception):\n    def __str__(self):\n        raise ValueError('no text')\n\n\nraise Unprintable()\n", "Unprintable"),
+            ("lines.py", source + b"\nraise RuntimeError('first line\\nsecond line')\n", "RuntimeError: first line"),
             ("none.py", b"X = 1\n", "ImportError: defines no UniqueKeyLoader"),
             ("broken.py", b"def broken(:\n", "SyntaxError: "),
             ("absent.py", None, "FileNotFoundError: "),
@@ -569,11 +637,13 @@ def load_self_test() -> list[str]:
             # the annotation would be kept as text and raise no NameError.
             ("future.py", b"def f(x: missing): pass\nf.__annotations__\n", "NameError: "),
         ]
+        # A want that ends in a colon and a space must start why; any other
+        # must equal it.
         for name, text, want in cases:
             if text is not None:
                 (folder / name).write_bytes(text)
             loader, why = try_load(folder / name)
-            if loader is not None or not why.startswith(want):
+            if loader is not None or not (why.startswith(want) if want.endswith(": ") else why == want):
                 errors.append(f"self-test: loading {name} gave {why or 'UniqueKeyLoader'}, expected {want}")
         cached = folder / "cached.py"
         cached.write_bytes(source)
