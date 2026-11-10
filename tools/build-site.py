@@ -897,8 +897,7 @@ PLACEHOLDER_CHECKSUM = "0" * 64
 NEAR_PLACEHOLDER_ZEROS = 56
 # The verify page's own words for each state of its checksum (sum_tokens()): the note that stands in for the checksum
 # while release.json holds the placeholder, and the start of the sentence that shows the published checksum. D-4 of
-# site-src/pages/disclosure.html quotes both, and tools/test-build-site.py fails if either is missing from that entry,
-# so the disclosure page cannot go on describing wording that the verify page no longer shows.
+# site-src/pages/disclosure.html quotes both, and tools/test-build-site.py fails if either is missing from that entry.
 CHECKSUM_PENDING_NOTE = "appears here once that version is published"
 CHECKSUM_PUBLISHED_PHRASE = "The published checksum for version"
 # The verify page's download block in its source: steps 1 to 3, from the step 1 label to the end of the step 3 token

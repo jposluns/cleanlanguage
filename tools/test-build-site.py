@@ -2932,19 +2932,71 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
+def disclosure_d4_section(text: str) -> str | None:
+    """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
+    d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
+    ends at whichever comes first: the next h2 element, the next element whose class holds lbl (an entry or block
+    label), or the end of the page. It is the page source between those points, so an h3 heading inside D-4 does not end
+    it, and an HTML comment or an attribute value inside it counts as D-4's text."""
+    starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    bounds: list[int] = []
+
+    class Reader(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            line, column = self.getpos()
+            values = dict(attrs)
+            if not bounds:
+                if tag == "h2" and values.get("id") == "d-4":
+                    bounds.append(starts[line - 1] + column)
+            elif len(bounds) == 1 and (tag == "h2" or "lbl" in (values.get("class") or "").split()):
+                bounds.append(starts[line - 1] + column)
+
+    reader = Reader()
+    reader.feed(text)
+    reader.close()
+    if not bounds:
+        return None
+    return text[bounds[0]:bounds[1] if len(bounds) > 1 else len(text)]
+
+
 def check_disclosure_states(failures: list[str]) -> int:
-    """D-4 of site-src/pages/disclosure.html quotes the verify page's words for each state of its checksum: the
-    generator's CHECKSUM_PENDING_NOTE appears in the placeholder rendering of sum_tokens(), CHECKSUM_PUBLISHED_PHRASE in
-    the rendering with a published checksum, and each in D-4's section of the page source, so that a change to either
-    wording fails here until D-4 quotes what the verify page shows."""
+    """Each of the generator's CHECKSUM_PENDING_NOTE and CHECKSUM_PUBLISHED_PHRASE appears in its own state's rendering
+    of sum_tokens() and in D-4's own text in site-src/pages/disclosure.html, as disclosure_d4_section() reads it. Both
+    tests are containment of the text, so each passes wherever the phrase is written in one run, whatever the sentence
+    around it says. The test pages check the section reading: D-4's heading with an extra attribute, D-4 as the last
+    entry before the blocks that follow the entries, and a page with no D-4 heading, among others."""
     generator = load_module(GENERATOR)
+    phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
+    note, published = phrases.values()
+
+    def d4_failures(text: str, where: str) -> list[str]:
+        section = disclosure_d4_section(text)
+        if section is None:
+            return [f"{where} has no D-4 heading, an h2 element whose id attribute is d-4"]
+        return [f"D-4 of {where} lacks {name}, {phrase!r}" for name, phrase in phrases.items() if phrase not in section]
+
+    lacks_note = [f"D-4 of the test page lacks CHECKSUM_PENDING_NOTE, {note!r}"]
+    entry_4 = f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
+    blocks = ('<p class="lbl blk">Your browser</p>\n<p>{}</p>\n<p class="lbl blk">Security</p>\n<p>Report.</p>\n'
+              '<div class="next"><p class="lbl">Next</p><a class="start" href="/">Home</a>\n</div>\n')
+    cases = (
+        ("an extra attribute on the D-4 heading", f'<p class="lbl sec">Entry 4</p>\n<h2 class="x" id="d-4">Four</h2>\n'
+         f'<p>{note}; {published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("D-4 as the last entry", entry_4 + f"<p>{note}.</p>\n" + blocks.format("Local storage."), []),
+        ("D-4 at the end of the page", entry_4 + f"<p>{note}.</p>\n", []),
+        ("the note only on the next entry's label line",
+         entry_4 + f'<p class="lbl sec">Entry 5, {note}</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("the note only in a block after D-4 as the last entry", entry_4 + blocks.format(note), lacks_note),
+        ("the note only after the next h2 heading", entry_4 + f'<h2 id="d-5">Five</h2>\n<p>{note}</p>\n', lacks_note),
+        ("no D-4 heading", f'<p class="lbl sec">Entry 3</p>\n<h2 id="d-3">Three</h2>\n<p id="d-4">{note}; {published}'
+         " 1.</p>\n", ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
+    )
+    for case, text, expected in cases:
+        got = d4_failures(text, "the test page")
+        if got != expected:
+            failures.append(f"disclosure states: the test page with {case} gave {got}, expected {expected}")
     text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
-    start = text.find('<h2 id="d-4">')
-    end = text.find("<h2 ", start + 1) if start >= 0 else -1
-    if end < 0:
-        failures.append("disclosure states: site-src/pages/disclosure.html has no D-4 heading before another heading")
-        return 1
-    entry = text[start:end]
+    failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
     sum_url = generator.release_tokens(PIN_VERSION, f"v{PIN_VERSION}", PIN_CHECKSUM)["release.sum_url"]
     states = (("placeholder", generator.PLACEHOLDER_CHECKSUM, "CHECKSUM_PENDING_NOTE"),
               ("published", PIN_CHECKSUM, "CHECKSUM_PUBLISHED_PHRASE"))
@@ -2953,9 +3005,7 @@ def check_disclosure_states(failures: list[str]) -> int:
         rendered = "".join(generator.sum_tokens(PIN_VERSION, checksum, sum_url).values())
         if phrase not in rendered:
             failures.append(f"disclosure states: the {state} rendering of sum_tokens() lacks {name}, {phrase!r}")
-        if phrase not in entry:
-            failures.append(f"disclosure states: D-4 of site-src/pages/disclosure.html lacks {name}, {phrase!r}")
-    return 1
+    return 1 + len(cases)
 
 
 # The pin of the whole verify page: the sha256 of each state's rendering by
