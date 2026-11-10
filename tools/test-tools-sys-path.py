@@ -48,6 +48,16 @@ Residuals:
 
 - deliberate evasion of any kind, including an edit to this gate, such as a
   check added to it that tells a self-test source from a real file;
+- an edit to this gate that bounds a check at a depth deeper than its
+  self-tests reach: they hold no chain of more than 4 names before sys, so a
+  test for sys that accepts no longer chain passes them and misses
+  `a.b.c.d.e.sys.path`; the walk that runs the checks cut 11 levels below the
+  module, the walk that finds imports of sys or the walk that maps each node
+  to its parent cut 6 levels below it, or the walk that finds `match`
+  statements cut 5 levels below it passes them, and the first misses sys.path
+  under 8 nested `if` statements; and they hold no class pattern more than 4
+  levels down a case's pattern, so a walk of the pattern cut 4 levels down
+  passes them and misses `case [[[[[object(path=p)]]]]]:`;
 - `exec`, `eval` and `compile` of text, and Python held in strings and run by
   `-c`, such as the runner text of tools/test-skill-release-date.py;
 - sys reached by other means: `__import__("sys")`,
@@ -369,8 +379,11 @@ CASES = [
     ("import os\nos.path.sys.path.insert(0, 'x')\n", True),
     ("import a.b\nmatch a.b.sys:\n    case object(path=p):\n        pass\n", True),
     # sys reached through a chain of 3 or 4 names, at each check that takes
-    # sys, and through an attribute of a call, so a test for sys that bounds
-    # the chain's depth or needs a name at its base gets a verdict wrong.
+    # sys, and through an attribute of a call, so a test for sys that needs a
+    # name at its base, or that accepts no chain of more than 3 names before
+    # sys, gets a verdict wrong. No case holds a chain of 5 names or more
+    # before sys, so a test that accepts no chain of more than 4 names passes
+    # every self-test.
     ("import xml.etree.ElementTree\nxml.etree.ElementTree.sys.path.insert(0, 'x')\n", True),
     ("import a.b.c.d\na.b.c.d.sys.path.append('x')\n", True),
     ("import a.b.c.d\nmatch a.b.c.d.sys:\n    case object(path=p):\n        pass\n", True),
@@ -425,7 +438,12 @@ def self_test() -> list[str]:
     # Each case must keep its verdict with its lines indented under
     # `class C:`, `def f(self):`, `if x:` and `with y:`, so that each of its
     # statements stands 4 compound statements deep, so a check that reads only
-    # the top of the tree, or the tree to a fixed depth, gets a verdict wrong.
+    # the top of the tree gets a verdict wrong. So does a walk of the tree cut
+    # to stop a fixed number of levels below the module, up to 10 for the walk
+    # that runs the checks, 5 for the walk that finds imports of sys and for
+    # the walk that maps each node to its parent, and 4 for the walk that
+    # finds `match` statements; cut 1 level deeper, each of these walks passes
+    # every self-test.
     for source, refused in CASES:
         lines = source.splitlines(keepends=True)
         indented = "class C:\n    def f(self):\n        if x:\n            with y:\n" + "".join(" " * 16 + line for line in lines)
