@@ -1483,7 +1483,8 @@ def check_site_checksum(load_code: int = 0) -> int:
         return code
     if status != 200:
         # The checksum comparison cannot run (exit 2), but the release-date
-        # check below still runs and reports, and the more severe code wins.
+        # check below still runs and reports any failure it finds, and the more
+        # severe code wins.
         print(
             f"check-release-checksum-live: could not verify: unexpected HTTP {status} reading release {tag}",
             file=sys.stderr,
