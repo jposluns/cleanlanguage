@@ -2984,8 +2984,9 @@ def check_disclosure_states(failures: list[str]) -> int:
     cases = (
         ("an extra attribute on the D-4 heading", f'<p class="lbl sec">Entry 4</p>\n<h2 class="x" id="d-4">Four</h2>\n'
          f'<p>{note}; {published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n<h2 id="d-5">Five</h2>\n', []),
-        ("the note only before the D-4 heading on its line", f'<p class="lbl sec">Entry 4</p><p>{note}.</p><h2 id="d-4">'
-         f'Four</h2>\n<p>{published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n', lacks_note),
+        ("the note only before the D-4 heading on its line",
+         f'<p class="lbl sec">Entry 4</p><p>{note}.</p><h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
+         f'<p class="lbl sec">Entry 5</p>\n', lacks_note),
         ("D-4 as the last entry, its note on the line of the label that ends it",
          entry_4 + f"<p>{note}.</p>" + blocks.format("Local storage."), []),
         ("a class that holds lbl only within a word, before the note in D-4",
