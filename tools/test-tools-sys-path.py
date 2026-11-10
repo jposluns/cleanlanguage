@@ -58,6 +58,16 @@ Residuals:
   under 8 nested `if` statements; and they hold no class pattern more than 4
   levels down a case's pattern, so a walk of the pattern cut 4 levels down
   passes them and misses `case [[[[[object(path=p)]]]]]:`;
+- an edit to this gate that reads only some items of each list: each loop
+  over the names of an import, the cases of a `match`, the keywords of a
+  class pattern or the files, and each walk of the tree or of a case's
+  pattern, cut to read only the first 2 items of each list or only the last
+  2, passes the self-tests, except the walk that runs the checks, which
+  passes them cut to read only the first 3 or only the last 2; cut to the
+  first 2, the loop over the names of a `from sys import` misses
+  `from sys import argv, exit, path` and the loop over the files misses a
+  file that sorts after the first 2, and cut to the first 3, the walk that
+  runs the checks misses sys.path in the fourth statement of a file;
 - `exec`, `eval` and `compile` of text, and Python held in strings and run by
   `-c`, such as the runner text of tools/test-skill-release-date.py;
 - sys reached by other means: `__import__("sys")`,
@@ -357,8 +367,15 @@ CASES = [
     # In these cases and some above, the item that a loop over a list or a
     # walk of the tree needs, a name of an import, a case, a sub-pattern, a
     # class-pattern keyword or a statement, stands first of 2, in the middle
-    # of 3 and last of 2, so a loop that reads only some positions gets a
-    # verdict wrong.
+    # of 3 and last of 2, so a loop or walk that reads only the first item
+    # of each list, or only the last, gets a verdict wrong. In the case of
+    # `import os`, `import sys as s` and `s.path.append('x')`, the statement
+    # that the walk that runs the checks needs stands last of 3, so that
+    # walk gets a verdict wrong when it reads only the first 2 items of each
+    # list. Each such loop and walk passes every self-test when it reads
+    # only the first 2 items of each list, or only the last 2, except that
+    # walk, which passes them when it reads only the first 3 or only the
+    # last 2.
     ("import sys as s, os\ns.path.append('x')\n", True),
     ("import sys, sys as s\ns.path.append('x')\n", True),
     ("from sys import path, argv\n", True),

@@ -56,6 +56,14 @@ Residuals:
   catch added to it that tells a self-test's stand-in loader from a real one,
   for example by the traceback, `__cause__` or `__context__` of what it
   catches;
+- an edit to this gate that reads only some items: a walk that reads only the
+  first 2 pairs of each mapping and the first 2 items of each list, or only
+  the last 2 of each, passes the self-tests, and so do a loop over the
+  workflow files cut to its first 3 or its last 3 and a check that reads only
+  the first 5 path parts or only the last 2; cut so, the walk that reads the
+  first 2 misses a `uses` in the third step of a job, the loop over the files
+  cut to its first 3 misses a workflow that sorts after them, and the check of
+  the first 5 path parts accepts `owner/repo/a/b/c/d/e/..@<sha>`;
 - files outside .github/workflows/*.yml, which the launch scan refuses;
 - a 40-hex commit that is the commit of a tag, or a commit in a fork, is
   accepted; the gate does not check that the commit exists or which repository
@@ -341,7 +349,9 @@ CASES = [
     # In these cases and some above, a `uses` key, a key whose value holds
     # one, and a list item that holds one each stand first of 2, in the middle
     # of 3 and last of 2 in their mapping or list, so a walk that reads only
-    # some positions misses one.
+    # the first pair of each mapping or the first item of each list, or only
+    # the last, misses one. Cut to read only the first 2 pairs and items, or
+    # only the last 2, the walk passes every self-test.
     ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n    timeout-minutes: 5\n", True),
     ("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\nconcurrency: x\n", True),
     (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n  b:\n    steps:\n      - uses: actions/checkout@{SHA}\n", True),
@@ -352,8 +362,8 @@ CASES = [
     (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA}\n      - uses: actions/checkout@v4\n", True),
     # The key of a pair in an `!!omap` or `!!pairs` list may be a mapping or a
     # list, and it can hold a `uses` as the pair's value can, so a walk that
-    # reads only a pair's value, or only some kinds of node at either place,
-    # misses one.
+    # reads only a pair's value, or that skips a mapping or a list at either
+    # place, misses one.
     ("x: !!pairs [{? {uses: actions/checkout@v4} : y}]\n", True),
     ("x: !!omap [{? {uses: actions/checkout@v4} : y}]\n", True),
     ("jobs:\n  a: !!pairs [{? {steps: [{uses: actions/checkout@v4}]} : y}]\n", True),
@@ -396,7 +406,11 @@ def self_test(loader) -> list[str]:
     # are tried too. A `/` or an `@` that splits a name is judged as the rule
     # judges the whole value. Each try in a path part is made in the first
     # path part and again in the fourth, after `a/b/c/`, so a check that reads
-    # only the first 3 path parts gets a verdict wrong.
+    # only the first 3 path parts gets a verdict wrong, and a `/` tried as the
+    # last character of the fourth makes an empty fifth, so one that reads
+    # only the first 4 gets one wrong too, as does one that reads only the
+    # last path part. One that reads only the first 5 path parts, or only the
+    # last 2, passes every self-test.
     alnum = string.ascii_letters + string.digits
 
     def allowed(value: str) -> bool:
