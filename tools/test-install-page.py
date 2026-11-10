@@ -5,28 +5,28 @@ Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR) and, the committed tree aside, applies 1 fault there: it
 changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
-tools/check-headers.py or tools/check-inline-code.py (in 2 cases adding a
-cached file of it too), swaps 2 family pages, or adds a file that Cloudflare
-Pages runs or reads: package.json, functions/_middleware.js, site/_worker.js,
-site/_worker.js/index.js, wrangler.json, wrangler.jsonc, wrangler.toml,
-runtime.txt, requirements.txt, Pipfile or Gemfile. It runs the gate there as a
-separate process and asserts its exit code and, where a case gives them as
-(code, words), that its output holds those words, so that a crash, which also
-exits 1, does not pass for a refusal. 3 cases put a ``</ script>``, markup in a
-``title`` and a comment ended by ``--!>`` on a family page, and 3 run a copy of
-the gate that expects the other reading of 1 of its ``READING_PROBES``,
-expecting exit 3 and the probe's name, as the gate gives them on a Python that
-reads that probe's fragment otherwise. 2 more each run a copy in which the
-probe of a ``</ script>`` inside a ``script`` or the probe of markup in a
-``title`` reads its ``h1`` inside an open ``div``, as on a Python whose
-html.parser opens elements inside a ``script`` or a ``title``, with
-``tools/check-inline-code.py`` removed, expecting exit 3 and the probe's name,
-which the copy cannot give if that probe tries to read that file. The probe of
-a comment ended by ``--!>`` has no ``</br>``, and its only start tag is its
-``h1``'s, with only the comment before it, so no reading of it meets a start
-tag or a ``</br>`` while an element is open, and parse() reads that file only
-at a start tag, a self-closing one included, or a ``</br>`` end tag that it
-meets while it holds an element open. probe_name_problems() fails unless
+tools/check-headers.py or tools/check-inline-code.py (in 2 cases, 1 under root,
+adding a cached file of it too), swaps 2 family pages, or adds a file that
+Cloudflare Pages runs or reads: package.json, functions/_middleware.js,
+site/_worker.js, site/_worker.js/index.js, wrangler.json, wrangler.jsonc,
+wrangler.toml, runtime.txt, requirements.txt, Pipfile or Gemfile. It runs the
+gate there as a separate process and asserts its exit code and, where a case
+gives them as (code, words), that its output holds those words, so that a
+crash, which also exits 1, does not pass for a refusal. 3 cases put a
+``</ script>``, markup in a ``title`` and a comment ended by ``--!>`` on a
+family page, and 3 run a copy of the gate that expects the other reading of 1
+of its ``READING_PROBES``, expecting exit 3 and the probe's name, as the gate
+gives them on a Python that reads that probe's fragment otherwise. 2 more each
+run a copy in which the probe of a ``</ script>`` inside a ``script`` or the
+probe of markup in a ``title`` reads its ``h1`` inside an open ``div``, as on a
+Python whose html.parser opens elements inside a ``script`` or a ``title``,
+with ``tools/check-inline-code.py`` removed, expecting exit 3 and the probe's
+name, which the copy cannot give if that probe tries to read that file. The
+probe of a comment ended by ``--!>`` has no ``</br>``, and its only start tag
+is its ``h1``'s, with only the comment before it, so no reading of it meets a
+start tag or a ``</br>`` while an element is open, and parse() reads that file
+only at a start tag, a self-closing one included, or a ``</br>`` end tag that
+it meets while it holds an element open. probe_name_problems() fails unless
 PROBE_NAMES holds the names of the gate's ``READING_PROBES`` in their order, so
 that each probe has its copy. 1 case gives a family link the class ``btn``
 alone and expects the gate's refusal of it as not a button, so that the suite
@@ -44,11 +44,14 @@ hides as a whole has no h1 or an h1 that does not read as hidden, or if loading
 the gate or reading the fragments raises an exception. It reads only the
 anchors, h1 elements and page_hidden of the parser that parse() returns, and
 never calls the gate's family_checked(), which holds the 2 filters of the links
-back, on not hidden and on visible text. Exit 0 when every case passes; 1
-otherwise, naming each failing case. Each of RESIDUALS is a fault the gate
-passes, such as markup in which a browser may hide or empty what the gate
-checks; it must exit 0, and the gate's docstring must name it, so that what the
-gate says it checks cannot outgrow its code unnoticed.
+back, on not hidden and on visible text. hidden_link_exit_problems() fails
+unless hidden_link_problems(), given a stand-in for the gate whose parse()
+raises SystemExit(3), as the gate's die() does, returns the problem that names
+SystemExit(3). Exit 0 when every case passes; 1 otherwise, naming each failing
+case. Each of RESIDUALS is a fault the gate passes, such as markup in which a
+browser may hide or empty what the gate checks; it must exit 0, and the gate's
+docstring must name it, so that what the gate says it checks cannot outgrow its
+code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -208,6 +211,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import urllib.parse
 from pathlib import Path
 
@@ -2196,7 +2200,7 @@ HIDDEN_LINKS = (
 )
 
 
-def hidden_link_problems() -> list[str]:
+def hidden_link_problems(loader=load_gate) -> list[str]:
     """The gate's parse(), run in this process on the 8 fragments of HIDDEN_LINKS, gives no visible text to a link that
     it reads as hidden on a fragment that it does not hide as a whole, so on those fragments the filter of the links
     back on not hidden in family_checked() is implied by its filter on visible text; this fails if, on 1 of them, it
@@ -2204,10 +2208,11 @@ def hidden_link_problems() -> list[str]:
     returns, and never calls family_checked(), which holds the 2 filters. On a fragment that parse() hides as a whole, a
     link that reads as hidden may keep its text, and this fails unless that fragment has an h1 and every h1 reads as
     hidden, so that check 4 refuses such a page. It also fails if parse() reads no link of a fragment as hidden, and,
-    naming the error, if loading the gate or reading the fragments raises an exception."""
+    naming the error, if loading the gate or reading the fragments raises an exception. It takes the gate from loader():
+    load_gate() by default, and in hidden_link_exit_problems() a stand-in whose parse() raises SystemExit(3)."""
     problems: list[str] = []
     try:
-        gate = load_gate()
+        gate = loader()
         for markup in HIDDEN_LINKS:
             parser = gate.parse(markup)
             hidden = [anchor for anchor in parser.anchors if anchor["hidden"]]
@@ -2222,9 +2227,27 @@ def hidden_link_problems() -> list[str]:
                 problems.append(f"parse() gives visible text to a link that it reads as hidden in {markup!r}, so the "
                                 "filter of the links back on not hidden is no longer implied by the filter on visible "
                                 "text.")
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"the hidden links of tools/{GATE.name} could not be checked: {error!r}"]
     return problems
+
+
+def hidden_link_exit_problems() -> list[str]:
+    """A problem unless hidden_link_problems(), given a stand-in for the gate whose parse() raises SystemExit(3), as the
+    gate's die() does, returns the problem that names SystemExit(3), so that its catch cannot narrow to Exception
+    unnoticed."""
+    def parse(markup: str):
+        raise SystemExit(3)
+
+    expected = [f"the hidden links of tools/{GATE.name} could not be checked: SystemExit(3)"]
+    try:
+        found = hidden_link_problems(lambda: types.SimpleNamespace(parse=parse))
+    except SystemExit as error:
+        return [f"hidden_link_problems() let {error!r} through from a gate whose parse() raises it"]
+    if found != expected:
+        return [f"hidden_link_problems(), given a gate whose parse() raises SystemExit(3), returns {found!r}, not "
+                f"{expected!r}"]
+    return []
 
 
 def end_tag_problems() -> list[str]:
@@ -2660,6 +2683,7 @@ def main() -> int:
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
     failures += [f"the hidden links: {problem}" for problem in hidden_link_problems()]
+    failures += [f"the hidden link exit: {problem}" for problem in hidden_link_exit_problems()]
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
