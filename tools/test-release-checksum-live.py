@@ -5238,7 +5238,8 @@ class WorkflowPathsTest(unittest.TestCase):
         """The entries of each path filter under the workflow's on key, by trigger and in order, read as text: a list
         starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs while each line
         starts with 6 spaces, a hyphen and a space. An entry in double quotes is read without them, and any other entry
-        line is kept whole, so that it never equals an expected entry."""
+        line is kept whole, so that it never equals an expected entry: an entry that the reader cannot read exactly,
+        such as one written without quotes, fails the list test even when it names an expected entry."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
@@ -5281,8 +5282,12 @@ class WorkflowPathsTest(unittest.TestCase):
         that these tests read, is pinned only by the hand-kept OWN_FILES and GENERATOR_INPUTS, so a new read of that
         kind is seen by neither test; the render runs on the committed sources, so a file that it opens only while
         site-src/site.json stages a draft is not traced; and a new generator input that a copy of GENERATOR_INPUTS can
-        do without, so that WholePageTest still passes, and that neither traced render opens, is seen by neither
-        test."""
+        do without, so that WholePageTest still passes, and that neither traced render opens, is seen by neither test.
+        The 2 assertIn checks do not read the workflow, so they catch no broken workflow: they make a trace that records
+        neither file fail, such as one whose hook records nothing, since the loop that follows then checks nothing. The
+        finally sets TRACE back to None so that the hook does nothing for the rest of the process and the trace stops
+        growing; no test outcome depends on it, since the test reads the trace only to compute files and no file is
+        opened between the end of the render and that computation, so no test pins it."""
         global TRACE, TRACE_HOOK_INSTALLED
         root = MODULE_PATH.parent.parent
         release = json.loads((root / "site-src/release.json").read_text(encoding="utf-8"))
