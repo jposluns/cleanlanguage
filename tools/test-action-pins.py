@@ -24,13 +24,14 @@ empty repo or path part, such as `owner/@<sha>`, and a `uses` that is not
 text. A workflow that cannot be read as UTF-8, one whose loading raises an
 Exception of any type, such as the error on a duplicate key, the ValueError on
 `!!int abc` or the RecursionError on mappings nested as deep as the recursion
-limit, or a SystemExit, a recursive node, and an Exception raised while the
-loaded document is walked, such as the ValueError on turning an integer key of
-more than 4300 digits into text, are findings, and an empty
-.github/workflows/*.yml listing is a failure.
-tools/test-workflow-launch-isolation.py separately refuses local actions and
-local reusable workflows, and any .yml or .yaml file under .github outside
-.github/workflows/*.yml, such as an action.yml.
+limit, or a SystemExit, and a recursive node are findings, and an empty
+.github/workflows/*.yml listing is a failure. A finding's path writes each
+mapping key as key_text does, by no call that raises, so an integer key of
+more than 4300 digits, whose decimal text raises ValueError under the default
+limit, is written as its bit length. tools/test-workflow-launch-isolation.py
+separately refuses local actions and local reusable workflows, and any .yml or
+.yaml file under .github outside .github/workflows/*.yml, such as an
+action.yml.
 
 The gate takes UniqueKeyLoader from the launch scan without importing the
 scan. It calls `os.lstat` on tools/test-workflow-launch-isolation.py and
@@ -138,6 +139,26 @@ def check_uses(value) -> str | None:
     return None
 
 
+def key_text(key) -> str:
+    """Return a mapping key as text for a finding's path, without raising.
+
+    Text is returned as it is. An integer is written as its decimal digits,
+    unless `sys.get_int_max_str_digits()` is not 0 and its bit length is more
+    than 3 times that limit, since its decimal text could then exceed the
+    limit and raise ValueError; it is then written as its bit length, such as
+    `<int of 14768 bits>`. A limit of 0 sets no limit, so the digits are
+    written. Any other key is written as its type's name, such as `<bool>`.
+    """
+    if type(key) is str:
+        return key
+    if type(key) is int:
+        limit = sys.get_int_max_str_digits()
+        if limit and key.bit_length() > 3 * limit:
+            return f"<int of {key.bit_length()} bits>"
+        return str(key)
+    return f"<{type(key).__name__}>"
+
+
 def walk(doc, found: list[str], checked: list[str]) -> None:
     """Check every `uses` key in doc, at any depth; record each in checked.
 
@@ -169,12 +190,12 @@ def walk(doc, found: list[str], checked: list[str]) -> None:
         stack.append((node, where, True))
         if isinstance(node, dict):
             pairs = list(node.items())
-            children = [(value, f"{where}.{key}") for key, value in pairs]
+            children = [(value, f"{where}.{key_text(key)}") for key, value in pairs]
         else:
             pairs = [tuple(node)] if isinstance(node, tuple) and len(node) == 2 else []
             children = [(item, f"{where}[{n}]") for n, item in enumerate(node)]
         for key, value in pairs:
-            if key == "uses":
+            if type(key) is str and key == "uses":
                 checked.append(where)
                 reason = check_uses(value)
                 if reason:
@@ -182,26 +203,33 @@ def walk(doc, found: list[str], checked: list[str]) -> None:
         stack.extend((child, label, False) for child, label in reversed(children))
 
 
+def describe(exc: BaseException) -> str:
+    """Return the first line of "<type name>: <text>" for exc.
+
+    The text is `str(exc)`, which can raise, such as on an instance made
+    without calling `__init__` or one whose class's `__str__` raises; when
+    building the line raises an Exception, the type's name alone is returned.
+    """
+    name = type(exc).__name__
+    try:
+        return f"{name}: {exc}".splitlines()[0]
+    except Exception:
+        return name
+
+
 def check_text(text: str, label: str, loader) -> tuple[list[str], int]:
     """Return the findings for one workflow's text, and its number of uses.
 
     An Exception or a SystemExit raised while loader loads text is a finding
-    that the text cannot be parsed, and an Exception raised while the loaded
-    document is walked, such as the ValueError on turning an integer key of
-    more than 4300 digits into text, is a finding that it cannot be checked.
+    that the text cannot be parsed, which names it as describe does.
     """
     try:
         doc = yaml.load(text, Loader=loader)
     except (Exception, SystemExit) as exc:
-        first = f"{type(exc).__name__}: {exc}".splitlines()[0]
-        return [f"{label}: cannot be parsed as YAML ({first})"], 0
+        return [f"{label}: cannot be parsed as YAML ({describe(exc)})"], 0
     found: list[str] = []
     checked: list[str] = []
-    try:
-        walk(doc, found, checked)
-    except Exception as exc:
-        first = f"{type(exc).__name__}: {exc}".splitlines()[0]
-        return [f"{label}: cannot be checked ({first})"], 0
+    walk(doc, found, checked)
     return [f"{label}: {reason.lstrip('.')}" for reason in found], len(checked)
 
 
@@ -315,15 +343,36 @@ def self_test(loader) -> list[str]:
             continue
         if bool(found) != refused:
             errors.append(f"self-test: {text[:200]!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
-    # The owner holds only ASCII letters, digits and hyphens, so each other
-    # ASCII punctuation character must be refused as the owner's first
-    # character and as a later one; a later `/` ends the owner, so it is tried
-    # first only.
-    owners = [f"{char}owner" for char in string.punctuation if char != "-"]
-    owners += [f"o{char}wner" for char in string.punctuation if char not in "-/"]
-    for owner in owners:
-        if check_uses(f"{owner}/repo@{SHA}") is None:
-            errors.append(f"self-test: the owner {owner!r} gave no finding")
+    # PIN must give the verdict of the rule in the docstring, as allowed
+    # applies that rule from its text rather than from PIN, for every ASCII
+    # character and some others, such as non-ASCII digits and letters, as the
+    # owner's first or a later character, inside or as the whole of the repo
+    # and a path part, and as a character of the ref. A `/` or an `@` that
+    # splits a name is judged as the rule judges the whole value.
+    alnum = string.ascii_letters + string.digits
+
+    def allowed(value: str) -> bool:
+        names, at, ref = value.partition("@")
+        owner, *parts = names.split("/")
+        return (
+            at == "@"
+            and len(ref) == 40
+            and all(char in "0123456789abcdef" for char in ref)
+            and owner[:1] != ""
+            and owner[0] in alnum
+            and all(char in alnum + "-" for char in owner)
+            and parts != []
+            and all(part not in ("", ".", "..") and all(char in alnum + "_.-" for char in part) for part in parts)
+        )
+
+    chars = [chr(n) for n in range(128)]
+    chars += ["\u00a0", "\u00e9", "\u0130", "\u0131", "\u0663", "\u017f", "\u2028", "\u212a", "\uff10", "\uff21"]
+    forms = ["{}wner/repo@", "o{}ner/repo@", "owner/r{}po@", "owner/{}@", "owner/repo/p{}th@", "owner/repo/{}@"]
+    values = [form.format(char) + SHA for form in forms for char in chars]
+    values += [f"owner/repo@{char}{SHA[1:]}" for char in chars]
+    for value in values:
+        if (check_uses(value) is None) != allowed(value):
+            errors.append(f"self-test: {value!r} gave {check_uses(value) or 'no finding'}, but the rule {'allows' if allowed(value) else 'refuses'} it")
     for text in (step("actions/checkout@v4"), "jobs:\n  a:\n    steps:\n      - !!pairs [{uses: actions/checkout@v4}]\n"):
         _, count = check_text(text, "case.yml", loader)
         if count != 1:
@@ -353,31 +402,81 @@ def self_test(loader) -> list[str]:
     if len(found) != 1 or not found[0].startswith("case.yml: cannot be parsed as YAML (RecursionError: "):
         errors.append(f"self-test: mappings nested {depth} deep gave {found}")
 
-    # check_text must turn each Exception that a workflow load raises into a
-    # finding that names its type. These cases check it for each type that
-    # loading hostile workflow text through the real loader was observed to
-    # raise, and for Unlisted, an Exception subclass defined only here, which
-    # this stand-in loader's mapping constructor raises and which stands in
-    # for a type not yet observed.
+    # A stand-in loader whose mapping constructor raises an instance of every
+    # Exception subclass present when this self-test runs, found by walking
+    # `type.__subclasses__` from Exception, must give 1 finding that names the
+    # instance's type. Each instance is made by calling its class with no
+    # arguments or, when that raises or gives another type, without calling
+    # `__init__`; a subclass of BaseExceptionGroup needs a message and a list
+    # of exceptions, so it is also called with them. A class that no route
+    # makes is a self-test failure. Unlisted, whose finding is checked in
+    # full, and Unprintable, whose `__str__` raises, are also raised on their
+    # own.
     class Unlisted(Exception):
         pass
+
+    class Unprintable(Exception):
+        def __str__(self):
+            raise ValueError("no text")
+
+    raised: list[BaseException] = []
 
     class Raises(loader):
         pass
 
     def raises(_loader, _node, deep=False):
-        raise Unlisted("defined in the self-test")
+        raise raised[0]
 
     Raises.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, raises)
-    try:
-        found, _ = check_text(step(f"actions/checkout@{SHA}"), "case.yml", Raises)
-    except Exception as exc:
-        found = [f"{type(exc).__name__} escaped check_text"]
-    if found != ["case.yml: cannot be parsed as YAML (Unlisted: defined in the self-test)"]:
-        errors.append(f"self-test: a loader whose mapping constructor raises an Exception subclass defined here gave {found}")
+    for exc, want in (
+        (Unlisted("defined in the self-test"), "Unlisted: defined in the self-test"),
+        (Unprintable(), "Unprintable"),
+    ):
+        raised[:] = [exc]
+        try:
+            found, _ = check_text(step(f"actions/checkout@{SHA}"), "case.yml", Raises)
+        except Exception as escaped:
+            found = [f"{type(escaped).__name__} escaped check_text"]
+        if found != [f"case.yml: cannot be parsed as YAML ({want})"]:
+            errors.append(f"self-test: a loader whose mapping constructor raises {want.split(':')[0]} gave {found}")
+    classes: dict[int, type] = {}
+    todo: list[type] = [Exception]
+    while todo:
+        cls = todo.pop()
+        if id(cls) not in classes:
+            classes[id(cls)] = cls
+            todo.extend(type.__subclasses__(cls))
+    for cls in classes.values():
+        routes = [cls, lambda: cls.__new__(cls), lambda: BaseException.__new__(cls)]
+        if issubclass(cls, BaseExceptionGroup):
+            routes.append(lambda: cls("self-test", [Exception()]))
+        made = []
+        for route in routes:
+            try:
+                made = [route()]
+            except Exception as exc:
+                why = describe(exc)
+                continue
+            if type(made[0]) is cls:
+                break
+            why = f"made a {type(made[0]).__name__}"
+            made = []
+        if not made:
+            errors.append(f"self-test: cannot make an instance of {cls.__module__}.{cls.__qualname__} ({why})")
+            continue
+        raised[:] = made
+        try:
+            found, _ = check_text(step(f"actions/checkout@{SHA}"), "case.yml", Raises)
+        except Exception as exc:
+            found = [f"{type(exc).__name__} escaped check_text"]
+        head = f"case.yml: cannot be parsed as YAML ({cls.__name__}"
+        if len(found) != 1 or not (found[0] == head + ")" or found[0].startswith(head + ": ")):
+            errors.append(f"self-test: {cls.__module__}.{cls.__qualname__} raised while loading gave {found}")
     # With Python 3.14.4 and PyYAML 6.0.3, loading each input below through
     # the real loader raised the type beside it; each must give a finding that
-    # names that type. The cases above cover RecursionError and SystemExit.
+    # names that type. The walk above raises each Exception subclass present
+    # when the self-test runs from a stand-in loader; these rows check real
+    # inputs.
     for text, kind in (
         ("a: !!int abc\n", "ValueError"),
         ("a: !!bool maybe\n", "KeyError"),
@@ -397,20 +496,24 @@ def self_test(loader) -> list[str]:
             found = [f"{type(exc).__name__} escaped check_text"]
         if len(found) != 1 or not found[0].startswith(f"case.yml: cannot be parsed as YAML ({kind}: "):
             errors.append(f"self-test: {text[:80]!r} gave {found}, expected a finding that names {kind}")
-    # The text of an integer of more than 4300 digits raises ValueError: a
-    # `uses` value that is one must be a finding that names its type, and a
-    # key that is one must be a finding that the workflow cannot be checked.
+    # The text of an integer of more than 4300 digits raises ValueError under
+    # the default limit. A `uses` value that is one, 60 ** 2500, must be a
+    # finding that names its type; a key that is one must be written in a path
+    # as its bit length, or as its digits when the limit is 0; and a key that
+    # is one with no `uses` under it must give no finding.
     big = "1" + ":0" * 2500
+    key = str(60**2500) if sys.get_int_max_str_digits() == 0 else "<int of 14768 bits>"
     for text, want in (
-        (step(big), "case.yml: jobs.a.steps[0].uses: a value of type int is not text"),
-        (f"? {big}\n: 1\n", "case.yml: cannot be checked (ValueError: "),
+        (step(big), ["case.yml: jobs.a.steps[0].uses: a value of type int is not text"]),
+        (f"? {big}\n: {{uses: actions/checkout@v4}}\n", [f"case.yml: {key}.uses: {check_uses('actions/checkout@v4')}"]),
+        (f"? {big}\n: 1\n", []),
     ):
         try:
             found, _ = check_text(text, "case.yml", loader)
         except Exception as exc:
             found = [f"{type(exc).__name__} escaped check_text"]
-        if len(found) != 1 or not found[0].startswith(want):
-            errors.append(f"self-test: an integer of more than 4300 digits gave {found}, expected {want}")
+        if found != want:
+            errors.append(f"self-test: an integer of more than 4300 digits gave {[f[:200] for f in found]}, expected {[w[:200] for w in want]}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"
@@ -496,6 +599,10 @@ def load_self_test() -> list[str]:
 
 
 def main() -> int:
+    # A finding can hold text that the output's encoding cannot hold, such as
+    # a lone surrogate in a workflow key; it is written as a backslash escape,
+    # so the line is printed instead of raising UnicodeEncodeError.
+    sys.stdout.reconfigure(errors="backslashreplace")
     loader, why = load_scan()
     if loader is None:
         print(f"FAIL: cannot load UniqueKeyLoader from {SCAN} ({why})")
