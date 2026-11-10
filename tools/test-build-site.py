@@ -2938,14 +2938,16 @@ def disclosure_d4_section(text: str) -> str | None:
     ends at whichever comes first: the next h2 element, the next element whose class attribute lists lbl as a class name
     (such as an entry or block label; class_names() splits the attribute on ASCII whitespace only, as HTML does), or the
     end of the page. It is the page source between those points, so an h3 heading inside D-4 does not end it, and an
-    HTML comment or an attribute value inside it counts as D-4's text."""
+    HTML comment or an attribute value inside it counts as D-4's text. It reads a tag's attributes as HTML does: a name
+    in any letter case, a value with its character references decoded, a value left out as empty, and of 2 attributes
+    with the same name only the first, as tools/build-site.py reads them."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
     class Reader(HTMLParser):
         def handle_starttag(self, tag, attrs):
             line, column = self.getpos()
-            values = dict(attrs)
+            values = {name: value or "" for name, value in reversed(attrs)}
             if not bounds:
                 if tag == "h2" and values.get("id") == "d-4":
                     bounds.append(starts[line - 1] + column)
@@ -2994,6 +2996,10 @@ def check_disclosure_states(failures: list[str]) -> int:
          entry_4 + f'<p class="nolbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
         ("a class attribute whose only class name joins lbl and x with a no-break space, before the note in D-4",
          entry_4 + f'<p class="lbl\u00a0x">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("the note only after an element with 2 class attributes, the first lbl sec and the second x",
+         entry_4 + f'<p class="lbl sec" class="x">Entry 5</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("an element with 2 class attributes, the first x and the second lbl, before the note in D-4",
+         entry_4 + f'<p class="x" class="lbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
         ("D-4 at the end of the page", entry_4 + f"<p>{note}.</p>\n", []),
         ("the note only on the next entry's label line",
          entry_4 + f'<p class="lbl sec">Entry 5, {note}</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
@@ -3001,6 +3007,12 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("the note only after the next h2 heading", entry_4 + f'<h2 id="d-5">Five</h2>\n<p>{note}</p>\n', lacks_note),
         ("no D-4 heading", f'<p class="lbl sec">Entry 3</p>\n<h2 id="d-3">Three</h2>\n<p id="d-4">{note}; {published}'
          " 1.</p>\n", ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
+        ("a D-4 heading with 2 id attributes, the first d-4 and the second x",
+         f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4" id="x">Four</h2>\n<p>{note}; {published} 1.</p>\n'
+         '<p class="lbl sec">Entry 5</p>\n', []),
+        ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
+         f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
+         ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
     )
     for case, text, expected in cases:
         got = d4_failures(text, "the test page")
