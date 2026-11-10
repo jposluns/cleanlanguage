@@ -83,11 +83,10 @@ The rule:
    a character that ends a bash word (a space, a tab, `|`, `&`, `;`, `(`, `)`,
    `<` or `>`), is a launch (so `$python3 -I tools/x.py` is not one, and nor
    is `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`: any other
-   character continues the word). With the launches removed, a line
-   that still holds the word python, or a `.py`, `.pyz` or `.pyw` name with no
-   letter, digit or underscore directly after it (so `x.pyc` is not one), in
-   any letter case, is a finding, whether it is a command, a comment or a
-   message.
+   character continues the word). With the launches removed, a line that still
+   holds the word python, or a `.py`, `.pyz` or `.pyw` name with no letter,
+   digit or underscore directly after it (so `x.pyc` is not one), in any
+   letter case, is a finding, whether it is a command, a comment or a message.
 4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
    quotes, its backslashes and each `$` directly before a quote are removed is
    a finding (so `p$"y"thon3` is one).
