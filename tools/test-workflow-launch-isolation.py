@@ -100,12 +100,12 @@ Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
 `python3 -P -E -s` equivalent, a quoted script path, a character after `.py`
 that does not end a bash word, as in `tools/x.py''` or `tools/x.py$EMPTY`, 2
-spaces before `-I`, a
-launch whose words are split across continued lines, `(python3)` and other
-case arms naming python, a message or comment that names python or a .py file,
-an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
-`${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
-`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
+spaces before `-I`, a launch whose words are split across continued lines,
+`(python3)` and other case arms naming python, a message or comment that names
+python or a .py file, an expression such as `${{ env.PY }}`,
+`${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
+as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or `bash -e {0}`. Write a
+launch as `python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
