@@ -62,8 +62,8 @@ Exit codes:
   0  the page matches and is static
   1  the text drifted, or inline code was reintroduced
   3  a file could not be read, tools/check-inline-code.py could not be loaded, the
-     expected markup was not found, or the Python version is 3.7 or later and not
-     one that tools/check-inline-code.py supports
+     expected markup was not found, or the Python version is 3.7 or later and not one
+     that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
