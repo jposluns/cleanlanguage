@@ -75,13 +75,14 @@ def gate_families(path: Path = INSTALL_GATE) -> list[str]:
     class or type parameter name, and a type alias. It returns the families only if there is exactly 1 of them and it is
     a statement of the module of the form FAMILIES = [...] or (...) holding 1 or more strings and nothing else, and only
     if no global or nonlocal statement names FAMILIES, no attribute of FAMILIES is used, no item of FAMILIES is assigned
-    or deleted, no attribute named FAMILIES of any object, the module included, is used, and the source has no * import.
-    So a FAMILIES local to a def or a lambda, which leaves the module's FAMILIES as it is, is refused too: that is the
-    price of a reader that cannot misjudge a scope. Anything else fails with a message naming each refusal, so that a
-    list that is computed, or changed in any of those ways, cannot pass unread. It cannot see a change in which FAMILIES
-    is neither a target, nor the name before an attribute or item, nor an attribute name. Examples are a change made
-    through another name for the same list; through an expression that holds the list, such as
-    (FAMILIES or []).append(...) or [FAMILIES][0] += [...]; through a function the list is passed to, such as
+    or deleted, no attribute access x.FAMILIES is made, on any object x, the module included, and the source has no *
+    import. So a FAMILIES local to a def or a lambda, which leaves the module's FAMILIES as it is, is refused too: that
+    is the price of a reader that cannot misjudge a scope. Anything else fails with a message naming each refusal, so
+    that a list that is computed, or changed in any of those ways, cannot pass unread. It cannot see a change in which
+    FAMILIES is neither a target, nor the name before an attribute or item, nor the name of an attribute access.
+    Examples are a change made through another name for the same list, such as fam, bound by from __main__ import
+    FAMILIES as fam or by the class pattern of case object(FAMILIES=fam); through an expression that holds the list,
+    such as (FAMILIES or []).append(...) or [FAMILIES][0] += [...]; through a function the list is passed to, such as
     operator.iadd() or list.append(); and through the name given as a string or keyword, such as the string that
     setattr(), exec() or globals()[...] takes or the keyword that globals().update() takes."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -101,8 +102,8 @@ def gate_families(path: Path = INSTALL_GATE) -> list[str]:
               and isinstance(node.ctx, (ast.Store, ast.Del))):
             refusals.append(f"line {node.lineno} assigns or deletes an item of FAMILIES")
         elif isinstance(node, ast.Attribute) and node.attr == "FAMILIES":
-            # The module's own object, reached through sys.modules[__name__] or an imported __main__, say, rebinds,
-            # deletes or changes FAMILIES through this attribute, and the source cannot show which object is the module.
+            # The module's own object, reached through sys.modules[__name__] or an imported __main__, say, can rebind,
+            # delete or change FAMILIES through this attribute, and the source cannot show which object is the module.
             refusals.append(f"line {node.lineno} uses an attribute named FAMILIES, which on the module's own object "
                             "can rebind, delete or change it")
     value = None
