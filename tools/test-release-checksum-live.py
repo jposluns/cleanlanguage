@@ -53,6 +53,7 @@ import io
 import json
 import locale
 import os
+import py_compile
 import resource
 import shutil
 import signal
@@ -1461,14 +1462,16 @@ class ConditionalPassTest(unittest.TestCase):
         gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
         gate.release_status = unexpected_call
         saved = gate.GENERATOR
-        gate.GENERATOR = Path(self._tmp.name) / "build-site.py"
+        missing = Path(self._tmp.name) / "build-site.py"
+        gate.GENERATOR = missing
         try:
             code, out, err = self.main_reports()
         finally:
             gate.GENERATOR = saved
         self.assertEqual((code, out), (3, ""))
+        # The generator is missing, and the refusal names the exception's type and the missing file's path.
         self.assertIn("check-release-checksum-live: tools/build-site.py could not render the verify page's download "
-                      "block", err)
+                      f"block: FileNotFoundError: [Errno 2] No such file or directory: '{missing}'\n", err)
 
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the
@@ -5001,7 +5004,7 @@ class WholePageTest(unittest.TestCase):
                 code, output = self.gate_run()
                 self.assertEqual(code, 3, output)
                 # The checksum comes from the page, not release.json, which holds SUM.
-                self.assertIn(f"tools/build-site.py could not render the verify page: the checksum "
+                self.assertIn(f"tools/build-site.py could not render the verify page: BuildError: the checksum "
                               f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
                               output)
                 self.assertNotIn("release.json", output)
@@ -5103,6 +5106,95 @@ class WholePageTest(unittest.TestCase):
                 site_json.write_text(original, encoding="utf-8")
                 sitemap_config.write_text(original_sitemap, encoding="utf-8")
                 self.page.write_text(page, encoding="utf-8")
+
+
+def load_faults(defined: str, renamed: str) -> list[tuple[str, object, type]]:
+    """6 faults, each on its own copy of tools/build-site.py and each with the exception that the gate's LookupError
+    carries as its cause: the file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the
+    definition that starts with ``defined`` changed to start with ``renamed``, and a syntax error beside a cached file
+    of the unbroken source that the normal loader runs without comparing it with the source (an unchecked hash-based
+    file). For each fault but the renaming, that cause is the exception the load raises; the renamed copy loads, and the
+    cause is the AttributeError that the render call raises when it reads the missing name. Beside a cached file, a gate
+    that always reads the source gives that cause, and one that runs the cached file in its place does not. Root reads a
+    file whatever its mode, so under root the 2 mode-000 faults skip their case instead."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    name = defined.removeprefix("def ").removesuffix("(")
+    return [("missing", missing, FileNotFoundError), ("with mode 000", locked, PermissionError),
+            ("with mode 000 beside a valid cached file", cached_locked, PermissionError),
+            ("with a syntax error", broken, SyntaxError), (f"with {name} renamed", rename, AttributeError),
+            ("with a syntax error beside a stale cached file", stale, SyntaxError)]
+
+
+class GeneratorLoadTest(unittest.TestCase):
+    """A tools/build-site.py with each fault that load_faults() gives is a generator that cannot render, which the gate
+    raises as LookupError and main() refuses with exit 3; the gate never runs a cached file in place of the source. No
+    case reads the network."""
+
+    GENERATOR = Path(__file__).resolve().parent / "build-site.py"
+
+    def test_each_load_failure_is_a_generator_that_cannot_render(self):
+        for render, defined in ((gate.download_block, "def verify_download_block("),
+                                (gate.rendered_verify_page, "def verify_page(")):
+            for name, fault, cause in load_faults(defined, defined.replace("(", "_unused(")):
+                with self.subTest(f"{defined}: tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "build-site.py"
+                    shutil.copyfile(self.GENERATOR, path)
+                    fault(path)
+                    with mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render(CURRENT, ZIP_SUM)
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, cause)
+                    # The message ends with the cause's type and text, and for an OSError that text names the
+                    # generator's path, so that the refusal says which file could not be read.
+                    error = raised.exception.__cause__
+                    self.assertTrue(str(raised.exception).endswith(f": {type(error).__name__}: {error}"),
+                                    raised.exception)
+                    if issubclass(cause, OSError):
+                        self.assertIn(f": '{path}'", str(raised.exception))
+
+    def test_a_generator_that_exits_while_it_loads_cannot_render(self):
+        for render in (gate.download_block, gate.rendered_verify_page):
+            for code, statement, shown in ((0, "raise SystemExit(0)", "SystemExit: 0"),
+                                           (1, "raise SystemExit(1)", "SystemExit: 1"),
+                                           (None, "raise SystemExit", "SystemExit")):
+                with self.subTest(f"{render.__name__}: {shown} at import"), tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "build-site.py"
+                    path.write_bytes(self.GENERATOR.read_bytes() + f"\n{statement}\n".encode("ascii"))
+                    with mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render(CURRENT, ZIP_SUM)
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    # The message names the exception, so that the exit is never shown as a bare code or as nothing.
+                    self.assertTrue(str(raised.exception).endswith(f": {shown}"), raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, SystemExit)
+                    self.assertEqual(raised.exception.__cause__.code, code)
 
 
 if __name__ == "__main__":

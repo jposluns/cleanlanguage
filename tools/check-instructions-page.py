@@ -61,16 +61,19 @@ recorded hash and deliberate review.
 Exit codes:
   0  the page matches and is static
   1  the text drifted, or inline code was reintroduced
-  3  a file could not be read, the expected markup was not found, or the Python version
-     is 3.7 or later and not one that tools/check-inline-code.py supports
+  3  a file could not be read, tools/check-inline-code.py could not be loaded, the
+     expected markup was not found, or the Python version is 3.7 or later and not one
+     that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
 
 import html
-import importlib.util
+import os
 import re
+import stat
 import sys
+import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -95,15 +98,36 @@ def die(message: str) -> None:
     raise SystemExit(3)
 
 
+def load_inline_gate():
+    """tools/check-inline-code.py, read, compiled and run as a fresh module. The source is always read, so no cached
+    bytecode stands in for it; a source that is not a regular file, or that cannot be read, compiled or run, or that
+    defines no inline_code_problems or no UnsupportedPython, means that tools/check-inline-code.py could not be loaded
+    (exit 3)."""
+    try:
+        info = os.lstat(INLINE_GATE)
+    except OSError as error:
+        die(f"tools/check-inline-code.py could not be read: {error}")
+    if not stat.S_ISREG(info.st_mode):
+        die("tools/check-inline-code.py is not a regular file")
+    try:
+        source = INLINE_GATE.read_bytes()
+    except OSError as error:
+        die(f"tools/check-inline-code.py could not be read: {error}")
+    module = types.ModuleType("check_inline_code")
+    module.__file__ = str(INLINE_GATE)
+    try:
+        exec(compile(source, str(INLINE_GATE), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        die(f"tools/check-inline-code.py could not be loaded: {error!r}")
+    for attribute in ("inline_code_problems", "UnsupportedPython"):
+        if not hasattr(module, attribute):
+            die(f"tools/check-inline-code.py defines no {attribute}")
+    return module
+
+
 def inline_code_problems(text: str) -> list[str]:
     """Check 2: each piece of inline code, read with tools/check-inline-code.py."""
-    if not INLINE_GATE.is_file():
-        die("tools/check-inline-code.py does not exist")
-    spec = importlib.util.spec_from_file_location("check_inline_code", INLINE_GATE)
-    if spec is None or spec.loader is None:
-        die("tools/check-inline-code.py could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_inline_gate()
     try:
         return module.inline_code_problems(text)
     except module.UnsupportedPython as error:

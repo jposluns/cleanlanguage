@@ -708,16 +708,18 @@ Exit codes:
   1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, load path, pinned load,
      class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
      doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
-  3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
-     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports
+  3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing or cannot be loaded, or the
+     Python version is 3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
 
 import functools
-import importlib.util
+import os
 import re
+import stat
 import sys
+import types
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
@@ -861,17 +863,40 @@ def die(message: str) -> None:
     raise SystemExit(3)
 
 
+# The names this gate reads from each sibling gate that load_tool() loads.
+REUSED_NAMES = {
+    "check-inline-code.py": ("inline_code_problems", "UnsupportedPython", "INERT_ELEMENTS"),
+    "check-baseline-pin.py": ("load_pin", "Unreadable", "PREFIX"),
+    "check-headers.py": ("parse",),
+}
+
+
 @functools.cache
 def load_tool(name: str):
-    """Load a sibling gate as a module, so this gate applies exactly its logic."""
+    """Load a sibling gate as a module, so this gate applies exactly its logic. The source is always read, compiled and
+    run as a fresh module, so no cached bytecode stands in for it; a source that is not a regular file, or that cannot
+    be read, compiled or run, or that lacks any name REUSED_NAMES lists for it, is a gate it reuses that cannot be
+    loaded (exit 3)."""
     path = Path(__file__).resolve().parent / name
-    if not path.is_file():
-        die(f"tools/{name} does not exist")
-    spec = importlib.util.spec_from_file_location(name.removesuffix(".py").replace("-", "_"), path)
-    if spec is None or spec.loader is None:
-        die(f"tools/{name} could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        die(f"tools/{name} could not be read: {error}")
+    if not stat.S_ISREG(info.st_mode):
+        die(f"tools/{name} is not a regular file")
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        die(f"tools/{name} could not be read: {error}")
+    module = types.ModuleType(name.removesuffix(".py").replace("-", "_"))
+    module.__file__ = str(path)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        die(f"tools/{name} could not be loaded: {error!r}")
+    for attribute in REUSED_NAMES[name]:
+        if not hasattr(module, attribute):
+            die(f"tools/{name} defines no {attribute}")
     return module
 
 

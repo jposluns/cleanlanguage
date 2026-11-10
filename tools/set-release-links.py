@@ -44,17 +44,22 @@ Usage
 exits non-zero if anything would, without writing. ``--checksum`` is the zero
 placeholder until the release is published, and the published checksum after
 that; a checksum other than the placeholder with 56 or more of its 64 digits 0,
-such as a mistyped placeholder, is refused (exit 2).
+such as a mistyped placeholder, is refused (exit 2). A ``tools/build-site.py``
+that is not a regular file, that cannot be read, compiled or run, or that
+defines no ``build()``, ``BuildError`` or ``Unreadable`` is refused with the
+same exit 2, the exit of every refusal this writer makes.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import importlib.util
 import json
+import os
 import re
+import stat
 import sys
+import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -115,6 +120,33 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str 
     return planned
 
 
+def load_generator():
+    """tools/build-site.py, read, compiled and run as a fresh module. The source is always read, so no cached bytecode
+    stands in for it; a source that is not a regular file, or that cannot be read, compiled or run, or that defines no
+    build(), BuildError or Unreadable, is refused (exit 2)."""
+    path = REPO_ROOT / "tools" / "build-site.py"
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        die(f"tools/build-site.py could not be read: {error}")
+    if not stat.S_ISREG(info.st_mode):
+        die("tools/build-site.py is not a regular file")
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        die(f"tools/build-site.py could not be read: {error}")
+    module = types.ModuleType("build_site")
+    module.__file__ = str(path)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        die(f"tools/build-site.py could not be loaded: {error!r}")
+    for attribute in ("build", "BuildError", "Unreadable"):
+        if not hasattr(module, attribute):
+            die(f"tools/build-site.py defines no {attribute}")
+    return module
+
+
 def output_name(page: dict) -> str:
     return page["path"] if page["path"].endswith(".html") else page["path"] + "index.html"
 
@@ -125,11 +157,7 @@ def site_pages(release: dict, date: str) -> dict[Path, str | bytes]:
     A page changes when its regenerated output differs from the committed file. Only an
     indexable page carries a modified date, so a noindex page is regenerated but never stamped.
     """
-    spec = importlib.util.spec_from_file_location("build_site", REPO_ROOT / "tools" / "build-site.py")
-    if spec is None or spec.loader is None:
-        die("tools/build-site.py could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_generator()
     site_json = REPO_ROOT / "site-src" / "site.json"
     try:
         original = site_json.read_text(encoding="utf-8")

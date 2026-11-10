@@ -65,18 +65,21 @@ never a pass. In CI that means ``actions/checkout`` needs ``fetch-depth: 0``.
 Exit codes:
   0  every page passed
   1  at least one page has a problem
-  3  the check could not run: no git history, or a page could not be read
+  3  the check could not run: no git history, a page could not be read, or
+     tools/web_metadata.py or tools/sitemap_engine.py could not be loaded
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import html.parser
-import importlib.util
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -85,20 +88,53 @@ SITE_ROOT = REPO_ROOT / "site"
 TOOLS_DIR = Path(__file__).resolve().parent
 
 
-def _load_sibling(name: str):
-    """Load tools/<name>.py by its explicit path, leaving sys.path unchanged."""
-    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
+def die(message: str) -> None:
+    print(f"check-page-metadata: {message}", file=sys.stderr)
+    raise SystemExit(3)
+
+
+def _load_sibling(name: str, needs: tuple[str, ...]):
+    """Load tools/<name>.py by its explicit path, leaving sys.path unchanged.
+
+    The source is always read, compiled and run as a fresh module, so no cached
+    bytecode stands in for it. The module is in sys.modules under name while it
+    runs, so a later sibling can import it by that name, and is removed from it
+    when the load fails. A source that is not a regular file, or that cannot be
+    read, compiled or run, or that lacks any name in needs, means that the check
+    could not run (exit 3).
+    """
+    path = TOOLS_DIR / f"{name}.py"
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        die(f"tools/{path.name} could not be read: {error}")
+    if not stat.S_ISREG(info.st_mode):
+        die(f"tools/{path.name} is not a regular file")
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        die(f"tools/{path.name} could not be read: {error}")
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        sys.modules.pop(name, None)
+        die(f"tools/{path.name} could not be loaded: {error!r}")
+    for attribute in needs:
+        if not hasattr(module, attribute):
+            sys.modules.pop(name, None)
+            die(f"tools/{path.name} defines no {attribute}")
     return module
 
 
 # The sibling modules load by explicit path, so sys.path never names the tools
 # folder and no file planted there can be imported. web_metadata loads first
 # under its own name, because sitemap_engine imports it by that name.
-web_metadata = _load_sibling("web_metadata")
-engine = _load_sibling("sitemap_engine")
+web_metadata = _load_sibling("web_metadata", ("UrlError", "parse_origin", "meta_tags", "link_tags", "contained",
+                                              "same_origin_path", "locate_on_disk"))
+engine = _load_sibling("sitemap_engine", ("EngineError", "load_config", "enumerate_pages"))
 
 SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 
@@ -244,12 +280,6 @@ REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "artic
 # unnoticed, so the image references are resolved back to files here.
 SITE_ORIGIN = "https://cleanlanguage.ai"
 IMAGE_REFERENCES = ("og:image", "twitter:image")
-
-
-
-def die(message: str) -> None:
-    print(f"check-page-metadata: {message}", file=sys.stderr)
-    raise SystemExit(3)
 
 
 def git(*args: str) -> str:

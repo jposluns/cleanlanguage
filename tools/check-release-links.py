@@ -168,11 +168,11 @@ Exit codes:
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import re
 import stat
 import sys
+import types
 import urllib.parse
 from html.parser import HTMLParser
 from pathlib import Path
@@ -510,14 +510,17 @@ def rendered_verify_page() -> bytes:
     site-src/release.json (verify_page), the page the gate requires byte for byte. Raises LookupError when the
     generator cannot render it, which a refusal on any page causes."""
     try:
-        spec = importlib.util.spec_from_file_location("build_site_page", GENERATOR)
-        if spec is None or spec.loader is None:
-            raise ImportError("no loader")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType("build_site_page")
+        module.__file__ = str(GENERATOR)
+        exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         return module.verify_page(REPO_ROOT)
-    except Exception as error:
-        raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
+    # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
+    # (exit 3), never as the generator's own exit code.
+    except (Exception, SystemExit) as error:
+        # The message gives the type and the text: the text of an OSError names its file, and a bare SystemExit, whose
+        # text is empty, shows as its type alone.
+        detail = ": ".join(part for part in (type(error).__name__, str(error)) if part)
+        raise LookupError(f"tools/build-site.py could not render the verify page: {detail}") from error
 
 
 def staged_draft() -> str | None:
@@ -675,14 +678,17 @@ def download_block(version: str, checksum: str) -> str:
     3, or, for the zero placeholder, the not-yet-published note. Raises LookupError when the generator cannot
     render it. Both gates carry this function verbatim, as download_block_problems says."""
     try:
-        spec = importlib.util.spec_from_file_location("build_site", GENERATOR)
-        if spec is None or spec.loader is None:
-            raise ImportError("no loader")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = types.ModuleType("build_site")
+        module.__file__ = str(GENERATOR)
+        exec(compile(GENERATOR.read_bytes(), str(GENERATOR), "exec", dont_inherit=True), module.__dict__)
         return module.verify_download_block(module.REPO_ROOT, version, f"v{version}", checksum)
-    except Exception as error:
-        raise LookupError(f"tools/build-site.py could not render the verify page's download block: {error}") from error
+    # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
+    # (exit 3), never as the generator's own exit code.
+    except (Exception, SystemExit) as error:
+        # The message gives the type and the text: the text of an OSError names its file, and a bare SystemExit, whose
+        # text is empty, shows as its type alone.
+        detail = ": ".join(part for part in (type(error).__name__, str(error)) if part)
+        raise LookupError(f"tools/build-site.py could not render the verify page's download block: {detail}") from error
 
 
 def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
