@@ -5242,24 +5242,42 @@ class WorkflowPathsTest(unittest.TestCase):
 
     def path_lists(self) -> dict[str, list[str]]:
         """The entries of each path filter under the workflow's on key, by trigger and in order, read as text: a list
-        starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs while each line
-        starts with 6 spaces, a hyphen and a space. An entry in double quotes is read without them, and any other entry
-        line is kept whole, so that it never equals an expected entry: an entry that the reader cannot read exactly,
-        such as one written without quotes, fails the list test even when it names an expected entry. No broken workflow
-        fails the tests only because of 4 of its tests. The length test makes an empty entry a failure, not an
-        IndexError, and the test that a trigger key was read skips a paths key under no trigger key, which would
-        otherwise be read under None, so that the list test could raise a TypeError rather than fail. The test that the
-        section is on: is in both branches, though either alone would do, since each top-level key resets the trigger;
-        without both, a list under a mistyped on key would be read."""
+        starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs to the next key, a
+        line indented 4 spaces or less whose text after the indent starts with neither whitespace, # nor a hyphen. A
+        line of the list whose text after the indent starts with a hyphen is an entry line. An entry line of 6 spaces, a
+        hyphen, a space and an entry in double quotes is read without the quotes, and any other entry line is kept
+        whole, so that it never equals an expected entry: an entry that the reader cannot read exactly, such as one
+        written without quotes, fails the list test even when it names an expected entry. Any other line of the list, a
+        blank line included, is refused when an entry line follows it: each entry line that follows adds a record that
+        names the line by its number and never equals an expected entry, so that the list test fails on it. As runs
+        show, PyYAML reads an entry after a blank line or a comment line as part of the list, and cannot load the
+        workflow when that line is instead a line of text indented more than 4 spaces or one whose text after the indent
+        starts with a tab, or when an entry indented 6 spaces is followed by an entry line indented 4 spaces or less. A
+        blank line or a comment line between 2 entries fails too, though PyYAML reads the same list; one after the last
+        entry passes. No broken workflow fails the tests only because of 4 of its tests. The length test makes an empty
+        entry a failure, not an IndexError, and the test that a trigger key was read skips a paths key under no trigger
+        key, which would otherwise be read under None, so that the list test could raise a TypeError rather than fail.
+        The test that the section is on: is in both branches, though either alone would do, since each top-level key
+        resets the trigger; without both, a list under a mistyped on key would be read. The reader still cannot see a
+        key written otherwise than as the line it expects, such as one with a comment after its colon, as runs show: the
+        entries of a second paths key so written are not read, though PyYAML keeps them in place of the first list, and
+        a list under a trigger key so written is read as part of the list of the trigger before it, though PyYAML reads
+        it under its own trigger. How GitHub reads either is not checked offline."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
-        for line in self.WORKFLOW.read_text(encoding="utf-8").splitlines():
-            if listing is not None and line.startswith("      - "):
+        hidden: list[str] = []
+        for number, line in enumerate(self.WORKFLOW.read_text(encoding="utf-8").splitlines(), 1):
+            text = line.lstrip(" ")
+            if listing is not None and text.startswith("-"):
+                listing += hidden
                 entry = line.removeprefix("      - ")
                 listing.append(entry[1:-1] if len(entry) > 1 and entry[0] == entry[-1] == '"' else line)
                 continue
-            listing = None
+            if listing is not None and (len(line) - len(text) > 4 or text[:1].strip() in ("", "#")):
+                hidden.append(f"line {number} is not an entry: {line!r}")
+                continue
+            listing, hidden = None, []
             if line and not line[0].isspace() and not line.startswith("#"):
                 section, trigger = line, None
             elif section == "on:" and line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
@@ -5302,7 +5320,7 @@ class WorkflowPathsTest(unittest.TestCase):
         opened between the end of the render and that computation, so no test pins it. The test checks both triggers,
         which catches no broken workflow when the list test also runs, since that test requires both lists to name the
         same entries; it is kept so that the test run alone still fails on a file missing from 1 list. The default of
-        lists.get makes a trigger with no list fail on each file, not raise a KeyError. The subtests, and the sorting
+        lists.get makes a trigger with no list fail on each file, not raise a TypeError. The subtests, and the sorting
         and the set that give files, change only how a failure is reported."""
         global TRACE, TRACE_HOOK_INSTALLED
         root = MODULE_PATH.parent.parent
