@@ -84,20 +84,20 @@ The rule:
    followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
    nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
-   of a process substitution). In plain run text (text that bash reads as
-   commands), bash ends the script word at each character of that list, and
-   the rule counts the launch before it. Bash continues the word at a `<(` or
-   `>(`, and at every other character not in that list except one that closes
-   a construct holding the launch, and the rule refuses the line. The rule
-   also refuses such a closing character, although bash ends the word there:
-   for example a closing backquote, which ends a command substitution written
-   with backquotes, a `}` that ends a parameter expansion, as in
-   `${v:+python3 -I tools/x.py} --flag`, or a `"` or `'` that ends a quoted
-   string, as in `eval "python3 -I tools/x.py"`. With the launches removed, a
-   line that still holds the word python, or a `.py`, `.pyz` or `.pyw` name
-   with no letter, digit or underscore directly after it (so `x.pyc` is not
-   one), in any letter case, is a finding, whether it is a command, a comment
-   or a message.
+   of a process substitution). The rule counts the launch before each
+   character of that list, and refuses the line at a `<(` or `>(` and at every
+   other character directly after `.py`, among them a character that closes a
+   construct holding the launch: for example a closing backquote, which ends a
+   command substitution written with backquotes, a `}` that ends a parameter
+   expansion, or a `"` or `'` that ends a quoted string. For
+   `${v:+python3 -I tools/x.py} --flag`, with `v=1`, and for
+   `eval "python3 -I tools/x.py"`, bash passes tools/x.py as the script, and
+   for `${v:+python3 -I tools/x.py}w`, with `v=1`, and for
+   `eval "python3 -I tools/x.py"w`, it passes tools/x.pyw. With the launches
+   removed, a line that still holds the word python, or a `.py`, `.pyz` or
+   `.pyw` name with no letter, digit or underscore directly after it (so
+   `x.pyc` is not one), in any letter case, is a finding, whether it is a
+   command, a comment or a message.
 4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
    quotes, its backslashes and each `$` directly before a quote are removed is
    a finding (so `p$"y"thon3` is one).
@@ -109,23 +109,21 @@ The rule:
 
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
-`python3 -P -E -s` equivalent, a quoted script path, a character after `.py`
-that does not end a bash word in plain run text (text that bash reads as
-commands, not text such as a quoted string, a comment, a here-document body or
-a parameter expansion), as in `tools/x.py''` or `tools/x.py$EMPTY`, a
-character directly after `.py` that closes a construct holding the launch, and
-so ends the word, but is not in rule 3's list (such as a closing backquote,
-which ends a command substitution written with backquotes, a `}` that ends a
-parameter expansion, as in `${v:+python3 -I tools/x.py} --flag`, or a `"` or
-`'` that ends a quoted string, as in `eval "python3 -I tools/x.py"`; a `)`
-that closes `$(...)` or a subshell is in that list, and the launch before it
-is counted), 2 spaces before `-I`, a launch whose words are split across
-continued lines, `(python3)` and other case arms naming python, a message or
-comment that names python or a .py file, an expression such as
-`${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`,
-which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or
-`bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`, and a command
-substitution that holds one as `$(...)`.
+`python3 -P -E -s` equivalent, a quoted script path, a character directly
+after `.py` that is not in rule 3's list, as in `tools/x.py''` or
+`tools/x.py$EMPTY`, among them a character that closes a construct holding the
+launch (such as a closing backquote, which ends a command substitution written
+with backquotes, a `}` that ends a parameter expansion, as in
+`${v:+python3 -I tools/x.py} --flag`, or a `"` or `'` that ends a quoted
+string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
+subshell is in that list, and the launch before it is counted), 2 spaces
+before `-I`, a launch whose words are split across continued lines,
+`(python3)` and other case arms naming python, a message or comment that names
+python or a .py file, an expression such as `${{ env.PY }}`,
+`${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
+as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or `bash -e {0}`. Write a
+launch as `python3 -I tools/<name>.py`, and a command substitution that holds
+one as `$(...)`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
@@ -176,9 +174,10 @@ Residuals, named here because the scan reads text the pull request controls:
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
 - a launch written inside a parameter expansion, such as
-  `${v:+python3 -I tools/x.py|w}`, where bash does not end the word at `|`,
-  `;`, `&`, `<`, `>`, `(` or `)`, so the scan counts tools/x.py while bash
-  passes a script word that holds that character;
+  `${v:+python3 -I tools/x.py|w}`, which the scan counts as a launch of
+  tools/x.py, while with `v=1` bash passes `tools/x.py|w` as the script; with
+  `;`, `&`, `<`, `>`, `(` or `)` in place of `|`, the scan also counts
+  tools/x.py, and bash passes tools/x.py followed by that character and `w`;
 - an edit to rule 3's right edge that the self-tests do not reach. The
   character and pair self-tests put after `.py` each character of a sample
   (each ASCII character, each code point that `str.isspace()` accepts or whose
@@ -190,8 +189,8 @@ Residuals, named here because the scan reads text the pull request controls:
   only for a code point outside the sample, only where the text beyond the
   second character after `.py` differs, or only where a character outside the
   edge is followed by anything but `w`, if no case holds that text, and the
-  scan can then count a launch whose script word bash continues, or refuse an
-  honest one;
+  scan can then count a launch while bash passes another script word, or
+  refuse an honest one;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
   expands it, such as an escape in an ANSI-C string, a glob, brace or
   parameter expansion, or a `${{ }}` expression;
@@ -711,19 +710,18 @@ RUN_CASES = [
     ('echo "$HOME"', False),
     ("echo $'a b'", False),
     ("echo py$thon3", False),
-    # Rule 3's right edge. In plain run text, which bash reads as commands, a
-    # character after `.py` that does not end a bash word continues the word,
-    # so the scan refuses it rather than reads what bash would run
-    # (tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs tools/x.py). A
-    # `<(` or `>(` directly after `.py` also continues the word, since bash
-    # reads it as a process substitution (tools/x.py<(echo w) runs a script
-    # whose name ends with the substitution's path). A closing backquote ends
-    # the word, but the scan refuses it too: it cannot tell a closing
-    # backquote from an opening one, after which the word continues. A launch
-    # directly followed by the end of the line, a space, a tab, `|`, `&`, `;`,
-    # `(`, `)`, or a `<` or `>` not directly followed by `(`, stays counted,
-    # as it does before an operator that starts with one of them, such as
-    # `>>`, `<<<`, `>&`, `|&`, `&>` or `;;`.
+    # Rule 3's right edge. The scan refuses a character directly after `.py`
+    # that is not in the edge, rather than read what bash would run:
+    # tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs tools/x.py. That
+    # includes a backquote, since the scan cannot tell a closing backquote
+    # from an opening one: v=`python3 -I tools/x.py` runs tools/x.py, and
+    # tools/x.py`echo w` runs tools/x.pyw. It also refuses a `<(` or `>(`
+    # directly after `.py`: tools/x.py<(echo w) runs a script whose name ends
+    # with the path of a process substitution. A launch directly followed by
+    # the end of the line, a space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<`
+    # or `>` not directly followed by `(`, stays counted, as it does before an
+    # operator that starts with one of them, such as `>>`, `<<<`, `>&`, `|&`,
+    # `&>` or `;;`.
     (f'python3 -I {X}"w"', True),
     (f"python3 -I {X}'w'", True),
     (f"python3 -I {X}$'w'", True),
@@ -806,7 +804,9 @@ STEP_CASES = [
     ("env:\n          FOO: bar\n        run: echo ok", False),
     ("run: echo ok\n        run: python3 tools/x.py", True),
     # A carriage return reaches run text only through a YAML double-quoted
-    # escape, and it does not end a bash word, so the launch word continues.
+    # escape. The scan refuses one directly after `.py`: for
+    # `python3 -I tools/x.py` followed by a carriage return and `w`, bash
+    # passes tools/x.py, the carriage return and `w` as the script.
     ('run: "python3 -I tools/x.py\\rw"', True),
     ("uses: ./tools/action", True),
     ("uses: ../other/action", True),
