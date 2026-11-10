@@ -3046,8 +3046,8 @@ def check_disclosure_states(failures: list[str]) -> int:
                 states if phrases[name] not in "".join(sum_tokens(PIN_VERSION, checksum, sum_url).values())]
 
     # A stand-in for sum_tokens() that renders nothing in either state shows that each failure names its own state. No
-    # check pins the "disclosure states:" prefix of this case's failures, or the file name that its failures for
-    # site-src/pages/disclosure.html give.
+    # check pins the "disclosure states:" prefix of this case's failures, the file name that its failures for
+    # site-src/pages/disclosure.html give, or the count of cases that it returns.
     planted = state_failures(lambda version, checksum, url: {})
     expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}",
                 f"the published rendering of sum_tokens() lacks CHECKSUM_PUBLISHED_PHRASE, {published!r}"]
