@@ -35,12 +35,13 @@ The rule:
    cannot be listed, a file that cannot be read as UTF-8 or parsed with
    PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
    read differently). The scan loads each workflow with UniqueKeyLoader, and a
-   file whose loading raises a YAML error, RecursionError, ValueError,
-   IndexError, KeyError, AttributeError or TypeError is a finding.
-   UniqueKeyLoader's mapping constructor skips each merge key (`<<`), builds
-   each other key with `loader.construct_object(key_node, deep=deep)`, raises
-   a ConstructorError when a built key is `in` the list of the keys built
-   before it, and returns
+   file whose loading raises any exception is a finding:
+   `cannot be parsed as YAML`, then in parentheses the exception's type, a
+   colon, a space and the first line of its message, such as
+   `(OverflowError: int too large to convert to float)`. UniqueKeyLoader's
+   mapping constructor skips each merge key (`<<`), builds each other key with
+   `loader.construct_object(key_node, deep=deep)`, raises a ConstructorError
+   when a built key is `in` the list of the keys built before it, and returns
    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`. Loading with
    UniqueKeyLoader refuses some documents and loads others; UniqueKeyLoader's
    docstring gives examples of each that the self-tests record. Each workflow
@@ -389,8 +390,9 @@ def scan_tree(root: Path, floor: int, probe_scripts) -> tuple[list[str], int]:
                 findings.append(f"{rel}: holds {name}, which YAML 1.1 and 1.2 read differently")
         try:
             doc = yaml.load(text, Loader=UniqueKeyLoader)
-        except (yaml.YAMLError, RecursionError, ValueError, IndexError, KeyError, AttributeError, TypeError) as exc:
-            findings.append(f"{rel}: cannot be parsed as YAML ({str(exc).splitlines()[0]})")
+        except Exception as exc:
+            first = f"{type(exc).__name__}: {exc}".splitlines()[0]
+            findings.append(f"{rel}: cannot be parsed as YAML ({first})")
             continue
         found: list[str] = []
         runs, shells = collect(doc, found)
@@ -800,20 +802,25 @@ def self_test() -> list[str]:
             ("a mapping with a merge and an override, held in a sequence in a mapping and merged by a later key",
              "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
             ("a mapping nested 300 deep", "x: " + "{a: " * 300 + "1" + "}" * 300 + "\n" + head,
-             "cannot be parsed as YAML (maximum recursion depth"),
+             "cannot be parsed as YAML (RecursionError: maximum recursion depth"),
             # Loading these raises, in turn, a ValueError, a ValueError, an
-            # IndexError, a KeyError, an AttributeError and a TypeError, none
-            # of them a YAML error, and scan_tree catches each type.
+            # IndexError, a KeyError, an AttributeError, a TypeError and an
+            # OverflowError, none of them a YAML error, and scan_tree turns
+            # any exception raised while loading into a finding that names its
+            # type.
             ("an impossible date", "x: 2001-02-30\n" + head,
-             "cannot be parsed as YAML (day 30 must be in range 1..28 for month 2 in year 2001)"),
+             "cannot be parsed as YAML (ValueError: day 30 must be in range 1..28 for month 2 in year 2001)"),
             ("a !!int tag on a word", "x: !!int a\n" + head,
-             "cannot be parsed as YAML (invalid literal for int() with base 10: 'a')"),
-            ("a !!int tag on an empty string", "x: !!int ''\n" + head, "cannot be parsed as YAML (string index out of range)"),
-            ("a !!bool tag on a word", "x: !!bool a\n" + head, "cannot be parsed as YAML ('a')"),
+             "cannot be parsed as YAML (ValueError: invalid literal for int() with base 10: 'a')"),
+            ("a !!int tag on an empty string", "x: !!int ''\n" + head,
+             "cannot be parsed as YAML (IndexError: string index out of range)"),
+            ("a !!bool tag on a word", "x: !!bool a\n" + head, "cannot be parsed as YAML (KeyError: 'a')"),
             ("a !!timestamp tag on a word", "x: !!timestamp a\n" + head,
-             "cannot be parsed as YAML ('NoneType' object has no attribute 'groupdict')"),
+             "cannot be parsed as YAML (AttributeError: 'NoneType' object has no attribute 'groupdict')"),
             ("a !!map tag on a sequence", "x: !!map [a]\n" + head,
-             "cannot be parsed as YAML (cannot unpack non-iterable ScalarNode object)"),
+             "cannot be parsed as YAML (TypeError: cannot unpack non-iterable ScalarNode object)"),
+            ("a float scalar of 175 colon-separated parts", "x: 1" + ":0" * 173 + ":0.5\n" + head,
+             "cannot be parsed as YAML (OverflowError: int too large to convert to float)"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
