@@ -157,6 +157,10 @@ Residuals, named here because the scan reads text the pull request controls:
   traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
+- a launch written inside a parameter expansion, such as
+  `${v:+python3 -I tools/x.py|w}`, where bash does not end the word at `|`,
+  `;`, `&`, `<`, `>`, `(` or `)`, so the scan counts tools/x.py while bash
+  passes a script word that holds that character;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
   expands it, such as an escape in an ANSI-C string, a glob, brace or
   parameter expansion, or a `${{ }}` expression;
