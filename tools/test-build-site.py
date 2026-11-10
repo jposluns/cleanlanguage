@@ -2935,9 +2935,10 @@ def check_release_near_placeholder(failures: list[str]) -> int:
 def disclosure_d4_section(text: str) -> str | None:
     """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
     d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
-    ends at whichever comes first: the next h2 element, the next element whose class holds lbl (such as an entry or
-    block label), or the end of the page. It is the page source between those points, so an h3 heading inside D-4 does
-    not end it, and an HTML comment or an attribute value inside it counts as D-4's text."""
+    ends at whichever comes first: the next h2 element, the next element whose class attribute lists lbl as a class name
+    (such as an entry or block label; class_names() splits the attribute on ASCII whitespace only, as HTML does), or the
+    end of the page. It is the page source between those points, so an h3 heading inside D-4 does not end it, and an
+    HTML comment or an attribute value inside it counts as D-4's text."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -2948,7 +2949,7 @@ def disclosure_d4_section(text: str) -> str | None:
             if not bounds:
                 if tag == "h2" and values.get("id") == "d-4":
                     bounds.append(starts[line - 1] + column)
-            elif tag == "h2" or "lbl" in (values.get("class") or "").split():
+            elif tag == "h2" or "lbl" in class_names(values.get("class") or ""):
                 bounds.append(starts[line - 1] + column)
 
     reader = Reader()
@@ -2989,8 +2990,10 @@ def check_disclosure_states(failures: list[str]) -> int:
          f'<p class="lbl sec">Entry 5</p>\n', lacks_note),
         ("D-4 as the last entry, its note on the line of the label that ends it",
          entry_4 + f"<p>{note}.</p>" + blocks.format("Local storage."), []),
-        ("a class that holds lbl only within a word, before the note in D-4",
+        ("a class attribute whose only class name is nolbl, before the note in D-4",
          entry_4 + f'<p class="nolbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("a class attribute whose only class name joins lbl and x with a no-break space, before the note in D-4",
+         entry_4 + f'<p class="lbl\u00a0x">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
         ("D-4 at the end of the page", entry_4 + f"<p>{note}.</p>\n", []),
         ("the note only on the next entry's label line",
          entry_4 + f'<p class="lbl sec">Entry 5, {note}</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
