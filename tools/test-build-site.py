@@ -2941,12 +2941,15 @@ def disclosure_d4_section(text: str) -> str | None:
     or an attribute value inside it counts as D-4's text. It finds tags and comments as Python's HTMLParser tokenizes
     the page, and reads a tag's attributes as HTMLParser gives them, each name in lower case and each value with its
     character references decoded; it reads a value left out as empty and, of 2 attributes with the same name, only the
-    first. The generator builds only page sources whose tokens HTMLParser and HTML read alike, apart from a noscript
-    element's content, which HTML reads as text when scripting is on (tools/build-site.py, "Page source grammar"). So on
-    a page it builds, this reading finds the D-4 heading and the end that HTML with scripting off finds; with scripting
-    on, a label or an h2 element inside a noscript in D-4 ends the section here but not in HTML. On markup outside that
-    grammar, which the generator refuses, the two can differ further; for example, HTML closes <!--> at once, where
-    HTMLParser reads a comment to the next --> or --!>, so this reading skips a label or an h2 element between them."""
+    first. The generator builds a page only if HTMLParser and HTML tokenize alike its source with its template tokens
+    and rail written in, apart from a noscript element's content, which HTML reads as text when scripting is on
+    (tools/build-site.py, "Page source grammar"). This reading takes the source as written, so on a page the generator
+    builds, it finds the D-4 heading and the end that HTML with scripting off finds, unless a template token such as
+    {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
+    section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
+    the section here but not in HTML. On markup outside that grammar, which the generator refuses, the two can differ
+    further; for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this
+    reading skips a label or an h2 element between them."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -2972,12 +2975,13 @@ def check_disclosure_states(failures: list[str]) -> int:
     """Each of the generator's CHECKSUM_PENDING_NOTE and CHECKSUM_PUBLISHED_PHRASE appears in its own state's rendering
     of sum_tokens() and in D-4's own text in site-src/pages/disclosure.html, as disclosure_d4_section() reads it. Both
     tests are containment of the text, so each passes wherever the phrase is written in one run, whatever the sentence
-    around it says; in D-4, a phrase that the page source splits with a line break, a tag, a comment or a character
-    reference fails, even where the rendered sentence reads the same. The test needs each phrase in D-4 only once, so it
-    binds no sentence that restates a phrase in other words, and no quotation of a phrase while D-4 holds that phrase
-    elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test pages check the
-    section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that follow the
-    entries, and a page with no D-4 heading, among others."""
+    around it says; in D-4, a phrase that the page source does not write character for character in one run fails, even
+    where the rendered sentence reads the same: for example, with a line break, a tab or 2 spaces in place of a space,
+    with a tag or a comment inside it, or with a character written as a character reference. The test needs each phrase
+    in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
+    D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
+    pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
+    follow the entries, and a page with no D-4 heading, among others."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
@@ -3041,14 +3045,15 @@ def check_disclosure_states(failures: list[str]) -> int:
         return [f"the {state} rendering of sum_tokens() lacks {name}, {phrases[name]!r}" for state, checksum, name in
                 states if phrases[name] not in "".join(sum_tokens(PIN_VERSION, checksum, sum_url).values())]
 
-    # A stand-in for sum_tokens() that renders nothing in the placeholder state and only the published phrase in the
-    # published state shows that a failure names its own state.
-    planted = state_failures(lambda version, checksum, url: {} if checksum == generator.PLACEHOLDER_CHECKSUM else
-                             {"sum": published})
-    expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}"]
+    # A stand-in for sum_tokens() that renders nothing in either state shows that each failure names its own state. No
+    # check pins the "disclosure states:" prefix of this case's failures, or the file name that its failures for
+    # site-src/pages/disclosure.html give.
+    planted = state_failures(lambda version, checksum, url: {})
+    expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}",
+                f"the published rendering of sum_tokens() lacks CHECKSUM_PUBLISHED_PHRASE, {published!r}"]
     if planted != expected:
-        failures.append(f"disclosure states: a stand-in rendering empty in the placeholder state gave {planted}, "
-                        f"expected {expected}")
+        failures.append(f"disclosure states: a stand-in rendering empty in both states gave {planted}, expected "
+                        f"{expected}")
     failures.extend(f"disclosure states: {failure}" for failure in state_failures(generator.sum_tokens))
     return 2 + len(cases)
 
