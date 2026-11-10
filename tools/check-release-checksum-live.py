@@ -201,14 +201,15 @@ Exit codes:
      read, whose manifest is malformed, or whose zip does not hash to its
      manifest; or a published release whose ``published_at`` is unreadable
      or malformed or whose ``immutable`` field is not exactly true
-  3  a required file could not be read, the verify page is not the page the
-     generator writes for the state it shows, or the generator could not
-     render its download block or the page (see Behaviour), the SKILL.md
-     Released line is
-     malformed, a call of tools/skill-release-date.py, which runs in a
-     child process, did not give a result the gate could accept (see
-     run_release_date_child), or SIGCHLD could not be reset to its default
-     disposition (see reset_sigchld)
+  3  a required file is missing, is not a regular file or could not be read;
+     the verify page is not the page the generator writes for the state it
+     shows, or the generator could not render its download block or the page
+     (see Behaviour); SKILL.md has no ``Version:`` line, its first ``Version:``
+     line is not a bare X.Y.Z version, or the extractor rejects that version;
+     the SKILL.md Released line is malformed; a call of
+     tools/skill-release-date.py, which runs in a child process, did not give a
+     result the gate could accept (see run_release_date_child); or SIGCHLD
+     could not be reset to its default disposition (see reset_sigchld)
 
 When the verify page passes its own checks and the release it names is
 published, the release-date check and the site-checksum comparison both run,
