@@ -79,8 +79,11 @@ The rule:
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
    spaces, `<name>` holding no `/`, no character of a path and no `$` directly
-   before `python3`, and no character of a path after `.py`, is a launch (so
-   `$python3 -I tools/x.py` is not one). With the launches removed, a line
+   before `python3`, and `.py` directly followed by the end of the line or by
+   a character that ends a bash word (a space, a tab, `|`, `&`, `;`, `(`, `)`,
+   `<` or `>`), is a launch (so `$python3 -I tools/x.py` is not one, and nor
+   is `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`: any other
+   character continues the word). With the launches removed, a line
    that still holds the word python, or a `.py`, `.pyz` or `.pyw` name with no
    letter, digit or underscore directly after it (so `x.pyc` is not one), in
    any letter case, is a finding, whether it is a command, a comment or a
@@ -96,7 +99,9 @@ The rule:
 
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
-`python3 -P -E -s` equivalent, a quoted script path, 2 spaces before `-I`, a
+`python3 -P -E -s` equivalent, a quoted script path, a character after `.py`
+that does not end a bash word, as in `tools/x.py''` or `tools/x.py$EMPTY`, 2
+spaces before `-I`, a
 launch whose words are split across continued lines, `(python3)` and other
 case arms naming python, a message or comment that names python or a .py file,
 an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
@@ -195,7 +200,7 @@ PLANTED_MODULES = ("tempfile", "msvcrt", "nt", "_winapi")
 PLANT_MARKER = "PLANTED-MODULE-RAN"
 
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
-LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
+LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()<>]|\Z)")
 PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
@@ -663,6 +668,34 @@ RUN_CASES = [
     ('echo "$HOME"', False),
     ("echo $'a b'", False),
     ("echo py$thon3", False),
+    # Rule 3's right edge. A character after `.py` that does not end a bash
+    # word continues the word, so the scan refuses it rather than read what
+    # bash would run (tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs
+    # tools/x.py). A launch directly followed by the end of the line, a space,
+    # a tab, `|`, `&`, `;`, `(`, `)`, `<` or `>` stays counted.
+    (f'python3 -I {X}"w"', True),
+    (f"python3 -I {X}'w'", True),
+    (f"python3 -I {X}$'w'", True),
+    (f'python3 -I {X}"c"', True),
+    (f'python3 -I {X}$"w"', True),
+    (f"python3 -I {X}$W", True),
+    (f"python3 -I {X}*", True),
+    (f"python3 -I {X}?", True),
+    (f"python3 -I {X}[w]", True),
+    (f"python3 -I {X}{{,w}}", True),
+    (f"python3 -I {X}`echo w`", True),
+    (f"python3 -I {X}~", True),
+    (f"python3 -I {X},w", True),
+    (f"python3 -I {X}#w", True),
+    (f"python3 -I {X}:w", True),
+    (f"python3 -I {X}''", True),
+    (f"python3 -I {X}\u00a0w", True),
+    (f"python3 -I {X}\tw", False),
+    (f"python3 -I {X}|cat", False),
+    (f"python3 -I {X}&", False),
+    (f"python3 -I {X}<f", False),
+    (f"python3 -I {X}>f", False),
+    (f"python3 -I {X}(", False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -697,6 +730,9 @@ STEP_CASES = [
     ("env:\n          PATH: /x\n        run: echo ok", True),
     ("env:\n          FOO: bar\n        run: echo ok", False),
     ("run: echo ok\n        run: python3 tools/x.py", True),
+    # A carriage return reaches run text only through a YAML double-quoted
+    # escape, and it does not end a bash word, so the launch word continues.
+    ('run: "python3 -I tools/x.py\\rw"', True),
     ("uses: ./tools/action", True),
     ("uses: ../other/action", True),
     ("uses: actions/checkout@" + "a" * 40, False),
@@ -753,6 +789,9 @@ def self_test() -> list[str]:
         case.write_text(head + "      - run: python3 -I tools/gone.py\n", encoding="utf-8")
         if not any("does not exist" in f for f in scan()):
             errors.append("self-test: a missing launched script gave no finding")
+        for text in (f"python3 -I {X}", f"python3 -I {X} --flag", f'v="$(python3 -I {X})"'):
+            if check_run(text) != ([], [(X, True)]):
+                errors.append(f"self-test: {text!r} did not read as 1 counted launch of {X}")
 
         two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
                     "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")
