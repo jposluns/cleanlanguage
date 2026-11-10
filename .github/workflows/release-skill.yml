@@ -360,7 +360,7 @@ jobs:
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
               15)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day, and the live release checksum check reports the same disagreement until then." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day. Until then, the live release checksum check reports the same disagreement whenever it reads the immutable field of the release as true and its published_at as a usable instant, and otherwise exits 2 as a release it could not verify (see the exit codes listed in the module docstring of that check)." >&2
                 echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;
