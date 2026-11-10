@@ -103,9 +103,10 @@ an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
 `${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
 `shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
 
-Out of this scan's scope: a check that the tools do not change sys.path, the
-pinning of `uses`, and local actions and local reusable workflows, which
-rule 1 refuses rather than reads.
+Out of this scan's scope: whether the tools refer to sys.path, which
+tools/test-tools-sys-path.py checks; the pinning of `uses`, which
+tools/test-action-pins.py checks; and local actions and local reusable
+workflows, which rule 1 refuses rather than reads.
 
 Residuals, named here because the scan reads text the pull request controls:
 
