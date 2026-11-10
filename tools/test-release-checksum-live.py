@@ -4850,6 +4850,65 @@ class ContractRoutingTest(unittest.TestCase):
         self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
 
 
+class CorrectiveRemedyTest(unittest.TestCase):
+    """The gate prints exactly 1 message that names a corrective new version: the date-mismatch remedy in
+    check_release_date. The release workflow's superseded-release note does not apply to this gate, because a later
+    version never supersedes the latest release the gate checks, so no second message may name that remedy. A message is
+    a string constant of the gate that is not a statement of its own, after implicit concatenation, or an f-string with
+    each replacement field read as a brace pair, so a docstring or a comment is not a message. Its text is normalized by
+    lowering the case, reading each hyphen as a space and collapsing each run of whitespace. Every message that names
+    either token, corrective or new version, is recorded with the top-level function that holds it, and the record must
+    be exactly the 1 message in check_release_date, naming the phrase once and each token once, so a second copy that is
+    split across implicit concatenation, recased, respaced or hyphenated still fails. A hyphenated rewording of the 1
+    message passes this test; the exact wording stays pinned by
+    test_mismatch_message_states_both_values_and_defers_to_the_readback. This test does not catch, for example, a remedy
+    worded without either token, a message assembled at run time from pieces that never hold a token whole, or the 1
+    message printed more than once at run time."""
+
+    PHRASE = "corrective new version"
+    TOKENS = ("corrective", "new version")
+
+    @staticmethod
+    def normalized(text):
+        return " ".join(text.lower().replace("-", " ").split())
+
+    def recorded_messages(self):
+        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+        recorded = []
+        for statement in tree.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = statement.name
+            else:
+                name = "module"
+            # A docstring or a bare string is the value of a statement of its own, not a message.
+            statements = {id(node.value) for node in ast.walk(statement) if isinstance(node, ast.Expr)}
+            parts = set()
+            for node in ast.walk(statement):
+                if isinstance(node, ast.JoinedStr):
+                    # ast.walk visits a JoinedStr before its parts, so a part is never counted alone.
+                    parts.update(id(child) for child in node.values)
+                    if id(node) in statements:
+                        continue
+                    text = "".join(
+                        child.value if isinstance(child, ast.Constant) and isinstance(child.value, str) else "{}"
+                        for child in node.values
+                    )
+                elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                        and id(node) not in statements and id(node) not in parts):
+                    text = node.value
+                else:
+                    continue
+                text = self.normalized(text)
+                if any(token in text for token in self.TOKENS):
+                    counts = (text.count(self.PHRASE),) + tuple(text.count(token) for token in self.TOKENS)
+                    recorded.append((name, counts))
+        return recorded
+
+    def test_exactly_one_message_names_a_corrective_new_version(self):
+        """The messages naming either token are exactly 1: the date-mismatch remedy, naming the phrase once."""
+        self.assertEqual(self.recorded_messages(), [("check_release_date", (1, 1, 1))])
+
+
 class SharedPlaceholderRuleTest(unittest.TestCase):
     """The rule of the verify page is one rule in 2 copies: this gate and check-release-links.py carry
     download_block_problems and what it reads verbatim, so the 2 gates cannot accept different pages."""
