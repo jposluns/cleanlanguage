@@ -2936,11 +2936,17 @@ def disclosure_d4_section(text: str) -> str | None:
     """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
     d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
     ends at whichever comes first: the next h2 element, the next element whose class attribute lists lbl as a class name
-    (such as an entry or block label; class_names() splits the attribute on ASCII whitespace only, as HTML does), or the
-    end of the page. It is the page source between those points, so an h3 heading inside D-4 does not end it, and an
-    HTML comment or an attribute value inside it counts as D-4's text. It reads a tag's attributes as HTML does: a name
-    in any letter case, a value with its character references decoded, a value left out as empty, and of 2 attributes
-    with the same name only the first, as tools/build-site.py reads them."""
+    (such as an entry or block label; class_names() splits the attribute on ASCII whitespace only), or the end of the
+    page. It is the page source between those points, so an h3 heading inside D-4 does not end it, and an HTML comment
+    or an attribute value inside it counts as D-4's text. It finds tags and comments as Python's HTMLParser tokenizes
+    the page, and reads a tag's attributes as HTMLParser gives them, each name in lower case and each value with its
+    character references decoded; it reads a value left out as empty and, of 2 attributes with the same name, only the
+    first. The generator builds only page sources whose tokens HTMLParser and HTML read alike, apart from a noscript
+    element's content, which HTML reads as text when scripting is on (tools/build-site.py, "Page source grammar"). So on
+    a page it builds, this reading finds the D-4 heading and the end that HTML with scripting off finds; with scripting
+    on, a label or an h2 element inside a noscript in D-4 ends the section here but not in HTML. On markup the generator
+    refuses, the two can differ further: where a later --> or --!> follows <!--> or <!--->, HTMLParser reads a comment
+    up to it, where HTML closes the comment at once, so this reading skips a label or an h2 element between them."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -3013,6 +3019,11 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
+        ("the note after <!--> and an Entry 5 label, which HTMLParser reads as 1 comment up to the next --> (the "
+         "generator refuses <!-->)", entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n'
+         '<h2 id="d-5">Five</h2>\n', []),
+        ("the note only after an Entry 5 label on a div element",
+         entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
     )
     for case, text, expected in cases:
         got = d4_failures(text, "the test page")
