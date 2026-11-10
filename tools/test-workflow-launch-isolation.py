@@ -84,12 +84,12 @@ The rule:
    followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
    nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
-   of a process substitution). The rule counts the launch before each
-   character of that list, and refuses the line at a `<(` or `>(` and at every
-   other character directly after `.py`, among them a character that closes a
-   construct holding the launch: for example a closing backquote, which ends a
-   command substitution written with backquotes, a `}` that ends a parameter
-   expansion, or a `"` or `'` that ends a quoted string. For
+   of a process substitution). The rule reads the form before each character
+   of that list as a launch, and refuses the line at a `<(` or `>(` and at
+   every other character directly after `.py`, among them a character that
+   closes a construct holding the launch: for example a closing backquote,
+   which ends a command substitution written with backquotes, a `}` that ends
+   a parameter expansion, or a `"` or `'` that ends a quoted string. For
    `${v:+python3 -I tools/x.py} --flag`, with `v=1`, and for
    `eval "python3 -I tools/x.py"`, bash passes tools/x.py as the script, and
    for `${v:+python3 -I tools/x.py}w`, with `v=1`, and for
@@ -116,7 +116,7 @@ launch (such as a closing backquote, which ends a command substitution written
 with backquotes, a `}` that ends a parameter expansion, as in
 `${v:+python3 -I tools/x.py} --flag`, or a `"` or `'` that ends a quoted
 string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
-subshell is in that list, and the launch before it is counted), 2 spaces
+subshell is in that list, and the form before it reads as a launch), 2 spaces
 before `-I`, a launch whose words are split across continued lines,
 `(python3)` and other case arms naming python, a message or comment that names
 python or a .py file, an expression such as `${{ env.PY }}`,
@@ -717,11 +717,11 @@ RUN_CASES = [
     # from an opening one: v=`python3 -I tools/x.py` runs tools/x.py, and
     # tools/x.py`echo w` runs tools/x.pyw. It also refuses a `<(` or `>(`
     # directly after `.py`: tools/x.py<(echo w) runs a script whose name ends
-    # with the path of a process substitution. A launch directly followed by
-    # the end of the line, a space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<`
-    # or `>` not directly followed by `(`, stays counted, as it does before an
-    # operator that starts with one of them, such as `>>`, `<<<`, `>&`, `|&`,
-    # `&>` or `;;`.
+    # with the path of a process substitution. `python3 -I tools/x.py`
+    # directly followed by the end of the line, a space, a tab, `|`, `&`, `;`,
+    # `(`, `)`, or a `<` or `>` not directly followed by `(`, still reads as a
+    # launch, as it does before an operator that starts with one of them, such
+    # as `>>`, `<<<`, `>&`, `|&`, `&>` or `;;`.
     (f'python3 -I {X}"w"', True),
     (f"python3 -I {X}'w'", True),
     (f"python3 -I {X}$'w'", True),
