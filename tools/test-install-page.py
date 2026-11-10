@@ -2344,7 +2344,8 @@ def gate_exit_problems() -> list[str]:
 # each with the reason; in_process_run_problems() fails on any other such function.
 RUN_EXEMPT = {
     "pinned_baseline": "a loader: the module-level read of BASELINE runs it",
-    "load_gate": "a loader: each function that runs the gate calls it or takes it as its loader",
+    "load_gate": ("a loader: every load of the gate in this process calls it, apart from those in "
+                  "statement_problems() and version_problems(), which call exec_module() themselves"),
     "exiting_gate": "a loader: the stand-in that gate_exit_problems() hands each check of its tuple",
     "hidden_link_problems": "hidden_link_exit_problems() holds its catch with its own stand-in gate",
     "probe_name_problems": "it reads only READING_PROBES, which exiting_gate() leaves as the gate binds it",
@@ -2363,9 +2364,12 @@ def in_process_run_problems() -> list[str]:
     SystemExit holds, and for each handler that is bare or names BaseException or KeyboardInterrupt, so that none of
     these can be added unnoticed. A load or run is a call of load_gate(), loader(), pinned_baseline(), exiting_gate(),
     exec() or __import__(), or of an attribute exec_module(), load_tool(), run_path(), import_module() or parse(),
-    ast.parse() aside. The body of load_gate(), pinned_baseline() or exiting_gate(), each call of which is itself a
-    load, needs no try, and no try outside a def or a lambda holds what runs inside it. It reads names only, so a load
-    through another name, or a handler that names another name bound to BaseException, passes unnoticed."""
+    ast.parse() aside. A function is each def that no other def holds, at the top level or under any class, if, try,
+    with or loop, named by the classes around it and its own name, as in Class.method; a def, class or lambda inside it
+    is part of it, and its decorators, defaults and annotations run where it stands. The body of load_gate(),
+    pinned_baseline() or exiting_gate(), each call of which is itself a load, needs no try, and no try outside a def or
+    a lambda holds what runs inside it. It reads names only, so a load through another name, or a handler that names
+    another name bound to BaseException, passes unnoticed."""
     names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
     attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
     loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
@@ -2389,29 +2393,36 @@ def in_process_run_problems() -> list[str]:
 
     runs: list[tuple[str | None, int, str, bool]] = []
 
-    def visit(node: ast.AST, owner: str | None, held: bool) -> None:
+    def visit(node: ast.AST, owner: str | None, scope: str, held: bool) -> None:
         if isinstance(node, (ast.Try, ast.TryStar)):
             catches = any("SystemExit" in handler_names(handler) for handler in node.handlers)
             for child in node.body:
-                visit(child, owner, held or catches)
+                visit(child, owner, scope, held or catches)
             for child in [*node.handlers, *node.orelse, *node.finalbody]:
-                visit(child, owner, held)
+                visit(child, owner, scope, held)
             return
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Its body counts for the outermost def; its decorators, defaults and annotations run where the def stands.
+            inner = owner or scope + node.name
+            for child in ast.iter_child_nodes(node):
+                if any(child is statement for statement in node.body):
+                    visit(child, inner, scope, not owner and inner in loaders)
+                else:
+                    visit(child, owner, scope, held)
+            return
+        if isinstance(node, ast.ClassDef) and not owner:
+            scope += node.name + "."
+        if isinstance(node, ast.Lambda):
             held = False
         name = run_name(node)
         if name:
             runs.append((owner, node.lineno, name, held))
         for child in ast.iter_child_nodes(node):
-            visit(child, owner, held)
+            visit(child, owner, scope, held)
 
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     for statement in tree.body:
-        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for child in statement.body:
-                visit(child, statement.name, statement.name in loaders)
-        else:
-            visit(statement, None, False)
+        visit(statement, None, "", False)
     exits = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "gate_exit_problems"]
     tuples = [node.value for check in exits for node in ast.walk(check) if isinstance(node, ast.Assign)
               and [ast.unparse(target) for target in node.targets] == ["checks"] and isinstance(node.value, ast.Tuple)]
