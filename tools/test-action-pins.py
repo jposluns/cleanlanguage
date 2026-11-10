@@ -496,7 +496,7 @@ def self_test(loader) -> list[str]:
                 continue
             if type(made[0]) is cls:
                 break
-            why = f"made a {type(made[0]).__name__}"
+            why = f"made an instance of {type(made[0]).__name__}"
             made = []
         if not made:
             errors.append(f"self-test: cannot make an instance of {cls.__module__}.{cls.__qualname__} ({why})")
@@ -576,7 +576,7 @@ def self_test(loader) -> list[str]:
             except Exception as exc:
                 got = f"{type(exc).__name__} escaped key_text"
             if got != want:
-                errors.append(f"self-test: key_text of a {type(key).__name__} key under a limit of {limit} gave {got[:80]!r}, expected {want[:80]!r}")
+                errors.append(f"self-test: key_text of a key of type {type(key).__name__} under a limit of {limit} gave {got[:80]!r}, expected {want[:80]!r}")
     finally:
         sys.set_int_max_str_digits(previous)
     found, _ = check_text("? true\n: {uses: actions/checkout@v4}\n", "case.yml", loader)

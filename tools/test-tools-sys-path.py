@@ -371,6 +371,20 @@ def self_test() -> list[str]:
     found = check_source(nested.encode("utf-8"), "case.py")
     if found != want:
         errors.append(f"self-test: {nested!r} gave {found}, expected {want}")
+    # Each name in `dir(sys)` and `dir(type(sys))` that starts and ends with 2
+    # underscores must be refused after `from sys import` and as a keyword of
+    # `case object(<name>=x):` under `match sys:`. The set is taken from the
+    # running Python, so a name that a later Python adds is covered when it
+    # runs, and a name that is not on sys in the running Python is not. It is
+    # built by its own test, not by dunder, so a narrowed dunder cannot narrow
+    # it, and a set that lacks `__dict__`, such as an empty one, is a failure.
+    special = sorted(name for name in {*dir(sys), *dir(type(sys))} if name.startswith("__") and name.endswith("__"))
+    if "__dict__" not in special:
+        errors.append(f"self-test: the names on sys that start and end with 2 underscores lack __dict__: {special}")
+    for name in special:
+        for source in (f"from sys import {name}\n", f"import sys\nmatch sys:\n    case object({name}=x):\n        pass\n"):
+            if not check_source(source.encode("utf-8"), "case.py"):
+                errors.append(f"self-test: {source!r} gave no finding, expected a finding")
     # In a thread whose stack is 8 MiB, ast.parse raises MemoryError on the
     # first source and RecursionError on the second, neither of them a
     # SyntaxError, so these cases fail when the parse catch misses either
