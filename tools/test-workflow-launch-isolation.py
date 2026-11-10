@@ -826,6 +826,22 @@ def self_test() -> list[str]:
             case.write_text(text, encoding="utf-8")
             if not any(needle in f for f in scan()):
                 errors.append(f"self-test: whole file {name} gave no finding naming {needle!r}")
+        # An exception whose message is empty must still give a finding that
+        # names its type. A constructor for a private tag raises one, and is
+        # removed afterward so that no later case loads the tag.
+        def raise_empty(loader, node):
+            raise ValueError()
+
+        UniqueKeyLoader.add_constructor("!empty", raise_empty)
+        case.write_text("x: !empty a\n" + head, encoding="utf-8")
+        try:
+            findings = scan()
+        except Exception as exc:
+            findings = [f"a crash with {type(exc).__name__}"]
+        finally:
+            del UniqueKeyLoader.yaml_constructors["!empty"]
+        if not any("cannot be parsed as YAML (ValueError: )" in f for f in findings):
+            errors.append(f"self-test: an exception with an empty message gave {findings!r}")
         clean = [
             ("a YAML merge key",
              "x: &c\n  runs-on: ubuntu-latest\n  defaults:\n    run:\n      shell: bash\non: push\njobs:\n"
