@@ -13,12 +13,15 @@ The rule, over the syntax tree of every tools/*.py file, so string literals,
 docstrings and comments are not read:
 
 1. Any reference, read or write, to sys.path, sys.meta_path, sys.path_hooks or
-   sys.path_importer_cache is a finding. Here sys is the name sys, any name
-   that `import sys as <alias>` binds, any name that
-   `from <module> import sys` binds, with or without `as`, whatever that
-   module is, and any attribute named sys, such as `os.sys`. An attribute
-   named meta_path, path_hooks, path_importer_cache or addsitedir is a finding
-   on any object.
+   sys.path_importer_cache is a finding, including a keyword of one of those 4
+   names in any class pattern of a `match` statement whose subject is sys,
+   such as `case types.ModuleType(path=p)`. Here sys is any attribute named
+   sys, such as `os.sys`, and each of these names wherever it stands in the
+   file, whatever its scope: the name sys, any name that
+   `import sys as <alias>` binds, and any name that `from <module> import sys`
+   binds, with or without `as`, whatever that module is. An attribute named
+   meta_path, path_hooks, path_importer_cache or addsitedir, and a keyword of
+   one of those names in any class pattern, are findings on any object.
 2. `from sys import` of any of those 4 names, or of `*`, is a finding.
 3. `import site`, in any form, and `from site import` are findings.
 4. A call to setattr or delattr whose first argument is sys is a finding. A
@@ -45,8 +48,9 @@ Residuals:
   `importlib.import_module("sys")`, `sys.modules["sys"]`,
   `getattr(os, "sys")`, `globals()["sys"]`, a name bound to sys other than by
   an import, such as `s = sys`, `(s := sys)`, a for, comprehension, `with` or
-  match target, or a lambda default, sys passed to a function, and
-  `getattr(sys, "__dict__")`;
+  match target, or a lambda default, sys passed to a function,
+  `getattr(sys, "__dict__")`, and a class pattern that reaches sys through a
+  keyword named sys, such as `case object(sys=object(path=p))`;
 - computed attribute names, such as `sys.__getattribute__("path")`, and
   setattr, getattr, delattr or vars reached under another name, such as
   `builtins.setattr` or `f = setattr`;
@@ -80,7 +84,8 @@ def sys_names(tree: ast.AST) -> set[str]:
     """Return the names taken as the sys module.
 
     These are sys and each name that an import of the name sys binds, such as
-    `import sys as s` or `from os import sys as s`.
+    `import sys as s` or `from os import sys as s`, collected from the whole
+    file without regard to scope.
     """
     names = {"sys"}
     for node in ast.walk(tree):
@@ -110,6 +115,14 @@ def check_source(source: bytes, label: str) -> list[str]:
         return [f"{label}: cannot be parsed ({type(exc).__name__}: {exc})"]
     names = sys_names(tree)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    # A class-pattern keyword reads that attribute of the match subject.
+    on_sys = {
+        pattern
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Match) and is_sys(node.subject, names)
+        for case in node.cases
+        for pattern in ast.walk(case.pattern)
+    }
     found: list[tuple[int, str]] = []
 
     def dict_access(node: ast.AST, text: str) -> None:
@@ -125,6 +138,12 @@ def check_source(source: bytes, label: str) -> list[str]:
                 found.append((node.lineno, f"a reference to an attribute named {node.attr}"))
             if node.attr == "__dict__" and is_sys(node.value, names):
                 dict_access(node, "sys.__dict__")
+        elif isinstance(node, ast.MatchClass):
+            for name in node.kwd_attrs:
+                if name in GUARDED and node in on_sys:
+                    found.append((node.lineno, f"a reference to sys.{name} in a class pattern"))
+                elif name in ANY_OBJECT:
+                    found.append((node.lineno, f"a class-pattern keyword named {name}"))
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
             if node.module == "sys":
                 for alias in node.names:
@@ -218,6 +237,15 @@ CASES = [
     ("import sys\ndelattr(*(sys, 'path'))\n", True),
     ("import sys\ngetattr(*(sys, 'path')).insert(0, 'x')\n", True),
     ("import sys\nvars(*(sys,))['path'].insert(0, 'x')\n", True),
+    ("def f(sys):\n    return sys.path\n", True),
+    ("def f():\n    from config import sys as cfg\n    return cfg\ndef g(cfg):\n    return cfg.path\n", True),
+    ("import sys, types\nmatch sys:\n    case types.ModuleType(path=p):\n        p.insert(0, 'x')\n", True),
+    ("import sys\nmatch sys:\n    case object(meta_path=m):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(path_hooks=h):\n        pass\n", True),
+    ("match x:\n    case C(path_importer_cache=c):\n        pass\n", True),
+    ("match x:\n    case C(addsitedir=a):\n        pass\n", True),
+    ("match p:\n    case Point(x=0):\n        pass\n", False),
+    ("match request:\n    case Request(path=p):\n        pass\n", False),
     ("a.b.path.join('x')\n", False),
     ("d = obj.__dict__\n", False),
     ("setattr(obj, 'x', 1)\n", False),
@@ -248,6 +276,14 @@ def self_test() -> list[str]:
         found = check_source(source.encode("utf-8"), "case.py")
         if bool(found) != refused:
             errors.append(f"self-test: {source!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
+    # The parser raises MemoryError, not SyntaxError, on a source this deep,
+    # so this case holds the parse catch at Exception.
+    try:
+        found = check_source(b"x = " + b"-" * 100000 + b"1\n", "deep.py")
+    except Exception as exc:
+        found = [f"{type(exc).__name__} escaped check_source"]
+    if len(found) != 1 or not found[0].startswith("deep.py: cannot be parsed (MemoryError: "):
+        errors.append(f"self-test: a source too complex to parse gave {found}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         tools = root / "tools"

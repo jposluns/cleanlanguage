@@ -21,8 +21,8 @@ is a finding: a tag or a branch, a short, long or upper-case hex ref, a local
 `./` or `../` path, any `docker://` value, an expression such as
 `${{ matrix.action }}`, an owner that holds `_` or `.`, and a `uses` that is
 not text. A workflow that cannot be read as UTF-8, one whose loading raises an
-Exception, such as a duplicate key, and a recursive node are findings, and an
-empty .github/workflows/*.yml listing is a failure.
+Exception, such as a duplicate key, or a SystemExit, and a recursive node are
+findings, and an empty .github/workflows/*.yml listing is a failure.
 tools/test-workflow-launch-isolation.py separately refuses local actions and
 local reusable workflows, and any .yml or .yaml file under .github outside
 .github/workflows/*.yml, such as an action.yml.
@@ -38,8 +38,9 @@ read error, a compile error, an Exception or a SystemExit raised while the
 scan's module body runs, and a scan that defines no UniqueKeyLoader each stop
 the gate before its self-tests, with one FAIL line that names the exception's
 type and message, and exit status 1. Any other BaseException, such as
-KeyboardInterrupt or GeneratorExit, is not caught: it stops the gate with a
-traceback and no FAIL line, so an interrupt stays an interrupt.
+KeyboardInterrupt or GeneratorExit, raised while the scan's module body runs
+or while UniqueKeyLoader loads a workflow, is not caught: it stops the gate
+with a traceback and no FAIL line, so an interrupt stays an interrupt.
 
 Residuals:
 
@@ -170,10 +171,13 @@ def walk(doc, found: list[str], checked: list[str]) -> None:
 
 
 def check_text(text: str, label: str, loader) -> tuple[list[str], int]:
-    """Return the findings for one workflow's text, and its number of uses."""
+    """Return the findings for one workflow's text, and its number of uses.
+
+    An Exception or a SystemExit raised while loader loads text is a finding.
+    """
     try:
         doc = yaml.load(text, Loader=loader)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         first = f"{type(exc).__name__}: {exc}".splitlines()[0]
         return [f"{label}: cannot be parsed as YAML ({first})"], 0
     found: list[str] = []
@@ -256,6 +260,8 @@ CASES = [
     (step(f"own_er/repo@{SHA}"), True),
     (step(f"own.er/repo@{SHA}"), True),
     (step(f"ow\u00f1er/repo@{SHA}"), True),
+    (step(f"\u00f1wner/repo@{SHA}"), True),
+    (step("owner/repo@" + "g" * 40), True),
     ("jobs:\n  a:\n    steps:\n      - !!omap [{uses: actions/checkout@v4}]\n", True),
     ("jobs:\n  a:\n    steps:\n      - !!pairs [{uses: actions/checkout@v4}]\n", True),
     ("jobs:\n  a: !!omap [{steps: [{uses: actions/checkout@v4}]}]\n", True),
@@ -273,6 +279,7 @@ CASES = [
     (f"jobs:\n  a:\n    uses: octo-org/.github/.github/workflows/w.yml@{SHA}\n", False),
     (f"jobs:\n  a:\n    steps:\n      - uses: owner/repo.js/sub_dir/x-y@{SHA}\n", False),
     ("jobs:\n  a:\n    steps:\n      - run: echo uses actions/checkout@v4\n", False),
+    ("jobs:\n  a:\n    steps:\n      - [uses, actions/checkout@v4]\n", False),
 ]
 
 
@@ -289,6 +296,20 @@ def self_test(loader) -> list[str]:
     found, count = check_text(f"a: &s {{uses: actions/checkout@{SHA}}}\nb: *s\nc: *s\n", "case.yml", loader)
     if found or count != 1:
         errors.append(f"self-test: a mapping that aliases bring in 3 times gave {found}, {count} uses, expected 1")
+
+    class Exits(loader):
+        pass
+
+    def exits(_loader, _node, deep=False):
+        raise SystemExit(0)
+
+    Exits.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, exits)
+    try:
+        found, _ = check_text(step(f"actions/checkout@{SHA}"), "case.yml", Exits)
+    except (Exception, SystemExit) as exc:
+        found = [f"{type(exc).__name__} escaped check_text"]
+    if found != ["case.yml: cannot be parsed as YAML (SystemExit: 0)"]:
+        errors.append(f"self-test: a loader whose mapping constructor raises SystemExit(0) gave {found}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"
