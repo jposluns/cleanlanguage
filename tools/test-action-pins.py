@@ -73,10 +73,12 @@ Residuals:
   turn.
 
 Usage: python3 -I tools/test-action-pins.py
-Exit status: 0 when every check passes, 1 on any finding or failure, except
-for the BaseException described above, and a MemoryError raised after the
-self-tests outside a workflow's load, such as while a workflow is read or
-walked, each of which ends the gate with a traceback.
+Exit status: 0 when every check passes, 1 on any finding or failure. Some
+exceptions are not caught and end the gate with a traceback and no FAIL line,
+such as the BaseException described above, a MemoryError raised at the start
+of the self-tests or after them while a workflow is read or walked, and the
+AttributeError raised when the gate starts with stdout closed; each such
+MemoryError and that AttributeError give exit status 1.
 """
 
 from __future__ import annotations
@@ -156,10 +158,11 @@ def key_text(key) -> str:
 
     Text is returned as it is. An integer is written as its decimal digits,
     unless `sys.get_int_max_str_digits()` is not 0 and its bit length is more
-    than 3 times that limit, since its decimal text could then exceed the
-    limit and raise ValueError; it is then written as its bit length, such as
-    `<int of 14768 bits>`. A limit of 0 sets no limit, so the digits are
-    written. Any other key is written as its type's name, such as `<bool>`.
+    than 3 times that limit, a conservative bound above which its decimal text
+    may exceed the limit and raise ValueError; it is then written as its bit
+    length, such as `<int of 14768 bits>`. A limit of 0 sets no limit, so the
+    digits are written. Any other key is written as its type's name, such as
+    `<bool>`.
     """
     if type(key) is str:
         return key

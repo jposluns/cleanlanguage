@@ -73,6 +73,9 @@ Residuals:
 - computed attribute names, such as `sys.__getattribute__("path")`, and
   setattr, getattr, delattr or vars reached under another name, such as
   `builtins.setattr` or `f = setattr`;
+- a name that starts and ends with 2 underscores, other than `__dict__`, used
+  as an attribute of sys to reach sys.path or the module's dict, such as
+  `sys.__getstate__()["path"]` or `sys.__setattr__("path", [])`;
 - site reached without an import statement, such as `__import__("site")`;
 - .pth files in site-packages, which -I does not stop;
 - third-party and C-extension code;
@@ -321,6 +324,12 @@ CASES = [
     ("from sys import __dict__ as d\nd['path'].insert(0, 'x')\n", True),
     ("from sys import __dict__\n__dict__['path'].append('x')\n", True),
     ("from sys import __getattribute__ as ga\nga('path').insert(0, 'x')\n", True),
+    ("from sys import __getstate__ as gs\ngs()['path'].append('x')\n", True),
+    ("from sys import __stdout__\n", True),
+    ("import sys\nmatch sys:\n    case object(__class__=c):\n        pass\n", True),
+    ("import os\nmatch os.sys:\n    case object(path=p):\n        pass\n", True),
+    ("import sys as s\nmatch s:\n    case object(path=p):\n        pass\n", True),
+    ("from os import sys as t\nmatch t:\n    case object(path=p):\n        pass\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match x:\n    case C(__class__=c):\n        pass\n", False),
     ("from os import __name__\n", False),
