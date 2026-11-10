@@ -8,7 +8,7 @@ against an honest author who writes such a reference by mistake; deliberate
 evasion is a named residual.
 
 The rule: each .github/workflows/*.yml file is loaded with UniqueKeyLoader,
-taken from tools/test-workflow-launch-isolation.py by its explicit path, and
+taken from tools/test-workflow-launch-isolation.py as described below, and
 every value of a mapping key `uses`, at any depth, so a step `uses`, a job
 `uses` and one that an alias or a merge key brings in, must be text of the
 form `owner/repo[/path]@<sha>`, where `<sha>` is exactly 40 lower-case hex
@@ -23,6 +23,18 @@ findings, and an empty .github/workflows/*.yml listing is a failure.
 tools/test-workflow-launch-isolation.py separately refuses local actions and
 local reusable workflows, and any .yml or .yaml file under .github outside
 .github/workflows/*.yml, such as an action.yml.
+
+The gate takes UniqueKeyLoader from the launch scan without importing the
+scan. It calls `os.lstat` on tools/test-workflow-launch-isolation.py and
+refuses a path that is not a regular file, such as a symbolic link or a
+folder; reads the source bytes; compiles them with `dont_inherit=True`; and
+runs them in a fresh module namespace whose `__file__` is that path, so no
+cached bytecode file in tools/__pycache__ stands in for the source. It leaves
+sys.path unchanged and adds no entry for the scan to sys.modules. An lstat or
+read error, a compile error, any exception or SystemExit raised while the
+scan's module body runs, and a scan that defines no UniqueKeyLoader each stop
+the gate before its self-tests, with one FAIL line that names the exception's
+type and message, and exit status 1.
 
 Residuals:
 
@@ -42,10 +54,13 @@ Exit status: 0 when every check passes, 1 on any finding or failure.
 
 from __future__ import annotations
 
-import importlib.util
+import os
+import py_compile
 import re
+import stat
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 try:
@@ -61,14 +76,31 @@ SEGMENT = r"(?!\.\.?(?:/|@))[A-Za-z0-9_.-]+"
 PIN = re.compile(rf"[A-Za-z0-9][A-Za-z0-9-]*/{SEGMENT}(?:/{SEGMENT})*@[0-9a-f]{{40}}")
 
 
-def load_scan():
-    """Load the launch scan by its explicit path, leaving the search path unchanged."""
-    spec = importlib.util.spec_from_file_location("workflow_launch_isolation", SCAN)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {SCAN}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def load_scan(path: Path = SCAN) -> tuple[type | None, str]:
+    """Return (UniqueKeyLoader, "") from the scan at path, or (None, why).
+
+    A path that `os.lstat` does not report as a regular file, such as a
+    symbolic link or a folder, is refused. Otherwise the source bytes are
+    read, compiled with `dont_inherit=True` and run in a fresh module
+    namespace whose `__file__` is path, so no cached bytecode stands in for
+    the source; sys.path is not changed and no entry is added to sys.modules.
+    Any exception or SystemExit raised by those steps, and a module that
+    defines no UniqueKeyLoader, give (None, why), where why is the exception's
+    type, a colon, a space and its message.
+    """
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise ImportError("not a regular file")
+        source = path.read_bytes()
+        module = types.ModuleType("workflow_launch_isolation")
+        module.__file__ = str(path)
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+        if not hasattr(module, "UniqueKeyLoader"):
+            raise ImportError("defines no UniqueKeyLoader")
+    except (Exception, SystemExit) as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    return module.UniqueKeyLoader, ""
 
 
 def check_uses(value) -> str | None:
@@ -202,14 +234,76 @@ def self_test(loader) -> list[str]:
         findings, _ = scan_tree(root, loader)
         if not any(".github/workflows/bad.yml: cannot be read" in f for f in findings):
             errors.append("self-test: a workflow that is not UTF-8 gave no finding")
+    errors += load_self_test()
+    return errors
+
+
+def try_load(path: Path) -> tuple[type | None, str]:
+    """Call load_scan(path); an exception or SystemExit that escapes it becomes why."""
+    try:
+        return load_scan(path)
+    except (Exception, SystemExit) as exc:
+        return None, f"escaped load_scan: {type(exc).__name__}: {exc}"
+
+
+def load_self_test() -> list[str]:
+    errors: list[str] = []
+    try:
+        source = SCAN.read_bytes()
+    except OSError as exc:
+        return [f"self-test: cannot read {SCAN} ({exc})"]
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        good = folder / "good.py"
+        good.write_bytes(source)
+        loader, why = try_load(good)
+        if getattr(loader, "__name__", None) != "UniqueKeyLoader":
+            errors.append(f"self-test: a copy of the launch scan did not load ({why})")
+        if "workflow_launch_isolation" in sys.modules:
+            errors.append("self-test: loading the launch scan added it to sys.modules")
+        cases = [
+            ("exits.py", source + b"\nraise SystemExit(0)\n", "SystemExit: 0"),
+            ("none.py", b"X = 1\n", "ImportError: defines no UniqueKeyLoader"),
+            ("broken.py", b"def broken(:\n", "SyntaxError: "),
+            ("absent.py", None, "FileNotFoundError: "),
+        ]
+        for name, text, want in cases:
+            if text is not None:
+                (folder / name).write_bytes(text)
+            loader, why = try_load(folder / name)
+            if loader is not None or not why.startswith(want):
+                errors.append(f"self-test: loading {name} gave {why or 'UniqueKeyLoader'}, expected {want}")
+        cached = folder / "cached.py"
+        cached.write_bytes(source)
+        try:
+            pyc = py_compile.compile(
+                str(cached), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH
+            )
+        except (OSError, py_compile.PyCompileError) as exc:
+            errors.append(f"self-test: could not write a cached .pyc ({exc})")
+        else:
+            cached.write_bytes(b"raise RuntimeError('the source ran')\n")
+            loader, why = try_load(cached)
+            if not Path(pyc).is_file() or why != "RuntimeError: the source ran":
+                errors.append(f"self-test: a cached .pyc beside a broken source gave {why or 'UniqueKeyLoader'}")
+        (folder / "dir.py").mkdir()
+        others = ["dir.py"]
+        try:
+            (folder / "link.py").symlink_to(good)
+            others.append("link.py")
+        except OSError as exc:
+            errors.append(f"self-test: could not make a symbolic link ({exc})")
+        for name in others:
+            loader, why = try_load(folder / name)
+            if loader is not None or why != "ImportError: not a regular file":
+                errors.append(f"self-test: loading {name} gave {why or 'UniqueKeyLoader'}, expected a refusal")
     return errors
 
 
 def main() -> int:
-    try:
-        loader = load_scan().UniqueKeyLoader
-    except Exception as exc:
-        print(f"FAIL: cannot load UniqueKeyLoader from {SCAN} ({type(exc).__name__}: {exc})")
+    loader, why = load_scan()
+    if loader is None:
+        print(f"FAIL: cannot load UniqueKeyLoader from {SCAN} ({why})")
         return 1
     errors = self_test(loader)
     if errors:
