@@ -25,8 +25,11 @@ import importlib.util
 import io
 import json
 import os
+import py_compile
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -1246,6 +1249,148 @@ class WorkflowPathsTest(unittest.TestCase):
             for relative, pattern in self.COVERING.items():
                 with self.subTest(f"{name}: {relative}"):
                     self.assertIn(f'      - "{pattern}"\n', part)
+
+
+def load_faults(defined: str, renamed: str) -> list[tuple[str, object, str, type]]:
+    """6 faults, each on its own copy of tools/build-site.py and each with the words of the writer's refusal and the
+    exception that the gate's LookupError carries as its cause: the file missing, its mode 000, its mode 000 beside a
+    valid cached file, a syntax error, the definition that starts with ``defined`` changed to start with ``renamed``,
+    and a syntax error beside a cached file of the unbroken source that the normal loader runs without comparing it with
+    the source (an unchecked hash-based file). For each fault but the renaming, that cause is the exception the load
+    raises; the renamed copy loads, the gate's cause is the AttributeError that the render call raises when it reads the
+    missing name, and the writer refuses the copy for that name. Beside a cached file, a tool that always reads the
+    source gives that cause or refusal, and one that runs the cached file in its place does not. Root reads a file
+    whatever its mode, so under root the 2 mode-000 faults skip their case instead."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    name = defined.removeprefix("def ").removesuffix("(")
+    return [("missing", missing, "could not be read", FileNotFoundError),
+            ("with mode 000", locked, "could not be read", PermissionError),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read", PermissionError),
+            ("with a syntax error", broken, "could not be loaded", SyntaxError),
+            (f"with {name} renamed", rename, f"defines no {name}", AttributeError),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded", SyntaxError)]
+
+
+def exits(code: int | None):
+    """A fault that appends raise SystemExit(code), or a bare raise SystemExit when code is None, to
+    tools/build-site.py, so that it exits while it loads."""
+    def fault(path: Path) -> None:
+        statement = "raise SystemExit" if code is None else f"raise SystemExit({code})"
+        path.write_bytes(path.read_bytes() + f"\n{statement}\n".encode("ascii"))
+
+    return fault
+
+
+# Each code that exits() takes, with the exception as the gate's refusal names it.
+EXITS = ((0, "SystemExit: 0"), (1, "SystemExit: 1"), (None, "SystemExit"))
+
+
+class GeneratorLoadTest(unittest.TestCase):
+    """A tools/build-site.py with each fault that load_faults() gives is a generator that cannot render, which the gate
+    raises as LookupError and main() refuses with exit 3, and the writer refuses with exit 2. Neither runs a cached file
+    in place of the source."""
+
+    GENERATOR = Path(__file__).resolve().parent / "build-site.py"
+
+    def faulted(self, root: Path, fault) -> Path:
+        path = root / "tools" / "build-site.py"
+        path.parent.mkdir()
+        shutil.copyfile(self.GENERATOR, path)
+        fault(path)
+        return path
+
+    def test_the_gate_raises_each_load_failure(self):
+        for render, defined in ((lambda: gate.download_block("1.0.0", ZEROS), "def verify_download_block("),
+                                (gate.rendered_verify_page, "def verify_page(")):
+            for name, fault, _, cause in load_faults(defined, defined.replace("(", "_unused(")):
+                with self.subTest(f"{defined}: tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                    path = self.faulted(Path(tmp), fault)
+                    with unittest.mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render()
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, cause)
+                    # The message ends with the cause's type and text, and for an OSError that text names the
+                    # generator's path, so that the refusal says which file could not be read.
+                    error = raised.exception.__cause__
+                    self.assertTrue(str(raised.exception).endswith(f": {type(error).__name__}: {error}"),
+                                    raised.exception)
+                    if issubclass(cause, OSError):
+                        self.assertIn(f": '{path}'", str(raised.exception))
+
+    def test_the_gate_raises_a_generator_that_exits_while_it_loads(self):
+        for site, render in (("download_block", lambda: gate.download_block("1.0.0", ZEROS)),
+                             ("rendered_verify_page", gate.rendered_verify_page)):
+            for code, shown in EXITS:
+                with self.subTest(f"{site}: {shown} at import"), tempfile.TemporaryDirectory() as tmp:
+                    path = self.faulted(Path(tmp), exits(code))
+                    with unittest.mock.patch.object(gate, "GENERATOR", path), self.assertRaises(LookupError) as raised:
+                        render()
+                    self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
+                                    raised.exception)
+                    # The message names the exception, so that the exit is never shown as a bare code or as nothing.
+                    self.assertTrue(str(raised.exception).endswith(f": {shown}"), raised.exception)
+                    self.assertIsInstance(raised.exception.__cause__, SystemExit)
+                    self.assertEqual(raised.exception.__cause__.code, code)
+
+    def test_the_gate_exits_3_when_the_generator_exits_while_it_loads(self):
+        # The gate runs as a process on a copy of the generator's inputs, so that main()'s mapping to exit 3 is
+        # observed, not inferred.
+        for code, shown in EXITS:
+            with self.subTest(f"{shown} at import"), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for relative in WriterTest.INPUTS + ("tools/check-release-links.py",):
+                    source, target = WriterTest.REPO / relative, root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if source.is_dir():
+                        shutil.copytree(source, target)
+                    else:
+                        shutil.copyfile(source, target)
+                exits(code)(root / "tools/build-site.py")
+                result = subprocess.run([sys.executable, "-I", str(root / "tools/check-release-links.py")],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                # main() renders the download block before the whole page, so the block's refusal is the one shown.
+                self.assertIn("check-release-links: tools/build-site.py could not render the verify page's download "
+                              f"block: {shown}\n", result.stderr)
+
+    def test_the_writer_refuses_each_load_failure(self):
+        release = {"version": "1.0.0", "tag": "v1.0.0", "checksum": ZEROS}
+        for name, fault, words, _ in load_faults("def build(", "def build_unused("):
+            with self.subTest(f"tools/build-site.py {name}"), tempfile.TemporaryDirectory() as tmp:
+                self.faulted(Path(tmp), fault)
+                stderr = io.StringIO()
+                with (unittest.mock.patch.object(writer, "REPO_ROOT", Path(tmp)), contextlib.redirect_stderr(stderr),
+                      self.assertRaises(SystemExit) as raised):
+                    writer.site_pages(release, "2026-11-04")
+                self.assertEqual(raised.exception.code, 2, stderr.getvalue())
+                self.assertIn(f"set-release-links: tools/build-site.py {words}", stderr.getvalue())
 
 
 if __name__ == "__main__":

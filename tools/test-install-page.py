@@ -5,7 +5,8 @@ Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR) and, the committed tree aside, applies 1 fault there: it
 changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
-tools/check-headers.py or tools/check-inline-code.py, swaps 2 family pages, or
+tools/check-headers.py or tools/check-inline-code.py (in 2 cases adding a
+cached file of it too), swaps 2 family pages, or
 adds a file that Cloudflare Pages runs or reads: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
@@ -201,6 +202,8 @@ import ast
 import difflib
 import hashlib
 import importlib.util
+import os
+import py_compile
 import re
 import shutil
 import subprocess
@@ -2590,6 +2593,55 @@ def version_binding_problems() -> list[str]:
     return problems + [problem for _, problem in sorted(found)]
 
 
+def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
+    """6 of the ways a sibling tool can fail to load, each a fault on 1 file with the words of the refusal it gives: the
+    file missing, its mode 000, its mode 000 beside a valid cached file, a syntax error, the definition of attribute
+    renamed, and a syntax error beside a cached file of the unbroken source that the normal loader runs without
+    comparing it with the source (an unchecked hash-based file). The tool must always read the source, so that no cached
+    file stands in for it. Root reads a file whatever its mode, so under root the 2 mode-000 cases are not run, and
+    main() names them as skipped."""
+    def missing(path: Path) -> None:
+        path.unlink()
+
+    def locked(path: Path) -> None:
+        os.chmod(path, 0)
+
+    def cached_locked(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        os.chmod(path, 0)
+
+    def broken(path: Path) -> None:
+        path.write_bytes(path.read_bytes() + b"\ndef (\n")
+
+    def rename(path: Path) -> None:
+        text = path.read_text(encoding="utf-8")
+        if defined not in text:
+            raise AssertionError(f"{defined!r} is not in {path.name}")
+        path.write_text(text.replace(defined, renamed, 1), encoding="utf-8")
+
+    def stale(path: Path) -> None:
+        py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        broken(path)
+
+    return [("missing", missing, "could not be read"), ("with mode 000", locked, "could not be read"),
+            ("with mode 000 beside a valid cached file", cached_locked, "could not be read"),
+            ("with a syntax error", broken, "could not be loaded"),
+            (f"with {attribute} renamed", rename, f"defines no {attribute}"),
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
+
+
+LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: fault(root / INLINE_GATE),
+               (3, f"check-install-page: {INLINE_GATE} {words}"))
+              for name, fault, words in load_faults("def inline_code_problems(",
+                                                    "def inline_code_problems_unused(", "inline_code_problems")]
+# Root reads a file whatever its mode, so under root a mode-000 case cannot fail to read: it is left out of CASES, and
+# main() names it as skipped.
+SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
+CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
+
+
 def main() -> int:
     if sys.argv[1:] == [PRINT_PIN]:
         held, problems = committed_rules()
@@ -2630,6 +2682,8 @@ def main() -> int:
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
+    for name in SKIPPED:
+        print(f"test-install-page: skipped {name}: root reads a file whatever its mode")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
