@@ -217,8 +217,8 @@ Residuals, named here because the check reads text by fixed rules:
   starts with exactly 1 space after a blank line under a bullet are refused
   rather than read, and "<!--" written inside inline code is refused like a
   comment. Outside the spans that item 5 covers, the reader reads a list item
-  indented by 4 or more spaces under an open bullet, and a line such as
-  "2. text" directly under a bullet line as part of that bullet, whatever a
+  indented by 4 or more spaces under an open bullet, and a line such as "2.
+  text" directly under a bullet line as part of that bullet, whatever a
   renderer makes of them. No compared text comes from those lines, but the
   pointer sentence and the checklist's mentions of a dash are found there;
 - the items an exit 1 report names come only from the one Keep clause, so a
