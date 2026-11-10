@@ -29,12 +29,22 @@ path and ignores the user site directory and every PYTHON* variable.
 
 The rule:
 
-1. Scope. The scan reads .github/workflows/*.yml. Any other .yml or .yaml
-   file anywhere under .github, in any letter case, such as an action.yml or
-   a .YML workflow, is a finding, as is a symbolic link under .github, a
-   folder that cannot be listed, a file that cannot be read as UTF-8 or
-   parsed with PyYAML's safe loader, a repeated mapping key, and U+0085,
-   U+2028 or U+2029 (which YAML 1.1 and 1.2 read differently). Each workflow
+1. Scope. The scan reads .github/workflows/*.yml. Any other .yml or .yaml file
+   anywhere under .github, in any letter case, such as an action.yml or a .YML
+   workflow, is a finding, as is a symbolic link under .github, a folder that
+   cannot be listed, a file that cannot be read as UTF-8 or parsed with
+   PyYAML's safe loader, and U+0085, U+2028 or U+2029 (which YAML 1.1 and 1.2
+   read differently). The scan loads each workflow with UniqueKeyLoader, and a
+   file whose loading raises any exception is a finding:
+   `cannot be parsed as YAML`, then in parentheses the exception's type, a
+   colon, a space and the first line of its message, such as
+   `(OverflowError: int too large to convert to float)`. UniqueKeyLoader's
+   mapping constructor skips each merge key (`<<`), builds each other key with
+   `loader.construct_object(key_node, deep=deep)`, raises a ConstructorError
+   when a built key is `in` the list of the keys built before it, and returns
+   `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`. Loading with
+   UniqueKeyLoader refuses some documents and loads others; UniqueKeyLoader's
+   docstring gives examples of each that the self-tests record. Each workflow
    must have a jobs mapping; a job that is not a mapping, a steps value that
    is not a list and a step that is not a mapping are findings. A job or step
    `uses:` value that starts with ./ or ../, a local action or a local
@@ -53,29 +63,31 @@ The rule:
    since a shell run with -c takes its command text as a string the scan
    cannot read as commands. A shell word is bash, sh, dash, zsh or ksh,
    alone or as the last part of a path such as /bin/bash, with no letter,
-   digit, underscore, dot, slash or hyphen directly before the word or
-   directly after it (so sha256sum, ssh, fish and a.sh are not shell
-   words, and a quoted `"bash"` is one). A -c cluster is a hyphen and
-   letters that include a lower-case c (`-[A-Za-z]*c[A-Za-z]*`, such as
-   `-c`, `-ec` or `-ce`), with no letter, digit, underscore or hyphen
-   directly before or after it (so `--norc` and `-cache-dir` are not one).
-   The two may stand anywhere on the line, in either order: the rule does
-   not read command position, so it refuses some honest lines, such as
-   `shfmt -ln bash -ci`, `bash tools/a.sh -c config`, `grep bash -c file`
-   or a message that mentions `bash -c`, and an author rephrases such a
-   line. These are cheap checks of the common ways to redirect `python3`
-   or hide a launch; they are not complete, and Residuals names what they
-   miss.
+   digit, underscore, dot or hyphen directly before the word, and no letter,
+   digit, underscore, dot, slash or hyphen directly after it (so sha256sum,
+   ssh, fish and a.sh are not shell words, and a quoted `"bash"` is one). A -c
+   cluster is a hyphen and letters that include a lower-case c
+   (`-[A-Za-z]*c[A-Za-z]*`, such as `-c`, `-ec` or `-ce`), with no letter,
+   digit, underscore or hyphen directly before or after it (so `--norc` and
+   `-cache-dir` are not one). Both may stand anywhere on the line, in either
+   order: the rule does not read command position, so it refuses some honest
+   lines, such as `shfmt -ln bash -ci`, `bash tools/a.sh -c config`,
+   `grep bash -c file` or a message that mentions `bash -c`, and an author
+   rephrases such a line. These are cheap checks of the common ways to
+   redirect `python3` or hide a launch; they are not complete, and Residuals
+   names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
-   spaces, `<name>` holding no `/`, no character of a path and no `$`
-   directly before `python3`, and no character of a path after `.py`, is a
-   launch (so `$python3 -I tools/x.py` is not one). With the launches
-   removed, a line that still holds the word python in any case, or a `.py`
-   or `.pyz` name, is a finding, whether it is a command, a comment or a
+   spaces, `<name>` holding no `/`, no character of a path and no `$` directly
+   before `python3`, and no character of a path after `.py`, is a launch (so
+   `$python3 -I tools/x.py` is not one). With the launches removed, a line
+   that still holds the word python, or a `.py`, `.pyz` or `.pyw` name with no
+   letter, digit or underscore directly after it (so `x.pyc` is not one), in
+   any letter case, is a finding, whether it is a command, a comment or a
    message.
-4. A word that holds python or a `.py` name only once its quotes and
-   backslashes are removed is a finding.
+4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
+   quotes, its backslashes and each `$` directly before a quote are removed is
+   a finding (so `p$"y"thon3` is one).
 5. Every launched script must exist, and the launches on lines that are not
    shell comments must number at least LAUNCH_FLOOR.
 6. Tempfile.py, msvcrt.py, nt.py and _winapi.py are planted beside a copy of
@@ -84,11 +96,12 @@ The rule:
 
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
-`python3 -P -E -s` equivalent, a quoted script path, two spaces before `-I`, a
+`python3 -P -E -s` equivalent, a quoted script path, 2 spaces before `-I`, a
 launch whose words are split across continued lines, `(python3)` and other
-case arms naming python, a message or comment that names python or a .py
-file, and `shell: sh` or `bash -e {0}`. Write a launch as
-`python3 -I tools/<name>.py`.
+case arms naming python, a message or comment that names python or a .py file,
+an expression such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
+`${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
+`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
@@ -100,6 +113,8 @@ Residuals, named here because the scan reads text the pull request controls:
   author who means to run python without -I can write a line whose text the
   scan sees but misreads, and can also edit this scan, which only review
   catches;
+- a repeated mapping key that loading with UniqueKeyLoader does not refuse,
+  such as `x: {<<: {p: 1, p: 2}}`, which the self-tests record as loading;
 - a PATH or ENV assignment whose name is quoted or escaped, such as
   `export 'PATH'=x`;
 - a shell run with -c whose shell is not a shell word on the line: a shell
@@ -125,12 +140,20 @@ Residuals, named here because the scan reads text the pull request controls:
   tools/test-shell-launch-isolation.py reads the tools/*.sh scripts among
   them that it finds by name, and names in its residuals those it does not
   read;
-- other launchers, such as `uv run`, pytest, pipx or an extensionless script;
+- other launchers, such as `uv run`, pytest or pipx;
+- a script run by its shebang whose name ends in none of `.py`, `.pyz` and
+  `.pyw`, such as an extensionless script;
+- a compiled file run directly, such as a `.pyc` file, which the scan does not
+  read;
+- a workflow whose job id or `shell` value, or whose step `run` value given as
+  a number, cannot be turned into text, such as an integer written in hex
+  whose value has more than 4300 decimal digits, which stops the scan with a
+  traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
 - obfuscation that spells python or a `.py` name only once bash or GitHub
-  expands it, such as an ANSI-C string, a glob, brace or parameter expansion,
-  or a `${{ }}` expression;
+  expands it, such as an escape in an ANSI-C string, a glob, brace or
+  parameter expansion, or a `${{ }}` expression;
 - remote actions and remote reusable workflows, including composite ones,
   which are outside this repository;
 - a correct launch in a context that never runs, such as an echo message or a
@@ -174,10 +197,10 @@ PLANT_MARKER = "PLANTED-MODULE-RAN"
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
 LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
 PYTHON = re.compile(r"python", re.IGNORECASE)
-PY_NAME = re.compile(r"\.pyz?(?![\w])")
+PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
-SHELL_WORD = re.compile(r"(?<![\w./-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
+SHELL_WORD = re.compile(r"(?<![\w.-])(?:bash|sh|dash|zsh|ksh)(?![\w./-])")
 C_CLUSTER = re.compile(r"(?<![\w-])-[A-Za-z]*c[A-Za-z]*(?![\w-])")
 LOCAL_USES = ("./", "../")
 
@@ -202,14 +225,52 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
         if PYTHON.search(rest) or PY_NAME.search(rest):
             refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip()))
         for word in line.split():
-            plain = re.sub(r"[\"'\\]", "", word)
+            plain = re.sub(r"\$(?=[\"'])|[\"'\\]", "", word)
             if (PYTHON.search(plain) and not PYTHON.search(word)) or (PY_NAME.search(plain) and not PY_NAME.search(word)):
                 refused.append(("a quote or backslash inside python or a .py name", line.strip()))
     return refused, launches
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
-    """A safe loader that refuses a mapping with a repeated key."""
+    """A safe loader whose mapping constructor checks each key that it builds.
+
+    Its own code is `_construct_mapping`, registered as the constructor for
+    the plain mapping tag, tag:yaml.org,2002:map, and for no other tag. Called
+    on a mapping node, it skips each key whose tag is tag:yaml.org,2002:merge
+    (`<<`). It builds each other key with
+    `loader.construct_object(key_node, deep=deep)`, raises a ConstructorError
+    when the built key is `in` the list of the keys built before it, and
+    appends the key to that list otherwise. Then it returns
+    `yaml.SafeLoader.construct_mapping(loader, node, deep=deep)`.
+
+    Loading with UniqueKeyLoader refuses some documents and loads others. The
+    self-tests hold a case for each document below, with its outcome on PyYAML
+    6.0.3 and Python 3.14.4; these are examples, not a rule for which
+    documents are refused. Each document is written as its top-level lines
+    joined by "then". How GitHub Actions reads any of these documents is not
+    checked.
+
+    - Refused with a message that holds `duplicate key`: the keys `1` and
+      `1.0`, `true` and `yes`, `~` and `null`, `a` and `'a'`, and `.nan` and
+      `.nan`, each pair in 1 mapping.
+    - Refused with a message that holds `duplicate key 'p'`:
+      `m: {<<: &b {<<: {p: 1}, p: 2}}` then `n: *b`.
+    - Refused with a message that holds `tag:yaml.org,2002:value`:
+      `x: {=: a}`, `x: {!!value a: b}`, and `l: [{<<: &b {=: a}}]` then
+      `n: *b`.
+    - Refused with a message that holds `duplicate key []`:
+      `x: {? [a]: 1, ? [b]: 2}`.
+    - Refused with a message that holds `recursive node`: `a: &x {b: *x}` and
+      `a: &x {b: {<<: *x}}`.
+    - Refused with a message that holds `maximum recursion depth`:
+      `x: {a: {a: ... 1}}`, with mappings nested 300 deep.
+    - Loaded: `on` and `'on'`, as 2 keys, True and a string;
+      `x: {<<: {p: 1}, p: 2}`; `x: {<<: {p: 1}, <<: {p: 2}}`;
+      `x: {<<: {p: 1, p: 2}}`; `x: !!set {a, a}`;
+      `l: [{<<: &b {<<: {p: 1}, p: 2}}]` then `n: *b`;
+      `m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}` then `n: *b`;
+      `m: {<<: &b {=: a}}` then `n: *b`; and `x: {y: &b {=: a}, <<: *b}`.
+    """
 
 
 def _construct_mapping(loader, node, deep=False):
@@ -333,8 +394,9 @@ def scan_tree(root: Path, floor: int, probe_scripts) -> tuple[list[str], int]:
                 findings.append(f"{rel}: holds {name}, which YAML 1.1 and 1.2 read differently")
         try:
             doc = yaml.load(text, Loader=UniqueKeyLoader)
-        except yaml.YAMLError as exc:
-            findings.append(f"{rel}: cannot be parsed as YAML ({str(exc).splitlines()[0]})")
+        except Exception as exc:
+            first = f"{type(exc).__name__}: {exc}".splitlines()[0]
+            findings.append(f"{rel}: cannot be parsed as YAML ({first})")
             continue
         found: list[str] = []
         runs, shells = collect(doc, found)
@@ -526,6 +588,81 @@ RUN_CASES = [
     ("OLD_ENV=x", False),
     ('echo "$PATH=x"', False),
     ('echo "$ENV="', False),
+    # The characters before and after a shell word or a -c cluster, and the
+    # letters of a cluster: each case fails when the part of SHELL_WORD or
+    # C_CLUSTER that decides it is removed or weakened.
+    ("x_bash -c true", False),
+    ("a.bash -c true", False),
+    ("a-bash -c true", False),
+    ("bash_x -c true", False),
+    ("bash.x -c true", False),
+    ("bash/x -c true", False),
+    ("bash-x -c true", False),
+    ("bash -Ec true", True),
+    ("bash -cE true", True),
+    ("bash -xec true", True),
+    ("bash -cex true", True),
+    ("bash -AZazcAZaz true", True),
+    ("bash --c", False),
+    ("bash -c_x", False),
+    ("bash -c-x", False),
+    ("bash a-c", False),
+    ("bash x-c", False),
+    # An upper-case letter, a digit, a non-ASCII letter or an underscore
+    # directly before or after a shell word or a -c cluster: each case fails
+    # when the `\w` of the lookaround that decides it no longer holds that
+    # class. In `bash -cA1` the 1 keeps `-cA` from being a cluster, so the A
+    # after `-c` decides the case.
+    ("Abash -c true", False),
+    ("1bash -c true", False),
+    ("\u00e9bash -c true", False),
+    ("bashA -c true", False),
+    ("bash1 -c true", False),
+    ("bash\u00e9 -c true", False),
+    ("bash A-c", False),
+    ("bash 1-c", False),
+    ("bash \u00e9-c", False),
+    ("bash _-c", False),
+    ("bash -cA1", False),
+    ("bash -c1", False),
+    ("bash -c\u00e9", False),
+    # A shell word as the last part of a path, whose folders may hold a dot
+    # or a hyphen, and a quote directly after a -c cluster. These pin
+    # behaviour rather than a part of either pattern: a slash may stand
+    # directly before a shell word, and a quote directly after a cluster.
+    ("./bash -c true", True),
+    ("/opt/a.b/bash -c true", True),
+    ("/opt/my-tools/bash -c true", True),
+    ("/a/b/c/bash -c true", True),
+    ("bash -c'true'", True),
+    ('bash -c"true"', True),
+    # Rule 3 reads .pyw as well as .py and .pyz, in any letter case, and only
+    # when no letter, digit or underscore follows the suffix, so x.pyc, x.py3,
+    # x.py_, x.py followed by U+00E9 (a non-ASCII letter) and a property named
+    # pyenv pass. Each passing case fails when the `\w` of the lookahead no
+    # longer holds the class of the character after the suffix.
+    ("./tools/x.pyw", True),
+    ("./tools/x.PY", True),
+    ("./tools/x.PYZ", True),
+    ("echo x.pyc", False),
+    ("echo x.py3", False),
+    ("echo x.py_", False),
+    ("echo x.py\u00e9", False),
+    ('echo "${{ steps.pyenv.outputs.v }}"', False),
+    # Rule 3 reads these names in any letter case, so it also refuses an
+    # expression that names a property PY, Py, PYZ or PYW.
+    ('echo "${{ env.PY }}"', True),
+    ('echo "${{ matrix.Py }}"', True),
+    ('echo "${{ env.PYZ }}"', True),
+    ('echo "${{ vars.PYW }}"', True),
+    # Rule 4 drops a $ directly before either quote, so p$"y"thon3 and
+    # p$'y'thon3 read as python3, and keeps any other $, so py$thon3 does not.
+    ('p$"y"thon3 -c \'x\'', True),
+    ("p$'y'thon3 -c 'x'", True),
+    ('cp a.p$"y" b', True),
+    ('echo "$HOME"', False),
+    ("echo $'a b'", False),
+    ("echo py$thon3", False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -638,11 +775,77 @@ def self_test() -> list[str]:
             ("a second job without the first job's shell", two_jobs, "jobs.b.steps[0]: run text with no explicit shell"),
             ("a job that uses a local reusable workflow", head + "  k:\n    uses: ./.github/workflows/w.yml\n",
              "jobs.k.uses: './.github/workflows/w.yml' is a local action"),
+            ("keys 1 and 1.0", "x:\n  1: a\n  1.0: b\n" + head, "duplicate key"),
+            ("keys true and yes", "x:\n  true: a\n  yes: b\n" + head, "duplicate key"),
+            ("keys ~ and null", "x:\n  ~: a\n  null: b\n" + head, "duplicate key"),
+            ("keys a and 'a'", "x:\n  a: 1\n  'a': 2\n" + head, "duplicate key"),
+            ("an anchored mapping with a merge and an override, merged and then reused as an alias",
+             "m: {<<: &b {<<: {p: 1}, p: 2}}\nn: *b\n" + head, "duplicate key 'p'"),
+            ("a mapping with a repeated key, merged and then reused as an alias",
+             "m: {<<: &b {p: 1, p: 2}}\nn: *b\n" + head, "duplicate key"),
+            ("an anchored mapping whose 2 merge keys supply the same key, merged and then reused as an alias",
+             "m: {<<: &b {<<: {p: 1}, <<: {p: 2}}}\nn: *b\n" + head, "duplicate key"),
+            ("an anchored mapping whose merge list repeats a key, merged and then reused as an alias",
+             "m: {<<: &b {<<: [{p: 1}, {p: 2}]}}\nn: *b\n" + head, "duplicate key"),
+            ("a mapping with a merge and an override, held and merged by the same mapping",
+             "m: {a: &b {<<: {p: 1}, p: 2}, <<: *b}\n" + head, "duplicate key"),
+            ("keys .nan and .nan", "x:\n  .nan: a\n  .nan: b\n" + head, "duplicate key"),
+            ("a plain = key", "x:\n  =: a\n" + head, "tag:yaml.org,2002:value"),
+            ("a key tagged !!value", "x:\n  !!value a: b\n" + head, "tag:yaml.org,2002:value"),
+            ("a plain = key in a flow mapping", "x: {=: a}\n" + head, "tag:yaml.org,2002:value"),
+            ("a key tagged !!value in a flow mapping", "x: {!!value a: b}\n" + head, "tag:yaml.org,2002:value"),
+            ("2 sequence keys", "x: {? [a]: 1, ? [b]: 2}\n" + head,
+             "duplicate key []"),
+            ("a mapping that holds an alias to itself", "a: &x {b: *x}\n" + head, "recursive node"),
+            ("a mapping merged into one of its own values", "a: &x {b: {<<: *x}}\n" + head,
+             "recursive node"),
+            ("a mapping with a merge and an override, held in a sequence and merged by a later key",
+             "m: [&b {<<: {p: 1}, p: 2}]\no: {<<: *b}\n" + head, "duplicate key 'p'"),
+            ("a plain = key in a mapping merged in a sequence and reused as a later alias",
+             "l: [{<<: &b {=: a}}]\nn: *b\n" + head, "tag:yaml.org,2002:value"),
+            ("a mapping with a merge and an override, held in a sequence in a mapping and merged by a later key",
+             "m: {s: [&b {<<: {p: 1}, p: 2}]}\no: {<<: *b}\n" + head, "duplicate key 'p'"),
+            ("a mapping nested 300 deep", "x: " + "{a: " * 300 + "1" + "}" * 300 + "\n" + head,
+             "cannot be parsed as YAML (RecursionError: maximum recursion depth"),
+            # Loading these raises, in turn, a ValueError, a ValueError, an
+            # IndexError, a KeyError, an AttributeError, a TypeError and an
+            # OverflowError, none of them a YAML error, and scan_tree turns
+            # any exception raised while loading into a finding that names its
+            # type.
+            ("an impossible date", "x: 2001-02-30\n" + head,
+             "cannot be parsed as YAML (ValueError: day 30 must be in range 1..28 for month 2 in year 2001)"),
+            ("a !!int tag on a word", "x: !!int a\n" + head,
+             "cannot be parsed as YAML (ValueError: invalid literal for int() with base 10: 'a')"),
+            ("a !!int tag on an empty string", "x: !!int ''\n" + head,
+             "cannot be parsed as YAML (IndexError: string index out of range)"),
+            ("a !!bool tag on a word", "x: !!bool a\n" + head, "cannot be parsed as YAML (KeyError: 'a')"),
+            ("a !!timestamp tag on a word", "x: !!timestamp a\n" + head,
+             "cannot be parsed as YAML (AttributeError: 'NoneType' object has no attribute 'groupdict')"),
+            ("a !!map tag on a sequence", "x: !!map [a]\n" + head,
+             "cannot be parsed as YAML (TypeError: cannot unpack non-iterable ScalarNode object)"),
+            ("a float scalar of 175 colon-separated parts", "x: 1" + ":0" * 173 + ":0.5\n" + head,
+             "cannot be parsed as YAML (OverflowError: int too large to convert to float)"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
             if not any(needle in f for f in scan()):
                 errors.append(f"self-test: whole file {name} gave no finding naming {needle!r}")
+        # An exception whose message is empty must still give a finding that
+        # names its type. A constructor for a private tag raises one, and is
+        # removed afterwards so that no later case loads the tag.
+        def raise_empty(loader, node):
+            raise ValueError()
+
+        UniqueKeyLoader.add_constructor("!empty", raise_empty)
+        case.write_text("x: !empty a\n" + head, encoding="utf-8")
+        try:
+            findings = scan()
+        except Exception as exc:
+            findings = [f"a crash with {type(exc).__name__}"]
+        finally:
+            del UniqueKeyLoader.yaml_constructors["!empty"]
+        if not any("cannot be parsed as YAML (ValueError: )" in f for f in findings):
+            errors.append(f"self-test: an exception with an empty message gave {findings!r}")
         clean = [
             ("a YAML merge key",
              "x: &c\n  runs-on: ubuntu-latest\n  defaults:\n    run:\n      shell: bash\non: push\njobs:\n"
@@ -656,11 +859,46 @@ def self_test() -> list[str]:
              head + "  k:\n    uses: octo/repo/.github/workflows/w.yml@" + "a" * 40 + "\n"),
             ("a job-level shell: bash for each of two jobs",
              two_jobs.replace("  b:\n    steps:", "  b:\n    defaults:\n      run:\n        shell: bash\n    steps:")),
+            ("a merge with an override", "x: {<<: {p: 1}, p: 2}\n" + head),
+            ("a mapping with 2 merge keys", "x: {<<: {p: 1}, <<: {q: 2}}\n" + head),
+            ("a mapping with 2 merge keys that supply the same key", "x: {<<: {p: 1}, <<: {p: 2}}\n" + head),
+            ("a repeated key in a merge source", "x: {<<: {p: 1, p: 2}}\n" + head),
+            ("a repeated key in a merge list's source", "x: {<<: [{p: 1, p: 2}]}\n" + head),
+            ("a top-level mapping with a merge and an override, then merged and reused as an alias",
+             "a: &b {<<: {p: 1}, p: 2}\nm: {<<: *b}\nn: *b\n" + head),
+            ("a mapping with a merge and an override, merged by 2 mappings",
+             "m: {<<: &b {<<: {p: 1}, p: 2}}\no: {<<: *b}\n" + head),
+            ("a !!set with a repeated member", "x: !!set {a, a}\n" + head),
+            ("keys on and 'on'", "'on': x\n" + head, {True: "push", "on": "x"}),
+            ("an !!omap with a repeated key", "x: !!omap [{a: 1}, {a: 2}]\n" + head),
+            ("a !!pairs with a repeated key", "x: !!pairs [{a: 1}, {a: 2}]\n" + head),
+            ("a plain = key in a merged mapping reused as an alias", "m: {<<: &b {=: a}}\nn: *b\n" + head,
+             {"m": {"=": "a"}, "n": {"=": "a"}}),
+            ("a mapping that holds an alias to itself through a list", "a: &x {b: [*x]}\n" + head),
+            ("a mapping that is its own merge source", "a: &x {<<: *x}\n" + head, {"a": {}}),
+            ("a mapping that holds a key and is its own merge source", "a: &x {b: 1, <<: *x}\n" + head, {"a": {"b": 1}}),
+            ("a mapping whose merge list holds only itself", "a: &x {<<: [*x]}\n" + head, {"a": {}}),
+            ("a mapping with a merge and an override, merged in a sequence and reused as a later alias",
+             "l: [{<<: &b {<<: {p: 1}, p: 2}}]\nn: *b\n" + head, {"l": [{"p": 2}], "n": {"p": 2}}),
+            ("a mapping with a merge and an override, merged in a sequence in a mapping and reused as a later alias",
+             "m: {s: [{<<: &b {<<: {p: 1}, p: 2}}]}\nn: *b\n" + head, {"m": {"s": [{"p": 2}]}, "n": {"p": 2}}),
+            ("a mapping with a merge and an override, held in a sequence, reused as an alias and merged in the same mapping",
+             "m: {s: [&b {<<: {p: 1}, p: 2}], t: *b, u: {<<: *b}}\n" + head,
+             {"m": {"s": [{"p": 2}], "t": {"p": 2}, "u": {"p": 2}}}),
+            ("a plain = key in a merge source", "x: {<<: {=: a}}\n" + head, {"x": {"=": "a"}}),
+            ("a plain = key in a mapping held and merged by the same mapping", "x: {y: &b {=: a}, <<: *b}\n" + head,
+             {"x": {"=": "a", "y": {"=": "a"}}}),
         ]
-        for name, text in clean:
+        # A third member maps top-level keys to the values they must load to,
+        # since a case can pass the scan and still load to another value.
+        for name, text, *value in clean:
             case.write_text(text, encoding="utf-8")
             if scan():
                 errors.append(f"self-test: {name} gave {scan()!r}")
+            elif value:
+                doc = yaml.load(text, Loader=UniqueKeyLoader)
+                if {key: doc.get(key) for key in value[0]} != value[0]:
+                    errors.append(f"self-test: {name} loaded {doc!r}, not {value[0]!r}")
         case.write_text(head, encoding="utf-8")
         (workflows / "bad.yml").write_bytes(b"on: \xff\n")
         if not any("cannot be read" in f for f in scan()):
