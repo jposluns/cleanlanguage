@@ -2178,9 +2178,10 @@ def name_reading_problems() -> list[str]:
     return problems
 
 
-# Fragments in which the gate's parse() reads a link to #get as hidden: by its own attribute, a hiding ancestor, a
-# hiding class on an ancestor, a details without open and a noscript ancestor, which HIDING_ELEMENTS names, and on a
-# page that parse() hides as a whole, by a hiding body start tag before or after the link or a frameset start tag.
+# Fragments in which the gate's parse() reads a link to #get as hidden: by its own attribute; by a hiding ancestor; by a
+# hiding class on an ancestor; by a details without open, which the gate reads as hiding all its content but its first
+# summary child; by a noscript ancestor, 1 of HIDING_ELEMENTS; and, on a page that parse() hides as a whole, by a hiding
+# body start tag before or after the link or by a frameset start tag.
 HIDDEN_LINKS = (
     '<a href="/install/#get" hidden>Back</a>',
     '<div hidden><p><a href="/install/#get"><span>Back</span></a></p></div>',

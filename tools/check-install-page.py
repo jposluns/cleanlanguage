@@ -701,32 +701,37 @@ inside a ``script``, markup inside a ``title``, and a comment ended by
 fragment differs from the number that Python 3.14.4 gives, the gate exits 3 and
 names that probe, so a release that changes a reading stops the gate wherever
 it runs, ``tools/release-dry-run.sh`` included, which runs the gate without the
-suite. The probes read no file: ``parse()`` reads
+suite. The probe of a comment ended by ``--!>`` puts a ``-->`` after its
+``h1``, so that where ``--!>`` does not end the comment, ``-->`` ends it after
+the ``h1``, and the comment is not left open to the end of the input, where a
+parser may read the comment's text up to its first ``>`` as data and then read
+the ``h1``. The probes read no file: ``parse()`` reads
 ``tools/check-inline-code.py`` only for its ``INERT_ELEMENTS``, which do not
-change the ``h1`` elements it reads, and a probe gives it none. The suite puts
-each reading on a family page: an ``h1`` after a ``</ script>`` in its JSON-LD
-and an ``h1`` in its ``title`` pass, and an ``h1`` after a comment ended by
-``--!>`` fails as a second ``h1``. It also runs, for each probe, a copy of the
-gate that expects the other reading of it, which must exit 3 and name that
-probe, and 2 copies in which the probe of a ``</ script>`` inside a ``script``
-or the probe of markup in a ``title`` reads its ``h1`` inside an open ``div``,
-as on a Python that opens elements inside a ``script`` or a ``title``; each
-must exit 3 and name its probe with ``tools/check-inline-code.py`` removed,
-which it cannot do if that probe tries to read that file. The probe of a
-comment ended by ``--!>`` has no ``</br>``, and its only start tag is its
-``h1``'s, with only the comment before it, so no reading of it meets a start
-tag or a ``</br>`` while an element is open, and ``parse()`` reads that file
-only at a start tag, a self-closing one included, or a ``</br>`` end tag that
-it meets while it holds an element open.
+change the ``h1`` elements it reads, and for each probe ``main()`` gives
+``parse()`` the empty tuple ``()`` in their place. The suite puts each reading
+on a family page: an ``h1`` after a ``</ script>`` in its JSON-LD and an ``h1``
+in its ``title`` pass, and an ``h1`` after a comment ended by ``--!>`` fails as
+a second ``h1``. It also runs, for each probe, a copy of the gate that expects
+the other reading of it, which must exit 3 and name that probe, and 2 copies in
+which the probe of a ``</ script>`` inside a ``script`` or the probe of markup
+in a ``title`` reads its ``h1`` inside an open ``div``, as on a Python that
+opens elements inside a ``script`` or a ``title``; each must exit 3 and name
+its probe with ``tools/check-inline-code.py`` removed, which it cannot do if
+that probe tries to read that file. The probe of a comment ended by ``--!>``
+has no ``</br>``, and its only start tag is its ``h1``'s, with only the comment
+before it, so no reading of it meets a start tag or a ``</br>`` while an
+element is open, and ``parse()`` reads that file only at a start tag, a
+self-closing one included, or a ``</br>`` end tag that it meets while it holds
+an element open.
 
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, load path, pinned load,
      class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
      doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
-  3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
-     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports, or the number of h1
-     elements that parse() reads in a fragment of READING_PROBES differs from the number that Python 3.14.4 gives
+  3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is 3.9
+     or later and either not 3.14 or not one that tools/check-inline-code.py supports, or the number of h1 elements that
+     parse() reads in a fragment of READING_PROBES differs from the number that Python 3.14.4 gives
 """
 
 from __future__ import annotations
@@ -769,14 +774,14 @@ DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
-# A listed version does not fix how html.parser reads raw text and comments, which a patch release can change, so
-# main() runs parse() on each of these fragments before it reads a file, and exits 3 naming the probe when the number
-# of h1 elements read differs from the number given here, which Python 3.14.4 reads: a "</ script>" does not close a
-# script, a title holds its markup as text, and "--!>" ends a comment (see Python versions).
+# A listed version does not fix how html.parser reads raw text and comments, which a patch release can change, so main()
+# runs parse() on each of these fragments before it reads a file, and exits 3 naming the probe when the number of h1
+# elements read differs from the number given here, which Python 3.14.4 reads: a "</ script>" does not close a script, a
+# title holds its markup as text, and "--!>" ends a comment (see Python versions).
 READING_PROBES = (
     ("a </ script> inside a script", "<script></ script><h1>Probe</h1></script>", 0),
     ("markup inside a title", "<title><h1>Probe</h1></title>", 0),
-    ("a comment ended by --!>", "<!-- probe --!><h1>Probe</h1>", 1),
+    ("a comment ended by --!>", "<!-- probe --!><h1>Probe</h1> -->", 1),
 )
 # The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
@@ -1142,10 +1147,11 @@ class PageParser(HTMLParser):
 
     def __init__(self, inert_tags: tuple[str, ...] | None = None) -> None:
         super().__init__()
-        # The elements of INERT_ELEMENTS, or None to have inert_elements() read them from tools/check-inline-code.py at
-        # each start tag, a self-closing one included, or </br> end tag that the parser meets while it holds an element
-        # open. They decide only which ids and links count, never which h1 elements count, so a probe of READING_PROBES
-        # gives none and reads no file.
+        # The tags read as inert, inside whose elements an id or a link does not count: a tuple, which may be empty, or
+        # None to have inert_elements() read them from tools/check-inline-code.py at each start tag, a self-closing one
+        # included, or </br> end tag that the parser meets while it holds an element open. They decide only which ids
+        # and links count, never which h1 elements count, so main() gives each probe of READING_PROBES the empty tuple,
+        # and no probe reads a file.
         self.inert_tags = inert_tags
         self.stack: list[dict] = []
         self.order = 0
@@ -1948,8 +1954,8 @@ def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict
     filter on visible text: the parser never counts text inside a hiding element, so there a link that it reads as
     hidden has no visible text, which hidden_link_problems() of tools/test-install-page.py checks on the fragments of
     its HIDDEN_LINKS. Only on a page that parse() hides as a whole (by a frameset start tag, or a hiding html or body
-    start tag, anywhere) may a link that reads as hidden keep its text, and there every h1 reads as hidden too, so
-    check 4 refuses the page."""
+    start tag, anywhere) may a link that reads as hidden keep its text, and there every h1 reads as hidden too, so check
+    4 refuses the page."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
     problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
