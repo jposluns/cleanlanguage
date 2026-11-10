@@ -105,9 +105,10 @@ def load_scan(path: Path = SCAN) -> tuple[type | None, str]:
     sys.path is not changed and no entry for the scan is added to sys.modules;
     the modules that the scan imports are added there as any import adds them.
     An Exception or a SystemExit raised by those steps, and a module that
-    defines no UniqueKeyLoader, give (None, why), where why is the exception's
-    type, a colon, a space and its message. Any other BaseException, such as
-    KeyboardInterrupt, is not caught.
+    defines no UniqueKeyLoader, give (None, why), where why is the first line
+    of the exception's type, a colon, a space and its message, or the type's
+    name alone when building that text raises, as describe gives it. Any other
+    BaseException, such as KeyboardInterrupt, is not caught.
     """
     try:
         info = os.lstat(path)
@@ -120,7 +121,7 @@ def load_scan(path: Path = SCAN) -> tuple[type | None, str]:
         if not hasattr(module, "UniqueKeyLoader"):
             raise ImportError("defines no UniqueKeyLoader")
     except (Exception, SystemExit) as exc:
-        return None, f"{type(exc).__name__}: {exc}"
+        return None, describe(exc)
     return module.UniqueKeyLoader, ""
 
 
@@ -558,6 +559,7 @@ def load_self_test() -> list[str]:
             errors.append("self-test: loading the launch scan added it to sys.modules")
         cases = [
             ("exits.py", source + b"\nraise SystemExit(0)\n", "SystemExit: 0"),
+            ("unprintable.py", source + b"\nclass Unprintable(Exception):\n    def __str__(self):\n        raise ValueError('no text')\n\n\nraise Unprintable()\n", "Unprintable"),
             ("none.py", b"X = 1\n", "ImportError: defines no UniqueKeyLoader"),
             ("broken.py", b"def broken(:\n", "SyntaxError: "),
             ("absent.py", None, "FileNotFoundError: "),
