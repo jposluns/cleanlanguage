@@ -84,11 +84,13 @@ The rule:
    followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
    nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
-   of a process substitution: any other character, and a `<(` or `>(`,
-   continues the word). With the launches removed, a line that still holds the
-   word python, or a `.py`, `.pyz` or `.pyw` name with no letter, digit or
-   underscore directly after it (so `x.pyc` is not one), in any letter case,
-   is a finding, whether it is a command, a comment or a message.
+   of a process substitution: any other character except a closing backquote,
+   or a `<(` or `>(`, continues the word, and the rule refuses a closing
+   backquote too, although it ends the word). With the launches removed, a
+   line that still holds the word python, or a `.py`, `.pyz` or `.pyw` name
+   with no letter, digit or underscore directly after it (so `x.pyc` is not
+   one), in any letter case, is a finding, whether it is a command, a comment
+   or a message.
 4. A word that holds python or a `.py`, `.pyz` or `.pyw` name only once its
    quotes, its backslashes and each `$` directly before a quote are removed is
    a finding (so `p$"y"thon3` is one).
@@ -101,13 +103,17 @@ The rule:
 Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
 `python3 -P -E -s` equivalent, a quoted script path, a character after `.py`
-that does not end a bash word, as in `tools/x.py''` or `tools/x.py$EMPTY`, 2
-spaces before `-I`, a launch whose words are split across continued lines,
-`(python3)` and other case arms naming python, a message or comment that names
-python or a .py file, an expression such as `${{ env.PY }}`,
-`${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
-as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or `bash -e {0}`. Write a
-launch as `python3 -I tools/<name>.py`.
+that does not end a bash word in plain run text (text that bash reads as
+commands, not text such as a quoted string, a comment, a here-document body or
+a parameter expansion), as in `tools/x.py''` or `tools/x.py$EMPTY`, a closing
+backquote directly after `.py`, which ends a command substitution written with
+backquotes, 2 spaces before `-I`, a launch whose words are split across
+continued lines, `(python3)` and other case arms naming python, a message or
+comment that names python or a .py file, an expression such as
+`${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`,
+which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or
+`bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`, and a command
+substitution that holds one as `$(...)`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local actions and local reusable workflows, which
@@ -673,14 +679,19 @@ RUN_CASES = [
     ('echo "$HOME"', False),
     ("echo $'a b'", False),
     ("echo py$thon3", False),
-    # Rule 3's right edge. A character after `.py` that does not end a bash
-    # word continues the word, so the scan refuses it rather than reads what
-    # bash would run (tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs
-    # tools/x.py). A `<(` or `>(` directly after `.py` also continues the
-    # word, since bash reads it as a process substitution (tools/x.py<(echo w)
-    # runs a script whose name ends with the substitution's path). A launch
+    # Rule 3's right edge. In plain run text, which bash reads as commands, a
+    # character after `.py` that does not end a bash word continues the word,
+    # so the scan refuses it rather than reads what bash would run
+    # (tools/x.py"w" runs tools/x.pyw, and tools/x.py'' runs tools/x.py). A
+    # `<(` or `>(` directly after `.py` also continues the word, since bash
+    # reads it as a process substitution (tools/x.py<(echo w) runs a script
+    # whose name ends with the substitution's path). A closing backquote ends
+    # the word, but the scan refuses it too: it cannot tell a closing
+    # backquote from an opening one, after which the word continues. A launch
     # directly followed by the end of the line, a space, a tab, `|`, `&`, `;`,
-    # `(`, `)`, or a `<` or `>` not directly followed by `(`, stays counted.
+    # `(`, `)`, or a `<` or `>` not directly followed by `(`, stays counted,
+    # as it does before an operator that starts with one of them, such as
+    # `>>`, `<<<`, `>&`, `|&`, `&>` or `;;`.
     (f'python3 -I {X}"w"', True),
     (f"python3 -I {X}'w'", True),
     (f"python3 -I {X}$'w'", True),
@@ -700,12 +711,23 @@ RUN_CASES = [
     (f"python3 -I {X}\u00a0w", True),
     (f"python3 -I {X}<(echo w)", True),
     (f"python3 -I {X}>(cat)", True),
+    (f"v=`python3 -I {X}`", True),
     (f"python3 -I {X}\tw", False),
     (f"python3 -I {X}|cat", False),
     (f"python3 -I {X}&", False),
     (f"python3 -I {X}<f", False),
     (f"python3 -I {X}>f", False),
     (f"python3 -I {X}(", False),
+    (f"python3 -I {X}>>f", False),
+    (f"python3 -I {X}<<EOF\nw\nEOF", False),
+    (f"python3 -I {X}<<<w", False),
+    (f"python3 -I {X}>&2", False),
+    (f"python3 -I {X}<&0", False),
+    (f"python3 -I {X}>|f", False),
+    (f"python3 -I {X}|&cat", False),
+    (f"python3 -I {X}&>f", False),
+    (f'case "$v" in a) python3 -I {X};; esac', False),
+    (f"python3 -I {X}>2", False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -802,6 +824,18 @@ def self_test() -> list[str]:
         for text in (f"python3 -I {X}", f"python3 -I {X} --flag", f'v="$(python3 -I {X})"'):
             if check_run(text) != ([], [(X, True)]):
                 errors.append(f"self-test: {text!r}: expected no finding and exactly 1 counted launch of {X}")
+        # Rule 3's right edge, character by character: each character of the
+        # edge, and a newline, which check_run reads as the end of a line,
+        # gives no finding and exactly 1 counted launch, and every other
+        # character, here each ASCII character and U+0085, U+00A0, U+2028,
+        # U+2029 and U+FEFF, gives a finding and no counted launch.
+        edge = " \t|&;()<>\n"
+        for c in [chr(n) for n in range(128)] + ["\x85", "\xa0", "\u2028", "\u2029", "\ufeff"]:
+            refused, launches = check_run(f"python3 -I {X}{c}w")
+            if c in edge and (refused, launches) != ([], [(X, True)]):
+                errors.append(f"self-test: {c!r} after {X}: expected no finding and exactly 1 counted launch of {X}")
+            elif c not in edge and (not refused or (X, True) in launches):
+                errors.append(f"self-test: {c!r} after {X}: expected a finding and no counted launch of {X}")
 
         two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
                     "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")
