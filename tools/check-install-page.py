@@ -1174,10 +1174,10 @@ class PageParser(HTMLParser):
     def __init__(self, inert_tags: tuple[str, ...] | None = None) -> None:
         super().__init__()
         # The tags read as inert, inside whose elements an id or a link does not count: a tuple, which may be empty, or
-        # None to have inert_elements() read them from tools/check-inline-code.py at each start tag, a self-closing one
-        # included, or </br> end tag that the parser meets while it holds an element open. They decide only which ids
-        # and links count, never which h1 elements count, so main() gives each probe of READING_PROBES the empty tuple,
-        # and no probe reads a file.
+        # None to have inert_elements() read them from tools/check-inline-code.py, which it does only at a start tag, a
+        # self-closing one included, or a </br> end tag that the parser meets while it holds an element open. They
+        # decide only which ids and links count, never which h1 elements count, so main() gives each probe of
+        # READING_PROBES the empty tuple, and no probe reads a file.
         self.inert_tags = inert_tags
         self.stack: list[dict] = []
         self.order = 0
