@@ -4854,24 +4854,25 @@ class CorrectiveRemedyTest(unittest.TestCase):
     """The gate prints exactly 1 message that names a corrective new version: the date-mismatch remedy in
     check_release_date. The release workflow's superseded-release note does not apply to this gate, because a later
     version never supersedes the latest release the gate checks, so no second message may name that remedy. A message is
-    a string constant of the gate that is not a statement of its own, after implicit concatenation, or an f-string with
+    a string constant or an f-string of the gate that is not a statement of its own, after implicit concatenation, with
     each replacement field read as a brace pair, so a docstring or a comment is not a message; a string inside a
     replacement field, a format spec included, is a message of its own. Its text is normalized by lowering the case,
     reading each hyphen as a space and collapsing each run of whitespace. Every message in this sense that names either
     token, corrective or new version, is recorded with the top-level function that holds it, or with module when no
     top-level function holds it, as in a class, and the record must be exactly the 1 message in check_release_date,
-    naming the phrase once and each token once, so a second message that names the phrase, even split across implicit
-    concatenation, recased, respaced or hyphenated, still fails. A token is matched as a substring, so a sibling message
-    in this sense that names it only within longer words, such as renew versioning, fails too. So do these honest
-    refactors, accepted as over-pins: a rename of check_release_date, the remedy print moved into a new top-level
-    function, the remedy text moved into a module constant, and any rewrite that splits the 1 message into more than 1
-    string constant, such as its pieces joined with an explicit + or its text passed to print as 2 arguments split
-    between corrective and new version, unless 1 of those constants holds the whole phrase and the others hold no token.
-    A hyphenated rewording of the 1 message passes this test; the exact wording stays pinned by the REMEDY constant of
-    ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through date_mismatch.
-    Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for example, a
-    second remedy worded without either token, a copy of the phrase written as bytes, assembled at run time from pieces
-    that never hold a token whole or read from another file, or the 1 message printed more than once at run time."""
+    naming the phrase once and each token once, so a second message in this sense that names the phrase, even split
+    across implicit concatenation, recased, respaced or hyphenated, still fails. A token is matched as a substring, so a
+    sibling message in this sense that names it only within longer words, such as renew versioning, fails too. So do
+    these honest refactors, accepted as over-pins: a rename of check_release_date, the remedy print moved into a new
+    top-level function, the remedy text moved into a module constant, and any rewrite that splits the 1 message into
+    more than 1 string constant, such as its pieces joined with an explicit + or its text passed to print as 2 arguments
+    split between corrective and new version, unless 1 of those constants holds the whole phrase and the others hold no
+    token. A hyphenated rewording of the 1 message passes this test; the exact wording stays pinned by the REMEDY
+    constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through
+    date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for
+    example, a second remedy worded without either token, a copy of the phrase written as bytes, assembled at run time
+    from pieces that never hold a token whole or read from another file, or the 1 message printed more than once at run
+    time."""
 
     PHRASE = "corrective new version"
     TOKENS = ("corrective", "new version")
@@ -4914,7 +4915,8 @@ class CorrectiveRemedyTest(unittest.TestCase):
         return recorded
 
     def test_exactly_one_message_names_a_corrective_new_version(self):
-        """The messages naming either token are exactly 1: the date-mismatch remedy, naming the phrase once."""
+        """The messages in the sense of the class docstring that name either token are exactly 1: the date-mismatch
+        remedy, naming the phrase once."""
         self.assertEqual(self.recorded_messages(), [("check_release_date", (1, 1, 1))])
 
 
