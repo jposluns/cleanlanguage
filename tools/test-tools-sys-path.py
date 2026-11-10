@@ -57,6 +57,15 @@ Residuals:
   lambda default, sys passed to a function, `getattr(sys, "__dict__")`, and a
   class pattern that reaches sys through a keyword named sys, such as
   `case object(sys=object(path=p))`;
+- sys held under another name by another module, such as `collections._sys` or
+  `threading._sys`;
+- a positional sub-pattern of a class pattern in a case whose match subject is
+  sys, such as `case C(p):`, which binds sys.path when `C.__match_args__`
+  names path;
+- standard-library calls that put a folder on sys.path, such as
+  `runpy.run_path` on a folder, which puts it first on sys.path for the run,
+  and `unittest.TestLoader().discover` with `top_level_dir`, which leaves that
+  folder on sys.path;
 - computed attribute names, such as `sys.__getattribute__("path")`, and
   setattr, getattr, delattr or vars reached under another name, such as
   `builtins.setattr` or `f = setattr`;
@@ -76,9 +85,11 @@ from __future__ import annotations
 import ast
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+DEEP_STACK = 8 * 1024 * 1024
 
 GUARDED = ("path", "meta_path", "path_hooks", "path_importer_cache")
 ANY_OBJECT = ("meta_path", "path_hooks", "path_importer_cache", "addsitedir")
@@ -200,6 +211,37 @@ def scan_tree(root: Path) -> tuple[list[str], int]:
 
 # ---------------------------------------------------------------- self-tests
 
+
+def check_in_thread(source: bytes, label: str) -> list[str]:
+    """Run check_source(source, label) in a thread whose stack is 8 MiB.
+
+    A stack size that cannot be set, a thread that cannot start, and an
+    Exception that escapes check_source each give a 1-item list that says so
+    and that no caller takes for a parse finding.
+    """
+    result: list[list[str]] = []
+
+    def run() -> None:
+        try:
+            result.append(check_source(source, label))
+        except Exception as exc:
+            result.append([f"{type(exc).__name__} escaped check_source"])
+
+    try:
+        previous = threading.stack_size(DEEP_STACK)
+    except (ValueError, RuntimeError) as exc:
+        return [f"cannot set a thread stack of 8 MiB ({type(exc).__name__}: {exc})"]
+    try:
+        thread = threading.Thread(target=run)
+        thread.start()
+    except RuntimeError as exc:
+        return [f"cannot start a thread ({exc})"]
+    finally:
+        threading.stack_size(previous)
+    thread.join()
+    return result[0] if result else ["the thread gave no result"]
+
+
 # Source that must be refused (True) or must pass (False).
 CASES = [
     ("import sys\nsys.path.insert(0, 'x')\n", True),
@@ -300,19 +342,21 @@ def self_test() -> list[str]:
     found = check_source(nested.encode("utf-8"), "case.py")
     if found != want:
         errors.append(f"self-test: {nested!r} gave {found}, expected {want}")
-    # ast.parse raises MemoryError on the first source and RecursionError on
-    # the second, neither of them a SyntaxError, so these cases fail when the
-    # parse catch misses either type; they do not tell that catch apart from
-    # one at Exception.
+    # In a thread whose stack is 8 MiB, ast.parse raises MemoryError on the
+    # first source and RecursionError on the second, neither of them a
+    # SyntaxError, so these cases fail when the parse catch misses either
+    # type; they do not tell that catch apart from one at Exception. The
+    # RecursionError depends on the C stack: in a thread whose stack is 16
+    # MiB, for example, the second source parses. Both run in a thread whose
+    # stack size is set here, so the outcome does not depend on the process's
+    # stack limit, and a size that cannot be set, or a thread that cannot
+    # start, is a self-test failure.
     deep = [
         ("deep.py", b"x = " + b"-" * 100000 + b"1\n", "MemoryError"),
         ("chain.py", b"x = " + b"1+" * 99999 + b"1\n", "RecursionError"),
     ]
     for label, source, kind in deep:
-        try:
-            found = check_source(source, label)
-        except Exception as exc:
-            found = [f"{type(exc).__name__} escaped check_source"]
+        found = check_in_thread(source, label)
         if len(found) != 1 or not found[0].startswith(f"{label}: cannot be parsed ({kind}: "):
             errors.append(f"self-test: a source on which ast.parse raises {kind} gave {found}")
     with tempfile.TemporaryDirectory() as tmp:
