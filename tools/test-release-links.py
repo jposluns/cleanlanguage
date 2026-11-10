@@ -1308,7 +1308,7 @@ def exits(code: int | None):
 
 
 # Each code that exits() takes, with the exception as the gate's refusal names it.
-EXITS = ((0, "SystemExit(0)"), (1, "SystemExit(1)"), (None, "SystemExit()"))
+EXITS = ((0, "SystemExit: 0"), (1, "SystemExit: 1"), (None, "SystemExit"))
 
 
 class GeneratorLoadTest(unittest.TestCase):
@@ -1336,6 +1336,13 @@ class GeneratorLoadTest(unittest.TestCase):
                     self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
                                     raised.exception)
                     self.assertIsInstance(raised.exception.__cause__, cause)
+                    # The message ends with the cause's type and text, and for an OSError that text names the
+                    # generator's path, so that the refusal says which file could not be read.
+                    error = raised.exception.__cause__
+                    self.assertTrue(str(raised.exception).endswith(f": {type(error).__name__}: {error}"),
+                                    raised.exception)
+                    if issubclass(cause, OSError):
+                        self.assertIn(f": '{path}'", str(raised.exception))
 
     def test_the_gate_raises_a_generator_that_exits_while_it_loads(self):
         for site, render in (("download_block", lambda: gate.download_block("1.0.0", ZEROS)),

@@ -517,7 +517,10 @@ def rendered_verify_page() -> bytes:
     # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
     # (exit 3), never as the generator's own exit code.
     except (Exception, SystemExit) as error:
-        raise LookupError(f"tools/build-site.py could not render the verify page: {error!r}") from error
+        # The message gives the type and the text: the text of an OSError names its file, and a bare SystemExit, whose
+        # text is empty, shows as its type alone.
+        detail = ": ".join(part for part in (type(error).__name__, str(error)) if part)
+        raise LookupError(f"tools/build-site.py could not render the verify page: {detail}") from error
 
 
 def staged_draft() -> str | None:
@@ -682,8 +685,10 @@ def download_block(version: str, checksum: str) -> str:
     # SystemExit too, so that a generator that exits while it loads or renders is reported as one that cannot render
     # (exit 3), never as the generator's own exit code.
     except (Exception, SystemExit) as error:
-        raise LookupError(
-            f"tools/build-site.py could not render the verify page's download block: {error!r}") from error
+        # The message gives the type and the text: the text of an OSError names its file, and a bare SystemExit, whose
+        # text is empty, shows as its type alone.
+        detail = ": ".join(part for part in (type(error).__name__, str(error)) if part)
+        raise LookupError(f"tools/build-site.py could not render the verify page's download block: {detail}") from error
 
 
 def download_block_problems(text: str, block: str, redirects: str) -> list[str]:

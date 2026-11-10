@@ -1462,14 +1462,16 @@ class ConditionalPassTest(unittest.TestCase):
         gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
         gate.release_status = unexpected_call
         saved = gate.GENERATOR
-        gate.GENERATOR = Path(self._tmp.name) / "build-site.py"
+        missing = Path(self._tmp.name) / "build-site.py"
+        gate.GENERATOR = missing
         try:
             code, out, err = self.main_reports()
         finally:
             gate.GENERATOR = saved
         self.assertEqual((code, out), (3, ""))
+        # The generator is missing, and the refusal names the exception's type and the missing file's path.
         self.assertIn("check-release-checksum-live: tools/build-site.py could not render the verify page's download "
-                      "block", err)
+                      f"block: FileNotFoundError: [Errno 2] No such file or directory: '{missing}'\n", err)
 
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the
@@ -5002,7 +5004,7 @@ class WholePageTest(unittest.TestCase):
                 code, output = self.gate_run()
                 self.assertEqual(code, 3, output)
                 # The checksum comes from the page, not release.json, which holds SUM.
-                self.assertIn(f"tools/build-site.py could not render the verify page: BuildError('the checksum "
+                self.assertIn(f"tools/build-site.py could not render the verify page: BuildError: the checksum "
                               f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
                               output)
                 self.assertNotIn("release.json", output)
@@ -5169,12 +5171,19 @@ class GeneratorLoadTest(unittest.TestCase):
                     self.assertTrue(str(raised.exception).startswith("tools/build-site.py could not render"),
                                     raised.exception)
                     self.assertIsInstance(raised.exception.__cause__, cause)
+                    # The message ends with the cause's type and text, and for an OSError that text names the
+                    # generator's path, so that the refusal says which file could not be read.
+                    error = raised.exception.__cause__
+                    self.assertTrue(str(raised.exception).endswith(f": {type(error).__name__}: {error}"),
+                                    raised.exception)
+                    if issubclass(cause, OSError):
+                        self.assertIn(f": '{path}'", str(raised.exception))
 
     def test_a_generator_that_exits_while_it_loads_cannot_render(self):
         for render in (gate.download_block, gate.rendered_verify_page):
-            for code, statement, shown in ((0, "raise SystemExit(0)", "SystemExit(0)"),
-                                           (1, "raise SystemExit(1)", "SystemExit(1)"),
-                                           (None, "raise SystemExit", "SystemExit()")):
+            for code, statement, shown in ((0, "raise SystemExit(0)", "SystemExit: 0"),
+                                           (1, "raise SystemExit(1)", "SystemExit: 1"),
+                                           (None, "raise SystemExit", "SystemExit")):
                 with self.subTest(f"{render.__name__}: {shown} at import"), tempfile.TemporaryDirectory() as tmp:
                     path = Path(tmp) / "build-site.py"
                     path.write_bytes(self.GENERATOR.read_bytes() + f"\n{statement}\n".encode("ascii"))
