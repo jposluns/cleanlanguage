@@ -84,10 +84,10 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      bullet's text, which starts after the marker and 1 space, while this check
      would read the line as part of the bullet. After a blank line under a
      heading or a paragraph, this check reads such a line as the start of a new
-     paragraph, and item 5 refuses it in its two spans. This refusal runs after
-     the others in this list have run over both files, so a line they refuse
-     keeps its message. It runs over each file before any later item reads that
-     file, and exits at the first such line in it.
+     paragraph, and item 5 refuses it in its spans. This refusal runs after the
+     others in this list have run over both files, so a line they refuse keeps
+     its message. It runs over each file before any later item reads that file,
+     and exits at the first such line in it.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. Every other refusal
@@ -216,8 +216,8 @@ Residuals, named here because the check reads text by fixed rules:
   that starts with "<" after 0 to 3 spaces, and a line that is not blank and
   starts with exactly 1 space after a blank line under a bullet are refused
   rather than read, and "<!--" written inside inline code is refused like a
-  comment. Outside the two spans that item 5 covers, the reader reads a list
-  item indented by 4 or more spaces under an open bullet, and a line such as
+  comment. Outside the spans that item 5 covers, the reader reads a list item
+  indented by 4 or more spaces under an open bullet, and a line such as
   "2. text" directly under a bullet line as part of that bullet, whatever a
   renderer makes of them. No compared text comes from those lines, but the
   pointer sentence and the checklist's mentions of a dash are found there;
