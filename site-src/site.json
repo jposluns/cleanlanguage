@@ -66,7 +66,7 @@
      "description": "The quality checklist Clean Language uses to review finished prose: accuracy, directness, ownership, natural language, density, tone, and mechanics."},
     {"id": "demo", "path": "demo/", "title": "Try it", "nav_label": "Try it", "source": "demo.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-28",
      "description": "Try Clean Language on your own writing: copy one prompt into ChatGPT, Claude, Gemini, or Copilot and compare the before and after."},
-    {"id": "disclosure", "path": "disclosure/", "title": "Disclosure", "nav_label": "Disclosure", "source": "disclosure.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-07", "published": "2026-11-03",
+    {"id": "disclosure", "path": "disclosure/", "title": "Disclosure", "nav_label": "Disclosure", "source": "disclosure.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-10", "published": "2026-11-03",
      "description": "What the Clean Language project claims, the limit of each claim, and the evidence."},
     {"id": "license", "path": "license/", "title": "Licence", "nav_label": "Licence", "source": "license.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-11-03",
      "description": "The licence of Clean Language and the cleanlanguage.ai site, CC BY-SA 4.0, summarized in plain language."},

@@ -2932,6 +2932,32 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
+def check_disclosure_states(failures: list[str]) -> int:
+    """D-4 of site-src/pages/disclosure.html quotes the verify page's words for each state of its checksum: the
+    generator's CHECKSUM_PENDING_NOTE appears in the placeholder rendering of sum_tokens(), CHECKSUM_PUBLISHED_PHRASE in
+    the rendering with a published checksum, and each in D-4's section of the page source, so that a change to either
+    wording fails here until D-4 quotes what the verify page shows."""
+    generator = load_module(GENERATOR)
+    text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
+    start = text.find('<h2 id="d-4">')
+    end = text.find("<h2 ", start + 1) if start >= 0 else -1
+    if end < 0:
+        failures.append("disclosure states: site-src/pages/disclosure.html has no D-4 heading before another heading")
+        return 1
+    entry = text[start:end]
+    sum_url = generator.release_tokens(PIN_VERSION, f"v{PIN_VERSION}", PIN_CHECKSUM)["release.sum_url"]
+    states = (("placeholder", generator.PLACEHOLDER_CHECKSUM, "CHECKSUM_PENDING_NOTE"),
+              ("published", PIN_CHECKSUM, "CHECKSUM_PUBLISHED_PHRASE"))
+    for state, checksum, name in states:
+        phrase = getattr(generator, name)
+        rendered = "".join(generator.sum_tokens(PIN_VERSION, checksum, sum_url).values())
+        if phrase not in rendered:
+            failures.append(f"disclosure states: the {state} rendering of sum_tokens() lacks {name}, {phrase!r}")
+        if phrase not in entry:
+            failures.append(f"disclosure states: D-4 of site-src/pages/disclosure.html lacks {name}, {phrase!r}")
+    return 1
+
+
 # The pin of the whole verify page: the sha256 of each state's rendering by
 # verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
 # zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
@@ -3371,6 +3397,7 @@ def main() -> int:
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
     ran += check_release_near_placeholder(failures)
+    ran += check_disclosure_states(failures)
     ran += check_verify_page_pin(failures)
     ran += check_committed_render(failures)
     ran += check_check_mode(failures)
