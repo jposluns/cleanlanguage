@@ -895,9 +895,10 @@ PLACEHOLDER_CHECKSUM = "0" * 64
 # mistyped one, and load_release() refuses it (near_placeholder()); a real SHA-256 has that many with a probability of
 # about 10^-58. tools/set-release-links.py and tools/check-release-links.py apply the same rule.
 NEAR_PLACEHOLDER_ZEROS = 56
-# The verify page's own words for each state of its checksum (sum_tokens()): the note that stands in for the checksum
-# while release.json holds the placeholder, and the start of the sentence that shows the published checksum. D-4 of
-# site-src/pages/disclosure.html quotes both, and tools/test-build-site.py fails if either is missing from that entry.
+# The verify page's own words for each state of its checksum (sum_tokens()): part of the note that stands in for the
+# checksum while release.json holds the placeholder, and the start of the sentence that shows the published checksum.
+# D-4 of site-src/pages/disclosure.html quotes both, and tools/test-build-site.py fails if either is missing from that
+# entry.
 CHECKSUM_PENDING_NOTE = "appears here once that version is published"
 CHECKSUM_PUBLISHED_PHRASE = "The published checksum for version"
 # The verify page's download block in its source: steps 1 to 3, from the step 1 label to the end of the step 3 token

@@ -2935,9 +2935,9 @@ def check_release_near_placeholder(failures: list[str]) -> int:
 def disclosure_d4_section(text: str) -> str | None:
     """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
     d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
-    ends at whichever comes first: the next h2 element, the next element whose class holds lbl (an entry or block
-    label), or the end of the page. It is the page source between those points, so an h3 heading inside D-4 does not end
-    it, and an HTML comment or an attribute value inside it counts as D-4's text."""
+    ends at whichever comes first: the next h2 element, the next element whose class holds lbl (such as an entry or
+    block label), or the end of the page. It is the page source between those points, so an h3 heading inside D-4 does
+    not end it, and an HTML comment or an attribute value inside it counts as D-4's text."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -2948,7 +2948,7 @@ def disclosure_d4_section(text: str) -> str | None:
             if not bounds:
                 if tag == "h2" and values.get("id") == "d-4":
                     bounds.append(starts[line - 1] + column)
-            elif len(bounds) == 1 and (tag == "h2" or "lbl" in (values.get("class") or "").split()):
+            elif tag == "h2" or "lbl" in (values.get("class") or "").split():
                 bounds.append(starts[line - 1] + column)
 
     reader = Reader()
@@ -2963,8 +2963,10 @@ def check_disclosure_states(failures: list[str]) -> int:
     """Each of the generator's CHECKSUM_PENDING_NOTE and CHECKSUM_PUBLISHED_PHRASE appears in its own state's rendering
     of sum_tokens() and in D-4's own text in site-src/pages/disclosure.html, as disclosure_d4_section() reads it. Both
     tests are containment of the text, so each passes wherever the phrase is written in one run, whatever the sentence
-    around it says. The test pages check the section reading: D-4's heading with an extra attribute, D-4 as the last
-    entry before the blocks that follow the entries, and a page with no D-4 heading, among others."""
+    around it says. The test needs each phrase in D-4 only once, so it binds no sentence that restates a phrase in other
+    words, and no quotation of a phrase while D-4 holds that phrase elsewhere, such as the limitation's quotation of the
+    note while the claim quotes it. The test pages check the section reading: D-4's heading with an extra attribute, D-4
+    as the last entry before the blocks that follow the entries, and a page with no D-4 heading, among others."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
@@ -2982,7 +2984,12 @@ def check_disclosure_states(failures: list[str]) -> int:
     cases = (
         ("an extra attribute on the D-4 heading", f'<p class="lbl sec">Entry 4</p>\n<h2 class="x" id="d-4">Four</h2>\n'
          f'<p>{note}; {published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n<h2 id="d-5">Five</h2>\n', []),
-        ("D-4 as the last entry", entry_4 + f"<p>{note}.</p>\n" + blocks.format("Local storage."), []),
+        ("the note only before the D-4 heading on its line", f'<p class="lbl sec">Entry 4</p><p>{note}.</p><h2 id="d-4">'
+         f'Four</h2>\n<p>{published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n', lacks_note),
+        ("D-4 as the last entry, its note on the line of the label that ends it",
+         entry_4 + f"<p>{note}.</p>" + blocks.format("Local storage."), []),
+        ("a class that holds lbl only within a word, before the note in D-4",
+         entry_4 + f'<p class="nolbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
         ("D-4 at the end of the page", entry_4 + f"<p>{note}.</p>\n", []),
         ("the note only on the next entry's label line",
          entry_4 + f'<p class="lbl sec">Entry 5, {note}</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
