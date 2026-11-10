@@ -368,6 +368,24 @@ CASES = [
     # sys reached through a chain of attributes that is not os alone.
     ("import os\nos.path.sys.path.insert(0, 'x')\n", True),
     ("import a.b\nmatch a.b.sys:\n    case object(path=p):\n        pass\n", True),
+    # sys reached through a chain of 3 or 4 names, at each check that takes
+    # sys, and through an attribute of a call, so a test for sys that bounds
+    # the chain's depth or needs a name at its base gets a verdict wrong.
+    ("import xml.etree.ElementTree\nxml.etree.ElementTree.sys.path.insert(0, 'x')\n", True),
+    ("import a.b.c.d\na.b.c.d.sys.path.append('x')\n", True),
+    ("import a.b.c.d\nmatch a.b.c.d.sys:\n    case object(path=p):\n        pass\n", True),
+    ("import a.b.c.d\na.b.c.d.sys.__dict__['path'].append('x')\n", True),
+    ("import a.b.c.d\nsetattr(a.b.c.d.sys, 'path', [])\n", True),
+    ("import a.b.c.d\ngetattr(a.b.c.d.sys, 'path').append('x')\n", True),
+    ("import a.b.c.d\nvars(a.b.c.d.sys)['path'].append('x')\n", True),
+    ("import importlib\nimportlib.import_module('os').sys.path.insert(0, 'x')\n", True),
+    # A class pattern 4 levels down a case's pattern, under a sequence, a
+    # keyword, a mapping and a positional sub-pattern; sys bound by a relative
+    # import; and site imported by a name of 4 parts.
+    ("import sys\nmatch sys:\n    case [object(a={'k': C(object(path=p))})]:\n        pass\n", True),
+    ("from . import sys as s\ns.path.append('x')\n", True),
+    ("import site.x.y.z\n", True),
+    ("from site.x.y.z import w\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match x:\n    case C(__class__=c):\n        pass\n", False),
     ("from os import __name__\n", False),
@@ -404,6 +422,16 @@ def self_test() -> list[str]:
         found = check_source(source.encode("utf-8"), "case.py")
         if bool(found) != refused:
             errors.append(f"self-test: {source!r} gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
+    # Each case must keep its verdict with its lines indented under
+    # `class C:`, `def f(self):`, `if x:` and `with y:`, so that each of its
+    # statements stands 4 compound statements deep, so a check that reads only
+    # the top of the tree, or the tree to a fixed depth, gets a verdict wrong.
+    for source, refused in CASES:
+        lines = source.splitlines(keepends=True)
+        indented = "class C:\n    def f(self):\n        if x:\n            with y:\n" + "".join(" " * 16 + line for line in lines)
+        found = check_source(indented.encode("utf-8"), "case.py")
+        if bool(found) != refused:
+            errors.append(f"self-test: {source!r} nested 4 deep gave {found or 'no finding'}, expected {'a finding' if refused else 'none'}")
     nested = "import sys\nmatch sys:\n    case object(flags=Flags(path=p)):\n        pass\n"
     want = ["case.py:3: a class-pattern keyword named path in a case whose match subject is sys"]
     found = check_source(nested.encode("utf-8"), "case.py")

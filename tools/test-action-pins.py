@@ -350,6 +350,15 @@ CASES = [
     ("jobs:\n  a:\n    steps:\n      - name: x\n        uses: actions/checkout@v4\n        with: {a: b}\n", True),
     (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/checkout@{SHA}\n", True),
     (f"jobs:\n  a:\n    steps:\n      - uses: actions/checkout@{SHA}\n      - uses: actions/checkout@v4\n", True),
+    # The key of a pair in an `!!omap` or `!!pairs` list may be a mapping or a
+    # list, and it can hold a `uses` as the pair's value can, so a walk that
+    # reads only a pair's value, or only some kinds of node at either place,
+    # misses one.
+    ("x: !!pairs [{? {uses: actions/checkout@v4} : y}]\n", True),
+    ("x: !!omap [{? {uses: actions/checkout@v4} : y}]\n", True),
+    ("jobs:\n  a: !!pairs [{? {steps: [{uses: actions/checkout@v4}]} : y}]\n", True),
+    ("x: !!omap [{? [{uses: actions/checkout@v4}] : y}]\n", True),
+    ("x: !!pairs [{k: {uses: actions/checkout@v4}}]\n", True),
     (step(f"actions/checkout@{SHA}"), False),
     (f"jobs:\n  a:\n    steps:\n      - !!omap [{{uses: actions/checkout@{SHA}}}]\n", False),
     (f"jobs:\n  a:\n    steps:\n      - !!pairs [{{uses: actions/checkout@{SHA}}}]\n", False),
@@ -385,7 +394,9 @@ def self_test(loader) -> list[str]:
     # of the 40 characters of the ref, and after the ref. `.` and `..` as the
     # whole of the repo and a path part, and a second `@<sha>` after the ref,
     # are tried too. A `/` or an `@` that splits a name is judged as the rule
-    # judges the whole value.
+    # judges the whole value. Each try in a path part is made in the first
+    # path part and again in the fourth, after `a/b/c/`, so a check that reads
+    # only the first 3 path parts gets a verdict wrong.
     alnum = string.ascii_letters + string.digits
 
     def allowed(value: str) -> bool:
@@ -410,9 +421,10 @@ def self_test(loader) -> list[str]:
     for group in by_category.values():
         chars += [group[n * (len(group) - 1) // 31] for n in range(32)] if len(group) > 32 else group
     chars += ["\u00a0", "\u00e9", "\u0130", "\u0131", "\u0663", "\u017f", "\u2028", "\u212a", "\uff10", "\uff21"]
-    forms = [f"{{}}/repo@{SHA}", f"owner/{{}}@{SHA}", f"owner/repo/{{}}@{SHA}"]
-    names = ["owner", "repo", "path"]
+    forms = [f"{{}}/repo@{SHA}", f"owner/{{}}@{SHA}", f"owner/repo/{{}}@{SHA}", f"owner/repo/a/b/c/{{}}@{SHA}"]
+    names = ["owner", "repo", "path", "path"]
     values = [f"owner/{name}@{SHA}" for name in (".", "..")] + [f"owner/repo/{name}@{SHA}" for name in (".", "..")]
+    values += [f"owner/repo/a/b/c/{name}@{SHA}" for name in (".", "..")]
     values.append(f"owner/repo@{SHA}@{SHA}")
     for char in dict.fromkeys(chars):
         for form, name in zip(forms, names):
