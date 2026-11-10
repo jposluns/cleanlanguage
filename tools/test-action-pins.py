@@ -22,12 +22,13 @@ upper-case hex ref, a local `./` or `../` path, any `docker://` value, an
 expression such as `${{ matrix.action }}`, an owner that holds `_` or `.`, an
 empty repo or path part, such as `owner/@<sha>`, and a `uses` that is not
 text. A workflow that cannot be read as UTF-8, one whose loading raises an
-Exception, such as the error on a duplicate key or the RecursionError on
-mappings nested as deep as the recursion limit, or a SystemExit, and a
-recursive node are findings, and an empty .github/workflows/*.yml listing is a
-failure. tools/test-workflow-launch-isolation.py separately refuses local
-actions and local reusable workflows, and any .yml or .yaml file under .github
-outside .github/workflows/*.yml, such as an action.yml.
+Exception of any type, such as the error on a duplicate key, the ValueError on
+`!!int abc` or the RecursionError on mappings nested as deep as the recursion
+limit, or a SystemExit, and a recursive node are findings, and an empty
+.github/workflows/*.yml listing is a failure.
+tools/test-workflow-launch-isolation.py separately refuses local actions and
+local reusable workflows, and any .yml or .yaml file under .github outside
+.github/workflows/*.yml, such as an action.yml.
 
 The gate takes UniqueKeyLoader from the launch scan without importing the
 scan. It calls `os.lstat` on tools/test-workflow-launch-isolation.py and
@@ -322,6 +323,43 @@ def self_test(loader) -> list[str]:
         found = [f"{type(exc).__name__} escaped check_text"]
     if len(found) != 1 or not found[0].startswith("case.yml: cannot be parsed as YAML (RecursionError: "):
         errors.append(f"self-test: mappings nested {depth} deep gave {found}")
+
+    # The Exception types that a workflow load can raise are an open set: a
+    # constructor, PyYAML's own or one that a loader subclass adds, can raise
+    # any of them, so no list of real types pins the catch in check_text. This
+    # stand-in loader's mapping constructor raises Unlisted, an Exception
+    # subclass defined only here, which no catch in check_text can name, so
+    # this case fails under any catch narrower than Exception.
+    class Unlisted(Exception):
+        pass
+
+    class Raises(loader):
+        pass
+
+    def raises(_loader, _node, deep=False):
+        raise Unlisted("defined in the self-test")
+
+    Raises.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, raises)
+    try:
+        found, _ = check_text(step(f"actions/checkout@{SHA}"), "case.yml", Raises)
+    except Exception as exc:
+        found = [f"{type(exc).__name__} escaped check_text"]
+    if found != ["case.yml: cannot be parsed as YAML (Unlisted: defined in the self-test)"]:
+        errors.append(f"self-test: a loader whose mapping constructor raises an Exception subclass defined here gave {found}")
+    # On these tags PyYAML's constructors raise a ValueError, a KeyError and
+    # an AttributeError, none of them a YAMLError; each must be a finding that
+    # names its type.
+    for text, kind in (
+        ("a: !!int abc\n", "ValueError"),
+        ("a: !!bool maybe\n", "KeyError"),
+        ("a: !!timestamp nope\n", "AttributeError"),
+    ):
+        try:
+            found, _ = check_text(text, "case.yml", loader)
+        except Exception as exc:
+            found = [f"{type(exc).__name__} escaped check_text"]
+        if len(found) != 1 or not found[0].startswith(f"case.yml: cannot be parsed as YAML ({kind}: "):
+            errors.append(f"self-test: {text!r} gave {found}, expected a finding that names {kind}")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         workflows = root / ".github" / "workflows"

@@ -124,7 +124,10 @@ def check_source(source: bytes, label: str) -> list[str]:
     # A top-level class-pattern keyword reads that attribute of the match
     # subject, and a nested one reads an attribute of an object reached from
     # it, so every class pattern at any depth of a case under a sys subject is
-    # collected.
+    # collected. ast.walk reaches each sub-pattern that a pattern holds: the
+    # pattern of a MatchAs, and the patterns of a MatchOr, a MatchSequence, a
+    # MatchMapping and a MatchClass, with the keyword patterns of a
+    # MatchClass; MatchValue, MatchSingleton and MatchStar hold none.
     on_sys = {
         pattern
         for node in ast.walk(tree)
@@ -254,6 +257,10 @@ CASES = [
     ("match x:\n    case C(path_importer_cache=c):\n        pass\n", True),
     ("match x:\n    case C(addsitedir=a):\n        pass\n", True),
     ("import sys\nmatch sys:\n    case object(path=p) | object(flags=p):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(path=p) as q:\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case [object(path=p)]:\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case {\"k\": object(path=p)}:\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case C(object(path=p)):\n        pass\n", True),
     ("import sys\nmatch sys:\n    case object(__dict__=d):\n        d['path'].insert(0, 'x')\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match p:\n    case Point(x=0):\n        pass\n", False),
