@@ -84,8 +84,8 @@ The rule:
    followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
    nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
-   of a process substitution: any other character except a closing backquote,
-   or a `<(` or `>(`, continues the word, and the rule refuses a closing
+   of a process substitution: a `<(` or `>(` continues the word, as does any
+   other character but a closing backquote, and the rule refuses a closing
    backquote too, although it ends the word). With the launches removed, a
    line that still holds the word python, or a `.py`, `.pyz` or `.pyw` name
    with no letter, digit or underscore directly after it (so `x.pyc` is not
@@ -836,6 +836,24 @@ def self_test() -> list[str]:
                 errors.append(f"self-test: {c!r} after {X}: expected no finding and exactly 1 counted launch of {X}")
             elif c not in edge and (not refused or (X, True) in launches):
                 errors.append(f"self-test: {c!r} after {X}: expected a finding and no counted launch of {X}")
+        # Rule 3's right edge, pair by pair. The edge reads at most 2
+        # characters after `.py`: a character of its class, or a `<` or `>`
+        # and then the character that its lookahead tests. So a character of
+        # the edge and the character after it hold all that the edge reads,
+        # and this loop puts each such pair, from the edge and the characters
+        # above, between `python3 -I tools/x.py` and `w`. Each pair gives no
+        # finding and exactly 1 counted launch, except `<(` and `>(`, which
+        # give a finding and no counted launch. The edge here leaves out the
+        # newline: check_run splits the run text on newlines before LAUNCH
+        # reads a line, so the edge never reads a character after one.
+        for e in " \t|&;()<>":
+            for c in [chr(n) for n in range(128)] + ["\x85", "\xa0", "\u2028", "\u2029", "\ufeff"]:
+                refused, launches = check_run(f"python3 -I {X}{e}{c}w")
+                pair = f"self-test: {e!r} then {c!r} after {X}"
+                if e + c not in ("<(", ">(") and (refused, launches) != ([], [(X, True)]):
+                    errors.append(f"{pair}: expected no finding and exactly 1 counted launch of {X}")
+                elif e + c in ("<(", ">(") and (not refused or (X, True) in launches):
+                    errors.append(f"{pair}: expected a finding and no counted launch of {X}")
 
         two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
                     "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")
