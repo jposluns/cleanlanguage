@@ -84,7 +84,10 @@ Residuals:
   end in .pyw or .pyz.
 
 Usage: python3 -I tools/test-tools-sys-path.py
-Exit status: 0 when every check passes, 1 on any finding or failure.
+Exit status: 0 when every check passes, 1 on any finding or failure. When the
+reader of stdout closes the pipe before the gate has written all its output,
+the interpreter writes a BrokenPipeError to stderr and the gate exits 120,
+whether every check passes or not.
 """
 
 from __future__ import annotations
@@ -330,6 +333,11 @@ CASES = [
     ("import os\nmatch os.sys:\n    case object(path=p):\n        pass\n", True),
     ("import sys as s\nmatch s:\n    case object(path=p):\n        pass\n", True),
     ("from os import sys as t\nmatch t:\n    case object(path=p):\n        pass\n", True),
+    ("from sys import argv, path\n", True),
+    ("import os, site\n", True),
+    ("import os, sys as s\ns.path.append('x')\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=f, path=p):\n        pass\n", True),
+    ("import sys\nmatch sys:\n    case object(flags=f):\n        pass\n    case object(path=p):\n        pass\n", True),
     ("match x:\n    case C(__dict__=d):\n        pass\n", False),
     ("match x:\n    case C(__class__=c):\n        pass\n", False),
     ("from os import __name__\n", False),

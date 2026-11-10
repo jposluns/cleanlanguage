@@ -78,7 +78,10 @@ exceptions are not caught and end the gate with a traceback and no FAIL line,
 such as the BaseException described above, a MemoryError raised at the start
 of the self-tests or after them while a workflow is read or walked, and the
 AttributeError raised when the gate starts with stdout closed; each such
-MemoryError and that AttributeError give exit status 1.
+MemoryError and that AttributeError give exit status 1. When the reader of
+stdout closes the pipe before the gate has written all its output, the
+interpreter writes a BrokenPipeError to stderr and the gate exits 120, whether
+every check passes or not.
 """
 
 from __future__ import annotations
@@ -333,6 +336,8 @@ CASES = [
     ("jobs:\n  a: !!pairs [{uses: owner/repo/.github/workflows/w.yml@v1}]\n", True),
     ("jobs:\n  a: &x !!pairs [{k: *x}]\n", True),
     (chain("actions/checkout@v4"), True),
+    ("jobs:\n  a:\n    steps:\n      - name: x\n        uses: actions/checkout@v4\n", True),
+    ("jobs:\n  a:\n    steps:\n      - name: x\n      - uses: actions/checkout@v4\n      - name: y\n", True),
     (step(f"actions/checkout@{SHA}"), False),
     (f"jobs:\n  a:\n    steps:\n      - !!omap [{{uses: actions/checkout@{SHA}}}]\n", False),
     (f"jobs:\n  a:\n    steps:\n      - !!pairs [{{uses: actions/checkout@{SHA}}}]\n", False),
@@ -598,6 +603,12 @@ def self_test(loader) -> list[str]:
         findings, count = scan_tree(root, loader)
         if findings or count != 1:
             errors.append(f"self-test: a clean tree gave {findings}, {count} uses")
+        # second.yml sorts after ok.yml, so a loop that reads only the first
+        # workflow misses its finding.
+        (workflows / "second.yml").write_text(step("actions/checkout@v4"), encoding="utf-8")
+        findings, count = scan_tree(root, loader)
+        if not any(f.startswith(".github/workflows/second.yml: jobs.a.steps[0].uses: ") for f in findings) or count != 2:
+            errors.append(f"self-test: a second workflow whose uses is not pinned gave {findings}, {count} uses")
         (workflows / "bad.yml").write_bytes(b"jobs: {a: {steps: [{uses: '\xff'}]}}\n")
         findings, _ = scan_tree(root, loader)
         if not any(".github/workflows/bad.yml: cannot be read" in f for f in findings):
