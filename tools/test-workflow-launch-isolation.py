@@ -877,10 +877,12 @@ def self_test() -> list[str]:
         # the sample gives a finding and no counted launch. The whitespace and
         # format code points are there so that an edit that widens the class
         # by `\s`, which matches what str.isspace() accepts, or by any
-        # whitespace or format code point, fails here. The loop pins the
-        # verdict on each sampled character before `w`, not on every edit: the
-        # comment on the pair self-test below names the edits that can pass
-        # it, a residual.
+        # whitespace or format code point but a newline, fails here. A newline
+        # added to the class passes every self-test, an equivalent edit:
+        # check_run splits the run text on newlines before LAUNCH reads a
+        # line. The loop pins the verdict on each sampled character before
+        # `w`, not on every edit: the comment on the pair self-test below
+        # names the edits that can pass it, a residual.
         edge = " \t|&;()<>\n"
         for c in EDGE_SAMPLE:
             refused, launches = check_run(f"python3 -I {X}{c}w")
