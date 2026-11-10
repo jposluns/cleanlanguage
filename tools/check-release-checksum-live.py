@@ -12,13 +12,18 @@ band under a user token (see the release runbook), matching the rest of the
 fleet, which keeps pull request authorship out of Actions. If that flip is
 forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
-check goes red on that drift (exit 1) when it can download and read the
-published release's zip and ``.sha256`` and the zip hashes to a well-formed
-manifest; when it cannot, it goes red as a release it could not verify (exit 2)
-and reports no drift (see Exit codes). It runs in CI on a pull request or a
-push to main that changes a file it or its tests read, which the workflow's
-path filters name, on a daily schedule and on manual dispatch, and the
-orchestrator runs it as the final step of the runbook.
+check reports that drift when the verify page passes its own checks and the
+gate then downloads the published release's zip and ``.sha256``, the zip hashes
+to a well-formed manifest and that digest differs from the page's checksum, and
+only then. When the gate reaches a published release but cannot download, read
+or check those files, it reports a release it could not verify and no drift.
+Either way the run goes red, and the gate exits with the most severe code of
+the checks that ran (see Exit codes). It runs in CI on a pull request or a push
+to main that changes a file it or its tests read, which the workflow's path
+filters name, on a daily schedule and on manual dispatch, and the orchestrator
+runs it as the final step of the runbook. GitHub may not run a path-filtered
+workflow for a change to more files than it compares, which is not checked
+offline; the daily schedule still runs the gate on main.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
@@ -209,19 +214,23 @@ Exit codes:
      run_release_date_child), or SIGCHLD could not be reset to its default
      disposition (see reset_sigchld)
 
-The release-date check and the site-checksum comparison both run and both
-are reported when the release the site names is published, including when its
-download fails, its downloaded assets cannot be read, or its manifest is
-malformed or undecodable, and also when that
-release returns a status other than 200 or 404, or a status that cannot be
-read while SKILL.md names a different version, and when the site names an
-unreleased version that is not the current skill version, so neither failure
-hides the other. Within the date check of a published release, a Released line
-missing above the undated baseline does not hide an immutable field that is not
-exactly true: both are reported and the more severe 2 wins. The extractor is probed inside main, not at import, so a
-probe that ends in exit 3 is reported and contributes 3 while the checksum
-comparison still runs and reports. The gate then exits with the most severe code, the highest
-one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
+When the verify page passes its own checks and the release it names is
+published, the release-date check and the site-checksum comparison both run and
+both are reported, also when the comparison stops because the download fails,
+the downloaded assets cannot be read, or the manifest is malformed or
+undecodable. When that release returns a status other than 200 or 404, or a
+status that cannot be read while SKILL.md names a different version, and when
+the site names an unreleased version that is not the current skill version, the
+comparison does not run: the gate reports a release it could not verify, or the
+inconsistency, and the release-date check still runs and reports any failure it
+finds. So neither failure hides the other. Within the date check of a published
+release, a Released line missing above the undated baseline does not hide an
+immutable field that is not exactly true: both are reported and the more severe
+2 wins. The extractor is probed inside main, not at import, so a probe that
+ends in exit 3 is reported and contributes 3 while the checksum comparison
+still runs and reports. The gate then exits with the most severe code, the
+highest one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not
+complete.
 
 Before it starts any child, main resets SIGCHLD to its default
 disposition (reset_sigchld), because an ignored SIGCHLD, inherited across

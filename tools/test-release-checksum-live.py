@@ -5215,7 +5215,9 @@ class WorkflowPathsTest(unittest.TestCase):
     that changes a file they read, so its push and pull_request triggers each carry a path filter that names every such
     file: each of OWN_FILES, and each of GENERATOR_INPUTS, a directory as its path followed by /**. The daily schedule
     and manual dispatch run the gate whatever changed, so a change to main that a path filter misses is still checked at
-    the next scheduled run."""
+    the next scheduled run. Residuals: these tests pin both lists, but no test compares them with the sentence of the
+    gate's module docstring that says what runs it, so the 2 can disagree; and GitHub may not run a path-filtered
+    workflow for a change to more files than it compares, which is not checked offline."""
 
     WORKFLOW = MODULE_PATH.parent.parent / ".github/workflows/release-checksum-live.yml"
     # The files the gate or its tests read that GENERATOR_INPUTS does not list: the page the gate checks, the gate,
@@ -5273,11 +5275,14 @@ class WorkflowPathsTest(unittest.TestCase):
         page, for the committed release and for the zero placeholder, rendered through the gate as it renders them,
         while an audit hook records each file opened. An entry covers the file it names, and an entry that ends in /**
         covers every file under its directory; this matcher is not GitHub's, so how GitHub matches ** under a directory
-        whose name starts with a dot, as in site/.well-known/**, is not checked here. Residuals: the extractor
-        tools/skill-release-date.py runs in a child process, which the hook does not see, so OWN_FILES lists it by hand;
-        the render runs on the committed sources, so a file that it opens only while site-src/site.json stages a draft
-        is not traced; and a new generator input that a copy of GENERATOR_INPUTS can do without, so that WholePageTest
-        still passes, and that neither traced render opens, is seen by neither test."""
+        whose name starts with a dot, as in site/.well-known/**, is not checked here. Residuals: the trace covers only
+        the render, which does not run the extractor tools/skill-release-date.py, so OWN_FILES lists it by hand; a file
+        that the gate reads outside the render in a whole run, such as site/_redirects and site/verify/index.html, or
+        that these tests read, is pinned only by the hand-kept OWN_FILES and GENERATOR_INPUTS, so a new read of that
+        kind is seen by neither test; the render runs on the committed sources, so a file that it opens only while
+        site-src/site.json stages a draft is not traced; and a new generator input that a copy of GENERATOR_INPUTS can
+        do without, so that WholePageTest still passes, and that neither traced render opens, is seen by neither
+        test."""
         global TRACE, TRACE_HOOK_INSTALLED
         root = MODULE_PATH.parent.parent
         release = json.loads((root / "site-src/release.json").read_text(encoding="utf-8"))
