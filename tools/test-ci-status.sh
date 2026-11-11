@@ -985,6 +985,27 @@ CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   run_clock_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
+# run_clock_case itself must fail a case whose gh kills differ from the ones it
+# expects. Each call below runs inside a command substitution, whose count of
+# failures is its own, and its line must be a FAIL that names kill: with
+# CASE_NO_KILL set, a plan whose last read the deadline cuts off, so gh is
+# killed once; and without it, a wait that the deadline ends between reads, so
+# gh is never killed.
+for no_kill in 1 ""; do
+  if [ -n "$no_kill" ]; then
+    got="$(CASE_NO_KILL=1 run_clock_case "kill probe" "$GA_IN_PROGRESS" "" "g s" 2 --wait --timeout 5)"
+  else
+    got="$(run_clock_case "kill probe" "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4)"
+  fi
+  # The reasons follow the last semicolon of a FAIL line of run_clock_case.
+  if [[ "$got" == "FAIL kill probe ("*";"* && "${got##*;}" == *kill* ]]; then
+    printf 'ok   run_clock_case fails a kill it does not expect (CASE_NO_KILL=%s)\n' "${no_kill:-unset}"
+  else
+    printf 'FAIL run_clock_case passes a kill it does not expect (CASE_NO_KILL=%s; printed %s)\n' \
+      "${no_kill:-unset}" "${got:-nothing}"
+    fails=$((fails + 1))
+  fi
+done
 # The fake clock above starts and kills no real process, so this case runs a
 # real hung gh that is killed and reaped. Its first read hangs, so the tool
 # must start that 1 gh call inside the 5-second window, and the fake gh must
@@ -1785,17 +1806,17 @@ run_err_case "every missing required check is named, in order" \
 # skipped by an if: or allowed to fail leaves the job successful, so such a job
 # would read green without running its checks. The job display name is also the
 # only 4-space-indented name: line, it is a name of REQUIRED_ACTIONS_JOBS as the
-# gate holds it, and no other workflow file carries it on a plain or quoted name:
-# line. A renamed job, a filter that leaves a commit without the check, or any
-# key or line outside that shape fails here, instead of turning every read into a
-# forever-pending one or a false green. In CI this check runs in the CI status
-# tests job (.github/workflows/ci-status-test.yml) on every pull request and
-# every push to main, and ci-status.py insists on that job, so a commit on which
-# it has not run, or has not passed, does not read green. Residual: what the
-# commands the steps run and the pinned actions do, including anything they write
-# for later steps, such as a BASH_ENV line in the GITHUB_ENV file, and what the
-# other jobs of the workflow run, are not checked, so a step changed to do
-# nothing still reads green.
+# gate holds it, and named_elsewhere (below) does not find it in another file of
+# the workflow folder. A renamed job, a filter that leaves a commit without the
+# check, or any key or line outside that shape fails here, instead of turning
+# every read into a forever-pending one or a false green. In CI this check runs
+# in the CI status tests job (.github/workflows/ci-status-test.yml) on every pull
+# request and every push to main, and ci-status.py insists on that job, so a
+# commit on which it has not run, or has not passed, does not read green.
+# Residual: what the commands the steps run and the pinned actions do, including
+# anything they write for later steps, such as a BASH_ENV line in the GITHUB_ENV
+# file, and what the other jobs of the workflow run, are not checked, so a step
+# changed to do nothing still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
 # A line outside the subset, a file that cannot be read as UTF-8, or a file with
 # no line other than blank lines and comments, ends the check with that one word;
@@ -2022,17 +2043,20 @@ print(" ".join(dict.fromkeys(found)))
 PY
 }
 wf_dir="${here}/../.github/workflows"
-# The Actions jobs the gate requires, read from the gate as the value of
-# REQUIRED_ACTIONS_JOBS, not from its text, so a job is read as the gate reads
-# it however its declaration is spelt, and a declaration that only a comment
-# holds is not read. The label of each entry must be the name its matcher
-# counts: a github-actions run of that name counts, and neither a run of that
-# name from another app nor a run whose name differs does. The names print
-# sorted, each followed by a semicolon, or nothing when the gate cannot be
-# loaded or a label and its matcher disagree.
-declared_jobs="$(python3 -I - "$here" <<'PY'
+# declared_jobs_of GATE: the Actions jobs that the gate file GATE requires, read
+# by loading it and taking the value of its REQUIRED_ACTIONS_JOBS, not its text,
+# so a job is read from the value that its declaration gives the gate, not from
+# how the declaration is spelt, and a declaration that only a comment holds is
+# not read. The label of each entry must be the name its matcher counts: a
+# github-actions run of that name must count, and a run of that name from
+# another app must not, nor a run whose name is the label with a space before or
+# after it, with its last character dropped or a character added, or in upper or
+# lower case. A matcher that counts some other name passes this test. The names
+# print sorted, each followed by a semicolon; the function prints nothing and
+# fails when the gate cannot be loaded or a label and its matcher disagree.
+declared_jobs_of() {
+  python3 -I - "$1" <<'PY'
 import importlib.util
-import os
 import sys
 
 
@@ -2041,20 +2065,40 @@ def run(name, slug):
 
 
 try:
-    spec = importlib.util.spec_from_file_location("ci_status_declared", os.path.join(sys.argv[1], "ci-status.py"))
+    spec = importlib.util.spec_from_file_location("ci_status_declared", sys.argv[1])
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     names = []
     for label, matches in gate.REQUIRED_ACTIONS_JOBS:
+        others = {label + " ", " " + label, label[:-1], label + "x", label.lower(), label.upper()} - {label}
         if not matches(run(label, "github-actions")) or matches(run(label, "another-app")) \
-                or matches(run(label + " ", "github-actions")):
+                or any(matches(run(other, "github-actions")) for other in others):
             sys.exit(1)
         names.append(label)
 except Exception:
     sys.exit(1)
 print("".join(name + ";" for name in sorted(names)))
 PY
-)" || declared_jobs=""
+}
+# named_elsewhere DIR WF JOB: succeed when a file of DIR whose name ends in .yml
+# or .yaml, other than WF, holds a line on which a name: key, with no # before
+# it on the line and at the start of the line or after white space, an opening
+# brace or a comma, has the value JOB, plain or in quotes, followed by the end
+# of the line, a comment, a comma or a closing brace. It reads each line as
+# text, not as YAML, so a line that YAML reads as something else, such as a line
+# of a run: block, still counts, a safe failure, and a value that the line does
+# not hold as that text, such as an expression or a block scalar, is not seen.
+named_elsewhere() {
+  local dir="$1" wf="$2" job="$3" other
+  for other in "$dir"/*.yml "$dir"/*.yaml; do
+    [ -f "$other" ] && [ "${other##*/}" != "$wf" ] || continue
+    if grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${job}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other"; then
+      return 0
+    fi
+  done
+  return 1
+}
+declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""
 shaped_jobs=()
 for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
   "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
@@ -2069,15 +2113,10 @@ for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill di
     if [ -n "$shape" ]; then why="$why $shape"; fi
   fi
   case ";${declared_jobs}" in *";${job};"*) ;; *) why="$why declared" ;; esac
-  # No other workflow file may hold a name: line, at any indent, plain or
-  # quoted, that carries this display name, so the loop cannot check one
+  # Another workflow file that names a job after this display name, in a form
+  # that named_elsewhere reads, fails here, so the loop does not check one
   # workflow while another produces the run that the gate reads.
-  for other in "$wf_dir"/*.yml "$wf_dir"/*.yaml; do
-    [ -f "$other" ] && [ "${other##*/}" != "$wf" ] || continue
-    if grep -q -x -E "[[:space:]]*(- )?name:[[:space:]]*[\"']?${job}[\"']?[[:space:]]*" "$other"; then
-      why="$why named-elsewhere"; break
-    fi
-  done
+  if named_elsewhere "$wf_dir" "$wf" "$job"; then why="$why named-elsewhere"; fi
   if [ -z "$why" ]; then
     printf 'ok   required check %s follows %s\n' "$job" "$wf"
   else
@@ -2093,6 +2132,57 @@ if [ -n "$declared_jobs" ] && [ "$declared_jobs" = "$looped_jobs" ]; then
 else
   printf 'FAIL the shape loop names %s but the gate declares %s\n' "$looped_jobs" "$declared_jobs"; fails=$((fails + 1))
 fi
+# run_declared_case NAME WANT GATE: declared_jobs_of on a file holding exactly
+# GATE must print WANT, or nothing when WANT is empty.
+run_declared_case() {
+  local name="$1" want="$2" tmp got
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  printf '%s\n' "$3" > "$tmp/gate.py"
+  got="$(declared_jobs_of "$tmp/gate.py")" || got=""
+  if [ "$got" = "$want" ]; then printf 'ok   %s\n' "$name"
+  else printf 'FAIL %s (printed %s, want %s)\n' "$name" "${got:-nothing}" "${want:-nothing}"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+SD_GATE='REQUIRED_ACTIONS_JOBS = (("Skill discovery", lambda c: %s),)'
+run_declared_case "a label matched by its name and the github-actions slug is declared" "Skill discovery;" \
+  "$(printf "$SD_GATE" 'c["slug"] == "github-actions" and c["name"] == "Skill discovery"')"
+run_declared_case "a matcher that folds letter case declares nothing" "" \
+  "$(printf "$SD_GATE" 'c["slug"] == "github-actions" and c["name"].lower() == "skill discovery"')"
+run_declared_case "a matcher that strips white space declares nothing" "" \
+  "$(printf "$SD_GATE" 'c["slug"] == "github-actions" and c["name"].strip() == "Skill discovery"')"
+run_declared_case "a matcher that counts a longer name declares nothing" "" \
+  "$(printf "$SD_GATE" 'c["slug"] == "github-actions" and c["name"].startswith("Skill discovery")')"
+run_declared_case "a matcher that ignores the app declares nothing" "" \
+  "$(printf "$SD_GATE" 'c["name"] == "Skill discovery"')"
+run_declared_case "a gate that fails to load declares nothing" "" 'raise ValueError("gate")'
+# run_named_elsewhere_case NAME WANT FILE LINE: named_elsewhere, for the job
+# Skill discovery of own.yml, on a folder holding own.yml and FILE, with LINE
+# appended to FILE, must exit WANT.
+run_named_elsewhere_case() {
+  local name="$1" want="$2" tmp got=0
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  printf 'jobs:\n  check:\n    name: Skill discovery\n' > "$tmp/own.yml"
+  printf '%s\n' "$4" >> "$tmp/$3"
+  named_elsewhere "$tmp" own.yml "Skill discovery" || got=$?
+  if [ "$got" = "$want" ]; then printf 'ok   %s (exit %s)\n' "$name" "$got"
+  else printf 'FAIL %s (got %s, want %s)\n' "$name" "$got" "$want"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+run_named_elsewhere_case "another workflow's plain job name is found" 0 other.yml '    name: Skill discovery'
+run_named_elsewhere_case "another workflow's double-quoted job name is found" 0 other.yml '    name: "Skill discovery"'
+run_named_elsewhere_case "another workflow's single-quoted job name is found" 0 other.yml "    name: 'Skill discovery'"
+run_named_elsewhere_case "a job name followed by a comment is found" 0 other.yml '    name: Skill discovery # a comment'
+run_named_elsewhere_case "a step name is found" 0 other.yml '      - name: Skill discovery'
+run_named_elsewhere_case "a job name after a tab is found" 0 other.yml "$(printf '\tname: Skill discovery')"
+run_named_elsewhere_case "a job name in a flow mapping is found" 0 other.yml \
+  '  check: {name: Skill discovery, runs-on: ubuntu-latest}'
+run_named_elsewhere_case "a quoted job name last in a flow mapping is found" 0 other.yml \
+  '  check: { runs-on: ubuntu-latest, name: "Skill discovery" }'
+run_named_elsewhere_case "a job name in a .yaml file is found" 0 other.yaml '    name: Skill discovery'
+run_named_elsewhere_case "a longer name is not found" 1 other.yml '    name: Skill discovery check'
+run_named_elsewhere_case "another key that ends in name is not found" 1 other.yml '    job-name: Skill discovery'
+run_named_elsewhere_case "a comment is not found" 1 other.yml '    # name: Skill discovery'
+run_named_elsewhere_case "the job's own workflow is not read" 1 own.yml '      - name: Skill discovery'
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
@@ -2296,6 +2386,24 @@ run_contract_case "--timeout at the 86400-second bound is used" 0 "$C1" owner/na
 run_contract_case "--timeout above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 86401 "$C1"
 run_contract_case "--timeout far above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 2147484 "$C1"
 run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT" 5 3 --wait --timeout 2 --interval 86401
+# run_case, run_timed_case and run_contract_case each refuse, without running
+# it, a case that wants exit 2 from a real-time --wait. Each is called that way
+# here inside a command substitution, whose count of failures is its own, and
+# must print exactly its refusal line.
+GUARD_LINE="FAIL guard probe (wants exit 2 from a real-time --wait; run it with run_clock_case)"
+for runner in run_case run_timed_case run_contract_case; do
+  case "$runner" in
+    run_case) got="$(run_case "guard probe" "$GA_PRESENT" "" "" 2 --wait --timeout 1)" ;;
+    run_timed_case) got="$(run_timed_case "guard probe" "$GA_PRESENT" 5 2 --wait --timeout 1)" ;;
+    *) got="$(run_contract_case "guard probe" 2 "$C1" owner/name owner/name - - --wait --timeout 1 "$C1")" ;;
+  esac
+  if [ "$got" = "$GUARD_LINE" ]; then
+    printf 'ok   %s refuses a real-time wait that wants exit 2\n' "$runner"
+  else
+    printf 'FAIL %s does not refuse a real-time wait that wants exit 2 (printed %s)\n' "$runner" "${got:-nothing}"
+    fails=$((fails + 1))
+  fi
+done
 
 # Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
 # ci-status.sh from a working directory that holds a planted ci-status.py, which

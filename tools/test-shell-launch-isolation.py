@@ -341,6 +341,15 @@ EXCEPTIONS = (
      'isolated interpreter'),
     ('tools/test-ci-status.sh',
      literal(
+         'declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""',
+         'printf \'%s\\n\' "$3" > "$tmp/gate.py"',
+         'got="$(declared_jobs_of "$tmp/gate.py")" || got=""',
+     ),
+     (),
+     'the path is the argument of declared_jobs_of, whose python3 -I program loads the file in its isolated '
+     'interpreter, or the file that a printf redirection writes for it; no .py token on the line is a launch'),
+    ('tools/test-ci-status.sh',
+     literal(
          '% (show(starts), show(deadlines), show(gh_deadlines), show(kills), show(returns), now()))\'     '
          '"${here}/ci-status.py" "$C1" "$tmp" "$left" "$starts" "$killed" "$frozen" > "$tmp/out" 2> "$tmp/err" '
          '|| got=$?',

@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Tests for tools/run_all_checks.sh: it runs every gate CI runs, unpiped, and fails when one fails.
+"""Tests for tools/run_all_checks.sh: it runs the run text read here, unpiped, and fails on a failure.
 
-Coverage. The test reads each workflow under .github/workflows whose name ends in .yml with PyYAML's
-safe loader (which reads the key on as True) and selects those that a pull request or a push to main
-triggers: a pull_request or pull_request_target trigger, or a push trigger whose branches name main
-or hold a pattern (an entry with any of the characters * ? [ ] + !), which counts as matching main
-whatever it matches, or that has no branches, branches-ignore or tags filter, or whose
-branches-ignore leaves main. For each step of those workflows that has run text, the text with
-surrounding white space stripped must be a command line of the script or one of EXCEPTIONS, and a
-failure names the workflow and the step. A selected workflow whose commands the script cannot mirror
-from the repository root also fails, naming the workflow: a job that calls a reusable workflow,
-whose steps the test does not read, a run step with a working-directory, and a defaults key on the
-workflow or on a job. A command line is the text after "run " on a line of the script that starts
-with it, or the text before " || status=1" on a line of plugin_manifests that starts with
-"  claude ". Every command line must be such a run text or the stand-in of an exception, and no
-command line may repeat, and every entry of EXCEPTIONS must still name a step of a selected
-workflow, so neither the script nor the table can go stale unseen.
+Coverage. The test reads each file directly under .github/workflows whose name ends in .yml or .yaml
+with PyYAML's safe loader (which reads the key on as True). From the on: value of each it selects
+those that a pull request or a push to main triggers: a pull_request or pull_request_target trigger,
+or a push trigger whose branches name main or hold a pattern (an entry with any of the characters *
+? [ ] + !), which counts as matching main whatever it matches, or that has no branches,
+branches-ignore or tags filter, or whose branches-ignore does not name main. Of a selected workflow
+it reads the defaults and jobs keys, the uses, defaults and steps keys of each job, and the run and
+working-directory keys of each step. Each run text, with surrounding white space stripped, must be a
+command line of the script or one of EXCEPTIONS, and a failure names the workflow and the step.
+Since the script runs each command from the repository root, a job with a uses key, which calls a
+reusable workflow whose steps the test does not read, a run step with a working-directory, and a
+defaults key on the workflow or on a job each fail, naming the workflow. A command line is the text
+after "run " on a line of the script that starts with it, or the text before " || status=1" on a
+line of plugin_manifests that starts with "  claude ". A command line that is neither such a run
+text nor the stand-in of an exception fails, so does a command line that repeats, and so does an
+entry of EXCEPTIONS that names no step of a selected workflow.
 
 Behaviour. Each case copies the script into a temporary tree whose tools/ folder holds a stub in
 place of each script a command line names, beside a copy of plugin-validate.yml and a skill folder
@@ -24,30 +25,31 @@ arguments, and whether its standard output and standard error are pipes, and exi
 case sets; a stub claude on PATH answers --version with the version the case sets. The script's own
 output goes to regular files, so a stub sees a pipe only when the script makes one. PATH holds only
 links to the commands the script and the stubs use, and to cat and tee, so a claude installed on
-this machine never takes part. The cases: every command line runs once, in order, with neither
-stream a pipe, and the script exits 0; a stub exiting 1, 2 or 3 leaves every later command running
-and the script exiting 1, naming that command; a claude that reports another version, or no claude,
-makes the script exit 1 without any validation.
+this machine never takes part. The cases: the command lines each run once, in order, with neither
+stream a pipe, and the script exits 0; the same holds when the script is started by a relative path
+with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2 or 3 (the first, a
+middle and the last stub) leaves the later commands running and the script exiting 1, naming that
+command; a claude that reports another version, or no claude, makes the script exit 1 without any
+validation.
 
 The cases pin the commands, not the script's other shell text, so the test also fails unless the
 sha256 of the committed script is SCRIPT_SHA256. To change the script, read the whole change,
 confirm that it still runs every command line unpiped and keeps going after a failure, then record
 the new digest in SCRIPT_SHA256 in the same pull request.
 
-Residual: the test reads the run text, not what each command does or the setting it runs in. A step
-still matches, and the script runs its run text with bash, from the repository root, in this
-machine's environment and on every change, whatever its workflow sets around it: the step's shell,
-the job's runner (runs-on), container, services or strategy matrix, an if: condition on the job or
-the step, continue-on-error, env on the workflow, the job or the step (GH_TOKEN for the live release
-checksum check), or a paths filter that limits when CI runs it. A run text is compared whole, so the
-same command written another way in a workflow is reported as missing, a safe failure. A
-pull_request trigger selects its workflow whatever its filters, and a branches-ignore entry is
-compared with main as text, so a pattern that excludes main, such as ma*, still selects its
-workflow; the run text of a workflow so selected must then be a command line, a safe failure. A step
-that runs a gate through an action (uses: rather than run:) is not read, and a workflow that only
-another workflow's run triggers (workflow_run) is not selected, so the script is not required to run
-either. A job that calls a reusable workflow, a run step with a working-directory and a defaults key
-are not mirrored; they fail, as Coverage says.
+Residual: the test reads the run text, not what each command does. A key that the test does not
+read, on the workflow, a job or a step, can set what a step runs in, or whether, when or for how
+long it runs, such as its shell, runner, container, condition, environment (GH_TOKEN for the live
+release checksum check), time limit or paths filter; the script runs the run text with bash, from
+the repository root, in this machine's environment and on every change, whatever such a key sets,
+and the test passes it. A run text is compared whole, so the same command written another way in a
+workflow is reported as missing, a safe failure. A pull_request trigger selects its workflow
+whatever its filters, and a branches-ignore entry is compared with main as text, so a pattern that
+excludes main, such as ma*, still selects its workflow; the run text of a workflow so selected must
+then be a command line, a safe failure. A file that the test does not read, a step without run text,
+such as one that runs a gate through an action (uses: rather than run:), and a workflow that the
+selection above does not select, such as one that only another workflow's run triggers
+(workflow_run), are not compared, so the script is not required to run what they run.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
@@ -73,7 +75,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
 # the change.
-SCRIPT_SHA256 = "3478a0b453373aaddd618e6ab08b027239f5b98fccadaeb3423f7e9d93038970"
+SCRIPT_SHA256 = "b6277419c2b6734a6714f41c17e744c81b3fee8dde6d200c236d97e9457e0537"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((
@@ -129,7 +131,10 @@ def selected(on) -> bool:
     if "branches" in push:
         return names_main(push["branches"])
     if "branches-ignore" in push:
-        return "main" not in (push["branches-ignore"] or [])
+        ignore = push["branches-ignore"]
+        if isinstance(ignore, str):
+            ignore = [ignore]
+        return "main" not in (ignore or [])
     return "tags" not in push
 
 
@@ -138,7 +143,7 @@ def workflow_steps(failures: list):
     count of selected workflows. A reusable workflow call, a working-directory or a defaults key in
     a selected workflow is added to failures."""
     steps, count = [], 0
-    for path in sorted(WORKFLOWS.glob("*.yml")):
+    for path in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")]):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(doc, dict) or not selected(doc.get(True, doc.get("on"))):
             continue
@@ -304,17 +309,24 @@ def make_tree(tmp: Path, lines: list, claude: bool) -> dict:
     return {"PATH": str(bin_dir), "HOME": str(tmp), "TMPDIR": str(tmp), "RUN_ALL_CHECKS_LOG": str(tmp / "log")}
 
 
-def run_case(lines: list, codes: str = "", version=None, claude: bool = True):
-    """Run the script in a stub tree: (exit status, log lines, script output)."""
+def run_case(lines: list, codes: str = "", version=None, claude: bool = True, cdpath: bool = False):
+    """Run the script in a stub tree: (exit status, log lines, script output). With cdpath, the
+    script is started by a relative path from the tree, with CDPATH naming another folder that holds
+    a tools folder, where a cd that consulted CDPATH would land."""
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name)
         env = make_tree(tmp, lines, claude)
         env["RUN_ALL_CHECKS_CODES"] = codes
         env["CLAUDE_STUB_VERSION"] = version if version is not None else pin()
         (tmp / "log").write_text("", encoding="utf-8")
+        argv, cwd = ["bash", str(tmp / "tools" / "run_all_checks.sh")], "/"
+        if cdpath:
+            (tmp / "elsewhere" / "tools").mkdir(parents=True)
+            env["CDPATH"] = str(tmp / "elsewhere")
+            argv, cwd = ["bash", "tools/run_all_checks.sh"], str(tmp)
         with open(tmp / "out", "wb") as out, open(tmp / "err", "wb") as err:
-            code = subprocess.run(["bash", str(tmp / "tools" / "run_all_checks.sh")], cwd="/", env=env,
-                                  stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=300).returncode
+            code = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                  timeout=300).returncode
         log = (tmp / "log").read_text(encoding="utf-8").splitlines()
         output = ((tmp / "out").read_bytes() + (tmp / "err").read_bytes()).decode("utf-8", "replace")
         log = [re.sub(r"plugin validate \S+/skills --strict", "plugin validate STAGED --strict", l) for l in log]
@@ -347,6 +359,12 @@ def behaviour(lines: list, failures: list) -> int:
         failures.append(f"every command passing: the calls are {calls(log)!r}, not {want!r}")
     if piped(log):
         failures.append(f"every command passing: a pipe reached {piped(log)!r}")
+
+    cases += 1
+    code, log, output = run_case(lines, cdpath=True)
+    if code != 0 or calls(log) != want:
+        failures.append(f"a CDPATH naming another tools folder: the script exits {code} with the calls "
+                        f"{calls(log)!r}, not 0 with every command once in order\n{output[-2000:]}")
 
     for status, line in ((1, stubs[0]), (2, stubs[len(stubs) // 2]), (3, stubs[-1])):
         cases += 1

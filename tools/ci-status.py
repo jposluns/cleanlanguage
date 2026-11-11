@@ -83,14 +83,15 @@ legitimately ran none of them never reads green, a safe failure. Residual: a nam
 and an app cannot tell which workflow produced a run, so a pull request that deletes
 one of those workflows and adds another job with the same display name satisfies the
 check; GitHub's own app-pinned required check has the same limit. Within the same
-residual, another job can carry one of the 4 display names under a name: key that
-the check does not read as that name. tools/test-ci-status.sh compares every name:
-line of the 4 workflows indented exactly 4 spaces, whatever form its value takes,
-and every other name: line of any workflow only by its plain or quoted text, so such
-a key passes when it carries a display name in a form whose text differs from that
-name, such as a block scalar or an expression. The tool reads the check runs the API
-returns under its default filter, the latest runs, so whether such a job can take
-the place of a failed run of the real job in a reading depends on how the API
+residual, another workflow can name a job after one of the 4 display names in a form
+that the shape check does not read. tools/test-ci-status.sh requires the name: lines
+indented exactly 4 spaces in each of the 4 workflows to be the one plain name: line
+of its job, and reads the other .yml and .yaml files of the workflow folder line by
+line as text, failing a line on which a name: key holds that display name, plain or
+quoted, as its whole value; a display name that a line does not hold as that text,
+such as a block scalar or an expression, is not seen. The tool reads the check runs
+the API returns under its default filter, the latest runs, so whether such a job can
+take the place of a failed run of the real job in a reading depends on how the API
 selects the latest runs, which this tool does not control. Pointing --repo at a
 repository that does not run all 5 unconditionally would downgrade a legitimate
 green to pending. For the 4 GitHub Actions jobs, any conclusion other than success
@@ -600,10 +601,10 @@ def verdict_of(checks) -> str:
 # Deferred: this list is declared here and is not cross-checked against the branch
 # ruleset for main. That cross-check would also require every context the ruleset
 # lists, report a listed context missing from this list, and fail closed (exit 3)
-# when the ruleset cannot be read. It waits for a record of the rules API
-# endpoint, payload and token scope that the live ruleset answers with, which this
-# repository does not hold, and for offline tests that serve that second read
-# beside the check-runs read.
+# when the ruleset cannot be read. It waits for a record of the rules API endpoint,
+# payload and token scope that the live ruleset answers with, which this repository
+# does not hold, and for offline tests that serve that second read beside the
+# check-runs read.
 def _actions_job(name: str):
     return lambda c: c["slug"] == "github-actions" and c["name"] == name
 

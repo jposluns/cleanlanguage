@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 #
-# Runs on this machine the run text of every run step that CI runs on a pull
-# request or a push to main: 1 run line for each distinct run text of the steps
-# of the 17 workflows under .github/workflows that a pull_request or a push to
-# main triggers, in the order of their files and of their steps, a command that
-# an earlier workflow already runs being run once. plugin-drift.yml (a schedule
-# and a manual dispatch) and release-skill.yml (a tag push and a manual
-# dispatch) never run on a pull request or a push to main, so neither is
-# mirrored. Each command runs unpiped, from the repository root, and its exit
-# status is recorded; a failure does not stop the run, and the script ends by
-# naming every command that failed and exiting 1, or exits 0 when every command
-# passed.
+# Runs on this machine the run text of the workflow steps that
+# tools/test-run-all-checks.py reads: 1 run line for each distinct run text of
+# the steps of the 17 workflows under .github/workflows that a pull_request or a
+# push to main triggers, in the order of their files and of their steps, a
+# command that an earlier workflow already runs being run once. plugin-drift.yml
+# (a schedule and a manual dispatch) and release-skill.yml (a tag push and a
+# manual dispatch) are not triggered by a pull request or a push to main, so
+# neither is mirrored. Each command runs unpiped, from the repository root, and
+# its exit status is recorded; a failure does not stop the run, and the script
+# ends by naming the commands that failed and exiting 1, or exits 0 when all of
+# them passed. It unsets CDPATH before its cd, so that cd does not resolve its
+# relative folder through CDPATH and the commands it runs do not inherit it.
 #
 # The Plugin manifests job installs the Claude Code CLI at the version that
 # plugin-validate.yml pins in CLAUDE_CODE_VERSION. This script installs nothing:
@@ -18,22 +19,22 @@
 # --version reports another version, and otherwise runs the 3 validations of
 # that job, the staged skills directory included.
 #
-# tools/test-run-all-checks.py fails when a run text of those workflows is
-# neither a command line here nor one of its listed exceptions, when a command
-# line here is not a run text of theirs, or when the sha256 of this script is
-# not the one it records, so a change here records the new digest there.
+# tools/test-run-all-checks.py fails when a run text that it reads is neither a
+# command line here nor one of its listed exceptions, when a command line here
+# is not such a run text, or when the sha256 of this script is not the one it
+# records, so a change here records the new digest there.
 #
-# Residual: the script runs every command whatever a change touches, so it runs
-# more than any 1 CI run, and it needs what CI provides: the pinned CLI, PyYAML,
-# the full git history, and network access with gh signed in for the live
-# release checksum check, whose step in CI takes GH_TOKEN from the workflow.
-# Each run text runs with bash in this machine's environment, so what a workflow
-# sets around a step, such as its shell, its job's runner, container, services
-# or matrix, an if: condition, continue-on-error or env, is not reproduced;
-# tools/test-run-all-checks.py names each such form. Some commands write
-# temporary files or temporary git worktrees, as in CI.
+# Residual: the script runs all of its commands whatever a change touches, and
+# it needs what CI provides, including the pinned CLI, PyYAML, the full git
+# history, and network access with gh signed in for the live release checksum
+# check, whose step in CI takes GH_TOKEN from the workflow. Each run text runs
+# with bash in this machine's environment, so what a workflow sets around a step
+# through a key that tools/test-run-all-checks.py does not read is not
+# reproduced; that test's docstring says which keys it reads. Some commands
+# write temporary files or temporary git worktrees, as in CI.
 set -uo pipefail
 
+unset CDPATH
 cd "$(dirname "$0")/.." || exit 1
 
 failed=()
