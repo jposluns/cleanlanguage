@@ -48,11 +48,17 @@ never calls the gate's family_checked(), which holds the 2 filters of the links
 back, on not hidden and on visible text. hidden_link_exit_problems() fails
 unless hidden_link_problems(), given a stand-in for the gate whose parse()
 raises SystemExit(3), as the gate's die() does, returns the problem that names
-SystemExit(3). Exit 0 when every case passes; 1 otherwise, naming each failing
-case. Each of RESIDUALS is a fault the gate passes, such as markup in which a
-browser may hide or empty what the gate checks; it must exit 0, and the gate's
-docstring must name it, so that what the gate says it checks cannot outgrow its
-code unnoticed.
+SystemExit(3). gate_exit_problems(), copy_exit_problems(),
+in_process_run_problems() and run_rule_case_problems() are for this test's own
+catches: a SystemExit raised in this process by a load or run of the gate or a
+sibling, as the gate's die() raises it, and an OSError from a scratch copy are
+to be named failures, not an exit with no failure line or a traceback. The
+cases of RUN_RULE_CASES give the start of each problem that
+in_process_run_problems() is to return on their planted sources. Exit 0 when
+every case passes; 1 otherwise, naming each failing case. Each of RESIDUALS is
+a fault the gate passes, such as markup in which a browser may hide or empty
+what the gate checks; it must exit 0, and the gate's docstring must name it, so
+that what the gate says it checks cannot outgrow its code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -233,7 +239,7 @@ def pinned_baseline() -> str:
 # the baseline needs no edit here; a pin that cannot be read fails this test with exit 1, rather than with a traceback.
 try:
     BASELINE = pinned_baseline()
-except Exception as error:
+except (Exception, SystemExit) as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
 # The names that hold the version read from the pin. version_binding_problems() reads this file's syntax tree for
@@ -516,14 +522,42 @@ INLINE_LIST = re.compile(r"^SUPPORTED_PYTHONS = .*$", re.M)
 INLINE_UNSUPPORTED = "SUPPORTED_PYTHONS = ((2, 7),)"
 
 
-def make_root(scratch: Path) -> Path:
+def make_root(scratch: Path, files: list[str] = FILES) -> Path:
     root = scratch / "repo"
     (root / "tools").mkdir(parents=True)
     shutil.copyfile(GATE, root / "tools" / GATE.name)
-    for relative in FILES:
+    for relative in files:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / relative, root / relative)
     return root
+
+
+def copy_problems(files: list[str] = FILES) -> list[str]:
+    """The problem, named once, if make_root() cannot build a scratch copy of the gate and files, so that a file it
+    copies, missing or unreadable, fails this test with exit 1 rather than with a traceback; main() then does not run
+    the checks that need the copy."""
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            make_root(Path(scratch), files)
+        except OSError as error:
+            return [f"the scratch copy of make_root() could not be made: {error}"]
+    return []
+
+
+def copy_exit_problems() -> list[str]:
+    """A problem unless copy_problems() and pin_case_problems() each return exactly 1 problem that names the file, given
+    each file of the loop below to copy; it is for their catches of OSError."""
+    problems: list[str] = []
+    for copier in (copy_problems, pin_case_problems):
+        for source in ("tools/no-such-file.py", "site/install"):
+            try:
+                found = copier([source])
+            except OSError as error:
+                problems.append(f"{copier.__name__}(), given {source}, let {error!r} through")
+                continue
+            if len(found) != 1 or source not in found[0]:
+                problems.append(f"{copier.__name__}(), given {source}, returns {found!r}, not 1 problem naming it")
+    return problems
 
 
 def edit(relative: str, old: str, new: str, every: bool = False):
@@ -643,7 +677,10 @@ PROBE_NAMES = ("a </ script> inside a script", "markup inside a title", "a comme
 def probe_name_problems() -> list[str]:
     """A problem unless PROBE_NAMES holds the names of the gate's READING_PROBES in their order, so that a probe added
     to the gate cannot go without a copy of the gate that expects its other reading."""
-    names = tuple(name for name, _, _ in load_gate().READING_PROBES)
+    try:
+        names = tuple(name for name, _, _ in load_gate().READING_PROBES)
+    except (Exception, SystemExit) as error:
+        return [f"READING_PROBES could not be read from tools/{GATE.name}: {error!r}"]
     if names != PROBE_NAMES:
         return [f"PROBE_NAMES is {PROBE_NAMES!r}, but the names of the READING_PROBES of tools/{GATE.name} are "
                 f"{names!r}, in that order"]
@@ -1906,7 +1943,7 @@ def committed_rules(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
     them."""
     try:
         classes = pinned_classes(load_gate())
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [], [f"CLASS_PIN could not be read from tools/{GATE.name}: {error!r}"]
     sheets: list[tuple[str, str]] = []
     problems: list[str] = []
@@ -1931,16 +1968,22 @@ def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
                         for problem in diff_problems(pin, held)]
 
 
-def pin_case_problems() -> list[str]:
-    """stylesheet_problems(), on a copy of STYLESHEETS and PIN_FILE with the fault of each of PIN_CASES, gives problems
-    that hold each of its words, or none where it gives none; a fault whose text the copy does not hold is a problem."""
+def pin_case_problems(files: list[str] = STYLESHEETS + [PIN_FILE]) -> list[str]:
+    """stylesheet_problems(), on a copy of files (STYLESHEETS and PIN_FILE by default) with the fault of each of
+    PIN_CASES, gives problems that hold each of its words, or none where it gives none; a fault whose text the copy does
+    not hold is a problem. A copy that cannot be made, of a file that is missing or unreadable, say, is named once, as 1
+    problem rather than a traceback, and no further case is run."""
     problems: list[str] = []
     for name, fault, words in PIN_CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
-            for relative in (*STYLESHEETS, PIN_FILE):
-                (root / relative).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPO_ROOT / relative, root / relative)
+            try:
+                for relative in files:
+                    (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(REPO_ROOT / relative, root / relative)
+            except OSError as error:
+                return problems + [f"the scratch copy for the case {name!r} of the rule pin's comparison could not be "
+                                   f"made: {error}"]
             # A committed stylesheet that no longer holds the text a fault edits is a problem, not a crash, so the
             # comparison of the committed stylesheets with the pin still runs and names the rule.
             try:
@@ -1999,12 +2042,13 @@ def checked_kinds(gate, relative: str, parser) -> list:
     return kinds + [link for link in paragraph_links(gate, parser) if link[1]["order"] not in held]
 
 
-def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes", root: Path = REPO_ROOT) -> list[str]:
+def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes", root: Path = REPO_ROOT,
+                       loader=load_gate) -> list[str]:
     """The gate's CLASS_PIN (or ATTRIBUTE_PIN, with field "attrs") holds, for each kind, exactly the classes (or the
     attributes) the pages under root give that checked element, each of its ancestors and each element it holds, by
     tag, so that the pin cannot be widened unnoticed."""
     try:
-        gate = load_gate()
+        gate = loader()
         found = {kind: ({}, {}, {}) for kind in getattr(gate, pin)}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
             parser = gate.parse((root / relative).read_text(encoding="utf-8"))
@@ -2012,7 +2056,7 @@ def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes", root: Pat
                 for position, other in gate.pin_positions(parser, element):
                     if other[field]:
                         found[kind][position].setdefault(other["tag"], set()).update(other[field])
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"{pin} of tools/{GATE.name} could not be checked: {error!r}"]
     problems: list[str] = []
     for kind, maps in getattr(gate, pin).items():
@@ -2034,13 +2078,13 @@ def inventory_case_problems() -> list[str]:
     return [f"with a further link back to #get in a Gemini step: {problem}" for problem in found]
 
 
-def head_pin_problems() -> list[str]:
+def head_pin_problems(loader=load_gate) -> list[str]:
     """The gate's HEAD_PIN holds exactly the meta, link and base elements that the committed pages carry, by the
     gate's head_key(), each with every attribute it carries and that attribute's value, None only where
     FREE_HEAD_VALUES leaves it free, so that the pin cannot be widened unnoticed; the elements of 1 key carry the same
     attributes, with the same values where they are not free."""
     try:
-        gate = load_gate()
+        gate = loader()
         found: dict = {}
         problems: list[str] = []
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
@@ -2052,7 +2096,7 @@ def head_pin_problems() -> list[str]:
                 values = {name: None if name == free else value for name, value in element["values"].items()}
                 if found.setdefault(key, values) != values:
                     problems.append(f"{relative} carries {key} as {values}, another page as {found[key]}.")
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"HEAD_PIN of tools/{GATE.name} could not be checked: {error!r}"]
     if gate.HEAD_PIN != found:
         problems.append(f"HEAD_PIN of tools/{GATE.name} holds {gate.HEAD_PIN}; the committed pages carry {found}.")
@@ -2074,7 +2118,7 @@ def attribute_pin_problems() -> list[str]:
         return problems
     try:
         recorded = set(load_gate().RULE_ATTRIBUTES)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"RULE_ATTRIBUTES could not be read from tools/{GATE.name}: {error!r}"]
     named = rule_attributes(held) - {HIDING_ATTRIBUTE}
     if recorded != named:
@@ -2082,12 +2126,12 @@ def attribute_pin_problems() -> list[str]:
     return []
 
 
-def header_pin_problems() -> list[str]:
+def header_pin_problems(loader=load_gate) -> list[str]:
     """The gate's INSTALL_HEADERS holds, for each URL pattern of the committed site/_headers that the gate's
     reaches_page() reads as able to match an install page or a file the pages load, exactly the headers and values
     that the file sets there, and no detach, so that the header pin cannot be widened unnoticed."""
     try:
-        gate = load_gate()
+        gate = loader()
         entries = gate.load_tool("check-headers.py").parse((REPO_ROOT / HEADERS).read_text(encoding="utf-8"))
         found: dict[str, list[tuple[str, str, str | None]]] = {}
         for _, pattern, kind, name, value in entries:
@@ -2103,11 +2147,11 @@ def header_pin_problems() -> list[str]:
     return []
 
 
-def tag_pin_problems(root: Path = REPO_ROOT) -> list[str]:
+def tag_pin_problems(root: Path = REPO_ROOT, loader=load_gate) -> list[str]:
     """The gate's TAG_PIN holds, for each kind, exactly the tags the pages under root give that checked element, each
     of its ancestors and each element it holds, so that the pin cannot be widened unnoticed."""
     try:
-        gate = load_gate()
+        gate = loader()
         found = {kind: (set(), set(), set()) for kind in gate.TAG_PIN}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
             parser = gate.parse((root / relative).read_text(encoding="utf-8"))
@@ -2115,46 +2159,46 @@ def tag_pin_problems(root: Path = REPO_ROOT) -> list[str]:
                 for position, other in gate.pin_positions(parser, element):
                     found[kind][position].add(other["tag"])
         recorded = {kind: tuple(set(tags) for tags in held) for kind, held in gate.TAG_PIN.items()}
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"TAG_PIN of tools/{GATE.name} could not be checked: {error!r}"]
     return [f"TAG_PIN of tools/{GATE.name} gives {kind} {recorded[kind]}; the committed pages give {found[kind]}."
             for kind in recorded if recorded[kind] != found[kind]]
 
 
-def page_attribute_pin_problems() -> list[str]:
+def page_attribute_pin_problems(loader=load_gate) -> list[str]:
     """The gate's PAGE_ATTRIBUTES holds, for each tag, exactly the attributes that the committed pages give an element
     of that tag, anywhere on them, and no tag whose elements carry none, so that the pin cannot be widened unnoticed."""
     try:
-        gate = load_gate()
+        gate = loader()
         found: dict[str, set[str]] = {}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
             for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements:
                 if element["attrs"]:
                     found.setdefault(element["tag"], set()).update(element["attrs"])
         recorded = {tag: set(names) for tag, names in gate.PAGE_ATTRIBUTES.items()}
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"PAGE_ATTRIBUTES of tools/{GATE.name} could not be checked: {error!r}"]
     if recorded != found:
         return [f"PAGE_ATTRIBUTES of tools/{GATE.name} holds {recorded}; the committed pages give {found}."]
     return []
 
 
-def page_tag_pin_problems() -> list[str]:
+def page_tag_pin_problems(loader=load_gate) -> list[str]:
     """The gate's PAGE_TAGS holds exactly the tags of the elements of the committed pages, anywhere on them, so that
     the pin cannot be widened unnoticed."""
     try:
-        gate = load_gate()
+        gate = loader()
         found = {element["tag"] for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER)
                  for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements}
         recorded = set(gate.PAGE_TAGS)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"PAGE_TAGS of tools/{GATE.name} could not be checked: {error!r}"]
     if recorded != found or len(recorded) != len(gate.PAGE_TAGS):
         return [f"PAGE_TAGS of tools/{GATE.name} holds {sorted(gate.PAGE_TAGS)}; the committed pages give {sorted(found)}."]
     return []
 
 
-def name_reading_problems() -> list[str]:
+def name_reading_problems(loader=load_gate) -> list[str]:
     """The gate's parse() and name_text(), run in this process on fragments, apart from the pins, read a family page
     heading as check 4 says: each br that no element hides, </br> included, reads as 1 space, a hidden br as nothing,
     and U+034F is kept, while has_visible_text() reads text of only U+034F or U+0000 as not visible."""
@@ -2167,7 +2211,7 @@ def name_reading_problems() -> list[str]:
         ("<h1>Chat\u034fGPT</h1>", "chat\u034fgpt"),
     )
     try:
-        gate = load_gate()
+        gate = loader()
         problems = [f"parse() and name_text() read {markup!r} as {gate.name_text(gate.parse(markup).h1[0]['chars'])!r}, "
                     f"not {name!r}." for markup, name in expected
                     if gate.name_text(gate.parse(markup).h1[0]["chars"]) != name]
@@ -2180,7 +2224,7 @@ def name_reading_problems() -> list[str]:
                  ("//host/assets/baseline/copy.js", None), ("/assets/%2e%2e/images/a.png", None))
         problems += [f"load_path() reads {target!r} as {gate.load_path(target)!r}, not {path!r}."
                      for target, path in paths if gate.load_path(target) != path]
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"the name reading of tools/{GATE.name} could not be checked: {error!r}"]
     return problems
 
@@ -2251,7 +2295,227 @@ def hidden_link_exit_problems() -> list[str]:
     return []
 
 
-def end_tag_problems() -> list[str]:
+def exiting_gate():
+    """The gate as load_gate() loads it, with parse() and load_tool() replaced by functions that raise SystemExit(3), as
+    the gate's die() does."""
+    def exit_now(*args, **kwargs):
+        raise SystemExit(3)
+
+    gate = load_gate()
+    gate.parse = exit_now
+    gate.load_tool = exit_now
+    return gate
+
+
+def gate_exit_problems() -> list[str]:
+    """A problem unless loading exiting_gate() and running its parse() on <p>x</p> raises SystemExit(3), and 1 for each
+    check of its tuple that, given exiting_gate() as its loader, does not return exactly 1 problem naming SystemExit(3).
+    It is for the catches of those checks."""
+    checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems, page_attribute_pin_problems,
+              page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
+    try:
+        exiting_gate().parse("<p>x</p>")
+        raised = "nothing"
+    except (Exception, SystemExit) as error:
+        raised = repr(error)
+    problems = [] if raised == "SystemExit(3)" else [
+        f"exiting_gate().parse('<p>x</p>') raises {raised}, not SystemExit(3)"]
+    for check in checks:
+        try:
+            found = check(loader=exiting_gate)
+        except (Exception, SystemExit) as error:
+            problems.append(f"{check.__name__}(), given exiting_gate() as its loader, let {error!r} through")
+            continue
+        if len(found) != 1 or "SystemExit(3)" not in found[0]:
+            problems.append(f"{check.__name__}(), given exiting_gate() as its loader, returns {found!r}, not 1 problem "
+                            "naming SystemExit(3)")
+    return problems
+
+
+# The functions, each with its reason, that in_process_run_problems() is given as exempt from the tuple of
+# gate_exit_problems().
+RUN_EXEMPT = {
+    "pinned_baseline": "a loader: the module-level read of BASELINE runs it",
+    "load_gate": ("a loader: every load of the gate in this process calls it, apart from those in "
+                  "statement_problems() and version_problems(), which call exec_module() themselves"),
+    "exiting_gate": "a loader: the stand-in that gate_exit_problems() hands each check of its tuple",
+    "gate_exit_problems": ("it loads exiting_gate() and runs its parse() only to check, under its own catch, that it "
+                           "raises SystemExit(3)"),
+    "hidden_link_problems": "hidden_link_exit_problems() holds its catch with its own stand-in gate",
+    "probe_name_problems": ("of the gate, it reads only READING_PROBES, which exiting_gate() leaves as the gate binds "
+                            "it"),
+    "committed_rules": "of the gate, it reads only CLASS_PIN, which exiting_gate() leaves as the gate binds it",
+    "attribute_pin_problems": ("of the gate, it reads only RULE_ATTRIBUTES and, through committed_rules(), CLASS_PIN, "
+                               "which exiting_gate() leaves as the gate binds them"),
+    "workflow_path_problems": ("of the gate, it reads only SERVER_ENTRIES, which exiting_gate() leaves as the gate "
+                               "binds it"),
+    "statement_problems": "it loads the gate itself and reads only its docstring and ALLOWED_SCRIPTS",
+    "version_problems": (f"it loads the gate and {INLINE_GATE} itself and, of what it loads, reads only "
+                         "SUPPORTED_PYTHONS"),
+}
+
+
+def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = RUN_EXEMPT) -> list[str]:
+    """The problems that its rule, the code below, finds in the syntax tree of source, this file by default, given
+    exempt; it is for the catches of the loads and runs of the gate or a sibling in this process. The cases of
+    RUN_RULE_CASES give the start of each problem that it is to return on their planted sources."""
+    names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
+    attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
+    loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
+
+    def run_name(node: ast.AST) -> str | None:
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in names:
+            return func.id
+        if (isinstance(func, ast.Attribute) and func.attr in attributes
+                and not (func.attr == "parse" and isinstance(func.value, ast.Name) and func.value.id == "ast")):
+            return func.attr
+        return None
+
+    def handler_names(handler: ast.ExceptHandler) -> set[str]:
+        if handler.type is None:
+            return {"BaseException"}
+        caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        return {node.id if isinstance(node, ast.Name) else getattr(node, "attr", "") for node in caught}
+
+    runs: list[tuple[str | None, int, str, bool]] = []
+
+    def visit(node: ast.AST, owner: str | None, scope: str, held: bool) -> None:
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            catches = any("SystemExit" in handler_names(handler) for handler in node.handlers)
+            for child in node.body:
+                visit(child, owner, scope, held or catches)
+            for child in [*node.handlers, *node.orelse, *node.finalbody]:
+                visit(child, owner, scope, held)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inner = owner or scope + node.name
+            for child in ast.iter_child_nodes(node):
+                if any(child is statement for statement in node.body):
+                    visit(child, inner, scope, not owner and inner in loaders)
+                else:
+                    visit(child, owner, scope, held)
+            return
+        if isinstance(node, ast.ClassDef) and not owner:
+            scope += node.name + "."
+        if isinstance(node, ast.Lambda):
+            held = False
+        name = run_name(node)
+        if name:
+            runs.append((owner, node.lineno, name, held))
+        for child in ast.iter_child_nodes(node):
+            visit(child, owner, scope, held)
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8") if source is None else source)
+    for statement in tree.body:
+        visit(statement, None, "", False)
+    exits = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "gate_exit_problems"]
+    tuples = [node.value for check in exits for node in ast.walk(check) if isinstance(node, ast.Assign)
+              and [ast.unparse(target) for target in node.targets] == ["checks"] and isinstance(node.value, ast.Tuple)]
+    held_checks = {ast.unparse(element) for value in tuples for element in value.elts
+                   if isinstance(element, (ast.Name, ast.Attribute))}
+    problems = [] if tuples else ["this check reads no tuple assigned to checks in gate_exit_problems()"]
+    runners: dict[str, int] = {}
+    for owner, line, name, held in runs:
+        if owner:
+            runners.setdefault(owner, line)
+        if not held:
+            problems.append(f"line {line}: this check reads {owner or 'the module level'} as calling {name}() outside "
+                            "every try with a handler that names SystemExit")
+    problems += [f"this check reads {owner}() as loading or running the gate or a sibling in this process (line "
+                 f"{line}) and finds it neither in the tuple of gate_exit_problems() nor in RUN_EXEMPT with a reason"
+                 for owner, line in runners.items() if owner not in held_checks and not exempt.get(owner)]
+    problems += [f"RUN_EXEMPT names {name}, which this check either does not read as a function that loads or runs the "
+                 "gate or a sibling in this process or finds in the tuple of gate_exit_problems()"
+                 for name in exempt if name not in runners or name in held_checks]
+    problems += [f"line {node.lineno}: a handler that this check reads as bare or as naming BaseException or "
+                 "KeyboardInterrupt"
+                 for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
+                 and handler_names(node) & {"BaseException", "KeyboardInterrupt"}]
+    return problems
+
+
+# The 2 lines that start each planted source of RUN_RULE_CASES, a gate_exit_problems() whose tuple holds held_problems
+# and Checks.method_problems; each source's own lines start at line 3.
+RUN_RULE_HEAD = "def gate_exit_problems():\n    checks = (held_problems, Checks.method_problems)\n"
+RUN_HELD = ("def held_problems():\n    try:\n        load_gate().parse('')\n    except (Exception, SystemExit):\n"
+            "        pass\n")
+RUN_EXEMPT_HELD = ("def exempt_problems():\n    try:\n        load_gate()\n    except (Exception, SystemExit):\n"
+                   "        pass\n")
+RUN_UNHELD = "this check reads the module level as calling {}() outside every try with a handler that names SystemExit"
+RUN_OWNER = ("this check reads {}() as loading or running the gate or a sibling in this process (line {}) and finds it "
+             "neither in the tuple of gate_exit_problems() nor in RUN_EXEMPT with a reason")
+RUN_NAMED = ("RUN_EXEMPT names {}, which this check either does not read as a function that loads or runs the gate or "
+             "a sibling in this process or finds in the tuple of gate_exit_problems()")
+RUN_HANDLER = "line 5: a handler that this check reads as bare or as naming BaseException or KeyboardInterrupt"
+# Each case: its name, its source after RUN_RULE_HEAD, the RUN_EXEMPT that in_process_run_problems() is given with it,
+# and the start of each problem that it is to return.
+RUN_RULE_CASES = [
+    ("a held run in a function of the tuple", RUN_HELD, {}, []),
+    ("a run at the top level", "load_gate()\n", {}, ["line 3: " + RUN_UNHELD.format("load_gate")]),
+    ("2 runs at the top level", "load_gate()\nexec('')\n", {},
+     ["line 3: " + RUN_UNHELD.format("load_gate"), "line 4: " + RUN_UNHELD.format("exec")]),
+    ("a run under a try whose handler names Exception only", "try:\n    exec('')\nexcept Exception:\n    pass\n", {},
+     ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("a run in a handler that names SystemExit", "try:\n    pass\nexcept SystemExit:\n    exec('')\n", {},
+     ["line 6: " + RUN_UNHELD.format("exec")]),
+    ("a run under an if at the top level", "if True:\n    exec('')\n", {}, ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("a held run in a method of the tuple", "class Checks:\n    def method_problems(self):\n        try:\n"
+     "            self.gate.parse('')\n        except (Exception, SystemExit):\n            pass\n", {}, []),
+    ("a held run in a method outside the tuple", "class Other:\n    def parse_problems(self):\n        try:\n"
+     "            self.gate.parse('')\n        except (Exception, SystemExit):\n            pass\n", {},
+     [RUN_OWNER.format("Other.parse_problems", 6)]),
+    ("a held run in a def nested in a function of the tuple", "def held_problems():\n    def inner():\n        try:\n"
+     "            load_gate()\n        except (Exception, SystemExit):\n            pass\n    return inner\n", {}, []),
+    ("a run in a nested def under a held try", "def held_problems():\n    try:\n        def inner():\n"
+     "            load_gate()\n    except (Exception, SystemExit):\n        pass\n", {},
+     ["line 6: this check reads held_problems as calling load_gate() outside every try with a handler that names "
+      "SystemExit"]),
+    ("a held run in a def under an if", "if True:\n    def guarded_problems():\n        try:\n            exec('')\n"
+     "        except (Exception, SystemExit):\n            pass\n", {}, [RUN_OWNER.format("guarded_problems", 6)]),
+    ("a held run in a def under a try", "try:\n    def tried_problems():\n        try:\n            exec('')\n"
+     "        except (Exception, SystemExit):\n            pass\nexcept ImportError:\n    pass\n", {},
+     [RUN_OWNER.format("tried_problems", 6)]),
+    ("a load in a default", "def held_problems(gate=load_gate()):\n    return gate\n", {},
+     ["line 3: " + RUN_UNHELD.format("load_gate")]),
+    ("a run in a lambda under a held try",
+     "try:\n    run = lambda: exec('')\nexcept (Exception, SystemExit):\n    pass\n", {},
+     ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("the body of a loader", "def load_gate():\n    return spec.loader.exec_module(module)\n",
+     {"load_gate": "a loader"}, []),
+    ("a bare handler", "try:\n    pass\nexcept:\n    pass\n", {}, [RUN_HANDLER]),
+    ("a handler that names BaseException", "try:\n    pass\nexcept BaseException:\n    pass\n", {}, [RUN_HANDLER]),
+    ("a handler that names KeyboardInterrupt",
+     "try:\n    pass\nexcept (ValueError, KeyboardInterrupt):\n    pass\n", {}, [RUN_HANDLER]),
+    ("an exempt function with its reason", RUN_EXEMPT_HELD, {"exempt_problems": "a reason"}, []),
+    ("an exempt function with no reason", RUN_EXEMPT_HELD, {"exempt_problems": ""},
+     [RUN_OWNER.format("exempt_problems", 5)]),
+    ("an exempt name that runs nothing", "def quiet_problems():\n    return []\n", {"quiet_problems": "a reason"},
+     [RUN_NAMED.format("quiet_problems")]),
+    ("an exempt name in the tuple", RUN_HELD, {"held_problems": "a reason"}, [RUN_NAMED.format("held_problems")]),
+]
+
+
+def run_rule_case_problems() -> list[str]:
+    """A problem for each case of RUN_RULE_CASES whose starts do not match what in_process_run_problems() returns, given
+    RUN_RULE_HEAD and the case's source with its RUN_EXEMPT."""
+    problems: list[str] = []
+    for name, source, exempt, starts in RUN_RULE_CASES:
+        try:
+            found = in_process_run_problems(RUN_RULE_HEAD + source, exempt)
+        except Exception as error:
+            problems.append(f"{name}: in_process_run_problems() raised {error!r}")
+            continue
+        if len(found) != len(starts) or not all(problem.startswith(start) for problem, start in zip(found, starts)):
+            count = "1 problem that starts" if len(starts) == 1 else f"{len(starts)} problems that start"
+            problems.append(f"{name}: in_process_run_problems() returns {found!r}, not {count} with {starts!r}, in "
+                            "order")
+    return problems
+
+
+def end_tag_problems(loader=load_gate) -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
     where a page leaves out an end tag that the HTML standard lets it omit where no more content follows in the parent
@@ -2302,7 +2566,7 @@ def end_tag_problems() -> list[str]:
                  '<span class="vh"><li>a<li>b</span>', "<ul><li><p>a<li>b</ul>", "<div><p>a<p>b</div>",
                  "<dl><dd>a<dd>b</dl>", "<table><tr><td>a<td>b</table>"]
     try:
-        gate = load_gate()
+        gate = loader()
         problems = [f"{name} of tools/{GATE.name} holds {sorted(held)}, not {sorted(stated)}." for name, held, stated in (
             ("P_PARENTS", gate.P_PARENTS, p_parents), ("SVG_SHAPES", gate.SVG_SHAPES, svg_shapes),
             *[(f"IMPLIED_ENDS[{child!r}]", gate.IMPLIED_ENDS.get(child, ()), implied[child]) for child in implied],
@@ -2313,17 +2577,17 @@ def end_tag_problems() -> list[str]:
                      if gate.parse(markup).misnested]
         problems += [f"parse() reads {markup!r} with no misnested end tag." for markup in misnested
                      if not gate.parse(markup).misnested]
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"the end tags of tools/{GATE.name} could not be checked: {error!r}"]
     return problems
 
 
-def loaded_segment_problems() -> list[str]:
+def loaded_segment_problems(loader=load_gate) -> list[str]:
     """The gate's LOADED_SEGMENTS holds exactly the first path segments of the files the committed pages load: each
     src, each href of a link other than the canonical link, and each url() of STYLESHEETS, read from the address of
     its stylesheet, so that the redirect and header refusal of check 7 covers every 1 of them."""
     try:
-        gate = load_gate()
+        gate = loader()
         loads: set[str] = set()
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
             for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements:
@@ -2379,7 +2643,7 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
         gate = load_gate()
         entries = [path for name in gate.SERVER_ENTRIES for path in (name, f"{name}/index.js", f"{name}/a/b/index.js")]
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         return [f"{WORKFLOW} could not be checked: {error!r}"]
     lists: list[list[str]] = []
     unread: list[str] = []
@@ -2484,7 +2748,7 @@ def version_problems() -> list[str]:
         spec.loader.exec_module(gate)
         if gate.SUPPORTED_PYTHONS != ((3, 14),):
             problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} is {gate.SUPPORTED_PYTHONS!r}, not ((3, 14),).")
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         problems.append(f"SUPPORTED_PYTHONS could not be read from tools/{GATE.name}: {error!r}")
     else:
         try:
@@ -2495,7 +2759,7 @@ def version_problems() -> list[str]:
             if missing:
                 problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} lists {missing!r}, which {INLINE_GATE} "
                                 "does not support, so the gate would exit 3 only after it reads the pages.")
-        except Exception as error:
+        except (Exception, SystemExit) as error:
             problems.append(f"SUPPORTED_PYTHONS could not be read from {INLINE_GATE}: {error!r}")
     for version in FAKED_VERSIONS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -2527,9 +2791,12 @@ def version_problems() -> list[str]:
 
 def statement_problems() -> list[str]:
     """The gate's docstring names exactly the scripts that ALLOWED_SCRIPTS holds."""
-    spec = importlib.util.spec_from_file_location("check_install_page", GATE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (Exception, SystemExit) as error:
+        return [f"ALLOWED_SCRIPTS could not be read from tools/{GATE.name}: {error!r}"]
     listed = re.search(r"``ALLOWED_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
     names = tuple(re.findall(r"``([a-z]+\.js)``", listed.group(1))) if listed else ()
     if names != module.ALLOWED_SCRIPTS:
@@ -2673,30 +2940,38 @@ def main() -> int:
     failures: list[str] = statement_problems()
     failures += [f"the version literals: {problem}" for problem in version_literal_problems()]
     failures += [f"the version binding: {problem}" for problem in version_binding_problems()]
+    copied = copy_problems()
+    failures += [f"the scratch copy: {problem}" for problem in copied]
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
     failures += [f"the attribute pin: {problem}" for problem in class_pin_problems("ATTRIBUTE_PIN", "attrs")]
     failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
     failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
     failures += [f"the pinned headers: {problem}" for problem in header_pin_problems()]
     failures += [f"the tag pin: {problem}" for problem in tag_pin_problems()]
-    failures += [f"the inventories: {problem}" for problem in inventory_case_problems()]
+    if not copied:
+        failures += [f"the inventories: {problem}" for problem in inventory_case_problems()]
     failures += [f"the page attribute pin: {problem}" for problem in page_attribute_pin_problems()]
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
     failures += [f"the hidden links: {problem}" for problem in hidden_link_problems()]
     failures += [f"the hidden link exit: {problem}" for problem in hidden_link_exit_problems()]
+    failures += [f"the gate exit: {problem}" for problem in gate_exit_problems()]
+    failures += [f"the copy exit: {problem}" for problem in copy_exit_problems()]
+    failures += [f"the in-process runs: {problem}" for problem in in_process_run_problems()]
+    failures += [f"the in-process rule: {problem}" for problem in run_rule_case_problems()]
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
-    failures += [f"the Python version: {problem}" for problem in version_problems()]
+    if not copied:
+        failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
         if words not in doc:
             failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
-    for name, fault, expected in CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]:
+    for name, fault, expected in ([] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]):
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
