@@ -5217,13 +5217,14 @@ def trace_opens(event: str, args: tuple) -> None:
 
 
 class WorkflowPathsTest(unittest.TestCase):
-    """.github/workflows/release-checksum-live.yml runs these tests and the gate on a pull request or a push to main
-    that changes a file they read, so its push and pull_request triggers each carry a path filter that names every such
-    file: each of OWN_FILES, and each of GENERATOR_INPUTS, a directory as its path followed by /**. The daily schedule
-    and manual dispatch run the gate whatever changed, so a change to main that a path filter misses is still checked at
-    the next scheduled run. Residuals: these tests pin both lists, but no test compares them with the sentence of the
-    gate's module docstring that says what runs it, so the 2 can disagree; and GitHub may not run a path-filtered
-    workflow for a change to more files than it compares, which is not checked offline."""
+    """.github/workflows/release-checksum-live.yml runs these tests and then the gate on a pull request or a push to
+    main that changes a file they read, so its push and pull_request triggers each carry a path filter that names every
+    such file: each of OWN_FILES, and each of GENERATOR_INPUTS, a directory as its path followed by /**. The daily
+    schedule and manual dispatch run these tests and then the gate whatever changed, and a failing test stops the job
+    before the gate runs, so a change to main that a path filter misses is still checked at the next scheduled run.
+    Residuals: these tests pin both lists, but no test compares them with the sentence of the gate's module docstring
+    that says what runs it, so the 2 can disagree; and GitHub may not run a path-filtered workflow for a change to more
+    files than it compares, which is not checked offline."""
 
     WORKFLOW = MODULE_PATH.parent.parent / ".github/workflows/release-checksum-live.yml"
     # The files the gate or its tests read that GENERATOR_INPUTS does not list: the page the gate checks, the gate,
@@ -5247,38 +5248,41 @@ class WorkflowPathsTest(unittest.TestCase):
         line of the list whose text after the indent starts with a hyphen is an entry line. An entry line of 6 spaces, a
         hyphen, a space and an entry in double quotes is read without the quotes, and any other entry line is kept
         whole, so that it never equals an expected entry: an entry that the reader cannot read exactly, such as one
-        written without quotes, fails the list test even when it names an expected entry. Any other line of the list, a
-        blank line included, is refused when an entry line follows it: each entry line that follows adds a record that
-        names the line by its number and never equals an expected entry, so that the list test fails on it. As runs
-        show, PyYAML reads an entry after a blank line or a comment line as part of the list, and cannot load the
-        workflow when that line is instead a line of text indented more than 4 spaces or one whose text after the indent
-        starts with a tab, or when an entry indented 6 spaces is followed by an entry line indented 4 spaces or less. A
-        blank line or a comment line between 2 entries fails too, though PyYAML reads the same list; one after the last
-        entry passes. No broken workflow fails the tests only because of 4 of its tests. The length test makes an empty
-        entry a failure, not an IndexError, and the test that a trigger key was read skips a paths key under no trigger
-        key, which would otherwise be read under None, so that the list test could raise a TypeError rather than fail.
-        The test that the section is on: is in both branches, though either alone would do, since each top-level key
-        resets the trigger; without both, a list under a mistyped on key would be read. The reader still cannot see a
-        key written otherwise than as the line it expects, such as one with a comment after its colon, as runs show: the
-        entries of a second paths key so written are not read, though PyYAML keeps them in place of the first list, and
-        a list under a trigger key so written is read as part of the list of the trigger before it, though PyYAML reads
-        it under its own trigger. How GitHub reads either is not checked offline."""
+        written without quotes, fails the list test even when it names an expected entry. The reader skips a blank line,
+        a comment line, a line indented more than 4 spaces and a line whose text after the indent starts with a tab, in
+        a list or outside one, and a list goes on past such a line, so an entry after it is read and fails the list test
+        unless it is expected. As runs show, PyYAML reads an entry after a blank line or a comment line as part of the
+        list, so a blank line or a comment line between 2 expected entries passes; it cannot load the workflow when that
+        line is instead a line of text indented more than 4 spaces or one whose text after the indent starts with a tab,
+        which passes too when no entry that is not expected follows it. No broken workflow fails the tests only because
+        of 5 of its tests. The continue after an entry line changes only how a failure is reported: without it, an entry
+        line indented more than 4 spaces is skipped next, and one indented 4 spaces or less, which is kept whole and so
+        fails the list test, ends the list, so that the tests also report the entries after it as missing. The length
+        test makes an empty entry a failure, not an IndexError, and the test that a trigger key was read skips a paths
+        key under no trigger key, which would otherwise be read under None, so that the list test could raise a
+        TypeError rather than fail. The test that the section is on: is in both branches, though either alone would do,
+        since each top-level key resets the trigger; without both, a list under a mistyped on key would be read.
+        Residuals: the reader reads the lines of the workflow, not its YAML, so it does not see an entry that a workflow
+        hides where its YAML reading differs from its line layout, and, as runs show, both tests pass while PyYAML reads
+        no path list, or a list other than the one read, in each of these forms: a repeated key, such as a second on:,
+        trigger or paths key, whose value PyYAML keeps in place of the first; a quoted or block scalar in place of a
+        list; a key written otherwise than as the line it expects, such as one with a comment after its colon, whose
+        list is not read, or is read as part of the list of the trigger before it; and a comment that holds a character
+        PyYAML takes as a line break, such as U+2028, after which PyYAML reads a repeated key. How GitHub reads these
+        forms is not checked offline."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
-        hidden: list[str] = []
-        for number, line in enumerate(self.WORKFLOW.read_text(encoding="utf-8").splitlines(), 1):
+        for line in self.WORKFLOW.read_text(encoding="utf-8").splitlines():
             text = line.lstrip(" ")
             if listing is not None and text.startswith("-"):
-                listing += hidden
                 entry = line.removeprefix("      - ")
                 listing.append(entry[1:-1] if len(entry) > 1 and entry[0] == entry[-1] == '"' else line)
                 continue
-            if listing is not None and (len(line) - len(text) > 4 or text[:1].strip() in ("", "#")):
-                hidden.append(f"line {number} is not an entry: {line!r}")
+            if len(line) - len(text) > 4 or text[:1].strip() in ("", "#"):
                 continue
-            listing, hidden = None, []
-            if line and not line[0].isspace() and not line.startswith("#"):
+            listing = None
+            if not line[0].isspace():
                 section, trigger = line, None
             elif section == "on:" and line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
                 trigger = line.strip().removesuffix(":")

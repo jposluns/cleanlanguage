@@ -14,12 +14,14 @@ forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
 check goes red on drift between the site and the published release, and also
 when it cannot verify the release; the Exit codes entries below state each
-condition that turns it red and its code. It runs in CI on a pull request or a
-push to main that changes a file it or its tests read, which the workflow's
-path filters name, on a daily schedule and on manual dispatch, and the
-orchestrator runs it as the final step of the runbook. GitHub may not run a
-path-filtered workflow for a change to more files than it compares, which is
-not checked offline; the daily schedule still runs the gate on main.
+condition that turns it red and its code. In CI, the workflow runs its tests
+and then this check on a pull request or a push to main that changes a file it
+or its tests read, which the workflow's path filters name, on a daily schedule
+and on manual dispatch, and a failing test stops the job before this check
+runs; the orchestrator runs it as the final step of the runbook. GitHub may not
+run a path-filtered workflow for a change to more files than it compares, which
+is not checked offline; the daily schedule still runs the tests and then this
+check on main.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
