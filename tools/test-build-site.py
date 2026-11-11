@@ -2947,9 +2947,10 @@ def disclosure_d4_section(text: str) -> str | None:
     builds, it finds the D-4 heading and the end that HTML with scripting off finds, unless a template token such as
     {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
-    the section here but not in HTML. On markup outside that grammar, which the generator refuses, the two can differ
-    further; for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this
-    reading skips a label or an h2 element between them."""
+    the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
+    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further;
+    for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this reading
+    skips a label or an h2 element between them."""
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -3046,8 +3047,9 @@ def check_disclosure_states(failures: list[str]) -> int:
                 states if phrases[name] not in "".join(sum_tokens(PIN_VERSION, checksum, sum_url).values())]
 
     # A stand-in for sum_tokens() that renders nothing in either state shows that each failure names its own state. No
-    # check pins the "disclosure states:" prefix of this case's failures, the file name that its failures for
-    # site-src/pages/disclosure.html give, or the count of cases that it returns.
+    # check pins the names of this case's test pages, the wording of its failures beyond what its expected lists hold
+    # (such as the "disclosure states:" prefix and the file name that its failures for site-src/pages/disclosure.html
+    # give), the call to reader.close() in disclosure_d4_section(), or the count of cases that it returns.
     planted = state_failures(lambda version, checksum, url: {})
     expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}",
                 f"the published rendering of sum_tokens() lacks CHECKSUM_PUBLISHED_PHRASE, {published!r}"]
