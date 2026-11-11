@@ -5242,37 +5242,40 @@ class WorkflowPathsTest(unittest.TestCase):
         return set(cls.OWN_FILES) | {f"{entry}/**" if (root / entry).is_dir() else entry for entry in GENERATOR_INPUTS}
 
     def path_lists(self) -> dict[str, list[str]]:
-        """The entries of each path filter under the workflow's on key, by trigger and in order, read as text: a list
-        starts at a line that is 4 spaces and paths:, under a trigger key indented 2 spaces, and runs to the next key, a
-        line indented 4 spaces or less whose text after the indent starts with neither whitespace, # nor a hyphen. A
-        line of the list whose text after the indent starts with a hyphen is an entry line. An entry line of 6 spaces, a
-        hyphen, a space and an entry in double quotes is read without the quotes, and any other entry line is kept
-        whole, so that it never equals an expected entry: an entry that the reader cannot read exactly, such as one
-        written without quotes, fails the list test even when it names an expected entry. Of the other lines, the reader
-        skips a blank line, a comment line, a line indented more than 4 spaces and a line whose text after the indent
-        starts with whitespace other than a space, such as a tab, in a list or outside one, and a list goes on past such
-        a line, so an entry after it is read and fails the list test unless it is expected. As runs show, PyYAML reads
-        an entry after a blank line or a comment line as part of the list, so a blank line or a comment line between 2
-        expected entries passes. A skipped line of any kind passes when no entry that is not expected follows it,
-        whatever PyYAML reads there; see Residuals. No broken workflow fails the tests only because of 5 of its parts.
-        The continue after an entry line changes only how a failure is reported: without it, an entry line indented more
-        than 4 spaces is skipped next, and one indented 4 spaces or less, which is kept whole and so fails the list
-        test, ends the list, so that the tests also report the entries after it as missing. The length test makes an
-        empty entry a failure, not an IndexError, and the test that a trigger key was read skips a paths key under no
-        trigger key, which would otherwise be read under None, so that the list test could raise a TypeError rather than
-        fail. The test that the section is on: is in both branches, though either alone would do, since each top-level
-        key resets the trigger; without both, a list under a mistyped on key would be read. Residuals: the reader reads
-        the lines of the workflow as str.splitlines splits them, and PyYAML reads its YAML, so every workflow on which
-        the 2 readings differ is a residual: on such a workflow both tests can pass while PyYAML reads no path list, a
-        list other than the one read, or no workflow at all. As runs show, for example, both tests pass while PyYAML
-        reads no path list for a trigger, or a list other than the one read, with a second on: or trigger key, whose
-        value PyYAML keeps in place of the first, also one that follows U+2028 in a comment; with a second paths key, or
-        a trigger key, that has a comment after its colon, whose list is not read or is read as part of the list of the
-        trigger before it; with a quoted or block scalar in place of a list; and with a line of text indented 8 spaces
-        first in a list, which PyYAML reads with the entries after it as 1 plain scalar. Both tests also pass while
-        PyYAML cannot load the workflow with a line of text indented 8 spaces between 2 entries, or with a comment that
-        holds U+000B or U+000C, which str.splitlines takes as a line break. How GitHub reads such workflows is not
-        checked offline."""
+        """The entries of each path filter under the workflow's on key, by trigger and in order, read as text, in the
+        lines that str.splitlines gives: a list starts at a line that is 4 spaces and paths:, under a trigger key
+        indented 2 spaces, and runs to the next key, a line indented 4 spaces or less whose text after the indent starts
+        with neither whitespace, # nor a hyphen. A line of the list whose text after the indent starts with a hyphen is
+        an entry line. An entry line of 6 spaces, a hyphen, a space and an entry in double quotes is read without the
+        quotes, and any other entry line is kept whole, so that it never equals an expected entry: an entry line that
+        the reader cannot read exactly, such as one written without quotes, fails the list test even when it names an
+        expected entry. Of the other lines, the reader skips a blank line, a comment line, a line indented more than 4
+        spaces and a line whose text after the indent starts with whitespace other than a space, such as a tab, in a
+        list or outside one, and a list goes on past such a line, so an entry after it is read and fails the list test
+        unless it is expected. As runs show, with a blank line, or a comment line of printable ASCII, added to the
+        workflow as committed before the first entry of a list, between 2 of its entries or after its last, PyYAML reads
+        the same lists, and it reads an entry indented as the others and added after that line as part of the list, so a
+        blank line or a comment line between 2 expected entries passes. A skipped line of any kind passes when no entry
+        that is not expected follows it, whatever PyYAML reads there; see Residuals. No broken workflow fails the tests
+        only because of 5 of its parts. The continue after an entry line changes only how a failure is reported: without
+        it, an entry line indented more than 4 spaces is skipped next, and one indented 4 spaces or less, which is kept
+        whole and so fails the list test, ends the list, so that the tests also report the entries after it as missing.
+        The length test makes an empty entry a failure, not an IndexError, and the test that a trigger key was read
+        skips a paths key under no trigger key, which would otherwise be read under None, so that the list test could
+        raise a TypeError rather than fail. The test that the section is on: is in both branches, though either alone
+        would do, since each top-level key resets the trigger; without both, a list under a mistyped on key would be
+        read. Residuals: the reader reads the lines of the workflow as str.splitlines splits them, and PyYAML reads its
+        YAML, so every workflow on which the 2 readings differ is a residual: on such a workflow both tests can pass
+        while PyYAML reads no path list, a list other than the one read, or no workflow at all. As runs show, for
+        example, with text added to the workflow as committed, both tests pass while PyYAML reads no push path list,
+        with an empty push key added under on: after both lists, also one that follows a comment line and U+0085, U+2028
+        or U+2029 in place of its line feed, since PyYAML keeps the value of the second key in place of the first; while
+        PyYAML reads a list other than the one read, with a paths key that has a comment after its colon and holds 1
+        entry added after the last entry of either list; and while PyYAML reads a list, with its entries, as 1 plain
+        scalar, with the line text here, indented 5 to 8 spaces, added before the first entry of that list. Both tests
+        also pass while PyYAML cannot load the workflow, with the line text here, indented 8 spaces, added between 2
+        entries of either list, or with U+000B or U+000C, which str.splitlines takes as a line break, added at the end
+        of a comment line. How GitHub reads such workflows is not checked offline."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
@@ -5296,11 +5299,11 @@ class WorkflowPathsTest(unittest.TestCase):
     def test_each_trigger_names_exactly_the_files_the_gate_reads(self):
         """Each trigger names exactly the entries of expected(), each once, and the workflow has no paths-ignore filter,
         which could exclude a file that a list names. The test that path_lists reads a list for push and pull_request
-        and for no other trigger makes a workflow with a path list under a third trigger, such as pull_request_target,
-        fail, since the loop below checks only those 2 lists, so that every list path_lists reads is pinned. path_lists
-        reads the workflow's layout, not its YAML, so an equivalent workflow laid out otherwise can fail here until
-        path_lists is updated, as one with the entries of a list indented 4 spaces or with on : in place of on: does.
-        Its subtests change only how a failure is reported."""
+        and for no other trigger makes this test fail when path_lists reads a path list under a third trigger, such as
+        pull_request_target, since the loop below checks only those 2 lists, so that every list path_lists reads is
+        pinned. path_lists reads the workflow's layout, not its YAML, so an equivalent workflow laid out otherwise can
+        fail here until path_lists is updated, as one with the entries of a list indented 4 spaces or with on : in place
+        of on: does. Its subtests change only how a failure is reported."""
         text = self.WORKFLOW.read_text(encoding="utf-8")
         lists = self.path_lists()
         self.assertEqual(sorted(lists), ["pull_request", "push"])
