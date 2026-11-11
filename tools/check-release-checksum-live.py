@@ -13,14 +13,15 @@ fleet, which keeps pull request authorship out of Actions. If that flip is
 forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
 check goes red on each condition that the Exit codes entries below name for
-codes 1 to 3, among them drift between the site and the published release. In
-CI, the workflow runs its tests and then this check on a pull request or a push
-to main that changes a file it or its tests read, which the workflow's path
-filters name, on a daily schedule and on manual dispatch, and a failing test
-stops the job before this check runs; the orchestrator runs it as the final
-step of the runbook. GitHub may not run a path-filtered workflow for a change
-to more files than it compares, which is not checked offline; the daily
-schedule still runs the tests on main, and then this check unless a test fails.
+codes 1 to 3, among them drift between the site and the published release the
+site names. In CI, the workflow runs its tests and then this check on a pull
+request or a push to main that changes a file it or its tests read, which the
+workflow's path filters name, on a daily schedule and on manual dispatch, and a
+failing test stops the job before this check runs; the orchestrator runs it as
+the final step of the runbook. GitHub may not run a path-filtered workflow for
+a change to more files than it compares, which is not checked offline; the
+daily schedule still runs the tests on main, and then this check unless a test
+fails.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
@@ -181,20 +182,20 @@ Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
 Exit codes:
   0  every check that ran passed: the site checksum matches the published
-     release and the release-date check of the version SKILL.md names
-     passes, or the site is ahead of an unpublished release in the pre-tag
-     window (it names the current skill version and carries the
+     release the site names and the release-date check of the version SKILL.md
+     names passes, or the site is ahead of an unpublished release in the
+     pre-tag window (it names the current skill version and carries the
      not-yet-published note, the tag does not exist yet, and the SKILL.md
      Released line is well formed, and present above the undated baseline)
-  1  drift or inconsistency: the release is published, the gate can
-     download and read its zip and ``.sha256``, the manifest is well formed
-     and the zip hashes to it, and the site shows a different checksum or
-     says that the checksum is not yet published, or the site names an
-     unreleased version that is not the current skill version, or it shows
-     a checksum as published while the release and its tag do not exist,
-     or the SKILL.md Released date disagrees with
-     the published release, or the Released line is missing above the undated
-     baseline (also in the pre-tag window)
+  1  drift or inconsistency: the release the site names is published, the gate
+     can download and read its zip and ``.sha256``, the manifest is well formed
+     and the zip hashes to it, and the site shows a different checksum or says
+     that the checksum is not yet published, or the site names an unreleased
+     version that is not the current skill version, or it shows a checksum as
+     published while the release the site names and its tag do not exist, or
+     the SKILL.md Released date disagrees with the UTC day of the
+     ``published_at`` record of the release SKILL.md names, or the Released
+     line is missing above the undated baseline (also in the pre-tag window)
   2  could not verify: a gh call that cannot be run or whose status or value
      the gate cannot read; a status other than 200 or 404 for a release or a
      tag the gate reads; a tag the gate reads that exists with no published
