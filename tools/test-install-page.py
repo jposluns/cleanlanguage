@@ -48,26 +48,29 @@ never calls the gate's family_checked(), which holds the 2 filters of the links
 back, on not hidden and on visible text. hidden_link_exit_problems() fails
 unless hidden_link_problems(), given a stand-in for the gate whose parse()
 raises SystemExit(3), as the gate's die() does, returns the problem that names
-SystemExit(3). gate_exit_problems() fails unless each check of its tuple, given
-exiting_gate(), the gate as load_gate() loads it with parse() and load_tool()
-replaced by functions that raise SystemExit(3), returns 1 problem that names
-SystemExit(3). in_process_run_problems() reads this file's syntax tree and
-fails on a function that loads or runs the gate or a sibling in this process
-and is neither in that tuple nor in RUN_EXEMPT with a reason, on such a load or
-run that no try with a handler naming SystemExit holds, and on a handler that
-is bare or names BaseException or KeyboardInterrupt. copy_exit_problems() fails
-unless copy_problems() and pin_case_problems(), each given a missing file or a
-directory to copy, name it in 1 problem. Exit 0 when every case passes; 1
-otherwise, naming each failing case. A load or run of the gate or a sibling in
-this process that raises SystemExit, as the gate's die() does when
-tools/check-inline-code.py is missing, is a named failure and never a silent
-exit 3. A scratch copy that make_root() cannot build is named once, and the
-inventories, the Python version checks and the cases, which need it, are not
-run; a copy of the stylesheets and the rule pin that pin_case_problems() cannot
-make is named once, and its cases are not run. Each of RESIDUALS is a fault the
-gate passes, such as markup in which a browser may hide or empty what the gate
-checks; it must exit 0, and the gate's docstring must name it, so that what the
-gate says it checks cannot outgrow its code unnoticed.
+SystemExit(3). gate_exit_problems() fails unless the parse() of exiting_gate(),
+the gate as load_gate() loads it with parse() and load_tool() replaced by
+functions that raise SystemExit(3), raises it on markup that never reaches
+load_tool(), and unless each check of its tuple, given exiting_gate(), returns
+1 problem that names SystemExit(3). in_process_run_problems() reads this file's
+syntax tree and fails on a function that loads or runs the gate or a sibling in
+this process and is neither in that tuple nor in RUN_EXEMPT with a reason, on
+such a load or run that no try with a handler naming SystemExit holds, and on a
+handler that is bare or names BaseException or KeyboardInterrupt;
+run_rule_case_problems() fails unless in_process_run_problems() gives, on each
+planted source of RUN_RULE_CASES, the problems that the case names.
+copy_exit_problems() fails unless copy_problems() and pin_case_problems(), each
+given a missing file or a directory to copy, name it in 1 problem. Exit 0 when
+every case passes; 1 otherwise, naming each failing case. A load or run of the
+gate or a sibling in this process that raises SystemExit, as the gate's die()
+does when tools/check-inline-code.py is missing, is a named failure and never a
+silent exit 3. A scratch copy that make_root() cannot build is named once, and
+the inventories, the Python version checks and the cases, which need it, are
+not run; a copy of the stylesheets and the rule pin that pin_case_problems()
+cannot make is named once, and its cases are not run. Each of RESIDUALS is a
+fault the gate passes, such as markup in which a browser may hide or empty what
+the gate checks; it must exit 0, and the gate's docstring must name it, so that
+what the gate says it checks cannot outgrow its code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
@@ -2320,13 +2323,21 @@ def exiting_gate():
 
 
 def gate_exit_problems() -> list[str]:
-    """A problem for each check of its tuple unless, given exiting_gate() as its loader, it returns exactly 1 problem,
-    which names SystemExit(3), so that no catch of those checks can narrow to Exception unnoticed;
-    in_process_run_problems() fails on a function that runs the gate or a sibling in this process and is neither in the
-    tuple nor in RUN_EXEMPT."""
+    """A problem unless the parse() of exiting_gate() raises SystemExit(3) on <p>x</p>, which never reaches load_tool(),
+    so that its replacement of parse() cannot be dropped unnoticed, and a problem for each check of its tuple unless,
+    given exiting_gate() as its loader, it returns exactly 1 problem, which names SystemExit(3), so that no catch of
+    those checks can narrow to Exception unnoticed; in_process_run_problems() fails on a function that runs the gate or
+    a sibling in this process and is neither in the tuple nor in RUN_EXEMPT."""
     checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems, page_attribute_pin_problems,
               page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
-    problems: list[str] = []
+    try:
+        exiting_gate().parse("<p>x</p>")
+        raised = None
+    except (Exception, SystemExit) as error:
+        raised = error
+    problems = [] if repr(raised) == "SystemExit(3)" else [
+        f"the parse() of exiting_gate() gives {raised!r} on <p>x</p>, which never reaches load_tool(), not "
+        "SystemExit(3)"]
     for check in checks:
         try:
             found = check(loader=exiting_gate)
@@ -2347,6 +2358,8 @@ RUN_EXEMPT = {
     "load_gate": ("a loader: every load of the gate in this process calls it, apart from those in "
                   "statement_problems() and version_problems(), which call exec_module() themselves"),
     "exiting_gate": "a loader: the stand-in that gate_exit_problems() hands each check of its tuple",
+    "gate_exit_problems": ("it loads exiting_gate() and runs its parse() only to check, under its own catch, that it "
+                           "raises SystemExit(3)"),
     "hidden_link_problems": "hidden_link_exit_problems() holds its catch with its own stand-in gate",
     "probe_name_problems": "it reads only READING_PROBES, which exiting_gate() leaves as the gate binds it",
     "committed_rules": "it reads only CLASS_PIN, which exiting_gate() leaves as the gate binds it",
@@ -2357,19 +2370,21 @@ RUN_EXEMPT = {
 }
 
 
-def in_process_run_problems() -> list[str]:
-    """A problem for each function in this file's syntax tree that loads or runs the gate or a sibling in this process
-    and is neither in the tuple of gate_exit_problems() nor in RUN_EXEMPT with a reason, for each name of RUN_EXEMPT
-    that names no such function or names 1 in that tuple, for each such load or run that no try with a handler naming
-    SystemExit holds, and for each handler that is bare or names BaseException or KeyboardInterrupt, so that none of
-    these can be added unnoticed. A load or run is a call of load_gate(), loader(), pinned_baseline(), exiting_gate(),
-    exec() or __import__(), or of an attribute exec_module(), load_tool(), run_path(), import_module() or parse(),
-    ast.parse() aside. A function is each def that no other def holds, at the top level or under any class, if, try,
-    with or loop, named by the classes around it and its own name, as in Class.method; a def, class or lambda inside it
-    is part of it, and its decorators, defaults and annotations run where it stands. The body of load_gate(),
-    pinned_baseline() or exiting_gate(), each call of which is itself a load, needs no try, and no try outside a def or
-    a lambda holds what runs inside it. It reads names only, so a load through another name, or a handler that names
-    another name bound to BaseException, passes unnoticed."""
+def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = RUN_EXEMPT) -> list[str]:
+    """A problem for each function in the syntax tree of source, this file by default, that loads or runs the gate or a
+    sibling in this process and is neither in the tuple of gate_exit_problems() nor in exempt with a reason, for each
+    name of exempt that names no such function or names 1 in that tuple, for each such load or run that no try with a
+    handler naming SystemExit holds, and for each handler that is bare or names BaseException or KeyboardInterrupt, so
+    that none of these can be added unnoticed. A load or run is a call of load_gate(), loader(), pinned_baseline(),
+    exiting_gate(), exec() or __import__(), or of an attribute exec_module(), load_tool(), run_path(), import_module()
+    or parse(), ast.parse() aside. A function is each def that no other def holds, at the top level or under any class,
+    if, try, with or loop, named by the classes around it and its own name, as in Class.method, as the tuple may name it
+    too; a def, class or lambda inside it is part of it, and its decorators, defaults and annotations run where it
+    stands. The body of load_gate(), pinned_baseline() or exiting_gate(), each call of which is itself a load, needs no
+    try, and no try outside a def or a lambda holds what runs inside it. It reads names only, so a load through another
+    name, or a handler that names another name bound to BaseException, passes unnoticed, and it does not read whether a
+    reason of exempt is true, so a change that makes one untrue passes unnoticed. run_rule_case_problems() holds these
+    rules on the planted sources of RUN_RULE_CASES."""
     names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
     attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
     loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
@@ -2420,13 +2435,14 @@ def in_process_run_problems() -> list[str]:
         for child in ast.iter_child_nodes(node):
             visit(child, owner, scope, held)
 
-    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8") if source is None else source)
     for statement in tree.body:
         visit(statement, None, "", False)
     exits = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "gate_exit_problems"]
     tuples = [node.value for check in exits for node in ast.walk(check) if isinstance(node, ast.Assign)
               and [ast.unparse(target) for target in node.targets] == ["checks"] and isinstance(node.value, ast.Tuple)]
-    held_checks = {element.id for value in tuples for element in value.elts if isinstance(element, ast.Name)}
+    held_checks = {ast.unparse(element) for value in tuples for element in value.elts
+                   if isinstance(element, (ast.Name, ast.Attribute))}
     problems = [] if tuples else ["gate_exit_problems() assigns no tuple to checks, so its checks cannot be read"]
     runners: dict[str, int] = {}
     for owner, line, name, held in runs:
@@ -2437,14 +2453,86 @@ def in_process_run_problems() -> list[str]:
                             "handler that names SystemExit, so a SystemExit there would end this test unnamed")
     problems += [f"{owner}() loads or runs the gate or a sibling in this process (line {line}) and is neither in the "
                  "tuple of gate_exit_problems() nor in RUN_EXEMPT with its reason"
-                 for owner, line in runners.items() if owner not in held_checks and not RUN_EXEMPT.get(owner)]
+                 for owner, line in runners.items() if owner not in held_checks and not exempt.get(owner)]
     problems += [f"RUN_EXEMPT names {name}, which is not a function that loads or runs the gate or a sibling in this "
                  "process, or is also in the tuple of gate_exit_problems()"
-                 for name in RUN_EXEMPT if name not in runners or name in held_checks]
+                 for name in exempt if name not in runners or name in held_checks]
     problems += [f"line {node.lineno}: a handler that is bare or names BaseException or KeyboardInterrupt; catch "
                  "(Exception, SystemExit) and let KeyboardInterrupt through"
                  for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
                  and handler_names(node) & {"BaseException", "KeyboardInterrupt"}]
+    return problems
+
+
+# The 2 lines that start each planted source of RUN_RULE_CASES: a tuple that holds held_problems() and the method
+# Checks.method_problems(), so that each source's own lines start at line 3.
+RUN_RULE_HEAD = "def gate_exit_problems():\n    checks = (held_problems, Checks.method_problems)\n"
+RUN_HELD = ("def held_problems():\n    try:\n        load_gate().parse('')\n    except (Exception, SystemExit):\n"
+            "        pass\n")
+RUN_EXEMPT_HELD = ("def exempt_problems():\n    try:\n        load_gate()\n    except (Exception, SystemExit):\n"
+                   "        pass\n")
+RUN_UNHELD = "the module level calls {}() outside every try"
+RUN_OWNER = "{}() loads or runs the gate or a sibling in this process (line {})"
+RUN_HANDLER = "line 5: a handler that is bare or names BaseException or KeyboardInterrupt"
+# Each case: its name, its source after RUN_RULE_HEAD, the RUN_EXEMPT that in_process_run_problems() is given with it,
+# and the start of each problem that it must return, in order.
+RUN_RULE_CASES = [
+    ("a held run in a function of the tuple", RUN_HELD, {}, []),
+    ("a run at the top level", "load_gate()\n", {}, ["line 3: " + RUN_UNHELD.format("load_gate")]),
+    ("a run under a try whose handler names Exception only", "try:\n    exec('')\nexcept Exception:\n    pass\n", {},
+     ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("a run in a handler that names SystemExit", "try:\n    pass\nexcept SystemExit:\n    exec('')\n", {},
+     ["line 6: " + RUN_UNHELD.format("exec")]),
+    ("a run under an if at the top level", "if True:\n    exec('')\n", {}, ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("a held run in a method of the tuple", "class Checks:\n    def method_problems(self):\n        try:\n"
+     "            self.gate.parse('')\n        except (Exception, SystemExit):\n            pass\n", {}, []),
+    ("a held run in a method outside the tuple", "class Other:\n    def parse_problems(self):\n        try:\n"
+     "            self.gate.parse('')\n        except (Exception, SystemExit):\n            pass\n", {},
+     [RUN_OWNER.format("Other.parse_problems", 6)]),
+    ("a held run in a def nested in a function of the tuple", "def held_problems():\n    def inner():\n        try:\n"
+     "            load_gate()\n        except (Exception, SystemExit):\n            pass\n    return inner\n", {}, []),
+    ("a run in a nested def under a held try", "def held_problems():\n    try:\n        def inner():\n"
+     "            load_gate()\n    except (Exception, SystemExit):\n        pass\n", {},
+     ["line 6: held_problems calls load_gate() outside every try"]),
+    ("a held run in a def under an if", "if True:\n    def guarded_problems():\n        try:\n            exec('')\n"
+     "        except (Exception, SystemExit):\n            pass\n", {}, [RUN_OWNER.format("guarded_problems", 6)]),
+    ("a held run in a def under a try", "try:\n    def tried_problems():\n        try:\n            exec('')\n"
+     "        except (Exception, SystemExit):\n            pass\nexcept ImportError:\n    pass\n", {},
+     [RUN_OWNER.format("tried_problems", 6)]),
+    ("a load in a default", "def held_problems(gate=load_gate()):\n    return gate\n", {},
+     ["line 3: " + RUN_UNHELD.format("load_gate")]),
+    ("a run in a lambda under a held try",
+     "try:\n    run = lambda: exec('')\nexcept (Exception, SystemExit):\n    pass\n", {},
+     ["line 4: " + RUN_UNHELD.format("exec")]),
+    ("the body of a loader", "def load_gate():\n    return spec.loader.exec_module(module)\n",
+     {"load_gate": "a loader"}, []),
+    ("a bare handler", "try:\n    pass\nexcept:\n    pass\n", {}, [RUN_HANDLER]),
+    ("a handler that names BaseException", "try:\n    pass\nexcept BaseException:\n    pass\n", {}, [RUN_HANDLER]),
+    ("a handler that names KeyboardInterrupt",
+     "try:\n    pass\nexcept (ValueError, KeyboardInterrupt):\n    pass\n", {}, [RUN_HANDLER]),
+    ("an exempt function with its reason", RUN_EXEMPT_HELD, {"exempt_problems": "a reason"}, []),
+    ("an exempt function with no reason", RUN_EXEMPT_HELD, {"exempt_problems": ""},
+     [RUN_OWNER.format("exempt_problems", 5)]),
+    ("an exempt name that runs nothing", "def quiet_problems():\n    return []\n", {"quiet_problems": "a reason"},
+     ["RUN_EXEMPT names quiet_problems,"]),
+    ("an exempt name in the tuple", RUN_HELD, {"held_problems": "a reason"}, ["RUN_EXEMPT names held_problems,"]),
+]
+
+
+def run_rule_case_problems() -> list[str]:
+    """A problem for each case of RUN_RULE_CASES unless in_process_run_problems(), given RUN_RULE_HEAD and its source
+    with its RUN_EXEMPT, returns 1 problem for each start that it gives, in order, and no other, so that a rule of
+    in_process_run_problems() that a case covers cannot change unnoticed."""
+    problems: list[str] = []
+    for name, source, exempt, starts in RUN_RULE_CASES:
+        try:
+            found = in_process_run_problems(RUN_RULE_HEAD + source, exempt)
+        except Exception as error:
+            problems.append(f"{name}: in_process_run_problems() raised {error!r}")
+            continue
+        if len(found) != len(starts) or not all(problem.startswith(start) for problem, start in zip(found, starts)):
+            problems.append(f"{name}: in_process_run_problems() returns {found!r}, not {len(starts)} problems that "
+                            f"start with {starts!r}, in order")
     return problems
 
 
@@ -2892,6 +2980,7 @@ def main() -> int:
     failures += [f"the gate exit: {problem}" for problem in gate_exit_problems()]
     failures += [f"the copy exit: {problem}" for problem in copy_exit_problems()]
     failures += [f"the in-process runs: {problem}" for problem in in_process_run_problems()]
+    failures += [f"the in-process rule: {problem}" for problem in run_rule_case_problems()]
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
