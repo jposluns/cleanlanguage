@@ -214,11 +214,11 @@ Exit codes:
      generator writes for the state it shows, or the generator could not render
      its download block or the page (see Behaviour); SKILL.md has no
      ``Version:`` line, its first ``Version:`` line is not a bare X.Y.Z
-     version, or the extractor rejects that version; the SKILL.md Released line
-     is malformed; a call of tools/skill-release-date.py, which runs in a child
-     process, did not give a result the gate could accept (see
-     run_release_date_child); or SIGCHLD could not be reset to its default
-     disposition (see reset_sigchld)
+     version, or, when SKILL.md has no Released line, the extractor rejects
+     that version; the SKILL.md Released line is malformed; a call of
+     tools/skill-release-date.py, which runs in a child process, did not give a
+     result the gate could accept (see run_release_date_child); or SIGCHLD
+     could not be reset to its default disposition (see reset_sigchld)
 
 When the verify page passes its own checks and the release it names is
 published, the release-date check and the site-checksum comparison both run,
@@ -1524,13 +1524,13 @@ def check_site_checksum(load_code: int = 0) -> int:
         )
         claimed = None
 
-    # Item 26: the release SKILL.md names is checked on its own terms, whatever
-    # version the site names (see check_release_date). A date edited after
-    # release goes red here; a release that slipped past UTC midnight is
-    # refused or caught by the release workflow itself, and goes red here too.
-    # Both checks run, and each reports any failure it finds, before the gate
-    # exits with the more severe code, so a date failure cannot hide checksum
-    # drift.
+    # Item 26: the release SKILL.md names is checked on its own terms,
+    # regardless of the version the site names (see check_release_date). A date
+    # edited after release goes red here; a release that slipped past UTC
+    # midnight is refused or caught by the release workflow itself, and goes
+    # red here too. Both checks run, and each reports any failure it finds,
+    # before the gate exits with the more severe code, so a date failure cannot
+    # hide checksum drift.
     date_code = release_date_code(version, status)
 
     if claimed is None:
