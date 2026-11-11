@@ -2509,8 +2509,9 @@ def run_rule_case_problems() -> list[str]:
             problems.append(f"{name}: in_process_run_problems() raised {error!r}")
             continue
         if len(found) != len(starts) or not all(problem.startswith(start) for problem, start in zip(found, starts)):
-            problems.append(f"{name}: in_process_run_problems() returns {found!r}, not {len(starts)} problems that "
-                            f"start with {starts!r}, in order")
+            count = "1 problem that starts" if len(starts) == 1 else f"{len(starts)} problems that start"
+            problems.append(f"{name}: in_process_run_problems() returns {found!r}, not {count} with {starts!r}, in "
+                            "order")
     return problems
 
 
