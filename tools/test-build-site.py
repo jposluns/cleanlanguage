@@ -3031,6 +3031,9 @@ def check_disclosure_states(failures: list[str]) -> int:
          '<h2 id="d-5">Five</h2>\n', []),
         ("the note only after an Entry 5 label on a div element",
          entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("the note directly before the next h2 heading on its line", entry_4 + f'{note}<h2 id="d-5">Five</h2>\n', []),
+        ("the D-4 heading first on the page and the note last, with no line break after it",
+         f'<h2 id="d-4">Four</h2>{published} 1;\n{note}', []),
     )
     for case, text, expected in cases:
         got = d4_failures(text, "the test page")
@@ -3049,7 +3052,9 @@ def check_disclosure_states(failures: list[str]) -> int:
     # A stand-in for sum_tokens() that renders nothing in either state shows that each failure names its own state. No
     # check pins the names of this case's test pages, the wording of its failures beyond what its expected lists hold
     # (such as the "disclosure states:" prefix and the file name that its failures for site-src/pages/disclosure.html
-    # give), the call to reader.close() in disclosure_d4_section(), or the count of cases that it returns.
+    # give), the count of cases that it returns, the call to reader.close() in disclosure_d4_section(), or either bound
+    # of the text that this function returns against a move of 1 character later, which adds or drops at most the < that
+    # starts the tag at that bound, a character that neither phrase holds.
     planted = state_failures(lambda version, checksum, url: {})
     expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}",
                 f"the published rendering of sum_tokens() lacks CHECKSUM_PUBLISHED_PHRASE, {published!r}"]
