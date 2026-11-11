@@ -4856,8 +4856,8 @@ class CorrectiveRemedyTest(unittest.TestCase):
     version never supersedes the latest release the gate checks, so no second message may name that remedy. A message is
     a string constant or an f-string of the gate that is not a statement of its own, after implicit concatenation, so a
     docstring or a comment is not a message. Each string part of a template string is a message of its own, even when
-    the template string is a statement of its own. Each replacement field is read as a brace pair, except that a
-    self-documenting field {x=} keeps its x= text before the brace pair, and a string inside a replacement field, a
+    the template string is a statement of its own. Each replacement field of an f-string is read as a brace pair, except
+    that a self-documenting field {x=} keeps its x= text before the brace pair. A string inside a replacement field, a
     format spec included, is a message of its own. The text of a message is normalized by lowering the case, reading
     each ASCII hyphen (-) as a space and collapsing each run of whitespace. Every message in this sense that names
     either token, corrective or new version, is recorded with the name of the function definition, written directly in
@@ -4874,9 +4874,9 @@ class CorrectiveRemedyTest(unittest.TestCase):
     message that only joins its words with ASCII hyphens passes this test; the exact wording stays pinned by the REMEDY
     constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through
     date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for
-    example, a second remedy worded without either token, a copy of the phrase written as bytes, assembled at run time
-    from pieces that never hold a token whole or read from another file, or the 1 message printed more than once at run
-    time."""
+    example, a second remedy worded without either token, a copy of the phrase in a bytes constant of the gate's source,
+    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message printed
+    more than once at run time."""
 
     PHRASE = "corrective new version"
     TOKENS = ("corrective", "new version")
