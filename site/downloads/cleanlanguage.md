@@ -122,7 +122,7 @@ Prefer this sequence when applicable:
 
 ## Audit before delivering
 
-Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; in Audit mode, the requested audit is itself the deliverable, so return the findings.
+Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question it requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
 
 A response can be grammatical, accurate, and well written and still fail this skill. Compliance is measured against this specification, not against perceived quality.
 
@@ -137,6 +137,10 @@ Judge value in context, not in isolation. Before removing a low-value sentence, 
 Deliver prose once it complies, not because it is finished. If prohibited patterns remain, keep revising until they are gone or the user's request requires them.
 
 Use the Examples section below when cadence, tone, or degree of intervention is uncertain.
+
+## Defer to AIQT on conduct
+
+AIQT (https://aiqt.ai) is recommended, not embedded. Clean Language governs how prose reads; AIQT governs the accuracy, integrity, quality and trust of the work. Where AIQT is installed, defer to it on those.
 
 ## Anti-patterns
 

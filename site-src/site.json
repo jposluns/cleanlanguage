@@ -38,7 +38,7 @@
   "pages": [
     {"id": "home", "path": "", "title": "Home", "nav_label": "Home", "source": "home.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-27",
      "description": "Free rules that strip robotic tone, filler, and jargon from AI writing on Claude, ChatGPT, Gemini, and Copilot, while telling your AI to keep your facts."},
-    {"id": "standard", "path": "standard/", "title": "The standard", "nav_label": "The standard", "source": "standard.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-28",
+    {"id": "standard", "path": "standard/", "title": "The standard", "nav_label": "The standard", "source": "standard.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-11", "published": "2026-07-28",
      "description": "The Clean Language standard: precedence order, operating modes, core style, and what it removes and preserves."},
     {"id": "examples", "path": "examples/", "title": "Examples", "nav_label": "Examples", "source": "examples.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-28",
      "description": "Before-and-after examples showing how Clean Language rewrites generic prose while preserving every fact. These are the examples the skill uses."},
@@ -58,7 +58,7 @@
      "description": "Set up Clean Language in local models, API-based assistants, and other AI systems that accept custom instructions, system prompts, or uploaded files."},
     {"id": "verify", "path": "verify/", "title": "Verify", "nav_label": "Verify", "source": "verify.html", "scripts": ["copy.js"], "modified": "2026-11-08", "published": "2026-07-27",
      "description": "Optional steps to confirm that the Clean Language download matches its published SHA-256 checksum. If you trust the source, you can skip this."},
-    {"id": "instructions", "path": "instructions/", "title": "Instructions", "nav_label": "Instructions", "source": "instructions.html", "scripts": ["copy.js"], "modified": "2026-11-08", "published": "2026-08-15",
+    {"id": "instructions", "path": "instructions/", "title": "Instructions", "nav_label": "Instructions", "source": "instructions.html", "scripts": ["copy.js"], "modified": "2026-11-11", "published": "2026-08-15",
      "description": "The complete Clean Language instructions as plain text, ready to copy into Claude, ChatGPT, Gemini, Copilot, or any other AI."},
     {"id": "channels", "path": "channels/", "title": "By channel", "nav_label": "By channel", "source": "channels.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-28",
      "description": "How Clean Language adapts to each channel: executive, technical, governance, incident, email, chat, and report writing."},
