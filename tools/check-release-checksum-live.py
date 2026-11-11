@@ -20,8 +20,8 @@ or its tests read, which the workflow's path filters name, on a daily schedule
 and on manual dispatch, and a failing test stops the job before this check
 runs; the orchestrator runs it as the final step of the runbook. GitHub may not
 run a path-filtered workflow for a change to more files than it compares, which
-is not checked offline; the daily schedule still runs the tests and then this
-check on main.
+is not checked offline; the daily schedule still runs the tests on main, and
+then this check unless a test fails.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
@@ -204,14 +204,18 @@ Exit codes:
      manifest; or a published release whose ``published_at`` is unreadable
      or malformed or whose ``immutable`` field is not exactly true
   3  a required file is missing, is not a regular file or could not be read;
-     the verify page is not the page the generator writes for the state it
-     shows, or the generator could not render its download block or the page
-     (see Behaviour); SKILL.md has no ``Version:`` line, its first ``Version:``
-     line is not a bare X.Y.Z version, or the extractor rejects that version;
-     the SKILL.md Released line is malformed; a call of
-     tools/skill-release-date.py, which runs in a child process, did not give a
-     result the gate could accept (see run_release_date_child); or SIGCHLD
-     could not be reset to its default disposition (see reset_sigchld)
+     the verify page, when it does not carry the not-yet-published note, has no
+     checksum element, shows a checksum that is not a 64 character lower-case
+     SHA-256 or that is the zero placeholder, or does not state which version
+     its checksum belongs to; the verify page is otherwise not the page the
+     generator writes for the state it shows, or the generator could not render
+     its download block or the page (see Behaviour); SKILL.md has no
+     ``Version:`` line, its first ``Version:`` line is not a bare X.Y.Z
+     version, or the extractor rejects that version; the SKILL.md Released line
+     is malformed; a call of tools/skill-release-date.py, which runs in a child
+     process, did not give a result the gate could accept (see
+     run_release_date_child); or SIGCHLD could not be reset to its default
+     disposition (see reset_sigchld)
 
 When the verify page passes its own checks and the release it names is
 published, the release-date check and the site-checksum comparison both run,
