@@ -124,7 +124,7 @@ CRASH_RUNNER = (
 )
 
 # Row 80: runs the real extractor in --json mode with the function named by
-# its first argument (a dotted module.attribute) made to raise the built-in
+# its first argument (a target of the form below) made to raise the built-in
 # exception named by its second argument, and the request on stdin, to
 # observe the exit code and the empty stdout of an internal error. Arguments
 # after the extractor's path replace --json, so a CLI mode can be compared
@@ -132,10 +132,13 @@ CRASH_RUNNER = (
 # call, so a test can tell where the exception rose. _strptime is imported
 # before the patch because its import calls time.strftime, so a patched
 # time.strftime is not reached by that import; the publish_window cases
-# check that it fails inside publish_window_problem. A target of 3 parts,
-# module.Class.method, replaces that class in its module with a subclass
-# whose method raises, because a method of a built-in class such as
-# datetime.date cannot be set on the class itself.
+# check that it fails inside publish_window_problem. A target is
+# module.attribute or module.Class.method only, with a top-level module: a
+# target in a dotted module, such as os.path.isfile or
+# xml.dom.minidom.parseString, fails in the runner. A module.Class.method
+# target replaces that class in its module with a subclass whose method
+# raises, because a method of a built-in class such as datetime.date cannot
+# be set on the class itself.
 JSON_CRASH_RUNNER = (
     "import _strptime, builtins, importlib, runpy, sys\n"
     "kind = getattr(builtins, sys.argv[2])\n"

@@ -836,10 +836,10 @@ IMMUTABILITY_CLAIM_ALLOWED = (
     "echo \"$1: release ${RELEASE_TAG} is immutable; it carries no Released line, so no publication day is checked.\"",
     "echo \"The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished,"
     " so the remedy is a corrective new version whose Released line names its own publication day."
-    " Until then, the live release checksum check reports the same disagreement whenever it reads the"
-    " immutable field of the release as true and its published_at as a usable instant, and otherwise"
-    " exits 2 as a release it could not verify (see the exit codes listed in the module docstring of"
-    " that check).\" >" + chr(38) + "2",
+    " The live release checksum check compares a Released date with a publication day only for the"
+    " version SKILL.md names, so it checks the date of ${RELEASE_TAG} only while SKILL.md names that"
+    " version, and it reports a mismatch whenever it compares the 2 days and finds them different (see"
+    " the exit codes listed in the module docstring of that check for its other outcomes).\" >" + chr(38) + "2",
     "echo \"Re-stamping the Released line cannot fix this: the published zip carries the Released line of the"
     " commit it was built from, and an immutable release cannot be republished. If the line at this commit"
     " was edited after the release, restore the value the published zip carries; otherwise the remedy is a"
@@ -1176,7 +1176,10 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("IS PUBLISHED on a different UTC day", err)
         self.assertIn("skill-release-date: the release was published on 2026-11-16 (UTC; published_at "
                       "2026-11-16T00:00:02Z), but its Released line names 2026-11-15", err)
-        self.assertIn("reports the same disagreement whenever it reads the immutable field of the release as true",
+        self.assertIn("The live release checksum check compares a Released date with a publication day only for "
+                      "the version SKILL.md names, so it checks the date of v1.0.15 only while SKILL.md names that "
+                      "version, and it reports a mismatch whenever it compares the 2 days and finds them different "
+                      "(see the exit codes listed in the module docstring of that check for its other outcomes).",
                       err)
 
     def test_readback_mismatch_names_a_corrective_new_version_and_no_republish(self):
@@ -1978,11 +1981,15 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # subject is "it", a claim split across sentences, or another
         # wording can still slip past it.
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
-        # Each allowed line is printed exactly once, so an allowed line left
-        # behind after its printed text changes fails here.
+        # Each allowed line occurs exactly once in the workflow text, so an
+        # allowed line left behind after the line it matches changes fails
+        # here. This counts lines of the text, not prints: a function that
+        # runs more than once prints its line more than once, and a second
+        # copy of an allowed line, even an honest one, fails here. The
+        # subtest names each entry by its index in the allowed tuple.
         stripped = [line.strip() for line in WORKFLOW_TEXT.splitlines()]
-        for allowed in IMMUTABILITY_CLAIM_ALLOWED:
-            with self.subTest(allowed=allowed[:60]):
+        for index, allowed in enumerate(IMMUTABILITY_CLAIM_ALLOWED):
+            with self.subTest(entry=index, allowed=allowed[:60]):
                 self.assertEqual(stripped.count(allowed), 1)
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         for value in list(job_env().values()) + [description]:
