@@ -84,30 +84,31 @@ GitHub's own app-pinned required check has the same limit. Within the same resid
 workflow can name a job after one of the 4 display names in a form that the shape check does
 not read. tools/test-ci-status.sh requires the name: lines indented exactly 4 spaces in each
 of the 4 workflows to be the one plain name: line of its job, and reads the other .yml and
-.yaml files of the workflow folder line by line as text, failing a line that holds that
-display name, plain or quoted, as the value of a name: key in the form that its
-named_elsewhere function describes; a job named in another form, such as a quoted key, a
-block scalar or an expression, is not seen. The tool reads the check runs the API returns
-under its default filter, the latest runs, so whether such a job can take the place of a
-failed run of the real job in a reading depends on how the API selects the latest runs,
-which this tool does not control. Pointing --repo at a repository that does not run all 5
-unconditionally would downgrade a legitimate green to pending. For the 4 GitHub Actions
-jobs, any conclusion other than success reads as a failure (exit 1), skipped and neutral
-included, because the shape check admits no key that could skip such a job; for the
-Cloudflare build, skipped and neutral count as passed, as GitHub counts them for a required
-check. Residual: a Cloudflare build that concludes skipped or neutral without building
-therefore reads green. For the 4 Actions jobs, tools/test-ci-status.sh reads each workflow
-with an allow-list that fails closed: the on: block holds only a pull_request trigger with
-nothing under it and a push trigger filtered to main alone; the permissions block is exactly
-contents: read; a top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a dotted
-version number such as 2.1.310; and the job with a required display name holds only name,
-runs-on set to ubuntu-latest, and steps. Each step holds an optional name and either uses:
-naming an owner/repo action pinned to a full 40-character commit sha, or run: with shell:
-bash, and nothing else. So that check refuses any if:, needs: or continue-on-error: key, any
-other runner or shell, any local or docker action, and any environment variable such as
-BASH_ENV or SHELLOPTS set in the workflow, any of which could otherwise skip the job or its
-steps, or pass over a failed step, and still read as passing; any line outside that shape
-fails the check. In CI that check runs in the CI status tests job of
+.yaml files of the workflow folder, those whose names start with a dot included, line by
+line as text, failing a file that it cannot read and a line that holds that display name,
+plain or quoted, as the value of a name: key in the form that its named_elsewhere function
+describes; a job named in another form, such as a quoted key, a block scalar or an
+expression, is not seen. The tool reads the check runs the API returns under its default
+filter, the latest runs, so whether such a job can take the place of a failed run of the
+real job in a reading depends on how the API selects the latest runs, which this tool does
+not control. Pointing --repo at a repository that does not run all 5 unconditionally would
+downgrade a legitimate green to pending. For the 4 GitHub Actions jobs, any conclusion other
+than success reads as a failure (exit 1), skipped and neutral included, because the shape
+check admits no key that could skip such a job; for the Cloudflare build, skipped and
+neutral count as passed, as GitHub counts them for a required check. Residual: a Cloudflare
+build that concludes skipped or neutral without building therefore reads green. For the 4
+Actions jobs, tools/test-ci-status.sh reads each workflow with an allow-list that fails
+closed: the on: block holds only a pull_request trigger with nothing under it and a push
+trigger filtered to main alone; the permissions block is exactly contents: read; a top-level
+env, if present, holds only CLAUDE_CODE_VERSION, set to a dotted version number such as
+2.1.310; and the job with a required display name holds only name, runs-on set to
+ubuntu-latest, and steps. Each step holds an optional name and either uses: naming an
+owner/repo action pinned to a full 40-character commit sha, or run: with shell: bash, and
+nothing else. So that check refuses any if:, needs: or continue-on-error: key, any other
+runner or shell, any local or docker action, and any environment variable such as BASH_ENV
+or SHELLOPTS set in the workflow, any of which could otherwise skip the job or its steps, or
+pass over a failed step, and still read as passing; any line outside that shape fails the
+check. In CI that check runs in the CI status tests job of
 .github/workflows/ci-status-test.yml on every pull request and every push to main, and this
 tool insists on that job, so a commit on which it has not run, or has not passed, never
 reads green. That job runs the pull request's own copy of tools/test-ci-status.sh, so a pull

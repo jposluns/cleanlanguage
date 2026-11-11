@@ -19,9 +19,11 @@ Since the script runs each command from the repository root, a job with a uses k
 reusable workflow whose steps the test does not read, a run step with a working-directory, and a
 defaults key on the workflow or on a job each fail, naming the workflow. A command line is the text
 after "run " on a line of the script that starts with it, or the text before " || status=1" on a
-line of plugin_manifests that starts with "  claude ". A command line that is neither such a run
-text nor the stand-in of an exception fails, so does a command line that repeats, and so does an
-entry of EXCEPTIONS that names no step of a selected workflow.
+line of plugin_manifests that starts with "  claude ", a line being the text between line feeds, as
+bash reads the script, so a carriage return or another character that Python reads as a line end
+stays in it; a reading case requires that. A command line that is neither such a run text nor the
+stand-in of an exception fails, so does a command line that repeats, and so does an entry of
+EXCEPTIONS that names no step of a selected workflow.
 
 Behaviour. Each case copies the script into a temporary tree whose tools/ folder holds a stub in
 place of each script a command line names, beside a copy of plugin-validate.yml and a skill folder
@@ -36,9 +38,11 @@ with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2
 middle and the last stub) leaves the later commands running and the script exiting 1, naming that
 command; a claude that reports another version, or no claude, makes the script exit 1 without any
 validation. The cases read plugin-validate.yml once, for that copy and for the version that its
-CLAUDE_CODE_VERSION line pins; when it cannot be read or holds no such line, the test fails, naming
-it, and runs none of these cases, and 2 reading cases require that failure of a folder and of a file
-with no such line.
+CLAUDE_CODE_VERSION line pins, matched as the sed of plugin_manifests matches it, on each line
+between line feeds, so a line that ends in a carriage return is not such a line; when it cannot be
+read or holds no such line or more than 1, the test fails, naming it and the cause, and runs none of
+these cases, and 5 reading cases require that failure of a folder, of a file with no such line, of a
+file with carriage returns, of a version that starts with a dot and of a file with 2 such lines.
 
 The cases pin the commands, not the script's other shell text, so the test also fails unless the
 sha256 of the committed script is SCRIPT_SHA256. To change the script, read the whole change,
@@ -106,6 +110,9 @@ EXCEPTIONS = {
 }
 RUN_LINE = re.compile(r"run (.+)")
 CLAUDE_LINE = re.compile(r"  (claude .+) \|\| status=1")
+# The line of plugin-validate.yml that pins the CLI, as the sed of plugin_manifests matches it: a
+# whole line between line feeds, so a carriage return before the line feed is part of the line.
+PIN_LINE = re.compile(r'  CLAUDE_CODE_VERSION: "([0-9][0-9.]*)"')
 # The commands the script and the stubs need on PATH, and cat and tee, so a script that pipes a
 # command through either still runs and the pipe check, not a missing command, is what refuses it.
 NEEDED = ("bash", "python3", "sed", "mktemp", "mkdir", "cp", "rm", "dirname", "env", "cat", "tee")
@@ -203,9 +210,10 @@ def workflow_steps(failures: list, folder: Path = WORKFLOWS):
 
 
 def command_lines(text: str) -> list:
-    """The command lines of the script, in order."""
+    """The command lines of the script, in order, each line being the text between line feeds, as
+    bash reads it."""
     found, inside = [], False
-    for line in text.splitlines():
+    for line in text.split("\n"):
         if line.startswith("plugin_manifests() {"):
             inside = True
         elif inside and line == "}":
@@ -221,9 +229,15 @@ def command_lines(text: str) -> list:
     return found
 
 
+def script_lines(path: Path = SCRIPT) -> list:
+    """The command lines of the script at path, read from its bytes, so that no line end is
+    translated before command_lines splits them."""
+    return command_lines(path.read_bytes().decode("utf-8"))
+
+
 def coverage(failures: list) -> tuple:
     steps, count = workflow_steps(failures)
-    lines = command_lines(SCRIPT.read_text(encoding="utf-8"))
+    lines = script_lines()
     mirrored = set(lines)
     for line in sorted({l for l in lines if lines.count(l) > 1}):
         failures.append(f"the command line {line!r} repeats in tools/run_all_checks.sh")
@@ -311,8 +325,9 @@ def expected_calls(lines: list) -> list:
 
 def read_pin(failures: list, path: Path = PIN_WORKFLOW):
     """(bytes, version) of plugin-validate.yml, or of path, for the behaviour cases: its bytes and
-    the version that its CLAUDE_CODE_VERSION line pins. None, with a failure that names the file,
-    when it cannot be read or holds no such line."""
+    the version that its 1 CLAUDE_CODE_VERSION line pins, read as the sed of plugin_manifests reads
+    it. None, with a failure that names the file and the cause, when it cannot be read or holds no
+    such line or more than 1, where that sed would find no pin or more than 1."""
     try:
         data = path.read_bytes()
         text = data.decode("utf-8")
@@ -320,13 +335,13 @@ def read_pin(failures: list, path: Path = PIN_WORKFLOW):
         failures.append(f"{path.name}: this test cannot read it for the behaviour cases, so it fails closed: "
                         f"{type(error).__name__}: {' '.join(str(error).split())[:300]}")
         return None
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    m = re.search(r'^  CLAUDE_CODE_VERSION: "([0-9.]+)"$', text, re.M)
-    if m is None:
-        failures.append(f"{path.name}: it holds no line '  CLAUDE_CODE_VERSION: \"<version>\"', so the behaviour "
-                        "cases cannot run")
+    pins = [m.group(1) for m in map(PIN_LINE.fullmatch, text.split("\n")) if m]
+    if len(pins) != 1:
+        failures.append(f"{path.name}: it holds {len(pins)} lines '  CLAUDE_CODE_VERSION: \"<version>\"', each read "
+                        "between line feeds as the sed of tools/run_all_checks.sh reads it, not 1, so the "
+                        "behaviour cases cannot run")
         return None
-    return data, m.group(1)
+    return data, pins[0]
 
 
 def make_tree(tmp: Path, lines: list, claude: bool, pin_bytes: bytes) -> dict:
@@ -463,11 +478,26 @@ UNREADABLE = (
 # Files of UNREADABLE from which read_pin must take no pin: a folder, which it cannot read, and a
 # file with no CLAUDE_CODE_VERSION line. Each must add exactly 1 failure, which names it.
 NO_PIN = ("folder.yml", "no-on.yml")
+# Files from which the sed of plugin_manifests takes no pin or 2, though a reading that ignored a
+# carriage return, took a version that starts with a dot or took the first match would take 1, each
+# a file name and its bytes. read_pin must take no pin from each, adding exactly 1 failure, which
+# names it.
+SED_NO_PIN = (
+    ("crlf.yml", b'env:\r\n  CLAUDE_CODE_VERSION: "2.1.310"\r\n'),
+    ("dot-first.yml", b'env:\n  CLAUDE_CODE_VERSION: ".2.1"\n'),
+    ("two-pins.yml", b'env:\n  CLAUDE_CODE_VERSION: "2.1.310"\n  CLAUDE_CODE_VERSION: "2.1.311"\n'),
+)
+# A script whose lines hold a carriage return and a vertical tab, which bash keeps inside a line,
+# and the command lines that script_lines must read from it.
+SCRIPT_CASE = (b"run python3 -I tools/x.py\r\nrun bash tools/y.sh\x0bz\n",
+               ["python3 -I tools/x.py\r", "bash tools/y.sh\x0bz"])
+READING_CASES = len(UNREADABLE) + len(NO_PIN) + len(SED_NO_PIN) + 1
 
 
 def reading(failures: list) -> int:
-    """Run workflow_steps on a folder that holds the files of UNREADABLE, and read_pin on each file
-    of NO_PIN in it."""
+    """Run workflow_steps on a folder that holds the files of UNREADABLE, read_pin on each file of
+    NO_PIN in it and of SED_NO_PIN in a folder below it, and script_lines on the script of
+    SCRIPT_CASE."""
     with tempfile.TemporaryDirectory() as name:
         folder = Path(name)
         for file_name, data in UNREADABLE:
@@ -475,29 +505,40 @@ def reading(failures: list) -> int:
                 (folder / file_name).mkdir()
             else:
                 (folder / file_name).write_bytes(data)
-        for file_name in NO_PIN:
-            found = []
+        (folder / "pins").mkdir()
+        for file_name, data in SED_NO_PIN:
+            (folder / "pins" / file_name).write_bytes(data)
+        for path in [*(folder / f for f in NO_PIN), *(folder / "pins" / f for f, _ in SED_NO_PIN)]:
+            file_name, found = path.name, []
             try:
-                pinned = read_pin(found, folder / file_name)
+                pinned = read_pin(found, path)
             except Exception as error:
                 failures.append(f"no pin in {file_name}: reading it raised {type(error).__name__}: {error}")
                 continue
             if pinned is not None or len(found) != 1 or not found[0].startswith(f"{file_name}: "):
                 failures.append(f"no pin in {file_name}: read_pin gave {pinned!r} and the failures {found!r}, "
                                 "not None and 1 failure naming it")
+        (folder / "script.sh").write_bytes(SCRIPT_CASE[0])
+        try:
+            got = script_lines(folder / "script.sh")
+        except Exception as error:
+            got = f"an error, {type(error).__name__}: {error}"
+        if got != SCRIPT_CASE[1]:
+            failures.append(f"script lines holding a carriage return and a vertical tab: script_lines gave {got!r}, "
+                            f"not {SCRIPT_CASE[1]!r}")
         found = []
         try:
             steps, count = workflow_steps(found, folder)
         except Exception as error:
             failures.append(f"files that cannot be read: reading them raised {type(error).__name__}: {error}")
-            return len(UNREADABLE) + len(NO_PIN)
+            return READING_CASES
         for file_name, _ in UNREADABLE:
             named = [f for f in found if f.startswith(f"{file_name}: this test cannot read it")]
             if len(named) != 1:
                 failures.append(f"a file that cannot be read, {file_name}: {len(named)} failures name it, not 1")
         if steps or count or len(found) != len(UNREADABLE):
             failures.append(f"files that cannot be read: {count} selected, {len(steps)} run steps, failures {found!r}")
-    return len(UNREADABLE) + len(NO_PIN)
+    return READING_CASES
 
 
 def main() -> int:

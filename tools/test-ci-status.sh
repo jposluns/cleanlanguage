@@ -2090,31 +2090,35 @@ except Exception:
 print("".join(name + ";" for name in sorted(names)))
 PY
 }
-# named_elsewhere DIR WF JOB: succeed when a file of DIR whose name ends in .yml
-# or .yaml, other than WF, holds a line on which the text name:, with no #
-# before it on the line and at the start of the line or after white space, an
-# opening brace or a comma, is followed, after any white space, by JOB, plain or
-# in quotes, and then by the end of the line, a comment, a comma or a closing
+# named_elsewhere DIR WF JOB: succeed when an entry of DIR other than WF whose
+# name ends in .yml or .yaml, one whose name starts with a dot included, as
+# tools/test-run-all-checks.py reads the folder, cannot be read, a safe failure
+# that grep names, or holds a line on which the text name:, with no # before it
+# on the line and at the start of the line or after white space, an opening
+# brace or a comma, is followed, after any white space, by JOB, plain or in
+# quotes, and then by the end of the line, a comment, a comma or a closing
 # brace. JOB is matched as text: each character that an extended regular
 # expression treats as special is escaped. It reads each line as text, not as
 # YAML, so a line that YAML reads as something else, such as a line of a run:
 # block, still counts, a safe failure, and a job named in another form, such as
-# a quoted key, an expression or a block scalar, is not seen.
-named_elsewhere() {
-  local dir="$1" wf="$2" job="$3" other text="" c i
+# a quoted key, an expression or a block scalar, is not seen. It runs in a
+# subshell, so its glob options do not reach the rest of the suite.
+named_elsewhere() (
+  shopt -s dotglob nullglob
+  local dir="$1" wf="$2" job="$3" other text="" c i status
   for ((i = 0; i < ${#job}; i++)); do
     c="${job:i:1}"
     case '.[\()*+?{|^$' in *"$c"*) text="$text\\" ;; esac
     text="$text$c"
   done
   for other in "$dir"/*.yml "$dir"/*.yaml; do
-    [ -f "$other" ] && [ "${other##*/}" != "$wf" ] || continue
-    if grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${text}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other"; then
-      return 0
-    fi
+    [ "${other##*/}" != "$wf" ] || continue
+    status=0
+    grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${text}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other" || status=$?
+    if [ "$status" -ne 1 ]; then return 0; fi
   done
   return 1
-}
+)
 declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""
 # shape_problems DIR WF JOB: the word of each problem that shape_loop finds with
 # the workflow WF of the folder DIR and its job JOB, each after a space, or
@@ -2198,13 +2202,17 @@ for tried in "Skill discovery " " Skill discovery" "Skill discover" "Skill disco
 done
 # run_named_elsewhere_case NAME WANT FILE LINE [JOB]: named_elsewhere, for the
 # job JOB (Skill discovery when not given) of own.yml, on a folder holding
-# own.yml and FILE, with LINE appended to FILE, must exit WANT.
+# own.yml and FILE, with LINE appended to FILE, or a folder FILE when FILE ends
+# in /, must exit WANT. What grep prints on standard error is not shown.
 run_named_elsewhere_case() {
   local name="$1" want="$2" job="${5:-Skill discovery}" tmp got=0
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   printf 'jobs:\n  check:\n    name: Skill discovery\n' > "$tmp/own.yml"
-  printf '%s\n' "$4" >> "$tmp/$3"
-  named_elsewhere "$tmp" own.yml "$job" || got=$?
+  case "$3" in
+    */) mkdir "$tmp/$3" ;;
+    *) printf '%s\n' "$4" >> "$tmp/$3" ;;
+  esac
+  named_elsewhere "$tmp" own.yml "$job" 2>/dev/null || got=$?
   if [ "$got" = "$want" ]; then printf 'ok   %s (exit %s)\n' "$name" "$got"
   else printf 'FAIL %s (got %s, want %s)\n' "$name" "$got" "$want"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
@@ -2220,6 +2228,9 @@ run_named_elsewhere_case "a job name in a flow mapping is found" 0 other.yml \
 run_named_elsewhere_case "a quoted job name last in a flow mapping is found" 0 other.yml \
   '  check: { runs-on: ubuntu-latest, name: "Skill discovery" }'
 run_named_elsewhere_case "a job name in a .yaml file is found" 0 other.yaml '    name: Skill discovery'
+run_named_elsewhere_case "a job name in a file whose name starts with a dot is found" 0 .other.yml \
+  '    name: Skill discovery'
+run_named_elsewhere_case "a folder named like a workflow file, which grep cannot read, is found" 0 other.yml/ ''
 run_named_elsewhere_case "a longer name is not found" 1 other.yml '    name: Skill discovery check'
 run_named_elsewhere_case "another key that ends in name is not found" 1 other.yml '    job-name: Skill discovery'
 run_named_elsewhere_case "a comment is not found" 1 other.yml '    # name: Skill discovery'
