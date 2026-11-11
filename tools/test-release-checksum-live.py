@@ -4855,26 +4855,28 @@ class CorrectiveRemedyTest(unittest.TestCase):
     check_release_date. The release workflow's superseded-release note does not apply to this gate, because a later
     version never supersedes the latest release the gate checks, so no second message may name that remedy. A message is
     a string constant or an f-string of the gate that is not a statement of its own, after implicit concatenation, so a
-    docstring or a comment is not a message. Each replacement field is read as a brace pair, except that a
+    docstring or a comment is not a message. Each string part of a template string is a message of its own, even when
+    the template string is a statement of its own. Each replacement field is read as a brace pair, except that a
     self-documenting field {x=} keeps its x= text before the brace pair, and a string inside a replacement field, a
     format spec included, is a message of its own. The text of a message is normalized by lowering the case, reading
     each ASCII hyphen (-) as a space and collapsing each run of whitespace. Every message in this sense that names
-    either token, corrective or new version, is recorded with the top-level function that holds it, or with module when
-    no top-level function holds it, as in a class, and the record must be exactly the 1 message in check_release_date,
-    naming the phrase once and each token once, so a second message in this sense that names the phrase, even split
-    across implicit concatenation, recased, respaced or with its words joined by hyphens, still fails. A token is
-    matched as a substring, so a sibling message in this sense that names it only within longer words, such as renew
-    versioning or a self-documenting field {corrective_tag=}, fails too, an over-pin. So do these honest refactors, also
-    accepted as over-pins: a rename of check_release_date, the remedy print moved into a new top-level function, the
-    remedy text moved into a module constant, and any rewrite that splits the 1 message into more than 1 string
-    constant, such as its pieces joined with an explicit + or its text passed to print as 2 arguments split between
-    corrective and new version, unless 1 of those constants holds the whole phrase and the others hold no token. A
-    rewording of the 1 message that only joins its words with ASCII hyphens passes this test; the exact wording stays
-    pinned by the REMEDY constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's
-    output through date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does
-    not catch, for example, a second remedy worded without either token, a copy of the phrase written as bytes,
-    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message printed
-    more than once at run time."""
+    either token, corrective or new version, is recorded with the name of the function definition, written directly in
+    the module body, that holds it, or with module otherwise, as for a function defined in a class or under a
+    module-level if or try, and the record must be exactly 1 message, in check_release_date, naming the phrase once and
+    each token once, so a second message in this sense that names the phrase, even split across implicit concatenation,
+    recased, respaced or with its words joined by hyphens, still fails. A token is matched as a substring, so a sibling
+    message in this sense that names it only within longer words, such as renew versioning or a self-documenting field
+    {corrective_tag=}, fails too, an over-pin. So do these honest refactors, also accepted as over-pins: any change that
+    records the 1 message under a name other than check_release_date, such as a rename of that function or the remedy
+    text moved into a module constant, and any rewrite that splits the 1 message into more than 1 string constant, such
+    as its pieces joined with an explicit + or its text passed to print as 2 arguments split between corrective and new
+    version, unless 1 of those constants holds the whole phrase and the others hold no token. A rewording of the 1
+    message that only joins its words with ASCII hyphens passes this test; the exact wording stays pinned by the REMEDY
+    constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through
+    date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for
+    example, a second remedy worded without either token, a copy of the phrase written as bytes, assembled at run time
+    from pieces that never hold a token whole or read from another file, or the 1 message printed more than once at run
+    time."""
 
     PHRASE = "corrective new version"
     TOKENS = ("corrective", "new version")
@@ -4891,7 +4893,8 @@ class CorrectiveRemedyTest(unittest.TestCase):
                 name = statement.name
             else:
                 name = "module"
-            # A docstring or a bare string is the value of a statement of its own, not a message.
+            # A docstring, a bare string or a bare f-string is the value of a statement of its own, not a message. The
+            # string parts of a template string are messages, even when the template string is a bare statement.
             statements = {id(node.value) for node in ast.walk(statement) if isinstance(node, ast.Expr)}
             parts = set()
             for node in ast.walk(statement):
@@ -4917,8 +4920,8 @@ class CorrectiveRemedyTest(unittest.TestCase):
         return recorded
 
     def test_exactly_one_message_names_a_corrective_new_version(self):
-        """The messages in the sense of the class docstring that name either token are exactly 1: the date-mismatch
-        remedy, naming the phrase once."""
+        """The messages in the sense of the class docstring that name either token are exactly 1, in check_release_date,
+        naming the phrase once and each token once."""
         self.assertEqual(self.recorded_messages(), [("check_release_date", (1, 1, 1))])
 
 
