@@ -2315,11 +2315,11 @@ def gate_exit_problems() -> list[str]:
               page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
     try:
         exiting_gate().parse("<p>x</p>")
-        raised = None
+        raised = "nothing"
     except (Exception, SystemExit) as error:
-        raised = error
-    problems = [] if repr(raised) == "SystemExit(3)" else [
-        f"the parse() of exiting_gate() gives {raised!r} on <p>x</p>, not SystemExit(3)"]
+        raised = repr(error)
+    problems = [] if raised == "SystemExit(3)" else [
+        f"exiting_gate().parse('<p>x</p>') raises {raised}, not SystemExit(3)"]
     for check in checks:
         try:
             found = check(loader=exiting_gate)
