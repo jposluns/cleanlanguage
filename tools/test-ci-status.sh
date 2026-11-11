@@ -6,29 +6,28 @@
 # it, so these tests drive the wrapper exactly as callers do.
 #
 # The gate reports a pass only after two identical readings. It insists on 5
-# checks: the GitHub Actions jobs Plugin manifests, Skill discovery, Agent
-# Plugins manifest and CI status tests, each matched by its exact display name
-# together with the github-actions app slug and read as a failure on any
-# conclusion other than success, and the external Cloudflare Pages build,
-# matched by the exact app slug cloudflare-workers-and-pages and app id 85455 of
-# the Cloudflare app, whatever its name. A passing reading missing any of them
-# is downgraded to pending, never a red; an unnamed or differently named
-# github-actions run, or a required name posted by another app, does not count.
-# Presence is read from the same reading as the verdict, and the reading is
-# FAIL-CLOSED: a malformed page (non-object, or check_runs that is not a list),
-# a check that is not an object, any field of the wrong type (a status that is
-# not a non-empty string, a conclusion/name/slug that is neither a string nor
-# null, or an app id that is neither an integer nor null), or a head_sha that is
-# present and does not name the requested commit makes the whole reading
-# unreadable rather than dropping or forging a check. A name and the
-# github-actions slug are each compared as the whole string, control characters
-# included, with no trimming, case folding or partial match, and a present
-# head_sha as the whole commit sha in either letter case. The slug is taken only
-# from the app object, so a required name followed by separators and a slug,
-# under a null app, does not count. A failed read breaks a confirmation in
-# progress but the same green set reappearing re-arms without consuming the
-# changing-set budget. Waits are deadline-capped; numeric arguments are base-10
-# and range-checked.
+# checks: the GitHub Actions jobs Plugin manifests, Skill discovery, Agent Plugins
+# manifest and CI status tests, each matched by its exact display name together
+# with the github-actions app slug and read as a failure on any conclusion other
+# than success, and the external Cloudflare Pages build, matched by the exact app
+# slug cloudflare-workers-and-pages and app id 85455 of the Cloudflare app,
+# whatever its name. A passing reading missing any of them is downgraded to
+# pending, never a red; an unnamed or differently named github-actions run, or a
+# required name posted by another app, does not count. Presence is read from the
+# same reading as the verdict, and the reading is FAIL-CLOSED: a malformed page
+# (non-object, or check_runs that is not a list), a check that is not an object,
+# any field of the wrong type (a status that is not a non-empty string, a
+# conclusion/name/slug that is neither a string nor null, or an app id that is
+# neither an integer nor null), or a head_sha that is present and does not name
+# the requested commit makes the whole reading unreadable rather than dropping or
+# forging a check. A name and the github-actions slug are each compared as the
+# whole string, control characters included, with no trimming, case folding or
+# partial match, and a present head_sha as the whole commit sha in either letter
+# case. The slug is taken only from the app object, so a required name followed by
+# separators and a slug, under a null app, does not count. A failed read breaks a
+# confirmation in progress but the same green set reappearing re-arms without
+# consuming the changing-set budget. Waits are deadline-capped; numeric arguments
+# are base-10 and range-checked.
 #
 # Each case of run_case, run_err_case and run_log_case puts a fake gh on PATH
 # serving check-runs from a per-call "plan" (tokens g/a/t/f/s: default payload,
@@ -593,8 +592,8 @@ finish(code, why, "deadline %s, gh deadline %s, killed at %s, returned at %s, ex
 # run_clock_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]: run_case
 # on the fake clock of FAKE_CLOCK_GATE with --interval 1, so a slow host cannot
 # close the window before a read starts, for a plan that ends in a read the
-# deadline cuts off or, with CASE_NO_KILL set, for a wait that the deadline ends
-# between reads. Each read other than s takes 0.5 seconds on that clock: g
+# deadline cuts off or, with CASE_NO_KILL set, for a wait that the deadline
+# ends between reads. Each read other than s takes 0.5 seconds on that clock: g
 # serves DEFAULT, a serves ALT, f ends with exit 1, and s would end only 60
 # seconds after it has started; the last token repeats once the plan runs out.
 # Exit, CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as run_case checks
@@ -804,8 +803,8 @@ run_bytes_case "non-UTF-8 output is rejected fail-closed" 3
 # With 2 seconds left and a gh that would end 60 seconds after it starts, this
 # case asserts the kill at the deadline, 1002.0, and exit 3.
 run_cut_off_case "gh read exceeding the wait deadline is not green" 2.000 "2.0 seconds"
-# The required Cloudflare Pages check absent -> not green even with the 4
-# required github-actions checks green (a partial reading is not confirmed).
+# The required Cloudflare Pages check absent -> not green even with the 4 required
+# github-actions checks green (a partial reading is not confirmed).
 run_case "required Cloudflare check absent -> not green" "$MISSING_CLOUDFLARE" "" "" 2
 # A duplicate check-run id must not pad the count to hide a run.
 run_case "duplicate check-run id is rejected fail-closed" "$DUP_ID" "" "" 3
@@ -945,18 +944,18 @@ CASE_NEEDLE="still unsettled after 4 seconds; giving up" CASE_READS=3 CASE_END=1
   run_clock_case "unfinished required check with --wait stays not green at the deadline" \
   "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4
 # A read that the deadline cuts off after a reading that succeeded and was still
-# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3):
-# a loaded host can start a read with little of the window left. The plan token
-# s is a gh call that hangs until the tool ends it at the deadline. These cases
-# run on the fake clock of run_clock_case, because in real time the earlier
-# reads and the 1-second sleeps between them must all fit inside the 5-second
-# window, which a heavily loaded host can exceed before the hanging call starts.
-# Each case requires the line naming the cut-off of that hanging call, and
-# requires the fake gh to have served it (CASE_READS), so a gate whose window
-# runs out before that call starts fails rather than passing through the
-# top-of-loop guard or the closed-window check before the read. After a failed
-# read, a read cut off at the deadline still reports the read failure (exit 3),
-# and so does one after a good reading and then a failed read.
+# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3): a
+# loaded host can start a read with little of the window left. The plan token s
+# is a gh call that hangs until the tool ends it at the deadline. These cases run
+# on the fake clock of run_clock_case, because in real time the earlier reads and
+# the 1-second sleeps between them must all fit inside the 5-second window, which
+# a heavily loaded host can exceed before the hanging call starts. Each case
+# requires the line naming the cut-off of that hanging call, and requires the
+# fake gh to have served it (CASE_READS), so a gate whose window runs out before
+# that call starts fails rather than passing through the top-of-loop guard or the
+# closed-window check before the read. After a failed read, a read cut off at the
+# deadline still reports the read failure (exit 3), and so does one after a good
+# reading and then a failed read.
 CUT_OFF="ci-status: the wait window cut off the last read (gh api did not return within"
 HUNG_READ_FAILED="check read failed for 0000000000000000000000000000000000000000: gh api did not return within"
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
@@ -1154,11 +1153,10 @@ run_err_case "a non-string name is named on standard error" \
 run_err_case "a non-string app slug is named on standard error" \
   '{"check_runs":[{"status":"completed","conclusion":"success","name":"x","app":{"slug":7}}]}' 3 \
   "check read failed for 0000000000000000000000000000000000000000: non-string check field app.slug"
-# conclusion, name, app.slug and the app object are nullable: each, null or
-# absent on an extra run beside the 5 green required checks, reads as an empty
-# value, never as a malformed reading. A completed run with no conclusion is a
-# failure, so the conclusion cases use an unfinished run, which reads pending
-# (exit 2).
+# conclusion, name, app.slug and the app object are nullable: each, null or absent
+# on an extra run beside the 5 green required checks, reads as an empty value,
+# never as a malformed reading. A completed run with no conclusion is a failure,
+# so the conclusion cases use an unfinished run, which reads pending (exit 2).
 run_case "extra run with a null name -> green" \
   "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}')" "" "" 0
 run_case "extra run with no name -> green" \
@@ -1202,12 +1200,11 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 # reader that checked only some runs would read it as green, pending or red, or
 # fail with another message; the whole reading must be unreadable, and the
 # message names what is wrong.
-# bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run,
-# in that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON
-# VALUE. FIELD is status, conclusion, name, app.slug, app.id, app (the whole app
-# object) or head_sha, which is added to that run alone. Any other INDEX changes
-# no run. Each run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455,
-# the others none.
+# bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run, in
+# that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON VALUE.
+# FIELD is status, conclusion, name, app.slug, app.id, app (the whole app object) or
+# head_sha, which is added to that run alone. Any other INDEX changes no run. Each
+# run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455, the others none.
 bad_at() {
   local i=0 spec st cn nm app hs slug id out=()
   for spec in "Plugin manifests|github-actions|" "Skill discovery|github-actions|" \
@@ -1698,8 +1695,8 @@ done
 # The name is not consulted: a run of the real app with an empty name counts.
 run_case "Cloudflare build with an empty name is matched by its app slug and app id -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
-# An integer app id on a github-actions run is valid: the 4 required Actions
-# jobs carrying the github-actions app id 15368 still count.
+# An integer app id on a github-actions run is valid: the 4 required Actions jobs
+# carrying the github-actions app id 15368 still count.
 run_case "github-actions runs carrying the app id 15368 still count -> green" \
   "$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"github-actions","id":15368}}' \
     '{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions","id":15368}}' \
@@ -1747,8 +1744,8 @@ for app_id in '"85455"' true false 85455.0 85455e0 '[]' '{}' '[85455]'; do
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\",\"id\":${app_id}}}")" 3 \
     "check read failed for 0000000000000000000000000000000000000000: check run app.id is not an integer"
 done
-# Every required check missing: the message names all 5, in their declared
-# order, and the commit read.
+# Every required check missing: the message names all 5, in their declared order,
+# and the commit read.
 run_err_case "every missing required check is named, in order" \
   '{"check_runs":[{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}]}' 2 \
   "required check(s) Plugin manifests, Skill discovery, Agent Plugins manifest, CI status tests, Cloudflare Pages not registered for 0000000000000000000000000000000000000000 though they run on every PR and push here; not green"
@@ -1761,44 +1758,44 @@ run_err_case "every missing required check is named, in order" \
 # keys are plain unquoted words; scalar values that are plain, or quoted on one
 # line without escapes; a one-line flow list of such scalars; block scalars (| or
 # >, with an optional chomping indicator), whose content is every following line
-# indented more than the column of the key that opened the block, so for
-# "- run: |" the column of run, not of the dash; and comments. Any other line,
-# such as a quoted, anchored, aliased, tagged, explicit or merge key, a flow
-# mapping, a duplicate key, a tab or a non-ASCII character, fails the check and
-# is named by its line number. A failure of the checker itself, a workflow that
-# is missing or cannot be read as UTF-8 text, or a workflow with no line other
-# than blank lines and comments, also fails the check, and is named
-# shape-check-error, unreadable-workflow or empty-workflow, not by a line number,
-# so no report names a line past the end of the file. Within that subset the
-# top level holds only name, on, permissions, env and jobs. The on: block holds
-# only a pull_request trigger with nothing under it and a push
-# trigger filtered to main alone. The permissions block is exactly contents:
-# read. A top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a
-# dotted version number such as 2.1.310, which cannot change whether or how a
-# step runs, so the check admits no BASH_ENV, ENV, SHELLOPTS or BASHOPTS that
-# could turn every step into a no-op. The job with the declared display name
-# holds only name, runs-on set to ubuntu-latest, and steps, so no env:, if:,
-# needs:, defaults: or container: key. Each step holds an optional name and
-# either uses: naming an owner/repo action pinned to a full 40-character commit
-# sha, never a local ./ action or a docker:// image, or run: with shell: bash,
-# never another shell or a custom shell command, and nothing else, so no env:,
-# if: or continue-on-error: key. So the check refuses anything set in the
-# workflow that could skip the job or its steps, or pass over a failed step. A
-# job skipped by an if:, or by a failed job it needs, concludes skipped, which
-# ci-status.py reads as a failure for a required Actions job, but a step skipped
-# by an if: or allowed to fail leaves the job successful, so such a job would
-# read green without running its checks. The job display name is also the only
-# 4-space-indented name: line, and it equals the name that ci-status.py
-# declares. A renamed job, a filter that leaves a commit without the check, or
-# any key or line outside that shape fails here, instead of turning every read
-# into a forever-pending one or a false green. In CI this check runs in the CI
-# status tests job (.github/workflows/ci-status-test.yml) on every pull request
-# and every push to main, and ci-status.py insists on that job, so a commit on
-# which it has not run, or has not passed, does not read green. Residual: what
-# the commands the steps run and the pinned actions do, including anything they
-# write for later steps, such as a BASH_ENV line in the GITHUB_ENV file, and
-# what the other jobs of the workflow run, are not checked, so a step changed to
-# do nothing still reads green.
+# indented more than the column of the key that opened the block, so for "- run:
+# |" the column of run, not of the dash; and comments. Any other line, such as a
+# quoted, anchored, aliased, tagged, explicit or merge key, a flow mapping, a
+# duplicate key, a tab or a non-ASCII character, fails the check and is named by
+# its line number. A failure of the checker itself, a workflow that is missing or
+# cannot be read as UTF-8 text, or a workflow with no line other than blank lines
+# and comments, also fails the check, and is named shape-check-error,
+# unreadable-workflow or empty-workflow, not by a line number, so no report names
+# a line past the end of the file. Within that subset the top level holds only
+# name, on, permissions, env and jobs. The on: block holds only a pull_request
+# trigger with nothing under it and a push trigger filtered to main alone. The
+# permissions block is exactly contents: read. A top-level env, if present, holds
+# only CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310, which
+# cannot change whether or how a step runs, so the check admits no BASH_ENV, ENV,
+# SHELLOPTS or BASHOPTS that could turn every step into a no-op. The job with the
+# declared display name holds only name, runs-on set to ubuntu-latest, and steps,
+# so no env:, if:, needs:, defaults: or container: key. Each step holds an
+# optional name and either uses: naming an owner/repo action pinned to a full
+# 40-character commit sha, never a local ./ action or a docker:// image, or run:
+# with shell: bash, never another shell or a custom shell command, and nothing
+# else, so no env:, if: or continue-on-error: key. So the check refuses anything
+# set in the workflow that could skip the job or its steps, or pass over a failed
+# step. A job skipped by an if:, or by a failed job it needs, concludes skipped,
+# which ci-status.py reads as a failure for a required Actions job, but a step
+# skipped by an if: or allowed to fail leaves the job successful, so such a job
+# would read green without running its checks. The job display name is also the
+# only 4-space-indented name: line, it is a name of REQUIRED_ACTIONS_JOBS as the
+# gate holds it, and no other workflow file carries it on a plain or quoted name:
+# line. A renamed job, a filter that leaves a commit without the check, or any
+# key or line outside that shape fails here, instead of turning every read into a
+# forever-pending one or a false green. In CI this check runs in the CI status
+# tests job (.github/workflows/ci-status-test.yml) on every pull request and
+# every push to main, and ci-status.py insists on that job, so a commit on which
+# it has not run, or has not passed, does not read green. Residual: what the
+# commands the steps run and the pinned actions do, including anything they write
+# for later steps, such as a BASH_ENV line in the GITHUB_ENV file, and what the
+# other jobs of the workflow run, are not checked, so a step changed to do
+# nothing still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
 # A line outside the subset, a file that cannot be read as UTF-8, or a file with
 # no line other than blank lines and comments, ends the check with that one word;
@@ -2025,6 +2022,39 @@ print(" ".join(dict.fromkeys(found)))
 PY
 }
 wf_dir="${here}/../.github/workflows"
+# The Actions jobs the gate requires, read from the gate as the value of
+# REQUIRED_ACTIONS_JOBS, not from its text, so a job is read as the gate reads
+# it however its declaration is spelt, and a declaration that only a comment
+# holds is not read. The label of each entry must be the name its matcher
+# counts: a github-actions run of that name counts, and neither a run of that
+# name from another app nor a run whose name differs does. The names print
+# sorted, each followed by a semicolon, or nothing when the gate cannot be
+# loaded or a label and its matcher disagree.
+declared_jobs="$(python3 -I - "$here" <<'PY'
+import importlib.util
+import os
+import sys
+
+
+def run(name, slug):
+    return {"status": "completed", "conclusion": "success", "name": name, "slug": slug, "app_id": None}
+
+
+try:
+    spec = importlib.util.spec_from_file_location("ci_status_declared", os.path.join(sys.argv[1], "ci-status.py"))
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    names = []
+    for label, matches in gate.REQUIRED_ACTIONS_JOBS:
+        if not matches(run(label, "github-actions")) or matches(run(label, "another-app")) \
+                or matches(run(label + " ", "github-actions")):
+            sys.exit(1)
+        names.append(label)
+except Exception:
+    sys.exit(1)
+print("".join(name + ";" for name in sorted(names)))
+PY
+)" || declared_jobs=""
 shaped_jobs=()
 for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
   "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
@@ -2038,17 +2068,25 @@ for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill di
     shape="$(wf_shape "$wf_dir/$wf" "$job")" || why="$why shape-check-error"
     if [ -n "$shape" ]; then why="$why $shape"; fi
   fi
-  if [ "$(grep -c -F "_actions_job(\"$job\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi
+  case ";${declared_jobs}" in *";${job};"*) ;; *) why="$why declared" ;; esac
+  # No other workflow file may hold a name: line, at any indent, plain or
+  # quoted, that carries this display name, so the loop cannot check one
+  # workflow while another produces the run that the gate reads.
+  for other in "$wf_dir"/*.yml "$wf_dir"/*.yaml; do
+    [ -f "$other" ] && [ "${other##*/}" != "$wf" ] || continue
+    if grep -q -x -E "[[:space:]]*(- )?name:[[:space:]]*[\"']?${job}[\"']?[[:space:]]*" "$other"; then
+      why="$why named-elsewhere"; break
+    fi
+  done
   if [ -z "$why" ]; then
     printf 'ok   required check %s follows %s\n' "$job" "$wf"
   else
     printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
   fi
 done
-# The loop above and tools/ci-status.py must name the same Actions jobs, so a
-# job added to REQUIRED_ACTIONS_JOBS without its workflow in the loop, or a pair
-# dropped from the loop, fails here instead of leaving a workflow unchecked.
-declared_jobs="$(grep -o -E '_actions_job\("[^"]*"\)' "${here}/ci-status.py" | sed -E 's/^_actions_job\("(.*)"\)$/\1/' | LC_ALL=C sort | tr '\n' ';')"
+# The loop above and REQUIRED_ACTIONS_JOBS must name the same Actions jobs, so a
+# job added to the gate without its workflow in the loop, or a pair dropped from
+# the loop, fails here instead of leaving a workflow unchecked.
 looped_jobs="$(printf '%s\n' "${shaped_jobs[@]}" | LC_ALL=C sort | tr '\n' ';')"
 if [ -n "$declared_jobs" ] && [ "$declared_jobs" = "$looped_jobs" ]; then
   printf 'ok   the shape loop names every Actions job that the gate declares\n'
@@ -2102,6 +2140,12 @@ NL="$(printf "\n.")"; NL="${NL%.}"
 # dup (stderr refuses a repeated --repo, --timeout or --interval).
 run_contract_case() {
   local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
+  # As in run_case, a case that wants exit 2 from a real-time --wait fails
+  # without running.
+  if [ "$want" = 2 ] && [[ " $* " == *" --wait "* ]]; then
+    printf 'FAIL %s (wants exit 2 from a real-time --wait; run it with run_clock_case)\n' "$name"
+    fails=$((fails + 1)); return
+  fi
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local tools="$tmp/repo/tools" bin="$tmp/bin"; mkdir -p "$tools" "$bin" "$tmp/shadow"
   cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"
@@ -2694,10 +2738,10 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # standard error, or for MODE red the red verdict, 1 with NEEDLE on standard
 # output. The replaced os.waitpid also requires the status it reaps after the
 # kill to be that end of gh, not the kill, so no case passes without reaching
-# it. Because gh has always ended before the kill, these cases do not cover a gh
-# still running when it is killed (the hung-gh cases of plan token s cover that)
-# or a gate that reads a kill as gh's own end. The gate's clock stands apart
-# from the host's, so they assert no time.
+# it. Because gh has always ended before the kill, these cases do not cover a
+# gh still running when it is killed (the hung-gh cases of plan token s cover
+# that) or a gate that reads a kill as gh's own end. The gate's clock stands
+# apart from the host's, so they assert no time.
 run_final_reap_case() {
   local name="$1" mode="$2" want="$3" needle="$4"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -2809,14 +2853,14 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # through its own code, and the case does not wait out the window. Because gh
 # repo view has ended on its own before the kill, it is not a call the deadline
 # cut off: the repository is inferred and printed on standard output, and the
-# read after it, finding the window closed, exits 3 with that on standard error,
-# never the line saying the repository could not be inferred, and never makes a
-# check-runs call. The replaced os.waitpid also requires the status it reaps
-# after the kill to be that exit 0, not the kill, so the case does not pass
-# without reaching it. Because gh repo view has always ended before the kill,
-# the case does not cover one still running when it is killed or a gate that
-# reads a kill as gh's own end. The shift moves the gate's clock away from the
-# host's, so it asserts no time.
+# read after it, finding the window closed, exits 3 with that on standard
+# error, never the line saying the repository could not be inferred, and never
+# makes a check-runs call. The replaced os.waitpid also requires the status it
+# reaps after the kill to be that exit 0, not the kill, so the case does not
+# pass without reaching it. Because gh repo view has always ended before the
+# kill, the case does not cover one still running when it is killed or a gate
+# that reads a kill as gh's own end. The shift moves the gate's clock away from
+# the host's, so it asserts no time.
 run_final_reap_view_case() {
   local name="$1" flag="$2"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }

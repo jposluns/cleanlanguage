@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
-# Runs on this machine every gate and suite that CI runs on a pull request or a
-# push to main: 1 run line for each distinct run text of the steps of the 17
-# workflows under .github/workflows that a pull_request or a push to main
-# triggers, in the order of their files and of their steps, a command that an
-# earlier workflow already runs being run once. plugin-drift.yml (a schedule and
-# a manual dispatch) and release-skill.yml (a tag push and a manual dispatch)
-# never run on a pull request or a push to main, so neither is mirrored. Each
-# command runs unpiped, from the repository root, and its exit status is
-# recorded; a failure does not stop the run, and the script ends by naming every
-# command that failed and exiting 1, or exits 0 when every command passed.
+# Runs on this machine the run text of every run step that CI runs on a pull
+# request or a push to main: 1 run line for each distinct run text of the steps
+# of the 17 workflows under .github/workflows that a pull_request or a push to
+# main triggers, in the order of their files and of their steps, a command that
+# an earlier workflow already runs being run once. plugin-drift.yml (a schedule
+# and a manual dispatch) and release-skill.yml (a tag push and a manual
+# dispatch) never run on a pull request or a push to main, so neither is
+# mirrored. Each command runs unpiped, from the repository root, and its exit
+# status is recorded; a failure does not stop the run, and the script ends by
+# naming every command that failed and exiting 1, or exits 0 when every command
+# passed.
 #
 # The Plugin manifests job installs the Claude Code CLI at the version that
 # plugin-validate.yml pins in CLAUDE_CODE_VERSION. This script installs nothing:
@@ -26,7 +27,11 @@
 # more than any 1 CI run, and it needs what CI provides: the pinned CLI, PyYAML,
 # the full git history, and network access with gh signed in for the live
 # release checksum check, whose step in CI takes GH_TOKEN from the workflow.
-# Some commands write temporary files or temporary git worktrees, as in CI.
+# Each run text runs with bash in this machine's environment, so what a workflow
+# sets around a step, such as its shell, its job's runner, container, services
+# or matrix, an if: condition, continue-on-error or env, is not reproduced;
+# tools/test-run-all-checks.py names each such form. Some commands write
+# temporary files or temporary git worktrees, as in CI.
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1

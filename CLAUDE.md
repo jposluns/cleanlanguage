@@ -17,13 +17,16 @@ A pull request whose head commit message carries a skip marker such as `[skip
 ci]` gets no run of those GitHub Actions checks, and one whose merge with `main`
 has conflicts gets no new run of them, so neither can merge until a commit that
 clears the condition is pushed to it. Through `tools/ci-status.sh` a head that
-lacks a check it insists on does not read green: it reads pending when another
-check has run on that head, and unreadable when no check has. A head that ran
-its checks before its merge with `main` came to conflict keeps those runs, so
-`tools/ci-status.sh` can read it green while GitHub refuses the merge. No
-workflow has a `merge_group` trigger, so a merge queue would never see these
-checks; on 2026-11-10 the maintainer decided not to add one now, and one must be
-added before any merge queue is turned on.
+lacks a check it insists on never reads green: a single reading is red when a
+check that has run on that head did not pass, pending when every check that has
+run on it passed or is still running, and unreadable when no check has run on
+it; a wait (`--wait`) ends red at once when a check did not pass, and otherwise
+ends not green when its window closes. A head that ran its checks before its
+merge with `main` came to conflict keeps those runs, so `tools/ci-status.sh` can
+read it green while GitHub refuses the merge. No workflow has a `merge_group`
+trigger, so a merge queue would never see these checks; on 2026-11-10 the
+maintainer decided not to add one now, and one must be added before any merge
+queue is turned on.
 
 ## Commit attribution
 

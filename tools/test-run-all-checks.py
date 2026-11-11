@@ -34,13 +34,20 @@ sha256 of the committed script is SCRIPT_SHA256. To change the script, read the 
 confirm that it still runs every command line unpiped and keeps going after a failure, then record
 the new digest in SCRIPT_SHA256 in the same pull request.
 
-Residual: the test reads the run text, not what each command does, so a step whose command reads the
-environment that its workflow sets (GH_TOKEN for the live release checksum check) or that runs only
-on some paths still matches, and the script runs it in this machine's environment, on every change.
-A run text is compared whole, so the same command written another way in a workflow is reported as
-missing, a safe failure. A step that runs a gate through an action (uses: rather than run:) is not
-read, and a workflow that only another workflow's run triggers (workflow_run) is not selected, so
-the script is not required to run either.
+Residual: the test reads the run text, not what each command does or the setting it runs in. A step
+still matches, and the script runs its run text with bash, from the repository root, in this
+machine's environment and on every change, whatever its workflow sets around it: the step's shell,
+the job's runner (runs-on), container, services or strategy matrix, an if: condition on the job or
+the step, continue-on-error, env on the workflow, the job or the step (GH_TOKEN for the live release
+checksum check), or a paths filter that limits when CI runs it. A run text is compared whole, so the
+same command written another way in a workflow is reported as missing, a safe failure. A
+pull_request trigger selects its workflow whatever its filters, and a branches-ignore entry is
+compared with main as text, so a pattern that excludes main, such as ma*, still selects its
+workflow; the run text of a workflow so selected must then be a command line, a safe failure. A step
+that runs a gate through an action (uses: rather than run:) is not read, and a workflow that only
+another workflow's run triggers (workflow_run) is not selected, so the script is not required to run
+either. A job that calls a reusable workflow, a run step with a working-directory and a defaults key
+are not mirrored; they fail, as Coverage says.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
@@ -66,7 +73,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
 # the change.
-SCRIPT_SHA256 = "d6f1791ebbaac20ecdc209c4a1d0283c4ca3d2956379b7475b47a966784c2a0e"
+SCRIPT_SHA256 = "3478a0b453373aaddd618e6ab08b027239f5b98fccadaeb3423f7e9d93038970"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((

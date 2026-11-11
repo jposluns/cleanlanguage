@@ -303,8 +303,6 @@ EXCEPTIONS = (
      'an error message that names the extractor; the line runs no Python'),
     ('tools/test-ci-status.sh',
      literal(
-         'if [ "$(grep -c -F "_actions_job(\\"$job\\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi',
-         'declared_jobs="$(grep -o -E \'_actions_job\\("[^"]*"\\)\' "${here}/ci-status.py" | sed -E \'s/^_actions_job\\("(.*)"\\)$/\\1/\' | LC_ALL=C sort | tr \'\\n\' \';\')"',
          'cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"',
          'printf "raise SystemExit(7)\\n" > "$tmp/shadow/json.py"',
          'ln -s "$tools/ci-status.py" "$tmp/elsewhere/ci-status.py"',

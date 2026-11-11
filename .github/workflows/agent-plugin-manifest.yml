@@ -9,7 +9,7 @@ name: Agent Plugins manifest
 # path-filtered required check never reports on a pull request outside its
 # paths and blocks the merge as forever-pending. tools/ci-status.sh insists on
 # this check by its display name, so a main commit without a run of it would
-# read as pending; the push trigger therefore runs on every push to main too.
+# never read green; the push trigger therefore runs on every push to main too.
 # tools/test-ci-status.sh reads this workflow with an allow-list that fails
 # closed: the on: block holds only a pull_request trigger with nothing under it
 # and a push trigger filtered to main alone; the permissions block is exactly

@@ -28,11 +28,11 @@ planted gate, and SHELLOPTS with noexec or onecmd makes bash run nothing and exi
 0 before ci-status.sh runs.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
-required check: the Cloudflare Pages build, one of the checks that CLAUDE.md lists
-as required on main, is produced by an external app, not GitHub Actions, so a gate
-built on actions/runs alone would pass while the required check was failing. The
-legacy commits/<sha>/status endpoint is not used either: this repository publishes
-no commit statuses, so it answers "pending" forever.
+required check: the Cloudflare Pages build, one of the checks that CLAUDE.md
+lists as required on main, is produced by an external app, not GitHub Actions,
+so a gate built on actions/runs alone would pass while the required check was
+failing. The legacy commits/<sha>/status endpoint is not used either: this
+repository publishes no commit statuses, so it answers "pending" forever.
 
 Reading is FAIL-CLOSED. The whole paginated response is parsed as JSON; a page that
 is not an object, a check_runs that is not a list, a check that is not an object, or
@@ -79,17 +79,15 @@ such as a main commit from before CI status tests ran on every push, or the exte
 check still building); such a reading is downgraded from pass to pending, never to a
 red, and the message naming the missing check says that it runs on every pull
 request and push, which is untrue of such an older commit. A commit that
-legitimately ran none of them is a safe false-red, never a false-green. Residual: a
-name and an app cannot tell which workflow produced a run, so a pull request that
-deletes one of those workflows and adds another job with the same display name
-satisfies the check; GitHub's own app-pinned required check has the same limit.
-Within the same residual, another job in one of the 4 workflows can carry one of the
-4 display names under a name: key indented other than the 4 spaces of a job's own
-keys. tools/test-ci-status.sh compares every name: line indented exactly 4 spaces,
-whatever form its value takes, but compares a job's name: key at any other indent
-only by its plain or quoted text, and only with the display name of that workflow's
-own job, so such a key passes when it carries another workflow's display name in any
-form, or its own workflow's display name in a form whose text differs from that
+legitimately ran none of them never reads green, a safe failure. Residual: a name
+and an app cannot tell which workflow produced a run, so a pull request that deletes
+one of those workflows and adds another job with the same display name satisfies the
+check; GitHub's own app-pinned required check has the same limit. Within the same
+residual, another job can carry one of the 4 display names under a name: key that
+the check does not read as that name. tools/test-ci-status.sh compares every name:
+line of the 4 workflows indented exactly 4 spaces, whatever form its value takes,
+and every other name: line of any workflow only by its plain or quoted text, so such
+a key passes when it carries a display name in a form whose text differs from that
 name, such as a block scalar or an expression. The tool reads the check runs the API
 returns under its default filter, the latest runs, so whether such a job can take
 the place of a failed run of the real job in a reading depends on how the API
@@ -602,10 +600,10 @@ def verdict_of(checks) -> str:
 # Deferred: this list is declared here and is not cross-checked against the branch
 # ruleset for main. That cross-check would also require every context the ruleset
 # lists, report a listed context missing from this list, and fail closed (exit 3)
-# when the ruleset cannot be read. It waits for a record of the rules API endpoint,
-# payload and token scope that the live ruleset answers with, which this repository
-# does not hold, and for offline tests that serve that second read beside the
-# check-runs read.
+# when the ruleset cannot be read. It waits for a record of the rules API
+# endpoint, payload and token scope that the live ruleset answers with, which this
+# repository does not hold, and for offline tests that serve that second read
+# beside the check-runs read.
 def _actions_job(name: str):
     return lambda c: c["slug"] == "github-actions" and c["name"] == name
 
