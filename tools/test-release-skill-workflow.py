@@ -837,9 +837,10 @@ IMMUTABILITY_CLAIM_ALLOWED = (
     "echo \"The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished,"
     " so the remedy is a corrective new version whose Released line names its own publication day."
     " The live release checksum check compares a Released date with a publication day only for the"
-    " version SKILL.md names, so it checks the date of ${RELEASE_TAG} only while SKILL.md names that"
-    " version, and it reports a mismatch whenever it compares the 2 days and finds them different (see"
-    " the exit codes listed in the module docstring of that check for its other outcomes).\" >" + chr(38) + "2",
+    " version that cleanlanguage/skills/cleanlanguage/SKILL.md names in the checkout the check runs from,"
+    " so it checks the date of ${RELEASE_TAG} only while that file names that version, and it reports a"
+    " mismatch whenever it compares the 2 days and finds them different (see the exit codes listed in the"
+    " module docstring of that check for its other outcomes).\" >" + chr(38) + "2",
     "echo \"Re-stamping the Released line cannot fix this: the published zip carries the Released line of the"
     " commit it was built from, and an immutable release cannot be republished. If the line at this commit"
     " was edited after the release, restore the value the published zip carries; otherwise the remedy is a"
@@ -1177,9 +1178,10 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("skill-release-date: the release was published on 2026-11-16 (UTC; published_at "
                       "2026-11-16T00:00:02Z), but its Released line names 2026-11-15", err)
         self.assertIn("The live release checksum check compares a Released date with a publication day only for "
-                      "the version SKILL.md names, so it checks the date of v1.0.15 only while SKILL.md names that "
-                      "version, and it reports a mismatch whenever it compares the 2 days and finds them different "
-                      "(see the exit codes listed in the module docstring of that check for its other outcomes).",
+                      "the version that cleanlanguage/skills/cleanlanguage/SKILL.md names in the checkout the check "
+                      "runs from, so it checks the date of v1.0.15 only while that file names that version, and it "
+                      "reports a mismatch whenever it compares the 2 days and finds them different (see the exit "
+                      "codes listed in the module docstring of that check for its other outcomes).",
                       err)
 
     def test_readback_mismatch_names_a_corrective_new_version_and_no_republish(self):

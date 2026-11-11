@@ -1084,12 +1084,17 @@ class JsonModeTest(unittest.TestCase):
         # the runner's message must name it. parse_date fails its
         # datetime.date.fromisoformat call, and confirm_published fails the
         # datetime.datetime.strptime call inside parse_instant. The
-        # publish_window cases still fail time.strftime, which formats the
-        # instant in a refusal, so the Exception rises inside
+        # publish_window cases fail time.strftime, which formats the instant
+        # in a refusal, so the Exception rises inside
         # publish_window_problem, after parse_instant. parse_date and
         # parse_instant read a ValueError from these calls as bad input, so
         # only RuntimeError is injected there, and a catch in either that
-        # grew to RuntimeError would answer malformed and fail here.
+        # grew to RuntimeError would answer malformed and fail here. The
+        # parse_date and confirm_published cases rely on those 2 calls: a
+        # parse_date or parse_instant rewritten to check its input without
+        # its call, even correctly, never meets the injected error, so the
+        # extractor exits 0 with a reply and the case fails here; the case
+        # must then target a call that the rewritten function makes.
         for label, target, kind, data, where in (
             ("parse_date", "datetime.date.fromisoformat", "RuntimeError",
              request("parse_date", "2026-11-15"), "parse_date"),
