@@ -12,8 +12,16 @@ band under a user token (see the release runbook), matching the rest of the
 fleet, which keeps pull request authorship out of Actions. If that flip is
 forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
-check goes red on exactly that drift. It runs in CI on pushes to main and on a
-daily schedule, and the orchestrator runs it as the final step of the runbook.
+check goes red on each condition that the Exit codes entries below name for
+codes 1 to 3, among them drift between the site and the published release the
+site names. In CI, the workflow runs its tests and then this check on a pull
+request or a push to main that changes a file it or its tests read, which the
+workflow's path filters name, on a daily schedule and on manual dispatch, and a
+failing test stops the job before this check runs; the orchestrator runs it as
+the final step of the runbook. GitHub may not run a path-filtered workflow for
+a change to more files than it compares, which is not checked offline; the
+daily schedule still runs the tests on main, and then this check unless a test
+fails.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
@@ -174,49 +182,63 @@ Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
 Exit codes:
   0  every check that ran passed: the site checksum matches the published
-     release and the release-date check of the version SKILL.md names
-     passes, or the site is ahead of an unpublished release in the pre-tag
-     window (it names the current skill version and carries the
+     release the site names and the release-date check of the version SKILL.md
+     names passes, or the site is ahead of an unpublished release in the
+     pre-tag window (it names the current skill version and carries the
      not-yet-published note, the tag does not exist yet, and the SKILL.md
      Released line is well formed, and present above the undated baseline)
-  1  drift or inconsistency: the release is published, the gate can
-     download and read its zip and ``.sha256``, the manifest is well formed
-     and the zip hashes to it, and the site shows a different checksum or
-     says that the checksum is not yet published, or the site names an
-     unreleased version that is not the current skill version, or it shows
-     a checksum as published while the release and its tag do not exist,
-     or the SKILL.md Released date disagrees with
-     the published release, or the Released line is missing above the undated
-     baseline (also in the pre-tag window)
-  2  could not verify: a gh or network error; a status other than 200 or 404
-     for the release the site names, for the release SKILL.md names, or for
-     a tag the gate reads; a tag that exists with no published release; a
-     published release whose zip or ``.sha256`` the gate cannot download or
-     read, whose manifest is malformed, or whose zip does not hash to its
-     manifest; or a published release whose ``published_at`` is unreadable
-     or malformed or whose ``immutable`` field is not exactly true
-  3  a required file could not be read, the verify page is not the page the
-     generator writes for the state it shows, or the generator could not
-     render its download block or the page (see Behaviour), the SKILL.md
-     Released line is
-     malformed, a call of tools/skill-release-date.py, which runs in a
-     child process, did not give a result the gate could accept (see
-     run_release_date_child), or SIGCHLD could not be reset to its default
-     disposition (see reset_sigchld)
+  1  drift or inconsistency: the release the site names is published, the gate
+     can download and read its zip and ``.sha256``, the manifest is well formed
+     and the zip hashes to it, and the site shows a different checksum or says
+     that the checksum is not yet published, or the site names an unreleased
+     version that is not the current skill version, or it shows a checksum as
+     published while the release the site names and its tag do not exist, or
+     the SKILL.md Released date disagrees with the UTC day of the
+     ``published_at`` record of the release SKILL.md names, or the Released
+     line is missing above the undated baseline (also in the pre-tag window)
+  2  could not verify: a gh call that cannot be run or whose status or value
+     the gate cannot read; a status other than 200 or 404 for a release or a
+     tag the gate reads; a tag the gate reads that exists with no published
+     release; for the release the site names, when it is published, a zip or
+     ``.sha256`` the gate cannot download or read, a malformed manifest, or a
+     zip that does not hash to its manifest; or, for the release SKILL.md
+     names, when it is published and SKILL.md has a Released line or names a
+     version above the undated baseline, an ``immutable`` field that is not
+     exactly true, or, with a Released line, a ``published_at`` that is
+     malformed
+  3  a required file is missing, is not a regular file or could not be read;
+     the verify page, when it does not carry the not-yet-published note, has no
+     checksum element, shows a checksum that is not a 64 character lower-case
+     SHA-256 or that is the zero placeholder, or does not state which version
+     its checksum belongs to; the verify page is otherwise not the page the
+     generator writes for the state it shows, or the generator could not render
+     its download block or the page (see Behaviour); SKILL.md has no
+     ``Version:`` line, its first ``Version:`` line is not a bare X.Y.Z
+     version, or, when SKILL.md has no Released line, the extractor rejects
+     that version; the SKILL.md Released line is malformed; a call of
+     tools/skill-release-date.py, which runs in a child process, did not give a
+     result the gate could accept (see run_release_date_child); or SIGCHLD
+     could not be reset to its default disposition (see reset_sigchld)
 
-The release-date check and the site-checksum comparison both run and both
-are reported when the release the site names is published, including when its
-download fails, its downloaded assets cannot be read, or its manifest is
-malformed or undecodable, and also when that
-release returns a status other than 200 or 404, or a status that cannot be
-read while SKILL.md names a different version, and when the site names an
-unreleased version that is not the current skill version, so neither failure
-hides the other. Within the date check of a published release, a Released line
-missing above the undated baseline does not hide an immutable field that is not
-exactly true: both are reported and the more severe 2 wins. The extractor is probed inside main, not at import, so a
-probe that ends in exit 3 is reported and contributes 3 while the checksum
-comparison still runs and reports. The gate then exits with the most severe code, the highest
-one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
+When the verify page passes its own checks and the release it names is
+published, the release-date check and the site-checksum comparison both run,
+and each reports any failure it finds, also when the comparison stops because
+the download fails, the downloaded assets cannot be read, or the manifest is
+malformed or undecodable, so neither failure hides the other. When that release
+returns a status other than 200 or 404, or a status that cannot be read while
+SKILL.md names a different version, and when the site names an unreleased
+version that is not the current skill version, the comparison does not run: the
+gate reports a release it could not verify, or the inconsistency, and the
+release-date check still runs. When SKILL.md names a different version from the
+site, that check reports any failure it finds; when it names the same version,
+it reads no release record, so it compares no date and no immutable field.
+Within the date check of a published release, a Released line missing above the
+undated baseline does not hide an immutable field that is not exactly true:
+both are reported and the more severe 2 wins. The extractor is probed inside
+main, not at import, so a probe that ends in exit 3 is reported and contributes
+3 while the checksum comparison still runs and reports. The gate then exits
+with the most severe code, the highest one (3 over 2 over 1 over 0), since 2
+and 3 mean a check could not complete.
 
 Before it starts any child, main resets SIGCHLD to its default
 disposition (reset_sigchld), because an ignored SIGCHLD, inherited across
@@ -1473,7 +1495,9 @@ def check_site_checksum(load_code: int = 0) -> int:
         return code
     if status != 200:
         # The checksum comparison cannot run (exit 2), but the release-date
-        # check below still runs and reports, and the more severe code wins.
+        # check below still runs, and the more severe code wins. When SKILL.md
+        # names this same version, that check reads no release record, so it
+        # compares no date.
         print(
             f"check-release-checksum-live: could not verify: unexpected HTTP {status} reading release {tag}",
             file=sys.stderr,
@@ -1481,7 +1505,8 @@ def check_site_checksum(load_code: int = 0) -> int:
         return max(2, release_date_code(version, status))
 
     # A failed download or a malformed release stops only the checksum
-    # comparison (exit 2); the release-date check below still runs and reports.
+    # comparison (exit 2); the release-date check below still runs and reports
+    # any failure it finds.
     try:
         claimed = published_digest(tag, zip_name, manifest_name)
     except SystemExit as stop:
@@ -1500,11 +1525,12 @@ def check_site_checksum(load_code: int = 0) -> int:
         claimed = None
 
     # Item 26: the release SKILL.md names is checked on its own terms,
-    # whatever version the site names (see check_release_date). A date edited
-    # after release goes red here; a release that slipped past UTC midnight is
-    # refused or caught by the release workflow itself, and goes red here too.
-    # Both checks run and report before the gate exits with the more severe
-    # code, so a date failure cannot hide checksum drift.
+    # regardless of the version the site names (see check_release_date). A date
+    # edited after release goes red here; a release that slipped past UTC
+    # midnight is refused or caught by the release workflow itself, and goes
+    # red here too. Both checks run, and each reports any failure it finds,
+    # before the gate exits with the more severe code, so a date failure cannot
+    # hide checksum drift.
     date_code = release_date_code(version, status)
 
     if claimed is None:

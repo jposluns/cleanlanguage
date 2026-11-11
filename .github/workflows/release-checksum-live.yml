@@ -7,8 +7,13 @@ name: Release checksum live
 # checks-only workflow goes red if the verify page checksum does not match the
 # published release asset, so a forgotten or wrong flip cannot ship green and
 # stay wrong. It authors nothing: read-only, no pull request, no push. The daily
-# schedule catches a forgotten flip that produced no further push to main. See
-# tools/check-release-checksum-live.py for exactly what it proves.
+# schedule and manual dispatch run the tests and then the gate whatever changed,
+# and a failing test stops the gate, so a forgotten flip with no later push to
+# main goes red at the next scheduled run; the log names each reason. The path
+# filters under push and pull_request name every file the gate or its tests
+# read, and WorkflowPathsTest in tools/test-release-checksum-live.py pins both
+# lists. See tools/check-release-checksum-live.py for exactly what it proves,
+# and its Exit codes entries for each condition that turns the gate red.
 
 on:
   push:
@@ -16,27 +21,51 @@ on:
       - main
     paths:
       - "site/verify/index.html"
-      - "site/_redirects"
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
       - "tools/skill-release-date.py"
       - "tools/check-release-links.py"
       - "tools/build-site.py"
-      - "site-src/pages/verify.html"
       - ".github/workflows/release-checksum-live.yml"
+      - "site-src/**"
+      - "cleanlanguage/skills/cleanlanguage/references/**"
+      - "site/downloads/**"
+      - "site/assets/baseline/**"
+      - "site/_headers"
+      - "site/_redirects"
+      - "site/robots.txt"
+      - "site/sitemap.xml"
+      - "site/.well-known/**"
+      - "site/README.md"
+      - "site/images/**"
+      - ".baseline/pin.toml"
+      - "tools/sitemap-config.json"
+      - "tools/check-install-page.py"
   pull_request:
     paths:
       - "site/verify/index.html"
-      - "site/_redirects"
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
       - "tools/skill-release-date.py"
       - "tools/check-release-links.py"
       - "tools/build-site.py"
-      - "site-src/pages/verify.html"
       - ".github/workflows/release-checksum-live.yml"
+      - "site-src/**"
+      - "cleanlanguage/skills/cleanlanguage/references/**"
+      - "site/downloads/**"
+      - "site/assets/baseline/**"
+      - "site/_headers"
+      - "site/_redirects"
+      - "site/robots.txt"
+      - "site/sitemap.xml"
+      - "site/.well-known/**"
+      - "site/README.md"
+      - "site/images/**"
+      - ".baseline/pin.toml"
+      - "tools/sitemap-config.json"
+      - "tools/check-install-page.py"
   schedule:
     - cron: "17 13 * * *"
   workflow_dispatch:
