@@ -48,29 +48,15 @@ never calls the gate's family_checked(), which holds the 2 filters of the links
 back, on not hidden and on visible text. hidden_link_exit_problems() fails
 unless hidden_link_problems(), given a stand-in for the gate whose parse()
 raises SystemExit(3), as the gate's die() does, returns the problem that names
-SystemExit(3). gate_exit_problems() fails unless loading exiting_gate(), the
-gate as load_gate() loads it with parse() and load_tool() replaced by functions
-that raise SystemExit(3), and running its parse() on <p>x</p> raises
-SystemExit(3), and unless each check of its tuple, given exiting_gate(), returns
-exactly 1 problem, which names SystemExit(3). in_process_run_problems() reads
-this file's syntax tree and fails on a function that its rule reads as loading
-or running the gate or a sibling in this process and that is neither in that
-tuple nor in RUN_EXEMPT with a reason, on such a load or run that its rule reads
-as needing a try with a handler naming SystemExit and lacking one, and on a
-handler that it reads as bare or as naming BaseException or KeyboardInterrupt;
-run_rule_case_problems() fails unless in_process_run_problems() returns, on each
-planted source of RUN_RULE_CASES, 1 problem for each start that the case gives,
-in order, and no other. copy_exit_problems() fails unless copy_problems() and
-pin_case_problems(), each given tools/no-such-file.py and then site/install to
-copy, return exactly 1 problem, which names it. Exit 0 when every case passes; 1
-otherwise, naming each failing case. A load or run of the gate or a sibling in
-this process that raises SystemExit, as the gate's die() does when
-tools/check-inline-code.py is missing, is a named failure and never a silent
-exit 3. A scratch copy that make_root() cannot build is named once, and the
-inventories, the Python version checks and the cases, which need it, are not
-run; a copy that pin_case_problems() cannot make for a case is named once, and
-that case and each case after it are not run. Each of RESIDUALS is a fault the
-gate passes, such as markup in which a browser may hide or empty what the gate
+SystemExit(3). gate_exit_problems(), copy_exit_problems(),
+in_process_run_problems() and run_rule_case_problems() are for this test's own
+catches: a SystemExit raised in this process by a load or run of the gate or a
+sibling, as the gate's die() raises it, and an OSError from a scratch copy are
+to be named failures, not an exit with no failure line or a traceback. The cases
+of RUN_RULE_CASES give the start of each problem that in_process_run_problems()
+is to return on their planted sources. Exit 0 when every case passes; 1
+otherwise, naming each failing case. Each of RESIDUALS is a fault the gate
+passes, such as markup in which a browser may hide or empty what the gate
 checks; it must exit 0, and the gate's docstring must name it, so that what the
 gate says it checks cannot outgrow its code unnoticed.
 
@@ -559,9 +545,8 @@ def copy_problems(files: list[str] = FILES) -> list[str]:
 
 
 def copy_exit_problems() -> list[str]:
-    """A problem unless copy_problems() and pin_case_problems(), each given the file list [tools/no-such-file.py] and
-    then [site/install], return exactly 1 problem, which names that file, so that neither catch can be removed, or
-    narrowed to FileNotFoundError or to IsADirectoryError alone, unnoticed."""
+    """A problem unless copy_problems() and pin_case_problems() each return exactly 1 problem that names the file, given
+    each file of the loop below to copy; it is for their catches of OSError."""
     problems: list[str] = []
     for copier in (copy_problems, pin_case_problems):
         for source in ("tools/no-such-file.py", "site/install"):
@@ -1998,7 +1983,7 @@ def pin_case_problems(files: list[str] = STYLESHEETS + [PIN_FILE]) -> list[str]:
                     shutil.copyfile(REPO_ROOT / relative, root / relative)
             except OSError as error:
                 return problems + [f"the scratch copy for the case {name!r} of the rule pin's comparison could not be "
-                                   f"made: {error}; it and each case after it were not run"]
+                                   f"made: {error}"]
             # A committed stylesheet that no longer holds the text a fault edits is a problem, not a crash, so the
             # comparison of the committed stylesheets with the pin still runs and names the rule.
             try:
@@ -2312,8 +2297,7 @@ def hidden_link_exit_problems() -> list[str]:
 
 def exiting_gate():
     """The gate as load_gate() loads it, with parse() and load_tool() replaced by functions that raise SystemExit(3), as
-    the gate's die() does when tools/check-inline-code.py cannot be read; the other names stay, so that a check that
-    reads them before it parses reaches parse()."""
+    the gate's die() does."""
     def exit_now(*args, **kwargs):
         raise SystemExit(3)
 
@@ -2324,13 +2308,9 @@ def exiting_gate():
 
 
 def gate_exit_problems() -> list[str]:
-    """A problem unless loading exiting_gate() and running its parse() on <p>x</p> raises SystemExit(3), so that this
-    fails if exiting_gate() no longer replaces parse(), unless the gate's own load, or its own parse() of <p>x</p> with
-    load_tool() replaced, raises SystemExit(3); a gate whose own load raises SystemExit(3) passes it either way. It
-    also gives a problem for each check of its tuple unless, given exiting_gate() as its loader, it returns exactly 1
-    problem, which names SystemExit(3), so that no catch of those checks can narrow to Exception unnoticed;
-    in_process_run_problems() fails on a function that its rule reads as loading or running the gate or a sibling in
-    this process and that is neither in the tuple nor in RUN_EXEMPT with a reason."""
+    """A problem unless loading exiting_gate() and running its parse() on <p>x</p> raises SystemExit(3), and 1 for each
+    check of its tuple that, given exiting_gate() as its loader, does not return exactly 1 problem naming SystemExit(3).
+    It is for the catches of those checks."""
     checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems, page_attribute_pin_problems,
               page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
     try:
@@ -2352,9 +2332,8 @@ def gate_exit_problems() -> list[str]:
     return problems
 
 
-# The functions that the rule of in_process_run_problems() reads as loading or running the gate or a sibling in this
-# process and that are not in the tuple of gate_exit_problems(), each with the reason; in_process_run_problems() fails
-# on any other such function.
+# The functions, each with its reason, that in_process_run_problems() is given as exempt from the tuple of
+# gate_exit_problems().
 RUN_EXEMPT = {
     "pinned_baseline": "a loader: the module-level read of BASELINE runs it",
     "load_gate": ("a loader: every load of the gate in this process calls it, apart from those in "
@@ -2377,14 +2356,9 @@ RUN_EXEMPT = {
 
 
 def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = RUN_EXEMPT) -> list[str]:
-    """A problem for each function that its rule reads, in the syntax tree of source, this file by default, as holding a
-    load or run of the gate or a sibling in this process and that is neither in the tuple of gate_exit_problems() nor in
-    exempt with a reason; for each name of exempt that names no such function or names 1 in that tuple; for each load or
-    run that its rule reads as needing a try with a handler naming SystemExit and lacking one; and for each handler that
-    its rule reads as bare or as naming BaseException or KeyboardInterrupt. Its rule is the code below. The cases of
-    RUN_RULE_CASES define what it must return on planted sources: each gives a source, the exempt that goes with it and
-    the start of each problem that this function must return on them, in order. run_rule_case_problems() fails on a
-    change to this function only if the change alters what it returns on 1 of those sources, or makes it raise there."""
+    """The problems that its rule, the code below, finds in the syntax tree of source, this file by default, given
+    exempt; it is for the catches of the loads and runs of the gate or a sibling in this process. The cases of
+    RUN_RULE_CASES give the start of each problem that it is to return on their planted sources."""
     names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
     attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
     loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
@@ -2417,7 +2391,6 @@ def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = 
                 visit(child, owner, scope, held)
             return
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Its body counts for the outermost def; its decorators, defaults and annotations run where the def stands.
             inner = owner or scope + node.name
             for child in ast.iter_child_nodes(node):
                 if any(child is statement for statement in node.body):
@@ -2443,8 +2416,7 @@ def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = 
               and [ast.unparse(target) for target in node.targets] == ["checks"] and isinstance(node.value, ast.Tuple)]
     held_checks = {ast.unparse(element) for value in tuples for element in value.elts
                    if isinstance(element, (ast.Name, ast.Attribute))}
-    problems = [] if tuples else ["this check reads no tuple assigned to checks in gate_exit_problems(), so it finds "
-                                  "no function in the tuple of gate_exit_problems()"]
+    problems = [] if tuples else ["this check reads no tuple assigned to checks in gate_exit_problems()"]
     runners: dict[str, int] = {}
     for owner, line, name, held in runs:
         if owner:
@@ -2459,14 +2431,14 @@ def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = 
                  "gate or a sibling in this process or finds in the tuple of gate_exit_problems()"
                  for name in exempt if name not in runners or name in held_checks]
     problems += [f"line {node.lineno}: a handler that this check reads as bare or as naming BaseException or "
-                 "KeyboardInterrupt; catch (Exception, SystemExit) and let KeyboardInterrupt through"
+                 "KeyboardInterrupt"
                  for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)
                  and handler_names(node) & {"BaseException", "KeyboardInterrupt"}]
     return problems
 
 
-# The 2 lines that start each planted source of RUN_RULE_CASES: a tuple that holds held_problems() and the method
-# Checks.method_problems(), so that each source's own lines start at line 3.
+# The 2 lines that start each planted source of RUN_RULE_CASES, a gate_exit_problems() whose tuple holds held_problems
+# and Checks.method_problems; each source's own lines start at line 3.
 RUN_RULE_HEAD = "def gate_exit_problems():\n    checks = (held_problems, Checks.method_problems)\n"
 RUN_HELD = ("def held_problems():\n    try:\n        load_gate().parse('')\n    except (Exception, SystemExit):\n"
             "        pass\n")
@@ -2477,10 +2449,9 @@ RUN_OWNER = ("this check reads {}() as loading or running the gate or a sibling 
              "neither in the tuple of gate_exit_problems() nor in RUN_EXEMPT with a reason")
 RUN_NAMED = ("RUN_EXEMPT names {}, which this check either does not read as a function that loads or runs the gate or "
              "a sibling in this process or finds in the tuple of gate_exit_problems()")
-RUN_HANDLER = ("line 5: a handler that this check reads as bare or as naming BaseException or KeyboardInterrupt; catch "
-               "(Exception, SystemExit) and let KeyboardInterrupt through")
+RUN_HANDLER = "line 5: a handler that this check reads as bare or as naming BaseException or KeyboardInterrupt"
 # Each case: its name, its source after RUN_RULE_HEAD, the RUN_EXEMPT that in_process_run_problems() is given with it,
-# and the start of each problem that it must return, in order.
+# and the start of each problem that it is to return.
 RUN_RULE_CASES = [
     ("a held run in a function of the tuple", RUN_HELD, {}, []),
     ("a run at the top level", "load_gate()\n", {}, ["line 3: " + RUN_UNHELD.format("load_gate")]),
@@ -2528,9 +2499,8 @@ RUN_RULE_CASES = [
 
 
 def run_rule_case_problems() -> list[str]:
-    """A problem for each case of RUN_RULE_CASES unless in_process_run_problems(), given RUN_RULE_HEAD and its source
-    with its RUN_EXEMPT, returns 1 problem for each start that it gives, in order, and no other, so that what
-    in_process_run_problems() returns on a planted source cannot stop matching its case unnoticed."""
+    """A problem for each case of RUN_RULE_CASES whose starts do not match what in_process_run_problems() returns, given
+    RUN_RULE_HEAD and the case's source with its RUN_EXEMPT."""
     problems: list[str] = []
     for name, source, exempt, starts in RUN_RULE_CASES:
         try:
@@ -2970,8 +2940,7 @@ def main() -> int:
     failures += [f"the version literals: {problem}" for problem in version_literal_problems()]
     failures += [f"the version binding: {problem}" for problem in version_binding_problems()]
     copied = copy_problems()
-    failures += [f"the scratch copy: {problem}; the inventories, the Python version checks and the cases were not run"
-                 for problem in copied]
+    failures += [f"the scratch copy: {problem}" for problem in copied]
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
     failures += [f"the attribute pin: {problem}" for problem in class_pin_problems("ATTRIBUTE_PIN", "attrs")]
     failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
