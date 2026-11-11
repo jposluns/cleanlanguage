@@ -1093,8 +1093,10 @@ class JsonModeTest(unittest.TestCase):
         # parse_date and confirm_published cases rely on those 2 calls: a
         # parse_date or parse_instant rewritten to check its input without
         # its call, even correctly, never meets the injected error, so the
-        # extractor exits 0 with a reply and the case fails here; the case
-        # must then target a call that the rewritten function makes.
+        # extractor exits 0 with a reply and the case fails here. When the
+        # rewrite makes no call that this runner can fail, as when
+        # parse_date checks the date with only int() and str.split, keeping
+        # the case needs a runner change or a different design.
         for label, target, kind, data, where in (
             ("parse_date", "datetime.date.fromisoformat", "RuntimeError",
              request("parse_date", "2026-11-15"), "parse_date"),
