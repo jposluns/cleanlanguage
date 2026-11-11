@@ -2102,7 +2102,8 @@ PY
 # YAML, so a line that YAML reads as something else, such as a line of a run:
 # block, still counts, a safe failure, and a job named in another form, such as
 # a quoted key, an expression or a block scalar, is not seen. It runs in a
-# subshell, so its glob options do not reach the rest of the suite.
+# subshell, so its glob options do not reach the rest of the suite; the case
+# after its cases below holds that.
 named_elsewhere() (
   shopt -s dotglob nullglob
   local dir="$1" wf="$2" job="$3" other text="" c i status
@@ -2239,6 +2240,26 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
+# named_elsewhere, called here in the suite's own shell on a folder holding only
+# .hidden.yml, must leave dotglob and nullglob off in its caller: shopt reads
+# each as off, and a glob of every entry of that folder matches neither the dot
+# file nor nothing, so it stays as written.
+glob_case="named_elsewhere leaves dotglob and nullglob off in its caller"
+if glob_tmp="$(mktemp -d)" && [ -d "$glob_tmp" ]; then
+  : > "$glob_tmp/.hidden.yml"
+  named_elsewhere "$glob_tmp" own.yml "Skill discovery" 2>/dev/null || :
+  glob_got=("$glob_tmp"/*)
+  if ! shopt -q dotglob && ! shopt -q nullglob && [ "${#glob_got[@]}" = 1 ] && [ "${glob_got[0]}" = "$glob_tmp/*" ]; then
+    printf 'ok   %s\n' "$glob_case"
+  else
+    printf 'FAIL %s (%s; the glob gave %s)\n' "$glob_case" "$(shopt -p dotglob nullglob | tr '\n' ' ')" \
+      "${glob_got[*]:-nothing}"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$glob_tmp"
+else
+  setup_failed "$glob_case"
+fi
 # run_shape_loop_case NAME: shape_loop, on a folder holding skill-discovery.yml
 # and a copy of it named other.yml, for the pair of Skill discovery, must print
 # 1 FAIL line, naming named-elsewhere and nothing else, and add 1 to fails.
