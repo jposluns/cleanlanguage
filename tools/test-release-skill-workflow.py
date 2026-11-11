@@ -1985,12 +1985,13 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
         # Each allowed line occurs exactly once in the workflow text. A pin
         # left behind after its line changes fails the assertion above if
-        # the new line is an unallowed claim, and fails here if the new line
-        # has its own pin or makes no claim. This counts lines of the text,
-        # not prints: a function that runs more than once prints its line
-        # more than once, and a second copy of an allowed line, even an
-        # honest one, fails here. The subtest names each entry by its index
-        # in the allowed tuple.
+        # immutability_claims() reports the new line, and fails here if it
+        # does not, as when the new line has its own pin or words a claim in
+        # a way the guard misses. This counts lines of the text, not prints:
+        # a function that runs more than once prints its line more than
+        # once, and a second copy of an allowed line, even an honest one,
+        # fails here. The subtest names each entry by its index in the
+        # allowed tuple.
         stripped = [line.strip() for line in WORKFLOW_TEXT.splitlines()]
         for index, allowed in enumerate(IMMUTABILITY_CLAIM_ALLOWED):
             with self.subTest(entry=index, allowed=allowed[:60]):
