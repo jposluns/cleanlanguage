@@ -221,19 +221,21 @@ When the verify page passes its own checks and the release it names is
 published, the release-date check and the site-checksum comparison both run,
 and each reports any failure it finds, also when the comparison stops because
 the download fails, the downloaded assets cannot be read, or the manifest is
-malformed or undecodable. When that release returns a status other than 200 or
-404, or a status that cannot be read while SKILL.md names a different version,
-and when the site names an unreleased version that is not the current skill
-version, the comparison does not run: the gate reports a release it could not
-verify, or the inconsistency, and the release-date check still runs and reports
-any failure it finds. So neither failure hides the other. Within the date check
-of a published release, a Released line missing above the undated baseline does
-not hide an immutable field that is not exactly true: both are reported and the
-more severe 2 wins. The extractor is probed inside main, not at import, so a
-probe that ends in exit 3 is reported and contributes 3 while the checksum
-comparison still runs and reports. The gate then exits with the most severe
-code, the highest one (3 over 2 over 1 over 0), since 2 and 3 mean a check
-could not complete.
+malformed or undecodable, so neither failure hides the other. When that release
+returns a status other than 200 or 404, or a status that cannot be read while
+SKILL.md names a different version, and when the site names an unreleased
+version that is not the current skill version, the comparison does not run: the
+gate reports a release it could not verify, or the inconsistency, and the
+release-date check still runs. When SKILL.md names a different version from the
+site, that check reports any failure it finds; when it names the same version,
+it reads no release record, so it compares no date and no immutable field.
+Within the date check of a published release, a Released line missing above the
+undated baseline does not hide an immutable field that is not exactly true:
+both are reported and the more severe 2 wins. The extractor is probed inside
+main, not at import, so a probe that ends in exit 3 is reported and contributes
+3 while the checksum comparison still runs and reports. The gate then exits
+with the most severe code, the highest one (3 over 2 over 1 over 0), since 2
+and 3 mean a check could not complete.
 
 Before it starts any child, main resets SIGCHLD to its default
 disposition (reset_sigchld), because an ignored SIGCHLD, inherited across
@@ -1490,8 +1492,9 @@ def check_site_checksum(load_code: int = 0) -> int:
         return code
     if status != 200:
         # The checksum comparison cannot run (exit 2), but the release-date
-        # check below still runs and reports any failure it finds, and the more
-        # severe code wins.
+        # check below still runs, and the more severe code wins. When SKILL.md
+        # names this same version, that check reads no release record, so it
+        # compares no date.
         print(
             f"check-release-checksum-live: could not verify: unexpected HTTP {status} reading release {tag}",
             file=sys.stderr,

@@ -5197,8 +5197,8 @@ class GeneratorLoadTest(unittest.TestCase):
                     self.assertEqual(raised.exception.__cause__.code, code)
 
 
-# The audit hook of WorkflowPathsTest records the path of each file opened while TRACE is a list. An audit hook cannot
-# be removed, so it is installed once (TRACE_HOOK_INSTALLED) and does nothing while TRACE is None, as it is outside the
+# The audit hook of WorkflowPathsTest, trace_opens, records file paths while TRACE is a list. An audit hook cannot be
+# removed, so it is installed once (TRACE_HOOK_INSTALLED) and does nothing while TRACE is None, as it is outside the
 # trace. No test outcome depends on installing it once: were it installed on each run, a second run of the coverage test
 # in the same process would add a second hook, which records the same files again, and the test reads them as a set; so
 # no test pins it.
@@ -5207,11 +5207,11 @@ TRACE_HOOK_INSTALLED = False
 
 
 def trace_opens(event: str, args: tuple) -> None:
-    """Record the absolute path of each file opened while TRACE is a list, and ignore every other event. No broken
-    workflow or generator fails the tests only because of the isinstance test or os.fsdecode: they keep a correct
-    generator from making the coverage test error, since a file opened by its descriptor (os.open, then open on the
-    descriptor) gives the hook an int, which os.fsdecode refuses, and a file opened by a bytes path gives the hook
-    bytes, which Path refuses unless os.fsdecode turns them into text."""
+    """While TRACE is a list, record the absolute path that an open event names when that path is text, bytes or a path
+    object, and ignore every other event. No broken workflow or generator fails the tests only because of the isinstance
+    test or os.fsdecode: they keep a correct generator from making the coverage test error, since open on a descriptor,
+    as after os.open, gives the hook an int, which os.fsdecode refuses, and open on a bytes path gives the hook bytes,
+    which Path refuses unless os.fsdecode turns them into text."""
     if event == "open" and TRACE is not None and isinstance(args[0], (str, bytes, os.PathLike)):
         TRACE.append(os.path.abspath(os.fsdecode(args[0])))
 
@@ -5242,40 +5242,27 @@ class WorkflowPathsTest(unittest.TestCase):
         return set(cls.OWN_FILES) | {f"{entry}/**" if (root / entry).is_dir() else entry for entry in GENERATOR_INPUTS}
 
     def path_lists(self) -> dict[str, list[str]]:
-        """The entries of each path filter under the workflow's on key, by trigger and in order, read as text, in the
-        lines that str.splitlines gives: a list starts at a line that is 4 spaces and paths:, under a trigger key
-        indented 2 spaces, and runs to the next key, a line indented 4 spaces or less whose text after the indent starts
-        with neither whitespace, # nor a hyphen. A line of the list whose text after the indent starts with a hyphen is
-        an entry line. An entry line of 6 spaces, a hyphen, a space and an entry in double quotes is read without the
-        quotes, and any other entry line is kept whole, so that it never equals an expected entry: an entry line that
-        the reader cannot read exactly, such as one written without quotes, fails the list test even when it names an
-        expected entry. Of the other lines, the reader skips a blank line, a comment line, a line indented more than 4
-        spaces and a line whose text after the indent starts with whitespace other than a space, such as a tab, in a
-        list or outside one, and a list goes on past such a line, so an entry after it is read and fails the list test
-        unless it is expected. As runs show, with a blank line, or a comment line of printable ASCII, added to the
-        workflow as committed before the first entry of a list, between 2 of its entries or after its last, PyYAML reads
-        the same lists, and it reads an entry indented as the others and added after that line as part of the list, so a
-        blank line or a comment line between 2 expected entries passes. A skipped line of any kind passes when no entry
-        that is not expected follows it, whatever PyYAML reads there; see Residuals. No broken workflow fails the tests
-        only because of 5 of its parts. The continue after an entry line changes only how a failure is reported: without
-        it, an entry line indented more than 4 spaces is skipped next, and one indented 4 spaces or less, which is kept
-        whole and so fails the list test, ends the list, so that the tests also report the entries after it as missing.
-        The length test makes an empty entry a failure, not an IndexError, and the test that a trigger key was read
-        skips a paths key under no trigger key, which would otherwise be read under None, so that the list test could
-        raise a TypeError rather than fail. The test that the section is on: is in both branches, though either alone
-        would do, since each top-level key resets the trigger; without both, a list under a mistyped on key would be
-        read. Residuals: the reader reads the lines of the workflow as str.splitlines splits them, and PyYAML reads its
-        YAML, so every workflow on which the 2 readings differ is a residual: on such a workflow both tests can pass
-        while PyYAML reads no path list, a list other than the one read, or no workflow at all. As runs show, for
-        example, with text added to the workflow as committed, both tests pass while PyYAML reads no push path list,
-        with an empty push key added under on: after both lists, also one that follows a comment line and U+0085, U+2028
-        or U+2029 in place of its line feed, since PyYAML keeps the value of the second key in place of the first; while
-        PyYAML reads a list other than the one read, with a paths key that has a comment after its colon and holds 1
-        entry added after the last entry of either list; and while PyYAML reads a list, with its entries, as 1 plain
-        scalar, with the line text here, indented 5 to 8 spaces, added before the first entry of that list. Both tests
-        also pass while PyYAML cannot load the workflow, with the line text here, indented 8 spaces, added between 2
-        entries of either list, or with U+000B or U+000C, which str.splitlines takes as a line break, added at the end
-        of a comment line. How GitHub reads such workflows is not checked offline."""
+        """The entries of each path filter under the workflow's on key, by trigger and in order, read as text in the
+        lines that str.splitlines gives. A list starts at a line that is 4 spaces and paths:, between the line on: and
+        the next top-level key and after a trigger key, a line of 2 spaces and then text that starts with neither
+        whitespace nor # and ends in a colon, and is read under the last such key; it runs to the next key, a line
+        indented 4 spaces or less whose text after the indent starts with neither whitespace, # nor a hyphen. A line of
+        a list whose text after the indent starts with a hyphen is an entry line: an entry line of 6 spaces, a hyphen, a
+        space and an entry in double quotes is read without the quotes, and any other entry line is kept whole, so that
+        it never equals an expected entry and the list test fails. Of the other lines, the reader skips a line indented
+        more than 4 spaces and a line whose text after the indent is empty or starts with whitespace or #, in a list or
+        outside one, and a list goes on past such a line, so an entry line after it is read as part of the list. No
+        broken workflow fails the tests only because of 5 of its parts. Without the continue after an entry line, an
+        entry line indented 4 spaces or less, which is kept whole and so already fails the list test, would also end the
+        list, so the continue changes only how a failure is reported. The length test keeps path_lists from raising an
+        IndexError on an entry line of 6 spaces, a hyphen and a space. The test that a trigger key was read keeps a
+        paths: line under on: with no trigger key above it from starting a list; without it, that list is read under
+        None, and the list test raises a TypeError when a list under a trigger is read too. The test that the section is
+        on: is in both branches, though either alone would do, since each top-level key resets the trigger; with both
+        removed, the committed workflow with onn: in place of on: passes. Residuals: the reader reads the lines of the
+        workflow as str.splitlines splits them, and PyYAML reads its YAML, so every workflow on which the 2 readings
+        differ is a residual: on such a workflow both tests can pass while PyYAML reads no path list, a list other than
+        the one read, or no workflow at all. How GitHub reads such workflows is not checked offline."""
         lists: dict[str, list[str]] = {}
         section = trigger = None
         listing: list[str] | None = None
@@ -5297,13 +5284,15 @@ class WorkflowPathsTest(unittest.TestCase):
         return lists
 
     def test_each_trigger_names_exactly_the_files_the_gate_reads(self):
-        """Each trigger names exactly the entries of expected(), each once, and the workflow has no paths-ignore filter,
-        which could exclude a file that a list names. The test that path_lists reads a list for push and pull_request
-        and for no other trigger makes this test fail when path_lists reads a path list under a third trigger, such as
-        pull_request_target, since the loop below checks only those 2 lists, so that every list path_lists reads is
-        pinned. path_lists reads the workflow's layout, not its YAML, so an equivalent workflow laid out otherwise can
-        fail here until path_lists is updated, as one with the entries of a list indented 4 spaces or with on : in place
-        of on: does. Its subtests change only how a failure is reported."""
+        """Each trigger names exactly the entries of expected(), each once, and the workflow's text does not hold
+        paths-ignore, so that a paths-ignore filter, which could exclude a file that a list names, fails this test
+        unless its key is written with a YAML escape, and so does a comment that names paths-ignore. The test that
+        path_lists reads a list for push and pull_request and for no other trigger makes this test fail when path_lists
+        reads a path list under a third trigger, since the loop below checks only those 2 lists, so that every list
+        path_lists reads is pinned. path_lists reads the workflow's layout, not its YAML, so an equivalent workflow laid
+        out otherwise can fail here until path_lists is updated, as the committed workflow does with the entries of its
+        pull_request list indented 4 spaces or with on : in place of on:. Its subtests change only how a failure is
+        reported."""
         text = self.WORKFLOW.read_text(encoding="utf-8")
         lists = self.path_lists()
         self.assertEqual(sorted(lists), ["pull_request", "push"])
@@ -5315,26 +5304,26 @@ class WorkflowPathsTest(unittest.TestCase):
                 self.assertEqual(set(entries), self.expected())
 
     def test_each_trigger_covers_every_file_the_render_opens(self):
-        """Each trigger covers every repository file that the gate's render opens: the download block and the whole
-        page, for the committed release and for the zero placeholder, rendered through the gate as it renders them,
-        while an audit hook records each file opened. An entry covers the file it names, and an entry that ends in /**
-        covers every file under its directory; this matcher is not GitHub's, so how GitHub matches ** under a directory
-        whose name starts with a dot, as in site/.well-known/**, is not checked here. Residuals: the trace covers only
-        the render, which does not run the extractor tools/skill-release-date.py, so OWN_FILES lists it by hand; a file
-        that the gate reads outside the render in a whole run, such as site/_redirects and site/verify/index.html, or
-        that these tests read, is pinned only by the hand-kept OWN_FILES and GENERATOR_INPUTS, so a new read of that
-        kind is seen by neither test; the render runs on the committed sources, so a file that it opens only while
-        site-src/site.json stages a draft is not traced; and a new generator input that a copy of GENERATOR_INPUTS can
-        do without, so that WholePageTest still passes, and that neither traced render opens, is seen by neither test.
-        The 2 assertIn checks do not read the workflow, so they catch no broken workflow: they make a trace that records
-        neither file fail, such as one whose hook records nothing, since the loop that follows then checks nothing. The
-        finally sets TRACE back to None so that the hook does nothing for the rest of the process and the trace stops
-        growing; no test outcome depends on it, since the test reads the trace only to compute files and no file is
-        opened between the end of the render and that computation, so no test pins it. The test checks both triggers,
-        which catches no broken workflow when the list test also runs, since that test requires both lists to name the
-        same entries; it is kept so that the test run alone still fails on a file missing from 1 list. The default of
-        lists.get makes a trigger with no list fail on each file, not raise a TypeError. The subtests, and the sorting
-        and the set that give files, change only how a failure is reported."""
+        """Each trigger covers every repository file whose path the audit hook records while the gate renders the
+        download block and the whole page, for the committed release and for the zero placeholder, as it renders them.
+        An entry covers the file it names, and an entry that ends in /** covers every file under its directory; this
+        matcher is not GitHub's, so how GitHub matches ** under a directory whose name starts with a dot, as in
+        site/.well-known/**, is not checked here. Residuals: the trace covers only the render, which does not run the
+        extractor tools/skill-release-date.py, so OWN_FILES lists it by hand; a file that the gate reads outside the
+        render in a whole run, such as site/_redirects and site/verify/index.html, or that these tests read, is pinned
+        only by the hand-kept OWN_FILES and GENERATOR_INPUTS, so a new read of that kind is seen by neither test; the
+        render runs on the committed sources, so a file that it opens only while site-src/site.json stages a draft is
+        not traced; and a new generator input that a copy of GENERATOR_INPUTS can do without, so that WholePageTest
+        still passes, and that neither traced render opens, is seen by neither test. The 2 assertIn checks do not read
+        the workflow, so they catch no broken workflow: they make the test fail on a trace that records neither file, as
+        an empty trace does, on which the loop that follows would check nothing. The finally sets TRACE back to None so
+        that the hook does nothing for the rest of the process and the trace stops growing; no test outcome depends on
+        it, since the test reads the trace only to compute files and no file is opened between the end of the render and
+        that computation, so no test pins it. The test checks both triggers, which catches no broken workflow when the
+        list test also runs, since that test requires both lists to name the same entries; it is kept so that the test
+        run alone still fails on a file missing from 1 list. The default of lists.get makes a trigger with no list fail
+        on each file, not raise a TypeError. The subtests, and the sorting and the set that give files, change only how
+        a failure is reported."""
         global TRACE, TRACE_HOOK_INSTALLED
         root = MODULE_PATH.parent.parent
         release = json.loads((root / "site-src/release.json").read_text(encoding="utf-8"))
