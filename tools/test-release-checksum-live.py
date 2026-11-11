@@ -4868,15 +4868,15 @@ class CorrectiveRemedyTest(unittest.TestCase):
     message in this sense that names it only within longer words, such as renew versioning or a self-documenting field
     {corrective_tag=}, fails too, an over-pin. So do these honest refactors, also accepted as over-pins: any change that
     records the 1 message under a name other than check_release_date, such as a rename of that function or the remedy
-    text moved into a module constant, and any rewrite that splits the 1 message into more than 1 string constant, such
-    as its pieces joined with an explicit + or its text passed to print as 2 arguments split between corrective and new
-    version, unless 1 of those constants holds the whole phrase and the others hold no token. A rewording of the 1
+    text moved into a module constant, and any rewrite that splits the 1 message into more than 1 message in this sense,
+    such as its pieces joined with an explicit + or its text passed to print as 2 arguments split between corrective and
+    new version, unless 1 of those messages holds the whole phrase and the others hold no token. A rewording of the 1
     message that only joins its words with ASCII hyphens passes this test; the exact wording stays pinned by the REMEDY
     constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through
     date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for
     example, a second remedy worded without either token, a copy of the phrase in a bytes constant of the gate's source,
-    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message's string
-    constant printed more than once at run time, such as in a loop or by a repeated call."""
+    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message in this
+    sense printed more than once at run time, such as in a loop or by a repeated call."""
 
     PHRASE = "corrective new version"
     TOKENS = ("corrective", "new version")
