@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 #
 # Runs on this machine the run text of the workflow steps that
-# tools/test-run-all-checks.py reads: 1 run line for each distinct run text of
-# the steps of the 17 workflows under .github/workflows that a pull_request or a
-# push to main triggers, in the order of their files and of their steps, a
-# command that an earlier workflow already runs being run once. plugin-drift.yml
-# (a schedule and a manual dispatch) and release-skill.yml (a tag push and a
-# manual dispatch) are not triggered by a pull request or a push to main, so
-# neither is mirrored. Each command runs unpiped, from the repository root, and
-# its exit status is recorded; a failure does not stop the run, and the script
-# ends by naming the commands that failed and exiting 1, or exits 0 when all of
-# them passed. It unsets CDPATH before its cd, so that cd does not resolve its
+# tools/test-run-all-checks.py reads, the steps of the 17 workflows under
+# .github/workflows that a pull_request or a push to main triggers, in the order
+# of their files and of their steps, a command that an earlier workflow already
+# runs being run once. Each distinct run text of those steps has a run line of
+# its own, apart from the 5 run texts of the Plugin manifests job, for which the
+# 1 run line plugin_manifests stands in (see below). plugin-drift.yml (a
+# schedule and a manual dispatch) and release-skill.yml (a tag push and a manual
+# dispatch) are not triggered by a pull request or a push to main, so neither is
+# mirrored. Each command runs unpiped, from the repository root, and its exit
+# status is recorded; a failure does not stop the run, and the script ends by
+# naming the commands that failed and exiting 1, or exits 0 when all of them
+# passed. It unsets CDPATH before its cd, so that cd does not resolve its
 # relative folder through CDPATH and the commands it runs do not inherit it.
 #
 # The Plugin manifests job installs the Claude Code CLI at the version that

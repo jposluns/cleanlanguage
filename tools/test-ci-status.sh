@@ -1006,6 +1006,16 @@ for no_kill in 1 ""; do
     fails=$((fails + 1))
   fi
 done
+# run_clock_case must also fail a case whose gate exits with the clock at a time
+# other than CASE_END: the wait of the second case above, which exits at 1004.0,
+# with CASE_END set to 1005.0. Its line must be a FAIL that names end.
+got="$(CASE_NO_KILL=1 CASE_END=1005.0 run_clock_case "end probe" "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4)"
+if [[ "$got" == "FAIL end probe ("*";"* && "${got##*;}" == *end* ]]; then
+  printf 'ok   run_clock_case fails an exit at a time other than CASE_END\n'
+else
+  printf 'FAIL run_clock_case passes an exit at a time other than CASE_END (printed %s)\n' "${got:-nothing}"
+  fails=$((fails + 1))
+fi
 # The fake clock above starts and kills no real process, so this case runs a
 # real hung gh that is killed and reaped. Its first read hangs, so the tool
 # must start that 1 gh call inside the 5-second window, and the fake gh must
@@ -2050,10 +2060,10 @@ wf_dir="${here}/../.github/workflows"
 # not read. The label of each entry must be the name its matcher counts: a
 # github-actions run of that name must count, and a run of that name from
 # another app must not, nor a run whose name is the label with a space before or
-# after it, with its last character dropped or a character added, or in upper or
-# lower case. A matcher that counts some other name passes this test. The names
-# print sorted, each followed by a semicolon; the function prints nothing and
-# fails when the gate cannot be loaded or a label and its matcher disagree.
+# after it, with its last character dropped or an x appended, or in upper or
+# lower case. Counting a name other than those does not fail this test. The
+# names print sorted, each followed by a semicolon; the function prints nothing
+# and fails when the gate cannot be loaded or a label and its matcher disagree.
 declared_jobs_of() {
   python3 -I - "$1" <<'PY'
 import importlib.util
@@ -2081,18 +2091,25 @@ print("".join(name + ";" for name in sorted(names)))
 PY
 }
 # named_elsewhere DIR WF JOB: succeed when a file of DIR whose name ends in .yml
-# or .yaml, other than WF, holds a line on which a name: key, with no # before
-# it on the line and at the start of the line or after white space, an opening
-# brace or a comma, has the value JOB, plain or in quotes, followed by the end
-# of the line, a comment, a comma or a closing brace. It reads each line as
-# text, not as YAML, so a line that YAML reads as something else, such as a line
-# of a run: block, still counts, a safe failure, and a value that the line does
-# not hold as that text, such as an expression or a block scalar, is not seen.
+# or .yaml, other than WF, holds a line on which the text name:, with no #
+# before it on the line and at the start of the line or after white space, an
+# opening brace or a comma, is followed, after any white space, by JOB, plain or
+# in quotes, and then by the end of the line, a comment, a comma or a closing
+# brace. JOB is matched as text: each character that an extended regular
+# expression treats as special is escaped. It reads each line as text, not as
+# YAML, so a line that YAML reads as something else, such as a line of a run:
+# block, still counts, a safe failure, and a job named in another form, such as
+# a quoted key, an expression or a block scalar, is not seen.
 named_elsewhere() {
-  local dir="$1" wf="$2" job="$3" other
+  local dir="$1" wf="$2" job="$3" other text="" c i
+  for ((i = 0; i < ${#job}; i++)); do
+    c="${job:i:1}"
+    case '.[\()*+?{|^$' in *"$c"*) text="$text\\" ;; esac
+    text="$text$c"
+  done
   for other in "$dir"/*.yml "$dir"/*.yaml; do
     [ -f "$other" ] && [ "${other##*/}" != "$wf" ] || continue
-    if grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${job}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other"; then
+    if grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${text}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other"; then
       return 0
     fi
   done
@@ -2155,15 +2172,15 @@ run_declared_case "a matcher that counts a longer name declares nothing" "" \
 run_declared_case "a matcher that ignores the app declares nothing" "" \
   "$(printf "$SD_GATE" 'c["name"] == "Skill discovery"')"
 run_declared_case "a gate that fails to load declares nothing" "" 'raise ValueError("gate")'
-# run_named_elsewhere_case NAME WANT FILE LINE: named_elsewhere, for the job
-# Skill discovery of own.yml, on a folder holding own.yml and FILE, with LINE
-# appended to FILE, must exit WANT.
+# run_named_elsewhere_case NAME WANT FILE LINE [JOB]: named_elsewhere, for the
+# job JOB (Skill discovery when not given) of own.yml, on a folder holding
+# own.yml and FILE, with LINE appended to FILE, must exit WANT.
 run_named_elsewhere_case() {
-  local name="$1" want="$2" tmp got=0
+  local name="$1" want="$2" job="${5:-Skill discovery}" tmp got=0
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   printf 'jobs:\n  check:\n    name: Skill discovery\n' > "$tmp/own.yml"
   printf '%s\n' "$4" >> "$tmp/$3"
-  named_elsewhere "$tmp" own.yml "Skill discovery" || got=$?
+  named_elsewhere "$tmp" own.yml "$job" || got=$?
   if [ "$got" = "$want" ]; then printf 'ok   %s (exit %s)\n' "$name" "$got"
   else printf 'FAIL %s (got %s, want %s)\n' "$name" "$got" "$want"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
@@ -2183,6 +2200,10 @@ run_named_elsewhere_case "a longer name is not found" 1 other.yml '    name: Ski
 run_named_elsewhere_case "another key that ends in name is not found" 1 other.yml '    job-name: Skill discovery'
 run_named_elsewhere_case "a comment is not found" 1 other.yml '    # name: Skill discovery'
 run_named_elsewhere_case "the job's own workflow is not read" 1 own.yml '      - name: Skill discovery'
+run_named_elsewhere_case "a job name holding regular expression characters is found" 0 other.yml \
+  '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
+run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
+  '    name: v1x2|x' 'v1.2|x'
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.

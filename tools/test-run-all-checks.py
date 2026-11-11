@@ -75,7 +75,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
 # the change.
-SCRIPT_SHA256 = "b6277419c2b6734a6714f41c17e744c81b3fee8dde6d200c236d97e9457e0537"
+SCRIPT_SHA256 = "d8be9aced004f80a3412c48cfbf487ddb648801355f285e45febabf4945ffa09"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((
