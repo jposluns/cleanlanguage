@@ -2932,6 +2932,139 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
+def disclosure_d4_section(text: str) -> str | None:
+    """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
+    d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
+    ends at whichever comes first: the next h2 element, the next element whose class attribute lists lbl as a class name
+    (such as an entry or block label; class_names() splits the attribute on ASCII whitespace only), or the end of the
+    page. It is the page source between those points, so an h3 heading inside D-4 does not end it, and an HTML comment
+    or an attribute value inside it counts as D-4's text. It finds tags and comments as Python's HTMLParser tokenizes
+    the page, and reads a tag's attributes as HTMLParser gives them, each name in lower case and each value with its
+    character references decoded; it reads a value left out as empty and, of 2 attributes with the same name, only the
+    first. The generator builds a page only if HTMLParser and HTML tokenize alike its source with its template tokens
+    and rail written in, apart from a noscript element's content, which HTML reads as text when scripting is on
+    (tools/build-site.py, "Page source grammar"). This reading takes the source as written, so on a page the generator
+    builds, it finds the D-4 heading and the end that HTML with scripting off finds, unless a template token such as
+    {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
+    section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
+    the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
+    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further;
+    for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this reading
+    skips a label or an h2 element between them."""
+    starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
+    bounds: list[int] = []
+
+    class Reader(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            line, column = self.getpos()
+            values = {name: value or "" for name, value in reversed(attrs)}
+            if not bounds:
+                if tag == "h2" and values.get("id") == "d-4":
+                    bounds.append(starts[line - 1] + column)
+            elif tag == "h2" or "lbl" in class_names(values.get("class") or ""):
+                bounds.append(starts[line - 1] + column)
+
+    reader = Reader()
+    reader.feed(text)
+    reader.close()
+    if not bounds:
+        return None
+    return text[bounds[0]:bounds[1] if len(bounds) > 1 else len(text)]
+
+
+def check_disclosure_states(failures: list[str]) -> int:
+    """Each of the generator's CHECKSUM_PENDING_NOTE and CHECKSUM_PUBLISHED_PHRASE appears in its own state's rendering
+    of sum_tokens() and in D-4's own text in site-src/pages/disclosure.html, as disclosure_d4_section() reads it. Both
+    tests are containment of the text, so each passes wherever the phrase is written in one run, whatever the sentence
+    around it says; in D-4, a phrase that the page source does not write character for character in one run fails, even
+    where the rendered sentence reads the same: for example, with a line break, a tab or 2 spaces in place of a space,
+    with a tag or a comment inside it, or with a character written as a character reference. The test needs each phrase
+    in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
+    D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
+    pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
+    follow the entries, and a page with no D-4 heading, among others."""
+    generator = load_module(GENERATOR)
+    phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
+    note, published = phrases.values()
+
+    def d4_failures(text: str, where: str) -> list[str]:
+        section = disclosure_d4_section(text)
+        if section is None:
+            return [f"{where} has no D-4 heading, an h2 element whose id attribute is d-4"]
+        return [f"D-4 of {where} lacks {name}, {phrase!r}" for name, phrase in phrases.items() if phrase not in section]
+
+    lacks_note = [f"D-4 of the test page lacks CHECKSUM_PENDING_NOTE, {note!r}"]
+    entry_4 = f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
+    blocks = ('<p class="lbl blk">Your browser</p>\n<p>{}</p>\n<p class="lbl blk">Security</p>\n<p>Report.</p>\n'
+              '<div class="next"><p class="lbl">Next</p><a class="start" href="/">Home</a>\n</div>\n')
+    cases = (
+        ("an extra attribute on the D-4 heading", f'<p class="lbl sec">Entry 4</p>\n<h2 class="x" id="d-4">Four</h2>\n'
+         f'<p>{note}; {published} 1.</p>\n<p class="lbl sec">Entry 5</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("the note only before the D-4 heading on its line",
+         f'<p class="lbl sec">Entry 4</p><p>{note}.</p><h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
+         f'<p class="lbl sec">Entry 5</p>\n', lacks_note),
+        ("D-4 as the last entry, its note on the line of the label that ends it",
+         entry_4 + f"<p>{note}.</p>" + blocks.format("Local storage."), []),
+        ("a class attribute whose only class name is nolbl, before the note in D-4",
+         entry_4 + f'<p class="nolbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("a class attribute whose only class name joins lbl and x with a no-break space, before the note in D-4",
+         entry_4 + f'<p class="lbl\u00a0x">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("the note only after an element with 2 class attributes, the first lbl sec and the second x",
+         entry_4 + f'<p class="lbl sec" class="x">Entry 5</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("an element with 2 class attributes, the first x and the second lbl, before the note in D-4",
+         entry_4 + f'<p class="x" class="lbl">Aside.</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("D-4 at the end of the page", entry_4 + f"<p>{note}.</p>\n", []),
+        ("the note only on the next entry's label line",
+         entry_4 + f'<p class="lbl sec">Entry 5, {note}</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("the note only in a block after D-4 as the last entry", entry_4 + blocks.format(note), lacks_note),
+        ("the note only after the next h2 heading", entry_4 + f'<h2 id="d-5">Five</h2>\n<p>{note}</p>\n', lacks_note),
+        ("no D-4 heading", f'<p class="lbl sec">Entry 3</p>\n<h2 id="d-3">Three</h2>\n<p id="d-4">{note}; {published}'
+         " 1.</p>\n", ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
+        ("a D-4 heading with 2 id attributes, the first d-4 and the second x",
+         f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4" id="x">Four</h2>\n<p>{note}; {published} 1.</p>\n'
+         '<p class="lbl sec">Entry 5</p>\n', []),
+        ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
+         f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
+         ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
+        ("the note after <!--> and an Entry 5 label, which HTMLParser reads as 1 comment up to the next --> (the "
+         "generator refuses <!-->)", entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n'
+         '<h2 id="d-5">Five</h2>\n', []),
+        ("the note only after an Entry 5 label on a div element",
+         entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
+        ("the note directly before the next h2 heading on its line", entry_4 + f'{note}<h2 id="d-5">Five</h2>\n', []),
+        ("the D-4 heading first on the page and the note last, with no line break after it",
+         f'<h2 id="d-4">Four</h2>{published} 1;\n{note}', []),
+    )
+    for case, text, expected in cases:
+        got = d4_failures(text, "the test page")
+        if got != expected:
+            failures.append(f"disclosure states: the test page with {case} gave {got}, expected {expected}")
+    text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
+    failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
+    sum_url = generator.release_tokens(PIN_VERSION, f"v{PIN_VERSION}", PIN_CHECKSUM)["release.sum_url"]
+    states = (("placeholder", generator.PLACEHOLDER_CHECKSUM, "CHECKSUM_PENDING_NOTE"),
+              ("published", PIN_CHECKSUM, "CHECKSUM_PUBLISHED_PHRASE"))
+
+    def state_failures(sum_tokens) -> list[str]:
+        return [f"the {state} rendering of sum_tokens() lacks {name}, {phrases[name]!r}" for state, checksum, name in
+                states if phrases[name] not in "".join(sum_tokens(PIN_VERSION, checksum, sum_url).values())]
+
+    # A stand-in for sum_tokens() that renders nothing in either state shows that each failure names its own state. No
+    # check pins the names of this case's test pages, the wording of its failures beyond what its expected lists hold
+    # (such as the "disclosure states:" prefix and the file name that its failures for site-src/pages/disclosure.html
+    # give), the count of cases that it returns, the call to reader.close() in disclosure_d4_section(), or either bound
+    # of the text that this function returns against a move of 1 character later, which adds or drops at most the < that
+    # starts the tag at that bound, a character that neither phrase holds.
+    planted = state_failures(lambda version, checksum, url: {})
+    expected = [f"the placeholder rendering of sum_tokens() lacks CHECKSUM_PENDING_NOTE, {note!r}",
+                f"the published rendering of sum_tokens() lacks CHECKSUM_PUBLISHED_PHRASE, {published!r}"]
+    if planted != expected:
+        failures.append(f"disclosure states: a stand-in rendering empty in both states gave {planted}, expected "
+                        f"{expected}")
+    failures.extend(f"disclosure states: {failure}" for failure in state_failures(generator.sum_tokens))
+    return 2 + len(cases)
+
+
 # The pin of the whole verify page: the sha256 of each state's rendering by
 # verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
 # zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
@@ -3371,6 +3504,7 @@ def main() -> int:
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
     ran += check_release_near_placeholder(failures)
+    ran += check_disclosure_states(failures)
     ran += check_verify_page_pin(failures)
     ran += check_committed_render(failures)
     ran += check_check_mode(failures)
