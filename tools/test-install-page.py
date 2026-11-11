@@ -2383,8 +2383,19 @@ def in_process_run_problems(source: str | None = None, exempt: dict[str, str] = 
     stands. The body of load_gate(), pinned_baseline() or exiting_gate(), each call of which is itself a load, needs no
     try, and no try outside a def or a lambda holds what runs inside it. It reads names only, so a load through another
     name, or a handler that names another name bound to BaseException, passes unnoticed, and it does not read whether a
-    reason of exempt is true, so a change that makes one untrue passes unnoticed. run_rule_case_problems() holds these
-    rules on the planted sources of RUN_RULE_CASES."""
+    reason of exempt is true, so a change that makes one untrue passes unnoticed. On the planted sources of
+    RUN_RULE_CASES, run_rule_case_problems() holds only the rules that its cases use: a function outside the tuple, or
+    in exempt with no reason; a name of exempt that names no such function or names 1 in the tuple; a call of
+    load_gate(), exec(), exec_module() or parse() outside every try with a handler naming SystemExit, at the top level,
+    under an if, under a try whose handler names Exception only, in a handler that names SystemExit, in a default, and
+    in a lambda or a nested def under such a try; a bare handler and 1 that names BaseException or KeyboardInterrupt; a
+    method that the tuple names as Class.method, a def under an if or a try, and a def nested in another; and the body
+    of load_gate(). No planted case uses the rest, among them: loader(), pinned_baseline(), exiting_gate(),
+    __import__(), load_tool(), run_path() and import_module(); ast.parse(); a decorator or an annotation; the else or
+    the finally of a held try; a try*; a try directly inside a held try; a handler that names SystemExit after another;
+    a def under a with or a loop; an async def; a nested class; a class or a lambda in a def; the body of
+    pinned_baseline() or exiting_gate(); and a handler named by attribute. A change to only the rule on 1 of these
+    passes run_rule_case_problems(); the suite fails on it only if it changes what this check returns on this file."""
     names = {"load_gate", "loader", "pinned_baseline", "exiting_gate", "exec", "__import__"}
     attributes = {"exec_module", "load_tool", "run_path", "import_module", "parse"}
     loaders = {"load_gate", "pinned_baseline", "exiting_gate"}
