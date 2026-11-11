@@ -25,10 +25,10 @@ name: Skill discovery
 # any line outside that shape fails the check. In CI that check runs in the CI
 # status tests job (.github/workflows/ci-status-test.yml) on every pull request
 # and every push to main, and tools/ci-status.sh insists on that job too, so a
-# commit on which it has not run, or has not passed, does not read green
-# through ci-status. What the commands the steps run and the pinned actions
-# do, including anything they write for later steps, and what the other jobs
-# of the workflow run, are not checked.
+# commit on which it has not run, or has not passed, does not read green through
+# ci-status. What the commands the steps run and the pinned actions do,
+# including anything they write for later steps, and what the other jobs of the
+# workflow run, are not checked.
 
 on:
   pull_request:

@@ -156,6 +156,14 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 # set, standard output must contain it as a fixed string.
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
+  # In real time a wait ends with the wait timing out (exit 2) only once a
+  # reading has succeeded inside the window, so whether a case gets that exit
+  # depends on how fast the host reads; such a case runs on the fake clock of
+  # run_clock_case instead, and here it fails without running.
+  if [ "$want" = 2 ] && [[ " $* " == *" --wait "* ]]; then
+    printf 'FAIL %s (wants exit 2 from a real-time --wait; run it with run_clock_case)\n' "$name"
+    fails=$((fails + 1)); return
+  fi
   local sha="${CASE_SHA:-0000000000000000000000000000000000000000}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
@@ -234,9 +242,14 @@ run_err_case() { local CASE_NEEDLE="$4"; run_case "$1" "$2" "" "" "$3"; }
 # required check.
 run_log_case() { local CASE_ONLY_CALLS=1; run_case "$1" "$2" "" "" "$3"; }
 
-# run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...
+# run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...: as in run_case, a case
+# that wants exit 2 from a real-time --wait fails without running.
 run_timed_case() {
   local name="$1" payload="$2" maxs="$3" want="$4"; shift 4
+  if [ "$want" = 2 ] && [[ " $* " == *" --wait "* ]]; then
+    printf 'FAIL %s (wants exit 2 from a real-time --wait; run it with run_clock_case)\n' "$name"
+    fails=$((fails + 1)); return
+  fi
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$payload" > "$tmp/def.json"
@@ -578,15 +591,16 @@ finish(code, why, "deadline %s, gh deadline %s, killed at %s, returned at %s, ex
 }
 
 # run_clock_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]: run_case
-# for a plan that ends in a read the deadline cuts off, on the fake clock of
-# FAKE_CLOCK_GATE with --interval 1, so a slow host cannot close the window
-# before that read starts. Each read other than s takes 0.5 seconds on that
-# clock: g serves DEFAULT, a serves ALT, f ends with exit 1, and s would end
-# only 60 seconds after it has started; the last token repeats once the plan
-# runs out. Exit, CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as
-# run_case checks them, and gh must be killed exactly once, at the deadline of
-# the --timeout given. When CASE_NO_KILL is set, the plan is one the deadline
-# never cuts off, and gh must never be killed instead.
+# on the fake clock of FAKE_CLOCK_GATE with --interval 1, so a slow host cannot
+# close the window before a read starts, for a plan that ends in a read the
+# deadline cuts off or, with CASE_NO_KILL set, for a wait that the deadline ends
+# between reads. Each read other than s takes 0.5 seconds on that clock: g
+# serves DEFAULT, a serves ALT, f ends with exit 1, and s would end only 60
+# seconds after it has started; the last token repeats once the plan runs out.
+# Exit, CASE_NEEDLE, CASE_ABSENT and CASE_READS are checked as run_case checks
+# them, and gh must be killed exactly once, at the deadline of the --timeout
+# given, or, with CASE_NO_KILL set, never. When CASE_END is set, the gate must
+# exit with the clock at that time.
 run_clock_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -601,6 +615,7 @@ run_clock_case() {
   PATH="$bin:$PATH" python3 -I -B -c "$FAKE_CLOCK_GATE"'
 plan, flags = sys.argv[4].split(), sys.argv[5:]
 no_kill = bool(os.environ.get("CASE_NO_KILL"))  # set on the case, so the shell exports it
+end = os.environ.get("CASE_END", "")
 DEADLINE = 1000.0 + float(flags[flags.index("--timeout") + 1])
 payloads = {}
 for tok, file in (("g", "/def.json"), ("a", "/alt.json")):
@@ -615,7 +630,8 @@ def before_read():
     GH_ENDS = 60.0 if tok == "s" else 0.5
     GH_STATUS = 256 if tok == "f" else 0  # 256 is the wait status of exit 1
 code = run_gate("--interval", "1", *flags)
-why = [w for w, ok in (("kill", not kills if no_kill else near(kills, [DEADLINE])),) if not ok]
+why = [w for w, ok in (("kill", not kills if no_kill else near(kills, [DEADLINE])),
+                       ("end", not end or near([now()], [float(end)]))) if not ok]
 finish(code, why, "reads at %s, killed at %s, exit at %.6f" % (show(starts), show(kills), now()))' \
     "${here}/ci-status.py" 0000000000000000000000000000000000000000 "$tmp" "$plan" "$@" > "$tmp/out" 2> "$tmp/err" || got=$?
   local why="" facts
@@ -788,8 +804,8 @@ run_bytes_case "non-UTF-8 output is rejected fail-closed" 3
 # With 2 seconds left and a gh that would end 60 seconds after it starts, this
 # case asserts the kill at the deadline, 1002.0, and exit 3.
 run_cut_off_case "gh read exceeding the wait deadline is not green" 2.000 "2.0 seconds"
-# The required Cloudflare Pages check absent -> not green even with the 4 required
-# github-actions checks green (a partial reading is not confirmed).
+# The required Cloudflare Pages check absent -> not green even with the 4
+# required github-actions checks green (a partial reading is not confirmed).
 run_case "required Cloudflare check absent -> not green" "$MISSING_CLOUDFLARE" "" "" 2
 # A duplicate check-run id must not pad the count to hide a run.
 run_case "duplicate check-run id is rejected fail-closed" "$DUP_ID" "" "" 3
@@ -884,9 +900,9 @@ CASE_NEEDLE="$(printf '  %-28s %s' extra neutral)" \
 # run on the fake clock of run_clock_case, where each read takes 0.5 seconds:
 # with --timeout 4 the 3 reads end at 1000.5, 1002.0 and 1003.5, none of them on
 # the deadline 1004.0, the top-of-loop guard ends the wait, and gh is never
-# killed.
-WAIT_TIMED_OUT="still unsettled after 4 seconds; giving up"
-CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)"$'\n'"${WAIT_TIMED_OUT}" CASE_NO_KILL=1 \
+# killed. This one requires the report line of the unfinished run; the second
+# requires the timed-out wait.
+CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)" CASE_NO_KILL=1 \
   run_clock_case "the report gives an unfinished run its status" "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4
 # A zero-length wait window fails closed rather than overrunning the deadline.
 run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
@@ -902,9 +918,9 @@ run_case "real cloudflare-workers-and-pages slug satisfies the required check" "
 # step of that case waits in real time.
 run_deadline_stop_case "wait stops near the deadline, not a whole interval past it"
 
-# The required set is the 4 named GitHub Actions jobs and the Cloudflare
-# build. An Actions job counts only when a run carries its exact display name and
-# the github-actions app slug; every run, duplicates included, still feeds the
+# The required set is the 4 named GitHub Actions jobs and the Cloudflare build.
+# An Actions job counts only when a run carries its exact display name and the
+# github-actions app slug; every run, duplicates included, still feeds the
 # verdict.
 run_case "unnamed github-actions run is not a required check -> not green" "$GENERIC_GA" "" "" 2
 run_case "Plugin manifests missing -> not green" "$(runs "$SD_OK" "$APM_OK" "$CST_OK" "$CF")" "" "" 2
@@ -922,23 +938,25 @@ run_case "required name in another letter case does not count -> not green" \
   "$(runs '{"status":"completed","conclusion":"success","name":"plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CST_OK" "$CF")" "" "" 2
 run_case "required name with a trailing space does not count -> not green" \
   "$(runs "$PM_OK" '{"status":"completed","conclusion":"success","name":"Skill discovery ","app":{"slug":"github-actions"}}' "$APM_OK" "$CST_OK" "$CF")" "" "" 2
-CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)"$'\n'"${WAIT_TIMED_OUT}" CASE_NO_KILL=1 \
+# The wait of the report case above, on the same fake clock, must time out with
+# exactly its 3 reads and exit at the deadline, 1004.0, so a wait that gives up
+# before the deadline or sleeps past it fails here.
+CASE_NEEDLE="still unsettled after 4 seconds; giving up" CASE_READS=3 CASE_END=1004.0 CASE_NO_KILL=1 \
   run_clock_case "unfinished required check with --wait stays not green at the deadline" \
   "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4
 # A read that the deadline cuts off after a reading that succeeded and was still
-# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3): a
-# loaded host can start a read with little of the window left. The plan token s
-# is a gh call that hangs until the tool ends it at the deadline.
-# These cases run on the fake clock of run_clock_case, because in real time the
-# earlier reads and the 1-second sleeps between them must all fit inside the
-# 5-second window, which a heavily loaded host can exceed before the hanging
-# call starts. Each case requires the line naming the cut-off of that hanging
-# call, and requires the fake gh to have served it (CASE_READS), so a gate
-# whose window runs out before that call starts fails rather than passing
-# through the top-of-loop guard or the closed-window check before the read.
-# After a failed read, a read cut off at the deadline still reports the read
-# failure (exit 3), and so does one after a good reading and then a failed
-# read.
+# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3):
+# a loaded host can start a read with little of the window left. The plan token
+# s is a gh call that hangs until the tool ends it at the deadline. These cases
+# run on the fake clock of run_clock_case, because in real time the earlier
+# reads and the 1-second sleeps between them must all fit inside the 5-second
+# window, which a heavily loaded host can exceed before the hanging call starts.
+# Each case requires the line naming the cut-off of that hanging call, and
+# requires the fake gh to have served it (CASE_READS), so a gate whose window
+# runs out before that call starts fails rather than passing through the
+# top-of-loop guard or the closed-window check before the read. After a failed
+# read, a read cut off at the deadline still reports the read failure (exit 3),
+# and so does one after a good reading and then a failed read.
 CUT_OFF="ci-status: the wait window cut off the last read (gh api did not return within"
 HUNG_READ_FAILED="check read failed for 0000000000000000000000000000000000000000: gh api did not return within"
 CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
@@ -1136,10 +1154,11 @@ run_err_case "a non-string name is named on standard error" \
 run_err_case "a non-string app slug is named on standard error" \
   '{"check_runs":[{"status":"completed","conclusion":"success","name":"x","app":{"slug":7}}]}' 3 \
   "check read failed for 0000000000000000000000000000000000000000: non-string check field app.slug"
-# conclusion, name, app.slug and the app object are nullable: each, null or absent
-# on an extra run beside the 5 green required checks, reads as an empty value,
-# never as a malformed reading. A completed run with no conclusion is a failure,
-# so the conclusion cases use an unfinished run, which reads pending (exit 2).
+# conclusion, name, app.slug and the app object are nullable: each, null or
+# absent on an extra run beside the 5 green required checks, reads as an empty
+# value, never as a malformed reading. A completed run with no conclusion is a
+# failure, so the conclusion cases use an unfinished run, which reads pending
+# (exit 2).
 run_case "extra run with a null name -> green" \
   "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}')" "" "" 0
 run_case "extra run with no name -> green" \
@@ -1183,11 +1202,12 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 # reader that checked only some runs would read it as green, pending or red, or
 # fail with another message; the whole reading must be unreadable, and the
 # message names what is wrong.
-# bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run, in
-# that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON VALUE.
-# FIELD is status, conclusion, name, app.slug, app.id, app (the whole app object)
-# or head_sha, which is added to that run alone. Any other INDEX changes no run. Each
-# run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455, the others none.
+# bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run,
+# in that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON
+# VALUE. FIELD is status, conclusion, name, app.slug, app.id, app (the whole app
+# object) or head_sha, which is added to that run alone. Any other INDEX changes
+# no run. Each run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455,
+# the others none.
 bad_at() {
   local i=0 spec st cn nm app hs slug id out=()
   for spec in "Plugin manifests|github-actions|" "Skill discovery|github-actions|" \
@@ -1678,8 +1698,8 @@ done
 # The name is not consulted: a run of the real app with an empty name counts.
 run_case "Cloudflare build with an empty name is matched by its app slug and app id -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
-# An integer app id on a github-actions run is valid: the 4 required Actions jobs
-# carrying the github-actions app id 15368 still count.
+# An integer app id on a github-actions run is valid: the 4 required Actions
+# jobs carrying the github-actions app id 15368 still count.
 run_case "github-actions runs carrying the app id 15368 still count -> green" \
   "$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"github-actions","id":15368}}' \
     '{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions","id":15368}}' \
@@ -1727,8 +1747,8 @@ for app_id in '"85455"' true false 85455.0 85455e0 '[]' '{}' '[85455]'; do
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\",\"id\":${app_id}}}")" 3 \
     "check read failed for 0000000000000000000000000000000000000000: check run app.id is not an integer"
 done
-# Every required check missing: the message names all 5, in their declared order,
-# and the commit read.
+# Every required check missing: the message names all 5, in their declared
+# order, and the commit read.
 run_err_case "every missing required check is named, in order" \
   '{"check_runs":[{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}]}' 2 \
   "required check(s) Plugin manifests, Skill discovery, Agent Plugins manifest, CI status tests, Cloudflare Pages not registered for 0000000000000000000000000000000000000000 though they run on every PR and push here; not green"
@@ -1767,8 +1787,8 @@ run_err_case "every missing required check is named, in order" \
 # job skipped by an if:, or by a failed job it needs, concludes skipped, which
 # ci-status.py reads as a failure for a required Actions job, but a step skipped
 # by an if: or allowed to fail leaves the job successful, so such a job would
-# read green without running its checks. The job display name is also the
-# only 4-space-indented name: line, and it equals the name that ci-status.py
+# read green without running its checks. The job display name is also the only
+# 4-space-indented name: line, and it equals the name that ci-status.py
 # declares. A renamed job, a filter that leaves a commit without the check, or
 # any key or line outside that shape fails here, instead of turning every read
 # into a forever-pending one or a false green. In CI this check runs in the CI
@@ -1777,8 +1797,8 @@ run_err_case "every missing required check is named, in order" \
 # which it has not run, or has not passed, does not read green. Residual: what
 # the commands the steps run and the pinned actions do, including anything they
 # write for later steps, such as a BASH_ENV line in the GITHUB_ENV file, and
-# what the other jobs of the workflow run, are not checked, so a step changed
-# to do nothing still reads green.
+# what the other jobs of the workflow run, are not checked, so a step changed to
+# do nothing still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
 # A line outside the subset, a file that cannot be read as UTF-8, or a file with
 # no line other than blank lines and comments, ends the check with that one word;
@@ -2005,9 +2025,11 @@ print(" ".join(dict.fromkeys(found)))
 PY
 }
 wf_dir="${here}/../.github/workflows"
+shaped_jobs=()
 for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
   "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
   wf="${pair%%:*}" job="${pair#*:}" why=""
+  shaped_jobs+=("$job")
   if [ ! -f "$wf_dir/$wf" ] || [ ! -r "$wf_dir/$wf" ]; then
     why=" unreadable-workflow"
   else
@@ -2023,6 +2045,16 @@ for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill di
     printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
   fi
 done
+# The loop above and tools/ci-status.py must name the same Actions jobs, so a
+# job added to REQUIRED_ACTIONS_JOBS without its workflow in the loop, or a pair
+# dropped from the loop, fails here instead of leaving a workflow unchecked.
+declared_jobs="$(grep -o -E '_actions_job\("[^"]*"\)' "${here}/ci-status.py" | sed -E 's/^_actions_job\("(.*)"\)$/\1/' | LC_ALL=C sort | tr '\n' ';')"
+looped_jobs="$(printf '%s\n' "${shaped_jobs[@]}" | LC_ALL=C sort | tr '\n' ';')"
+if [ -n "$declared_jobs" ] && [ "$declared_jobs" = "$looped_jobs" ]; then
+  printf 'ok   the shape loop names every Actions job that the gate declares\n'
+else
+  printf 'FAIL the shape loop names %s but the gate declares %s\n' "$looped_jobs" "$declared_jobs"; fails=$((fails + 1))
+fi
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
@@ -2648,21 +2680,24 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # whose other attributes, sleep included, are the real ones. No host clock
 # reading reaches the gate, so only the shift moves its clock: however long the
 # first read, served by a fake gh script run as its own process, and the sleep
-# after it take on a loaded host, the window stays open for the second read.
+# after it take on a loaded host, the window stays open for the second read. To
+# hold the cases to that, the host clock, as time.time and time.monotonic read
+# it, steps 31 seconds forward, past the whole window, once the first read
+# returns, so a gate clock that read the host clock would find the deadline
+# passed before the second read and exit 2 with neither NEEDLE nor the reap.
 # Once that wait has seen gh end, the replaced os.waitpid sets the shift to the
 # whole 30-second window, so the gate, at its next clock read (the one after
 # that poll), finds the deadline passed and kills and reaps gh at once through
 # its own code, and the case does not wait out the window. No sleep of the gate
-# is skipped. None of the ends of the second gh is
-# a read the deadline cut off, so each case must exit WANT, never 2 as a
-# timed-out wait: 3 with NEEDLE on standard error, or for MODE red the red
-# verdict, 1 with NEEDLE on standard output. The replaced os.waitpid also
-# requires the status it reaps after the kill to be that end of gh, not the
-# kill, so no case passes without reaching it. Because gh has always ended
-# before the kill, these cases do not cover a gh still running when it is
-# killed (the hung-gh cases of plan token s cover that) or a gate that reads a
-# kill as gh's own end. The gate's clock stands apart from the host's, so they
-# assert no time.
+# is skipped. None of the ends of the second gh is a read the deadline cut off,
+# so each case must exit WANT, never 2 as a timed-out wait: 3 with NEEDLE on
+# standard error, or for MODE red the red verdict, 1 with NEEDLE on standard
+# output. The replaced os.waitpid also requires the status it reaps after the
+# kill to be that end of gh, not the kill, so no case passes without reaching
+# it. Because gh has always ended before the kill, these cases do not cover a gh
+# still running when it is killed (the hung-gh cases of plan token s cover that)
+# or a gate that reads a kill as gh's own end. The gate's clock stands apart
+# from the host's, so they assert no time.
 run_final_reap_case() {
   local name="$1" mode="$2" want="$3" needle="$4"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -2693,6 +2728,16 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 shift = [0]
 WALL, MONO = time.time(), time.monotonic()  # read once, before the gate starts
+real_time, real_monotonic, host_step = time.time, time.monotonic, [0]
+time.time = lambda: real_time() + host_step[0]
+time.monotonic = lambda: real_monotonic() + host_step[0]
+real_read_checks = mod.read_checks
+def read_checks(*args):
+    try:
+        return real_read_checks(*args)
+    finally:
+        host_step[0] = 31  # the host clock steps past the whole window after the first read
+mod.read_checks = read_checks
 class Clock:
     def __getattr__(self, name):
         return getattr(time, name)

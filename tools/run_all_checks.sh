@@ -8,8 +8,8 @@
 # a manual dispatch) and release-skill.yml (a tag push and a manual dispatch)
 # never run on a pull request or a push to main, so neither is mirrored. Each
 # command runs unpiped, from the repository root, and its exit status is
-# recorded; a failure does not stop the run, and the script ends by naming
-# every command that failed and exiting 1, or exits 0 when every command passed.
+# recorded; a failure does not stop the run, and the script ends by naming every
+# command that failed and exiting 1, or exits 0 when every command passed.
 #
 # The Plugin manifests job installs the Claude Code CLI at the version that
 # plugin-validate.yml pins in CLAUDE_CODE_VERSION. This script installs nothing:

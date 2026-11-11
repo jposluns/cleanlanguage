@@ -28,11 +28,11 @@ planted gate, and SHELLOPTS with noexec or onecmd makes bash run nothing and exi
 0 before ci-status.sh runs.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
-required check: the Cloudflare Pages build, one of the checks that CLAUDE.md
-lists as required on main, is produced by an external app, not GitHub Actions,
-so a gate built on actions/runs alone would pass while the required check was
-failing. The legacy commits/<sha>/status endpoint is not used either:
-this repository publishes no commit statuses, so it answers "pending" forever.
+required check: the Cloudflare Pages build, one of the checks that CLAUDE.md lists
+as required on main, is produced by an external app, not GitHub Actions, so a gate
+built on actions/runs alone would pass while the required check was failing. The
+legacy commits/<sha>/status endpoint is not used either: this repository publishes
+no commit statuses, so it answers "pending" forever.
 
 Reading is FAIL-CLOSED. The whole paginated response is parsed as JSON; a page that
 is not an object, a check_runs that is not a list, a check that is not an object, or
@@ -55,27 +55,30 @@ whose Actions gates had not started). So a pass is confirmed only when two
 consecutive readings have the identical set of checks and conclusions. This costs
 one interval on every green result, whether or not --wait was given.
 
-This repository runs, on every pull request and every push to main, 4 GitHub
-Actions jobs whose display names are Plugin manifests, Skill discovery, Agent
-Plugins manifest and CI status tests, and the external Cloudflare Pages build.
-CLAUDE.md lists the Cloudflare build and the first 3 Actions jobs as the checks
-required on main. The tool insists on all 5, so CI status tests, the job that runs
-the workflow shape check below, also gates every reading through this tool, though
-GitHub does not require it for a merge. Each Actions job is matched by its exact display
-name (case-sensitive and untrimmed) together with the github-actions app slug, so a
-run of the same name from another app, or an unnamed github-actions job such as the
+This repository runs, on every pull request and every push to main, 4 GitHub Actions
+jobs whose display names are Plugin manifests, Skill discovery, Agent Plugins
+manifest and CI status tests, and the external Cloudflare Pages build. CLAUDE.md
+lists the Cloudflare build and the first 3 Actions jobs as the checks required on
+main. The tool insists on all 5, so CI status tests, the job that runs the workflow
+shape check below, also gates every reading through this tool, though GitHub does
+not require it for a merge. Each Actions job is matched by its exact display name
+(case-sensitive and untrimmed) together with the github-actions app slug, so a run
+of the same name from another app, or an unnamed github-actions job such as the
 sitemap check, never satisfies one; the Cloudflare build is matched by the exact app
 slug and app id of the Cloudflare app on this repository, whatever its name, so a
 run from any other app never satisfies it. If Cloudflare renames or re-registers
 that app, a passing run of it no longer counts, so the reading cannot turn green
 until the pin is updated: a passing reading reads pending, and a red reading still
 reads red. An app id that is neither an integer nor null makes the reading
-unreadable. Only the Cloudflare build is pinned by app id, and an absent or null
-app id never matches that pinned id. The 4 Actions jobs are matched by app slug
-and display name alone; their app id is not compared. A passing reading missing
-any of the 5 means that check has not registered (a malformed branch, a head
-whose commit message carries a skip marker, or the external check still building);
-such a reading is downgraded from pass to pending, never to a red. A commit that
+unreadable. Only the Cloudflare build is pinned by app id, and an absent or null app
+id never matches that pinned id. The 4 Actions jobs are matched by app slug and
+display name alone; their app id is not compared. A passing reading missing any of
+the 5 means that check has not registered (a malformed branch, a head whose commit
+message carries a skip marker, a commit older than the workflow that runs the check,
+such as a main commit from before CI status tests ran on every push, or the external
+check still building); such a reading is downgraded from pass to pending, never to a
+red, and the message naming the missing check says that it runs on every pull
+request and push, which is untrue of such an older commit. A commit that
 legitimately ran none of them is a safe false-red, never a false-green. Residual: a
 name and an app cannot tell which workflow produced a run, so a pull request that
 deletes one of those workflows and adds another job with the same display name
@@ -92,31 +95,31 @@ returns under its default filter, the latest runs, so whether such a job can tak
 the place of a failed run of the real job in a reading depends on how the API
 selects the latest runs, which this tool does not control. Pointing --repo at a
 repository that does not run all 5 unconditionally would downgrade a legitimate
-green to pending. For the 4 GitHub Actions jobs, any conclusion other than
-success reads as a failure (exit 1), skipped and neutral included, because the
-shape check admits no key that could skip such a job; for the Cloudflare build,
-skipped and neutral count as passed, as GitHub counts them for a required check.
-Residual: a Cloudflare build that concludes skipped or neutral without building
-therefore reads green. For the 4 Actions jobs, tools/test-ci-status.sh reads
-each workflow with an allow-list that fails closed: the on: block holds only a
-pull_request trigger with nothing under it and a push trigger filtered to main
-alone; the permissions block is exactly contents: read; a top-level env, if present,
-holds only CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310; and
-the job with a required display name holds only name, runs-on set to ubuntu-latest,
-and steps. Each step holds an optional name and either uses: naming an owner/repo
-action pinned to a full 40-character commit sha, or run: with shell: bash, and
-nothing else. So that check refuses any if:, needs: or continue-on-error: key, any
-other runner or shell, any local or docker action, and any environment variable such
-as BASH_ENV or SHELLOPTS set in the workflow, any of which could otherwise skip the
-job or its steps, or pass over a failed step, and still read as passing; any line
-outside that shape fails the check. In CI that check runs in the CI status tests
-job of .github/workflows/ci-status-test.yml on every pull request and every push to
-main, and this tool insists on that job, so a commit on which it has not run, or
-has not passed, never reads green. That job runs the pull request's own copy of
+green to pending. For the 4 GitHub Actions jobs, any conclusion other than success
+reads as a failure (exit 1), skipped and neutral included, because the shape check
+admits no key that could skip such a job; for the Cloudflare build, skipped and
+neutral count as passed, as GitHub counts them for a required check. Residual: a
+Cloudflare build that concludes skipped or neutral without building therefore reads
+green. For the 4 Actions jobs, tools/test-ci-status.sh reads each workflow with an
+allow-list that fails closed: the on: block holds only a pull_request trigger with
+nothing under it and a push trigger filtered to main alone; the permissions block is
+exactly contents: read; a top-level env, if present, holds only CLAUDE_CODE_VERSION,
+set to a dotted version number such as 2.1.310; and the job with a required display
+name holds only name, runs-on set to ubuntu-latest, and steps. Each step holds an
+optional name and either uses: naming an owner/repo action pinned to a full
+40-character commit sha, or run: with shell: bash, and nothing else. So that check
+refuses any if:, needs: or continue-on-error: key, any other runner or shell, any
+local or docker action, and any environment variable such as BASH_ENV or SHELLOPTS
+set in the workflow, any of which could otherwise skip the job or its steps, or pass
+over a failed step, and still read as passing; any line outside that shape fails the
+check. In CI that check runs in the CI status tests job of
+.github/workflows/ci-status-test.yml on every pull request and every push to main,
+and this tool insists on that job, so a commit on which it has not run, or has not
+passed, never reads green. That job runs the pull request's own copy of
 tools/test-ci-status.sh, so a pull request that weakens the check weakens it for
-itself. What the commands the steps run and the pinned actions do,
-including anything they write for later steps, and what the other jobs of the
-workflow run, are not checked.
+itself. What the commands the steps run and the pinned actions do, including
+anything they write for later steps, and what the other jobs of the workflow run,
+are not checked.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,
@@ -572,26 +575,26 @@ def verdict_of(checks) -> str:
     return "pass"
 
 
-# The checks this repository runs on every pull request and every push to main,
-# and on which this tool insists: the 4 github-actions jobs Plugin manifests, Skill
-# discovery, Agent Plugins manifest and CI status tests, and the external
-# Cloudflare Pages build. CLAUDE.md lists the Cloudflare build and the first 3
-# Actions jobs as the checks required on main; the tool also insists on CI status
-# tests, the job that runs the workflow shape check. Any conclusion of an Actions
-# job other than success reads as a failure (verdict_of). A passing reading missing
-# any of them means that check has not registered yet (or the head carries a skip
-# marker, or the branch is malformed), so it is not green until all are present.
-# Each Actions job is matched by its exact display name together with the
-# github-actions app slug, so a run of the same name from another app, or an
-# unnamed github-actions job, never satisfies one. The Cloudflare build is matched
-# by the exact app slug and app id of the Cloudflare app, read from the live
-# check-runs of commits 846e125 and 35fc546 on 2026-11-03 (slug
-# cloudflare-workers-and-pages, id 85455, owner cloudflare); its name is not
-# consulted. If Cloudflare renames or re-registers that app, a passing run of it
-# no longer counts, so the reading cannot turn green until the pin is updated: a
-# passing reading reads pending ("Cloudflare Pages not registered"), and a red
-# reading still reads red. A new pin is checked against live check-runs before it
-# merges.
+# The checks this repository runs on every pull request and every push to main, and
+# on which this tool insists: the 4 github-actions jobs Plugin manifests, Skill
+# discovery, Agent Plugins manifest and CI status tests, and the external Cloudflare
+# Pages build. CLAUDE.md lists the Cloudflare build and the first 3 Actions jobs as
+# the checks required on main; the tool also insists on CI status tests, the job
+# that runs the workflow shape check. Any conclusion of an Actions job other than
+# success reads as a failure (verdict_of). A passing reading missing any of them
+# means that check has not registered yet (or the head carries a skip marker, the
+# commit is older than the workflow that runs the check, or the branch is
+# malformed), so it is not green until all are present. Each Actions job is matched
+# by its exact display name together with the github-actions app slug, so a run of
+# the same name from another app, or an unnamed github-actions job, never satisfies
+# one. The Cloudflare build is matched by the exact app slug and app id of the
+# Cloudflare app, read from the live check-runs of commits 846e125 and 35fc546 on
+# 2026-11-03 (slug cloudflare-workers-and-pages, id 85455, owner cloudflare); its
+# name is not consulted. If Cloudflare renames or re-registers that app, a passing
+# run of it no longer counts, so the reading cannot turn green until the pin is
+# updated: a passing reading reads pending ("Cloudflare Pages not registered"), and
+# a red reading still reads red. A new pin is checked against live check-runs before
+# it merges.
 # Residual: a name and an app cannot tell which workflow produced a run, so a pull
 # request that deletes one of those workflows and adds another job with the same
 # display name satisfies the check. GitHub's own app-pinned required check has the

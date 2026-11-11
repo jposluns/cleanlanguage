@@ -13,13 +13,17 @@ skipped and neutral included, as a failure. Do not merge while any required
 check is failing or still pending, and do not merge a pull request that has
 unresolved review threads requesting changes.
 
-A pull request whose head commit message carries a skip marker such as
-`[skip ci]`, or whose merge with `main` has conflicts, gets no run of those
-GitHub Actions checks and cannot merge until a commit that clears the condition
-is pushed to it; through `tools/ci-status.sh` such a head reads pending, not
-green. No workflow has a `merge_group` trigger, so a merge queue would never see
-these checks; on 2026-11-10 the maintainer decided not to add one now, and one
-must be added before any merge queue is turned on.
+A pull request whose head commit message carries a skip marker such as `[skip
+ci]` gets no run of those GitHub Actions checks, and one whose merge with `main`
+has conflicts gets no new run of them, so neither can merge until a commit that
+clears the condition is pushed to it. Through `tools/ci-status.sh` a head that
+lacks a check it insists on does not read green: it reads pending when another
+check has run on that head, and unreadable when no check has. A head that ran
+its checks before its merge with `main` came to conflict keeps those runs, so
+`tools/ci-status.sh` can read it green while GitHub refuses the merge. No
+workflow has a `merge_group` trigger, so a merge queue would never see these
+checks; on 2026-11-10 the maintainer decided not to add one now, and one must be
+added before any merge queue is turned on.
 
 ## Commit attribution
 

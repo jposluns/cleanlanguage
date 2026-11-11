@@ -3,26 +3,30 @@
 
 Coverage. The test reads each workflow under .github/workflows whose name ends in .yml with PyYAML's
 safe loader (which reads the key on as True) and selects those that a pull request or a push to main
-triggers: a pull_request or pull_request_target trigger, or a push trigger whose branches name main,
-or that has no branches, branches-ignore or tags filter, or whose branches-ignore leaves main. For
-each step of those workflows that has run text, the text with surrounding white space stripped must
-be a command line of the script or one of EXCEPTIONS, and a failure names the workflow and the step.
-A command line is the text after "run " on a line of the script that starts with it, or the text
-before " || status=1" on a line of plugin_manifests that starts with "  claude ". Every command line
-must be such a run text or the stand-in of an exception, and no command line may repeat, and every
-entry of EXCEPTIONS must still name a step of a selected workflow, so neither the script nor the
-table can go stale unseen.
+triggers: a pull_request or pull_request_target trigger, or a push trigger whose branches name main
+or hold a pattern (an entry with any of the characters * ? [ ] + !), which counts as matching main
+whatever it matches, or that has no branches, branches-ignore or tags filter, or whose
+branches-ignore leaves main. For each step of those workflows that has run text, the text with
+surrounding white space stripped must be a command line of the script or one of EXCEPTIONS, and a
+failure names the workflow and the step. A selected workflow whose commands the script cannot mirror
+from the repository root also fails, naming the workflow: a job that calls a reusable workflow,
+whose steps the test does not read, a run step with a working-directory, and a defaults key on the
+workflow or on a job. A command line is the text after "run " on a line of the script that starts
+with it, or the text before " || status=1" on a line of plugin_manifests that starts with
+"  claude ". Every command line must be such a run text or the stand-in of an exception, and no
+command line may repeat, and every entry of EXCEPTIONS must still name a step of a selected
+workflow, so neither the script nor the table can go stale unseen.
 
 Behaviour. Each case copies the script into a temporary tree whose tools/ folder holds a stub in
 place of each script a command line names, beside a copy of plugin-validate.yml and a skill folder
-for the staged validation, and runs it with bash as a separate process. A stub records its name,
-its arguments, and whether its standard output and standard error are pipes, and exits with the
-code the case sets; a stub claude on PATH answers --version with the version the case sets. The
-script's own output goes to regular files, so a stub sees a pipe only when the script makes one.
-PATH holds only links to the commands the script and the stubs use, and to cat and tee, so a claude
-installed on this machine never takes part. The cases: every command line runs once, in order, with neither stream
-a pipe, and the script exits 0; a stub exiting 1, 2 or 3 leaves every later command running and
-the script exiting 1, naming that command; a claude that reports another version, or no claude,
+for the staged validation, and runs it with bash as a separate process. A stub records its name, its
+arguments, and whether its standard output and standard error are pipes, and exits with the code the
+case sets; a stub claude on PATH answers --version with the version the case sets. The script's own
+output goes to regular files, so a stub sees a pipe only when the script makes one. PATH holds only
+links to the commands the script and the stubs use, and to cat and tee, so a claude installed on
+this machine never takes part. The cases: every command line runs once, in order, with neither
+stream a pipe, and the script exits 0; a stub exiting 1, 2 or 3 leaves every later command running
+and the script exiting 1, naming that command; a claude that reports another version, or no claude,
 makes the script exit 1 without any validation.
 
 The cases pin the commands, not the script's other shell text, so the test also fails unless the
@@ -30,11 +34,13 @@ sha256 of the committed script is SCRIPT_SHA256. To change the script, read the 
 confirm that it still runs every command line unpiped and keeps going after a failure, then record
 the new digest in SCRIPT_SHA256 in the same pull request.
 
-Residual: the test reads the run text, not what each command does, so a step whose command reads
-the environment that its workflow sets (GH_TOKEN for the live release checksum check) or that runs
-only on some paths still matches, and the script runs it in this machine's environment, on every
-change. A run text is compared whole, so the same command written another way in a workflow is
-reported as missing, a safe failure.
+Residual: the test reads the run text, not what each command does, so a step whose command reads the
+environment that its workflow sets (GH_TOKEN for the live release checksum check) or that runs only
+on some paths still matches, and the script runs it in this machine's environment, on every change.
+A run text is compared whole, so the same command written another way in a workflow is reported as
+missing, a safe failure. A step that runs a gate through an action (uses: rather than run:) is not
+read, and a workflow that only another workflow's run triggers (workflow_run) is not selected, so
+the script is not required to run either.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
@@ -58,8 +64,9 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
-# The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading the change.
-SCRIPT_SHA256 = "c3533051fcc60854b1420cec285bd8f5773465b8328956f9c487b693fc7197c7"
+# The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
+# the change.
+SCRIPT_SHA256 = "d6f1791ebbaac20ecdc209c4a1d0283c4ca3d2956379b7475b47a966784c2a0e"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((
@@ -80,9 +87,21 @@ EXCEPTIONS = {
 }
 RUN_LINE = re.compile(r"run (.+)")
 CLAUDE_LINE = re.compile(r"  (claude .+) \|\| status=1")
-# The commands the script and the stubs need on PATH, and cat and tee, so a script that pipes a command
-# through either still runs and the pipe check, not a missing command, is what refuses it.
+# The commands the script and the stubs need on PATH, and cat and tee, so a script that pipes a
+# command through either still runs and the pipe check, not a missing command, is what refuses it.
 NEEDED = ("bash", "python3", "sed", "mktemp", "mkdir", "cp", "rm", "dirname", "env", "cat", "tee")
+
+
+# The characters of GitHub's branch filter patterns; a branches entry holding any of them counts as
+# matching main, a safe failure when it does not.
+PATTERN = set("*?[]+!")
+
+
+def names_main(branches) -> bool:
+    """True when a branches filter names main or holds a pattern."""
+    if isinstance(branches, str):
+        branches = [branches]
+    return any(b == "main" or (isinstance(b, str) and PATTERN & set(b)) for b in branches or [])
 
 
 def selected(on) -> bool:
@@ -101,24 +120,37 @@ def selected(on) -> bool:
     if not isinstance(push, dict):
         return True
     if "branches" in push:
-        return "main" in (push["branches"] or [])
+        return names_main(push["branches"])
     if "branches-ignore" in push:
         return "main" not in (push["branches-ignore"] or [])
     return "tags" not in push
 
 
-def workflow_steps():
-    """(workflow, job, step index, run text) for each run step of each selected workflow, and the count
-    of selected workflows."""
+def workflow_steps(failures: list):
+    """(workflow, job, step index, run text) for each run step of each selected workflow, and the
+    count of selected workflows. A reusable workflow call, a working-directory or a defaults key in
+    a selected workflow is added to failures."""
     steps, count = [], 0
     for path in sorted(WORKFLOWS.glob("*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(doc, dict) or not selected(doc.get(True, doc.get("on"))):
             continue
         count += 1
+        if "defaults" in doc:
+            failures.append(f"{path.name}: a defaults key, which can move its run steps out of the repository root")
         for job_id, job in (doc.get("jobs") or {}).items():
-            for index, step in enumerate((job or {}).get("steps") or []):
+            job = job or {}
+            if "uses" in job:
+                failures.append(f"{path.name} job {job_id}: it calls the reusable workflow {job['uses']!r}, whose "
+                                "steps this test does not read")
+            if "defaults" in job:
+                failures.append(f"{path.name} job {job_id}: a defaults key, which can move its run steps out of the "
+                                "repository root")
+            for index, step in enumerate(job.get("steps") or []):
                 if isinstance(step, dict) and "run" in step:
+                    if "working-directory" in step:
+                        failures.append(f"{path.name} job {job_id} step {index}: it runs in "
+                                        f"{step['working-directory']!r}, not the repository root")
                     steps.append((path.name, job_id, index, str(step["run"]).strip()))
     return steps, count
 
@@ -143,7 +175,7 @@ def command_lines(text: str) -> list:
 
 
 def coverage(failures: list) -> tuple:
-    steps, count = workflow_steps()
+    steps, count = workflow_steps(failures)
     lines = command_lines(SCRIPT.read_text(encoding="utf-8"))
     mirrored = set(lines)
     for line in sorted({l for l in lines if lines.count(l) > 1}):
@@ -205,8 +237,8 @@ exit 0
 
 
 def stub_name(line: str):
-    """The tools/ script a command line runs and its arguments, or None for plugin_manifests and
-    the claude lines."""
+    """The tools/ script a command line runs and its arguments, or None for plugin_manifests and the
+    claude lines."""
     words = line.split()
     if words[:2] == ["python3", "-I"] and len(words) > 2:
         return words[2], words[3:]
