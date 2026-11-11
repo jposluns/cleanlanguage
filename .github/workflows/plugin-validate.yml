@@ -41,13 +41,13 @@ name: Plugin manifests
 # shell, any local or docker action, and any environment variable such as
 # BASH_ENV or SHELLOPTS set in the workflow, any of which could otherwise skip
 # the job or its steps, or pass over a failed step, and still read as passing;
-# any line outside that shape fails the check. In CI that check runs only in
-# the CI status tests job (.github/workflows/ci-status-test.yml), which
-# tools/ci-status.sh does not insist on, so a pull request that adds such a key
-# and also alters or skips that job is not caught by ci-status. What the
-# commands the steps run and the pinned actions do, including anything they
-# write for later steps, and what the other jobs of the workflow run, are not
-# checked.
+# any line outside that shape fails the check. In CI that check runs in the CI
+# status tests job (.github/workflows/ci-status-test.yml) on every pull request
+# and every push to main, and tools/ci-status.sh insists on that job too, so a
+# commit on which it has not run, or has not passed, does not read green
+# through ci-status. What the commands the steps run and the pinned actions
+# do, including anything they write for later steps, and what the other jobs
+# of the workflow run, are not checked.
 
 on:
   pull_request:

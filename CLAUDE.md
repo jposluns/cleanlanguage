@@ -4,19 +4,22 @@
 
 Claude may merge a pull request to `main` automatically once its required CI
 checks are green, without waiting for further approval. On this repository the
-required check is the Cloudflare Pages build. `tools/ci-status.sh` also insists
-on the GitHub Actions checks `Plugin manifests`, `Skill discovery`, and `Agent
-Plugins manifest`, ahead of them becoming required on `main`, so a pull request
-lacking any of them does not read green through it. Do not merge while any
-required check is failing or still pending, and do not merge a pull request that
-has unresolved review threads requesting changes.
+required checks are the Cloudflare Pages build and the GitHub Actions checks
+`Plugin manifests`, `Skill discovery`, and `Agent Plugins manifest`, each of the
+3 pinned to the GitHub Actions app. `tools/ci-status.sh` insists on those 4
+checks and also on the GitHub Actions check `CI status tests`. Of the 4 GitHub
+Actions checks it insists on, it reads any conclusion other than success,
+skipped and neutral included, as a failure. Do not merge while any required
+check is failing or still pending, and do not merge a pull request that has
+unresolved review threads requesting changes.
 
-Once the GitHub Actions checks `Plugin manifests`, `Skill discovery`, and
-`Agent Plugins manifest` are also required on `main`, a pull request whose head
-commit message carries a skip marker such as `[skip ci]` gets no run of those
-three checks and cannot merge until a new commit without a skip marker is
-pushed to it. Such a head already does not read green through
-`tools/ci-status.sh`, which insists on those three checks today.
+A pull request whose head commit message carries a skip marker such as
+`[skip ci]`, or whose merge with `main` has conflicts, gets no run of those
+GitHub Actions checks and cannot merge until a commit that clears the condition
+is pushed to it; through `tools/ci-status.sh` such a head reads pending, not
+green. No workflow has a `merge_group` trigger, so a merge queue would never see
+these checks; on 2026-11-10 the maintainer decided not to add one now, and one
+must be added before any merge queue is turned on.
 
 ## Commit attribution
 

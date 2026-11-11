@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Tests for tools/run_all_checks.sh: it runs every gate CI runs, unpiped, and fails when one fails.
+
+Coverage. The test reads each workflow under .github/workflows whose name ends in .yml with PyYAML's
+safe loader (which reads the key on as True) and selects those that a pull request or a push to main
+triggers: a pull_request or pull_request_target trigger, or a push trigger whose branches name main,
+or that has no branches, branches-ignore or tags filter, or whose branches-ignore leaves main. For
+each step of those workflows that has run text, the text with surrounding white space stripped must
+be a command line of the script or one of EXCEPTIONS, and a failure names the workflow and the step.
+A command line is the text after "run " on a line of the script that starts with it, or the text
+before " || status=1" on a line of plugin_manifests that starts with "  claude ". Every command line
+must be such a run text or the stand-in of an exception, and no command line may repeat, and every
+entry of EXCEPTIONS must still name a step of a selected workflow, so neither the script nor the
+table can go stale unseen.
+
+Behaviour. Each case copies the script into a temporary tree whose tools/ folder holds a stub in
+place of each script a command line names, beside a copy of plugin-validate.yml and a skill folder
+for the staged validation, and runs it with bash as a separate process. A stub records its name,
+its arguments, and whether its standard output and standard error are pipes, and exits with the
+code the case sets; a stub claude on PATH answers --version with the version the case sets. The
+script's own output goes to regular files, so a stub sees a pipe only when the script makes one.
+PATH holds only links to the commands the script and the stubs use, and to cat and tee, so a claude
+installed on this machine never takes part. The cases: every command line runs once, in order, with neither stream
+a pipe, and the script exits 0; a stub exiting 1, 2 or 3 leaves every later command running and
+the script exiting 1, naming that command; a claude that reports another version, or no claude,
+makes the script exit 1 without any validation.
+
+The cases pin the commands, not the script's other shell text, so the test also fails unless the
+sha256 of the committed script is SCRIPT_SHA256. To change the script, read the whole change,
+confirm that it still runs every command line unpiped and keeps going after a failure, then record
+the new digest in SCRIPT_SHA256 in the same pull request.
+
+Residual: the test reads the run text, not what each command does, so a step whose command reads
+the environment that its workflow sets (GH_TOKEN for the live release checksum check) or that runs
+only on some paths still matches, and the script runs it in this machine's environment, on every
+change. A run text is compared whole, so the same command written another way in a workflow is
+reported as missing, a safe failure.
+
+Exit 0 when every case passes; 1 otherwise, naming each failing case.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("FAIL: PyYAML is required to read the workflows")
+    sys.exit(1)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
+# The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading the change.
+SCRIPT_SHA256 = "c3533051fcc60854b1420cec285bd8f5773465b8328956f9c487b693fc7197c7"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
+STAGED_RUN = "\n".join((
+    "set -euo pipefail",
+    'staged="$(mktemp -d)"',
+    'mkdir -p "${staged}/skills"',
+    'cp -r cleanlanguage/skills/cleanlanguage "${staged}/skills/cleanlanguage"',
+    'claude plugin validate "${staged}/skills" --strict',
+))
+# (workflow, run text): the command line of the script that stands in for that step, and why.
+EXCEPTIONS = {
+    ("plugin-validate.yml", 'npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"'):
+        ("plugin_manifests", "the script installs nothing; it checks the pinned version instead"),
+    ("plugin-validate.yml", "claude --version"):
+        ("plugin_manifests", "the script reads claude --version and compares it with the pin"),
+    ("plugin-validate.yml", STAGED_RUN):
+        ('claude plugin validate "${staged}/skills" --strict', "the script stages the skill the same way"),
+}
+RUN_LINE = re.compile(r"run (.+)")
+CLAUDE_LINE = re.compile(r"  (claude .+) \|\| status=1")
+# The commands the script and the stubs need on PATH, and cat and tee, so a script that pipes a command
+# through either still runs and the pipe check, not a missing command, is what refuses it.
+NEEDED = ("bash", "python3", "sed", "mktemp", "mkdir", "cp", "rm", "dirname", "env", "cat", "tee")
+
+
+def selected(on) -> bool:
+    """True when a pull request or a push to main triggers a workflow with this on: value."""
+    if isinstance(on, str):
+        on = {on: None}
+    elif isinstance(on, list):
+        on = {name: None for name in on}
+    if not isinstance(on, dict):
+        return False
+    if "pull_request" in on or "pull_request_target" in on:
+        return True
+    if "push" not in on:
+        return False
+    push = on["push"] or {}
+    if not isinstance(push, dict):
+        return True
+    if "branches" in push:
+        return "main" in (push["branches"] or [])
+    if "branches-ignore" in push:
+        return "main" not in (push["branches-ignore"] or [])
+    return "tags" not in push
+
+
+def workflow_steps():
+    """(workflow, job, step index, run text) for each run step of each selected workflow, and the count
+    of selected workflows."""
+    steps, count = [], 0
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict) or not selected(doc.get(True, doc.get("on"))):
+            continue
+        count += 1
+        for job_id, job in (doc.get("jobs") or {}).items():
+            for index, step in enumerate((job or {}).get("steps") or []):
+                if isinstance(step, dict) and "run" in step:
+                    steps.append((path.name, job_id, index, str(step["run"]).strip()))
+    return steps, count
+
+
+def command_lines(text: str) -> list:
+    """The command lines of the script, in order."""
+    found, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("plugin_manifests() {"):
+            inside = True
+        elif inside and line == "}":
+            inside = False
+        elif inside:
+            m = CLAUDE_LINE.fullmatch(line)
+            if m:
+                found.append(m.group(1))
+        else:
+            m = RUN_LINE.fullmatch(line)
+            if m:
+                found.append(m.group(1))
+    return found
+
+
+def coverage(failures: list) -> tuple:
+    steps, count = workflow_steps()
+    lines = command_lines(SCRIPT.read_text(encoding="utf-8"))
+    mirrored = set(lines)
+    for line in sorted({l for l in lines if lines.count(l) > 1}):
+        failures.append(f"the command line {line!r} repeats in tools/run_all_checks.sh")
+    used = set()
+    for workflow, job, index, run in steps:
+        key = (workflow, run)
+        if run in mirrored:
+            used.add(run)
+        elif key in EXCEPTIONS:
+            stand_in = EXCEPTIONS[key][0]
+            if stand_in not in mirrored:
+                failures.append(f"{workflow} job {job} step {index}: its stand-in {stand_in!r} is not a command line")
+            used.add(stand_in)
+        else:
+            failures.append(f"{workflow} job {job} step {index}: the run text {run!r} is not run by "
+                            "tools/run_all_checks.sh")
+    for key in EXCEPTIONS:
+        if not any((w, r) == key for w, _, _, r in steps):
+            failures.append(f"the exception for {key[0]} {key[1][:40]!r} names no step of a selected workflow")
+    for line in lines:
+        if line not in used:
+            failures.append(f"the command line {line!r} of tools/run_all_checks.sh is no run text of a "
+                            "selected workflow")
+    return count, len(steps), lines
+
+
+PY_STUB = '''import os, stat, sys
+NAME = {name!r}
+def pipe(fd):
+    try:
+        return stat.S_ISFIFO(os.fstat(fd).st_mode)
+    except OSError:
+        return False
+with open(os.environ["RUN_ALL_CHECKS_LOG"], "a") as log:
+    log.write("%s|%s|%d%d\\n" % (NAME, " ".join(sys.argv[1:]), pipe(1), pipe(2)))
+codes = dict(item.split("=", 1) for item in os.environ.get("RUN_ALL_CHECKS_CODES", "").split())
+sys.exit(int(codes.get(NAME, "0")))
+'''
+SH_STUB = '''#!/usr/bin/env bash
+out=0; err=0
+[ -p /dev/stdout ] && out=1
+[ -p /dev/stderr ] && err=1
+printf '%s|%s|%s%s\\n' {name} "$*" "$out" "$err" >> "$RUN_ALL_CHECKS_LOG"
+code=0
+for item in ${{RUN_ALL_CHECKS_CODES:-}}; do
+  if [ "${{item%%=*}}" = {name} ]; then code="${{item#*=}}"; fi
+done
+exit "$code"
+'''
+CLAUDE_STUB = '''#!/usr/bin/env bash
+out=0; err=0
+[ -p /dev/stdout ] && out=1
+[ -p /dev/stderr ] && err=1
+printf 'claude|%s|%s%s\\n' "$*" "$out" "$err" >> "$RUN_ALL_CHECKS_LOG"
+if [ "${1:-}" = --version ]; then printf '%s (Claude Code)\\n' "$CLAUDE_STUB_VERSION"; fi
+exit 0
+'''
+
+
+def stub_name(line: str):
+    """The tools/ script a command line runs and its arguments, or None for plugin_manifests and
+    the claude lines."""
+    words = line.split()
+    if words[:2] == ["python3", "-I"] and len(words) > 2:
+        return words[2], words[3:]
+    if words[0] == "bash" and len(words) > 1:
+        return words[1], words[2:]
+    if words[0].startswith("tools/"):
+        return words[0], words[1:]
+    return None
+
+
+def expected_calls(lines: list) -> list:
+    """The calls the stubs record when every command passes, in order."""
+    out = []
+    for line in lines:
+        if line == "plugin_manifests":
+            out += ["claude|--version", "claude|plugin validate . --strict",
+                    "claude|plugin validate ./cleanlanguage --strict", "claude|plugin validate STAGED --strict"]
+        elif not line.startswith("claude "):
+            name, args = stub_name(line)
+            out.append(f"{name}|{' '.join(args)}")
+    return out
+
+
+def pin() -> str:
+    m = re.search(r'^  CLAUDE_CODE_VERSION: "([0-9.]+)"$', PIN_WORKFLOW.read_text(encoding="utf-8"), re.M)
+    return m.group(1) if m else ""
+
+
+def make_tree(tmp: Path, lines: list, claude: bool) -> dict:
+    (tmp / "tools").mkdir()
+    (tmp / ".github" / "workflows").mkdir(parents=True)
+    (tmp / "cleanlanguage" / "skills" / "cleanlanguage").mkdir(parents=True)
+    (tmp / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md").write_text("stub\n", encoding="utf-8")
+    shutil.copy2(SCRIPT, tmp / "tools" / "run_all_checks.sh")
+    shutil.copy2(PIN_WORKFLOW, tmp / ".github" / "workflows" / "plugin-validate.yml")
+    for line in lines:
+        stub = stub_name(line)
+        if stub is None:
+            continue
+        path = tmp / stub[0]
+        if path.suffix == ".py":
+            path.write_text(PY_STUB.format(name=stub[0]), encoding="utf-8")
+        else:
+            path.write_text(SH_STUB.format(name=stub[0]), encoding="utf-8")
+            path.chmod(0o755)
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir()
+    for name in NEEDED:
+        found = shutil.which(name)
+        if found is None:
+            raise RuntimeError(f"{name} is not on PATH")
+        (bin_dir / name).symlink_to(os.path.realpath(found))
+    if claude:
+        (bin_dir / "claude").write_text(CLAUDE_STUB, encoding="utf-8")
+        (bin_dir / "claude").chmod(0o755)
+    return {"PATH": str(bin_dir), "HOME": str(tmp), "TMPDIR": str(tmp), "RUN_ALL_CHECKS_LOG": str(tmp / "log")}
+
+
+def run_case(lines: list, codes: str = "", version=None, claude: bool = True):
+    """Run the script in a stub tree: (exit status, log lines, script output)."""
+    with tempfile.TemporaryDirectory() as name:
+        tmp = Path(name)
+        env = make_tree(tmp, lines, claude)
+        env["RUN_ALL_CHECKS_CODES"] = codes
+        env["CLAUDE_STUB_VERSION"] = version if version is not None else pin()
+        (tmp / "log").write_text("", encoding="utf-8")
+        with open(tmp / "out", "wb") as out, open(tmp / "err", "wb") as err:
+            code = subprocess.run(["bash", str(tmp / "tools" / "run_all_checks.sh")], cwd="/", env=env,
+                                  stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=300).returncode
+        log = (tmp / "log").read_text(encoding="utf-8").splitlines()
+        output = ((tmp / "out").read_bytes() + (tmp / "err").read_bytes()).decode("utf-8", "replace")
+        log = [re.sub(r"plugin validate \S+/skills --strict", "plugin validate STAGED --strict", l) for l in log]
+        return code, log, output
+
+
+def calls(log: list) -> list:
+    return [entry.rsplit("|", 1)[0] for entry in log]
+
+
+def piped(log: list) -> list:
+    """The calls whose standard output or standard error was a pipe, apart from claude --version,
+    whose output the script reads."""
+    return [e.rsplit("|", 1)[0] for e in log if e.rsplit("|", 1)[1] != "00" and not e.startswith("claude|--version|")]
+
+
+def behaviour(lines: list, failures: list) -> int:
+    cases = 0
+    stubs = [l for l in lines if stub_name(l) is not None]
+    if not stubs:
+        failures.append("tools/run_all_checks.sh has no command line to stub")
+        return 0
+    want = expected_calls(lines)
+
+    cases += 1
+    code, log, output = run_case(lines)
+    if code != 0:
+        failures.append(f"every command passing: the script exits {code}, not 0\n{output[-2000:]}")
+    if calls(log) != want:
+        failures.append(f"every command passing: the calls are {calls(log)!r}, not {want!r}")
+    if piped(log):
+        failures.append(f"every command passing: a pipe reached {piped(log)!r}")
+
+    for status, line in ((1, stubs[0]), (2, stubs[len(stubs) // 2]), (3, stubs[-1])):
+        cases += 1
+        name = stub_name(line)[0]
+        code, log, output = run_case(lines, codes=f"{name}={status}")
+        label = f"{name} exiting {status}"
+        if code != 1:
+            failures.append(f"{label}: the script exits {code}, not 1")
+        if calls(log) != want:
+            failures.append(f"{label}: the calls are {calls(log)!r}, not every command once in order")
+        if f"==> exit {status}: {line}" not in output or f"  {line} (exit {status})" not in output:
+            failures.append(f"{label}: the output does not name the failed command {line!r}")
+
+    plugin = [l for l in lines if l == "plugin_manifests"]
+    for label, kwargs in (("a claude reporting another version", {"version": pin() + "1"}),
+                          ("no claude", {"claude": False})):
+        cases += 1
+        code, log, output = run_case(lines, **kwargs)
+        validations = [c for c in calls(log) if c.startswith("claude|plugin validate")]
+        if code != 1:
+            failures.append(f"{label}: the script exits {code}, not 1")
+        if validations or not plugin:
+            failures.append(f"{label}: the script ran {validations!r}, or runs no plugin_manifests")
+        if "==> exit 1: plugin_manifests" not in output:
+            failures.append(f"{label}: the output does not name plugin_manifests as failed")
+        others = [c for c in calls(log) if not c.startswith("claude|")]
+        if others != [c for c in want if not c.startswith("claude|")]:
+            failures.append(f"{label}: the other commands did not all run once in order")
+    return cases
+
+
+def main() -> int:
+    failures = []
+    digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+    if digest != SCRIPT_SHA256:
+        failures.append(f"tools/run_all_checks.sh has sha256 {digest}, not the reviewed {SCRIPT_SHA256}")
+    count, steps, lines = coverage(failures)
+    cases = behaviour(lines, failures)
+    for failure in failures:
+        print(f"FAIL: {failure}")
+    if failures:
+        return 1
+    print(f"OK: {count} workflows, {steps} run steps, {len(lines)} command lines in tools/run_all_checks.sh, "
+          f"{cases} behaviour cases")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

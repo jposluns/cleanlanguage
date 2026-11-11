@@ -20,8 +20,11 @@ name: Workflow launch isolation
 # tools/*.py script refers to sys.path, sys.meta_path, sys.path_hooks or
 # sys.path_importer_cache or imports site, and the sixth runs
 # tools/test-action-pins.py, which checks that every uses in the workflows is
-# pinned to a full 40-character commit. Each of those 2 files holds its gate's
-# scope and residuals.
+# pinned to a full 40-character commit. The seventh runs
+# tools/test-run-all-checks.py, which checks that tools/run_all_checks.sh runs
+# every run text of the workflows that a pull request or a push to main
+# triggers, unpiped, and fails when one of them fails. Each of those 3 files
+# holds its gate's scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -79,3 +82,7 @@ jobs:
       - name: Check that every uses in the workflows is pinned to a full 40-character commit
         shell: bash
         run: python3 -I tools/test-action-pins.py
+
+      - name: Check that tools/run_all_checks.sh runs every gate and suite of the workflows, unpiped, and fails when one fails
+        shell: bash
+        run: python3 -I tools/test-run-all-checks.py
