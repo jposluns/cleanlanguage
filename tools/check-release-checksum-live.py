@@ -12,16 +12,15 @@ band under a user token (see the release runbook), matching the rest of the
 fleet, which keeps pull request authorship out of Actions. If that flip is
 forgotten or wrong, a release run still goes green, so without this check the
 site could show a stale checksum indefinitely with nothing to surface it. This
-check goes red on drift between the site and the published release, and also
-when it cannot verify the release; the Exit codes entries below state each
-condition that turns it red and its code. In CI, the workflow runs its tests
-and then this check on a pull request or a push to main that changes a file it
-or its tests read, which the workflow's path filters name, on a daily schedule
-and on manual dispatch, and a failing test stops the job before this check
-runs; the orchestrator runs it as the final step of the runbook. GitHub may not
-run a path-filtered workflow for a change to more files than it compares, which
-is not checked offline; the daily schedule still runs the tests on main, and
-then this check unless a test fails.
+check goes red on each condition that the Exit codes entries below name for
+codes 1 to 3, among them drift between the site and the published release. In
+CI, the workflow runs its tests and then this check on a pull request or a push
+to main that changes a file it or its tests read, which the workflow's path
+filters name, on a daily schedule and on manual dispatch, and a failing test
+stops the job before this check runs; the orchestrator runs it as the final
+step of the runbook. GitHub may not run a path-filtered workflow for a change
+to more files than it compares, which is not checked offline; the daily
+schedule still runs the tests on main, and then this check unless a test fails.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
@@ -196,13 +195,16 @@ Exit codes:
      or the SKILL.md Released date disagrees with
      the published release, or the Released line is missing above the undated
      baseline (also in the pre-tag window)
-  2  could not verify: a gh or network error; a status other than 200 or 404
-     for the release the site names, for the release SKILL.md names, or for
-     a tag the gate reads; a tag that exists with no published release; a
-     published release whose zip or ``.sha256`` the gate cannot download or
-     read, whose manifest is malformed, or whose zip does not hash to its
-     manifest; or a published release whose ``published_at`` is unreadable
-     or malformed or whose ``immutable`` field is not exactly true
+  2  could not verify: a gh call that cannot be run or whose status or value
+     the gate cannot read; a status other than 200 or 404 for a release or a
+     tag the gate reads; a tag the gate reads that exists with no published
+     release; for the release the site names, when it is published, a zip or
+     ``.sha256`` the gate cannot download or read, a malformed manifest, or a
+     zip that does not hash to its manifest; or, for the release SKILL.md
+     names, when it is published and SKILL.md has a Released line or names a
+     version above the undated baseline, an ``immutable`` field that is not
+     exactly true, or, with a Released line, a ``published_at`` that is
+     malformed
   3  a required file is missing, is not a regular file or could not be read;
      the verify page, when it does not carry the not-yet-published note, has no
      checksum element, shows a checksum that is not a 64 character lower-case
@@ -1521,9 +1523,9 @@ def check_site_checksum(load_code: int = 0) -> int:
         )
         claimed = None
 
-    # Item 26: the release SKILL.md names is checked on its own terms,
-    # whatever version the site names (see check_release_date). A date edited
-    # after release goes red here; a release that slipped past UTC midnight is
+    # Item 26: the release SKILL.md names is checked on its own terms, whatever
+    # version the site names (see check_release_date). A date edited after
+    # release goes red here; a release that slipped past UTC midnight is
     # refused or caught by the release workflow itself, and goes red here too.
     # Both checks run, and each reports any failure it finds, before the gate
     # exits with the more severe code, so a date failure cannot hide checksum
