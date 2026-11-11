@@ -122,7 +122,7 @@ Prefer this sequence when applicable:
 
 ## Audit before delivering
 
-Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question it requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
+Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
 
 A response can be grammatical, accurate, and well written and still fail this skill. Compliance is measured against this specification, not against perceived quality.
 

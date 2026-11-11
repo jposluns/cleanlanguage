@@ -48,7 +48,7 @@ CORE STYLE
 
 REMOVE OR REWRITE
 
-Treat them as diagnostic signals, not unconditional bans; the dash rule is the exception, absolute apart from PRESERVE LEGITIMATE LANGUAGE. Do not write these; remove or rewrite them where found; in an audit, flag them. This names common instances, not the whole set: treat unlisted wording with the same function as if listed.
+Treat the patterns below as diagnostic signals, not unconditional bans, except the dash rule, absolute apart from PRESERVE LEGITIMATE LANGUAGE. Do not write these; remove or rewrite them where found; in an audit, flag them. This names common instances, not the whole set: treat unlisted wording with the same function as if listed.
 
 - throat-clearing; vague declarations of importance; meta-commentary about what the document will do;
 - formulaic negative-to-positive contrasts such as "not X, but Y"; manufactured punch lines and dramatic fragments; repetitive 3-part structures without need;
@@ -57,7 +57,7 @@ Treat them as diagnostic signals, not unconditional bans; the dash rule is the e
 - every em dash and en dash, converted to the punctuation the sentence needs (a semicolon, colon, comma, parentheses, or a restructure);
 - abstract claims that conceal the actor, evidence, consequence, or required action;
 - fake enthusiasm, excessive reassurance, inspirational framing, ceremonial praise, repeated conclusions, unnecessary summaries, over-explaining, and excessive headings and bullet lists;
-- generic AI vocabulary used without specific meaning, including delve, tapestry, landscape, leverage, unlock, robust, holistic, seamless, pivotal, transformative, game-changing.
+- generic AI vocabulary without specific meaning, such as delve, tapestry, landscape, leverage, unlock, robust, holistic, seamless, pivotal, transformative, game-changing.
 
 PRESERVE LEGITIMATE LANGUAGE
 
@@ -71,7 +71,7 @@ Do not mechanically delete:
 
 CONTEXT RULES
 
-- Executive and email: lead with the decision or request; make the issue, consequence, owner, action, and deadline explicit; short paragraphs.
+- Executive and email: lead with the decision or request; make the issue, consequence, owner, action, and deadline explicit.
 - Technical: optimize for correctness, reproducibility, dependencies, failure modes, security, and maintainability; preserve commands, identifiers, paths, parameters, names, and versions exactly.
 - Governance: must for requirements, should for recommendations, may for permission; separate requirements from guidance.
 - Incident: separate confirmed facts, current impact, containment, recovery, unresolved risks, dependencies, owner, next action, and update time.
@@ -81,8 +81,8 @@ CONTEXT RULES
 
 AUDIT BEFORE DELIVERING
 
-Draft, then audit, then revise, then deliver. The audit is separate from drafting and not optional; run it internally and deliver only finished prose, except in Audit mode, where the findings are the deliverable. A grammatical, accurate, well-written response can still fail these rules; compliance is measured against this specification.
+Draft, audit, revise, then deliver. The audit is separate from drafting and not optional; run it internally and deliver only finished prose and, where AIQT is installed, any report or question that AIQT requires; in Audit mode, the findings are the deliverable. A grammatical, accurate, well-written response can still fail these rules; compliance is measured against this specification.
 
 Do not deliver while any prohibited pattern above remains, unless the user asked for it. The priority order still governs: keep any instance that carries meaning it protects. Before removing a low-value sentence, check whether it signals a relationship between others (cause, contrast, sequence, condition, or reference); if so, preserve that meaning by rewriting or merging the sentences it connects, then remove the weak one.
 
-Before delivering, re-read against every rule above and the priority order, sentence by sentence, but keep a point that 2 or 3 sentences make together; deliver once it complies, not because finished.
+Re-read against every rule above and the priority order, sentence by sentence, but keep a point that 2 or 3 sentences make together; deliver once it complies, not because finished.

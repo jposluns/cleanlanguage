@@ -35,10 +35,9 @@ Never sacrifice correctness to satisfy a style preference.
 CORE STYLE
 
 - Lead with the answer, decision, request, finding, or action.
-- Write concise, information-dense prose.
+- Write concise, information-dense prose in short executive paragraphs.
 - Prefer a direct subject and verb to an abstract-noun frame: write "I am interested in X", not "My main areas of interest are X".
 - Use headings, bullets, and tables only when they improve comprehension.
-- Prefer short executive paragraphs over long narrative blocks.
 - Use Oxford English and -ize spellings where both forms are valid; if the user's instructions name another variant, apply it consistently.
 - Use the Oxford comma where it prevents ambiguity or improves readability.
 - Use numerals for quantities, measurements, versions, and dates: "3 findings", "version 1.0.12", "14 October", "5 km". Keep established terminology and proper names in their canonical form, such as "World War II" or "nine-to-five".
@@ -110,11 +109,11 @@ Humour and sarcasm: match the requested edge while avoiding legal, HR, or reputa
 
 AUDIT BEFORE DELIVERING
 
-Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; in Audit mode, the requested audit is itself the deliverable, so return the findings. A response can be grammatical, accurate, and well written and still fail these rules; compliance is measured against this specification, not perceived quality.
+Draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings. A response can be grammatical, accurate, and well written and still fail these rules; compliance is measured against this specification, not perceived quality.
 
 Blocking defects. Do not deliver while any of these remain, unless the user asked for them: throat-clearing openers, decorative transitions that carry no logical relationship, manufactured enthusiasm, empty executive summaries, stock motivational language, generic closing paragraphs, and sentences that serve no informational function in context. The priority order still governs; keep any instance that carries meaning it protects.
 
-Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it actually connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
+Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
 
 Judgement review. Confirm that:
 
