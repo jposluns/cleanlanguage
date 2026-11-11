@@ -4875,8 +4875,8 @@ class CorrectiveRemedyTest(unittest.TestCase):
     constant of ConditionalPassTest, which 3 tests of the mismatch path compare with the gate's output through
     date_mismatch. Rewording the 1 message off both tokens empties the record and fails. This test does not catch, for
     example, a second remedy worded without either token, a copy of the phrase in a bytes constant of the gate's source,
-    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message printed
-    more than once at run time."""
+    assembled at run time from pieces that never hold a token whole or read from another file, or the 1 message's string
+    constant printed more than once at run time, such as in a loop or by a repeated call."""
 
     PHRASE = "corrective new version"
     TOKENS = ("corrective", "new version")
