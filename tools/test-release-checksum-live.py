@@ -5255,7 +5255,7 @@ class WorkflowPathsTest(unittest.TestCase):
         list, so a blank line or a comment line between 2 expected entries passes; it cannot load the workflow when that
         line is instead a line of text indented more than 4 spaces or one whose text after the indent starts with a tab,
         which passes too when no entry that is not expected follows it. No broken workflow fails the tests only because
-        of 5 of its tests. The continue after an entry line changes only how a failure is reported: without it, an entry
+        of 5 of its parts. The continue after an entry line changes only how a failure is reported: without it, an entry
         line indented more than 4 spaces is skipped next, and one indented 4 spaces or less, which is kept whole and so
         fails the list test, ends the list, so that the tests also report the entries after it as missing. The length
         test makes an empty entry a failure, not an IndexError, and the test that a trigger key was read skips a paths
