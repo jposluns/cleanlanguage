@@ -52,13 +52,13 @@ SystemExit(3). gate_exit_problems(), copy_exit_problems(),
 in_process_run_problems() and run_rule_case_problems() are for this test's own
 catches: a SystemExit raised in this process by a load or run of the gate or a
 sibling, as the gate's die() raises it, and an OSError from a scratch copy are
-to be named failures, not an exit with no failure line or a traceback. The cases
-of RUN_RULE_CASES give the start of each problem that in_process_run_problems()
-is to return on their planted sources. Exit 0 when every case passes; 1
-otherwise, naming each failing case. Each of RESIDUALS is a fault the gate
-passes, such as markup in which a browser may hide or empty what the gate
-checks; it must exit 0, and the gate's docstring must name it, so that what the
-gate says it checks cannot outgrow its code unnoticed.
+to be named failures, not an exit with no failure line or a traceback. The
+cases of RUN_RULE_CASES give the start of each problem that
+in_process_run_problems() is to return on their planted sources. Exit 0 when
+every case passes; 1 otherwise, naming each failing case. Each of RESIDUALS is
+a fault the gate passes, such as markup in which a browser may hide or empty
+what the gate checks; it must exit 0, and the gate's docstring must name it, so
+that what the gate says it checks cannot outgrow its code unnoticed.
 
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
