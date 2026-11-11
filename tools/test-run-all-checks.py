@@ -14,7 +14,7 @@ file whose reading raises an error fails, naming the file, and its steps are not
 files include one that cannot be opened, decoded as UTF-8 or loaded as 1 YAML document, and one in
 which the document, jobs, a job or a step is not a mapping, steps is not a list, or the on: value is
 none of a string, a list and a mapping; a jobs, job or steps value that is null, false, zero or
-empty is read as holding nothing. The reading cases require this of 1 file of each of those kinds.
+empty is read as holding nothing. 9 reading cases require this of 1 file of each of those kinds.
 Since the script runs each command from the repository root, a job with a uses key, which calls a
 reusable workflow whose steps the test does not read, a run step with a working-directory, and a
 defaults key on the workflow or on a job each fail, naming the workflow. A command line is the text
@@ -35,7 +35,10 @@ stream a pipe, and the script exits 0; the same holds when the script is started
 with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2 or 3 (the first, a
 middle and the last stub) leaves the later commands running and the script exiting 1, naming that
 command; a claude that reports another version, or no claude, makes the script exit 1 without any
-validation.
+validation. The cases read plugin-validate.yml once, for that copy and for the version that its
+CLAUDE_CODE_VERSION line pins; when it cannot be read or holds no such line, the test fails, naming
+it, and runs none of these cases, and 2 reading cases require that failure of a folder and of a file
+with no such line.
 
 The cases pin the commands, not the script's other shell text, so the test also fails unless the
 sha256 of the committed script is SCRIPT_SHA256. To change the script, read the whole change,
@@ -58,7 +61,7 @@ selection above does not select, such as one that only another workflow's run tr
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case. An error outside the reading
 of a workflow file, such as a missing tools/run_all_checks.sh, ends the test with a traceback and
-exit 1.
+exit 1, after the failures found before it are printed.
 """
 
 from __future__ import annotations
@@ -306,18 +309,33 @@ def expected_calls(lines: list) -> list:
     return out
 
 
-def pin() -> str:
-    m = re.search(r'^  CLAUDE_CODE_VERSION: "([0-9.]+)"$', PIN_WORKFLOW.read_text(encoding="utf-8"), re.M)
-    return m.group(1) if m else ""
+def read_pin(failures: list, path: Path = PIN_WORKFLOW):
+    """(bytes, version) of plugin-validate.yml, or of path, for the behaviour cases: its bytes and
+    the version that its CLAUDE_CODE_VERSION line pins. None, with a failure that names the file,
+    when it cannot be read or holds no such line."""
+    try:
+        data = path.read_bytes()
+        text = data.decode("utf-8")
+    except Exception as error:  # fail closed: a file that cannot be read fails, named
+        failures.append(f"{path.name}: this test cannot read it for the behaviour cases, so it fails closed: "
+                        f"{type(error).__name__}: {' '.join(str(error).split())[:300]}")
+        return None
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    m = re.search(r'^  CLAUDE_CODE_VERSION: "([0-9.]+)"$', text, re.M)
+    if m is None:
+        failures.append(f"{path.name}: it holds no line '  CLAUDE_CODE_VERSION: \"<version>\"', so the behaviour "
+                        "cases cannot run")
+        return None
+    return data, m.group(1)
 
 
-def make_tree(tmp: Path, lines: list, claude: bool) -> dict:
+def make_tree(tmp: Path, lines: list, claude: bool, pin_bytes: bytes) -> dict:
     (tmp / "tools").mkdir()
     (tmp / ".github" / "workflows").mkdir(parents=True)
     (tmp / "cleanlanguage" / "skills" / "cleanlanguage").mkdir(parents=True)
     (tmp / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md").write_text("stub\n", encoding="utf-8")
     shutil.copy2(SCRIPT, tmp / "tools" / "run_all_checks.sh")
-    shutil.copy2(PIN_WORKFLOW, tmp / ".github" / "workflows" / "plugin-validate.yml")
+    (tmp / ".github" / "workflows" / "plugin-validate.yml").write_bytes(pin_bytes)
     for line in lines:
         stub = stub_name(line)
         if stub is None:
@@ -341,15 +359,16 @@ def make_tree(tmp: Path, lines: list, claude: bool) -> dict:
     return {"PATH": str(bin_dir), "HOME": str(tmp), "TMPDIR": str(tmp), "RUN_ALL_CHECKS_LOG": str(tmp / "log")}
 
 
-def run_case(lines: list, codes: str = "", version=None, claude: bool = True, cdpath: bool = False):
+def run_case(lines: list, pinned: tuple, codes: str = "", version=None, claude: bool = True,
+             cdpath: bool = False):
     """Run the script in a stub tree: (exit status, log lines, script output). With cdpath, the
     script is started by a relative path from the tree, with CDPATH naming another folder that holds
     a tools folder, where a cd that consulted CDPATH would land."""
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name)
-        env = make_tree(tmp, lines, claude)
+        env = make_tree(tmp, lines, claude, pinned[0])
         env["RUN_ALL_CHECKS_CODES"] = codes
-        env["CLAUDE_STUB_VERSION"] = version if version is not None else pin()
+        env["CLAUDE_STUB_VERSION"] = version if version is not None else pinned[1]
         (tmp / "log").write_text("", encoding="utf-8")
         argv, cwd = ["bash", str(tmp / "tools" / "run_all_checks.sh")], "/"
         if cdpath:
@@ -375,7 +394,7 @@ def piped(log: list) -> list:
     return [e.rsplit("|", 1)[0] for e in log if e.rsplit("|", 1)[1] != "00" and not e.startswith("claude|--version|")]
 
 
-def behaviour(lines: list, failures: list) -> int:
+def behaviour(lines: list, failures: list, pinned: tuple) -> int:
     cases = 0
     stubs = [l for l in lines if stub_name(l) is not None]
     if not stubs:
@@ -384,7 +403,7 @@ def behaviour(lines: list, failures: list) -> int:
     want = expected_calls(lines)
 
     cases += 1
-    code, log, output = run_case(lines)
+    code, log, output = run_case(lines, pinned)
     if code != 0:
         failures.append(f"every command passing: the script exits {code}, not 0\n{output[-2000:]}")
     if calls(log) != want:
@@ -393,7 +412,7 @@ def behaviour(lines: list, failures: list) -> int:
         failures.append(f"every command passing: a pipe reached {piped(log)!r}")
 
     cases += 1
-    code, log, output = run_case(lines, cdpath=True)
+    code, log, output = run_case(lines, pinned, cdpath=True)
     if code != 0 or calls(log) != want:
         failures.append(f"a CDPATH naming another tools folder: the script exits {code} with the calls "
                         f"{calls(log)!r}, not 0 with every command once in order\n{output[-2000:]}")
@@ -401,7 +420,7 @@ def behaviour(lines: list, failures: list) -> int:
     for status, line in ((1, stubs[0]), (2, stubs[len(stubs) // 2]), (3, stubs[-1])):
         cases += 1
         name = stub_name(line)[0]
-        code, log, output = run_case(lines, codes=f"{name}={status}")
+        code, log, output = run_case(lines, pinned, codes=f"{name}={status}")
         label = f"{name} exiting {status}"
         if code != 1:
             failures.append(f"{label}: the script exits {code}, not 1")
@@ -411,10 +430,10 @@ def behaviour(lines: list, failures: list) -> int:
             failures.append(f"{label}: the output does not name the failed command {line!r}")
 
     plugin = [l for l in lines if l == "plugin_manifests"]
-    for label, kwargs in (("a claude reporting another version", {"version": pin() + "1"}),
+    for label, kwargs in (("a claude reporting another version", {"version": pinned[1] + "1"}),
                           ("no claude", {"claude": False})):
         cases += 1
-        code, log, output = run_case(lines, **kwargs)
+        code, log, output = run_case(lines, pinned, **kwargs)
         validations = [c for c in calls(log) if c.startswith("claude|plugin validate")]
         if code != 1:
             failures.append(f"{label}: the script exits {code}, not 1")
@@ -441,10 +460,14 @@ UNREADABLE = (
     ("steps-text.yml", b"on: pull_request\njobs:\n  check:\n    steps: echo x\n"),
     ("step-text.yml", b"on: pull_request\njobs:\n  check:\n    steps:\n      - echo x\n"),
 )
+# Files of UNREADABLE from which read_pin must take no pin: a folder, which it cannot read, and a
+# file with no CLAUDE_CODE_VERSION line. Each must add exactly 1 failure, which names it.
+NO_PIN = ("folder.yml", "no-on.yml")
 
 
 def reading(failures: list) -> int:
-    """Run workflow_steps on a folder that holds the files of UNREADABLE."""
+    """Run workflow_steps on a folder that holds the files of UNREADABLE, and read_pin on each file
+    of NO_PIN in it."""
     with tempfile.TemporaryDirectory() as name:
         folder = Path(name)
         for file_name, data in UNREADABLE:
@@ -452,31 +475,45 @@ def reading(failures: list) -> int:
                 (folder / file_name).mkdir()
             else:
                 (folder / file_name).write_bytes(data)
+        for file_name in NO_PIN:
+            found = []
+            try:
+                pinned = read_pin(found, folder / file_name)
+            except Exception as error:
+                failures.append(f"no pin in {file_name}: reading it raised {type(error).__name__}: {error}")
+                continue
+            if pinned is not None or len(found) != 1 or not found[0].startswith(f"{file_name}: "):
+                failures.append(f"no pin in {file_name}: read_pin gave {pinned!r} and the failures {found!r}, "
+                                "not None and 1 failure naming it")
         found = []
         try:
             steps, count = workflow_steps(found, folder)
         except Exception as error:
             failures.append(f"files that cannot be read: reading them raised {type(error).__name__}: {error}")
-            return len(UNREADABLE)
+            return len(UNREADABLE) + len(NO_PIN)
         for file_name, _ in UNREADABLE:
             named = [f for f in found if f.startswith(f"{file_name}: this test cannot read it")]
             if len(named) != 1:
                 failures.append(f"a file that cannot be read, {file_name}: {len(named)} failures name it, not 1")
         if steps or count or len(found) != len(UNREADABLE):
             failures.append(f"files that cannot be read: {count} selected, {len(steps)} run steps, failures {found!r}")
-    return len(UNREADABLE)
+    return len(UNREADABLE) + len(NO_PIN)
 
 
 def main() -> int:
     failures = []
-    digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
-    if digest != SCRIPT_SHA256:
-        failures.append(f"tools/run_all_checks.sh has sha256 {digest}, not the reviewed {SCRIPT_SHA256}")
-    reads = reading(failures)
-    count, steps, lines = coverage(failures)
-    cases = behaviour(lines, failures)
-    for failure in failures:
-        print(f"FAIL: {failure}")
+    try:
+        digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+        if digest != SCRIPT_SHA256:
+            failures.append(f"tools/run_all_checks.sh has sha256 {digest}, not the reviewed {SCRIPT_SHA256}")
+        reads = reading(failures)
+        count, steps, lines = coverage(failures)
+        pinned = read_pin(failures)
+        cases = behaviour(lines, failures, pinned) if pinned is not None else 0
+    finally:
+        # The failures found so far print also when an error ends the test, so none is lost.
+        for failure in failures:
+            print(f"FAIL: {failure}", flush=True)
     if failures:
         return 1
     print(f"OK: {count} workflows, {steps} run steps, {len(lines)} command lines in tools/run_all_checks.sh, "

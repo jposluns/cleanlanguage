@@ -2116,8 +2116,8 @@ named_elsewhere() {
   return 1
 }
 declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""
-# shape_problems DIR WF JOB: the word of each problem that the loop below finds
-# with the workflow WF of the folder DIR and its job JOB, each after a space, or
+# shape_problems DIR WF JOB: the word of each problem that shape_loop finds with
+# the workflow WF of the folder DIR and its job JOB, each after a space, or
 # nothing when there is none.
 shape_problems() {
   local dir="$1" wf="$2" job="$3" why="" shape
@@ -2136,18 +2136,27 @@ shape_problems() {
   if named_elsewhere "$dir" "$wf" "$job"; then why="$why named-elsewhere"; fi
   printf '%s' "$why"
 }
+# shape_loop DIR PAIR...: for each PAIR, WF:JOB, add JOB to shaped_jobs and
+# print a line ok when shape_problems finds no problem with the workflow WF of
+# the folder DIR and its job JOB, and otherwise a FAIL line naming each problem,
+# which adds 1 to fails.
+shape_loop() {
+  local dir="$1" pair wf job why
+  shift
+  for pair in "$@"; do
+    wf="${pair%%:*}" job="${pair#*:}"
+    shaped_jobs+=("$job")
+    why="$(shape_problems "$dir" "$wf" "$job")"
+    if [ -z "$why" ]; then
+      printf 'ok   required check %s follows %s\n' "$job" "$wf"
+    else
+      printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
+    fi
+  done
+}
 shaped_jobs=()
-for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
-  "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
-  wf="${pair%%:*}" job="${pair#*:}"
-  shaped_jobs+=("$job")
-  why="$(shape_problems "$wf_dir" "$wf" "$job")"
-  if [ -z "$why" ]; then
-    printf 'ok   required check %s follows %s\n' "$job" "$wf"
-  else
-    printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
-  fi
-done
+shape_loop "$wf_dir" "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
+  "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"
 # The loop above and REQUIRED_ACTIONS_JOBS must name the same Actions jobs, so a
 # job added to the gate without its workflow in the loop, or a pair dropped from
 # the loop, fails here instead of leaving a workflow unchecked.
@@ -2180,6 +2189,13 @@ run_declared_case "a matcher that counts a longer name declares nothing" "" \
 run_declared_case "a matcher that ignores the app declares nothing" "" \
   "$(printf "$SD_GATE" 'c["name"] == "Skill discovery"')"
 run_declared_case "a gate that fails to load declares nothing" "" 'raise ValueError("gate")'
+# A matcher that counts the label and 1 other name declares nothing, for each of
+# the 6 names that the label test tries.
+for tried in "Skill discovery " " Skill discovery" "Skill discover" "Skill discoveryx" \
+  "skill discovery" "SKILL DISCOVERY"; do
+  run_declared_case "a matcher that also counts \"$tried\" declares nothing" "" \
+    "$(printf "$SD_GATE" 'c["slug"] == "github-actions" and c["name"] in ("Skill discovery", "'"$tried"'")')"
+done
 # run_named_elsewhere_case NAME WANT FILE LINE [JOB]: named_elsewhere, for the
 # job JOB (Skill discovery when not given) of own.yml, on a folder holding
 # own.yml and FILE, with LINE appended to FILE, must exit WANT.
@@ -2212,20 +2228,63 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
-# run_shape_problems_case NAME: shape_problems, on a folder holding
-# skill-discovery.yml and a copy of it named other.yml, must print
-# named-elsewhere and nothing else, so the loop fails a workflow whose job
-# another file names.
-run_shape_problems_case() {
+# run_shape_loop_case NAME: shape_loop, on a folder holding skill-discovery.yml
+# and a copy of it named other.yml, for the pair of Skill discovery, must print
+# 1 FAIL line, naming named-elsewhere and nothing else, and add 1 to fails.
+run_shape_loop_case() {
   local name="$1" tmp got
+  local want="FAIL required check Skill discovery follows skill-discovery.yml (named-elsewhere);fails 1;"
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   cp "$wf_dir/skill-discovery.yml" "$tmp/skill-discovery.yml" && cp "$wf_dir/skill-discovery.yml" "$tmp/other.yml"
-  got="$(shape_problems "$tmp" skill-discovery.yml "Skill discovery")"
-  if [ "$got" = " named-elsewhere" ]; then printf 'ok   %s\n' "$name"
-  else printf 'FAIL %s (got%s, want named-elsewhere)\n' "$name" "${got:- nothing}"; fails=$((fails + 1)); fi
+  got="$({ fails=0; shape_loop "$tmp" "skill-discovery.yml:Skill discovery"; printf 'fails %s\n' "$fails"; } | tr '\n' ';')"
+  if [ "$got" = "$want" ]; then printf 'ok   %s\n' "$name"
+  else printf 'FAIL %s (got %s, want %s)\n' "$name" "$got" "$want"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
 }
-run_shape_problems_case "the shape loop fails a workflow whose job a copy of it names"
+run_shape_loop_case "the shape loop fails a workflow whose job a copy of it names"
+# SD_SHAPE: a workflow in the shape that wf_shape accepts, whose job is Skill
+# discovery; each case below but the first changes 1 thing in it.
+SD_SHAPE='name: Skill discovery
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    name: Skill discovery
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+        shell: bash'
+# run_shape_problems_case NAME WANT JOB TEXT [STUB]: shape_problems, for the job
+# JOB of wf.yml in a folder that holds only wf.yml with TEXT, or nothing when
+# TEXT is empty, must print WANT; with STUB, wf_shape is a function that fails.
+run_shape_problems_case() {
+  local name="$1" want="$2" tmp got
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  if [ -n "$4" ]; then printf '%s\n' "$4" > "$tmp/wf.yml"; fi
+  if [ -n "${5:-}" ]; then got="$(wf_shape() { return 1; }; shape_problems "$tmp" wf.yml "$3")"
+  else got="$(shape_problems "$tmp" wf.yml "$3")"; fi
+  if [ "$got" = "$want" ]; then printf 'ok   %s\n' "$name"
+  else printf 'FAIL %s (got%s, want%s)\n' "$name" "${got:- nothing}" "${want:- nothing}"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+run_shape_problems_case "a workflow in the accepted shape has no shape problem" "" "Skill discovery" "$SD_SHAPE"
+run_shape_problems_case "a missing workflow is unreadable-workflow" " unreadable-workflow" "Skill discovery" ""
+run_shape_problems_case "a quoted job name is job-name" " job-name" "Skill discovery" \
+  "${SD_SHAPE/    name: Skill discovery/    name: \"Skill discovery\"}"
+run_shape_problems_case "a paths filter is trigger-filter" " trigger-filter pull-request-filter" "Skill discovery" \
+  "${SD_SHAPE/  pull_request:/  pull_request:
+    paths: [docs]}"
+run_shape_problems_case "a checker that fails is shape-check-error" " shape-check-error" "Skill discovery" \
+  "$SD_SHAPE" stub
+run_shape_problems_case "an if: on the job is the word wf_shape prints" " job-key-if" "Skill discovery" \
+  "${SD_SHAPE/    runs-on:/    if: false
+    runs-on:}"
+run_shape_problems_case "a job that the gate does not declare is declared" " declared" "Docs" \
+  "${SD_SHAPE//Skill discovery/Docs}"
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
