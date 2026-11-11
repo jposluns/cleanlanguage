@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/run_all_checks.sh: it runs the run text read here, unpiped, and fails on a failure.
+"""Test that tools/run_all_checks.sh runs the run text read here, unpiped, and fails on a failure.
 
 Coverage. The test reads each file directly under .github/workflows whose name ends in .yml or .yaml
 with PyYAML's safe loader (which reads the key on as True). From the on: value of each it selects
@@ -9,7 +9,12 @@ or a push trigger whose branches name main or hold a pattern (an entry with any 
 branches-ignore or tags filter, or whose branches-ignore does not name main. Of a selected workflow
 it reads the defaults and jobs keys, the uses, defaults and steps keys of each job, and the run and
 working-directory keys of each step. Each run text, with surrounding white space stripped, must be a
-command line of the script or one of EXCEPTIONS, and a failure names the workflow and the step.
+command line of the script or one of EXCEPTIONS, and a failure names the workflow and the step. A
+file whose reading raises an error fails, naming the file, and its steps are not compared. Such
+files include one that cannot be opened, decoded as UTF-8 or loaded as 1 YAML document, and one in
+which the document, jobs, a job or a step is not a mapping, steps is not a list, or the on: value is
+none of a string, a list and a mapping; a jobs, job or steps value that is null, false, zero or
+empty is read as holding nothing. The reading cases require this of 1 file of each of those kinds.
 Since the script runs each command from the repository root, a job with a uses key, which calls a
 reusable workflow whose steps the test does not read, a run step with a working-directory, and a
 defaults key on the workflow or on a job each fail, naming the workflow. A command line is the text
@@ -51,7 +56,9 @@ such as one that runs a gate through an action (uses: rather than run:), and a w
 selection above does not select, such as one that only another workflow's run triggers
 (workflow_run), are not compared, so the script is not required to run what they run.
 
-Exit 0 when every case passes; 1 otherwise, naming each failing case.
+Exit 0 when every case passes; 1 otherwise, naming each failing case. An error outside the reading
+of a workflow file, such as a missing tools/run_all_checks.sh, ends the test with a traceback and
+exit 1.
 """
 
 from __future__ import annotations
@@ -138,32 +145,57 @@ def selected(on) -> bool:
     return "tags" not in push
 
 
-def workflow_steps(failures: list):
-    """(workflow, job, step index, run text) for each run step of each selected workflow, and the
-    count of selected workflows. A reusable workflow call, a working-directory or a defaults key in
-    a selected workflow is added to failures."""
+def need(value, kinds: tuple, what: str):
+    """value, or a TypeError naming what when value is none of kinds."""
+    if not isinstance(value, kinds):
+        raise TypeError(f"{what} is of type {type(value).__name__}, not {' or '.join(k.__name__ for k in kinds)}")
+    return value
+
+
+def read_workflow(path: Path):
+    """None when the workflow at path is not selected; otherwise (failures, run steps) for it. It
+    raises on a file that it cannot read; a document, jobs value or job that is not a mapping raises
+    where this function reads it as one, and a steps value that is not a list raises when iterated
+    or yields an item that is not a mapping, which need refuses."""
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not selected(need(doc.get(True, doc.get("on")), (str, list, dict), "the on: value")):
+        return None
+    failures, steps = [], []
+    if "defaults" in doc:
+        failures.append(f"{path.name}: a defaults key, which can move its run steps out of the repository root")
+    for job_id, job in (doc.get("jobs") or {}).items():
+        job = job or {}
+        if "uses" in job:
+            failures.append(f"{path.name} job {job_id}: it calls the reusable workflow {job['uses']!r}, whose "
+                            "steps this test does not read")
+        if "defaults" in job:
+            failures.append(f"{path.name} job {job_id}: a defaults key, which can move its run steps out of the "
+                            "repository root")
+        for index, step in enumerate(job.get("steps") or []):
+            if "run" in need(step, (dict,), f"step {index} of job {job_id}"):
+                if "working-directory" in step:
+                    failures.append(f"{path.name} job {job_id} step {index}: it runs in "
+                                    f"{step['working-directory']!r}, not the repository root")
+                steps.append((path.name, job_id, index, str(step["run"]).strip()))
+    return failures, steps
+
+
+def workflow_steps(failures: list, folder: Path = WORKFLOWS):
+    """(workflow, job, step index, run text) for each run step of each selected workflow of folder,
+    and the count of selected workflows. A reusable workflow call, a working-directory or a defaults
+    key in a selected workflow is added to failures, and so is each file that cannot be read."""
     steps, count = [], 0
-    for path in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")]):
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(doc, dict) or not selected(doc.get(True, doc.get("on"))):
+    for path in sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")]):
+        try:
+            found = read_workflow(path)
+        except Exception as error:  # fail closed: a file that cannot be read fails, named
+            failures.append(f"{path.name}: this test cannot read it, so it fails closed: {type(error).__name__}: "
+                            f"{' '.join(str(error).split())[:300]}")
             continue
-        count += 1
-        if "defaults" in doc:
-            failures.append(f"{path.name}: a defaults key, which can move its run steps out of the repository root")
-        for job_id, job in (doc.get("jobs") or {}).items():
-            job = job or {}
-            if "uses" in job:
-                failures.append(f"{path.name} job {job_id}: it calls the reusable workflow {job['uses']!r}, whose "
-                                "steps this test does not read")
-            if "defaults" in job:
-                failures.append(f"{path.name} job {job_id}: a defaults key, which can move its run steps out of the "
-                                "repository root")
-            for index, step in enumerate(job.get("steps") or []):
-                if isinstance(step, dict) and "run" in step:
-                    if "working-directory" in step:
-                        failures.append(f"{path.name} job {job_id} step {index}: it runs in "
-                                        f"{step['working-directory']!r}, not the repository root")
-                    steps.append((path.name, job_id, index, str(step["run"]).strip()))
+        if found is not None:
+            count += 1
+            failures += found[0]
+            steps += found[1]
     return steps, count
 
 
@@ -396,11 +428,51 @@ def behaviour(lines: list, failures: list) -> int:
     return cases
 
 
+# Files that this test cannot read, 1 of each kind: (file name, its bytes, or None for a folder of
+# that name). Each must add exactly 1 failure, which names it, and no run step.
+UNREADABLE = (
+    ("folder.yml", None),
+    ("not-utf-8.yml", b"on: pull_request\njobs: {}\n# \xff\n"),
+    ("not-yaml.yml", b"on: [pull_request\n"),
+    ("document-list.yml", b"- on: pull_request\n"),
+    ("no-on.yml", b"jobs: {}\n"),
+    ("jobs-list.yml", b"on: pull_request\njobs:\n  - check\n"),
+    ("job-list.yml", b"on: pull_request\njobs:\n  check:\n    - run: x\n"),
+    ("steps-text.yml", b"on: pull_request\njobs:\n  check:\n    steps: echo x\n"),
+    ("step-text.yml", b"on: pull_request\njobs:\n  check:\n    steps:\n      - echo x\n"),
+)
+
+
+def reading(failures: list) -> int:
+    """Run workflow_steps on a folder that holds the files of UNREADABLE."""
+    with tempfile.TemporaryDirectory() as name:
+        folder = Path(name)
+        for file_name, data in UNREADABLE:
+            if data is None:
+                (folder / file_name).mkdir()
+            else:
+                (folder / file_name).write_bytes(data)
+        found = []
+        try:
+            steps, count = workflow_steps(found, folder)
+        except Exception as error:
+            failures.append(f"files that cannot be read: reading them raised {type(error).__name__}: {error}")
+            return len(UNREADABLE)
+        for file_name, _ in UNREADABLE:
+            named = [f for f in found if f.startswith(f"{file_name}: this test cannot read it")]
+            if len(named) != 1:
+                failures.append(f"a file that cannot be read, {file_name}: {len(named)} failures name it, not 1")
+        if steps or count or len(found) != len(UNREADABLE):
+            failures.append(f"files that cannot be read: {count} selected, {len(steps)} run steps, failures {found!r}")
+    return len(UNREADABLE)
+
+
 def main() -> int:
     failures = []
     digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
     if digest != SCRIPT_SHA256:
         failures.append(f"tools/run_all_checks.sh has sha256 {digest}, not the reviewed {SCRIPT_SHA256}")
+    reads = reading(failures)
     count, steps, lines = coverage(failures)
     cases = behaviour(lines, failures)
     for failure in failures:
@@ -408,7 +480,7 @@ def main() -> int:
     if failures:
         return 1
     print(f"OK: {count} workflows, {steps} run steps, {len(lines)} command lines in tools/run_all_checks.sh, "
-          f"{cases} behaviour cases")
+          f"{cases} behaviour cases, {reads} reading cases")
     return 0
 
 

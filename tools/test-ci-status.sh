@@ -1225,12 +1225,12 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
   run_case "Plugin manifests run with a null name does not count -> not green" \
   "$(runs '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CST_OK" "$CF")" "" "" 2
 
-# Every per-run check applies to every run, not only to the first or the last.
-# For a head_sha of another commit and for each malformed field, bad_at puts the
-# bad value on one run alone, at each index of a 6-run reading in turn, so a
-# reader that checked only some runs would read it as green, pending or red, or
-# fail with another message; the whole reading must be unreadable, and the
-# message names what is wrong.
+# Every per-run check applies to every run, not only to the first or the last. For a
+# head_sha of another commit and for each malformed field, bad_at puts the bad value
+# on one run alone, at each index of a 6-run reading in turn, so a reader that
+# checked only some runs would read it as green, pending or red, or fail with
+# another message; the whole reading must be unreadable, and the message names what
+# is wrong.
 # bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run, in
 # that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON VALUE.
 # FIELD is status, conclusion, name, app.slug, app.id, app (the whole app object) or
@@ -2116,24 +2116,32 @@ named_elsewhere() {
   return 1
 }
 declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""
-shaped_jobs=()
-for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
-  "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
-  wf="${pair%%:*}" job="${pair#*:}" why=""
-  shaped_jobs+=("$job")
-  if [ ! -f "$wf_dir/$wf" ] || [ ! -r "$wf_dir/$wf" ]; then
+# shape_problems DIR WF JOB: the word of each problem that the loop below finds
+# with the workflow WF of the folder DIR and its job JOB, each after a space, or
+# nothing when there is none.
+shape_problems() {
+  local dir="$1" wf="$2" job="$3" why="" shape
+  if [ ! -f "$dir/$wf" ] || [ ! -r "$dir/$wf" ]; then
     why=" unreadable-workflow"
   else
-    if [ "$(grep -E '^    name: ' "$wf_dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
-    if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' "$wf_dir/$wf"; then why="$why trigger-filter"; fi
-    shape="$(wf_shape "$wf_dir/$wf" "$job")" || why="$why shape-check-error"
+    if [ "$(grep -E '^    name: ' "$dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
+    if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' "$dir/$wf"; then why="$why trigger-filter"; fi
+    shape="$(wf_shape "$dir/$wf" "$job")" || why="$why shape-check-error"
     if [ -n "$shape" ]; then why="$why $shape"; fi
   fi
   case ";${declared_jobs}" in *";${job};"*) ;; *) why="$why declared" ;; esac
   # Another workflow file that names a job after this display name, in a form
   # that named_elsewhere reads, fails here, so the loop does not check one
   # workflow while another produces the run that the gate reads.
-  if named_elsewhere "$wf_dir" "$wf" "$job"; then why="$why named-elsewhere"; fi
+  if named_elsewhere "$dir" "$wf" "$job"; then why="$why named-elsewhere"; fi
+  printf '%s' "$why"
+}
+shaped_jobs=()
+for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
+  "agent-plugin-manifest.yml:Agent Plugins manifest" "ci-status-test.yml:CI status tests"; do
+  wf="${pair%%:*}" job="${pair#*:}"
+  shaped_jobs+=("$job")
+  why="$(shape_problems "$wf_dir" "$wf" "$job")"
   if [ -z "$why" ]; then
     printf 'ok   required check %s follows %s\n' "$job" "$wf"
   else
@@ -2204,6 +2212,20 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
+# run_shape_problems_case NAME: shape_problems, on a folder holding
+# skill-discovery.yml and a copy of it named other.yml, must print
+# named-elsewhere and nothing else, so the loop fails a workflow whose job
+# another file names.
+run_shape_problems_case() {
+  local name="$1" tmp got
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  cp "$wf_dir/skill-discovery.yml" "$tmp/skill-discovery.yml" && cp "$wf_dir/skill-discovery.yml" "$tmp/other.yml"
+  got="$(shape_problems "$tmp" skill-discovery.yml "Skill discovery")"
+  if [ "$got" = " named-elsewhere" ]; then printf 'ok   %s\n' "$name"
+  else printf 'FAIL %s (got%s, want named-elsewhere)\n' "$name" "${got:- nothing}"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+run_shape_problems_case "the shape loop fails a workflow whose job a copy of it names"
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
