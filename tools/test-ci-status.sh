@@ -50,8 +50,18 @@
 # they assert.
 set -uo pipefail
 
-# CDPATH is unset for this cd, so it cannot send a relative folder elsewhere.
-here="$(unset CDPATH; cd "$(dirname "$0")" && pwd)"
+# CDPATH is unset for the whole suite, so that it cannot send a cd of the suite,
+# or of a program that the suite runs, to another folder. A relative TMPDIR is
+# made absolute against the folder that the suite starts in, since mktemp -d
+# would otherwise give relative paths, which the gate would read from its own
+# folder when it runs gh, and a case that runs the gate from another folder
+# would read from that folder.
+unset CDPATH
+case "${TMPDIR-}" in
+  "" | /*) ;;
+  *) TMPDIR="$PWD/$TMPDIR"; export TMPDIR ;;
+esac
+here="$(cd "$(dirname "$0")" && pwd)"
 ci="${here}/ci-status.sh"
 fails=0
 skips=0  # a skipped case is reported on a skip line and never counted as ok
