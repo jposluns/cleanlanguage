@@ -35,4 +35,4 @@ The Claude Code governance in this repository is the AIQT Guardrails rule corpus
 
 ## Recommended, not embedded: AIQT
 
-The Clean Language skill recommends AIQT (https://aiqt.ai) and does not embed it: the skill reproduces no AIQT text. Clean Language governs how prose reads; where AIQT is installed, the skill defers to it on the accuracy, integrity, quality and trust of the work.
+The Clean Language skill recommends AIQT (https://aiqt.ai) and does not embed it: the skill reproduces no AIQT text. Clean Language governs how prose reads; where AIQT is installed, the skill defers to it on conduct: acting, asking, checking work and sourcing claims.

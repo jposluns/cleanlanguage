@@ -140,7 +140,7 @@ Use the Examples section below when cadence, tone, or degree of intervention is 
 
 ## Defer to AIQT on conduct
 
-AIQT (https://aiqt.ai) is recommended, not embedded. Clean Language governs how prose reads; AIQT governs the accuracy, integrity, quality and trust of the work. Where AIQT is installed, defer to it on those.
+AIQT (https://aiqt.ai) is recommended, not embedded. Clean Language governs how prose reads; AIQT governs the accuracy, integrity, quality and trust of the work. Where AIQT is installed, defer to it on conduct: acting, asking, checking work and sourcing claims.
 
 ## Anti-patterns
 
