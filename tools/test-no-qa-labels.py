@@ -43,33 +43,42 @@ too, so the allowlist cannot silently go stale.
 
 A second, narrower pass, the history pass, reads every file that git ls-files lists under
 HISTORY_SCOPE (tools/, site-src/ and .github/), the files that the backlog probes read with git
-grep, and matches each physical line against HISTORY_PATTERNS: the 5 patterns of LABEL_PATTERNS that
-HISTORY_LABEL_NAMES names, and the 2 backlog probes that the pass must fail on, each the git grep -i
-probe of its backlog row written as a case-insensitive Python pattern whose word boundary counts
-only an ASCII letter, digit or underscore as a word character, as git grep does in the C locale. It
-skips only the fixture lines of this lint, the file FIXTURE_FILE names: a line of an assignment of
-data, in a class or module body, that lies between a line that is FIXTURE_START and the next line
-that is FIXTURE_END and holds no comment, where an assignment of data is one whose value holds no
-call, lambda, comprehension or formatted string. Every other line of this lint is read: its
-docstrings, its comments and its test code, and any comment or other statement inside a fixture
-block. The HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and
-the reading of tracked files are pinned too. These patterns name a review pass or a finding by
-number and match no plan or contract id, so the pass covers files whose ids would fail the full
-patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that
-cannot be read as UTF-8, or that is missing, is a failure that names the file, and so are a fixture
-block left open and a git ls-files that fails. Its residuals: it matches single lines only, so a
-label split across lines or written in words passes; it reads no untracked file, as git grep reads
-none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so the file
-that a tracked link points to is read only when it is itself a tracked file in the 3 folders; and it
-reads no tracked file outside them, among them .aiqt/, the adopted governance files, .baseline/, the
-pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of numbered review
-rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog
-probe of numbered findings and rounds matches. Its accepted false failures: ordinary text in which a
-space and a digit follow the word discovery, verify, finding or round, in any case, such as a count
-of files to verify or of files found, or a plain round number that a letter or a decimal
-continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; and so is a line
+grep, as git grep reads it, split at each line feed only, so a carriage return stays in its line and
+each line has the number git grep gives it, and matches each physical line against HISTORY_PATTERNS:
+the 5 patterns of LABEL_PATTERNS that HISTORY_LABEL_NAMES names, and the 2 backlog probes that the
+pass must fail on, each the git grep -i probe of its backlog row written as a case-insensitive
+Python pattern whose word boundary counts only an ASCII letter, digit or underscore as a word
+character, as git grep does in the C locale. It skips only the fixture lines of this lint, the file
+FIXTURE_FILE names: a line of an assignment of data, made directly in the body of a class at the top
+level of this lint to names that FIXTURE_NAMES lists for that class, that lies between a comment
+line that is FIXTURE_START and the next comment line that is FIXTURE_END and holds no comment, where
+an assignment of data is one whose value holds no call, lambda, comprehension or formatted string.
+Every other line of this lint is read: its docstrings, its comments and its test code, and any
+comment or other statement inside a fixture block, an assignment to another name or in a function or
+a nested class among them, and a string line that reads as a marker opens and closes no block. The
+HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and the reading
+of tracked files, against a run of git grep, are pinned too, and FixtureNameRegistry fails when a
+name in FIXTURE_NAMES is not a fixture of its class or is read by no method of that class other than
+as the message of an assertion. These patterns name a review pass or a finding by number and match
+no plan or contract id, so the pass covers files whose ids would fail the full patterns, such as
+tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that cannot be read as
+UTF-8, or that is missing, is a failure that names the file, and so are a fixture block left open, a
+carriage return in this lint and a git ls-files that fails. Its residuals: it matches single lines
+only, so a label split across lines or written in words passes; it reads no untracked file, as git
+grep reads none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so
+the file that a tracked link points to is read only when it is itself a tracked file in the 3
+folders; and it reads no tracked file outside them, among them .aiqt/, the adopted governance files,
+.baseline/, the pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of
+numbered review rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that
+the backlog probe of numbered findings and rounds matches. Its accepted false failures: ordinary
+text in which a space and a digit follow the word discovery, verify, finding or round, in any case,
+such as a count of files to verify or of files found, or a plain round number that a letter or a
+decimal continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; so is a line
 that the first probe matches only because a letter or digit outside ASCII comes just before its
-first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C.
+first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C; and so is a line in which
+a capital I with a dot above, U+0130, stands for an i of a word of a history pattern, as in the
+forms DOTTED_CAPITAL_I holds, which neither probe matches under either locale and the pass fails,
+since the case-insensitive matching of Python folds that letter to i.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -331,15 +340,38 @@ HISTORY_PROBES = (
 HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_LABEL_NAMES)
                     + HISTORY_PROBES)
 # The history pass skips only the fixture lines of this file, the label forms its self-checks use as
-# examples, which the maintainer allows and nothing else. A fixture line lies between a line that is
-# FIXTURE_START and the next line that is FIXTURE_END, once each is stripped, belongs to an
-# assignment of data in a class or module body that lies wholly inside that block, and holds no
-# comment. A value of data holds only the node types in FIXTURE_DATA, so a value with a call, a
-# lambda, a comprehension or a formatted string is not data, and its lines are read.
+# examples, which the maintainer allows and nothing else. A fixture line lies between a comment line
+# that is FIXTURE_START and the next comment line that is FIXTURE_END, once each is stripped,
+# belongs to an assignment of data that lies wholly inside that block, made directly in the body of
+# a class at the top level of this file to names that FIXTURE_NAMES lists for that class, and holds
+# no comment. A value of data holds only the node types in FIXTURE_DATA, so a value with a call, a
+# lambda, a comprehension or a formatted string is not data, and its lines are read. An assignment
+# to any other name, at module level, in a function or in a nested class is read too, and so is a
+# docstring or other string line that reads as a marker, which opens and closes no block.
 FIXTURE_FILE = "tools/test-no-qa-labels.py"
 FIXTURE_START = "# history pass fixtures: start"
 FIXTURE_END = "# history pass fixtures: end"
 FIXTURE_DATA = (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Subscript, ast.BinOp, ast.Add, ast.Load)
+# The fixture names, by the class that holds them: the class attributes whose values the self-checks
+# of that class read as examples, or as the results they expect for them. FixtureNameRegistry fails
+# when a name here is not assigned once as data in a fixture block of its class, or is read by no
+# method of that class other than as the message of an assertion.
+FIXTURE_NAMES = {
+    "NoReviewHistoryInScope": ("PLANTS",),
+    "HistoryPatternSelfCheck": ("FIXTURES", "PROBE_ONLY", "C_LOCALE_ONLY", "FALSE_FAILURES", "NUMBERED_FINDING_ONLY",
+                                "DOTTED_CAPITAL_I"),
+    "PatternSelfCheck": (
+        "LABELS", "WIDENED", "PROSE", "LETTER_EXEMPT", "FALSE_FAILURES", "FALSE_FAILURE_PYTHON",
+        "CODE_FALSE_FAILURES", "CODE_STRING_LABELS", "CODE", "ORDINARY_PYTHON", "COMMENT_LABELS", "PLACEMENTS",
+        "EXPECTED_SKIPS", "DOUBLE_QUOTE_FORMS", "DOUBLE_QUOTE_SKIPS", "ESCAPED_FORMS", "ESCAPED_SKIPS",
+        "ADJACENT_FORMS", "ADJACENT_EARLY", "ADJACENT_SKIPS", "ORACLE_CASES", "LITERAL_KIND_STATEMENTS",
+        "LITERAL_KIND_CODE", "PARSED_TEXT_STATEMENTS", "FIELD_CODE_STATEMENTS", "FIELD_TEXT_LABELS",
+        "LITERAL_LED_CODE", "DECODED_LABELS", "CONCATENATED_LABELS", "CONCATENATED_CLEAN", "RAW_FSTRING_LABELS",
+        "RAW_FSTRING_CLEAN", "VALUE_CLEAN", "VALUE_LABELS", "VALUE_COLON", "VALUE_LINE_FALSE_FAILURES",
+        "FIELD_BACKSLASH_STATEMENTS", "JOINED_REPORT", "FIELD_JOINING_STATEMENTS", "SPLIT", "SPREAD",
+        "PLAIN_NUMBER", "COLON_NUMBER", "SPLIT_COLON_CAUGHT", "SPLIT_COLON_REPORT", "SPLIT_COLON_EXEMPT",
+        "SECOND_IN_ONE_TEXT", "SECOND_ACROSS_LINES", "EARLIER_IN_ONE_TEXT", "EARLIER_ACROSS_LINES"),
+}
 # The modes of a symbolic link and of a submodule in the output of git ls-files --stage. The history
 # pass reads neither, as git grep reads neither.
 UNREAD_MODES = ("120000", "160000")
@@ -389,6 +421,15 @@ def labels_in(line, patterns=ALL_PATTERNS):
 def read_text(path):
     """The text of a file. A missing or unreadable file raises, so the caller fails."""
     return Path(path).read_text(encoding="utf-8")
+
+
+def read_as_git_grep(path):
+    """The text of a file as git grep reads it, decoded as UTF-8 with every carriage return kept.
+
+    Split at each line feed, it gives the lines and line numbers that git grep gives, even where a
+    carriage return stands alone. A missing or unreadable file raises, so the caller fails.
+    """
+    return Path(path).read_bytes().decode("utf-8")
 
 
 # An f-string, and a template string where this Python parses one, is a node of its own kind.
@@ -785,37 +826,46 @@ def tracked_history_files(root=ROOT):
 def fixture_lines(text):
     """The numbers of the fixture lines of text, the source of this lint.
 
-    A block runs from a line that is FIXTURE_START to the next line that is FIXTURE_END, once each
-    is stripped. A start inside an open block, an end outside one or a block left open raises
+    A block runs from a comment line that is FIXTURE_START to the next comment line that is
+    FIXTURE_END, once each is stripped; a line inside a string that reads as a marker is not one. A
+    start inside an open block, an end outside one, a block left open or a carriage return in text,
+    which would make the lines Python parses differ from the lines the pass reads, raises
     ValueError, so the history pass fails. A fixture line lies inside a block, belongs to an
-    assignment of data to names in a class or module body that lies wholly inside that block, and
-    holds no comment; a value of data holds only the node types in FIXTURE_DATA.
+    assignment of data that lies wholly inside that block, made directly in the body of a class at
+    the top level of text to names that FIXTURE_NAMES lists for that class, and holds no comment; a
+    value of data holds only the node types in FIXTURE_DATA.
     """
+    if "\r" in text:
+        raise ValueError("line {}: a carriage return".format(text[:text.index("\r")].count("\n") + 1))
+    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    commented = {tok.start[0] for tok in tokens if tok.type == tokenize.COMMENT}
+    source = text.split("\n")
     blocks = []
     start = None
-    for number, line in enumerate(text.split("\n"), 1):
-        if line.strip() == FIXTURE_START:
+    for number in sorted(commented):
+        line = source[number - 1].strip()
+        if line == FIXTURE_START:
             if start is not None:
                 raise ValueError("line {}: a fixture block starts inside another".format(number))
             start = number
-        elif line.strip() == FIXTURE_END:
+        elif line == FIXTURE_END:
             if start is None:
                 raise ValueError("line {}: a fixture block ends outside one".format(number))
             blocks.append((start, number))
             start = None
     if start is not None:
         raise ValueError("line {}: a fixture block is left open".format(start))
-    commented = {tok.start[0] for tok in tokenize.generate_tokens(io.StringIO(text).readline)
-                 if tok.type == tokenize.COMMENT}
     lines = set()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         tree = ast.parse(text)
-    for owner in ast.walk(tree):
-        if not isinstance(owner, (ast.Module, ast.ClassDef)):
+    for owner in tree.body:
+        if not isinstance(owner, ast.ClassDef) or owner.name not in FIXTURE_NAMES:
             continue
         for node in owner.body:
-            if (isinstance(node, ast.Assign) and all(isinstance(target, ast.Name) for target in node.targets)
+            if (isinstance(node, ast.Assign)
+                    and all(isinstance(target, ast.Name) and target.id in FIXTURE_NAMES[owner.name]
+                            for target in node.targets)
                     and all(isinstance(part, FIXTURE_DATA) for part in ast.walk(node.value))
                     and any(first < node.lineno and node.end_lineno < last for first, last in blocks)):
                 lines.update(range(node.lineno, node.end_lineno + 1))
@@ -839,10 +889,10 @@ def history_hits(rel, text):
 def history_report(root=ROOT):
     """The report of the history pass over the repository at root, and the number of files it read.
 
-    Each tracked file under HISTORY_SCOPE is read, apart from a symbolic link and a submodule, which
-    git grep reads neither of. A file that is missing, cannot be read as UTF-8 or, for this lint,
-    holds a fixture block left open or does not parse, is reported with its path, and a git ls-files
-    that fails is reported too.
+    Each tracked file under HISTORY_SCOPE is read as git grep reads it, apart from a symbolic link
+    and a submodule, which git grep reads neither of. A file that is missing, cannot be read as
+    UTF-8 or, for this lint, holds a fixture block left open or a carriage return or does not parse,
+    is reported with its path, and a git ls-files that fails is reported too.
     """
     try:
         entries = tracked_history_files(root)
@@ -855,7 +905,7 @@ def history_report(root=ROOT):
         if mode in UNREAD_MODES:
             continue
         try:
-            found.extend(history_hits(rel, read_text(Path(root) / rel)))
+            found.extend(history_hits(rel, read_as_git_grep(Path(root) / rel)))
         except (OSError, UnicodeDecodeError, ValueError, SyntaxError, tokenize.TokenError) as error:
             found.append("{}: unreadable: {}".format(rel, error))
             continue
@@ -868,6 +918,10 @@ class NoReviewHistoryInScope(unittest.TestCase):
     # Probe-matching lines planted into a copy of this lint, each of which the pass must report.
     PLANTS = ("round 3 of the plan", "fix round 2", "Verify 3 and discovery 2")
     # history pass fixtures: end
+
+    # The 2 backlog probes, verbatim, as git grep -iE reads them.
+    ROW_172_PROBE = r"\b(discovery|verify)( round)? [0-9]|\bfinding [0-9]|\bround [0-9]"
+    ROW_183_PROBE = r"(fix|review|qa|discovery|verify) round [0-9]|round [0-9]+ (miss|reproduction|finding)"
 
     def test_no_file_in_scope_names_a_review_pass_or_a_numbered_finding(self):
         found, read = history_report()
@@ -899,14 +953,26 @@ class NoReviewHistoryInScope(unittest.TestCase):
         comment_before = "class NoReviewHistoryInScope(unittest.TestCase):"
         test_head = "def test_the_fixture_file_is_this_lint(self):"
         for plant in self.PLANTS:
-            cases = (("the module docstring", docstring_head, plant),
-                     ("a comment", "", "# " + plant),
-                     ("test code", test_head, "        planted = \"{}\"".format(plant)),
-                     ("a comment in a fixture block", FIXTURE_START, "    # " + plant),
-                     ("a call in a fixture block", FIXTURE_START, "    PLANTED = str(\"{}\")".format(plant)),
-                     ("a fixture line with a comment", FIXTURE_START,
-                      "    PLANTED = \"{}\"  # planted".format(plant)))
-            for where, after, line in cases:
+            value = "\"{}\"".format(plant)
+            # (where, the stripped line the plant follows, the planted lines, the offset in them of
+            # the line that must be reported). FIXTURE_START is first met in this class, whose only
+            # fixture name is PLANTS, so in each case only the rule that the case names keeps its
+            # line out of the skip.
+            cases = (("the module docstring", docstring_head, plant, 0),
+                     ("a comment", "", "# " + plant, 0),
+                     ("test code", test_head, "        planted = " + value, 0),
+                     ("a comment in a fixture block", FIXTURE_START, "    # " + plant, 0),
+                     ("a call in a fixture block", FIXTURE_START, "    PLANTS = str({})".format(value), 0),
+                     ("a fixture line with a comment", FIXTURE_START, "    PLANTS = {}  # planted".format(value), 0),
+                     ("a name outside FIXTURE_NAMES in a fixture block", FIXTURE_START, "    MESSAGE = " + value, 0),
+                     ("a local of a method in a fixture block", FIXTURE_START,
+                      "    def helper(self):\n        PLANTS = " + value, 1),
+                     ("a class in a method in a fixture block", FIXTURE_START,
+                      "    def helper(self):\n        class K:\n            PLANTS = " + value, 2),
+                     ("a string line that reads as a marker", FIXTURE_END,
+                      "    \"\"\"\n    {}\n    \"\"\"\n    PLANTS = {}\n    \"\"\"\n    {}\n    \"\"\"".format(
+                          FIXTURE_START, value, FIXTURE_END), 3))
+            for where, after, line, offset in cases:
                 with self.subTest(plant=plant, where=where):
                     if where == "a comment":
                         lines = own.split("\n")
@@ -915,47 +981,76 @@ class NoReviewHistoryInScope(unittest.TestCase):
                     else:
                         text, number = self.planted(own, after, line)
                     found = history_hits(FIXTURE_FILE, text)
-                    self.assertEqual([hit.split(":")[1] for hit in found], [str(number)], found)
+                    self.assertEqual([hit.split(":")[1] for hit in found], [str(number + offset)], found)
+            with self.subTest(plant=plant, where="a class in a module function in a fixture block"):
+                lines = own.split("\n")
+                at = lines.index(comment_before)
+                block = [FIXTURE_START, "def helper():", "    class NoReviewHistoryInScope:",
+                         "        PLANTS = " + value, FIXTURE_END]
+                found = history_hits(FIXTURE_FILE, "\n".join(lines[:at] + block + lines[at:]))
+                self.assertEqual([hit.split(":")[1] for hit in found], [str(at + 4)], found)
             with self.subTest(plant=plant, where="a fixture line"):
-                text, _ = self.planted(own, FIXTURE_START, "    PLANTED = \"{}\"".format(plant))
+                text, _ = self.planted(own, FIXTURE_START, "    PLANTS = " + value)
                 self.assertEqual(history_hits(FIXTURE_FILE, text), [])
             with self.subTest(plant=plant, where="a fixture block of another file"):
                 text = "class C:\n    {}\n    X = \"{}\"\n    {}\n".format(FIXTURE_START, plant, FIXTURE_END)
                 found = history_hits("tools/other.py", text)
                 self.assertEqual([hit.split(":")[1] for hit in found], ["3"], found)
+        with self.subTest(where="this lint at another path with the same file name"):
+            matched = [number for number, line in enumerate(own.split("\n"), 1) if labels_in(line, HISTORY_PATTERNS)]
+            found = history_hits("tools/copy/test-no-qa-labels.py", own)
+            self.assertGreater(len(matched), 0)
+            self.assertEqual([int(hit.split(":")[1]) for hit in found], matched, found)
 
     def test_a_malformed_fixture_block_fails(self):
         for text in ("{}\nX = 1\n".format(FIXTURE_START), "X = 1\n{}\n".format(FIXTURE_END),
-                     "{0}\n{0}\nX = 1\n{1}\n".format(FIXTURE_START, FIXTURE_END)):
+                     "{0}\n{0}\nX = 1\n{1}\n".format(FIXTURE_START, FIXTURE_END), "X = 1\r\n"):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError):
                     history_hits(FIXTURE_FILE, text)
 
     def test_the_pass_reads_the_tracked_files_as_git_grep_does(self):
+        # The lines the pass reports in readable files must be the lines that git grep, run with
+        # both backlog probes under LC_ALL=C, prints for the same index: so a force-added file and a
+        # folder starting with _ are read, an untracked file, a file outside the 3 folders, a
+        # tracked symbolic link and a submodule, here a gitlink whose folder holds a planted line,
+        # are not, and a lone carriage return keeps the line numbers of git grep. A tracked file
+        # that is missing or not UTF-8, which git grep passes over, is a failure that names the file
+        # in the report.
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
 
-            def git(*args):
-                subprocess.run(["git", "-C", str(root)] + list(args), capture_output=True, check=True)
+            def git(*args, **options):
+                return subprocess.run(["git", "-C", str(root)] + list(args), capture_output=True, **options)
 
-            git("init", "-q")
+            git("init", "-q", check=True)
             files = {"tools/__pycache__/x.txt": self.PLANTS[1], "site-src/_cache/y.md": self.PLANTS[0],
-                     ".github/z.yml": "clean", "outside.md": self.PLANTS[2], "tools/gone.txt": "clean"}
+                     ".github/z.yml": "clean", "outside.md": self.PLANTS[2], "tools/gone.txt": "clean",
+                     "tools/cr.txt": "x\r" + self.PLANTS[2] + "\nx\r" + self.PLANTS[1] + "\nx\r" + self.PLANTS[0]}
             for rel, line in files.items():
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
-                (root / rel).write_text(line + "\n", encoding="utf-8")
+                (root / rel).write_bytes((line + "\n").encode("utf-8"))
             (root / "tools/bad.txt").write_bytes(b"\xff\xfe\n")
             (root / "tools/link.md").symlink_to("../outside.md")
-            git("add", "-f", "--", ".")
+            git("add", "-f", "--", ".", check=True)
+            git("update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",tools/sub", check=True)
+            (root / "tools/sub").mkdir()
+            (root / "tools/sub/p.txt").write_text(self.PLANTS[1] + "\n", encoding="utf-8")
             (root / "tools/gone.txt").unlink()
             (root / "tools/untracked.txt").write_text(self.PLANTS[2] + "\n", encoding="utf-8")
             found, read = history_report(root)
-        self.assertEqual(read, 3, found)
-        self.assertEqual(sorted(hit.split(":")[0] for hit in found),
-                         ["site-src/_cache/y.md", "tools/__pycache__/x.txt", "tools/bad.txt", "tools/gone.txt"])
-        self.assertTrue(all(":1: " in hit for hit in found if hit.split(":")[0].endswith((".md", "x.txt"))), found)
-        self.assertTrue(all(": unreadable: " in hit for hit in found if hit.split(":")[0].endswith(("bad.txt", "gone.txt"))),
-                        found)
+            grep = git("grep", "-n", "-z", "-iE", "-e", self.ROW_172_PROBE, "-e", self.ROW_183_PROBE, "--",
+                       *HISTORY_SCOPE, env=dict(os.environ, LC_ALL="C"))
+        self.assertEqual(grep.returncode, 0, grep.stderr)
+        printed = sorted((entry.split(b"\0")[0].decode("utf-8"), int(entry.split(b"\0")[1]))
+                         for entry in grep.stdout.split(b"\n") if entry)
+        hits = sorted((hit.split(":")[0], int(hit.split(":")[1])) for hit in found if ": unreadable: " not in hit)
+        self.assertEqual(hits, printed, found)
+        self.assertEqual(printed, [("site-src/_cache/y.md", 1), ("tools/__pycache__/x.txt", 1),
+                                   ("tools/cr.txt", 1), ("tools/cr.txt", 2), ("tools/cr.txt", 3)])
+        self.assertEqual(sorted(hit.split(":")[0] for hit in found if ": unreadable: " in hit),
+                         ["tools/bad.txt", "tools/gone.txt"], found)
+        self.assertEqual(read, 4, found)
 
     def test_a_failed_listing_fails(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -996,6 +1091,11 @@ class HistoryPatternSelfCheck(unittest.TestCase):
     # Ordinary text that only the numbered finding pattern catches, as the plural or with a number
     # sign, which neither backlog probe matches: a cost of keeping that pattern wide, pinned here.
     NUMBERED_FINDING_ONLY = ("the findings 2 tools printed", "findings 2 and 3", "finding #3 files")
+    # Forms with a capital I with a dot above, U+0130, in place of an i of a probe word, which
+    # neither backlog probe matches under LC_ALL=C or C.UTF-8 and the history pass catches, since
+    # the case-insensitive matching of Python folds that letter to i: an accepted false failure,
+    # which stays caught.
+    DOTTED_CAPITAL_I = ("ver\u0130fy 3", "f\u0130nding 3", "d\u0130scovery 3", "find\u0130ng 3")
     # history pass fixtures: end
 
     def test_the_history_patterns_are_pinned(self):
@@ -1037,6 +1137,52 @@ class HistoryPatternSelfCheck(unittest.TestCase):
         for text in self.FALSE_FAILURES[1:]:
             with self.subTest(text=text):
                 self.assertEqual(labels_in(text, LABEL_PATTERNS), ["a numbered finding"], text)
+
+    def test_a_capital_i_with_a_dot_above_stays_caught(self):
+        for text in self.DOTTED_CAPITAL_I:
+            with self.subTest(text=text):
+                self.assertIn("\u0130", text)
+                self.assertTrue(labels_in(text, HISTORY_PATTERNS), text)
+
+
+class FixtureNameRegistry(unittest.TestCase):
+    @staticmethod
+    def message_arguments(call):
+        """The arguments of an assert call of unittest that are its message, not its subject."""
+        if not (isinstance(call.func, ast.Attribute) and call.func.attr.startswith("assert")):
+            return []
+        subjects = 1 if call.func.attr in ("assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone") else 2
+        return call.args[subjects:] + [keyword.value for keyword in call.keywords if keyword.arg == "msg"]
+
+    def test_each_fixture_name_is_a_fixture_that_its_class_reads(self):
+        own = read_text(ROOT / FIXTURE_FILE)
+        tree = ast.parse(own)
+        skipped = fixture_lines(own)
+        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+        self.assertEqual(sorted(set(FIXTURE_NAMES) - set(classes)), [])
+        for owner, names in FIXTURE_NAMES.items():
+            assigned = {}
+            for node in classes[owner].body:
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            assigned.setdefault(target.id, []).append(node)
+            messages = {id(part) for call in ast.walk(classes[owner]) if isinstance(call, ast.Call)
+                        for argument in self.message_arguments(call) for part in ast.walk(argument)}
+            read = {node.attr for method in classes[owner].body
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    for node in ast.walk(method)
+                    if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls", owner)
+                    and id(node) not in messages}
+            self.assertEqual(len(names), len(set(names)), owner)
+            for name in names:
+                with self.subTest(owner=owner, name=name):
+                    self.assertEqual(len(assigned.get(name, [])), 1, "assigned other than once")
+                    node = assigned[name][0]
+                    self.assertTrue(set(range(node.lineno, node.end_lineno + 1)) <= skipped,
+                                    "not a fixture: outside a block, not data or commented")
+                    self.assertIn(name, read, "read by no method of its class other than as a message")
 
 
 class PatternSelfCheck(unittest.TestCase):

@@ -181,21 +181,24 @@ Residuals, named here because the scan reads text the pull request controls:
   a character of rule 3's left edge, a space, a tab, `|`, `&`, `;` or `(`, or
   at the start of a line inside it, which the scan counts as a launch of the
   script it reads with no finding, while bash may run `python3` with that
-  script or with another script word, run another program, or run nothing.
-  Examples, run with `v=1` and a stub `python3` that prints its arguments:
-  bash passes `tools/x.py|w` as the script for
+  script or with another script word, run `python3` without `-I`, run another
+  program, or run nothing. Examples, run with `v=1` and a stub `python3` that
+  prints its arguments: bash passes `tools/x.py|w` as the script for
   `${v:+ python3 -I tools/x.py|w}`, and for the same with a tab or a newline
   after the `+`, and `tools/x.py|w1` for `${v/#/ python3 -I tools/x.py|w}`; it
   looks up the program `x` for `${v:+x python3 -I tools/x.py|w}` and the
   program `1` for `${v:- python3 -I tools/x.py|w}`, which runs `python3` only
   with `v` unset, and exits with status 127 where no such program is
-  installed; and it fails with exit status 127, so nothing runs, for a command
+  installed; it fails with exit status 127, so nothing runs, for a command
   named, for example, `;python3` after `;`, `|`, `&` or `(`, and for a command
   name that holds spaces, from `"${v:+ python3 -I tools/x.py|w}"`, whose
   quotes stop word splitting, or from `${v:+ python3 -I tools/x.py|w}` with
-  `IFS='|'`. Rule 3's left edge refuses the form, as in
-  `${v:+python3 -I tools/x.py|w}`, where any other character, such as the `+`
-  or a `-`, comes directly before `python3`;
+  `IFS='|'`; and with `IFS=' -'`, `IFS=' I'` or `IFS=$' \\t\\nI'`, each of
+  which splits the word `-I`, it runs `python3` with no `-I`, passing `I` and
+  `tools/x.py|w` for the first, and `-` and `tools/x.py|w` for the other 2, so
+  that `python3` reads its program from standard input. Rule 3's left edge
+  refuses the form, as in `${v:+python3 -I tools/x.py|w}`, where any other
+  character, such as the `+` or a `-`, comes directly before `python3`;
 - an edit to rule 3's right edge that the self-tests do not reach. The
   character and pair self-tests put after `.py` each character of a sample
   (each ASCII character, each code point that `str.isspace()` accepts or whose
