@@ -14,16 +14,18 @@ file whose reading raises an error fails, naming the file, and its steps are not
 files include one that cannot be opened, decoded as UTF-8 or loaded as 1 YAML document, and one in
 which the document, jobs, a job or a step is not a mapping, steps is not a list, or the on: value is
 none of a string, a list and a mapping; a jobs, job or steps value that is null, false, zero or
-empty is read as holding nothing. 9 reading cases require this of 1 file of each of those kinds.
-Since the script runs each command from the repository root, a job with a uses key, which calls a
-reusable workflow whose steps the test does not read, a run step with a working-directory, and a
-defaults key on the workflow or on a job each fail, naming the workflow. A command line is the text
-after "run " on a line of the script that starts with it, or the text before " || status=1" on a
-line of plugin_manifests that starts with "  claude ", a line being the text between line feeds, as
-bash reads the script, so a carriage return or another character that Python reads as a line end
-stays in it; a reading case requires that. A command line that is neither such a run text nor the
-stand-in of an exception fails, so does a command line that repeats, and so does an entry of
-EXCEPTIONS that names no step of a selected workflow.
+empty is read as holding nothing. 9 reading cases require this of 1 file of each of those kinds. A
+folder that the test cannot list fails, naming it, and none of it is read, since a glob of such a
+folder finds no file; 2 reading cases require this of a path that names nothing and of a file. Since
+the script runs each command from the repository root, a job with a uses key, which calls a reusable
+workflow whose steps the test does not read, a run step with a working-directory, and a defaults key
+on the workflow or on a job each fail, naming the workflow. A command line is the text after "run "
+on a line of the script that starts with it, or the text before " || status=1" on a line of
+plugin_manifests that starts with "  claude ", a line being the text between line feeds, as bash
+reads the script, so a carriage return or another character that Python reads as a line end stays in
+it; a reading case requires that. A command line that is neither such a run text nor the stand-in of
+an exception fails, so does a command line that repeats, and so does an entry of EXCEPTIONS that
+names no step of a selected workflow.
 
 Behaviour. Each case copies the script into a temporary tree whose tools/ folder holds a stub in
 place of each script a command line names, beside a copy of plugin-validate.yml and a skill folder
@@ -32,12 +34,14 @@ arguments, and whether its standard output and standard error are pipes, and exi
 case sets; a stub claude on PATH answers --version with the version the case sets. The script's own
 output goes to regular files, so a stub sees a pipe only when the script makes one. PATH holds only
 links to the commands the script and the stubs use, and to cat and tee, so a claude installed on
-this machine never takes part. The cases: the command lines each run once, in order, with neither
-stream a pipe, and the script exits 0; the same holds when the script is started by a relative path
-with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2 or 3 (the first, a
-middle and the last stub) leaves the later commands running and the script exiting 1, naming that
-command; a claude that reports another version, or no claude, makes the script exit 1 without any
-validation. The cases read plugin-validate.yml once, for that copy and for the version that its
+this machine never takes part. In every case no stub's standard output or standard error is a pipe,
+apart from those of claude --version, whose output the script reads. The cases: the command lines
+each run once, in order, and the script exits 0; the same holds when the script is started by a
+relative path with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2 or 3
+(the first, a middle and the last stub) leaves the later commands running and the script exiting 1,
+naming that command; a claude that reports another version, or no claude, makes the script exit 1,
+naming plugin_manifests, without any validation, while the other commands each run once, in order.
+The cases read plugin-validate.yml once, for that copy and for the version that its
 CLAUDE_CODE_VERSION line pins, matched as the sed of plugin_manifests matches it, on each line
 between line feeds, so a line that ends in a carriage return is not such a line; when it cannot be
 read or holds no such line or more than 1, the test fails, naming it and the cause, and runs none of
@@ -193,8 +197,16 @@ def read_workflow(path: Path):
 def workflow_steps(failures: list, folder: Path = WORKFLOWS):
     """(workflow, job, step index, run text) for each run step of each selected workflow of folder,
     and the count of selected workflows. A reusable workflow call, a working-directory or a defaults
-    key in a selected workflow is added to failures, and so is each file that cannot be read."""
+    key in a selected workflow is added to failures, and so is each file that cannot be read. A
+    folder that cannot be listed is added to failures, and nothing of it is read, since a glob of
+    such a folder finds no file and raises nothing."""
     steps, count = [], 0
+    try:
+        os.listdir(folder)
+    except OSError as error:  # fail closed: a folder that cannot be listed fails, named
+        failures.append(f"{folder}: this test cannot list the folder, so it fails closed: {type(error).__name__}: "
+                        f"{' '.join(str(error).split())[:300]}")
+        return steps, count
     for path in sorted([*folder.glob("*.yml"), *folder.glob("*.yaml")]):
         try:
             found = read_workflow(path)
@@ -428,9 +440,12 @@ def behaviour(lines: list, failures: list, pinned: tuple) -> int:
 
     cases += 1
     code, log, output = run_case(lines, pinned, cdpath=True)
+    label = "a CDPATH naming another tools folder"
     if code != 0 or calls(log) != want:
-        failures.append(f"a CDPATH naming another tools folder: the script exits {code} with the calls "
+        failures.append(f"{label}: the script exits {code} with the calls "
                         f"{calls(log)!r}, not 0 with every command once in order\n{output[-2000:]}")
+    if piped(log):
+        failures.append(f"{label}: a pipe reached {piped(log)!r}")
 
     for status, line in ((1, stubs[0]), (2, stubs[len(stubs) // 2]), (3, stubs[-1])):
         cases += 1
@@ -443,6 +458,8 @@ def behaviour(lines: list, failures: list, pinned: tuple) -> int:
             failures.append(f"{label}: the calls are {calls(log)!r}, not every command once in order")
         if f"==> exit {status}: {line}" not in output or f"  {line} (exit {status})" not in output:
             failures.append(f"{label}: the output does not name the failed command {line!r}")
+        if piped(log):
+            failures.append(f"{label}: a pipe reached {piped(log)!r}")
 
     plugin = [l for l in lines if l == "plugin_manifests"]
     for label, kwargs in (("a claude reporting another version", {"version": pinned[1] + "1"}),
@@ -459,6 +476,8 @@ def behaviour(lines: list, failures: list, pinned: tuple) -> int:
         others = [c for c in calls(log) if not c.startswith("claude|")]
         if others != [c for c in want if not c.startswith("claude|")]:
             failures.append(f"{label}: the other commands did not all run once in order")
+        if piped(log):
+            failures.append(f"{label}: a pipe reached {piped(log)!r}")
     return cases
 
 
@@ -491,13 +510,17 @@ SED_NO_PIN = (
 # and the command lines that script_lines must read from it.
 SCRIPT_CASE = (b"run python3 -I tools/x.py\r\nrun bash tools/y.sh\x0bz\n",
                ["python3 -I tools/x.py\r", "bash tools/y.sh\x0bz"])
-READING_CASES = len(UNREADABLE) + len(NO_PIN) + len(SED_NO_PIN) + 1
+# Paths that workflow_steps cannot list as a folder, 1 of each kind: (name, the bytes of a file of
+# that name, or None for a path that names nothing). Each must add exactly 1 failure, which names
+# it, and no run step.
+UNLISTABLE = (("no-folder", None), ("file-folder", b"on: pull_request\n"))
+READING_CASES = len(UNREADABLE) + len(NO_PIN) + len(SED_NO_PIN) + len(UNLISTABLE) + 1
 
 
 def reading(failures: list) -> int:
-    """Run workflow_steps on a folder that holds the files of UNREADABLE, read_pin on each file of
-    NO_PIN in it and of SED_NO_PIN in a folder below it, and script_lines on the script of
-    SCRIPT_CASE."""
+    """Run workflow_steps on a folder that holds the files of UNREADABLE and on each path of
+    UNLISTABLE in a folder below it, read_pin on each file of NO_PIN in it and of SED_NO_PIN in
+    another folder below it, and script_lines on the script of SCRIPT_CASE."""
     with tempfile.TemporaryDirectory() as name:
         folder = Path(name)
         for file_name, data in UNREADABLE:
@@ -518,6 +541,20 @@ def reading(failures: list) -> int:
             if pinned is not None or len(found) != 1 or not found[0].startswith(f"{file_name}: "):
                 failures.append(f"no pin in {file_name}: read_pin gave {pinned!r} and the failures {found!r}, "
                                 "not None and 1 failure naming it")
+        (folder / "unlisted").mkdir()
+        for path_name, data in UNLISTABLE:
+            path, found = folder / "unlisted" / path_name, []
+            if data is not None:
+                path.write_bytes(data)
+            try:
+                steps, count = workflow_steps(found, path)
+            except Exception as error:
+                failures.append(f"a folder that cannot be listed, {path_name}: reading it raised "
+                                f"{type(error).__name__}: {error}")
+                continue
+            if steps or count or len(found) != 1 or not found[0].startswith(f"{path}: this test cannot list"):
+                failures.append(f"a folder that cannot be listed, {path_name}: {count} selected, {len(steps)} run "
+                                f"steps, failures {found!r}, not 1 failure naming it")
         (folder / "script.sh").write_bytes(SCRIPT_CASE[0])
         try:
             got = script_lines(folder / "script.sh")

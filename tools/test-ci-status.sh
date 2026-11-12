@@ -1016,6 +1016,16 @@ else
   printf 'FAIL run_clock_case passes an exit at a time other than CASE_END (printed %s)\n' "${got:-nothing}"
   fails=$((fails + 1))
 fi
+# run_clock_case must also fail a case whose fake gh served a number of reads
+# other than CASE_READS: the same wait, which serves 3 reads, with CASE_READS
+# set to 4. Its line must be a FAIL that names reads.
+got="$(CASE_NO_KILL=1 CASE_READS=4 run_clock_case "reads probe" "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4)"
+if [[ "$got" == "FAIL reads probe ("*";"* && "${got##*;}" == *reads* ]]; then
+  printf 'ok   run_clock_case fails a count of reads other than CASE_READS\n'
+else
+  printf 'FAIL run_clock_case passes a count of reads other than CASE_READS (printed %s)\n' "${got:-nothing}"
+  fails=$((fails + 1))
+fi
 # The fake clock above starts and kills no real process, so this case runs a
 # real hung gh that is killed and reaped. Its first read hangs, so the tool
 # must start that 1 gh call inside the 5-second window, and the fake gh must
@@ -2090,7 +2100,9 @@ except Exception:
 print("".join(name + ";" for name in sorted(names)))
 PY
 }
-# named_elsewhere DIR WF JOB: succeed when an entry of DIR other than WF whose
+# named_elsewhere DIR WF JOB: succeed when DIR is not a folder that ls can
+# list, a safe failure, since a glob of a folder that cannot be listed gives
+# nothing and no error; and succeed when an entry of DIR other than WF whose
 # name ends in .yml or .yaml, one whose name starts with a dot included, as
 # tools/test-run-all-checks.py reads the folder, cannot be read, a safe failure
 # that grep names, or holds a line on which the text name:, with no # before it
@@ -2113,6 +2125,7 @@ named_elsewhere() (
     case '.[\()*+?{|^$' in *"$c"*) text="$text\\" ;; esac
     text="$text$c"
   done
+  if [ ! -d "$dir" ] || ! ls -a -- "$dir" > /dev/null; then return 0; fi
   for other in "$dir"/*.yml "$dir"/*.yaml; do
     [ "${other##*/}" != "$wf" ] || continue
     status=0
@@ -2241,6 +2254,30 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
+# run_unlisted_case NAME KIND: named_elsewhere, for the job Skill discovery of
+# own.yml, on a path that it cannot list as a folder, must exit 0, a safe
+# failure. KIND is 311, a folder of mode 311 holding own.yml and other.yml,
+# which names the job (a user other than root cannot list it, so the case needs
+# the check of the folder; root can, and passes the case by finding the name);
+# file, a file holding a line that names the job; or none, a path that names
+# nothing.
+run_unlisted_case() {
+  local name="$1" kind="$2" tmp got=0 made=0
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  case "$kind" in
+    311) mkdir "$tmp/wf" && printf 'jobs:\n  check:\n    name: Skill discovery\n' > "$tmp/wf/own.yml" \
+           && printf '    name: Skill discovery\n' > "$tmp/wf/other.yml" && chmod 311 "$tmp/wf" || made=1 ;;
+    file) printf '    name: Skill discovery\n' > "$tmp/wf" || made=1 ;;
+  esac
+  if [ "$made" != 0 ]; then setup_failed "$name"; chmod -R u+rwx "$tmp"; rm -rf "$tmp"; return; fi
+  named_elsewhere "$tmp/wf" own.yml "Skill discovery" 2>/dev/null || got=$?
+  if [ "$got" = 0 ]; then printf 'ok   %s (exit %s)\n' "$name" "$got"
+  else printf 'FAIL %s (got %s, want 0)\n' "$name" "$got"; fails=$((fails + 1)); fi
+  chmod -R u+rwx "$tmp"; rm -rf "$tmp"
+}
+run_unlisted_case "a workflow folder that cannot be listed is found" 311
+run_unlisted_case "a workflow path that names a file is found" file
+run_unlisted_case "a workflow path that names nothing is found" none
 # run_glob_case NAME LINE WANT: named_elsewhere, called in the suite's own shell
 # on a folder holding only .hidden.yml, which holds LINE, must exit WANT and
 # leave dotglob and nullglob off in its caller: shopt reads each as off, and a
