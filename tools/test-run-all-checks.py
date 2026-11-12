@@ -15,12 +15,14 @@ files include one that cannot be opened, decoded as UTF-8 or loaded as 1 YAML do
 which the document, jobs, a job or a step is not a mapping, steps is not a list, or the on: value is
 none of a string, a list and a mapping; a jobs, job or steps value that is null, false, zero or
 empty is read as holding nothing. 9 reading cases require this of 1 file of each of those kinds. A
-folder that the test cannot list fails, naming it, and none of it is read, since a glob of such a
-folder finds no file; 2 reading cases require this of a path that names nothing and of a file. Since
-the script runs each command from the repository root, a job with a uses key, which calls a reusable
-workflow whose steps the test does not read, a run step with a working-directory, and a defaults key
-on the workflow or on a job each fail, naming the workflow. A command line is the text after "run "
-on a line of the script that starts with it, or the text before " || status=1" on a line of
+folder that the test cannot list fails, naming it, and the comparison reads none of it, since a glob
+of such a folder finds no file; 2 reading cases require this of a path that names nothing and of a
+file. The behaviour cases below open plugin-validate.yml by its path, which needs no listing of the
+folder, so a folder that can be entered but not listed still gives them that file. Since the script
+runs each command from the repository root, a job with a uses key, which calls a reusable workflow
+whose steps the test does not read, a run step with a working-directory, and a defaults key on the
+workflow or on a job each fail, naming the workflow. A command line is the text after "run " on a
+line of the script that starts with it, or the text before " || status=1" on a line of
 plugin_manifests that starts with "  claude ", a line being the text between line feeds, as bash
 reads the script, so a carriage return or another character that Python reads as a line end stays in
 it; a reading case requires that. A command line that is neither such a run text nor the stand-in of

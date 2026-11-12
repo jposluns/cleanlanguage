@@ -1018,14 +1018,18 @@ else
 fi
 # run_clock_case must also fail a case whose fake gh served a number of reads
 # other than CASE_READS: the same wait, which serves 3 reads, with CASE_READS
-# set to 4. Its line must be a FAIL that names reads.
-got="$(CASE_NO_KILL=1 CASE_READS=4 run_clock_case "reads probe" "$GA_IN_PROGRESS" "" "g" 2 --wait --timeout 4)"
-if [[ "$got" == "FAIL reads probe ("*";"* && "${got##*;}" == *reads* ]]; then
-  printf 'ok   run_clock_case fails a count of reads other than CASE_READS\n'
-else
-  printf 'FAIL run_clock_case passes a count of reads other than CASE_READS (printed %s)\n' "${got:-nothing}"
-  fails=$((fails + 1))
-fi
+# set to 4 and to 2. Each line must be a FAIL that names reads.
+for probe_reads in 4 2; do
+  got="$(CASE_NO_KILL=1 CASE_READS="$probe_reads" run_clock_case "reads probe" "$GA_IN_PROGRESS" "" "g" 2 \
+    --wait --timeout 4)"
+  if [[ "$got" == "FAIL reads probe ("*";"* && "${got##*;}" == *reads* ]]; then
+    printf 'ok   run_clock_case fails a count of reads other than CASE_READS (CASE_READS=%s)\n' "$probe_reads"
+  else
+    printf 'FAIL run_clock_case passes a count of reads other than CASE_READS (CASE_READS=%s; printed %s)\n' \
+      "$probe_reads" "${got:-nothing}"
+    fails=$((fails + 1))
+  fi
+done
 # The fake clock above starts and kills no real process, so this case runs a
 # real hung gh that is killed and reaped. Its first read hangs, so the tool
 # must start that 1 gh call inside the 5-second window, and the fake gh must
@@ -1034,6 +1038,20 @@ fi
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=1 \
   run_case "a real gh that hangs from the first read is killed and reaped -> unreadable" \
   "$GA_PRESENT" "" "s" 3 --wait --timeout 5
+# run_case must fail a case whose fake gh served a number of reads other than
+# CASE_READS: a green reading without --wait, which the gate confirms with a
+# second read, so its fake gh serves 2 reads, with CASE_READS set to 3 and to
+# 1. Each line must be a FAIL that names reads.
+for probe_reads in 3 1; do
+  got="$(CASE_READS="$probe_reads" run_case "reads probe" "$GA_PRESENT" "" "" 0)"
+  if [[ "$got" == "FAIL reads probe ("*";"* && "${got##*;}" == *reads* ]]; then
+    printf 'ok   run_case fails a count of reads other than CASE_READS (CASE_READS=%s)\n' "$probe_reads"
+  else
+    printf 'FAIL run_case passes a count of reads other than CASE_READS (CASE_READS=%s; printed %s)\n' \
+      "$probe_reads" "${got:-nothing}"
+    fails=$((fails + 1))
+  fi
+done
 run_cut_off_case "a read cut off with under a second left names its real bound" 0.500 "0.5 seconds"
 run_cut_off_case "a read cut off with 1.96 seconds left names 1.9 seconds, not a longer bound" \
   1.960 "1.9 seconds"
@@ -2114,9 +2132,9 @@ PY
 # YAML, so a line that YAML reads as something else, such as a line of a run:
 # block, still counts, a safe failure, and a job named in another form, such as
 # a quoted key, an expression or a block scalar, is not seen. It runs in a
-# subshell, so the glob options that it sets stay inside it; the 2 cases after
-# its cases below hold that dotglob and nullglob are off in its caller after a
-# call that finds a name and after one that finds none.
+# subshell, so the glob options that it sets stay inside it; the 2
+# run_glob_case cases below hold that dotglob and nullglob are off in its
+# caller after a call that finds a name and after one that finds none.
 named_elsewhere() (
   shopt -s dotglob nullglob
   local dir="$1" wf="$2" job="$3" other text="" c i status
@@ -2259,8 +2277,7 @@ run_named_elsewhere_case "a name that the job name matches only as a pattern is 
 # failure. KIND is 311, a folder of mode 311 holding own.yml and other.yml,
 # which names the job (a user other than root cannot list it, so the case needs
 # the check of the folder; root can, and passes the case by finding the name);
-# file, a file holding a line that names the job; or none, a path that names
-# nothing.
+# file, a file whose line names the job; or none, a path that names nothing.
 run_unlisted_case() {
   local name="$1" kind="$2" tmp got=0 made=0
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
