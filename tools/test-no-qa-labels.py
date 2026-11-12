@@ -57,28 +57,34 @@ Every other line of this lint is read: its docstrings, its comments and its test
 comment or other statement inside a fixture block, an assignment to another name or in a function or
 a nested class among them, and a string line that reads as a marker opens and closes no block. The
 HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and the reading
-of tracked files, against a run of git grep, are pinned too, and FixtureNameRegistry fails when a
-name in FIXTURE_NAMES is not a fixture of its class or is read by no method of that class other than
-as the message of an assertion. These patterns name a review pass or a finding by number and match
-no plan or contract id, so the pass covers files whose ids would fail the full patterns, such as
-tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that cannot be read as
-UTF-8, or that is missing, is a failure that names the file, and so are a fixture block left open, a
-carriage return in this lint and a git ls-files that fails. Its residuals: it matches single lines
-only, so a label split across lines or written in words passes; it reads no untracked file, as git
-grep reads none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so
-the file that a tracked link points to is read only when it is itself a tracked file in the 3
-folders; and it reads no tracked file outside them, among them .aiqt/, the adopted governance files,
-.baseline/, the pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of
-numbered review rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that
-the backlog probe of numbered findings and rounds matches. Its accepted false failures: ordinary
-text in which a space and a digit follow the word discovery, verify, finding or round, in any case,
-such as a count of files to verify or of files found, or a plain round number that a letter or a
-decimal continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; so is a line
-that the first probe matches only because a letter or digit outside ASCII comes just before its
-first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C; and so is a line in which
-a capital I with a dot above, U+0130, stands for an i of a word of a history pattern, as in the
-forms DOTTED_CAPITAL_I holds, which neither probe matches under either locale and the pass fails,
-since the case-insensitive matching of Python folds that letter to i.
+of tracked files, against a run of git grep, are pinned too. Two classes at the top level of this
+lint that share a name are a failure. FixtureNameRegistry, a static check of the source, fails when
+a name in FIXTURE_NAMES is not a fixture of its class or is read by no method of that class other
+than as a message argument of an assert call; it cannot tell an example from other data, so a name
+read only through self.fail, an alias, subTest(msg=...) or len passes it, and so does a class that a
+later binding of its name, other than a second class, hides from unittest. These patterns name a
+review pass or a finding by number and match no plan or contract id, so the pass covers files whose
+ids would fail the full patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare
+ids. A tracked file that cannot be read as UTF-8, or that is missing, is a failure that names the
+file, and so are a fixture block left open, a carriage return in this lint and a git ls-files that
+fails. Its residuals: it matches single lines only, so a label split across lines or written in
+words passes; it reads no untracked file, as git grep reads none; it reads no tracked symbolic link
+and no submodule, as git grep reads neither, so the file that a tracked link points to is read only
+when it is itself a tracked file in the 3 folders; and it reads no tracked file outside them, among
+them .aiqt/, the adopted governance files, .baseline/, the pinned upstream package, whose
+SPECIFICATION.md has a line that the backlog probe of numbered review rounds matches, and plugin/,
+the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of numbered findings and
+rounds matches. Its accepted false failures: ordinary text in which a space and a digit follow the
+word discovery, verify, finding or round, in any case, such as a count of files to verify or of
+files found, or a plain round number that a letter or a decimal continuation follows, which
+LABEL_PATTERNS exempts, is caught, and is reworded; so is a line that the first probe matches only
+because a letter or digit outside ASCII comes just before its first word, which git grep passes
+under C.UTF-8 and fails under LC_ALL=C; and so is a line in which a capital I with a dot above,
+U+0130, stands for an i of a word of a history pattern, as in the forms DOTTED_CAPITAL_I holds,
+which neither probe matches under either locale and the pass fails, since the case-insensitive
+matching of Python folds that letter to i. A dotless i, U+0131, or a long s, U+017F, in place of an
+i or an s of a probe word, as in the forms C_UTF8_FOLDS holds, is caught too, and is no false
+failure, since a probe matches such a line under C.UTF-8.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -347,19 +353,24 @@ HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in
 # no comment. A value of data holds only the node types in FIXTURE_DATA, so a value with a call, a
 # lambda, a comprehension or a formatted string is not data, and its lines are read. An assignment
 # to any other name, at module level, in a function or in a nested class is read too, and so is a
-# docstring or other string line that reads as a marker, which opens and closes no block.
+# docstring or other string line that reads as a marker, which opens and closes no block. Two
+# classes at the top level of this file that share a name are a failure, so no class that a later
+# one hides holds fixture lines.
 FIXTURE_FILE = "tools/test-no-qa-labels.py"
 FIXTURE_START = "# history pass fixtures: start"
 FIXTURE_END = "# history pass fixtures: end"
 FIXTURE_DATA = (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Subscript, ast.BinOp, ast.Add, ast.Load)
 # The fixture names, by the class that holds them: the class attributes whose values the self-checks
-# of that class read as examples, or as the results they expect for them. FixtureNameRegistry fails
-# when a name here is not assigned once as data in a fixture block of its class, or is read by no
-# method of that class other than as the message of an assertion.
+# of that class read as examples, or as the results they expect for them. FixtureNameRegistry, a
+# static check of the source, fails when a name here is not assigned once as data in a fixture block
+# of its class, or is read by no method of that class other than as a message argument of an assert
+# call. It cannot tell an example from other data, so a name that a method reads only through
+# self.fail, an alias, subTest(msg=...) or len passes it, and so does a class that a later binding
+# of its name, other than a second class, hides from unittest.
 FIXTURE_NAMES = {
     "NoReviewHistoryInScope": ("PLANTS",),
     "HistoryPatternSelfCheck": ("FIXTURES", "PROBE_ONLY", "C_LOCALE_ONLY", "FALSE_FAILURES", "NUMBERED_FINDING_ONLY",
-                                "DOTTED_CAPITAL_I"),
+                                "DOTTED_CAPITAL_I", "C_UTF8_FOLDS"),
     "PatternSelfCheck": (
         "LABELS", "WIDENED", "PROSE", "LETTER_EXEMPT", "FALSE_FAILURES", "FALSE_FAILURE_PYTHON",
         "CODE_FALSE_FAILURES", "CODE_STRING_LABELS", "CODE", "ORDINARY_PYTHON", "COMMENT_LABELS", "PLACEMENTS",
@@ -830,7 +841,9 @@ def fixture_lines(text):
     FIXTURE_END, once each is stripped; a line inside a string that reads as a marker is not one. A
     start inside an open block, an end outside one, a block left open or a carriage return in text,
     which would make the lines Python parses differ from the lines the pass reads, raises
-    ValueError, so the history pass fails. A fixture line lies inside a block, belongs to an
+    ValueError, so the history pass fails, and so do 2 classes at the top level of text that share a
+    name, since the later one would hide the earlier one from unittest and from FixtureNameRegistry,
+    which reads the last class of each name. A fixture line lies inside a block, belongs to an
     assignment of data that lies wholly inside that block, made directly in the body of a class at
     the top level of text to names that FIXTURE_NAMES lists for that class, and holds no comment; a
     value of data holds only the node types in FIXTURE_DATA.
@@ -859,6 +872,10 @@ def fixture_lines(text):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         tree = ast.parse(text)
+    classes = [owner for owner in tree.body if isinstance(owner, ast.ClassDef)]
+    for owner in classes:
+        if [other.name for other in classes].count(owner.name) > 1:
+            raise ValueError("line {}: another class at the top level is named {}".format(owner.lineno, owner.name))
     for owner in tree.body:
         if not isinstance(owner, ast.ClassDef) or owner.name not in FIXTURE_NAMES:
             continue
@@ -1009,14 +1026,31 @@ class NoReviewHistoryInScope(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     history_hits(FIXTURE_FILE, text)
 
+    def test_a_class_name_used_twice_fails(self):
+        # A class that a later class of the same name hides never runs, and FixtureNameRegistry
+        # reads only the later one, so a fixture block in the hidden class would skip lines that no
+        # check reads. The first text puts such a class, with a plant as its fixture, between 2
+        # classes of this lint.
+        own = read_text(ROOT / FIXTURE_FILE)
+        lines = own.split("\n")
+        at = lines.index("class HistoryPatternSelfCheck(unittest.TestCase):")
+        hidden = ["class PatternSelfCheck:", "    " + FIXTURE_START, "    LABELS = (\"{}\",)".format(self.PLANTS[1]),
+                  "    " + FIXTURE_END, "", ""]
+        for text in ("\n".join(lines[:at] + hidden + lines[at:]), "class A:\n    pass\n\n\nclass A:\n    pass\n"):
+            with self.subTest(text=text[:20]):
+                with self.assertRaises(ValueError):
+                    history_hits(FIXTURE_FILE, text)
+
     def test_the_pass_reads_the_tracked_files_as_git_grep_does(self):
         # The lines the pass reports in readable files must be the lines that git grep, run with
         # both backlog probes under LC_ALL=C, prints for the same index: so a force-added file and a
         # folder starting with _ are read, an untracked file, a file outside the 3 folders, a
-        # tracked symbolic link and a submodule, here a gitlink whose folder holds a planted line,
-        # are not, and a lone carriage return keeps the line numbers of git grep. A tracked file
-        # that is missing or not UTF-8, which git grep passes over, is a failure that names the file
-        # in the report.
+        # tracked symbolic link and a submodule, here a gitlink entry with an empty folder, are not,
+        # and a lone carriage return keeps the line numbers of git grep. The line of tools/c.txt,
+        # which the first probe matches under LC_ALL=C and not under C.UTF-8, since an e with an
+        # acute accent comes just before round, ties the run of git grep to that locale. A tracked
+        # file that is missing or not UTF-8, which git grep passes over, is a failure that names the
+        # file in the report.
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
 
@@ -1026,7 +1060,8 @@ class NoReviewHistoryInScope(unittest.TestCase):
             git("init", "-q", check=True)
             files = {"tools/__pycache__/x.txt": self.PLANTS[1], "site-src/_cache/y.md": self.PLANTS[0],
                      ".github/z.yml": "clean", "outside.md": self.PLANTS[2], "tools/gone.txt": "clean",
-                     "tools/cr.txt": "x\r" + self.PLANTS[2] + "\nx\r" + self.PLANTS[1] + "\nx\r" + self.PLANTS[0]}
+                     "tools/cr.txt": "x\r" + self.PLANTS[2] + "\nx\r" + self.PLANTS[1] + "\nx\r" + self.PLANTS[0],
+                     "tools/c.txt": "\u00e9" + self.PLANTS[0]}
             for rel, line in files.items():
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_bytes((line + "\n").encode("utf-8"))
@@ -1035,7 +1070,6 @@ class NoReviewHistoryInScope(unittest.TestCase):
             git("add", "-f", "--", ".", check=True)
             git("update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",tools/sub", check=True)
             (root / "tools/sub").mkdir()
-            (root / "tools/sub/p.txt").write_text(self.PLANTS[1] + "\n", encoding="utf-8")
             (root / "tools/gone.txt").unlink()
             (root / "tools/untracked.txt").write_text(self.PLANTS[2] + "\n", encoding="utf-8")
             found, read = history_report(root)
@@ -1046,11 +1080,11 @@ class NoReviewHistoryInScope(unittest.TestCase):
                          for entry in grep.stdout.split(b"\n") if entry)
         hits = sorted((hit.split(":")[0], int(hit.split(":")[1])) for hit in found if ": unreadable: " not in hit)
         self.assertEqual(hits, printed, found)
-        self.assertEqual(printed, [("site-src/_cache/y.md", 1), ("tools/__pycache__/x.txt", 1),
+        self.assertEqual(printed, [("site-src/_cache/y.md", 1), ("tools/__pycache__/x.txt", 1), ("tools/c.txt", 1),
                                    ("tools/cr.txt", 1), ("tools/cr.txt", 2), ("tools/cr.txt", 3)])
         self.assertEqual(sorted(hit.split(":")[0] for hit in found if ": unreadable: " in hit),
                          ["tools/bad.txt", "tools/gone.txt"], found)
-        self.assertEqual(read, 4, found)
+        self.assertEqual(read, 5, found)
 
     def test_a_failed_listing_fails(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -1096,6 +1130,10 @@ class HistoryPatternSelfCheck(unittest.TestCase):
     # the case-insensitive matching of Python folds that letter to i: an accepted false failure,
     # which stays caught.
     DOTTED_CAPITAL_I = ("ver\u0130fy 3", "f\u0130nding 3", "d\u0130scovery 3", "find\u0130ng 3")
+    # Forms with a dotless i, U+0131, or a long s, U+017F, in place of an i or an s of a probe word,
+    # which a probe matches under C.UTF-8 and not under LC_ALL=C, and which the history pass
+    # catches, since the case-insensitive matching of Python folds those letters as well.
+    C_UTF8_FOLDS = ("d\u0131scovery 3", "di\u017fcovery 3", "around 3 mi\u017fses")
     # history pass fixtures: end
 
     def test_the_history_patterns_are_pinned(self):
@@ -1143,6 +1181,12 @@ class HistoryPatternSelfCheck(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn("\u0130", text)
                 self.assertTrue(labels_in(text, HISTORY_PATTERNS), text)
+
+    def test_a_dotless_i_or_a_long_s_stays_caught(self):
+        for text in self.C_UTF8_FOLDS:
+            with self.subTest(text=text):
+                self.assertTrue({"\u0131", "\u017f"} & set(text), text)
+                self.assertTrue(labels_in(text, HISTORY_PATTERNS[len(self.LABEL_NAMES):]), text)
 
 
 class FixtureNameRegistry(unittest.TestCase):
