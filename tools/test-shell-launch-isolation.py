@@ -36,7 +36,10 @@ in a backslash, as in bash, so it joins no line:
    -X or -W and the word after it) and a `--` that ends them, where a word may
    hold quoted parts with no space or tab inside them, so
    `python3 -I -X utf8 tools/x.py` and `python3 -I -- tools/x.py` pass and
-   `python3 -I "$(dirname "$0")/x.py"` is a finding. The rules read text, not
+   `python3 -I "$(dirname "$0")/x.py"` is a finding. The .py path must end at
+   the last character of that word that bash keeps once it removes quotes, so
+   `python3 -I tools/x.py''` passes and `python3 -I tools/x.py"'"`, which bash
+   runs as `tools/x.py'`, is a finding. The rules read text, not
    what runs. Rule 2 reads such a token inside quotes, a command substitution
    or other text, so `"$here"/x.py`, `bash -c 'tools/x.py'`, `$PY tools/x.py`
    and an argument after the program, such as a path that a `-c` or `-`
@@ -459,6 +462,29 @@ STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") +
 C_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"-c $")
 
 
+def kept_end(word: str, start: int) -> int:
+    """Return where the last character of word that bash keeps once it removes quotes ends.
+
+    word is a word that WORD matched at start in its line. The contents of a quoted part count, an
+    empty pair of quotes keeps nothing, and an unquoted backslash keeps only the character after
+    it. A backslash inside double quotes counts as kept, and a quote that the walk finds no close
+    for keeps the rest of the word: both readings can give a false finding, never a silent pass.
+    """
+    end = at = 0
+    while at < len(word):
+        if word[at] in "\"'":
+            close = word.find(word[at], at + 1)
+            if close < 0:
+                return start + len(word)
+            if close > at + 1:
+                end = close
+            at = close + 1
+        else:
+            at = min(at + (2 if word[at] == "\\" else 1), len(word))
+            end = at
+    return start + end
+
+
 def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
     """Return the rules a shell line breaks, given the names of the launcher functions of its script."""
     found = []
@@ -469,9 +495,10 @@ def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
         if not line.startswith(ISOLATED, at) or (at and line[at - 1] not in LAUNCH_BEFORE):
             found.append(INTERPRETER_REASON)
             break
-    # A .py path passes only where it ends its launch's program word, before any closing quotes.
+    # A .py path passes only where it ends the last character of its launch's program word that
+    # bash keeps.
     starts = [PROGRAM] + [re.compile(r"^[ \t]*" + re.escape(name) + r"[ \t]+" + WORD) for name in launchers]
-    programs = {m.start(1) + len(m.group(1).rstrip("\"'")) for start in starts for m in start.finditer(line)}
+    programs = {kept_end(m.group(1), m.start(1)) for start in starts for m in start.finditer(line)}
     if any(m.end() not in programs for m in PY_PATH.finditer(line)):
         found.append(PATH_REASON)
     return found
@@ -820,6 +847,15 @@ LINE_CASES = [
     ("python3 -I -X tools/y.py", True),
     ("python3 -I -Xutf8 tools/x.py", True),
     ("python3 -I -c 'print(1)' tools/x.py", True),
+    # The .py path must end the last character of the program word that bash keeps once it
+    # removes quotes: bash runs tools/x.py' for the first of these, and tools/x.py" or
+    # tools/x.py'' for the next 2.
+    ("python3 -I tools/x.py\"'\"", True),
+    ("python3 -I tools/x.py'\"'", True),
+    ("python3 -I tools/x.py\"''\"", True),
+    ("python3 -I tools/x.py''", False),
+    ('python3 -I tools/x.py""', False),
+    ('python3 -I tools/"x.py"', False),
     ('python3 -I - tools/x.py <<\'PY\'', True),
     ('python3 -I "$(tools/x.py)"', True),
     ("gate tools/x.py", True),

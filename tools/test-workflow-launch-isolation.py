@@ -78,11 +78,13 @@ The rule:
    names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
-   spaces, `<name>` holding no `/`, no character of a path and no `$` directly
-   before `python3`, and `.py` directly followed by the end of the line, a
-   space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<` or `>` not directly
-   followed by `(`, is a launch (so `$python3 -I tools/x.py` is not one, and
-   nor are `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
+   spaces, `<name>` holding no `/`, `python3` directly after the start of the
+   line, a space, a tab, `|`, `&`, `;` or `(`, and `.py` directly followed by
+   the end of the line, a space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<` or
+   `>` not directly followed by `(`, is a launch (so `$python3 -I tools/x.py`,
+   `x=python3 -I tools/x.py` and `{,x}python3 -I tools/x.py`, which bash runs
+   as `python3 xpython3 -I tools/x.py`, are not one, and nor are
+   `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
    of a process substitution). The rule reads the form before each character
    of that list as a launch, and refuses the line at a `<(` or `>(` and at
@@ -116,8 +118,10 @@ launch (such as a closing backquote, which ends a command substitution written
 with backquotes, a `}` that ends a parameter expansion, as in
 `${v:+python3 -I tools/x.py} --flag`, or a `"` or `'` that ends a quoted
 string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
-subshell is in that list, and the form before it reads as a launch), 2 spaces
-before `-I`, a launch whose words are split across continued lines,
+subshell is in that list, and the form before it reads as a launch), a
+`python3` directly after a character that is not in rule 3's left edge, such
+as `x=`, a quote, a `{`, a `}` or a `)`, 2 spaces before `-I`, a launch whose
+words are split across continued lines,
 `(python3)` and other case arms naming python, a message or comment that names
 python or a .py file, an expression such as `${{ env.PY }}`,
 `${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
@@ -174,11 +178,11 @@ Residuals, named here because the scan reads text the pull request controls:
   traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
-- a launch written inside a parameter expansion, such as
-  `${v:+python3 -I tools/x.py|w}`, which the scan counts as a launch of
-  tools/x.py, while with `v=1` bash passes `tools/x.py|w` as the script; with
-  `;`, `&`, `<`, `>`, `(` or `)` in place of `|`, the scan also counts
-  tools/x.py, and bash passes tools/x.py followed by that character and `w`;
+- a launch written inside a parameter expansion after a space or a `(`, such
+  as `${v:+ python3 -I tools/x.py|w}`, which the scan counts as a launch of
+  tools/x.py, while with `v=1` bash splits the expansion into words and passes
+  `tools/x.py|w` as the script; rule 3's left edge refuses the form only where
+  `python3` directly follows the `+`, as in `${v:+python3 -I tools/x.py|w}`;
 - an edit to rule 3's right edge that the self-tests do not reach. The
   character and pair self-tests put after `.py` each character of a sample
   (each ASCII character, each code point that `str.isspace()` accepts or whose
@@ -223,8 +227,9 @@ except ImportError:
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The number of launches under .github/workflows after row 95 was rebased
-# onto row 89 (fix round 8).
+# A floor on the launches the scan counts under .github/workflows, outside
+# shell comments, so that a scan that stops seeing launches fails. 53 was the
+# count when the floor was set; the workflows hold more launches now.
 LAUNCH_FLOOR = 53
 
 # Launched scripts that load sibling modules, checked with planted modules.
@@ -237,7 +242,7 @@ PLANTED_MODULES = ("tempfile", "msvcrt", "nt", "_winapi")
 PLANT_MARKER = "PLANTED-MODULE-RAN"
 
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
-LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()]|[<>](?!\()|\Z)")
+LAUNCH = re.compile(r"(?<![^ \t|&;(])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()]|[<>](?!\()|\Z)")
 PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
@@ -506,7 +511,9 @@ EDGE_SAMPLE = [chr(n) for n in range(128)] + EDGE_WIDE + ["\u00e9", "\u03b1", "\
 
 # Run text that must be refused (True) or must pass (False).
 RUN_CASES = [
-    # Round 4 misses
+    # Forms close to the one form that are not it: another folder or suffix, a
+    # prefixed or versioned interpreter, another option, a .pyz name, and a PATH,
+    # ENV, BASH_ENV or GITHUB_PATH change that can redirect python3
     ("tools/sub/x.py", True),
     ("python3 -I tools/sub/x.py", True),
     (f"python3 -I {X}c", True),
@@ -558,8 +565,8 @@ RUN_CASES = [
     ("./x.py", True),
     ("py\\\nthon3 -c 'x'", True),
     ("tools/x.\\\npy", True),
-    # Comments and messages have no exemption (fix round 7). The round 6
-    # reproduction: a ")" in a message closes a "$(" opened on the line above.
+    # Comments and messages have no exemption: the scan reads text, not shell
+    # syntax, so a ")" in a message can close a "$(" opened on the line above.
     ("# see tools/x.py", True),
     ("# the Python gates", True),
     ('echo "tools/x.py is unavailable (exit $1)." >&2', True),
@@ -578,6 +585,16 @@ RUN_CASES = [
     ("echo pYthon", True),
     (f"$python3 -I {X}", True),
     (f'v="$python3 -I {X}"', True),
+    # Rule 3's left edge: python3 directly after any character other than a
+    # space, a tab, |, &, ; or ( is not a launch. Bash runs {,x}python3 as
+    # `python3 xpython3`, $(echo i)python3 as ipython3, and a quoted or assigned
+    # python3 as no command at all.
+    ("{,x}python3 -I tools/x.py", True),
+    (f"$(echo i)python3 -I {X}", True),
+    (f"${{v}}python3 -I {X}", True),
+    (f'echo "python3 -I {X} "', True),
+    (f"x=python3 -I {X}", True),
+    (f"${{v:+python3 -I {X}|w}}", True),
     ("bash -c true", True),
     ("sh -c 'echo ok'", True),
     ('bash -c "$CMD"', True),
@@ -916,6 +933,18 @@ def self_test() -> list[str]:
                     errors.append(f"{pair}: expected no finding and exactly 1 counted launch of {X}")
                 elif e + c in ("<(", ">(") and (not refused or (X, True) in launches):
                     errors.append(f"{pair}: expected a finding and no counted launch of {X}")
+        # Rule 3's left edge, character by character, over the same sample:
+        # each character of the left edge, and a newline, which check_run reads
+        # as the start of a line, put directly before `python3 -I tools/x.py`
+        # gives no finding and exactly 1 counted launch, and every other
+        # character of the sample gives a finding and no counted launch.
+        left = " \t|&;(\n"
+        for c in EDGE_SAMPLE:
+            refused, launches = check_run(f"{c}python3 -I {X}")
+            if c in left and (refused, launches) != ([], [(X, True)]):
+                errors.append(f"self-test: {c!r} before python3: expected no finding and exactly 1 counted launch of {X}")
+            elif c not in left and (not refused or (X, True) in launches):
+                errors.append(f"self-test: {c!r} before python3: expected a finding and no counted launch of {X}")
 
         two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
                     "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")

@@ -2202,7 +2202,7 @@ run_contract_case "--timeout above the 86400-second bound is refused" 3 nogh own
 run_contract_case "--timeout far above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 2147484 "$C1"
 run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT" 5 3 --wait --timeout 2 --interval 86401
 
-# Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
+# Wrapper path resolution fails closed. Each case runs
 # ci-status.sh from a working directory that holds a planted ci-status.py, which
 # records that it ran. The planted file must never run. RESOLVE is a space-separated
 # list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
@@ -2234,8 +2234,8 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
 # that a python3 first on PATH retargets, just before the resolver runs, to a
 # directory holding a copy of the wrapper and the planted ci-status.py.
-# fdslashes, fdlink, fdslasheshold and fdlinkhold build the descriptor decoy of
-# the round 8 seat driver: a hard link to the copied wrapper opened as fd 9 and
+# fdslashes, fdlink, fdslasheshold and fdlinkhold build the symlink form of
+# the descriptor decoy: a hard link to the copied wrapper opened as fd 9 and
 # removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
 # beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
 # symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.

@@ -531,7 +531,7 @@ class FixesTest(unittest.TestCase):
                 engine.build_entries(config(), root)
 
 
-class Round4Test(unittest.TestCase):
+class ConfigOutputAndUrlTest(unittest.TestCase):
     def test_config_bad_bytes_is_run_error(self):
         import tempfile
 

@@ -13,8 +13,10 @@ name: Orchestration registry
 # script, then drive the real hook with each stage-2 arming key against a contrast without
 # that key, together with the project orch_doctor tool. Each is its own named step, so a run
 # that omits one is visible in the step list, not only in the overall colour. A lint step fails
-# when a comment or docstring in these sources names a review round or a finding id instead of
-# stating its reason (tools/test-no-qa-labels.py). A further step runs a literal regression check
+# when a comment or docstring in these sources, the workflows, the 2 launch scans or the release
+# sources names a review round or a finding id instead of stating its reason, and when any line
+# of a file under tools/, site-src/ or .github/ names a review pass or a finding by number
+# (tools/test-no-qa-labels.py). A further step runs a literal regression check
 # of the /flow command's mode text, since a session follows /flow when it reads the host's mode
 # record (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line starting
 # "- MODE (", when that line is not closed on the same line or does not name exactly the 2 values

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Lint: the orchestration sources carry no internal review-history labels.
+"""Lint: the repository's sources carry no internal review-history labels.
 
 A comment or docstring that names the review pass or the finding that once motivated it, such as
-"(round 7)", "(fix round 16, M1)", "(F1)", "finding S3" or "claude QA round 10", or that credits
+"(round 7)", "(fix round 16, M1)", "(F1)", "finding S3", "finding 17", "VERIFY-2" or "claude QA
+round 10", or that credits
 a model family with a finding, such as "codex reproduced" or "the gemini seed", means nothing to a
 later reader and mixes numbering schemes. The text states the reason itself instead.
 
@@ -39,6 +40,16 @@ ALLOWLIST, the reviewed set of lines whose match is a cross-reference to a named
 review label, passes. A scanned file that is missing, unreadable or does not tokenize and parse is a
 failure, never a skip, and an allowlist entry that no longer matches a scanned line is a failure
 too, so the allowlist cannot silently go stale.
+
+A second, narrower pass, the history pass, reads every file under HISTORY_SCOPE (tools/, site-src/
+and .github/) except those UNSCANNED names with a reason, and matches each physical line against
+HISTORY_PATTERNS: the round number, the fix round, the QA round, the numbered finding and the
+numbered review pass. These name a review pass or a finding by number and match no plan or
+contract id, so the pass covers files whose ids would fail the full patterns, such as
+tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A file that cannot be read as UTF-8
+is a failure. Its residuals: it matches single lines only, so a label split across lines or written
+in words passes; it skips the files UNSCANNED names; and it reads every file under its folders,
+untracked or generated files included.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -116,13 +127,33 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The files the orchestration work owns, repository-relative.
+# The files scanned with every pattern, repository-relative: the files the orchestration work owns,
+# every workflow, the 2 launch scans and the release sources.
 SCANNED = (
     ".aiqt/config.md",
     ".claude/hooks/ask_mode_guard.py",
+    ".github/workflows/agent-plugin-manifest.yml",
+    ".github/workflows/ci-status-test.yml",
+    ".github/workflows/install-page.yml",
+    ".github/workflows/link-check.yml",
+    ".github/workflows/manifest-icon.yml",
     ".github/workflows/orchestration-registry.yml",
+    ".github/workflows/page-metadata.yml",
+    ".github/workflows/pages-build.yml",
+    ".github/workflows/plugin-drift.yml",
+    ".github/workflows/plugin-validate.yml",
+    ".github/workflows/portable-text-sync.yml",
+    ".github/workflows/release-checksum-live.yml",
+    ".github/workflows/release-dry-run.yml",
+    ".github/workflows/release-skill.yml",
+    ".github/workflows/site-draft.yml",
+    ".github/workflows/site-hardening.yml",
+    ".github/workflows/sitemap.yml",
+    ".github/workflows/skill-discovery.yml",
+    ".github/workflows/workflow-isolation.yml",
     "tools/check-flow-mode.py",
     "tools/check-orchestration-registry.py",
+    "tools/check-release-checksum-live.py",
     "tools/migrate-todo-aei.py",
     "tools/orch-enumerate-backlog.py",
     "tools/orch_doctor.py",
@@ -133,6 +164,10 @@ SCANNED = (
     "tools/test-orch-stage1-hooks.py",
     "tools/test-orch-stage2-hooks.py",
     "tools/test-orchestration-registry.py",
+    "tools/test-release-checksum-live.py",
+    "tools/test-shell-launch-isolation.py",
+    "tools/test-skill-release-date.py",
+    "tools/test-workflow-launch-isolation.py",
 )
 
 FAMILY = r"(?:codex|claude|gemini)"
@@ -229,6 +264,9 @@ LABEL_PATTERNS = (
         r"|\b" + REVIEW_WORD + r"\b" + NEAR + FAMILY + r"\b")),
     ("a parenthesized finding id", re.compile(r"\([A-Z]{1,2}-?[0-9]{1,2}[a-z]?(?:[,);:]| and )")),
     ("a named finding id", re.compile(r"(?i)\bfindings? [A-Z]{1,2}-?[0-9]{1,2}[a-z]?\b")),
+    ("a numbered finding", re.compile(r"(?i)\bfindings? #?[0-9]")),
+    # Upper case only, so that ordinary text such as "verify 3 files" passes.
+    ("a numbered review pass", re.compile(r"\b(?:DISCOVERY|VERIFY)(?: rounds?)?[- ]#?[0-9]")),
     ("a severity-numbered finding", re.compile(r"(?i)\b(?:CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+\b")),
     ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])[0-9]{1,2}\b")),
 )
@@ -240,10 +278,24 @@ PROSE_PATTERNS = (
 
 ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
 
+# The history pass reads every file under these folders, line by line, against the patterns that
+# name a review pass or a numbered finding. Plan and contract ids, such as C1 or T9, match none of
+# them, so the pass needs no allowlist.
+HISTORY_SCOPE = ("tools", "site-src", ".github")
+HISTORY_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
+                 "a numbered review pass")
+HISTORY_PATTERNS = tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_NAMES)
+# Files in HISTORY_SCOPE that the history pass skips, each with its reason.
+UNSCANNED = {"tools/test-no-qa-labels.py": "holds the label forms it catches as self-check fixtures"}
+
 # Reviewed lines whose match is not a review label: the T1 to T15 identifiers of the armed-behaviour
 # proofs in the item 28.2 stage-2 plan (section 3), which the stage-2 suite names its cases after,
-# and the plan open points P5 and P6. Each entry is the exact text of the line.
+# and the plan open points P5 and P6; and, in the release-date tests, an ISO 8601 instant whose T00
+# reads as a bare id. Each entry is the exact text of the line.
 ALLOWLIST = {
+    "tools/test-skill-release-date.py": (
+        "            \"2026-01-01T00:00:Z\", \"2026-01-01T:00:00Z\", \"2026-01-01T00::00Z\", \"2026-01-T00:00:00Z\",",
+    ),
     "tools/test-orch-stage2-hooks.py": (
         "Every armed-behaviour proof (T1 to T15 of the item 28.2 stage-2 plan, section 3, PR1-g) runs against the",
         "Optional keys: T6 (`attestations`, open point P5) and T12 (`mistakes_register`, open point P6) cover keys",
@@ -647,6 +699,39 @@ class NoReviewLabels(unittest.TestCase):
                     self.assertTrue(labels_in(entry), "allowlisted line matches no pattern; remove it")
 
 
+def history_files():
+    """(repository-relative path, path) for each file under HISTORY_SCOPE, in sorted order."""
+    for folder in HISTORY_SCOPE:
+        for path in sorted((ROOT / folder).rglob("*")):
+            if path.is_file() and "__pycache__" not in path.parts:
+                yield path.relative_to(ROOT).as_posix(), path
+
+
+class NoReviewHistoryInScope(unittest.TestCase):
+    def test_no_file_in_scope_names_a_review_pass_or_a_numbered_finding(self):
+        found = []
+        read = 0
+        for rel, path in history_files():
+            if rel in UNSCANNED:
+                continue
+            for number, line in enumerate(read_text(path).split("\n"), 1):
+                names = labels_in(line, HISTORY_PATTERNS)
+                if names:
+                    found.append("{}:{}: {}: {}".format(rel, number, ", ".join(names), line.strip()))
+            read += 1
+        self.assertGreater(read, 0, "no file was read")
+        self.assertEqual(found, [], "review-history labels found:\n" + "\n".join(found))
+
+    def test_every_unscanned_path_exists_in_scope(self):
+        for rel in UNSCANNED:
+            with self.subTest(file=rel):
+                self.assertTrue((ROOT / rel).is_file(), rel)
+                self.assertIn(rel.split("/")[0], HISTORY_SCOPE, rel)
+
+    def test_the_history_pass_holds_each_of_its_patterns(self):
+        self.assertEqual(tuple(name for name, _ in HISTORY_PATTERNS), HISTORY_NAMES)
+
+
 class PatternSelfCheck(unittest.TestCase):
     LABELS = ("(round 7)", "(round-5 fix)", "Round 2 G5: x", "(fix round 16, M1)", "(fix round 17, F1)",
               "Fix round 16 (M1): x", "claude QA round 10", "codex QA HIGH-1", "(codex QA F6)", "(F1)",
@@ -660,13 +745,15 @@ class PatternSelfCheck(unittest.TestCase):
     # any case, a hyphenated finding id in parentheses or after the word finding, and a
     # letter-suffixed finding id, and a plain round number that an underscore or a numeric
     # character that is not a letter follows, such as superscript two, one half or the Roman
-    # numeral eight.
+    # numeral eight, and a finding or an upper-case DISCOVERY or VERIFY pass named by its number.
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
                "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
                "as fixed in round: 7, then", "(round: 7)", "round 7", "round-7", "round: 7",
                "round: 7]", "round: 7?", "round: 7!", "**round: 7**",
-               "round 7\u00b2", "round 7\u00bd", "round 7\u2167", "round 7_")
+               "round 7\u00b2", "round 7\u00bd", "round 7\u2167", "round 7_",
+               "VERIFY 1.1 finding 1", "DISCOVERY round 4, finding 1", "finding 17",
+               "findings 2 and 3", "VERIFY-2")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
@@ -675,7 +762,8 @@ class PatternSelfCheck(unittest.TestCase):
              "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5",
              "Time per round: 7\u00b5s", "Time per round: 7 \u03bcs",
              "round: 7\u00b5", "round: 7 \u03bc", "round: 7\u5e74",
-             "round 7th", "round 7a", "round 7.5", "round 7\u0434")
+             "round 7th", "round 7a", "round 7.5", "round 7\u0434",
+             "verify 3 files", "the finding is")
     # Both forms are exempt before a letter of any script, so one sample stands for each of
     # the five letter categories, from scripts the samples above do not use: Cyrillic small and
     # capital letters (Ll, Lu), Arabic and Hebrew letters (Lo), modifier letters (Lm), titlecase
