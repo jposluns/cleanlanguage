@@ -43,68 +43,81 @@ too, so the allowlist cannot silently go stale.
 
 A second, narrower pass, the history pass, reads every file that git ls-files lists under
 HISTORY_SCOPE (tools/, site-src/ and .github/), the files that the backlog probes read with git
-grep, as git grep reads it, split at each line feed only, so a carriage return stays in its line and
-each line has the number git grep gives it, and matches each physical line against HISTORY_PATTERNS:
-the 5 patterns of LABEL_PATTERNS that HISTORY_LABEL_NAMES names, and the 2 backlog probes that the
-pass must fail on, each the git grep -i probe of its backlog row written as a case-insensitive
-Python pattern whose word boundary counts only an ASCII letter, digit or underscore as a word
-character, as git grep does in the C locale. It skips only the fixture lines of this lint, the file
-FIXTURE_FILE names: a line of an assignment of data, made directly in the body of a class at the top
-level of this lint to names that FIXTURE_NAMES lists for that class, that lies between a comment
-line that is FIXTURE_START and the next comment line that is FIXTURE_END and holds no comment, where
-an assignment of data is one whose value holds no call, lambda, comprehension or formatted string.
-Every other line of this lint is read: its docstrings, its comments and its test code, and any
-comment or other statement inside a fixture block, an assignment to another name or in a function or
-a nested class among them, and a string line that reads as a marker opens and closes no block. The
-HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and the reading
-of tracked files, against a run of git grep, are pinned too. A class at the top level of this lint
-that has a decorator is a failure, and so is a binding at module level, other than that class, of
-its name or of the name of a class that FIXTURE_NAMES lists, as the source spells it, such as a
-second class of that name, also one inside an if, try, with, for or while block, a function, an
-assignment, plain, augmented, annotated or by a walrus, an import, a for, with or except target, a
-match capture, a del, a global statement that names it, or a star import, which can bind any name; a
-binding inside a function, lambda or class body, or a comprehension target, is not at module level.
-A rebinding that the source does not spell, such as one through globals(), setattr or exec, passes,
-and so does a change that keeps the name but hides tests of the class from unittest, such as a base
-class other than unittest.TestCase, a method deleted from the class or a load_tests function.
-FixtureNameRegistry, a static check of the source, fails when a name in FIXTURE_NAMES is not the
-target of exactly one plain assignment made directly in the body of its class, when that assignment
-is not a fixture, or when no method of that class reads the name other than as a message argument of
-an assert call. In the class body it counts only such a plain assignment, as in LABELS = () or
-LABELS = X = (), so a second one fails; any other binding of the name in the class, such as an
-annotated or augmented assignment, a tuple or for target, a def, a walrus, an import or a del in its
-body, or a method that rebinds the name on self, is not counted and passes the registry and the
-history pass, and some such bindings hide a fixture line from every self-check while the lint
-passes, such as PROSE: tuple = () after the fixture block of PatternSelfCheck. A read that it counts
-is an attribute of self, of cls or of the class by its name, as in self.PROSE, cls.PROSE or
-PatternSelfCheck.PROSE; a read through another expression, such as type(self).PROSE,
-self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE, is not counted, so a name read only
-that way fails. It cannot tell an example from other data, so a read that it counts, other than as a
-message argument, passes it, whatever the read does with the value, such as a read through
-self.fail, a lambda, str(), len or subTest(msg=...), or into an alias. These patterns name a review
-pass or a finding by number and match no plan or contract id, so the pass covers files whose ids
-would fail the full patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A
-tracked file that cannot be read as UTF-8, or that is missing, is a failure that names the file, and
-other conditions that the pass cannot read past are failures too, such as a fixture block left open,
-one that starts inside another, an end outside a block, a carriage return in this lint and a git
-ls-files that fails. Its residuals: it matches single lines only, so a label split across lines or
-written in words passes; it reads no untracked file, as git grep reads none; it reads no tracked
-symbolic link and no submodule, as git grep reads neither, so the file that a tracked link points to
-is read only when it is itself a tracked file in the 3 folders; and it reads no tracked file outside
-them, among them .aiqt/, the adopted governance files, .baseline/, the pinned upstream package,
-whose SPECIFICATION.md has a line that the backlog probe of numbered review rounds matches, and
-plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of numbered
-findings and rounds matches. Its accepted false failures: ordinary text in which a space and a digit
-follow the word discovery, verify, finding or round, in any case, such as a count of files to verify
-or of files found, or a plain round number that a letter or a decimal continuation follows, which
-LABEL_PATTERNS exempts, is caught, and is reworded; so is a line that the first probe matches only
-because a letter or digit outside ASCII comes just before its first word, which git grep passes
-under C.UTF-8 and fails under LC_ALL=C; and so is a line in which a capital I with a dot above,
-U+0130, stands for an i of a word of a history pattern, as in the forms DOTTED_CAPITAL_I holds,
-which neither probe matches under either locale and the pass fails, since the case-insensitive
-matching of Python folds that letter to i. A dotless i, U+0131, or a long s, U+017F, in place of an
-i or an s of a probe word, as in the forms C_UTF8_FOLDS holds, is caught too, and is no false
-failure, since a probe matches such a line under C.UTF-8.
+grep. It reads each from the work tree, as git grep reads a file whose index entry and work-tree
+copy agree, split at each line feed only, so a carriage return stays in its line and each line has
+the number git grep gives it, and matches each physical line against HISTORY_PATTERNS: the 5
+patterns of LABEL_PATTERNS that HISTORY_LABEL_NAMES names, and the 2 backlog probes that the pass
+must fail on, each the git grep -i probe of its backlog row written as a case-insensitive Python
+pattern whose word boundary counts only an ASCII letter, digit or underscore as a word character, as
+git grep does in the C locale. It skips only the fixture lines of this lint, the file FIXTURE_FILE
+names, and on each only the tokens of its fixture assignment. A fixture assignment is an assignment
+of data, made directly in the body of a class at the top level of this lint to names that
+FIXTURE_NAMES lists for that class, that lies between a comment line that is FIXTURE_START and the
+next comment line that is FIXTURE_END, where an assignment of data is one whose value holds no call,
+lambda, comprehension or formatted string, and a fixture line is a line of it that holds no comment.
+A line of a fixture assignment that holds any other token, such as a semicolon or a second statement
+before or after the assignment, is a failure; indentation, line ends and comments are not tokens of
+a statement. Every other line of this lint is read: its docstrings, its comments and its test code,
+and any comment inside a fixture block, or other statement there on a line that holds no fixture
+assignment, an assignment to another name or in a function or a nested class among them, and a
+string line that reads as a marker opens and closes no block. The HistoryPatternSelfCheck case pins
+those 7 patterns, and the scope, the fixture rule and the reading of tracked files, against a run of
+git grep, are pinned too. A class at the top level of this lint that has a decorator is a failure,
+and so is a binding at module level, other than that class, of its name or of the name of a class
+that FIXTURE_NAMES lists, as the source spells it, such as a second class of that name, also one
+inside an if, try, with, for or while block, a function, an assignment, plain, augmented, annotated
+or by a walrus, an import, a for, with or except target, a match capture, a del, a global statement
+that names it, or a star import, which can bind any name; a binding inside a function, lambda or
+class body, or a comprehension target, is not at module level. A rebinding that the source does not
+spell, such as one through globals(), setattr or exec, passes, and so does a change that keeps the
+name but hides tests of the class from unittest, such as a base class other than unittest.TestCase,
+a method deleted from the class or a load_tests function. FixtureNameRegistry, a static check of the
+source, fails when a name in FIXTURE_NAMES is not the target of exactly one plain assignment made
+directly in the body of its class, when that assignment is not a fixture, or when no method of that
+class reads the name other than in an argument that it takes for a message. In the class body it
+counts only such a plain assignment, as in LABELS = () or LABELS = X = (), so a second one fails;
+any other binding of the name in the class, such as an annotated or augmented assignment, a tuple or
+for target, a def, a walrus, an import or a del in its body, or a method that rebinds the name on
+self, is not counted and passes the registry and the history pass, and some such bindings hide a
+fixture line from every self-check while the lint passes, such as PROSE: tuple = () after the
+fixture block of PatternSelfCheck. A read that it counts is an attribute of self, of cls or of the
+class by its name, as in self.PROSE, cls.PROSE or PatternSelfCheck.PROSE; a read through another
+expression, such as type(self).PROSE, self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE,
+is not counted, so a name read only that way fails. It takes for a message every positional argument
+after the first 2, or after the first 1 for assertTrue, assertFalse, assertIsNone and
+assertIsNotNone, of a call of any method whose name starts with assert, and the value of a msg
+keyword, so a read passed as a later argument of such a call that is not a message, such as a
+callable argument of assertRaises, as in self.assertRaises(ValueError, list, self.PROSE), is not
+counted either. It cannot tell an example from other data, so a read that it counts passes it,
+whatever the read does with the value, such as a read through self.fail, a lambda, str(), len or
+subTest(msg=...), or into an alias. These patterns name a review pass or a finding by number and
+match no plan or contract id, so the pass covers files whose ids would fail the full patterns, such
+as tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that cannot be read
+as UTF-8, or that is missing, is a failure that names the file, and other conditions that the pass
+cannot read past are failures too, such as a fixture block left open, one that starts inside
+another, an end outside a block, a line of a fixture assignment that holds a token outside it, a
+carriage return in this lint and a git ls-files that fails. Its residuals: it matches single lines
+only, so a label split across lines or written in words passes; it reads no untracked file, as git
+grep reads none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so
+the file that a tracked link points to is read only when it is itself a tracked file in the 3
+folders; and it reads no tracked file outside them, among them .aiqt/, the adopted governance files,
+.baseline/, the pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of
+numbered review rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that
+the backlog probe of numbered findings and rounds matches. Its accepted false failures: ordinary
+text in which a space and a digit follow the word discovery, verify, finding or round, in any case,
+such as a count of files to verify or of files found, or a plain round number that a letter or a
+decimal continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; so is a line
+that the first probe matches only because a letter or digit outside ASCII comes just before its
+first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C; and so is a line in which
+a capital I with a dot above, U+0130, stands for an i of a word of a history pattern, as in the
+forms DOTTED_CAPITAL_I holds, which neither probe matches under either locale and the pass fails,
+since the case-insensitive matching of Python folds that letter to i. A dotless i, U+0131, or a long
+s, U+017F, in place of an i or an s of a probe word, as in the forms C_UTF8_FOLDS holds, is caught
+too, and is no false failure, since a probe matches such a line under C.UTF-8. A further accepted
+false failure: a tracked file whose index entry and work-tree copy differ in a way that git grep
+reads otherwise, such as a file marked skip-worktree or a regular file in the index that is a
+symbolic link in the work tree, is read from the work tree, so a line there that a pattern matches
+fails the pass while git grep does not print it.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -366,34 +379,43 @@ HISTORY_PROBES = (
 HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_LABEL_NAMES)
                     + HISTORY_PROBES)
 # The history pass skips only the fixture lines of this file, which the maintainer allows as the
-# label forms that its self-checks read as examples, and nothing else; FixtureNameRegistry checks
-# that a self-check reads each of them only as far as the comment on FIXTURE_NAMES states. A fixture
-# line lies between a comment line that is FIXTURE_START and the next comment line that is
-# FIXTURE_END, once each is stripped, belongs to an assignment of data that lies wholly inside that
-# block, made directly in the body of a class at the top level of this file to names that
-# FIXTURE_NAMES lists for that class, and holds no comment. A value of data holds only the node
-# types in FIXTURE_DATA, so a value with a call, a lambda, a comprehension or a formatted string is
-# not data, and its lines are read. An assignment to any other name, at module level, in a function
-# or in a nested class is read too, and so is a docstring or other string line that reads as a
-# marker, which opens and closes no block. A decorator on a class at the top level of this file, and
-# a binding at module level, other than that class, of its name or of the name of a class that
-# FIXTURE_NAMES lists, as module_bindings reads one, are failures, so no class that such a binding
-# hides holds fixture lines.
+# label forms that its self-checks read as examples, and on each only the tokens of its fixture
+# assignment; FixtureNameRegistry checks that a self-check reads each of them only as far as the
+# comment on FIXTURE_NAMES states. A fixture assignment is an assignment of data that lies wholly
+# inside a block, from a comment line that is FIXTURE_START to the next comment line that is
+# FIXTURE_END, once each is stripped, made directly in the body of a class at the top level of this
+# file to names that FIXTURE_NAMES lists for that class. A fixture line is a line of a fixture
+# assignment that holds no comment, and a line of a fixture assignment that holds any token other
+# than the tokens of that assignment, such as a semicolon or a second statement, fails the pass. A
+# value of data holds only the node types in FIXTURE_DATA, so a value with a call, a lambda, a
+# comprehension or a formatted string is not data, and its lines are read. An assignment to any
+# other name, at module level, in a function or in a nested class is read too, and so is a docstring
+# or other string line that reads as a marker, which opens and closes no block. A decorator on a
+# class at the top level of this file, and a binding at module level, other than that class, of its
+# name or of the name of a class that FIXTURE_NAMES lists, as module_bindings reads one, are
+# failures, so no class that such a binding hides holds fixture lines.
 FIXTURE_FILE = "tools/test-no-qa-labels.py"
 FIXTURE_START = "# history pass fixtures: start"
 FIXTURE_END = "# history pass fixtures: end"
 FIXTURE_DATA = (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Subscript, ast.BinOp, ast.Add, ast.Load)
+# The token types that are no part of a statement: the layout tokens, and a comment, which makes its
+# line read rather than fail the pass.
+OUTSIDE_STATEMENTS = (tokenize.NEWLINE, tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER,
+                      tokenize.COMMENT)
 # The fixture names, by the class that holds them: the class attributes whose values the self-checks
 # of that class read as examples, or as the results they expect for them. FixtureNameRegistry, a
 # static check of the source, fails when a name here is not the target of exactly one plain
 # assignment made directly in the body of its class, when that assignment is not a fixture line, or
-# when no method of that class reads the name other than as a message argument of an assert call. It
-# counts no other binding of the name in the class, such as an annotated or augmented assignment, a
-# for target or a method that rebinds it on self, and no read other than as an attribute of self, of
-# cls or of the class by its name, such as a read through type(self), self.__class__, getattr or
-# super(). It cannot tell an example from other data, so a read that it counts, other than as a
-# message argument, passes it, whatever the read does with the value, such as a read through
-# self.fail, a lambda, str(), len or subTest(msg=...), or into an alias.
+# when no method of that class reads the name other than in an argument that message_arguments
+# gives. It counts no other binding of the name in the class, such as an annotated or augmented
+# assignment, a for target or a method that rebinds it on self, and no read other than as an
+# attribute of self, of cls or of the class by its name, such as a read through type(self),
+# self.__class__, getattr or super(). The arguments that message_arguments gives are every argument
+# after the subjects of a call of a method whose name starts with assert, so a read as a later
+# argument that is not a message, such as a callable argument of assertRaises, is not counted
+# either. It cannot tell an example from other data, so a read that it counts passes it, whatever
+# the read does with the value, such as a read through self.fail, a lambda, str(), len or
+# subTest(msg=...), or into an alias.
 FIXTURE_NAMES = {
     "NoReviewHistoryInScope": ("PLANTS",),
     "HistoryPatternSelfCheck": ("FIXTURES", "PROBE_ONLY", "C_LOCALE_ONLY", "FALSE_FAILURES", "NUMBERED_FINDING_ONLY",
@@ -913,10 +935,14 @@ def fixture_lines(text):
     class or of a class that FIXTURE_NAMES lists, other than that class, such as a second class of
     that name, also one inside an if, try, with, for or while block, an assignment, an import, a del
     or a star import, since such a binding can hide the class from unittest and from
-    FixtureNameRegistry, which reads the class at the top level. A fixture line lies inside a block,
-    belongs to an assignment of data that lies wholly inside that block, made directly in the body
-    of a class at the top level of text to names that FIXTURE_NAMES lists for that class, and holds
-    no comment; a value of data holds only the node types in FIXTURE_DATA.
+    FixtureNameRegistry, which reads the class at the top level. A fixture assignment is an
+    assignment of data that lies wholly inside a block, made directly in the body of a class at the
+    top level of text to names that FIXTURE_NAMES lists for that class; a value of data holds only
+    the node types in FIXTURE_DATA. A fixture line is a line of a fixture assignment that holds no
+    comment. Only the tokens of the assignment, from its first character to its last, are exempt, so
+    a line of a fixture assignment that holds any other token, such as a semicolon or a second
+    statement before or after the assignment, raises ValueError too; the token types in
+    OUTSIDE_STATEMENTS, layout and comments, are not checked.
     """
     if "\r" in text:
         raise ValueError("line {}: a carriage return".format(text[:text.index("\r")].count("\n") + 1))
@@ -955,6 +981,7 @@ def fixture_lines(text):
             raise ValueError("line {}: a star import can bind the name of a class".format(node.lineno))
         if name in names and id(node) not in tops:
             raise ValueError("line {}: {} is bound at module level other than by its class".format(node.lineno, name))
+    spans = {}
     for owner in tree.body:
         if not isinstance(owner, ast.ClassDef) or owner.name not in FIXTURE_NAMES:
             continue
@@ -965,6 +992,16 @@ def fixture_lines(text):
                     and all(isinstance(part, FIXTURE_DATA) for part in ast.walk(node.value))
                     and any(first < node.lineno and node.end_lineno < last for first, last in blocks)):
                 lines.update(range(node.lineno, node.end_lineno + 1))
+                span = ((node.lineno, char_column(source, node.lineno, node.col_offset)),
+                        (node.end_lineno, char_column(source, node.end_lineno, node.end_col_offset)))
+                spans.update((number, span) for number in range(node.lineno, node.end_lineno + 1))
+    for tok in tokens:
+        if tok.type in OUTSIDE_STATEMENTS:
+            continue
+        for number in range(tok.start[0], tok.end[0] + 1):
+            if number in spans and not spans[number][0] <= tok.start <= tok.end <= spans[number][1]:
+                raise ValueError("line {}: a line of a fixture assignment holds a token outside it: {!r}".format(
+                    number, tok.string))
     return lines - commented
 
 
@@ -985,11 +1022,12 @@ def history_hits(rel, text):
 def history_report(root=ROOT):
     """The report of the history pass over the repository at root, and the number of files it read.
 
-    Each tracked file under HISTORY_SCOPE is read as git grep reads it, apart from a symbolic link
-    and a submodule, which git grep reads neither of. A file that is missing or cannot be read as
-    UTF-8, and this lint when it does not parse or when fixture_lines raises ValueError on it, such
-    as for a fixture block left open or a carriage return, is reported with its path, and a git
-    ls-files that fails is reported too.
+    Each tracked file under HISTORY_SCOPE is read from the work tree, as git grep reads a file whose
+    index entry and work-tree copy agree, apart from a symbolic link and a submodule, which git grep
+    reads neither of. A file that is missing or cannot be read as UTF-8, and this lint when it does
+    not parse or when fixture_lines raises ValueError on it, such as for a fixture block left open,
+    a line of a fixture assignment that holds a token outside it or a carriage return, is reported
+    with its path, and a git ls-files that fails is reported too.
     """
     try:
         entries = tracked_history_files(root)
@@ -1107,10 +1145,42 @@ class NoReviewHistoryInScope(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     history_hits(FIXTURE_FILE, text)
 
+    def test_a_fixture_line_that_holds_another_token_fails(self):
+        # Each statement below holds a label that both probes match, built at run time so that no
+        # line of this lint holds it, and the pass fails each, put after a semicolon at the end of
+        # the PLANTS line or before the assignment at the start of that line, and fails a lone
+        # semicolon after the assignment and a statement after the last line of a longer fixture.
+        own = read_text(ROOT / FIXTURE_FILE)
+        lines = own.split("\n")
+        at = next(index for index, line in enumerate(lines) if line.startswith("    PLANTS = ("))
+        review = "Review ro\x75nd 3 and f\x69nding 7"
+        statements = (("after", "MESSAGE = \"{}\"".format(self.PLANTS[1])), ("after", "print(\"{}\")".format(review)),
+                      ("after", "assert \"{}\"".format(self.PLANTS[1])), ("before", "print(\"{}\")".format(review)),
+                      ("after", ""))
+        for where, statement in statements:
+            if where == "after":
+                line = lines[at] + ";" + (" " + statement if statement else "")
+            else:
+                line = "    {}; {}".format(statement, lines[at].lstrip())
+            with self.subTest(where=where, statement=statement):
+                if statement:
+                    self.assertTrue(all(labels_in(line, (probe,)) for probe in HISTORY_PROBES), line)
+                with self.assertRaises(ValueError) as caught:
+                    history_hits(FIXTURE_FILE, "\n".join(lines[:at] + [line] + lines[at + 1:]))
+                self.assertTrue(str(caught.exception).startswith("line {}: ".format(at + 1)), caught.exception)
+        with self.subTest(where="after the last line of a fixture of 3 lines"):
+            text = "class NoReviewHistoryInScope:\n    {}\n    PLANTS = (\n        \"x\",\n    ); MESSAGE = \"{}\"\n    {}\n"
+            with self.assertRaises(ValueError) as caught:
+                history_hits(FIXTURE_FILE, text.format(FIXTURE_START, self.PLANTS[1], FIXTURE_END))
+            self.assertTrue(str(caught.exception).startswith("line 5: "), caught.exception)
+
     # Bindings at module level of the name of a class at the top level of this lint, each put before
     # the guard that runs the tests, the empty text standing for a decorator on PatternSelfCheck.
-    # Each can hide the class from unittest, and FixtureNameRegistry reads only the class at the top
-    # level, so the fixture block of a hidden class would skip lines that no check reads.
+    # Each text is a binding at module level that the source spells, a form that can hide the class
+    # from unittest, and the pass fails each whether or not it binds the name at run time, as a
+    # match on None, a function that is never called and a star import of os do not.
+    # FixtureNameRegistry reads only the class at the top level, so the fixture block of a hidden
+    # class would skip lines that no check reads.
     REBINDINGS = ("if True:\n    class PatternSelfCheck:\n        pass",
                   "try:\n    class PatternSelfCheck:\n        pass\nexcept ImportError:\n    pass",
                   "with warnings.catch_warnings():\n    class PatternSelfCheck:\n        pass",
@@ -1308,7 +1378,14 @@ class HistoryPatternSelfCheck(unittest.TestCase):
 class FixtureNameRegistry(unittest.TestCase):
     @staticmethod
     def message_arguments(call):
-        """The arguments of an assert call of unittest that are its message, not its subject."""
+        """The arguments of a call that the registry reads as the message of an assert call.
+
+        These are every positional argument after the first 2, or after the first 1 for assertTrue,
+        assertFalse, assertIsNone and assertIsNotNone, of a call of any method whose name starts
+        with assert, and the value of a msg keyword. So a later argument of such a call that is not
+        a message, such as a callable argument of assertRaises, is given too, and a fixture read
+        only that way fails the registry.
+        """
         if not (isinstance(call.func, ast.Attribute) and call.func.attr.startswith("assert")):
             return []
         subjects = 1 if call.func.attr in ("assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone") else 2
@@ -1321,11 +1398,11 @@ class FixtureNameRegistry(unittest.TestCase):
         A name fails when it is listed twice, when it is not the target of exactly one ast.Assign
         made directly in the body of its class at the top level of text, when that assignment is not
         a fixture as fixture_lines reads one, or when no method of its class reads it, as an
-        attribute of self, cls or the class by its ast.Name, other than as a message argument of an
-        assert call; a class that is not at the top level fails with the name None. Only an
-        ast.Assign counts, so a second binding of the name in the class by another form, such as an
-        annotated or augmented assignment, a tuple or for target, a def, a walrus, an import, a del
-        or a method that rebinds it on self, does not fail.
+        attribute of self, cls or the class by its ast.Name, other than in an argument that
+        message_arguments gives; a class that is not at the top level fails with the name None. Only
+        an ast.Assign counts, so a second binding of the name in the class by another form, such as
+        an annotated or augmented assignment, a tuple or for target, a def, a walrus, an import, a
+        del or a method that rebinds it on self, does not fail.
         """
         tree = ast.parse(text)
         skipped = fixture_lines(text)
@@ -1368,19 +1445,27 @@ class FixtureNameRegistry(unittest.TestCase):
     def test_a_name_that_no_method_reads_other_than_as_a_message_fails(self):
         # A class of FIXTURE_NAMES with 1 fixture, read by its method in each way below: as the
         # first or the second subject of an assert call, each of which passes, and as a message
-        # argument of one, by position or as msg=, or not at all, each of which fails the registry.
+        # argument of one, by position or as msg=, as a later argument of assertRaises, which
+        # message_arguments gives as it gives a message, or not at all, each of which fails the
+        # registry. A name that the class does not assign, and one that it assigns twice by a plain
+        # assignment, fail it too.
         text = ("class NoReviewHistoryInScope:\n    {}\n    PLANTS = (\"x\",)\n    {}\n\n"
                 "    def test_x(self):\n        {{}}\n").format(FIXTURE_START, FIXTURE_END)
         unread = [("NoReviewHistoryInScope", "PLANTS", "read by no method of its class other than as a message")]
         for read, expected in (("self.assertEqual(self.PLANTS, ())", []), ("self.assertEqual((), self.PLANTS)", []),
                                ("self.assertTrue(1, self.PLANTS)", unread),
-                               ("self.assertEqual(1, 1, msg=self.PLANTS)", unread), ("pass", unread)):
+                               ("self.assertEqual(1, 1, msg=self.PLANTS)", unread),
+                               ("self.assertRaises(ValueError, list, self.PLANTS)", unread), ("pass", unread)):
             with self.subTest(read=read):
                 found = self.problems(text.format(read), {"NoReviewHistoryInScope": ("PLANTS",)})
                 self.assertEqual(found, expected)
         with self.subTest(read="a name that the class does not assign"):
             found = self.problems(text.format("pass"), {"NoReviewHistoryInScope": ("PLANTS", "MESSAGE")})
             self.assertEqual(found, [("NoReviewHistoryInScope", "MESSAGE", "assigned other than once")] + unread)
+        with self.subTest(read="a name assigned twice"):
+            twice = text.replace("    PLANTS = (\"x\",)\n", "    PLANTS = (\"x\",)\n    PLANTS = (\"y\",)\n")
+            found = self.problems(twice.format("self.assertEqual(self.PLANTS, ())"), {"NoReviewHistoryInScope": ("PLANTS",)})
+            self.assertEqual(found, [("NoReviewHistoryInScope", "PLANTS", "assigned other than once")])
 
 
 class PatternSelfCheck(unittest.TestCase):

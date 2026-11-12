@@ -962,6 +962,18 @@ LINE_CASES = [
     ("(bash -c 'python3 -I tools/x.py')", False),
     ("bash -c 'python3 -I tools/x.py'|w", False),
     ("python3 -I tools\\/x.py", False),
+    # Each other character of WORD_END ends a word after an unquoted character of the word and after
+    # a closing quote: bash runs the script tools/x.py for each of these that has no (, and reports
+    # a syntax error at the ( of the other 2.
+    ("python3 -I tools/x.py\tw", False),
+    ("python3 -I tools/x.py|w", False),
+    ("python3 -I tools/x.py&w", False),
+    ("python3 -I tools/x.py(w)", False),
+    ("python3 -I tools/x.py>w", False),
+    ("bash -c 'python3 -I tools/x.py'&w", False),
+    ("bash -c 'python3 -I tools/x.py'(w)", False),
+    ("bash -c 'python3 -I tools/x.py'<w", False),
+    ("bash -c 'python3 -I tools/x.py'>w", False),
     # Outside the word model, pinned as the module docstring's Residuals names them: bash runs
     # tools/x.py for each of the first 5, false findings, toolsx.py for the next, and tools/x.pyw or
     # tools/x.py/dev/fd/63 for the last 2, each of which passes.
@@ -973,6 +985,12 @@ LINE_CASES = [
     ("python3 -I tools\\x.py", False),
     ("python3 -I tools/x.py`echo w`", False),
     ("python3 -I tools/x.py<(echo w)", False),
+    # A launch that names neither a word rule 1 reads nor a .py token passes, as the module
+    # docstring's Residuals names it: for the first, an interpreter held in a variable, bash runs
+    # python3 with no -I, and for the second, whose suffix is spelt with quoting, bash runs
+    # tools/x.py by its shebang.
+    ('"$real_py" -c 1', False),
+    ("tools/x.p''y --check", False),
     # A quote that WORD stops before continues the program word: bash runs tools/x.pyw x for the
     # first, and reads a part that runs on to the next line for each of the next 2.
     ('python3 -I tools/x.py"w x"', True),

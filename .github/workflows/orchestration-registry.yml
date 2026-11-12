@@ -16,16 +16,17 @@ name: Orchestration registry
 # fails when a comment or docstring in these sources, the workflows, the 2 launch scans,
 # tools/check-release-checksum-live.py, tools/test-release-checksum-live.py or
 # tools/test-skill-release-date.py names a review round or a finding id instead of stating
-# its reason, and when any line of a tracked file under tools/, site-src/ or .github/, apart
-# from the marked fixture lines of the lint itself, names a review pass or a finding by
-# number (tools/test-no-qa-labels.py). A further step runs a literal regression check of the
-# /flow command's mode text, since a session follows /flow when it reads the host's mode
-# record (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line
-# starting "- MODE (", when that line is not closed on the same line or does not name exactly
-# the 2 values that the host's mode writer writes, each once and in lower case, when any line
-# holds a bare "attended" outside the text between straight double quotes that the check
-# pairs left to right on that line, or when the sentence that an absent mode record is read
-# as unattended is missing. It reads words, not meaning: outside the MODE line, the bare
+# its reason, and when any line of a tracked file under tools/, site-src/ or .github/ names a
+# review pass or a finding by number, apart from the tokens of the marked fixture assignments
+# of the lint itself, whose lines fail when they hold any other token, such as a semicolon or
+# a second statement (tools/test-no-qa-labels.py). A further step runs a literal regression
+# check of the /flow command's mode text, since a session follows /flow when it reads the
+# host's mode record (tools/check-flow-mode.py). It fails when the file does not hold exactly
+# 1 line starting "- MODE (", when that line is not closed on the same line or does not name
+# exactly the 2 values that the host's mode writer writes, each once and in lower case, when
+# any line holds a bare "attended" outside the text between straight double quotes that the
+# check pairs left to right on that line, or when the sentence that an absent mode record is
+# read as unattended is missing. It reads words, not meaning: outside the MODE line, the bare
 # "attended" test is the only test that can fail a line, so a third mode value named there,
 # such as "supervised", passes, and one that holds a bare "attended", such as
 # "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
