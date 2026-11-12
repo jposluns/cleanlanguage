@@ -31,8 +31,8 @@ Plugins spec requirement, so labelled as such):
         "./skills/<name>" component is used, not a symlink-resolved basename;
   - C11 the plugin's eponymous skill ./skills/<plugin name> is declared, where the
         plugin name is read from the Claude manifest and never hardcoded;
-  - C12 no legacy cleanlanguage/SKILL.md remains after the item 43 PR2 relocation of
-        the skill under skills/<name>/.
+  - C12 no legacy cleanlanguage/SKILL.md remains, since the skill moved from there to
+        skills/<name>/ and a copy left at the old path would be a stale second skill.
 
 File reads use utf-8-sig, so a leading UTF-8 byte-order mark does not falsely reject
 an otherwise conforming manifest or SKILL.md. Filesystem inspection uses os.lstat and

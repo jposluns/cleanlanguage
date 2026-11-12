@@ -2134,37 +2134,47 @@ except Exception:
 print("".join(name + ";" for name in sorted(names)))
 PY
 }
-# named_elsewhere DIR WF JOB: succeed when DIR is not a folder that ls can
-# list, a safe failure, since a glob of a folder that cannot be listed gives
-# nothing and no error; and succeed when an entry of DIR other than WF whose
-# name ends in .yml or .yaml, one whose name starts with a dot included, as
-# tools/test-run-all-checks.py reads the folder, cannot be read, a safe failure
-# that grep names, or holds a line on which the text name:, with no # before it
-# on the line and at the start of the line or after white space, an opening
-# brace or a comma, is followed, after any white space, by JOB, plain or in
-# quotes, and then by the end of the line, a comment, a comma or a closing
-# brace. JOB is matched as text: each character that an extended regular
-# expression treats as special is escaped. It reads each line as text, not as
-# YAML, so a line that YAML reads as something else, such as a line of a run:
-# block, still counts, a safe failure, and a job named in another form, such as
-# a quoted key, an expression or a block scalar, is not seen. It runs in a
-# subshell, so the glob options that it sets stay inside it; the 2
-# run_glob_case cases below hold that dotglob and nullglob are off in its
-# caller after a call that finds a name and after one that finds none.
-named_elsewhere() (
-  shopt -s dotglob nullglob
-  local dir="$1" wf="$2" job="$3" other text="" c i status
-  for ((i = 0; i < ${#job}; i++)); do
-    c="${job:i:1}"
+# ere_text TEXT: print TEXT with a backslash before each character that an
+# extended regular expression treats as special, so that grep -E matches it as
+# text, and before no other character.
+ere_text() {
+  local text="" c i
+  for ((i = 0; i < ${#1}; i++)); do
+    c="${1:i:1}"
     case '.[\()*+?{|^$' in *"$c"*) text="$text\\" ;; esac
     text="$text$c"
   done
+  printf '%s' "$text"
+}
+# named_elsewhere DIR WF JOB: succeed when DIR is not a folder that ls can list,
+# a safe failure, since a glob of a folder that cannot be listed gives nothing
+# and no error; succeed when an entry of DIR other than WF whose name ends in
+# .yml or .yaml, one whose name starts with a dot included, as
+# tools/test-run-all-checks.py reads the folder, holds a line on which the text
+# name:, with no # before it on the line and at the start of the line or after
+# white space, an opening brace or a comma, is followed, after any white space,
+# by JOB, plain or in quotes, and then by the end of the line, a comment, a
+# comma or a closing brace; exit 2 when grep fails on such an entry, as on one
+# that it cannot read, which grep names, or on a pattern that does not compile,
+# so a grep error is read neither as a name found nor as none found; and exit 1
+# otherwise. JOB is matched as text, as ere_text prints it. It reads each line
+# as text, not as YAML, so a line that YAML reads as something else, such as a
+# line of a run: block, still counts, a safe failure, and a job named in another
+# form, such as a quoted key, an expression or a block scalar, is not seen. It
+# runs in a subshell, so the glob options that it sets stay inside it; the
+# run_glob_case cases below hold that dotglob and nullglob are off in its caller
+# after each of its 4 ways of ending.
+named_elsewhere() (
+  shopt -s dotglob nullglob
+  local dir="$1" wf="$2" text other status
+  text="$(ere_text "$3")"
   if [ ! -d "$dir" ] || ! ls -a -- "$dir" > /dev/null; then return 0; fi
   for other in "$dir"/*.yml "$dir"/*.yaml; do
     [ "${other##*/}" != "$wf" ] || continue
     status=0
-    grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${text}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" "$other" || status=$?
-    if [ "$status" -ne 1 ]; then return 0; fi
+    grep -q -E "^([^#]*[[:space:]{,])?name:[[:space:]]*[\"']?${text}[\"']?([[:space:]]*\$|[[:space:]]+#|[[:space:]]*[,}])" \
+      -- "$other" || status=$?
+    case "$status" in 0) return 0 ;; 1) ;; *) return 2 ;; esac
   done
   return 1
 )
@@ -2173,20 +2183,26 @@ declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""
 # the workflow WF of the folder DIR and its job JOB, each after a space, or
 # nothing when there is none.
 shape_problems() {
-  local dir="$1" wf="$2" job="$3" why="" shape
+  local dir="$1" wf="$2" job="$3" why="" shape status=0
   if [ ! -f "$dir/$wf" ] || [ ! -r "$dir/$wf" ]; then
     why=" unreadable-workflow"
   else
-    if [ "$(grep -E '^    name: ' "$dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
-    if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' "$dir/$wf"; then why="$why trigger-filter"; fi
+    if [ "$(grep -E '^    name: ' -- "$dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
+    if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' -- "$dir/$wf"; then why="$why trigger-filter"; fi
     shape="$(wf_shape "$dir/$wf" "$job")" || why="$why shape-check-error"
     if [ -n "$shape" ]; then why="$why $shape"; fi
   fi
   case ";${declared_jobs}" in *";${job};"*) ;; *) why="$why declared" ;; esac
   # Another workflow file that names a job after this display name, in a form
   # that named_elsewhere reads, fails here, so the loop does not check one
-  # workflow while another produces the run that the gate reads.
-  if named_elsewhere "$dir" "$wf" "$job"; then why="$why named-elsewhere"; fi
+  # workflow while another produces the run that the gate reads, and so does a
+  # grep error in that search, named named-elsewhere-error.
+  named_elsewhere "$dir" "$wf" "$job" || status=$?
+  case "$status" in
+    0) why="$why named-elsewhere" ;;
+    1) ;;
+    *) why="$why named-elsewhere-error" ;;
+  esac
   printf '%s' "$why"
 }
 # shape_loop DIR PAIR...: for each PAIR, WF:JOB, add JOB to shaped_jobs and
@@ -2276,10 +2292,14 @@ run_named_elsewhere_case "a job name in a flow mapping is found" 0 other.yml \
   '  check: {name: Skill discovery, runs-on: ubuntu-latest}'
 run_named_elsewhere_case "a quoted job name last in a flow mapping is found" 0 other.yml \
   '  check: { runs-on: ubuntu-latest, name: "Skill discovery" }'
+run_named_elsewhere_case "a job name right after a comma is found" 0 other.yml \
+  '  check: {runs-on: ubuntu-latest,name: Skill discovery}'
+run_named_elsewhere_case "a name at the start of the line is found" 0 other.yml 'name: Skill discovery'
 run_named_elsewhere_case "a job name in a .yaml file is found" 0 other.yaml '    name: Skill discovery'
 run_named_elsewhere_case "a job name in a file whose name starts with a dot is found" 0 .other.yml \
   '    name: Skill discovery'
-run_named_elsewhere_case "a folder named like a workflow file, which grep cannot read, is found" 0 other.yml/ ''
+run_named_elsewhere_case "a folder named like a workflow file, which grep cannot read, is a grep error" 2 \
+  other.yml/ ''
 run_named_elsewhere_case "a longer name is not found" 1 other.yml '    name: Skill discovery check'
 run_named_elsewhere_case "another key that ends in name is not found" 1 other.yml '    job-name: Skill discovery'
 run_named_elsewhere_case "a comment is not found" 1 other.yml '    # name: Skill discovery'
@@ -2288,6 +2308,16 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
+# ere_text must escape each character of its list and no other, so leaving one
+# out of the list fails here even when grep would read it as itself, as GNU grep
+# reads a ) that closes no group.
+got="$(ere_text 'a.[\()*+?{|^$]}b')"
+if [ "$got" = 'a\.\[\\\(\)\*\+\?\{\|\^\$]}b' ]; then
+  printf 'ok   ere_text escapes each special character and no other\n'
+else
+  printf 'FAIL ere_text escapes each special character and no other (printed %s)\n' "${got:-nothing}"
+  fails=$((fails + 1))
+fi
 # run_unlisted_case NAME KIND: named_elsewhere, for the job Skill discovery of
 # own.yml, on a path that it cannot list as a folder, must exit 0, a safe
 # failure. KIND is 311, a folder of mode 311 holding own.yml and other.yml,
@@ -2311,16 +2341,19 @@ run_unlisted_case() {
 run_unlisted_case "a workflow folder that cannot be listed is found" 311
 run_unlisted_case "a workflow path that names a file is found" file
 run_unlisted_case "a workflow path that names nothing is found" none
-# run_glob_case NAME LINE WANT: named_elsewhere, called in the suite's own shell
-# on a folder holding only .hidden.yml, which holds LINE, must exit WANT and
-# leave dotglob and nullglob off in its caller: shopt reads each as off, and a
-# glob of every entry of that folder matches neither the dot file nor nothing,
-# so it stays as written.
+# run_glob_case NAME LINE WANT [KIND]: named_elsewhere, called in the suite's
+# own shell on a folder holding only .hidden.yml, which holds LINE, must exit
+# WANT and leave dotglob and nullglob off in its caller: shopt reads each as
+# off, and a glob of every entry of that folder matches neither the dot entry
+# nor nothing, so it stays as written. With KIND folder, .hidden.yml is a
+# folder, which grep cannot read; with KIND none, named_elsewhere is called on a
+# path in that folder that names nothing, so it ends at its check of the folder.
 run_glob_case() {
-  local name="$1" want="$3" tmp got=0 entries
+  local name="$1" want="$3" kind="${4:-}" tmp got=0 entries
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
-  printf '%s\n' "$2" > "$tmp/.hidden.yml"
-  named_elsewhere "$tmp" own.yml "Skill discovery" 2>/dev/null || got=$?
+  if [ "$kind" = folder ]; then mkdir "$tmp/.hidden.yml"; else printf '%s\n' "$2" > "$tmp/.hidden.yml"; fi
+  if [ "$kind" = none ]; then named_elsewhere "$tmp/none" own.yml "Skill discovery" 2>/dev/null || got=$?
+  else named_elsewhere "$tmp" own.yml "Skill discovery" 2>/dev/null || got=$?; fi
   entries=("$tmp"/*)
   if [ "$got" = "$want" ] && ! shopt -q dotglob && ! shopt -q nullglob && [ "${#entries[@]}" = 1 ] \
     && [ "${entries[0]}" = "$tmp/*" ]; then
@@ -2335,6 +2368,9 @@ run_glob_case() {
 run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller when it finds a name" \
   '    name: Skill discovery' 0
 run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller when it finds none" '' 1
+run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller after a grep error" '' 2 folder
+run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller on a path it cannot list" \
+  '    name: Skill discovery' 0 none
 # run_shape_loop_case NAME: shape_loop, on a folder holding skill-discovery.yml
 # and a copy of it named other.yml, for the pair of Skill discovery, must print
 # 1 FAIL line, naming named-elsewhere and nothing else, and add 1 to fails.
@@ -2368,12 +2404,23 @@ jobs:
 # run_shape_problems_case NAME WANT JOB TEXT [STUB]: shape_problems, for the job
 # JOB of wf.yml in a folder that holds only wf.yml with TEXT, or nothing when
 # TEXT is empty, must print WANT; with STUB, wf_shape is a function that fails.
+# With CASE_OTHER set, the folder also holds other.yml with the line CASE_OTHER,
+# or a folder other.yml when CASE_OTHER is /. With CASE_SUB set, the folder is
+# CASE_SUB in a temporary folder, from which shape_problems is called with
+# CASE_SUB as a relative path.
 run_shape_problems_case() {
-  local name="$1" want="$2" tmp got
+  local name="$1" want="$2" sub="${CASE_SUB:-}" tmp dir got
   tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
-  if [ -n "$4" ]; then printf '%s\n' "$4" > "$tmp/wf.yml"; fi
-  if [ -n "${5:-}" ]; then got="$(wf_shape() { return 1; }; shape_problems "$tmp" wf.yml "$3")"
-  else got="$(shape_problems "$tmp" wf.yml "$3")"; fi
+  dir="$tmp${sub:+/$sub}"
+  if [ -n "$sub" ]; then mkdir -- "$dir"; fi
+  if [ -n "$4" ]; then printf '%s\n' "$4" > "$dir/wf.yml"; fi
+  case "${CASE_OTHER:-}" in
+    "") ;;
+    /) mkdir "$dir/other.yml" ;;
+    *) printf '%s\n' "$CASE_OTHER" > "$dir/other.yml" ;;
+  esac
+  if [ -n "${5:-}" ]; then got="$(wf_shape() { return 1; }; cd "$tmp" && shape_problems "${sub:-$tmp}" wf.yml "$3" 2>/dev/null)"
+  else got="$(cd "$tmp" && shape_problems "${sub:-$tmp}" wf.yml "$3" 2>/dev/null)"; fi
   if [ "$got" = "$want" ]; then printf 'ok   %s\n' "$name"
   else printf 'FAIL %s (got%s, want%s)\n' "$name" "${got:- nothing}" "${want:- nothing}"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
@@ -2392,6 +2439,15 @@ run_shape_problems_case "an if: on the job is the word wf_shape prints" " job-ke
     runs-on:}"
 run_shape_problems_case "a job that the gate does not declare is declared" " declared" "Docs" \
   "${SD_SHAPE//Skill discovery/Docs}"
+CASE_OTHER=/ run_shape_problems_case "a grep error in the search of other files is named-elsewhere-error" \
+  " named-elsewhere-error" "Skill discovery" "$SD_SHAPE"
+# A relative folder path that starts with a dash reaches each grep of a file in
+# it as a path, not as options, so the paths filter and the name in other.yml
+# are both found and no grep error names job-name or named-elsewhere-error.
+CASE_SUB=-dwf CASE_OTHER='    name: Skill discovery' run_shape_problems_case \
+  "a relative folder path that starts with a dash is read as a path" \
+  " trigger-filter pull-request-filter named-elsewhere" "Skill discovery" "${SD_SHAPE/  pull_request:/  pull_request:
+    paths: [docs]}"
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
@@ -3313,30 +3369,36 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || 
 
 run_closed_window_case "pending reading then the window closing before the next read -> not green, timed out"
 
-# run_late_pass_case NAME: the gate runs in process in wait mode with time.time
-# and time.monotonic fixed as in run_closed_window_case, so _gh never kills gh
-# in this case, and both check-runs calls serve the same green reading. When
-# the second read has returned, before main checks the deadline, the fixed
-# clock is moved to the deadline, so the pass is confirmed only after the
-# window closed. The case must exit 2; standard error must hold the line saying
-# that the checks passed only after the window closed; standard output must
-# hold the first reading's line asking for a confirmation reading but no
-# confirmed-pass line; and the fake gh must serve exactly 2 check-runs calls.
+# run_late_pass_case NAME [FAIL]: the gate runs in process in wait mode with
+# time.time and time.monotonic fixed as in run_closed_window_case, so _gh never
+# kills gh in this case, and both check-runs calls serve the same green reading.
+# When the second read has returned, before main checks the deadline, the fixed
+# clock is moved to the deadline, so the pass is confirmed only after the window
+# closed. The case must exit 2; standard error must hold the line saying that
+# the checks passed only after the window closed; standard output must hold the
+# first reading's line asking for a confirmation reading but no confirmed-pass
+# line; and the fake gh must serve exactly 2 check-runs calls. Since the fixed
+# clock moves only once a second read has returned, a third call of read_checks
+# ends the gate at once with a line naming the bound, which fails the case, so a
+# gate whose reads all fail cannot keep it waiting. With FAIL given, every
+# check-runs call of the fake gh exits 1.
 run_late_pass_case() {
-  local name="$1"
+  local name="$1" serve
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  serve="cat \"$tmp/def.json\""
+  if [ -n "${2:-}" ]; then serve="exit 1"; fi
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
-  *check-runs*) echo read >> "$tmp/reads"; cat "$tmp/def.json" ;;
+  *check-runs*) echo read >> "$tmp/reads"; $serve ;;
   *"repo view"*) printf "owner/name";; *) printf "";;
 esac
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys, time, types
 path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
@@ -3347,6 +3409,10 @@ real_read_checks = mod.read_checks
 calls = []
 def read_checks(repo, full_sha, deadline):
     calls.append(deadline)
+    if len(calls) > 2:
+        sys.stderr.write("late-pass bound: a third read, so the fixed clock would never reach the deadline\n")
+        sys.stderr.flush()
+        os._exit(4)
     checks = real_read_checks(repo, full_sha, deadline)
     if len(calls) == 2:
         now[0] = deadline  # after the confirmation read, before main checks the deadline
@@ -3363,12 +3429,23 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || 
   grep -q -F -- "every check passed" "$tmp/out"
   case $? in 1) ;; *) why="$why absent" ;; esac
   [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 2 ] || why="$why reads"
+  if grep -q -F -- "late-pass bound" "$tmp/err"; then why="$why bound"; fi
   if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
   else printf "FAIL %s (got %s, want 2;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
 }
 
 run_late_pass_case "green readings confirmed only after the window closed -> not green, timed out"
+# run_late_pass_case must end, and fail, when every read fails: called inside a
+# command substitution, whose count of failures is its own, with a fake gh whose
+# every check-runs call exits 1, its line must be a FAIL that names bound.
+got="$(run_late_pass_case "late-pass probe" fail)"
+if [[ "$got" == "FAIL late-pass probe ("*";"* && "${got##*;}" == *bound* ]]; then
+  printf 'ok   run_late_pass_case ends and fails when every read fails\n'
+else
+  printf 'FAIL run_late_pass_case does not fail on its bound when every read fails (printed %s)\n' "${got:-nothing}"
+  fails=$((fails + 1))
+fi
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.

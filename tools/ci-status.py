@@ -592,8 +592,8 @@ def verdict_of(checks) -> str:
 # its change merges.
 # Residual: a name and an app cannot tell which workflow produced a run, so a pull
 # request that deletes one of those workflows and adds another job with the same
-# display name satisfies the check. GitHub's own app-pinned required check has the
-# same limit.
+# display name satisfies the check. GitHub's own required check, pinned to an app,
+# has the same limit.
 # Deferred: this list is declared here and is not cross-checked against the branch
 # ruleset for main. That cross-check would also require every context the ruleset
 # lists, report a listed context missing from this list, and fail closed (exit 3)
