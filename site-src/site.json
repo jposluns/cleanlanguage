@@ -44,7 +44,7 @@
      "description": "Before-and-after examples showing how Clean Language rewrites generic prose while preserving every fact. These are the examples the skill uses."},
     {"id": "patterns", "path": "patterns/", "title": "Patterns", "nav_label": "Patterns", "source": "patterns.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-27",
      "description": "Spot and remove the AI writing patterns that sound generic: dash overuse, contrast framing, filler, fake enthusiasm, and corporate jargon."},
-    {"id": "install", "path": "install/", "title": "Install", "nav_label": "Install", "source": "install.html", "scripts": ["copy.js"], "modified": "2026-11-12", "published": "2026-07-27",
+    {"id": "install", "path": "install/", "title": "Install", "nav_label": "Install", "source": "install.html", "scripts": ["copy.js"], "modified": "2026-11-05", "published": "2026-07-27",
      "description": "Download Clean Language, then open the setup page for Claude, ChatGPT, Gemini, Copilot, or other AI systems. No command line, coding, or GitHub experience needed."},
     {"id": "install-claude", "path": "install/claude/", "title": "Install in Claude", "nav_label": "Install in Claude", "source": "install-claude.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-11-03",
      "description": "Click-by-click setup for Clean Language in Claude: upload the skill on the Claude website or Claude Desktop, or use a Claude Project instead."},
