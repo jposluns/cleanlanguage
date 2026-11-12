@@ -57,17 +57,26 @@ Every other line of this lint is read: its docstrings, its comments and its test
 comment or other statement inside a fixture block, an assignment to another name or in a function or
 a nested class among them, and a string line that reads as a marker opens and closes no block. The
 HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and the reading
-of tracked files, against a run of git grep, are pinned too. Two classes at the top level of this
-lint that share a name are a failure. FixtureNameRegistry, a static check of the source, fails when
-a name in FIXTURE_NAMES is not a fixture of its class or is read by no method of that class other
-than as a message argument of an assert call; it cannot tell an example from other data, so a name
-read only through self.fail, an alias, subTest(msg=...) or len passes it, and so does a class that a
-later binding of its name, other than a second class, hides from unittest. These patterns name a
-review pass or a finding by number and match no plan or contract id, so the pass covers files whose
-ids would fail the full patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare
-ids. A tracked file that cannot be read as UTF-8, or that is missing, is a failure that names the
-file, and so are a fixture block left open, a carriage return in this lint and a git ls-files that
-fails. Its residuals: it matches single lines only, so a label split across lines or written in
+of tracked files, against a run of git grep, are pinned too. A class at the top level of this lint
+that has a decorator is a failure, and so is a binding at module level, other than that class, of
+its name or of the name of a class that FIXTURE_NAMES lists, as the source spells it, such as a
+second class of that name, also one inside an if, try, with, for or while block, a function, an
+assignment, plain, augmented, annotated or by a walrus, an import, a for, with or except target, a
+match capture, a del, a global statement that names it, or a star import, which can bind any name; a
+binding inside a function, lambda or class body, or a comprehension target, is not at module level.
+A rebinding that the source does not spell, such as one through globals(), setattr or exec, passes,
+and so does a change that keeps the name but hides tests of the class from unittest, such as a base
+class other than unittest.TestCase, a method deleted from the class or a load_tests function.
+FixtureNameRegistry, a static check of the source, fails when a name in FIXTURE_NAMES is not a
+fixture of its class or is read by no method of that class other than as a message argument of an
+assert call; it cannot tell an example from other data, so any other read of the name in a method,
+as an attribute of self, cls or the class, passes it, whatever the read does with the value, such as
+a read through self.fail, a lambda, str(), len or subTest(msg=...), or into an alias. These patterns
+name a review pass or a finding by number and match no plan or contract id, so the pass covers files
+whose ids would fail the full patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as
+bare ids. A tracked file that cannot be read as UTF-8, or that is missing, is a failure that names
+the file, and so are a fixture block left open, a carriage return in this lint and a git ls-files
+that fails. Its residuals: it matches single lines only, so a label split across lines or written in
 words passes; it reads no untracked file, as git grep reads none; it reads no tracked symbolic link
 and no submodule, as git grep reads neither, so the file that a tracked link points to is read only
 when it is itself a tracked file in the 3 folders; and it reads no tracked file outside them, among
@@ -353,9 +362,10 @@ HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in
 # no comment. A value of data holds only the node types in FIXTURE_DATA, so a value with a call, a
 # lambda, a comprehension or a formatted string is not data, and its lines are read. An assignment
 # to any other name, at module level, in a function or in a nested class is read too, and so is a
-# docstring or other string line that reads as a marker, which opens and closes no block. Two
-# classes at the top level of this file that share a name are a failure, so no class that a later
-# one hides holds fixture lines.
+# docstring or other string line that reads as a marker, which opens and closes no block. A
+# decorator on a class at the top level of this file, and a binding at module level, other than that
+# class, of its name or of the name of a class that FIXTURE_NAMES lists, as module_bindings reads
+# one, are failures, so no class that such a binding hides holds fixture lines.
 FIXTURE_FILE = "tools/test-no-qa-labels.py"
 FIXTURE_START = "# history pass fixtures: start"
 FIXTURE_END = "# history pass fixtures: end"
@@ -364,9 +374,9 @@ FIXTURE_DATA = (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Subsc
 # of that class read as examples, or as the results they expect for them. FixtureNameRegistry, a
 # static check of the source, fails when a name here is not assigned once as data in a fixture block
 # of its class, or is read by no method of that class other than as a message argument of an assert
-# call. It cannot tell an example from other data, so a name that a method reads only through
-# self.fail, an alias, subTest(msg=...) or len passes it, and so does a class that a later binding
-# of its name, other than a second class, hides from unittest.
+# call. It cannot tell an example from other data, so any other read of a listed name in a method,
+# as an attribute of self, cls or the class, passes it, whatever the read does with the value, such
+# as a read through self.fail, a lambda, str(), len or subTest(msg=...), or into an alias.
 FIXTURE_NAMES = {
     "NoReviewHistoryInScope": ("PLANTS",),
     "HistoryPatternSelfCheck": ("FIXTURES", "PROBE_ONLY", "C_LOCALE_ONLY", "FALSE_FAILURES", "NUMBERED_FINDING_ONLY",
@@ -834,6 +844,46 @@ def tracked_history_files(root=ROOT):
     return sorted(entries.items())
 
 
+def module_bindings(tree):
+    """(name, node) for each binding of a name at module level that the source of tree spells.
+
+    A binding is at module level when the source makes it outside every function, lambda and class
+    body and outside the targets of a comprehension, or when a global statement anywhere names it.
+    The bindings read are the name of a class or function statement, each name in a target of an
+    assignment, plain, augmented or annotated, of a walrus, also inside a comprehension, of a for or
+    with statement or of a del, each name that an import binds, the name of an except clause, each
+    capture of a match pattern and each name of a global statement. A star import gives the name *,
+    since it can bind any name.
+    """
+    found = []
+
+    def visit(node, here):
+        if isinstance(node, ast.Global):
+            found.extend((name, node) for name in node.names)
+        elif here and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.append((node.name, node))
+        elif here and isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            found.append((node.id, node))
+        elif here and isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.extend((alias.asname or alias.name.split(".")[0], node) for alias in node.names)
+        elif here and isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.append((node.name, node))
+        elif here and isinstance(node, ast.MatchMapping) and node.rest:
+            found.append((node.rest, node))
+        body = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+        elif isinstance(node, ast.Lambda):
+            body = [node.body]
+        elif isinstance(node, ast.comprehension):
+            body = [node.target]
+        for child in ast.iter_child_nodes(node):
+            visit(child, here and not any(child is part for part in body))
+
+    visit(tree, True)
+    return found
+
+
 def fixture_lines(text):
     """The numbers of the fixture lines of text, the source of this lint.
 
@@ -841,12 +891,15 @@ def fixture_lines(text):
     FIXTURE_END, once each is stripped; a line inside a string that reads as a marker is not one. A
     start inside an open block, an end outside one, a block left open or a carriage return in text,
     which would make the lines Python parses differ from the lines the pass reads, raises
-    ValueError, so the history pass fails, and so do 2 classes at the top level of text that share a
-    name, since the later one would hide the earlier one from unittest and from FixtureNameRegistry,
-    which reads the last class of each name. A fixture line lies inside a block, belongs to an
-    assignment of data that lies wholly inside that block, made directly in the body of a class at
-    the top level of text to names that FIXTURE_NAMES lists for that class, and holds no comment; a
-    value of data holds only the node types in FIXTURE_DATA.
+    ValueError, so the history pass fails. So does a class at the top level of text that has a
+    decorator, and a binding at module level, as module_bindings reads one, of the name of such a
+    class or of a class that FIXTURE_NAMES lists, other than that class, such as a second class of
+    that name, also one inside an if, try, with, for or while block, an assignment, an import, a del
+    or a star import, since such a binding can hide the class from unittest and from
+    FixtureNameRegistry, which reads the class at the top level. A fixture line lies inside a block,
+    belongs to an assignment of data that lies wholly inside that block, made directly in the body
+    of a class at the top level of text to names that FIXTURE_NAMES lists for that class, and holds
+    no comment; a value of data holds only the node types in FIXTURE_DATA.
     """
     if "\r" in text:
         raise ValueError("line {}: a carriage return".format(text[:text.index("\r")].count("\n") + 1))
@@ -876,6 +929,15 @@ def fixture_lines(text):
     for owner in classes:
         if [other.name for other in classes].count(owner.name) > 1:
             raise ValueError("line {}: another class at the top level is named {}".format(owner.lineno, owner.name))
+        if owner.decorator_list:
+            raise ValueError("line {}: the class {} has a decorator".format(owner.lineno, owner.name))
+    names = {owner.name for owner in classes} | set(FIXTURE_NAMES)
+    tops = {id(owner) for owner in classes}
+    for name, node in module_bindings(tree):
+        if name == "*":
+            raise ValueError("line {}: a star import can bind the name of a class".format(node.lineno))
+        if name in names and id(node) not in tops:
+            raise ValueError("line {}: {} is bound at module level other than by its class".format(node.lineno, name))
     for owner in tree.body:
         if not isinstance(owner, ast.ClassDef) or owner.name not in FIXTURE_NAMES:
             continue
@@ -982,6 +1044,7 @@ class NoReviewHistoryInScope(unittest.TestCase):
                      ("a call in a fixture block", FIXTURE_START, "    PLANTS = str({})".format(value), 0),
                      ("a fixture line with a comment", FIXTURE_START, "    PLANTS = {}  # planted".format(value), 0),
                      ("a name outside FIXTURE_NAMES in a fixture block", FIXTURE_START, "    MESSAGE = " + value, 0),
+                     ("a chain with a name outside FIXTURE_NAMES", FIXTURE_START, "    PLANTS = MESSAGE = " + value, 0),
                      ("a local of a method in a fixture block", FIXTURE_START,
                       "    def helper(self):\n        PLANTS = " + value, 1),
                      ("a class in a method in a fixture block", FIXTURE_START,
@@ -1026,20 +1089,51 @@ class NoReviewHistoryInScope(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     history_hits(FIXTURE_FILE, text)
 
-    def test_a_class_name_used_twice_fails(self):
-        # A class that a later class of the same name hides never runs, and FixtureNameRegistry
-        # reads only the later one, so a fixture block in the hidden class would skip lines that no
-        # check reads. The first text puts such a class, with a plant as its fixture, between 2
-        # classes of this lint.
+    # Bindings at module level of the name of a class at the top level of this lint, each put before
+    # the guard that runs the tests, the empty text standing for a decorator on PatternSelfCheck.
+    # Each can hide the class from unittest, and FixtureNameRegistry reads only the class at the top
+    # level, so the fixture block of a hidden class would skip lines that no check reads.
+    REBINDINGS = ("if True:\n    class PatternSelfCheck:\n        pass",
+                  "try:\n    class PatternSelfCheck:\n        pass\nexcept ImportError:\n    pass",
+                  "with warnings.catch_warnings():\n    class PatternSelfCheck:\n        pass",
+                  "for _ in (1,):\n    class PatternSelfCheck:\n        pass",
+                  "while True:\n    class PatternSelfCheck:\n        pass\n    break",
+                  "", "PatternSelfCheck = None", "PatternSelfCheck |= int", "PatternSelfCheck: object = None",
+                  "(PatternSelfCheck := None)", "[PatternSelfCheck := None for _ in (1,)]",
+                  "import os as PatternSelfCheck", "from os import path as PatternSelfCheck",
+                  "for PatternSelfCheck in (None,):\n    pass", "del PatternSelfCheck",
+                  "def PatternSelfCheck():\n    pass", "with open(__file__) as PatternSelfCheck:\n    pass",
+                  "try:\n    raise OSError\nexcept OSError as PatternSelfCheck:\n    pass",
+                  "match None:\n    case PatternSelfCheck:\n        pass",
+                  "def hide():\n    global PatternSelfCheck\n    PatternSelfCheck = None", "from os import *",
+                  "NoReviewLabels = None")
+    # Bindings of the same name that are not at module level, which hide no class and pass.
+    LOCAL_BINDINGS = ("def hide():\n    PatternSelfCheck = None", "class Hide:\n    PatternSelfCheck = None",
+                      "[None for PatternSelfCheck in ()]", "(lambda: (PatternSelfCheck := None))")
+
+    def test_a_class_name_bound_again_fails(self):
+        # The first text puts a second class of a name, with a plant as its fixture, between 2
+        # classes of this lint, and the third holds a fixture class only inside an if block.
         own = read_text(ROOT / FIXTURE_FILE)
         lines = own.split("\n")
         at = lines.index("class HistoryPatternSelfCheck(unittest.TestCase):")
         hidden = ["class PatternSelfCheck:", "    " + FIXTURE_START, "    LABELS = (\"{}\",)".format(self.PLANTS[1]),
                   "    " + FIXTURE_END, "", ""]
-        for text in ("\n".join(lines[:at] + hidden + lines[at:]), "class A:\n    pass\n\n\nclass A:\n    pass\n"):
-            with self.subTest(text=text[:20]):
+        guard = "\nif __name__ == \"__main__\":"
+        head = "\nclass PatternSelfCheck(unittest.TestCase):\n"
+        texts = [("a second class", "\n".join(lines[:at] + hidden + lines[at:])),
+                 ("2 classes", "class A:\n    pass\n\n\nclass A:\n    pass\n"),
+                 ("a fixture class only in an if block", self.REBINDINGS[0] + "\n")]
+        texts.extend((form, own.replace(head, "\n@(lambda cls: object)" + head, 1) if not form
+                      else own.replace(guard, "\n" + form + "\n\n" + guard, 1)) for form in self.REBINDINGS)
+        for form, text in texts:
+            with self.subTest(form=form):
+                self.assertNotEqual(text, own)
                 with self.assertRaises(ValueError):
                     history_hits(FIXTURE_FILE, text)
+        for form in self.LOCAL_BINDINGS:
+            with self.subTest(form=form):
+                self.assertEqual(history_hits(FIXTURE_FILE, own.replace(guard, "\n" + form + "\n\n" + guard, 1)), [])
 
     def test_the_pass_reads_the_tracked_files_as_git_grep_does(self):
         # The lines the pass reports in readable files must be the lines that git grep, run with
@@ -1198,13 +1292,23 @@ class FixtureNameRegistry(unittest.TestCase):
         subjects = 1 if call.func.attr in ("assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone") else 2
         return call.args[subjects:] + [keyword.value for keyword in call.keywords if keyword.arg == "msg"]
 
-    def test_each_fixture_name_is_a_fixture_that_its_class_reads(self):
-        own = read_text(ROOT / FIXTURE_FILE)
-        tree = ast.parse(own)
-        skipped = fixture_lines(own)
+    @classmethod
+    def problems(cls, text, fixture_names):
+        """(class, name, problem) for each name of fixture_names that fails the registry in text.
+
+        A name fails when it is listed twice, when it is not assigned exactly once in the body of
+        its class at the top level of text, when that assignment is not a fixture as fixture_lines
+        reads one, or when no method of its class reads it other than as a message argument of an
+        assert call; a class that is not at the top level fails with the name None.
+        """
+        tree = ast.parse(text)
+        skipped = fixture_lines(text)
         classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-        self.assertEqual(sorted(set(FIXTURE_NAMES) - set(classes)), [])
-        for owner, names in FIXTURE_NAMES.items():
+        found = []
+        for owner, names in fixture_names.items():
+            if owner not in classes:
+                found.append((owner, None, "no class at the top level"))
+                continue
             assigned = {}
             for node in classes[owner].body:
                 if isinstance(node, ast.Assign):
@@ -1212,21 +1316,44 @@ class FixtureNameRegistry(unittest.TestCase):
                         if isinstance(target, ast.Name):
                             assigned.setdefault(target.id, []).append(node)
             messages = {id(part) for call in ast.walk(classes[owner]) if isinstance(call, ast.Call)
-                        for argument in self.message_arguments(call) for part in ast.walk(argument)}
+                        for argument in cls.message_arguments(call) for part in ast.walk(argument)}
             read = {node.attr for method in classes[owner].body
                     if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
                     for node in ast.walk(method)
                     if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
                     and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls", owner)
                     and id(node) not in messages}
-            self.assertEqual(len(names), len(set(names)), owner)
-            for name in names:
-                with self.subTest(owner=owner, name=name):
-                    self.assertEqual(len(assigned.get(name, [])), 1, "assigned other than once")
-                    node = assigned[name][0]
-                    self.assertTrue(set(range(node.lineno, node.end_lineno + 1)) <= skipped,
-                                    "not a fixture: outside a block, not data or commented")
-                    self.assertIn(name, read, "read by no method of its class other than as a message")
+            for name in sorted(set(names)):
+                if names.count(name) > 1:
+                    found.append((owner, name, "listed twice"))
+                if len(assigned.get(name, [])) != 1:
+                    found.append((owner, name, "assigned other than once"))
+                    continue
+                node = assigned[name][0]
+                if not set(range(node.lineno, node.end_lineno + 1)) <= skipped:
+                    found.append((owner, name, "not a fixture: outside a block, not data or commented"))
+                if name not in read:
+                    found.append((owner, name, "read by no method of its class other than as a message"))
+        return found
+
+    def test_each_fixture_name_is_a_fixture_that_its_class_reads(self):
+        self.assertEqual(self.problems(read_text(ROOT / FIXTURE_FILE), FIXTURE_NAMES), [])
+
+    def test_a_name_that_no_method_reads_other_than_as_a_message_fails(self):
+        # A class of FIXTURE_NAMES with 1 fixture, read by its method in each way below: as a
+        # subject of an assert call, which passes, and as a message argument of one, by position or
+        # as msg=, or not at all, each of which fails the registry.
+        text = ("class NoReviewHistoryInScope:\n    {}\n    PLANTS = (\"x\",)\n    {}\n\n"
+                "    def test_x(self):\n        {{}}\n").format(FIXTURE_START, FIXTURE_END)
+        unread = [("NoReviewHistoryInScope", "PLANTS", "read by no method of its class other than as a message")]
+        for read, expected in (("self.assertEqual(self.PLANTS, ())", []), ("self.assertTrue(1, self.PLANTS)", unread),
+                               ("self.assertEqual(1, 1, msg=self.PLANTS)", unread), ("pass", unread)):
+            with self.subTest(read=read):
+                found = self.problems(text.format(read), {"NoReviewHistoryInScope": ("PLANTS",)})
+                self.assertEqual(found, expected)
+        with self.subTest(read="a name that the class does not assign"):
+            found = self.problems(text.format("pass"), {"NoReviewHistoryInScope": ("PLANTS", "MESSAGE")})
+            self.assertEqual(found, [("NoReviewHistoryInScope", "MESSAGE", "assigned other than once")] + unread)
 
 
 class PatternSelfCheck(unittest.TestCase):

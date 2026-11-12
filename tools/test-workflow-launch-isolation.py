@@ -193,16 +193,19 @@ Residuals, named here because the scan reads text the pull request controls:
   pipe into a shell;
 - a launch after a backquote or a `)` that rule 3's left edge reads as opening
   a command substitution or as ending a case pattern while bash reads it
-  otherwise, since the rule reads one line at a time and counts quoted
-  backquotes too: the scan counts the form as a launch with no finding, while
-  bash may run another program or nothing. Examples, run with a stub `python3`
-  that prints its arguments: for `v=$(echo`, then a line
-  `i)python3 -I tools/x.py`, and for ``v=`echo``, then a line
-  `` `python3 -I tools/x.py ``, where the `)` or the backquote closes a
+  otherwise, since the rule reads one line at a time, counts quoted backquotes
+  too and does not check that a case statement is open: the scan counts the
+  form as a launch with no finding, while bash may run another program or
+  nothing. Examples, run with a stub `python3` that prints its arguments: for
+  `v=$(echo`, then a line `i)python3 -I tools/x.py`, and for ``v=`echo``, then
+  a line `` `python3 -I tools/x.py ``, where the `)` or the backquote closes a
   command substitution opened on the line before, and for
   ``echo '`'; x=`echo `python3 -I tools/x.py``, where a quoted backquote
   changes the count, bash sets v or x to `python3` and then fails with exit
-  status 127, since it finds no program `-I`;
+  status 127, since it finds no program `-I`; and for
+  `(true)python3 -I tools/x.py` or `a)python3 -I tools/x.py` at the start of a
+  line, with no case statement open, bash reports a syntax error and runs
+  nothing on that line;
 - a launch written inside a parameter expansion with `python3` directly after
   rule 3's left edge, such as a space, a tab, `|`, `&`, `;` or `(`, or at the
   start of a line inside it, which the scan counts as a launch of the script

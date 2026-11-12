@@ -175,10 +175,14 @@ joins outside that model: the scan can pass it while bash runs another script
 word, or refuse it while bash runs the .py path. Examples:
 `python3 -I tools\\x.py` passes, while bash runs `toolsx.py`, still with -I,
 and so does `python3 -I 'tools\\` with a next line `/x.py'`, which bash runs as
-`tools\\`, a line feed and `/x.py`, still with -I; and bash runs the script
-`tools/x.py` for each of these false findings,
-`bash -c 'python3 -I tools/x.py'""`, the same with `$v`, where v is empty, or
-`\\ w` in place of the `""`, `eval "bash -c 'python3 -I tools/x.py'"`,
+`tools\\`, a line feed and `/x.py`, still with -I; so do
+``python3 -I tools/x.py`echo w` `` and `python3 -I tools/x.py<(echo w)`, where
+a command or process substitution directly after the path, which the model
+reads as a word end, joins the word, so that bash runs `tools/x.pyw` or
+`tools/x.py/dev/fd/63`, still with -I; and bash runs the script `tools/x.py`
+for each of these false findings, `bash -c 'python3 -I tools/x.py'""`, the same
+with `$v`, where v is empty, or `\\ w` in place of the `""`,
+`eval "bash -c 'python3 -I tools/x.py'"`,
 `sh -c "bash -c 'python3 -I tools/x.py'"`, `python3 -I tools/x.py$''` and
 `python3 -I tools/x.py$""`. A launch from Python, such as subprocess with
 sys.executable. A launch in a script that a workflow step or a covered script
