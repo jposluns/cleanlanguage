@@ -2136,7 +2136,10 @@ PY
 }
 # ere_text TEXT: print TEXT with a backslash before each character that an
 # extended regular expression treats as special, so that grep -E matches it as
-# text, and before no other character.
+# text. The ere_text cases below give it each byte from 1 to 255 alone, the
+# printable ASCII characters together and the character U+00E9, and require a
+# backslash before each of the 12 characters of its list and before no other
+# character that they give it.
 ere_text() {
   local text="" c i
   for ((i = 0; i < ${#1}; i++)); do
@@ -2328,6 +2331,30 @@ if [ "${#ere_in}" = 95 ] && [ "$got" = "$ere_want" ]; then
 else
   printf 'FAIL ere_text escapes each of its 12 characters and no other printable ASCII character (printed %s)\n' \
     "${got:-nothing}"
+  fails=$((fails + 1))
+fi
+# ere_text is also given each byte from 1 to 255 alone, the newline included,
+# and the character U+00E9, and must print each byte of its list after a
+# backslash and every other byte, and U+00E9, as it is, so adding to the list a
+# tab, U+00E9 or another byte from 1 to 255 fails here. Its output is read up to
+# an x printed after it, so that a trailing newline is kept.
+ere_bad=""
+for ((ere_i = 1; ere_i < 256; ere_i++)); do
+  printf -v ere_c "\\$(printf '%03o' "$ere_i")"
+  ere_want="$ere_c"
+  for ere_s in . '[' '\' '(' ')' '*' + '?' '{' '|' '^' '$'; do
+    if [[ "$ere_c" == "$ere_s" ]]; then ere_want="\\$ere_c"; fi
+  done
+  got="$(ere_text "$ere_c"; printf x)"
+  if [ "${got%x}" != "$ere_want" ]; then ere_bad="$ere_bad $ere_i"; fi
+done
+got="$(ere_text $'\xc3\xa9'; printf x)"
+if [ "${got%x}" != $'\xc3\xa9' ]; then ere_bad="$ere_bad U+00E9"; fi
+if [ -z "$ere_bad" ]; then
+  printf 'ok   ere_text escapes the bytes of its list and no other byte from 1 to 255, and leaves U+00E9 as it is\n'
+else
+  printf 'FAIL ere_text escapes the bytes of its list and no other byte from 1 to 255, and leaves U+00E9 as it is (wrong:%s)\n' \
+    "$ere_bad"
   fails=$((fails + 1))
 fi
 # run_unlisted_case NAME KIND: named_elsewhere, for the job Skill discovery of

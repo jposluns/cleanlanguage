@@ -9,11 +9,15 @@
 # 1 run line plugin_manifests stands in (see below). plugin-drift.yml (a
 # schedule and a manual dispatch) and release-skill.yml (a tag push and a manual
 # dispatch) are not triggered by a pull request or a push to main, so neither is
-# mirrored. Each command runs unpiped, from the repository root, and its exit
-# status is recorded; a failure does not stop the run, and the script ends by
-# naming the commands that failed and exiting 1, or exits 0 when all of them
-# passed. It unsets CDPATH before its cd, so that cd does not resolve its
-# relative folder through CDPATH and the commands it runs do not inherit it.
+# mirrored. The script runs the command of a run line from the repository root
+# through its function run, which records a nonzero exit status; a failure does
+# not stop the run, and the script ends by naming the commands that failed and
+# exiting 1, or exits 0 when all of them passed. It puts no pipe on the command
+# of a run line or on a claude plugin validate of plugin_manifests, though
+# plugin_manifests reads the output of some commands, such as sed and claude
+# --version, through a command substitution, which is a pipe. It unsets CDPATH
+# before its cd, so that cd does not resolve its relative folder through CDPATH
+# and the commands it runs do not inherit it.
 #
 # The Plugin manifests job installs the Claude Code CLI at the version that
 # plugin-validate.yml pins in CLAUDE_CODE_VERSION. This script installs nothing:

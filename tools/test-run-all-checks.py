@@ -41,14 +41,17 @@ apart from those of claude --version, whose output the script reads. The cases: 
 each run once, in order, and the script exits 0; the same holds when the script is started by a
 relative path with CDPATH naming another folder that holds a tools folder; a stub exiting 1, 2 or 3
 (the first, a middle and the last stub) leaves the later commands running and the script exiting 1,
-naming that command; a claude that reports another version, or no claude, makes the script exit 1,
-naming plugin_manifests, without any validation, while the other commands each run once, in order.
-The cases read plugin-validate.yml once, for that copy and for the version that its
-CLAUDE_CODE_VERSION line pins, matched as the sed of plugin_manifests matches it, on each line
-between line feeds, so a line that ends in a carriage return is not such a line; when it cannot be
-read or holds no such line or more than 1, the test fails, naming it and the cause, and runs none of
-these cases, and 5 reading cases require that failure of a folder, of a file with no such line, of a
-file with carriage returns, of a version that starts with a dot and of a file with 2 such lines.
+naming that command; a stub claude whose validation of the repository root, of ./cleanlanguage or of
+the staged skills folder exits 1 makes the script exit 1, naming plugin_manifests, while the other
+validations and the other commands each run once, in order; a claude that reports another version,
+or no claude, makes the script exit 1, naming plugin_manifests, without any validation, while the
+other commands each run once, in order. The cases read plugin-validate.yml once, for that copy and
+for the version that its CLAUDE_CODE_VERSION line pins, matched as the sed of plugin_manifests
+matches it, on each line between line feeds, so a line that ends in a carriage return is not such a
+line; when it cannot be read or holds no such line or more than 1, the test fails, naming it and the
+cause, and runs none of these cases, and 5 reading cases require that failure of a folder, of a file
+with no such line, of a file with carriage returns, of a version that starts with a dot and of a
+file with 2 such lines.
 
 The cases pin the commands, not the script's other shell text, so the test also fails unless the
 sha256 of the committed script is SCRIPT_SHA256. To change the script, read the whole change,
@@ -95,7 +98,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
 # the change to SCRIPT.
-SCRIPT_SHA256 = "d8be9aced004f80a3412c48cfbf487ddb648801355f285e45febabf4945ffa09"
+SCRIPT_SHA256 = "51ee5f1528b4a13e98228dfde9f2b758ca3cf98c4fa846d8339dc2e4d4b11cad"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((
@@ -307,8 +310,15 @@ out=0; err=0
 [ -p /dev/stderr ] && err=1
 printf 'claude|%s|%s%s\\n' "$*" "$out" "$err" >> "$RUN_ALL_CHECKS_LOG"
 if [ "${1:-}" = --version ]; then printf '%s (Claude Code)\\n' "$CLAUDE_STUB_VERSION"; fi
+if [ "${1:-}" = plugin ] && [ -n "${CLAUDE_STUB_FAIL:-}" ]; then
+  case "${3:-}" in $CLAUDE_STUB_FAIL) exit 1 ;; esac
+fi
 exit 0
 '''
+# The validations of plugin_manifests, each a label and the pattern of its folder argument that
+# CLAUDE_STUB_FAIL gives the stub claude, so that exactly that validation exits 1.
+VALIDATIONS = (("the repository root", "."), ("./cleanlanguage", "./cleanlanguage"),
+               ("the staged skills folder", "*/skills"))
 
 
 def stub_name(line: str):
@@ -389,15 +399,17 @@ def make_tree(tmp: Path, lines: list, claude: bool, pin_bytes: bytes) -> dict:
 
 
 def run_case(lines: list, pinned: tuple, codes: str = "", version=None, claude: bool = True,
-             cdpath: bool = False):
+             cdpath: bool = False, fail: str = ""):
     """Run the script in a stub tree: (exit status, log lines, script output). With cdpath, the
     script is started by a relative path from the tree, with CDPATH naming another folder that holds
-    a tools folder, where a cd that consulted CDPATH would land."""
+    a tools folder, where a cd that consulted CDPATH would land. With fail, the validation of the
+    stub claude whose folder argument matches that pattern exits 1."""
     with tempfile.TemporaryDirectory() as name:
         tmp = Path(name)
         env = make_tree(tmp, lines, claude, pinned[0])
         env["RUN_ALL_CHECKS_CODES"] = codes
         env["CLAUDE_STUB_VERSION"] = version if version is not None else pinned[1]
+        env["CLAUDE_STUB_FAIL"] = fail
         (tmp / "log").write_text("", encoding="utf-8")
         argv, cwd = ["bash", str(tmp / "tools" / "run_all_checks.sh")], "/"
         if cdpath:
@@ -464,6 +476,20 @@ def behaviour(lines: list, failures: list, pinned: tuple) -> int:
             failures.append(f"{label}: a pipe reached {piped(log)!r}")
 
     plugin = [l for l in lines if l == "plugin_manifests"]
+    for folder, pattern in VALIDATIONS:
+        cases += 1
+        code, log, output = run_case(lines, pinned, fail=pattern)
+        label = f"a validation of {folder} exiting 1"
+        if code != 1:
+            failures.append(f"{label}: the script exits {code}, not 1")
+        if calls(log) != want or not plugin:
+            failures.append(f"{label}: the calls are {calls(log)!r}, not every command and validation once in "
+                            "order, or no plugin_manifests runs")
+        if "==> exit 1: plugin_manifests" not in output or "  plugin_manifests (exit 1)" not in output:
+            failures.append(f"{label}: the output does not name plugin_manifests as failed")
+        if piped(log):
+            failures.append(f"{label}: a pipe reached {piped(log)!r}")
+
     for label, kwargs in (("a claude reporting another version", {"version": pinned[1] + "1"}),
                           ("no claude", {"claude": False})):
         cases += 1
