@@ -35,7 +35,7 @@ Never sacrifice correctness to satisfy a style preference.
 CORE STYLE
 
 - Lead with the answer, decision, request, finding, or action.
-- Write concise, information-dense prose in short executive paragraphs.
+- Write concise, information-dense prose; prefer short executive paragraphs.
 - Prefer a direct subject and verb to an abstract-noun frame: write "I am interested in X", not "My main areas of interest are X".
 - Use headings, bullets, and tables only when they improve comprehension.
 - Use Oxford English and -ize spellings where both forms are valid; if the user's instructions name another variant, apply it consistently.
