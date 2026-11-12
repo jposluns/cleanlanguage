@@ -8,7 +8,7 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
-- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source? Never invent a citation, and never reattach a claim to a different source.
+- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source?
 
 ## Directness
 
