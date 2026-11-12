@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test that tools/run_all_checks.sh runs the run text read here, unpiped, and fails on a failure.
+"""Test that tools/run_all_checks.sh covers the run text read here and fails on a failure.
 
 Coverage. The test reads each file directly under .github/workflows whose name ends in .yml or .yaml
 with PyYAML's safe loader (which reads the key on as True). From the on: value of each it selects
