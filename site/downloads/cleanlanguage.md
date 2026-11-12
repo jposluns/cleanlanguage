@@ -122,7 +122,7 @@ Prefer this sequence when applicable:
 
 ## Audit before delivering
 
-Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
+Draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
 
 A response can be grammatical, accurate, and well written and still fail this skill. Compliance is measured against this specification, not against perceived quality.
 
@@ -130,7 +130,7 @@ Review at 2 levels.
 
 **Blocking defects.** Do not deliver while any of these remain, unless the user asked for them: throat-clearing openers, decorative transitions that carry no logical relationship, manufactured enthusiasm, empty executive summaries, stock motivational language, generic closing paragraphs, and sentences that serve no informational function in context. These are the meaning-free items in the removal list above; the precedence order still governs, so keep any instance that carries meaning it protects.
 
-Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it actually connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
+Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
 
 **Judgement review.** Verify the criteria in the Quality checklist section below, reading sentence by sentence: ask whether a sentence communicates something new, whether it only announces what follows, whether it could appear unchanged in unrelated responses, and whether it can be cut without changing meaning. A point is often carried by 2 or 3 sentences together; keep those, and rewrite or remove the rest. This level is judgement, not a mechanical gate.
 
@@ -240,7 +240,7 @@ Retain established technical terms such as latency, resilience, threat surface, 
 
 ### AI vocabulary fingerprints
 
-No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Treat each word below as a diagnostic signal, not a ban. Clean Language challenges words such as:
+No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Clean Language challenges words such as:
 
 - delve, tapestry, realm, landscape, journey, testament;
 - leverage, unlock, elevate, empower, foster, navigate;
@@ -298,7 +298,7 @@ Do not force a positive counterpoint after every criticism. State the finding, e
 
 ### Executive template phrasing
 
-Flag polished professional phrasing that is grammatically sound but overrepresented in generated messages, where it serves as default connection or emphasis rather than precise meaning. Treat it as a diagnostic signal, not a banned list: each of these is legitimate in precise legal, audit, standards, or technical use.
+Flag polished professional phrasing that is grammatically sound but overrepresented in generated messages, where it serves as default connection or emphasis rather than precise meaning. Each of these is legitimate in precise legal, audit, standards, or technical use.
 
 | Avoid as default | Prefer |
 |---|---|
@@ -310,8 +310,6 @@ Flag polished professional phrasing that is grammatically sound but overrepresen
 | I would welcome your perspective | I would appreciate your view; I would like your feedback |
 | possible application to | how this could apply to; whether this fits |
 
-Rewrite an abstract-noun frame as a direct statement: "My main areas of interest are X and Y" becomes "I am interested in X and Y."
-
 Watch for catalogue sentences: noun lists after "including", "across", "spanning", "focused on", or "areas such as" that reproduce a source list without prioritization or intent. Ask whether each item needs to appear, whether related items can be grouped, and whether the list connects to a decision, question, or request. Tie the list to what the writer wants, or trim it.
 
 When the user rejects a phrase as generated or unlike their voice, identify its function and rewrite the sentence structure. Do not substitute a synonym with the same cadence, such as replacing "highly relevant" with "particularly" or "aligns closely with".
@@ -320,7 +318,6 @@ When the user rejects a phrase as generated or unlike their voice, identify its 
 
 ### Executive communication
 
-- Lead with the decision, finding, or request.
 - Keep background subordinate to the conclusion.
 - Identify business impact, risk, owner, and timing.
 - Avoid generic leadership language and motivational framing.
@@ -339,7 +336,6 @@ When the user rejects a phrase as generated or unlike their voice, identify its 
 
 - Use `must` for mandatory requirements, `should` for recommendations, and `may` for permission.
 - Define scope, owner, evidence, exception handling, and review frequency.
-- Separate policy statements from explanatory guidance.
 - Preserve legal and standards terminology.
 - Avoid claims of compliance without evidence.
 
@@ -397,7 +393,7 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
-- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source? Never invent a citation, and never reattach a claim to a different source.
+- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source?
 
 ### Directness
 
@@ -446,7 +442,7 @@ Review finished prose against these questions.
 
 ## Examples
 
-These examples demonstrate degree of intervention rather than fixed templates. Every revised version uses only facts present in its source. Where a stronger version needs a specific figure or actor, the source supplies it. Never invent one to replace a vague statement.
+These examples demonstrate degree of intervention rather than fixed templates. Every revised version uses only facts present in its source; never invent a figure or actor to replace a vague statement.
 
 ### Lead with the conclusion
 
@@ -522,7 +518,7 @@ The system is extremely unreliable.
 
 The service dropped 14 percent of requests during the test window.
 
-Use the specific figure only when the source or a measurement provides it. Do not invent a number to replace a vague modifier; if none is available, keep the statement qualitative and flag the missing measurement.
+Use the specific figure only when the source or a measurement provides it; otherwise keep the statement qualitative and flag the missing measurement.
 
 #### Legitimate modifier
 

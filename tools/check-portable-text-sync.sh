@@ -7,7 +7,8 @@
 #   cleanlanguage.md      the canonical file; always byte-equal to the largest
 #                         size-labelled rendering (29k for now).
 #   cleanlanguage-29k.md  the largest rendering; GENERATED from the skill by
-#                         tools/build-portable-text.py, byte-equal to cleanlanguage.md.
+#                         tools/build-portable-text.py, byte-equal to cleanlanguage.md
+#                         (<= 29000 chars).
 #   cleanlanguage-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
 #   cleanlanguage-8k.md   a hand-maintained further-condensed rendering (<= 8000
 #                         chars) for assistants that cap instruction length.
@@ -24,8 +25,8 @@
 # skill and all files, that the skill carries a well-formed Released line when
 # its version sorts above the undated baseline and that every file carries the
 # same Released value as the skill (or none when the skill has none), that
-# cleanlanguage.md and cleanlanguage-29k.md are byte-equal, and that the
-# condensed files are within their size labels.
+# cleanlanguage.md and cleanlanguage-29k.md are byte-equal, and that every
+# size-labelled file is within its label.
 #
 # Usage:
 #   tools/check-portable-text-sync.sh            Check; exit non-zero on drift.
@@ -174,12 +175,15 @@ check_common() {
   if ! cmp -s "${canonical}" "${twin29}"; then
     echo "${canonical} is not byte-equal to ${twin29}." >&2; return 1
   fi
-  # The condensed files must stay within their size labels.
+  # Every size-labelled file must stay within its label. The 29k twin is
+  # byte-equal to the canonical file (checked above), so one count covers both.
   local n
   n="$(wc -m < "${eight}")"
   [ "${n}" -le 8000 ] || { echo "${eight} is ${n} chars, over its 8000 label." >&2; return 1; }
   n="$(wc -m < "${eleven}")"
   [ "${n}" -le 11000 ] || { echo "${eleven} is ${n} chars, over its 11000 label." >&2; return 1; }
+  n="$(wc -m < "${canonical}")"
+  [ "${n}" -le 29000 ] || { echo "${canonical} is ${n} chars, over its 29000 label." >&2; return 1; }
 }
 
 mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/skills/cleanlanguage/SKILL.md"; find cleanlanguage/skills/cleanlanguage/references -type f -name '*.md' | sort)

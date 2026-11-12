@@ -96,7 +96,7 @@ Retain established technical terms such as latency, resilience, threat surface, 
 
 ## AI vocabulary fingerprints
 
-No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Treat each word below as a diagnostic signal, not a ban. Clean Language challenges words such as:
+No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Clean Language challenges words such as:
 
 - delve, tapestry, realm, landscape, journey, testament;
 - leverage, unlock, elevate, empower, foster, navigate;
@@ -154,7 +154,7 @@ Do not force a positive counterpoint after every criticism. State the finding, e
 
 ## Executive template phrasing
 
-Flag polished professional phrasing that is grammatically sound but overrepresented in generated messages, where it serves as default connection or emphasis rather than precise meaning. Treat it as a diagnostic signal, not a banned list: each of these is legitimate in precise legal, audit, standards, or technical use.
+Flag polished professional phrasing that is grammatically sound but overrepresented in generated messages, where it serves as default connection or emphasis rather than precise meaning. Each of these is legitimate in precise legal, audit, standards, or technical use.
 
 | Avoid as default | Prefer |
 |---|---|
@@ -165,8 +165,6 @@ Flag polished professional phrasing that is grammatically sound but overrepresen
 | I would value discussions with | I would like to meet with |
 | I would welcome your perspective | I would appreciate your view; I would like your feedback |
 | possible application to | how this could apply to; whether this fits |
-
-Rewrite an abstract-noun frame as a direct statement: "My main areas of interest are X and Y" becomes "I am interested in X and Y."
 
 Watch for catalogue sentences: noun lists after "including", "across", "spanning", "focused on", or "areas such as" that reproduce a source list without prioritization or intent. Ask whether each item needs to appear, whether related items can be grouped, and whether the list connects to a decision, question, or request. Tie the list to what the writer wants, or trim it.
 
