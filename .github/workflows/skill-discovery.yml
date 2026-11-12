@@ -27,8 +27,8 @@ name: Skill discovery
 # main, and tools/ci-status.sh insists on that job too, so a commit on which it
 # has not run, or has not passed, does not read green through ci-status. What
 # the commands the steps run and the pinned actions do, including anything they
-# write for later steps, and what the other jobs of the workflow run, are not
-# checked.
+# write for the steps after them, and what the other jobs of the workflow run,
+# are not checked.
 
 on:
   pull_request:

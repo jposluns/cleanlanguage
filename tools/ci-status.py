@@ -588,8 +588,8 @@ def verdict_of(checks) -> str:
 # consulted. If Cloudflare renames or re-registers that app, a passing run of it no
 # longer counts, so the reading cannot turn green until the pin is updated: a
 # passing reading reads pending ("Cloudflare Pages not registered"), and a red
-# reading still reads red. A new pin is checked against live check-runs before it
-# merges.
+# reading still reads red. A new pin is checked against the live check-runs before
+# its change merges.
 # Residual: a name and an app cannot tell which workflow produced a run, so a pull
 # request that deletes one of those workflows and adds another job with the same
 # display name satisfies the check. GitHub's own app-pinned required check has the
@@ -599,8 +599,8 @@ def verdict_of(checks) -> str:
 # lists, report a listed context missing from this list, and fail closed (exit 3)
 # when the ruleset cannot be read. It waits for a record of the rules API endpoint,
 # payload and token scope that the live ruleset answers with, which this repository
-# does not hold, and for offline tests that serve that second read beside the
-# check-runs read.
+# does not hold, and for offline tests that serve that second read beside the read
+# of the check-runs.
 def _actions_job(name: str):
     return lambda c: c["slug"] == "github-actions" and c["name"] == name
 

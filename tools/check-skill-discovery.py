@@ -41,14 +41,17 @@ suppress OSErrors and return False on some Python versions, which would turn an
 inspection failure into a silent skip; a stat error here fails closed instead.
 
 Frontmatter parsing: the block is located offline (line 1 opens it, the next exact
-`---` closes it) and its body is parsed with PyYAML's safe_load (correct YAML,
-offline, no network install); a separate scan of the composed node tree rejects a
-duplicate top-level key, which safe_load would otherwise silently keep last-wins. The
-full frontmatter schema is still owned by the pinned `claude plugin validate --strict`
-run. PyYAML is the CI runner's ambient install, the same dependency the sibling
-release-package and manifest tooling already rely on; leaving it unpinned is a
-recorded, sibling-consistent residual. The SKILL.md filename match is exact, correct
-on the Linux CI runner; a case-insensitive filesystem is a known non-CI edge.
+`---` closes it) and its body is parsed with PyYAML's safe_load (correct YAML, offline,
+no network install); a separate scan of the composed node tree rejects a duplicate
+top-level key, which safe_load would otherwise silently keep last-wins. The full
+frontmatter schema is still owned by the pinned `claude plugin validate --strict` run.
+No step of the Skill discovery job that runs this script in CI
+(.github/workflows/skill-discovery.yml) installs PyYAML, so the job relies on the
+ubuntu-latest runner image to supply it as an ambient, unpinned install, the same
+dependency the sibling release-package and manifest tooling already rely on; leaving it
+unpinned is a recorded, sibling-consistent residual. The SKILL.md filename match is
+exact, correct on the Linux CI runner; a case-insensitive filesystem is a known edge
+case outside CI.
 
 Exit codes:
   0  the skills are discoverable and consistent

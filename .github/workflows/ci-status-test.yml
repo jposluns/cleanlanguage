@@ -32,8 +32,8 @@ name: CI status tests
 # through ci-status. The job runs the pull request's own copy of the tests, so a
 # pull request that weakens them also weakens this check of itself. What the
 # commands the steps run and the pinned actions do, including anything they
-# write for later steps, and what the other jobs of the workflow run, are not
-# checked.
+# write for the steps after them, and what the other jobs of the workflow run,
+# are not checked.
 
 on:
   pull_request:

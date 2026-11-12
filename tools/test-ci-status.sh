@@ -50,7 +50,8 @@
 # they assert.
 set -uo pipefail
 
-here="$(cd "$(dirname "$0")" && pwd)"
+# CDPATH is unset for this cd, so it cannot send a relative folder elsewhere.
+here="$(unset CDPATH; cd "$(dirname "$0")" && pwd)"
 ci="${here}/ci-status.sh"
 fails=0
 skips=0  # a skipped case is reported on a skip line and never counted as ok
@@ -114,8 +115,8 @@ INJECT_NL_US='{"check_runs":[
 # under a null app, beside the other 4 required checks green. A reader that took
 # the name and slug from the name text (as the earlier shell reader, which split
 # delimited records, could be made to) would see all 5 and call the reading
-# green; the tool takes the slug only from the app object, so Plugin manifests
-# stays missing.
+# green; the tool takes the slug only from the app object, so the Plugin
+# manifests check stays missing.
 FORGE_US="$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests\u001fgithub-actions","app":null}' "$SD_OK" "$APM_OK" "$CST_OK" "$CF")"
 # The same with a newline and a whole forged record (status, conclusion, name,
 # slug) after it, under an app whose slug is null.
@@ -920,7 +921,7 @@ run_deadline_stop_case "wait stops near the deadline, not a whole interval past 
 # The required set is the 4 named GitHub Actions jobs and the Cloudflare build.
 # An Actions job counts only when a run carries its exact display name and the
 # github-actions app slug; every run, duplicates included, still feeds the
-# verdict.
+# verdict of the reading.
 run_case "unnamed github-actions run is not a required check -> not green" "$GENERIC_GA" "" "" 2
 run_case "Plugin manifests missing -> not green" "$(runs "$SD_OK" "$APM_OK" "$CST_OK" "$CF")" "" "" 2
 run_case "Skill discovery missing -> not green" "$(runs "$PM_OK" "$APM_OK" "$CST_OK" "$CF")" "" "" 2
@@ -1257,8 +1258,8 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 # head_sha of another commit and for each malformed field, bad_at puts the bad value
 # on one run alone, at each index of a 6-run reading in turn, so a reader that
 # checked only some runs would read it as green, pending or red, or fail with
-# another message; the whole reading must be unreadable, and the message names what
-# is wrong.
+# another message; the whole reading must be unreadable, and the message must name
+# what is wrong.
 # bad_at FIELD VALUE INDEX: the 5 green required checks and a green extra run, in
 # that order, with FIELD of the run at INDEX (0 to 5) set to the raw JSON VALUE.
 # FIELD is status, conclusion, name, app.slug, app.id, app (the whole app object) or
@@ -1314,8 +1315,8 @@ for bad in '[]' '{}' '["completed"]'; do
     "$read_failed: non-string check field status"
 done
 # Only success, neutral and skipped can pass: a required check that concludes
-# cancelled, stale, action_required, timed_out or startup_failure is red, never
-# green.
+# cancelled, stale, action_required, timed_out or startup_failure makes the
+# reading red, never green.
 for concl in cancelled stale action_required timed_out startup_failure; do
   run_case "required check concluding $concl -> red" "$(bad_at conclusion "\"$concl\"" 0)" "" "" 1
 done
@@ -1323,8 +1324,8 @@ done
 # 3 of bad_at, in turn concluding skipped or neutral, beside the other 4
 # required checks green, reads red, because such a job may not have run its
 # steps. The Cloudflare build, run 4, keeps the reading GitHub gives a required
-# check: concluding skipped or neutral, it passes (the residual the ci-status.py
-# docstring discloses).
+# check: concluding skipped or neutral, it passes, which is the residual that
+# the ci-status.py docstring discloses.
 for concl in skipped neutral; do
   for idx in 0 1 2 3; do
     run_case "required Actions job $idx concluding $concl beside the other 4 green -> red" \
@@ -1812,45 +1813,50 @@ run_err_case "every missing required check is named, in order" \
 # The declared required names follow the workflows, and each workflow runs its
 # job on every pull request and every push to main. wf_shape reads each of the 4
 # workflows with an allow-list that fails closed, in Python with the standard
-# library only, because no YAML parser is guaranteed on the CI image. It accepts
-# only the YAML subset these files use: block mappings and block sequences whose
-# keys are plain unquoted words; scalar values that are plain, or quoted on one
-# line without escapes; a one-line flow list of such scalars; block scalars (| or
-# >, with an optional chomping indicator), whose content is every following line
-# indented more than the column of the key that opened the block, so for "- run:
-# |" the column of run, not of the dash; and comments. Any other line, such as a
-# quoted, anchored, aliased, tagged, explicit or merge key, a flow mapping, a
-# duplicate key, a tab or a non-ASCII character, fails the check and is named by
-# its line number. A failure of the checker itself, a workflow that is missing or
-# cannot be read as UTF-8 text, or a workflow with no line other than blank lines
-# and comments, also fails the check, and is named shape-check-error,
-# unreadable-workflow or empty-workflow, not by a line number, so no report names
-# a line past the end of the file. Within that subset the top level holds only
-# name, on, permissions, env and jobs. The on: block holds only a pull_request
-# trigger with nothing under it and a push trigger filtered to main alone. The
-# permissions block is exactly contents: read. A top-level env, if present, holds
-# only CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310, which
-# cannot change whether or how a step runs, so the check admits no BASH_ENV, ENV,
-# SHELLOPTS or BASHOPTS that could turn every step into a no-op. The job with the
-# declared display name holds only name, runs-on set to ubuntu-latest, and steps,
-# so no env:, if:, needs:, defaults: or container: key. Each step holds an
-# optional name and either uses: naming an owner/repo action pinned to a full
-# 40-character commit sha, never a local ./ action or a docker:// image, or run:
-# with shell: bash, never another shell or a custom shell command, and nothing
-# else, so no env:, if: or continue-on-error: key. So the check refuses anything
-# set in the workflow that could skip the job or its steps, or pass over a failed
-# step. A job skipped by an if:, or by a failed job it needs, concludes skipped,
-# which ci-status.py reads as a failure for a required Actions job, but a step
-# skipped by an if: or allowed to fail leaves the job successful, so such a job
-# would read green without running its checks. The job display name is also the
-# only 4-space-indented name: line, it is a name of REQUIRED_ACTIONS_JOBS as the
-# gate holds it, and named_elsewhere (below) does not find it in another file of
-# the workflow folder. A renamed job, a filter that leaves a commit without the
-# check, or any key or line outside that shape fails here, instead of turning
-# every read into a forever-pending one or a false green. In CI this check runs
-# in the CI status tests job (.github/workflows/ci-status-test.yml) on every pull
-# request and every push to main, and ci-status.py insists on that job, so a
-# commit on which it has not run, or has not passed, does not read green.
+# library only, because the job that runs this suite in CI installs no YAML
+# parser (its only steps are a checkout and bash tools/test-ci-status.sh), so any
+# parser on the runner would be an ambient, unpinned part of the ubuntu-latest
+# image. It accepts only the YAML subset these files use: block mappings and
+# block sequences whose keys are plain unquoted words; scalar values that are
+# plain, or quoted on one line without escapes; a one-line flow list of such
+# scalars; block scalars (| or >, with an optional chomping indicator), whose
+# content is every following line indented more than the column of the key that
+# opened the block, so for "- run: |" the column of run, not of the dash; and
+# comments. Any other line, such as a quoted, anchored, aliased, tagged, explicit
+# or merge key, a flow mapping, a duplicate key, a tab or a non-ASCII character,
+# fails the check and is named by its line number. A failure of the checker
+# itself, a workflow that is missing or cannot be read as UTF-8 text, or a
+# workflow with no line other than blank lines and comments, also fails the
+# check, and is named shape-check-error, unreadable-workflow or empty-workflow,
+# not by a line number, so no report names a line past the end of the file.
+# Within that subset the top level holds only name, on, permissions, env and
+# jobs. The on: block holds only a pull_request trigger with nothing under it and
+# a push trigger filtered to main alone. The permissions block is exactly
+# contents: read. A top-level env, if present, holds only CLAUDE_CODE_VERSION,
+# set to a dotted version number such as 2.1.310, which cannot change whether or
+# how a step runs, so the check admits no BASH_ENV, ENV, SHELLOPTS or BASHOPTS
+# that could turn every step into a no-op. The job with the declared display name
+# holds only name, runs-on set to ubuntu-latest, and steps, so no env:, if:,
+# needs:, defaults: or container: key. Each step holds an optional name and
+# either uses: naming an owner/repo action pinned to a full 40-character commit
+# sha, never a local ./ action or a docker:// image, or run: with shell: bash,
+# never another shell or a custom shell command, and nothing else, so no env:,
+# if: or continue-on-error: key. So the check refuses anything set in the
+# workflow that could skip the job or its steps, or pass over a failed step. A
+# job skipped by an if:, or by a failed job it needs, concludes skipped, which
+# ci-status.py reads as a failure for a required Actions job, but a step skipped
+# by an if: or allowed to fail leaves the job successful, so such a job would
+# read green without running its checks. The job display name is also the only
+# 4-space-indented name: line, it is a name of REQUIRED_ACTIONS_JOBS as the gate
+# holds it, and named_elsewhere (below) does not find it in another file of the
+# workflow folder. A renamed job, a filter that leaves a commit without the
+# check, or any key or line outside that shape fails here, instead of leaving a
+# required check that never registers, so that a commit whose other checks pass
+# reads pending at every reading and never green, or a reading that is green
+# though the job's checks did not run. In CI this check runs in the CI status
+# tests job (.github/workflows/ci-status-test.yml) on every pull request and
+# every push to main, and ci-status.py insists on that job, so a commit on which
+# it has not run, or has not passed, does not read green through ci-status.
 # Residual: what the commands the steps run and the pinned actions do, including
 # anything they write for later steps, such as a BASH_ENV line in the GITHUB_ENV
 # file, and what the other jobs of the workflow run, are not checked, so a step
@@ -2424,7 +2430,7 @@ NL="$(printf "\n.")"; NL="${NL%.}"
 run_contract_case() {
   local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
   # As in run_case, a case that wants exit 2 from a real-time --wait fails
-  # without running.
+  # here without running.
   if [ "$want" = 2 ] && [[ " $* " == *" --wait "* ]]; then
     printf 'FAIL %s (wants exit 2 from a real-time --wait; run it with run_clock_case)\n' "$name"
     fails=$((fails + 1)); return

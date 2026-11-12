@@ -94,7 +94,7 @@ except ImportError:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
-# the change.
+# the change to SCRIPT.
 SCRIPT_SHA256 = "d8be9aced004f80a3412c48cfbf487ddb648801355f285e45febabf4945ffa09"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
@@ -312,8 +312,8 @@ exit 0
 
 
 def stub_name(line: str):
-    """The tools/ script a command line runs and its arguments, or None for plugin_manifests and the
-    claude lines."""
+    """The tools/ script a command line runs and its arguments, or None for the plugin_manifests
+    and claude lines."""
     words = line.split()
     if words[:2] == ["python3", "-I"] and len(words) > 2:
         return words[2], words[3:]
@@ -502,7 +502,7 @@ NO_PIN = ("folder.yml", "no-on.yml")
 # Files from which the sed of plugin_manifests takes no pin or 2, though a reading that ignored a
 # carriage return, took a version that starts with a dot or took the first match would take 1, each
 # a file name and its bytes. read_pin must take no pin from each, adding exactly 1 failure, which
-# names it.
+# names the file.
 SED_NO_PIN = (
     ("crlf.yml", b'env:\r\n  CLAUDE_CODE_VERSION: "2.1.310"\r\n'),
     ("dot-first.yml", b'env:\n  CLAUDE_CODE_VERSION: ".2.1"\n'),
