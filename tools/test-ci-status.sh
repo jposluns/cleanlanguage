@@ -2308,14 +2308,26 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
-# ere_text must escape each character of its list and no other, so leaving one
-# out of the list fails here even when grep would read it as itself, as GNU grep
-# reads a ) that closes no group.
-got="$(ere_text 'a.[\()*+?{|^$]}b')"
-if [ "$got" = 'a\.\[\\\(\)\*\+\?\{\|\^\$]}b' ]; then
-  printf 'ok   ere_text escapes each special character and no other\n'
+# ere_text is given every printable ASCII character, from the space to the
+# tilde, and must put a backslash before each of the 12 characters of its list
+# and before no other of them, so leaving a character out of the list fails here
+# even when grep would read it as itself, as GNU grep reads a ) that closes no
+# group, and so does adding a printable ASCII character to the list.
+ere_in="" ere_want=""
+for ((ere_i = 32; ere_i < 127; ere_i++)); do
+  printf -v ere_c "\\$(printf '%03o' "$ere_i")"
+  ere_in="$ere_in$ere_c"
+  for ere_s in . '[' '\' '(' ')' '*' + '?' '{' '|' '^' '$'; do
+    if [[ "$ere_c" == "$ere_s" ]]; then ere_want="$ere_want\\"; fi
+  done
+  ere_want="$ere_want$ere_c"
+done
+got="$(ere_text "$ere_in")"
+if [ "${#ere_in}" = 95 ] && [ "$got" = "$ere_want" ]; then
+  printf 'ok   ere_text escapes each of its 12 characters and no other printable ASCII character\n'
 else
-  printf 'FAIL ere_text escapes each special character and no other (printed %s)\n' "${got:-nothing}"
+  printf 'FAIL ere_text escapes each of its 12 characters and no other printable ASCII character (printed %s)\n' \
+    "${got:-nothing}"
   fails=$((fails + 1))
 fi
 # run_unlisted_case NAME KIND: named_elsewhere, for the job Skill discovery of
@@ -2386,7 +2398,9 @@ run_shape_loop_case() {
 }
 run_shape_loop_case "the shape loop fails a workflow whose job a copy of it names"
 # SD_SHAPE: a workflow in the shape that wf_shape accepts, whose job is Skill
-# discovery; each case below but the first changes 1 thing in it.
+# discovery. The run_shape_problems_case calls below pass it unchanged or with
+# lines changed or added, or pass no workflow, and some of them also replace
+# wf_shape or change the folder that holds the workflow.
 SD_SHAPE='name: Skill discovery
 on:
   pull_request:
@@ -2448,6 +2462,13 @@ CASE_SUB=-dwf CASE_OTHER='    name: Skill discovery' run_shape_problems_case \
   "a relative folder path that starts with a dash is read as a path" \
   " trigger-filter pull-request-filter named-elsewhere" "Skill discovery" "${SD_SHAPE/  pull_request:/  pull_request:
     paths: [docs]}"
+# The same relative folder, holding only the unchanged workflow, has no problem,
+# which needs the ls of named_elsewhere to read that path after --: read as
+# options, -dwf asks ls for a line width of f, so ls fails and the check of the
+# folder would read the name as found.
+CASE_SUB=-dwf run_shape_problems_case \
+  "a relative folder path that starts with a dash and holds no other file has no problem" \
+  "" "Skill discovery" "$SD_SHAPE"
 
 # A workflow with no line other than blank lines and comments is named
 # empty-workflow, never by a line number past the end of the file.
@@ -3380,8 +3401,9 @@ run_closed_window_case "pending reading then the window closing before the next 
 # line; and the fake gh must serve exactly 2 check-runs calls. Since the fixed
 # clock moves only once a second read has returned, a third call of read_checks
 # ends the gate at once with a line naming the bound, which fails the case, so a
-# gate whose reads all fail cannot keep it waiting. With FAIL given, every
-# check-runs call of the fake gh exits 1.
+# gate whose reads all fail cannot keep it waiting. The gate also runs under an
+# alarm of 60 seconds of its own, which ends it, failing the case, if that bound
+# does not. With FAIL given, every check-runs call of the fake gh exits 1.
 run_late_pass_case() {
   local name="$1" serve
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -3398,7 +3420,8 @@ esac
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys, time, types
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, signal, sys, time, types
+signal.alarm(60)
 path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
@@ -3436,14 +3459,19 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || 
 }
 
 run_late_pass_case "green readings confirmed only after the window closed -> not green, timed out"
-# run_late_pass_case must end, and fail, when every read fails: called inside a
-# command substitution, whose count of failures is its own, with a fake gh whose
-# every check-runs call exits 1, its line must be a FAIL that names bound.
+# run_late_pass_case must end, and fail on its bound at the third read, when
+# every read fails: called inside a command substitution, whose count of
+# failures is its own, with a fake gh whose every check-runs call exits 1, it
+# must print exactly the FAIL line below, which needs exit 4, the bound line and
+# exactly 2 check-runs calls, so a bound that ends the gate only at a later read
+# fails here, and so does a gate that the bound never ends, which the alarm ends
+# after 60 seconds.
 got="$(run_late_pass_case "late-pass probe" fail)"
-if [[ "$got" == "FAIL late-pass probe ("*";"* && "${got##*;}" == *bound* ]]; then
-  printf 'ok   run_late_pass_case ends and fails when every read fails\n'
+if [ "$got" = "FAIL late-pass probe (got 4, want 2; exit message first bound)" ]; then
+  printf 'ok   run_late_pass_case fails on its bound at the third read when every read fails\n'
 else
-  printf 'FAIL run_late_pass_case does not fail on its bound when every read fails (printed %s)\n' "${got:-nothing}"
+  printf 'FAIL run_late_pass_case does not fail on its bound at the third read when every read fails (printed %s)\n' \
+    "${got:-nothing}"
   fails=$((fails + 1))
 fi
 
