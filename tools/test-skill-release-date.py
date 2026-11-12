@@ -124,7 +124,7 @@ CRASH_RUNNER = (
 )
 
 # Row 80: runs the real extractor in --json mode with the function named by
-# its first argument (a dotted module.attribute) made to raise the built-in
+# its first argument (a target of the form below) made to raise the built-in
 # exception named by its second argument, and the request on stdin, to
 # observe the exit code and the empty stdout of an internal error. Arguments
 # after the extractor's path replace --json, so a CLI mode can be compared
@@ -132,14 +132,26 @@ CRASH_RUNNER = (
 # call, so a test can tell where the exception rose. _strptime is imported
 # before the patch because its import calls time.strftime, so a patched
 # time.strftime is not reached by that import; the publish_window cases
-# check that it fails inside publish_window_problem.
+# check that it fails inside publish_window_problem. A target is
+# module.attribute or module.Class.method only, with a top-level module: a
+# target in a dotted module, such as os.path.isfile or
+# xml.dom.minidom.parseString, fails in the runner. A module.Class.method
+# target replaces that class in its module with a subclass whose method
+# raises, because a method of a built-in class such as datetime.date cannot
+# be set on the class itself.
 JSON_CRASH_RUNNER = (
     "import _strptime, builtins, importlib, runpy, sys\n"
     "kind = getattr(builtins, sys.argv[2])\n"
     "def crash(*args, **kwargs):\n"
     "    raise kind(f\"injected internal error in {sys._getframe(1).f_code.co_name}\")\n"
-    "module, name = sys.argv[1].rsplit(\".\", 1)\n"
-    "setattr(importlib.import_module(module), name, crash)\n"
+    "module, *owner, name = sys.argv[1].split(\".\")\n"
+    "home = importlib.import_module(module)\n"
+    "if owner:\n"
+    "    (cls_name,) = owner\n"
+    "    cls = getattr(home, cls_name)\n"
+    "    setattr(home, cls_name, type(cls.__name__, (cls,), {name: staticmethod(crash)}))\n"
+    "else:\n"
+    "    setattr(home, name, crash)\n"
     "sys.argv = [sys.argv[3], *(sys.argv[4:] or [\"--json\"])]\n"
     "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
 )
@@ -1066,22 +1078,34 @@ class JsonModeTest(unittest.TestCase):
         self.assertEqual((code, json.loads(out)["outcome"]), (0, "value"), err)
 
     def test_an_internal_error_in_an_op_of_the_shell_callers_exits_6(self):
-        # Row 89: as for the other ops, an Exception other than Malformed
-        # or Refused inside parse_date, publish_window or confirm_published
-        # is never a reply. The
+        # As for the other ops, an Exception other than Malformed or Refused
+        # inside parse_date, publish_window or confirm_published is never a
+        # reply. Each case names the function making the failing call, and
+        # the runner's message must name it. parse_date fails its
+        # datetime.date.fromisoformat call, and confirm_published fails the
+        # datetime.datetime.strptime call inside parse_instant. The
         # publish_window cases fail time.strftime, which formats the instant
-        # in a refusal, so the Exception rises inside publish_window_problem,
-        # after parse_instant, which reads a ValueError from its strptime call
-        # as a bad instant. The publish_window cases require the runner's
-        # message to name publish_window_problem.
+        # in a refusal, so the Exception rises inside
+        # publish_window_problem, after parse_instant. parse_date and
+        # parse_instant read a ValueError from these calls as bad input, so
+        # only RuntimeError is injected there, and a catch in either that
+        # grew to RuntimeError would answer malformed and fail here. The
+        # parse_date and confirm_published cases rely on those 2 calls: a
+        # parse_date or parse_instant rewritten to check its input without
+        # its call, even correctly, never meets the injected error, so the
+        # extractor exits 0 with a reply and the case fails here. When the
+        # rewrite makes no call that this runner can fail, as when
+        # parse_date checks the date with only int() and str.split, keeping
+        # the case needs a runner change or a different design.
         for label, target, kind, data, where in (
-            ("parse_date", "datetime.date", "RuntimeError", request("parse_date", "2026-11-15"), None),
+            ("parse_date", "datetime.date.fromisoformat", "RuntimeError",
+             request("parse_date", "2026-11-15"), "parse_date"),
             ("publish_window", "time.strftime", "RuntimeError",
              request("publish_window", expected="2026-11-15", now="2026-11-15T23:55:00Z"), "publish_window_problem"),
             ("publish_window, a ValueError", "time.strftime", "ValueError",
              request("publish_window", expected="2026-11-15", now="2026-11-15T23:55:00Z"), "publish_window_problem"),
-            ("confirm_published", "datetime.datetime", "RuntimeError",
-             request("confirm_published", expected="2026-11-15", published_at="2026-11-15T12:00:00Z"), None),
+            ("confirm_published", "datetime.datetime.strptime", "RuntimeError",
+             request("confirm_published", expected="2026-11-15", published_at="2026-11-15T12:00:00Z"), "parse_instant"),
         ):
             with self.subTest(label):
                 proc = subprocess.run(
@@ -1090,10 +1114,8 @@ class JsonModeTest(unittest.TestCase):
                 )
                 self.assertEqual(proc.returncode, 6, proc.stderr)
                 self.assertEqual(proc.stdout, b"")
-                self.assertTrue(proc.stderr.startswith(b"skill-release-date: internal error: "), proc.stderr)
-                if where is not None:
-                    line = f"skill-release-date: internal error: {kind}('injected internal error in {where}')\n"
-                    self.assertEqual(proc.stderr, line.encode("ascii"))
+                line = f"skill-release-date: internal error: {kind}('injected internal error in {where}')\n"
+                self.assertEqual(proc.stderr, line.encode("ascii"))
 
 
 class PatternPinTest(unittest.TestCase):
