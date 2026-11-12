@@ -2,10 +2,10 @@
 """Lint: the repository's sources carry no internal review-history labels.
 
 A comment or docstring that names the review pass or the finding that once motivated it, such as
-"(round-7)", "(fix-round-16, M1)", "(F1)", "finding S3", "finding #17", "VERIFY-2" or "claude QA
-round-10", or that credits a model family with a finding, such as "codex reproduced" or "the gemini
-seed", means nothing to a later reader and mixes numbering schemes. Such text states the reason
-itself, in place of the label.
+"(F1)", "finding S3" or a numbered pass or finding of the kinds the fixtures below hold, or that
+credits a model family with a finding, such as "codex reproduced" or "the gemini seed", means
+nothing to a later reader and mixes numbering schemes. Such text states the reason itself, in place
+of the label.
 
 The test scans each file in SCANNED in two ways. Every physical line is matched against
 LABEL_PATTERNS. Every prose block is matched against both sets. A prose block is, in a Python
@@ -41,25 +41,35 @@ review label, passes. A scanned file that is missing, unreadable or does not tok
 failure, never a skip, and an allowlist entry that no longer matches a scanned line is a failure
 too, so the allowlist cannot silently go stale.
 
-A second, narrower pass, the history pass, reads every file under HISTORY_SCOPE (tools/, site-src/
-and .github/), apart from any path with a __pycache__ folder in it and the 1 file UNSCANNED names
-with its reason, this lint, whose self-check fixtures hold the forms it catches. It matches each
-physical line against HISTORY_PATTERNS: the round number, the fix round, the QA round, the numbered
-finding and the numbered review pass of LABEL_PATTERNS, and the 2 backlog probes that the pass must
-fail on, each the git grep -i probe of its backlog row written as a case-insensitive Python pattern.
-The HistoryPatternSelfCheck case pins those 7 patterns, and the scope and the 1 skipped file are
-pinned too. These name a review pass or a finding by number and match no plan or contract id, so the
-pass covers files whose ids would fail the full patterns, such as tools/test-ci-status.sh, whose $C1
-and $C2 read as bare ids. A file that cannot be read as UTF-8 is a failure. Its residuals: it
-matches single lines only, so a label split across lines or written in words passes; it skips this
-lint; it reads every file under its folders, untracked or generated files included; and it reads no
-tracked file outside them, among them .aiqt/, the adopted governance files, .baseline/, the pinned
-upstream package, whose SPECIFICATION.md has a line that the backlog probe of numbered review rounds
-matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of
-numbered findings and rounds matches. Its accepted false failures: ordinary text in which a space
-and a digit follow the word discovery, verify, finding or round, in any case, such as a count of
-files to verify or of files found, or a plain round number that a letter or a decimal continuation
-follows, which LABEL_PATTERNS exempts, is caught, and is reworded.
+A second, narrower pass, the history pass, reads every file that git ls-files lists under
+HISTORY_SCOPE (tools/, site-src/ and .github/), the files that the backlog probes read with git
+grep, and matches each physical line against HISTORY_PATTERNS: the 5 patterns of LABEL_PATTERNS that
+HISTORY_LABEL_NAMES names, and the 2 backlog probes that the pass must fail on, each the git grep -i
+probe of its backlog row written as a case-insensitive Python pattern whose word boundary counts
+only an ASCII letter, digit or underscore as a word character, as git grep does in the C locale. It
+skips only the fixture lines of this lint, the file FIXTURE_FILE names: a line of an assignment of
+data, in a class or module body, that lies between a line that is FIXTURE_START and the next line
+that is FIXTURE_END and holds no comment, where an assignment of data is one whose value holds no
+call, lambda, comprehension or formatted string. Every other line of this lint is read: its
+docstrings, its comments and its test code, and any comment or other statement inside a fixture
+block. The HistoryPatternSelfCheck case pins those 7 patterns, and the scope, the fixture rule and
+the reading of tracked files are pinned too. These patterns name a review pass or a finding by
+number and match no plan or contract id, so the pass covers files whose ids would fail the full
+patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that
+cannot be read as UTF-8, or that is missing, is a failure that names the file, and so are a fixture
+block left open and a git ls-files that fails. Its residuals: it matches single lines only, so a
+label split across lines or written in words passes; it reads no untracked file, as git grep reads
+none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so the file
+that a tracked link points to is read only when it is itself a tracked file in the 3 folders; and it
+reads no tracked file outside them, among them .aiqt/, the adopted governance files, .baseline/, the
+pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of numbered review
+rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog
+probe of numbered findings and rounds matches. Its accepted false failures: ordinary text in which a
+space and a digit follow the word discovery, verify, finding or round, in any case, such as a count
+of files to verify or of files found, or a plain round number that a letter or a decimal
+continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; and so is a line
+that the first probe matches only because a letter or digit outside ASCII comes just before its
+first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -98,37 +108,43 @@ the number; in the plain form, a word after a space does not exempt it; in eithe
 that a bracket, a percent sign, an arrow, an underscore or a numeric character that is not a letter,
 such as superscript two, a vulgar fraction or a Roman numeral sign, follows is caught; and in a
 Python file, where both forms are matched against every physical line of code as well as of prose,
-ordinary arithmetic and identifiers in code, such as the lines "x = rounds - 1", "x = rounds-1" and
-"round2 = 3", are caught. Code lines stay matched because a label in a string literal that is not a
-statement of its own, such as an assertion message, would otherwise pass. A further accepted false
-failure: in an f-string or template string statement, the one space that stands for a replacement
-field can complete a label in the decoded text, so the text "fix", a field and the text "round"
-written together read as a fix round and are caught. A further accepted false failure: ordinary text
-in which the word finding or findings and a space come before a number, such as a count of files
-found, is caught by the numbered finding pattern; the pattern is kept this wide because the history
-pass fails the word finding, a space and a digit in tools/, site-src/ and .github/ anyway, so a
-narrower pattern would pass that form nowhere there. A further accepted false failure: in a Python
-file, each physical line of a string statement is matched against LABEL_PATTERNS as source text as
-well as in the value, so a physical line that matches LABEL_PATTERNS on its own is caught there even
-where the value reads otherwise. Such a line can hold an id or a round number that the rest of the
-value completes into a longer id or an exempt round number, from a later part of an implicitly
+ordinary arithmetic and identifiers in code, such as the lines that CODE_FALSE_FAILURES holds, are
+caught. Code lines stay matched because a label in a string literal that is not a statement of its
+own, such as an assertion message, would otherwise pass. A further accepted false failure: in an
+f-string or template string statement, the one space that stands for a replacement field can
+complete a label in the decoded text, so the text "fix", a field and the text "round" written
+together read as the label of a round of fixes and are caught. A further accepted false failure:
+ordinary text in which the word finding or findings, a space and an optional number sign come before
+a number, such as a count of files found, is caught by the numbered finding pattern, in every file
+this lint scans in full and, through the history pass, in tools/, site-src/ and .github/. The
+pattern is kept this wide because the plural and the number sign are forms that a label takes too,
+as in a list of numbered findings or a finding named by a number sign. Neither backlog probe matches
+those 2 forms, so in the 3 folders the singular form, which the first probe matches too, costs
+nothing more there, while the plural and the number-sign forms are a cost of this pattern alone,
+which the NUMBERED_FINDING_ONLY fixtures pin. A further accepted false failure: in a Python file,
+each physical line of a string statement is matched against LABEL_PATTERNS as source text as well as
+in the value, so a physical line that matches LABEL_PATTERNS on its own is caught there even where
+the value reads otherwise. Such a line can hold an id or a round number that the rest of the value
+completes into a longer id or an exempt round number, from a later part of an implicitly
 concatenated literal, from the next line after a joining backslash or from an escape later on the
-same line, as in the parts "the F1" and "00 case" or "fixed in round-7" and "th of the plan", whose
-values read as the id F100 and the exempt round-7th. A physical line that matches no pattern of
-LABEL_PATTERNS on its own is not caught this way, so a value that reads as a longer id or an exempt
-round number passes when no line of it matches on its own. The PatternSelfCheck case pins the forms
-the patterns are known to cover, a letter of each Unicode letter category that exempts either form,
-the ordinary code and prose they must not flag, these accepted false failures, a second round number
-match of each form in one searched text, the earlier match when both forms match one searched text
-and, for each Python placement, the literal set of forms it skips because they would end its string
-literal early and leave source that does not tokenize or parse, so a pattern weakened or widened
-past any of those sets fails the suite.
+same line, as in the parts "the F1" and "00 case", whose value reads as the id F100, and in the
+samples of VALUE_LINE_FALSE_FAILURES. A physical line that matches no pattern of LABEL_PATTERNS on
+its own is not caught this way, so a value that reads as a longer id or an exempt round number
+passes when no line of it matches on its own. The PatternSelfCheck case pins the forms the patterns
+are known to cover, a letter of each Unicode letter category that exempts either form, the ordinary
+code and prose they must not flag, these accepted false failures, a second round number match of
+each form in one searched text, the earlier match when both forms match one searched text and, for
+each Python placement, the literal set of forms it skips because they would end its string literal
+early and leave source that does not tokenize or parse, so a pattern weakened or widened past any of
+those sets fails the suite.
 """
 import ast
 import bisect
 import contextlib
 import io
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import tokenize
@@ -194,19 +210,20 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 class RoundNumberPattern:
     """The review round number pattern, whose two forms are exempt only before a letter.
 
-    One rule decides the plain form, as in "round-7" or "round #7", and the colon form, as in
-    "round: 7": a round number passes only when a letter of any script, a character whose Unicode
-    category starts with L, follows it, directly in the plain form and after any spaces on the same
-    line of the searched text in the colon form, or when a decimal continuation follows it. So
-    "round-7th", "round-7a", "round-7.5", "round: 7 decimal places", a time in microseconds and
-    "round: 7.5" pass. Any other ending, or the end of the text, is caught: in the plain form a
-    space before a word, in the colon form a line break before a word, and in either form a closing
-    quote, a bracket, a mark, an underscore or a numeric character that is not a letter (superscript
-    two, a vulgar fraction or a Roman numeral sign). The re module has no letter class, and its word
-    boundary counts those numeric characters and the underscore as word characters, so the letter
-    test is made in code, and search returns a match the way re.Pattern.search does. Prose is
-    searched for this pattern with its line breaks kept, so a letter on the next line never exempts
-    the colon form.
+    One rule decides the plain form, the word round or rounds, then any hyphens or spaces, an
+    optional number sign and a number, and the colon form, the word, a colon and a number, with any
+    spaces around the colon: a round number passes only when a letter of any script, a character
+    whose Unicode category starts with L, follows it, directly in the plain form and after any
+    spaces on the same line of the searched text in the colon form, or when a decimal continuation
+    follows it. So "round-7th", "round-7a", "round-7.5", "round: 7 decimal places", a time in
+    microseconds and "round: 7.5" pass. Any other ending, or the end of the text, is caught: in the
+    plain form a space before a word, in the colon form a line break before a word, and in either
+    form a closing quote, a bracket, a mark, an underscore or a numeric character that is not a
+    letter (superscript two, a vulgar fraction or a Roman numeral sign). The re module has no letter
+    class, and its word boundary counts those numeric characters and the underscore as word
+    characters, so the letter test is made in code, and search returns a match the way
+    re.Pattern.search does. Prose is searched for this pattern with its line breaks kept, so a
+    letter on the next line never exempts the colon form.
 
     The matches of both forms are found once for each text searched and kept, so the run of
     searches made over one joined block or string value, one from every start position, costs time
@@ -270,8 +287,8 @@ class RoundNumberPattern:
 LABEL_PATTERNS = (
     # Each form is exempt only before a letter or a decimal continuation; see the class.
     ("a review round number", RoundNumberPattern()),
-    ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
-    ("a QA round", re.compile(r"(?i)\bQA round\b")),
+    ("a round of fixes", re.compile(r"(?i)\bfix[- ]rounds?\b")),
+    ("a round of QA", re.compile(r"(?i)\bQA round\b")),
     ("a model-family QA attribution", re.compile(r"(?i)\b(?:codex|claude|gemini) QA\b")),
     ("a reviewer attribution", re.compile(
         r"(?i)\b" + FAMILY + r"\b" + NEAR + REVIEW_WORD + r"\b"
@@ -293,24 +310,39 @@ PROSE_PATTERNS = (
 
 ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
 
-# The history pass reads every file under these folders, line by line, against the patterns that
-# name a review pass or a numbered finding: 5 of LABEL_PATTERNS, and the 2 backlog probes the pass
-# must fail on, each written as its git grep -iE text with (?i) and non-capturing groups. Plan and
-# contract ids, such as C1 or T9, match none of them, so the pass needs no allowlist.
+# The history pass reads every tracked file under these folders, line by line, against the patterns
+# that name a review pass or a numbered finding: 5 of LABEL_PATTERNS, and the 2 backlog probes the
+# pass must fail on, each written as its git grep -iE text with (?i) and non-capturing groups, and
+# with each word boundary written as ASCII_BOUNDARY, the boundary that git grep reads in the C
+# locale, where only an ASCII letter, digit or underscore is a word character; under C.UTF-8 git
+# grep finds a boundary in no more places. Plan and contract ids, such as C1 or T9, match none of
+# them, so the pass needs no allowlist.
 HISTORY_SCOPE = ("tools", "site-src", ".github")
-HISTORY_LABEL_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
+HISTORY_LABEL_NAMES = ("a review round number", "a round of fixes", "a round of QA", "a numbered finding",
                        "a numbered review pass")
+ASCII_BOUNDARY = r"(?<!(?-i:[0-9A-Z_a-z]))"
 HISTORY_PROBES = (
     ("a review pass or a finding by number, as the backlog probe reads it", re.compile(
-        r"(?i)\b(?:discovery|verify)(?: round)? [0-9]|\bfinding [0-9]|\bround [0-9]")),
+        r"(?i)" + ASCII_BOUNDARY + r"(?:discovery|verify)(?: round)? [0-9]|" + ASCII_BOUNDARY + r"finding [0-9]|"
+        + ASCII_BOUNDARY + r"round [0-9]")),
     ("a numbered review round, as the backlog probe reads it", re.compile(
         r"(?i)(?:fix|review|qa|discovery|verify) round [0-9]|round [0-9]+ (?:miss|reproduction|finding)")),
 )
 HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_LABEL_NAMES)
                     + HISTORY_PROBES)
-# Files in HISTORY_SCOPE that the history pass skips, each with its reason. The maintainer allows
-# this one file and no other.
-UNSCANNED = {"tools/test-no-qa-labels.py": "holds the label forms it catches as self-check fixtures"}
+# The history pass skips only the fixture lines of this file, the label forms its self-checks use as
+# examples, which the maintainer allows and nothing else. A fixture line lies between a line that is
+# FIXTURE_START and the next line that is FIXTURE_END, once each is stripped, belongs to an
+# assignment of data in a class or module body that lies wholly inside that block, and holds no
+# comment. A value of data holds only the node types in FIXTURE_DATA, so a value with a call, a
+# lambda, a comprehension or a formatted string is not data, and its lines are read.
+FIXTURE_FILE = "tools/test-no-qa-labels.py"
+FIXTURE_START = "# history pass fixtures: start"
+FIXTURE_END = "# history pass fixtures: end"
+FIXTURE_DATA = (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Name, ast.Subscript, ast.BinOp, ast.Add, ast.Load)
+# The modes of a symbolic link and of a submodule in the output of git ls-files --stage. The history
+# pass reads neither, as git grep reads neither.
+UNREAD_MODES = ("120000", "160000")
 
 # Reviewed lines whose match is not a review label: the T1 to T15 identifiers of the armed-behaviour
 # proofs in the item 28.2 stage-2 plan (section 3), which the stage-2 suite names its cases after,
@@ -734,64 +766,237 @@ class NoReviewLabels(unittest.TestCase):
                     self.assertTrue(labels_in(entry), "allowlisted line matches no pattern; remove it")
 
 
-def history_files():
-    """(repository-relative path, path) for each file under HISTORY_SCOPE, in sorted order."""
-    for folder in HISTORY_SCOPE:
-        for path in sorted((ROOT / folder).rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts:
-                yield path.relative_to(ROOT).as_posix(), path
+def tracked_history_files(root=ROOT):
+    """(repository-relative path, mode) for each file that git ls-files lists under HISTORY_SCOPE.
+
+    The list is the index of the repository at root, the files that git grep reads, in sorted order,
+    each path once. A git ls-files that fails raises subprocess.CalledProcessError.
+    """
+    listed = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z", "--"] + list(HISTORY_SCOPE),
+                            capture_output=True, check=True).stdout
+    entries = {}
+    for entry in listed.split(b"\0"):
+        if entry:
+            info, _, path = entry.partition(b"\t")
+            entries[os.fsdecode(path)] = info.split()[0].decode("ascii")
+    return sorted(entries.items())
+
+
+def fixture_lines(text):
+    """The numbers of the fixture lines of text, the source of this lint.
+
+    A block runs from a line that is FIXTURE_START to the next line that is FIXTURE_END, once each
+    is stripped. A start inside an open block, an end outside one or a block left open raises
+    ValueError, so the history pass fails. A fixture line lies inside a block, belongs to an
+    assignment of data to names in a class or module body that lies wholly inside that block, and
+    holds no comment; a value of data holds only the node types in FIXTURE_DATA.
+    """
+    blocks = []
+    start = None
+    for number, line in enumerate(text.split("\n"), 1):
+        if line.strip() == FIXTURE_START:
+            if start is not None:
+                raise ValueError("line {}: a fixture block starts inside another".format(number))
+            start = number
+        elif line.strip() == FIXTURE_END:
+            if start is None:
+                raise ValueError("line {}: a fixture block ends outside one".format(number))
+            blocks.append((start, number))
+            start = None
+    if start is not None:
+        raise ValueError("line {}: a fixture block is left open".format(start))
+    commented = {tok.start[0] for tok in tokenize.generate_tokens(io.StringIO(text).readline)
+                 if tok.type == tokenize.COMMENT}
+    lines = set()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ast.parse(text)
+    for owner in ast.walk(tree):
+        if not isinstance(owner, (ast.Module, ast.ClassDef)):
+            continue
+        for node in owner.body:
+            if (isinstance(node, ast.Assign) and all(isinstance(target, ast.Name) for target in node.targets)
+                    and all(isinstance(part, FIXTURE_DATA) for part in ast.walk(node.value))
+                    and any(first < node.lineno and node.end_lineno < last for first, last in blocks)):
+                lines.update(range(node.lineno, node.end_lineno + 1))
+    return lines - commented
+
+
+def history_hits(rel, text):
+    """A report line for each line of text, the file rel, that a history pattern matches.
+
+    Only in FIXTURE_FILE are lines skipped, and only the fixture lines that fixture_lines finds.
+    """
+    skipped = fixture_lines(text) if rel == FIXTURE_FILE else set()
+    found = []
+    for number, line in enumerate(text.split("\n"), 1):
+        names = [] if number in skipped else labels_in(line, HISTORY_PATTERNS)
+        if names:
+            found.append("{}:{}: {}: {}".format(rel, number, ", ".join(names), line.strip()))
+    return found
+
+
+def history_report(root=ROOT):
+    """The report of the history pass over the repository at root, and the number of files it read.
+
+    Each tracked file under HISTORY_SCOPE is read, apart from a symbolic link and a submodule, which
+    git grep reads neither of. A file that is missing, cannot be read as UTF-8 or, for this lint,
+    holds a fixture block left open or does not parse, is reported with its path, and a git ls-files
+    that fails is reported too.
+    """
+    try:
+        entries = tracked_history_files(root)
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", b"") or b""
+        return ["git ls-files failed: {} {}".format(error, detail.decode("utf-8", "replace").strip())], 0
+    found = []
+    read = 0
+    for rel, mode in entries:
+        if mode in UNREAD_MODES:
+            continue
+        try:
+            found.extend(history_hits(rel, read_text(Path(root) / rel)))
+        except (OSError, UnicodeDecodeError, ValueError, SyntaxError, tokenize.TokenError) as error:
+            found.append("{}: unreadable: {}".format(rel, error))
+            continue
+        read += 1
+    return found, read
 
 
 class NoReviewHistoryInScope(unittest.TestCase):
+    # history pass fixtures: start
+    # Probe-matching lines planted into a copy of this lint, each of which the pass must report.
+    PLANTS = ("round 3 of the plan", "fix round 2", "Verify 3 and discovery 2")
+    # history pass fixtures: end
+
     def test_no_file_in_scope_names_a_review_pass_or_a_numbered_finding(self):
-        found = []
-        read = 0
-        for rel, path in history_files():
-            if rel in UNSCANNED:
-                continue
-            for number, line in enumerate(read_text(path).split("\n"), 1):
-                names = labels_in(line, HISTORY_PATTERNS)
-                if names:
-                    found.append("{}:{}: {}: {}".format(rel, number, ", ".join(names), line.strip()))
-            read += 1
+        found, read = history_report()
         self.assertGreater(read, 0, "no file was read")
         self.assertEqual(found, [], "review-history labels found:\n" + "\n".join(found))
 
-    def test_every_unscanned_path_exists_in_scope(self):
-        for rel in UNSCANNED:
-            with self.subTest(file=rel):
-                self.assertTrue((ROOT / rel).is_file(), rel)
-                self.assertIn(rel.split("/")[0], HISTORY_SCOPE, rel)
-
     def test_the_history_scope_is_the_3_folders(self):
         self.assertEqual(HISTORY_SCOPE, ("tools", "site-src", ".github"))
-        read = {rel.split("/")[0] for rel, _ in history_files()}
+        read = {rel.split("/")[0] for rel, _ in tracked_history_files()}
         self.assertEqual(read, set(HISTORY_SCOPE), "a folder of the scope holds no file the pass reads")
 
-    def test_only_this_lint_is_unscanned(self):
-        self.assertEqual(sorted(UNSCANNED), ["tools/test-no-qa-labels.py"])
+    def test_the_fixture_file_is_this_lint(self):
+        self.assertEqual(FIXTURE_FILE, "tools/test-no-qa-labels.py")
+        self.assertEqual((ROOT / FIXTURE_FILE).resolve(), Path(__file__).resolve())
+        self.assertEqual((FIXTURE_START, FIXTURE_END),
+                         ("# history pass fixtures: start", "# history pass fixtures: end"))
+
+    @staticmethod
+    def planted(text, after, line):
+        """text with line put after the first line whose stripped text is after, and its number."""
+        lines = text.split("\n")
+        at = next(index for index, old in enumerate(lines) if old.strip() == after) + 1
+        return "\n".join(lines[:at] + [line] + lines[at:]), at + 1
+
+    def test_a_plant_outside_the_fixture_lines_of_this_lint_fails(self):
+        own = read_text(ROOT / FIXTURE_FILE)
+        self.assertEqual(history_hits(FIXTURE_FILE, own), [])
+        docstring_head = own.split("\n")[1].strip()
+        comment_before = "class NoReviewHistoryInScope(unittest.TestCase):"
+        test_head = "def test_the_fixture_file_is_this_lint(self):"
+        for plant in self.PLANTS:
+            cases = (("the module docstring", docstring_head, plant),
+                     ("a comment", "", "# " + plant),
+                     ("test code", test_head, "        planted = \"{}\"".format(plant)),
+                     ("a comment in a fixture block", FIXTURE_START, "    # " + plant),
+                     ("a call in a fixture block", FIXTURE_START, "    PLANTED = str(\"{}\")".format(plant)),
+                     ("a fixture line with a comment", FIXTURE_START,
+                      "    PLANTED = \"{}\"  # planted".format(plant)))
+            for where, after, line in cases:
+                with self.subTest(plant=plant, where=where):
+                    if where == "a comment":
+                        lines = own.split("\n")
+                        at = lines.index(comment_before)
+                        text, number = "\n".join(lines[:at] + [line] + lines[at:]), at + 1
+                    else:
+                        text, number = self.planted(own, after, line)
+                    found = history_hits(FIXTURE_FILE, text)
+                    self.assertEqual([hit.split(":")[1] for hit in found], [str(number)], found)
+            with self.subTest(plant=plant, where="a fixture line"):
+                text, _ = self.planted(own, FIXTURE_START, "    PLANTED = \"{}\"".format(plant))
+                self.assertEqual(history_hits(FIXTURE_FILE, text), [])
+            with self.subTest(plant=plant, where="a fixture block of another file"):
+                text = "class C:\n    {}\n    X = \"{}\"\n    {}\n".format(FIXTURE_START, plant, FIXTURE_END)
+                found = history_hits("tools/other.py", text)
+                self.assertEqual([hit.split(":")[1] for hit in found], ["3"], found)
+
+    def test_a_malformed_fixture_block_fails(self):
+        for text in ("{}\nX = 1\n".format(FIXTURE_START), "X = 1\n{}\n".format(FIXTURE_END),
+                     "{0}\n{0}\nX = 1\n{1}\n".format(FIXTURE_START, FIXTURE_END)):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError):
+                    history_hits(FIXTURE_FILE, text)
+
+    def test_the_pass_reads_the_tracked_files_as_git_grep_does(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+
+            def git(*args):
+                subprocess.run(["git", "-C", str(root)] + list(args), capture_output=True, check=True)
+
+            git("init", "-q")
+            files = {"tools/__pycache__/x.txt": self.PLANTS[1], "site-src/_cache/y.md": self.PLANTS[0],
+                     ".github/z.yml": "clean", "outside.md": self.PLANTS[2], "tools/gone.txt": "clean"}
+            for rel, line in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(line + "\n", encoding="utf-8")
+            (root / "tools/bad.txt").write_bytes(b"\xff\xfe\n")
+            (root / "tools/link.md").symlink_to("../outside.md")
+            git("add", "-f", "--", ".")
+            (root / "tools/gone.txt").unlink()
+            (root / "tools/untracked.txt").write_text(self.PLANTS[2] + "\n", encoding="utf-8")
+            found, read = history_report(root)
+        self.assertEqual(read, 3, found)
+        self.assertEqual(sorted(hit.split(":")[0] for hit in found),
+                         ["site-src/_cache/y.md", "tools/__pycache__/x.txt", "tools/bad.txt", "tools/gone.txt"])
+        self.assertTrue(all(":1: " in hit for hit in found if hit.split(":")[0].endswith((".md", "x.txt"))), found)
+        self.assertTrue(all(": unreadable: " in hit for hit in found if hit.split(":")[0].endswith(("bad.txt", "gone.txt"))),
+                        found)
+
+    def test_a_failed_listing_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            found, read = history_report(Path(folder) / "missing")
+        self.assertEqual((len(found), read), (1, 0), found)
+        self.assertTrue(found[0].startswith("git ls-files failed: "), found)
 
 
 class HistoryPatternSelfCheck(unittest.TestCase):
     # The history pass, pinned literally: the 5 label patterns it shares with LABEL_PATTERNS, by
     # name, and the 2 backlog probes, by name and pattern text.
-    LABEL_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
+    LABEL_NAMES = ("a review round number", "a round of fixes", "a round of QA", "a numbered finding",
                    "a numbered review pass")
     PROBES = (("a review pass or a finding by number, as the backlog probe reads it",
-               r"(?i)\b(?:discovery|verify)(?: round)? [0-9]|\bfinding [0-9]|\bround [0-9]"),
+               r"(?i)(?<!(?-i:[0-9A-Z_a-z]))(?:discovery|verify)(?: round)? [0-9]|(?<!(?-i:[0-9A-Z_a-z]))finding [0-9]"
+               r"|(?<!(?-i:[0-9A-Z_a-z]))round [0-9]"),
               ("a numbered review round, as the backlog probe reads it",
                r"(?i)(?:fix|review|qa|discovery|verify) round [0-9]|round [0-9]+ (?:miss|reproduction|finding)"))
+    # history pass fixtures: start
     # A fixture for each history pattern, which that pattern must catch.
-    FIXTURES = {"a review round number": "fixed in round-7", "a fix round": "the fix-round change",
-                "a QA round": "the QA round", "a numbered finding": "finding #3",
+    FIXTURES = {"a review round number": "fixed in round-7", "a round of fixes": "the fix-round change",
+                "a round of QA": "the QA round", "a numbered finding": "finding #3",
                 "a numbered review pass": "VERIFY round 9.1",
                 PROBES[0][0]: "Verify 3", PROBES[1][0]: "around 3 misses"}
     # Forms the 5 label patterns pass, as a lower-case pass name or a round number that a letter or
-    # a decimal continuation exempts, and that the backlog probes, and so the history pass, catch.
+    # a decimal continuation exempts, and that the backlog probes, and so the history pass, catch,
+    # among them the second probe in upper case and with a number of 2 digits.
     PROBE_ONLY = ("Verify 3", "discovery 2", "round 7th", "round 7.5", "round 7a", "Verify round 9.1",
-                  "around 3 misses")
+                  "around 3 misses", "AROUND 3 MISSES", "around 12 misses")
+    # Forms that the first probe matches as git grep reads it under LC_ALL=C, where a letter or
+    # digit outside ASCII before its first word leaves a word boundary, and that the label patterns
+    # pass: an e with an acute accent, a dotless i, a Cyrillic letter, an n with a tilde, the Kelvin
+    # sign and an Arabic-Indic digit.
+    C_LOCALE_ONLY = ("\u00e9round 3", "\u0131round 3", "\u0434discovery 2", "\u00f1finding 3", "\u212around 3",
+                     "\u0663round 3")
     # Ordinary text that the history pass catches, an accepted false failure that stays caught.
     FALSE_FAILURES = ("verify 3 files", "finding 3 files were removed", "finding 2 issues")
+    # Ordinary text that only the numbered finding pattern catches, as the plural or with a number
+    # sign, which neither backlog probe matches: a cost of keeping that pattern wide, pinned here.
+    NUMBERED_FINDING_ONLY = ("the findings 2 tools printed", "findings 2 and 3", "finding #3 files")
+    # history pass fixtures: end
 
     def test_the_history_patterns_are_pinned(self):
         labels = dict(LABEL_PATTERNS)
@@ -812,6 +1017,19 @@ class HistoryPatternSelfCheck(unittest.TestCase):
                 self.assertEqual(labels_in(text, shared), [], text)
                 self.assertTrue(labels_in(text, HISTORY_PATTERNS), text)
 
+    def test_the_first_probe_catches_what_git_grep_matches_in_the_c_locale(self):
+        shared = HISTORY_PATTERNS[:len(self.LABEL_NAMES)]
+        for text in self.C_LOCALE_ONLY:
+            with self.subTest(text=text):
+                self.assertFalse(text[0].isascii(), text)
+                self.assertEqual(labels_in(text, shared), [], text)
+                self.assertEqual(labels_in(text, HISTORY_PATTERNS), [self.PROBES[0][0]], text)
+
+    def test_only_the_numbered_finding_pattern_catches_its_wider_forms(self):
+        for text in self.NUMBERED_FINDING_ONLY:
+            with self.subTest(text=text):
+                self.assertEqual(labels_in(text, HISTORY_PATTERNS), ["a numbered finding"], text)
+
     def test_ordinary_counts_stay_caught(self):
         for text in self.FALSE_FAILURES:
             with self.subTest(text=text):
@@ -822,6 +1040,7 @@ class HistoryPatternSelfCheck(unittest.TestCase):
 
 
 class PatternSelfCheck(unittest.TestCase):
+    # history pass fixtures: start
     LABELS = ("(round 7)", "(round-5 fix)", "Round 2 G5: x", "(fix round 16, M1)", "(fix round 17, F1)",
               "Fix round 16 (M1): x", "claude QA round 10", "codex QA HIGH-1", "(codex QA F6)", "(F1)",
               "(G1)", "(M2)", "(AA2)", "(BB1)", "(F1 and G1)", "finding S3", "findings F1 and G1",
@@ -830,12 +1049,13 @@ class PatternSelfCheck(unittest.TestCase):
               "refuting the gemini seed\x27s claim", "flagged by codex", "the claude review",
               "gemini found that", "a codex finding", "raised in the gemini round")
     # Forms added when the guard was widened: round numbers with a colon at a label position, a
-    # plural, a number sign or a hyphen, a hyphenated fix round, the credit verbs, a severity id in
-    # any case, a hyphenated finding id in parentheses or after the word finding, and a
-    # letter-suffixed finding id, and a plain round number that an underscore or a numeric character
-    # that is not a letter follows, such as superscript two, one half or the Roman numeral eight,
-    # and a finding or an upper-case DISCOVERY or VERIFY pass named by its number, with or without a
-    # number sign or the word round, whose decimal number the round number pattern exempts.
+    # plural, a number sign or a hyphen, a hyphenated label of a round of fixes, the credit verbs, a
+    # severity id in any case, a hyphenated finding id in parentheses or after the word finding, and
+    # a letter-suffixed finding id, and a plain round number that an underscore or a numeric
+    # character that is not a letter follows, such as superscript two, one half or the Roman numeral
+    # eight, and a finding or an upper-case DISCOVERY or VERIFY pass named by its number, with or
+    # without a number sign or the word round, even where the round number pattern exempts the
+    # decimal number that follows.
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
                "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
@@ -987,7 +1207,7 @@ class PatternSelfCheck(unittest.TestCase):
     # Decoded prose is matched against every pattern in its decoded form, so a label that only an
     # escape spells is caught at its own physical line: (source, line, pattern name).
     DECODED_LABELS = (("x = 1\n\"fixed in round \\x37\"\n", 2, "a review round number"),
-                      ("x = 1\n\"the fix\\x20round\"\n", 2, "a fix round"),
+                      ("x = 1\n\"the fix\\x20round\"\n", 2, "a round of fixes"),
                       ("x = 1\nb\"the codex\\x20QA pass\"\n", 2, "a model-family QA attribution"),
                       ("x = 1\nf\"\"\"the {x} case\nfixed in round \\x37\"\"\"\n", 3, "a review round number"))
     # The parts of one string statement join as Python joins them, with nothing between: a label
@@ -1015,11 +1235,11 @@ class PatternSelfCheck(unittest.TestCase):
     # line with nothing between, in a plain and in a triple-quoted literal, and the indentation
     # around a line break of a docstring is stripped. Each label is caught at the line where it
     # starts: (source, line, pattern name).
-    VALUE_LABELS = (("x = 1\n\"the fix\\nround case\"\n", 2, "a fix round"),
+    VALUE_LABELS = (("x = 1\n\"the fix\\nround case\"\n", 2, "a round of fixes"),
                     ("x = 1\n\"the finding\\nL5 case\"\n", 2, "a named finding id"),
                     ("x = 1\n\"the L\\\n5 case\"\n", 2, "a bare finding id in prose"),
                     ("x = 1\n\"\"\"the L\\\n5 case\"\"\"\n", 2, "a bare finding id in prose"),
-                    ("def f():\n    \"\"\"Handle the fix\n    round case.\"\"\"\n", 2, "a fix round"))
+                    ("def f():\n    \"\"\"Handle the fix\n    round case.\"\"\"\n", 2, "a round of fixes"))
     # The colon form is exempt only before a letter on the line of the number in the value: a
     # letter that the next part puts on that line exempts it, and a letter after a line break, an
     # escaped one here, does not. (source, the exact report.)
@@ -1061,6 +1281,35 @@ class PatternSelfCheck(unittest.TestCase):
              ("as fixed in round", "7 of review"),
              ("as fixed in (fix", "round 16, M1)"))
     SPREAD = ("codex", "independently", "also", "reproduced this failure.")
+    # A round number in each form, which the letter and numeral checks complete with a character.
+    PLAIN_NUMBER = "round 7"
+    COLON_NUMBER = "round: 7"
+    # A colon form split before its number over lines, which a letter on the next line does not
+    # exempt, and the same with a word on the line of the number, which does: (file, text).
+    SPLIT_COLON_CAUGHT = (("x.md", "fixed in round:\n7\nof review\n"),
+                          ("x.py", "# fixed in round:\n# 7\n# of review\nx = 1\n"),
+                          ("x.py", "\"\"\"fixed in round:\n7\nof review\n\"\"\"\n"))
+    SPLIT_COLON_REPORT = ":1: a review round number across a line break: round: 7"
+    SPLIT_COLON_EXEMPT = (("x.md", "fixed in round:\n7 decimal places\n"),
+                          ("x.py", "# fixed in round:\n# 7 decimal places\nx = 1\n"))
+    # 2 round numbers of one form in one text, each found: (text, the matches).
+    SECOND_IN_ONE_TEXT = (("fixed in round 7 and round 8", ["round 7", "round 8"]),
+                          ("fixed in round: 7, then round: 8", ["round: 7", "round: 8"]))
+    # A second round number that a line break splits, reported at line 1: (file, text, match).
+    SECOND_ACROSS_LINES = (("x.md", "fixed in round 7 and round\n8 too\n", "round 8"),
+                           ("x.py", "# fixed in round 7 and round\n# 8 too\n", "round 8"),
+                           ("x.md", "fixed in round: 7, then round:\n8, then x\n", "round: 8"),
+                           ("x.py", "# fixed in round: 7, then round:\n# 8, then x\n", "round: 8"))
+    # A round number of each form in one text, the earlier found first: (text, the matches).
+    EARLIER_IN_ONE_TEXT = (("fixed in round 7 and round: 8", ["round 7", "round: 8"]),
+                           ("fixed in round: 7, and round 8", ["round: 7", "round 8"]))
+    # The earlier form split over lines, reported at line 1, and the later at line 2: (file, text,
+    # the match at line 1).
+    EARLIER_ACROSS_LINES = (("x.md", "fixed round\n7 and round: 8\n", "round 7"),
+                            ("x.md", "fixed round:\n7, and round 8\n", "round: 7"),
+                            ("x.py", "# fixed round\n# 7 and round: 8\n", "round 7"),
+                            ("x.py", "# fixed round:\n# 7, and round 8\n", "round: 7"))
+    # history pass fixtures: end
 
     def test_every_known_label_form_is_caught(self):
         for text in self.LABELS + self.WIDENED:
@@ -1105,7 +1354,7 @@ class PatternSelfCheck(unittest.TestCase):
     @staticmethod
     def character_after_number(text):
         """The first character after the colon round number in text."""
-        return re.search(r"round: 7\s*(.)", text).group(1)
+        return re.search(r"round: [0-9]\s*(.)", text).group(1)
 
     def test_a_letter_of_every_category_exempts_both_forms(self):
         for text in self.LETTER_EXEMPT:
@@ -1119,17 +1368,17 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertTrue({"CYRILLIC", "ARABIC", "HEBREW", "MODIFIER"} <= scripts, scripts)
         for char in letters:
             with self.subTest(char=char):
-                self.assertEqual(labels_in("round 7" + char), [], char)
-                self.assertEqual(scan("x.py", "# round 7{}\nx = 1\n".format(char)), [], char)
-                self.assertEqual(scan("x.md", "round 7{}\n".format(char)), [], char)
-                self.assertTrue(labels_in("round 7 " + char), char)
+                self.assertEqual(labels_in(self.PLAIN_NUMBER + char), [], char)
+                self.assertEqual(scan("x.py", "# {}{}\nx = 1\n".format(self.PLAIN_NUMBER, char)), [], char)
+                self.assertEqual(scan("x.md", "{}{}\n".format(self.PLAIN_NUMBER, char)), [], char)
+                self.assertTrue(labels_in(self.PLAIN_NUMBER + " " + char), char)
 
     def test_a_numeric_character_that_is_not_a_letter_stays_caught(self):
         numerals = [self.character_after_number(text) for text in self.FALSE_FAILURES
                     if not self.character_after_number(text).isascii()]
         self.assertEqual({unicodedata.category(char) for char in numerals}, {"No", "Nl"})
         for char in numerals:
-            for text in ("round: 7" + char, "round: 7 " + char, "round 7" + char):
+            for text in (self.COLON_NUMBER + char, self.COLON_NUMBER + " " + char, self.PLAIN_NUMBER + char):
                 with self.subTest(text=text):
                     self.assertTrue(labels_in(text), text)
                     self.assertTrue(scan("x.py", "# {}\nx = 1\n".format(text)), text)
@@ -1441,13 +1690,10 @@ class PatternSelfCheck(unittest.TestCase):
                     self.assertTrue(any(hit.startswith(rel + ":1: ") for hit in found), found)
 
     def test_a_letter_on_the_next_line_does_not_exempt_a_split_colon_form(self):
-        for rel, text in (("x.md", "fixed in round:\n7\nof review\n"),
-                          ("x.py", "# fixed in round:\n# 7\n# of review\nx = 1\n"),
-                          ("x.py", "\"\"\"fixed in round:\n7\nof review\n\"\"\"\n")):
+        for rel, text in self.SPLIT_COLON_CAUGHT:
             with self.subTest(rel=rel, text=text):
-                self.assertIn(rel + ":1: a review round number across a line break: round: 7", scan(rel, text))
-        for rel, text in (("x.md", "fixed in round:\n7 decimal places\n"),
-                          ("x.py", "# fixed in round:\n# 7 decimal places\nx = 1\n")):
+                self.assertIn(rel + self.SPLIT_COLON_REPORT, scan(rel, text))
+        for rel, text in self.SPLIT_COLON_EXEMPT:
             with self.subTest(rel=rel, text=text):
                 self.assertEqual(scan(rel, text), [], text)
 
@@ -1475,24 +1721,19 @@ class PatternSelfCheck(unittest.TestCase):
         return found
 
     def test_a_second_round_number_in_one_text_is_reported(self):
-        self.assertEqual(self.every_round_match("fixed in round 7 and round 8"), ["round 7", "round 8"])
-        self.assertEqual(self.every_round_match("fixed in round: 7, then round: 8"),
-                         ["round: 7", "round: 8"])
-        for rel, text, second in (("x.md", "fixed in round 7 and round\n8 too\n", "round 8"),
-                                  ("x.py", "# fixed in round 7 and round\n# 8 too\n", "round 8"),
-                                  ("x.md", "fixed in round: 7, then round:\n8, then x\n", "round: 8"),
-                                  ("x.py", "# fixed in round: 7, then round:\n# 8, then x\n", "round: 8")):
+        for text, matches in self.SECOND_IN_ONE_TEXT:
+            with self.subTest(text=text):
+                self.assertEqual(self.every_round_match(text), matches)
+        for rel, text, second in self.SECOND_ACROSS_LINES:
             with self.subTest(rel=rel, text=text):
                 found = scan(rel, text)
                 self.assertIn(rel + ":1: a review round number across a line break: " + second, found)
 
     def test_the_earlier_of_the_two_forms_is_returned(self):
-        self.assertEqual(self.every_round_match("fixed in round 7 and round: 8"), ["round 7", "round: 8"])
-        self.assertEqual(self.every_round_match("fixed in round: 7, and round 8"), ["round: 7", "round 8"])
-        for rel, text, first in (("x.md", "fixed round\n7 and round: 8\n", "round 7"),
-                                 ("x.md", "fixed round:\n7, and round 8\n", "round: 7"),
-                                 ("x.py", "# fixed round\n# 7 and round: 8\n", "round 7"),
-                                 ("x.py", "# fixed round:\n# 7, and round 8\n", "round: 7")):
+        for text, matches in self.EARLIER_IN_ONE_TEXT:
+            with self.subTest(text=text):
+                self.assertEqual(self.every_round_match(text), matches)
+        for rel, text, first in self.EARLIER_ACROSS_LINES:
             with self.subTest(rel=rel, text=text):
                 found = scan(rel, text)
                 self.assertIn(rel + ":1: a review round number across a line break: " + first, found)
