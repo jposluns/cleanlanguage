@@ -963,13 +963,16 @@ LINE_CASES = [
     ("bash -c 'python3 -I tools/x.py'|w", False),
     ("python3 -I tools\\/x.py", False),
     # Outside the word model, pinned as the module docstring's Residuals names them: bash runs
-    # tools/x.py for each of the first 5, false findings, and toolsx.py for the last, which passes.
+    # tools/x.py for each of the first 5, false findings, toolsx.py for the next, and tools/x.pyw or
+    # tools/x.py/dev/fd/63 for the last 2, each of which passes.
     ("bash -c 'python3 -I tools/x.py'\"\"", True),
     ("bash -c 'python3 -I tools/x.py'$v", True),
     ("bash -c 'python3 -I tools/x.py'\\ w", True),
     ("eval \"bash -c 'python3 -I tools/x.py'\"", True),
     ("sh -c \"bash -c 'python3 -I tools/x.py'\"", True),
     ("python3 -I tools\\x.py", False),
+    ("python3 -I tools/x.py`echo w`", False),
+    ("python3 -I tools/x.py<(echo w)", False),
     # A quote that WORD stops before continues the program word: bash runs tools/x.pyw x for the
     # first, and reads a part that runs on to the next line for each of the next 2.
     ('python3 -I tools/x.py"w x"', True),
