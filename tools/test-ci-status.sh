@@ -2614,23 +2614,23 @@ for runner in run_case run_timed_case run_contract_case; do
   fi
 done
 
-# Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
-# ci-status.sh from a working directory that holds a planted ci-status.py, which
-# records that it ran. The planted file must never run. RESOLVE is a space-separated
-# list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
-# first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
-# nopy (the tools directory holds ci-status.sh only). One more token may name how
-# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash, then prints
-# after=<status>; the caller must keep running and see status 3), stdin (bash
-# -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
-# pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
-# file), pathexec (ci-status.sh executed through PATH), posixsh (the wrapper run
-# by the first of dash, sh, ksh, mksh or posh that a probe confirms is not bash;
-# skipped when there is none), restricted (bash -r), setr (bash run with a
-# BASH_ENV file that runs set -r), setrsourced (bash -c runs set -r, then sources
-# ci-status.sh found through PATH, then prints after=<status>; the caller must
-# keep running and see status 3), or noread (the ci-status.py
-# beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
+# Wrapper path resolution fails closed. Each case runs ci-status.sh from a working
+# directory that holds a planted ci-status.py, which records that it ran. The
+# planted file must never run. RESOLVE is a space-separated list: noreadlink (a
+# readlink first on PATH that exits 1), nopyresolve (a python3 first on PATH that
+# exits 1 for python3 -I -c and runs the real python3 otherwise), nopy (the tools
+# directory holds ci-status.sh only). One more token may name how the wrapper is
+# invoked: sourced (bash -c sources it, so $0 is bash, then prints after=<status>;
+# the caller must keep running and see status 3), stdin (bash -s reads it from a
+# pipe), barename (bash ci-status.sh, found through PATH), pylink (a copied wrapper
+# beside a ci-status.py that is a symlink to the planted file), pathexec
+# (ci-status.sh executed through PATH), posixsh (the wrapper run by the first of
+# dash, sh, ksh, mksh or posh that a probe confirms is not bash; skipped when there
+# is none), restricted (bash -r), setr (bash run with a BASH_ENV file that runs set
+# -r), setrsourced (bash -c runs set -r, then sources ci-status.sh found through
+# PATH, then prints after=<status>; the caller must keep running and see status 3),
+# or noread (the ci-status.py beside the wrapper has mode 000; skipped as root,
+# where mode 000 is readable).
 # sourcedself (bash -c sources it with $0 set to the wrapper path, then prints
 # after=<status>; the caller must keep running and see status 3). Without one,
 # the wrapper runs as bash with its absolute path. A shell option token, errexit
@@ -2646,11 +2646,13 @@ done
 # and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
 # that a python3 first on PATH retargets, just before the resolver runs, to a
 # directory holding a copy of the wrapper and the planted ci-status.py.
-# fdslashes, fdlink, fdslasheshold and fdlinkhold build the descriptor decoy of
-# the round 8 seat driver: a hard link to the copied wrapper opened as fd 9 and
-# removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
-# beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
-# symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
+# fdslashes, fdlink, fdslasheshold and fdlinkhold build a descriptor decoy: a hard
+# link to the copied wrapper opened as fd 9 and then removed, a symlink named
+# ".../h.sh (deleted)" to a decoy copy of the wrapper beside the planted
+# ci-status.py, and bash run on /dev//fd/9 (slashes) or on a symlink to /dev/fd/9
+# (link); the hold forms also pass fd 255 open on the decoy. The symlink has the
+# name that /proc/self/fd/9 then reads, so a wrapper that took its own path from
+# that name would run the planted file.
 # roflags and rotext run bash with a BASH_ENV file that marks the wrapper
 # variable __ci_status_flags (with a close-on-exec value) or __ci_status_text
 # (with a passing path) readonly, so the assignment fails: the wrapper must give
