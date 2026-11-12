@@ -360,7 +360,7 @@ jobs:
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
               15)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day. The live release checksum check compares a Released date with a publication day only for the version that cleanlanguage/skills/cleanlanguage/SKILL.md names in the checkout the check runs from, so it checks the date of ${RELEASE_TAG} only while that file names that version, and it reports a mismatch whenever it compares the 2 days and finds them different (see the exit codes listed in the module docstring of that check for its other outcomes)." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day, and the live release checksum check reports the same disagreement until then." >&2
                 echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;

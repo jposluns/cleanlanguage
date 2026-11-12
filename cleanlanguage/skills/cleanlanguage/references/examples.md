@@ -1,6 +1,6 @@
 # Examples
 
-These examples demonstrate degree of intervention rather than fixed templates. Every revised version uses only facts present in its source. Where a stronger version needs a specific figure or actor, the source supplies it. Never invent one to replace a vague statement.
+These examples demonstrate degree of intervention rather than fixed templates. Every revised version uses only facts present in its source; never invent a figure or actor to replace a vague statement.
 
 ## Lead with the conclusion
 
@@ -76,7 +76,7 @@ The system is extremely unreliable.
 
 The service dropped 14 percent of requests during the test window.
 
-Use the specific figure only when the source or a measurement provides it. Do not invent a number to replace a vague modifier; if none is available, keep the statement qualitative and flag the missing measurement.
+Use the specific figure only when the source or a measurement provides it; otherwise keep the statement qualitative and flag the missing measurement.
 
 ### Legitimate modifier
 

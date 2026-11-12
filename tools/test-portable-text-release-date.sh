@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Tests the Released-line checks (item 26, G1 and G2) in
-# tools/check-portable-text-sync.sh.
+# tools/check-portable-text-sync.sh, and its 29000-character label on the
+# generated full file (case 10).
 #
 # G1: the skill must carry a well-formed "Released: YYYY-MM-DD" line directly
 # after its Version line when its version sorts above the undated baseline
@@ -516,6 +517,44 @@ expect_fail "a malformed rendering line fails" "Malformed Released: line in ${el
 undated_fixture 1.0.14
 set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
+
+# 10. The 29k label: the generated full file, and so its byte-equal twin, may
+#     hold at most 29000 characters by wc -m. pad_full TARGET appends a line of
+#     "a" after a blank line at the end of the fixture skill, which adds its
+#     length plus 2 to the full file, regenerates, and fails the case unless
+#     the full file then holds exactly TARGET characters. The source then
+#     differs from the recorded hash, so a full file within its label fails on
+#     the hash, never on the label, and one over it fails on the label first.
+full="site/downloads/cleanlanguage.md"
+pad_full() { # target
+  local before after
+  before="$(wc -m < "${work}/${full}")"
+  python3 -I - "${work}/${skill}" "$(( $1 - before - 2 ))" <<'PYPAD'
+import sys
+path, count = sys.argv[1], int(sys.argv[2])
+if count < 1:
+    sys.exit("pad_full: the full file is already too long to pad to the target")
+with open(path, "a", encoding="utf-8", newline="") as fh:
+    fh.write("\n" + "a" * count + "\n")
+PYPAD
+  regen
+  after="$(wc -m < "${work}/${full}")"
+  if [ "${after}" -ne "$1" ]; then
+    fail "the full file was padded to $1 characters (it holds ${after})"
+    return 1
+  fi
+}
+undated_fixture 1.0.14
+if pad_full 29000; then
+  expect_fail_without "a full file of 29000 characters is within its label" \
+    "The skill source changed but the condensed portable files were not reconciled." \
+    "over its 29000 label"
+fi
+undated_fixture 1.0.14
+if pad_full 29001; then
+  expect_fail_line "a full file of 29001 characters is over its label" \
+    "${full} is 29001 chars, over its 29000 label."
+fi
 
 if [ "${fails}" -ne 0 ]; then
   printf '%d failure(s).\n' "${fails}" >&2
