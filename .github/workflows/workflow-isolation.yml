@@ -24,13 +24,16 @@ name: Workflow launch isolation
 # tools/test-run-all-checks.py, which checks that each run text it reads in
 # the workflows it selects is a command line of tools/run_all_checks.sh or one
 # of the exceptions that the test lists, for each of which the script runs
-# another command line in its place, and that the script puts no pipe on a
-# command line and fails when a command line fails, though it reads the output
-# of some commands through command substitutions, which are pipes. It selects
-# the workflows that a pull request or a push to main triggers and some
-# others, such as one whose branches-ignore holds a pattern that excludes
-# main, which its docstring names as a safe failure. Each of those 3 files
-# holds its gate's scope and residuals.
+# another command line in its place, and that the script gives no command line
+# a pipe as its standard output or standard error and fails when a command
+# line fails, though it reads the output of some commands through command
+# substitutions, which are pipes. It selects the workflows that a pull request
+# or a push to main triggers. It also selects a class of workflows whatever
+# their push filters match, such as one whose branches hold a pattern, one
+# whose branches-ignore holds a pattern that excludes main and one whose push
+# trigger holds only tags-ignore; its docstring names that class as a safe
+# failure where neither a pull request nor a push to main triggers such a
+# workflow. Each of those 3 files holds its gate's scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its

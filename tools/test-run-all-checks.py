@@ -65,12 +65,15 @@ release checksum check), time limit or paths filter; the script runs the run tex
 the repository root, in this machine's environment and on every change, whatever such a key sets,
 and the test passes it. A run text is compared whole, so the same command written another way in a
 workflow is reported as missing, a safe failure. A pull_request trigger selects its workflow
-whatever its filters, and a branches-ignore entry is compared with main as text, so a pattern that
-excludes main, such as ma*, still selects its workflow; the run text of a workflow so selected must
-then be a command line, a safe failure. A file that the test does not read, a step without run text,
-such as one that runs a gate through an action (uses: rather than run:), and a workflow that the
-selection above does not select, such as one that only another workflow's run triggers
-(workflow_run), are not compared, so the script is not required to run what they run.
+whatever its filters. The selection reads only which filters a push trigger holds and, of branches
+and branches-ignore, their entries as text, so the test also selects a class of workflows whatever
+their push filters match, such as one whose branches hold a pattern, one whose branches-ignore holds
+ma*, a pattern that excludes main, and one whose push trigger holds only tags-ignore; the run text
+of a workflow of that class must then be a command line, a safe failure where neither a pull request
+nor a push to main triggers it. A file that the test does not read, a step without run text, such as
+one that runs a gate through an action (uses: rather than run:), and a workflow that the selection
+above does not select, such as one that only another workflow's run triggers (workflow_run), are not
+compared, so the script is not required to run what they run.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case. An error outside the reading
 of a workflow file, such as a missing tools/run_all_checks.sh, ends the test with a traceback and
