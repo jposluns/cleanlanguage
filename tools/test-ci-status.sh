@@ -2102,8 +2102,9 @@ PY
 # YAML, so a line that YAML reads as something else, such as a line of a run:
 # block, still counts, a safe failure, and a job named in another form, such as
 # a quoted key, an expression or a block scalar, is not seen. It runs in a
-# subshell, so its glob options do not reach the rest of the suite; the case
-# after its cases below holds that.
+# subshell, so the glob options that it sets stay inside it; the 2 cases after
+# its cases below hold that dotglob and nullglob are off in its caller after a
+# call that finds a name and after one that finds none.
 named_elsewhere() (
   shopt -s dotglob nullglob
   local dir="$1" wf="$2" job="$3" other text="" c i status
@@ -2240,26 +2241,30 @@ run_named_elsewhere_case "a job name holding regular expression characters is fo
   '    name: Docs (a) [b] c* d+ e? {1} ^f $g \h' 'Docs (a) [b] c* d+ e? {1} ^f $g \h'
 run_named_elsewhere_case "a name that the job name matches only as a pattern is not found" 1 other.yml \
   '    name: v1x2|x' 'v1.2|x'
-# named_elsewhere, called here in the suite's own shell on a folder holding only
-# .hidden.yml, must leave dotglob and nullglob off in its caller: shopt reads
-# each as off, and a glob of every entry of that folder matches neither the dot
-# file nor nothing, so it stays as written.
-glob_case="named_elsewhere leaves dotglob and nullglob off in its caller"
-if glob_tmp="$(mktemp -d)" && [ -d "$glob_tmp" ]; then
-  : > "$glob_tmp/.hidden.yml"
-  named_elsewhere "$glob_tmp" own.yml "Skill discovery" 2>/dev/null || :
-  glob_got=("$glob_tmp"/*)
-  if ! shopt -q dotglob && ! shopt -q nullglob && [ "${#glob_got[@]}" = 1 ] && [ "${glob_got[0]}" = "$glob_tmp/*" ]; then
-    printf 'ok   %s\n' "$glob_case"
+# run_glob_case NAME LINE WANT: named_elsewhere, called in the suite's own shell
+# on a folder holding only .hidden.yml, which holds LINE, must exit WANT and
+# leave dotglob and nullglob off in its caller: shopt reads each as off, and a
+# glob of every entry of that folder matches neither the dot file nor nothing,
+# so it stays as written.
+run_glob_case() {
+  local name="$1" want="$3" tmp got=0 entries
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  printf '%s\n' "$2" > "$tmp/.hidden.yml"
+  named_elsewhere "$tmp" own.yml "Skill discovery" 2>/dev/null || got=$?
+  entries=("$tmp"/*)
+  if [ "$got" = "$want" ] && ! shopt -q dotglob && ! shopt -q nullglob && [ "${#entries[@]}" = 1 ] \
+    && [ "${entries[0]}" = "$tmp/*" ]; then
+    printf 'ok   %s\n' "$name"
   else
-    printf 'FAIL %s (%s; the glob gave %s)\n' "$glob_case" "$(shopt -p dotglob nullglob | tr '\n' ' ')" \
-      "${glob_got[*]:-nothing}"
+    printf 'FAIL %s (exit %s, want %s; %s; the glob gave %s)\n' "$name" "$got" "$want" \
+      "$(shopt -p dotglob nullglob | tr '\n' ' ')" "${entries[*]:-nothing}"
     fails=$((fails + 1))
   fi
-  rm -rf "$glob_tmp"
-else
-  setup_failed "$glob_case"
-fi
+  rm -rf "$tmp"
+}
+run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller when it finds a name" \
+  '    name: Skill discovery' 0
+run_glob_case "named_elsewhere leaves dotglob and nullglob off in its caller when it finds none" '' 1
 # run_shape_loop_case NAME: shape_loop, on a folder holding skill-discovery.yml
 # and a copy of it named other.yml, for the pair of Skill discovery, must print
 # 1 FAIL line, naming named-elsewhere and nothing else, and add 1 to fails.
