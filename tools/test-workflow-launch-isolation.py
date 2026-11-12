@@ -78,20 +78,31 @@ The rule:
    names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
-   spaces, `<name>` holding no `/`, `python3` directly after the start of the
-   line, a space, a tab, `|`, `&`, `;` or `(`, and `.py` directly followed by
-   the end of the line, a space, a tab, `|`, `&`, `;`, `(`, `)`, or a `<` or
-   `>` not directly followed by `(`, is a launch (so `$python3 -I tools/x.py`,
-   `x=python3 -I tools/x.py` and `{,x}python3 -I tools/x.py`, which bash runs
-   as `python3 xpython3 -I tools/x.py`, are not one, and nor are
+   spaces, `<name>` holding no `/`, `python3` directly after the left edge
+   below, and `.py` directly followed by the end of the line, a space, a tab,
+   `|`, `&`, `;`, `(`, `)`, or a `<` or `>` not directly followed by `(`, is a
+   launch (so `$python3 -I tools/x.py`, `x=python3 -I tools/x.py` and
+   `{,x}python3 -I tools/x.py`, which bash runs as
+   `python3 xpython3 -I tools/x.py`, are not one, and nor are
    `python3 -I tools/x.py"w"`, which bash runs as `tools/x.pyw`, and
    `python3 -I tools/x.py<(echo w)`, whose script word bash ends with the path
-   of a process substitution). The rule reads the form before each character
-   of that list as a launch, and refuses the line at a `<(` or `>(` and at
-   every other character directly after `.py`, among them a character that
-   closes a construct holding the launch: for example a closing backquote,
-   which ends a command substitution written with backquotes, a `}` that ends
-   a parameter expansion, or a `"` or `'` that ends a quoted string. For
+   of a process substitution). The left edge is the start of the line, a
+   space, a tab, `|`, `&`, `;` or `(`; a backquote that the rule reads as
+   opening a command substitution, which has an even number of backquotes
+   before it on the line, and the start of the line, one of those characters
+   or `=` directly before it, as in ``x=`python3 -I tools/x.py | cat` ``; or a
+   `)` that the rule reads as ending a case pattern, as in
+   `case "$a" in a)python3 -I tools/x.py;; esac`. Such a pattern holds
+   letters, digits, `_`, `.`, `*`, `?` and `-`, with alternatives joined by
+   `|` and an optional `(` before it, and it starts the line after any spaces
+   and tabs, or follows `case`, a word and `in`, separated and followed by
+   spaces or tabs, or follows `;;`, `;&` or `;;&` and any spaces or tabs. The
+   rule reads the form before each character of the list after `.py` as a
+   launch, and refuses the line at a `<(` or `>(` and at every other character
+   directly after `.py`, among them a character that closes a construct
+   holding the launch: for example a closing backquote, which ends a command
+   substitution written with backquotes, a `}` that ends a parameter
+   expansion, or a `"` or `'` that ends a quoted string. For
    `${v:+python3 -I tools/x.py} --flag`, with `v=1`, and for
    `eval "python3 -I tools/x.py"`, bash passes tools/x.py as the script, and
    for `${v:+python3 -I tools/x.py}w`, with `v=1`, and for
@@ -120,7 +131,10 @@ with backquotes, a `}` that ends a parameter expansion, as in
 string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
 subshell is in that list, and the form before it reads as a launch), a
 `python3` directly after a character that is not in rule 3's left edge, such
-as `x=`, a quote, a `{`, a `}` or a `)`, 2 spaces before `-I`, a launch whose
+as `x=`, a quote, a `{`, a `}`, a backquote that the rule reads as closing a
+command substitution, as in `` `echo i`python3 ``, or a `)` that ends no case
+pattern as the rule reads one, as in `$(echo i)python3` or after a pattern
+that holds a quote, as in `"a")python3`, 2 spaces before `-I`, a launch whose
 words are split across continued lines, `(python3)` and other case arms naming
 python, a message or comment that names python or a .py file, an expression
 such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
@@ -177,13 +191,25 @@ Residuals, named here because the scan reads text the pull request controls:
   traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
+- a launch after a backquote or a `)` that rule 3's left edge reads as opening
+  a command substitution or as ending a case pattern while bash reads it
+  otherwise, since the rule reads one line at a time and counts quoted
+  backquotes too: the scan counts the form as a launch with no finding, while
+  bash may run another program or nothing. Examples, run with a stub `python3`
+  that prints its arguments: for `v=$(echo`, then a line
+  `i)python3 -I tools/x.py`, and for ``v=`echo``, then a line
+  `` `python3 -I tools/x.py ``, where the `)` or the backquote closes a
+  command substitution opened on the line before, and for
+  ``echo '`'; x=`echo `python3 -I tools/x.py``, where a quoted backquote
+  changes the count, bash sets v or x to `python3` and then fails with exit
+  status 127, since it finds no program `-I`;
 - a launch written inside a parameter expansion with `python3` directly after
-  a character of rule 3's left edge, a space, a tab, `|`, `&`, `;` or `(`, or
-  at the start of a line inside it, which the scan counts as a launch of the
-  script it reads with no finding, while bash may run `python3` with that
-  script or with another script word, run `python3` without `-I`, run another
-  program, or run nothing. Examples, run with `v=1` and a stub `python3` that
-  prints its arguments: bash passes `tools/x.py|w` as the script for
+  rule 3's left edge, such as a space, a tab, `|`, `&`, `;` or `(`, or at the
+  start of a line inside it, which the scan counts as a launch of the script
+  it reads with no finding, while bash may run `python3` with that script or
+  with another script word, run `python3` without `-I`, run another program,
+  or run nothing. Examples, run with `v=1` and a stub `python3` that prints
+  its arguments: bash passes `tools/x.py|w` as the script for
   `${v:+ python3 -I tools/x.py|w}`, and for the same with a tab or a newline
   after the `+`, and `tools/x.py|w1` for `${v/#/ python3 -I tools/x.py|w}`; it
   looks up the program `x` for `${v:+x python3 -I tools/x.py|w}` and the
@@ -259,7 +285,9 @@ PLANTED_MODULES = ("tempfile", "msvcrt", "nt", "_winapi")
 PLANT_MARKER = "PLANTED-MODULE-RAN"
 
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
-LAUNCH = re.compile(r"(?<![^ \t|&;(])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()]|[<>](?!\()|\Z)")
+LAUNCH = re.compile(r"(?<![^ \t|&;()`])python3 -I (tools/[\w.-]+\.py)(?=[ \t|&;()]|[<>](?!\()|\Z)")
+# What rule 3's left edge reads before a `)` that ends a case pattern.
+CASE_ARM = re.compile(r"(?:^[ \t]*|\bcase[ \t]+[^ \t]+[ \t]+in[ \t]+|;[;&][ \t]*)\(?[\w.*?-]+(?:\|[\w.*?-]+)*\)\Z")
 PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.py[zw]?(?![\w])", re.IGNORECASE)
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
@@ -274,14 +302,25 @@ def runs_shell_c(line: str) -> bool:
     return bool(SHELL_WORD.search(line)) and bool(C_CLUSTER.search(line))
 
 
+def left_edge(line: str, start: int) -> bool:
+    """True when rule 3's left edge holds before line[start]."""
+    before = line[:start]
+    if before.endswith("`"):
+        before = before[:-1]
+        return before.count("`") % 2 == 0 and (not before or before[-1] in " \t|&;(=")
+    if before.endswith(")"):
+        return bool(CASE_ARM.search(before))
+    return True
+
+
 def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]:
     """Return (refused lines as (reason, line), launches as (script, counted))."""
     refused: list[tuple[str, str]] = []
     launches: list[tuple[str, bool]] = []
     for line in text.replace("\\\n", "").split("\n"):
         comment = line.lstrip(" \t").startswith("#")
-        launches += [(m.group(1), not comment) for m in LAUNCH.finditer(line)]
-        rest = LAUNCH.sub(" ", line)
+        launches += [(m.group(1), not comment) for m in LAUNCH.finditer(line) if left_edge(line, m.start())]
+        rest = LAUNCH.sub(lambda m: " " if left_edge(line, m.start()) else m.group(0), line)
         if SHIM.search(line):
             refused.append(("BASH_ENV, GITHUB_PATH, or an ENV or PATH assignment, which can redirect python3", line.strip()))
         if runs_shell_c(line):
@@ -605,18 +644,45 @@ RUN_CASES = [
     (f"$python3 -I {X}", True),
     (f'v="$python3 -I {X}"', True),
     # Rule 3's left edge: python3 directly after any character other than a
-    # space, a tab, |, &, ; or ( is not a launch. Bash runs {,x}python3 as
-    # `python3 xpython3`, $(echo i)python3 as ipython3, ${v}python3 as a
-    # command whose name starts with the value of v, a quoted python3 as text
-    # that echo prints, x=python3 -I tools/x.py as the command -I with x set
-    # to python3, and the expansion, with v set to 1, as python3 with the
-    # script word tools/x.py|w, which is not a file.
+    # space, a tab, |, &, ;, (, an opening backquote or a ) that ends a case
+    # pattern is not a launch. Bash runs {,x}python3 as `python3 xpython3`,
+    # $(echo i)python3 as ipython3, ${v}python3 as a command whose name starts
+    # with the value of v, a quoted python3 as text that echo prints,
+    # x=python3 -I tools/x.py as the command -I with x set to python3, and the
+    # expansion, with v set to 1, as python3 with the script word
+    # tools/x.py|w, which is not a file.
     ("{,x}python3 -I tools/x.py", True),
     (f"$(echo i)python3 -I {X}", True),
     (f"${{v}}python3 -I {X}", True),
     (f'echo "python3 -I {X} "', True),
     (f"x=python3 -I {X}", True),
     (f"${{v:+python3 -I {X}|w}}", True),
+    # A backquote is the left edge when the scan reads it as opening a command
+    # substitution: an even number of backquotes before it on the line, and
+    # the start of the line, a space, a tab, |, &, ;, ( or = directly before
+    # it. Bash runs tools/x.py for the first. It runs the command -I with x
+    # set to python3 for the second, and ipython3 for the next 2, where the
+    # backquote closes a substitution.
+    (f"x=`python3 -I {X} | cat`", False),
+    (f"x=`echo `python3 -I {X}", True),
+    (f"`echo i`python3 -I {X}", True),
+    (f"echo '`'; `echo i`python3 -I {X}", True),
+    # A ) is the left edge when the scan reads it as ending a case pattern of
+    # letters, digits and _ . * ? -, with alternatives joined by | and an
+    # optional ( before the pattern, that starts the line after any spaces and
+    # tabs, or follows `case`, a word and `in`, or a ;; ;& or ;;& arm end.
+    # With a set to a, bash runs tools/x.py for the first 4. It runs the
+    # command `in` for the next 2, reads a syntax error and runs nothing for
+    # the one after them, and runs tools/x.py for the last, which the scan
+    # refuses by design, since its pattern holds quotes.
+    (f'case "$a" in a)python3 -I {X};; esac', False),
+    (f'case "$a" in\n  a|-.?_*)python3 -I {X};;\nesac', False),
+    (f'case "$a" in b) true;; (a)python3 -I {X};; esac', False),
+    (f'case "$a" in b) true;;& a)python3 -I {X};; esac', False),
+    (f"$(echo in i)python3 -I {X}", True),
+    (f"case a in a) $(echo in i)python3 -I {X};; esac", True),
+    (f"echo i)python3 -I {X}", True),
+    (f'case "$a" in "a")python3 -I {X};; esac', True),
     ("bash -c true", True),
     ("sh -c 'echo ok'", True),
     ('bash -c "$CMD"', True),
@@ -956,12 +1022,13 @@ def self_test() -> list[str]:
                 elif e + c in ("<(", ">(") and (not refused or (X, True) in launches):
                     errors.append(f"{pair}: expected a finding and no counted launch of {X}")
         # Rule 3's left edge, character by character, over the same sample:
-        # each character of the left edge, and a newline, which check_run
-        # reads as the start of a line, put directly before
-        # `python3 -I tools/x.py` gives no finding and exactly 1 counted
-        # launch, and every other character of the sample gives a finding and
-        # no counted launch.
-        left = " \t|&;(\n"
+        # put directly before `python3 -I tools/x.py`, each of a space, a tab,
+        # |, &, ; and (, a backquote, which opens a command substitution at
+        # the start of a line, and a newline, which check_run reads as the
+        # start of a line, gives no finding and exactly 1 counted launch, and
+        # every other character of the sample gives a finding and no counted
+        # launch, among them a ), since no case pattern comes before it.
+        left = " \t|&;(`\n"
         for c in EDGE_SAMPLE:
             refused, launches = check_run(f"{c}python3 -I {X}")
             if c in left and (refused, launches) != ([], [(X, True)]):
