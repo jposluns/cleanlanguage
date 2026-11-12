@@ -2,10 +2,10 @@
 """Lint: the repository's sources carry no internal review-history labels.
 
 A comment or docstring that names the review pass or the finding that once motivated it, such as
-"(round 7)", "(fix round 16, M1)", "(F1)", "finding S3", "finding 17", "VERIFY-2" or "claude QA
-round 10", or that credits
-a model family with a finding, such as "codex reproduced" or "the gemini seed", means nothing to a
-later reader and mixes numbering schemes. The text states the reason itself instead.
+"(round-7)", "(fix-round-16, M1)", "(F1)", "finding S3", "finding #17", "VERIFY-2" or "claude QA
+round-10", or that credits a model family with a finding, such as "codex reproduced" or "the gemini
+seed", means nothing to a later reader and mixes numbering schemes. Such text states the reason
+itself, in place of the label.
 
 The test scans each file in SCANNED in two ways. Every physical line is matched against
 LABEL_PATTERNS. Every prose block is matched against both sets. A prose block is, in a Python
@@ -42,14 +42,24 @@ failure, never a skip, and an allowlist entry that no longer matches a scanned l
 too, so the allowlist cannot silently go stale.
 
 A second, narrower pass, the history pass, reads every file under HISTORY_SCOPE (tools/, site-src/
-and .github/) except those UNSCANNED names with a reason, and matches each physical line against
-HISTORY_PATTERNS: the round number, the fix round, the QA round, the numbered finding and the
-numbered review pass. These name a review pass or a finding by number and match no plan or
-contract id, so the pass covers files whose ids would fail the full patterns, such as
-tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A file that cannot be read as UTF-8
-is a failure. Its residuals: it matches single lines only, so a label split across lines or written
-in words passes; it skips the files UNSCANNED names; and it reads every file under its folders,
-untracked or generated files included.
+and .github/), apart from any path with a __pycache__ folder in it and the 1 file UNSCANNED names
+with its reason, this lint, whose self-check fixtures hold the forms it catches. It matches each
+physical line against HISTORY_PATTERNS: the round number, the fix round, the QA round, the numbered
+finding and the numbered review pass of LABEL_PATTERNS, and the 2 backlog probes that the pass must
+fail on, each the git grep -i probe of its backlog row written as a case-insensitive Python pattern.
+The HistoryPatternSelfCheck case pins those 7 patterns, and the scope and the 1 skipped file are
+pinned too. These name a review pass or a finding by number and match no plan or contract id, so the
+pass covers files whose ids would fail the full patterns, such as tools/test-ci-status.sh, whose $C1
+and $C2 read as bare ids. A file that cannot be read as UTF-8 is a failure. Its residuals: it
+matches single lines only, so a label split across lines or written in words passes; it skips this
+lint; it reads every file under its folders, untracked or generated files included; and it reads no
+tracked file outside them, among them .aiqt/, the adopted governance files, .baseline/, the pinned
+upstream package, whose SPECIFICATION.md has a line that the backlog probe of numbered review rounds
+matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of
+numbered findings and rounds matches. Its accepted false failures: ordinary text in which a space
+and a digit follow the word discovery, verify, finding or round, in any case, such as a count of
+files to verify or of files found, or a plain round number that a letter or a decimal continuation
+follows, which LABEL_PATTERNS exempts, is caught, and is reworded.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -59,57 +69,60 @@ Residual: this lint is a best-effort guard, not a complete one. Its patterns are
 prose, and its residual is open-ended: a label in any phrasing, synonym or layout the patterns do
 not list passes, and no list of known gaps can close that set. Completeness over the class of
 review-history labels therefore rests on an independent search of the scanned files, not on this
-lint. The known residual forms are these: a review pass named in words ("the third review"); a
-round number, in the plain form or the colon form, that one rule exempts, because a letter of any
-script, any character of Unicode category L, follows it, directly in the plain form, as in "round
-7th" or "round 7a", and on the same line with or without a space between, a line being a physical
-line of a comment or paragraph and a line of the decoded value of a string statement, in the colon
-form, as in the text "round: 7 decimal places" or a time in microseconds written with the micro
-sign or the Greek mu, or because a decimal continuation follows it, as in "round 7.5" or "round:
-7.5"; a round number written in decimal digits other than the ASCII digits 0 to 9, such as
-Arabic-Indic or fullwidth digits, which neither form matches; a finding id of three or more capital
-letters or of more than two digits; a finding id with a hyphen or a letter suffix, such as "the F-1
-case" or "the F1a case", anywhere outside parentheses and the word "finding"; in prose, a bare id
-that follows "point " or starts with "PR" (the forms the plan uses for its open points and
-pull-request slices), exclusions the code-line bare id pattern does not make, so "point F1" is
-still caught on any line; a reviewer named other than as codex, claude or gemini; a family name
-more than two words away from its review or credit word, or credited by a verb outside REVIEW_WORD;
-in a Python file, a label split across two lines of a string that is not a statement of its own,
-such as an argument or an assigned value, which is matched line by line only; in an f-string or
-template string statement, a label inside a replacement field or its format spec, which is code
-and so is matched only line by line against LABEL_PATTERNS, never against PROSE_PATTERNS or
-across a line break, and a label that a replacement field interrupts, whose place reads as one
-space; and a bare id in code that does not use one of the letters of the code-line bare id
-pattern. Both round number forms also have false failures, accepted as low severity: a round
-number that the rule above does not exempt
-is caught in either form, even in ordinary text, whatever follows it, including the end of the
-text. Examples, not a complete list: in the colon form, a word that follows the number only on the
-next line in the sense above does not exempt it, so such a line fails until reflowed to keep the
-word on the line of the number; in the plain form, a word after a space does not exempt it; in
-either form, a number that a bracket, a percent sign, an arrow, an underscore or a numeric
-character that is not a letter, such as superscript two, a vulgar fraction or a Roman numeral sign,
-follows is caught; and in a Python file, where both forms are matched against every physical line
-of code as well as of prose, ordinary arithmetic and identifiers in code, such as the lines
-"x = rounds - 1", "x = rounds-1" and "round2 = 3", are caught. Code lines stay matched because a
-label in a string literal that is not a statement of its own, such as an assertion message, would
-otherwise pass. A further accepted false failure: in an f-string or template string statement, the
-one space that stands for a replacement field can complete a label in the decoded text, so the text
-"fix", a field and the text "round" written together read as a fix round and are caught. A further
-accepted false failure: in a Python file, each physical line of a string statement is matched
-against LABEL_PATTERNS as source text as well as in the value, so a physical line that matches
-LABEL_PATTERNS on its own is caught there even where the value reads otherwise. Such a line can hold
-an id or a round number that the rest of the value completes into a longer id or an exempt round
-number, from a later part of an implicitly concatenated literal, from the next line after a joining
-backslash or from an escape later on the same line, as in the parts "the F1" and "00 case" or "fixed
-in round 7" and "th of the plan", whose values read as the id F100 and the exempt round 7th. A
-physical line that matches no pattern of LABEL_PATTERNS on its own is not caught this way, so a
-value that reads as a longer id or an exempt round number passes when no line of it matches on its
-own. The PatternSelfCheck case pins the forms the patterns are known to cover, a letter of each
-Unicode letter category that exempts either form, the ordinary code and prose they must not flag,
-these accepted false failures, a second round number match of each form in one searched text, the
-earlier match when both forms match one searched text and, for each Python placement, the literal
-set of forms it skips because they would end its string literal early and leave source that does not
-tokenize or parse, so a pattern weakened or widened past any of those sets fails the suite.
+lint. The known residual forms are these: a review pass named in words ("the third review"); a round
+number, in the plain form or the colon form, that one rule exempts, because a letter of any script,
+any character of Unicode category L, follows it, directly in the plain form, as in "round-7th" or
+"round-7a", and on the same line with or without a space between, a line being a physical line of a
+comment or paragraph and a line of the decoded value of a string statement, in the colon form, as in
+the text "round: 7 decimal places" or a time in microseconds written with the micro sign or the
+Greek mu, or because a decimal continuation follows it, as in "round-7.5" or "round: 7.5"; a round
+number written in decimal digits other than the ASCII digits 0 to 9, such as Arabic-Indic or
+fullwidth digits, which neither form matches; a finding id of three or more capital letters or of
+more than two digits; a finding id with a hyphen or a letter suffix, such as "the F-1 case" or "the
+F1a case", anywhere outside parentheses and the word "finding"; in prose, a bare id that follows
+"point " or starts with "PR" (the forms the plan uses for its open points and pull-request slices),
+exclusions the code-line bare id pattern does not make, so "point F1" is still caught on any line; a
+reviewer named other than as codex, claude or gemini; a family name more than two words away from
+its review or credit word, or credited by a verb outside REVIEW_WORD; in a Python file, a label
+split across two lines of a string that is not a statement of its own, such as an argument or an
+assigned value, which is matched line by line only; in an f-string or template string statement, a
+label inside a replacement field or its format spec, which is code and so is matched only line by
+line against LABEL_PATTERNS, never against PROSE_PATTERNS or across a line break, and a label that a
+replacement field interrupts, whose place reads as one space; and a bare id in code that does not
+use one of the letters of the code-line bare id pattern. Both round number forms also have false
+failures, accepted as low severity: a round number that the rule above does not exempt is caught in
+either form, even in ordinary text, whatever follows it, including the end of the text. Examples,
+not a complete list: in the colon form, a word that follows the number only on the next line in the
+sense above does not exempt it, so such a line fails until reflowed to keep the word on the line of
+the number; in the plain form, a word after a space does not exempt it; in either form, a number
+that a bracket, a percent sign, an arrow, an underscore or a numeric character that is not a letter,
+such as superscript two, a vulgar fraction or a Roman numeral sign, follows is caught; and in a
+Python file, where both forms are matched against every physical line of code as well as of prose,
+ordinary arithmetic and identifiers in code, such as the lines "x = rounds - 1", "x = rounds-1" and
+"round2 = 3", are caught. Code lines stay matched because a label in a string literal that is not a
+statement of its own, such as an assertion message, would otherwise pass. A further accepted false
+failure: in an f-string or template string statement, the one space that stands for a replacement
+field can complete a label in the decoded text, so the text "fix", a field and the text "round"
+written together read as a fix round and are caught. A further accepted false failure: ordinary text
+in which the word finding or findings and a space come before a number, such as a count of files
+found, is caught by the numbered finding pattern; the pattern is kept this wide because the history
+pass fails the word finding, a space and a digit in tools/, site-src/ and .github/ anyway, so a
+narrower pattern would pass that form nowhere there. A further accepted false failure: in a Python
+file, each physical line of a string statement is matched against LABEL_PATTERNS as source text as
+well as in the value, so a physical line that matches LABEL_PATTERNS on its own is caught there even
+where the value reads otherwise. Such a line can hold an id or a round number that the rest of the
+value completes into a longer id or an exempt round number, from a later part of an implicitly
+concatenated literal, from the next line after a joining backslash or from an escape later on the
+same line, as in the parts "the F1" and "00 case" or "fixed in round-7" and "th of the plan", whose
+values read as the id F100 and the exempt round-7th. A physical line that matches no pattern of
+LABEL_PATTERNS on its own is not caught this way, so a value that reads as a longer id or an exempt
+round number passes when no line of it matches on its own. The PatternSelfCheck case pins the forms
+the patterns are known to cover, a letter of each Unicode letter category that exempts either form,
+the ordinary code and prose they must not flag, these accepted false failures, a second round number
+match of each form in one searched text, the earlier match when both forms match one searched text
+and, for each Python placement, the literal set of forms it skips because they would end its string
+literal early and leave source that does not tokenize or parse, so a pattern weakened or widened
+past any of those sets fails the suite.
 """
 import ast
 import bisect
@@ -128,7 +141,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 
 # The files scanned with every pattern, repository-relative: the files the orchestration work owns,
-# every workflow, the 2 launch scans and the release sources.
+# every workflow, the 2 launch scans, and tools/check-release-checksum-live.py,
+# tools/test-release-checksum-live.py and tools/test-skill-release-date.py.
 SCANNED = (
     ".aiqt/config.md",
     ".claude/hooks/ask_mode_guard.py",
@@ -180,19 +194,19 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 class RoundNumberPattern:
     """The review round number pattern, whose two forms are exempt only before a letter.
 
-    One rule decides the plain form, as in "round 7", and the colon form, as in "round: 7": a round
-    number passes only when a letter of any script, a character whose Unicode category starts with
-    L, follows it, directly in the plain form and after any spaces on the same line of the searched
-    text in the colon form, or when a decimal continuation follows it. So "round 7th", "round 7a",
-    "round 7.5", "round: 7 decimal places", a time in microseconds and "round: 7.5" pass. Any
-    other ending, or the end of the text, is caught: in the plain form a space before a word, in
-    the colon form a line break before a word, and in either form a closing quote, a bracket, a
-    mark, an underscore or a numeric character that is not a letter (superscript two, a vulgar
-    fraction or a Roman numeral sign). The re module has no letter class, and its word boundary
-    counts those numeric characters and the underscore as word characters, so the letter test is
-    made in code, and search returns a match the way re.Pattern.search does. Prose is searched for
-    this pattern with its line breaks kept, so a letter on the next line never exempts the colon
-    form.
+    One rule decides the plain form, as in "round-7" or "round #7", and the colon form, as in
+    "round: 7": a round number passes only when a letter of any script, a character whose Unicode
+    category starts with L, follows it, directly in the plain form and after any spaces on the same
+    line of the searched text in the colon form, or when a decimal continuation follows it. So
+    "round-7th", "round-7a", "round-7.5", "round: 7 decimal places", a time in microseconds and
+    "round: 7.5" pass. Any other ending, or the end of the text, is caught: in the plain form a
+    space before a word, in the colon form a line break before a word, and in either form a closing
+    quote, a bracket, a mark, an underscore or a numeric character that is not a letter (superscript
+    two, a vulgar fraction or a Roman numeral sign). The re module has no letter class, and its word
+    boundary counts those numeric characters and the underscore as word characters, so the letter
+    test is made in code, and search returns a match the way re.Pattern.search does. Prose is
+    searched for this pattern with its line breaks kept, so a letter on the next line never exempts
+    the colon form.
 
     The matches of both forms are found once for each text searched and kept, so the run of
     searches made over one joined block or string value, one from every start position, costs time
@@ -265,7 +279,8 @@ LABEL_PATTERNS = (
     ("a parenthesized finding id", re.compile(r"\([A-Z]{1,2}-?[0-9]{1,2}[a-z]?(?:[,);:]| and )")),
     ("a named finding id", re.compile(r"(?i)\bfindings? [A-Z]{1,2}-?[0-9]{1,2}[a-z]?\b")),
     ("a numbered finding", re.compile(r"(?i)\bfindings? #?[0-9]")),
-    # Upper case only, so that ordinary text such as "verify 3 files" passes.
+    # Upper case only, so that ordinary text in which the verb verify comes before a number passes
+    # in the files outside the history pass.
     ("a numbered review pass", re.compile(r"\b(?:DISCOVERY|VERIFY)(?: rounds?)?[- ]#?[0-9]")),
     ("a severity-numbered finding", re.compile(r"(?i)\b(?:CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+\b")),
     ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])[0-9]{1,2}\b")),
@@ -279,13 +294,22 @@ PROSE_PATTERNS = (
 ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
 
 # The history pass reads every file under these folders, line by line, against the patterns that
-# name a review pass or a numbered finding. Plan and contract ids, such as C1 or T9, match none of
-# them, so the pass needs no allowlist.
+# name a review pass or a numbered finding: 5 of LABEL_PATTERNS, and the 2 backlog probes the pass
+# must fail on, each written as its git grep -iE text with (?i) and non-capturing groups. Plan and
+# contract ids, such as C1 or T9, match none of them, so the pass needs no allowlist.
 HISTORY_SCOPE = ("tools", "site-src", ".github")
-HISTORY_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
-                 "a numbered review pass")
-HISTORY_PATTERNS = tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_NAMES)
-# Files in HISTORY_SCOPE that the history pass skips, each with its reason.
+HISTORY_LABEL_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
+                       "a numbered review pass")
+HISTORY_PROBES = (
+    ("a review pass or a finding by number, as the backlog probe reads it", re.compile(
+        r"(?i)\b(?:discovery|verify)(?: round)? [0-9]|\bfinding [0-9]|\bround [0-9]")),
+    ("a numbered review round, as the backlog probe reads it", re.compile(
+        r"(?i)(?:fix|review|qa|discovery|verify) round [0-9]|round [0-9]+ (?:miss|reproduction|finding)")),
+)
+HISTORY_PATTERNS = (tuple(pattern for pattern in LABEL_PATTERNS if pattern[0] in HISTORY_LABEL_NAMES)
+                    + HISTORY_PROBES)
+# Files in HISTORY_SCOPE that the history pass skips, each with its reason. The maintainer allows
+# this one file and no other.
 UNSCANNED = {"tools/test-no-qa-labels.py": "holds the label forms it catches as self-check fixtures"}
 
 # Reviewed lines whose match is not a review label: the T1 to T15 identifiers of the armed-behaviour
@@ -687,6 +711,17 @@ class NoReviewLabels(unittest.TestCase):
         self.assertGreater(scanned, 0, "no line was scanned")
         self.assertEqual(found, [], "review-history labels found:\n" + "\n".join(found))
 
+    def test_scanned_holds_every_workflow_both_launch_scans_and_the_release_sources(self):
+        workflows = sorted(path.relative_to(ROOT).as_posix()
+                           for pattern in ("*.yml", "*.yaml")
+                           for path in (ROOT / ".github/workflows").glob(pattern))
+        self.assertGreater(len(workflows), 0, "no workflow was found")
+        for rel in workflows + ["tools/test-shell-launch-isolation.py", "tools/test-workflow-launch-isolation.py",
+                                "tools/check-release-checksum-live.py", "tools/test-release-checksum-live.py",
+                                "tools/test-skill-release-date.py"]:
+            with self.subTest(file=rel):
+                self.assertIn(rel, SCANNED)
+
     def test_allowlist_names_only_scanned_files(self):
         self.assertEqual(sorted(set(ALLOWLIST) - set(SCANNED)), [])
 
@@ -728,8 +763,62 @@ class NoReviewHistoryInScope(unittest.TestCase):
                 self.assertTrue((ROOT / rel).is_file(), rel)
                 self.assertIn(rel.split("/")[0], HISTORY_SCOPE, rel)
 
-    def test_the_history_pass_holds_each_of_its_patterns(self):
-        self.assertEqual(tuple(name for name, _ in HISTORY_PATTERNS), HISTORY_NAMES)
+    def test_the_history_scope_is_the_3_folders(self):
+        self.assertEqual(HISTORY_SCOPE, ("tools", "site-src", ".github"))
+        read = {rel.split("/")[0] for rel, _ in history_files()}
+        self.assertEqual(read, set(HISTORY_SCOPE), "a folder of the scope holds no file the pass reads")
+
+    def test_only_this_lint_is_unscanned(self):
+        self.assertEqual(sorted(UNSCANNED), ["tools/test-no-qa-labels.py"])
+
+
+class HistoryPatternSelfCheck(unittest.TestCase):
+    # The history pass, pinned literally: the 5 label patterns it shares with LABEL_PATTERNS, by
+    # name, and the 2 backlog probes, by name and pattern text.
+    LABEL_NAMES = ("a review round number", "a fix round", "a QA round", "a numbered finding",
+                   "a numbered review pass")
+    PROBES = (("a review pass or a finding by number, as the backlog probe reads it",
+               r"(?i)\b(?:discovery|verify)(?: round)? [0-9]|\bfinding [0-9]|\bround [0-9]"),
+              ("a numbered review round, as the backlog probe reads it",
+               r"(?i)(?:fix|review|qa|discovery|verify) round [0-9]|round [0-9]+ (?:miss|reproduction|finding)"))
+    # A fixture for each history pattern, which that pattern must catch.
+    FIXTURES = {"a review round number": "fixed in round-7", "a fix round": "the fix-round change",
+                "a QA round": "the QA round", "a numbered finding": "finding #3",
+                "a numbered review pass": "VERIFY round 9.1",
+                PROBES[0][0]: "Verify 3", PROBES[1][0]: "around 3 misses"}
+    # Forms the 5 label patterns pass, as a lower-case pass name or a round number that a letter or
+    # a decimal continuation exempts, and that the backlog probes, and so the history pass, catch.
+    PROBE_ONLY = ("Verify 3", "discovery 2", "round 7th", "round 7.5", "round 7a", "Verify round 9.1",
+                  "around 3 misses")
+    # Ordinary text that the history pass catches, an accepted false failure that stays caught.
+    FALSE_FAILURES = ("verify 3 files", "finding 3 files were removed", "finding 2 issues")
+
+    def test_the_history_patterns_are_pinned(self):
+        labels = dict(LABEL_PATTERNS)
+        self.assertEqual(HISTORY_PATTERNS,
+                         tuple((name, labels[name]) for name in self.LABEL_NAMES)
+                         + tuple((name, re.compile(text)) for name, text in self.PROBES))
+
+    def test_each_history_pattern_catches_its_fixture(self):
+        self.assertEqual(sorted(self.FIXTURES), sorted(name for name, _ in HISTORY_PATTERNS))
+        for name, pattern in HISTORY_PATTERNS:
+            with self.subTest(pattern=name):
+                self.assertTrue(pattern.search(self.FIXTURES[name]), self.FIXTURES[name])
+
+    def test_the_backlog_probes_catch_what_the_label_patterns_pass(self):
+        shared = HISTORY_PATTERNS[:len(self.LABEL_NAMES)]
+        for text in self.PROBE_ONLY:
+            with self.subTest(text=text):
+                self.assertEqual(labels_in(text, shared), [], text)
+                self.assertTrue(labels_in(text, HISTORY_PATTERNS), text)
+
+    def test_ordinary_counts_stay_caught(self):
+        for text in self.FALSE_FAILURES:
+            with self.subTest(text=text):
+                self.assertTrue(labels_in(text, HISTORY_PATTERNS), text)
+        for text in self.FALSE_FAILURES[1:]:
+            with self.subTest(text=text):
+                self.assertEqual(labels_in(text, LABEL_PATTERNS), ["a numbered finding"], text)
 
 
 class PatternSelfCheck(unittest.TestCase):
@@ -743,9 +832,10 @@ class PatternSelfCheck(unittest.TestCase):
     # Forms added when the guard was widened: round numbers with a colon at a label position, a
     # plural, a number sign or a hyphen, a hyphenated fix round, the credit verbs, a severity id in
     # any case, a hyphenated finding id in parentheses or after the word finding, and a
-    # letter-suffixed finding id, and a plain round number that an underscore or a numeric
-    # character that is not a letter follows, such as superscript two, one half or the Roman
-    # numeral eight, and a finding or an upper-case DISCOVERY or VERIFY pass named by its number.
+    # letter-suffixed finding id, and a plain round number that an underscore or a numeric character
+    # that is not a letter follows, such as superscript two, one half or the Roman numeral eight,
+    # and a finding or an upper-case DISCOVERY or VERIFY pass named by its number, with or without a
+    # number sign or the word round, whose decimal number the round number pattern exempts.
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
                "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
@@ -753,7 +843,7 @@ class PatternSelfCheck(unittest.TestCase):
                "round: 7]", "round: 7?", "round: 7!", "**round: 7**",
                "round 7\u00b2", "round 7\u00bd", "round 7\u2167", "round 7_",
                "VERIFY 1.1 finding 1", "DISCOVERY round 4, finding 1", "finding 17",
-               "findings 2 and 3", "VERIFY-2")
+               "findings 2 and 3", "VERIFY-2", "finding #3", "VERIFY round 9.1")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",

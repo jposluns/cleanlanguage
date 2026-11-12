@@ -12,25 +12,28 @@ name: Orchestration registry
 # The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
 # script, then drive the real hook with each stage-2 arming key against a contrast without
 # that key, together with the project orch_doctor tool. Each is its own named step, so a run
-# that omits one is visible in the step list, not only in the overall colour. A lint step fails
-# when a comment or docstring in these sources, the workflows, the 2 launch scans or the release
-# sources names a review round or a finding id instead of stating its reason, and when any line
-# of a file under tools/, site-src/ or .github/ names a review pass or a finding by number
-# (tools/test-no-qa-labels.py). A further step runs a literal regression check
-# of the /flow command's mode text, since a session follows /flow when it reads the host's mode
-# record (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line starting
-# "- MODE (", when that line is not closed on the same line or does not name exactly the 2 values
-# that the host's mode writer writes, each once and in lower case, when any line holds a bare
-# "attended" outside the text between straight double quotes that the check pairs left to right
-# on that line, or when the sentence that an absent mode record is read as unattended is missing.
-# It reads words, not meaning: outside the MODE line, the bare "attended" test is the only test
-# that can fail a line, so a third mode value named there, such as "supervised", passes, and one
-# that holds a bare "attended", such as "attended-only", fails; only the bare "attended" test skips
-# quoted text; a line that closes a quotation wrapped from the line above
-# pairs that closing quote with the next opening quote, so a bare "attended" between them passes;
-# a sentence that contradicts the absent rule passes, so does that sentence negated or inside a
-# quotation that rejects it; and the absent rule stated in other words fails. The step after it
-# runs a case for each of those verdicts (tools/test-check-flow-mode.py).
+# that omits one is visible in the step list, not only in the overall colour. A lint step
+# fails when a comment or docstring in these sources, the workflows, the 2 launch scans,
+# tools/check-release-checksum-live.py, tools/test-release-checksum-live.py or
+# tools/test-skill-release-date.py names a review round or a finding id instead of stating
+# its reason, and when any line of a file under tools/, site-src/ or .github/, apart from a
+# path with a __pycache__ folder in it and the lint itself, names a review pass or a finding
+# by number (tools/test-no-qa-labels.py). A further step runs a literal regression check of
+# the /flow command's mode text, since a session follows /flow when it reads the host's mode
+# record (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line
+# starting "- MODE (", when that line is not closed on the same line or does not name exactly
+# the 2 values that the host's mode writer writes, each once and in lower case, when any line
+# holds a bare "attended" outside the text between straight double quotes that the check
+# pairs left to right on that line, or when the sentence that an absent mode record is read
+# as unattended is missing. It reads words, not meaning: outside the MODE line, the bare
+# "attended" test is the only test that can fail a line, so a third mode value named there,
+# such as "supervised", passes, and one that holds a bare "attended", such as
+# "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
+# a quotation wrapped from the line above pairs that closing quote with the next opening
+# quote, so a bare "attended" between them passes; a sentence that contradicts the absent
+# rule passes, so does that sentence negated or inside a quotation that rejects it; and the
+# absent rule stated in other words fails. The step after it, tools/test-check-flow-mode.py,
+# runs a case for each of those verdicts.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
@@ -65,7 +68,7 @@ jobs:
         shell: bash
         run: python3 -I tools/test-orchestration-registry.py
 
-      - name: Check the orchestration sources for review-history labels
+      - name: Check the scanned sources and tools/, site-src/ and .github/ for review-history labels
         shell: bash
         run: python3 -I tools/test-no-qa-labels.py
 

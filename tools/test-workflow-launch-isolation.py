@@ -121,13 +121,12 @@ string, as in `eval "python3 -I tools/x.py"`; a `)` that closes `$(...)` or a
 subshell is in that list, and the form before it reads as a launch), a
 `python3` directly after a character that is not in rule 3's left edge, such
 as `x=`, a quote, a `{`, a `}` or a `)`, 2 spaces before `-I`, a launch whose
-words are split across continued lines,
-`(python3)` and other case arms naming python, a message or comment that names
-python or a .py file, an expression such as `${{ env.PY }}`,
-`${{ matrix.Py }}`, `${{ env.PYZ }}` or `${{ vars.PYW }}`, which rule 3 reads
-as a `.py`, `.pyz` or `.pyw` name, and `shell: sh` or `bash -e {0}`. Write a
-launch as `python3 -I tools/<name>.py`, and a command substitution that holds
-one as `$(...)`.
+words are split across continued lines, `(python3)` and other case arms naming
+python, a message or comment that names python or a .py file, an expression
+such as `${{ env.PY }}`, `${{ matrix.Py }}`, `${{ env.PYZ }}` or
+`${{ vars.PYW }}`, which rule 3 reads as a `.py`, `.pyz` or `.pyw` name, and
+`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`,
+and a command substitution that holds one as `$(...)`.
 
 Out of this scan's scope: whether the tools refer to sys.path, which
 tools/test-tools-sys-path.py checks; the pinning of `uses`, which
@@ -178,11 +177,16 @@ Residuals, named here because the scan reads text the pull request controls:
   traceback rather than a finding;
 - text built at run time, such as `eval`, a file written and then run, or a
   pipe into a shell;
-- a launch written inside a parameter expansion after a space or a `(`, such
-  as `${v:+ python3 -I tools/x.py|w}`, which the scan counts as a launch of
-  tools/x.py, while with `v=1` bash splits the expansion into words and passes
-  `tools/x.py|w` as the script; rule 3's left edge refuses the form only where
-  `python3` directly follows the `+`, as in `${v:+python3 -I tools/x.py|w}`;
+- a launch written inside a parameter expansion with `python3` directly after
+  a character of rule 3's left edge, a space, a tab, `|`, `&`, `;` or `(`, or
+  at the start of a line inside it, such as `${v:+ python3 -I tools/x.py|w}`,
+  which the scan counts as a launch of tools/x.py with no finding. With `v=1`,
+  bash splits the expansion into words at a space, a tab or a newline, so it
+  runs `python3` and passes `tools/x.py|w` as the script; after `|`, `&`, `;`
+  or `(` it splits nothing, looks for a command named, for example,
+  `;python3`, and fails with exit status 127, so nothing runs. Rule 3's left
+  edge refuses the form where any other character, such as the `+` or a `-`,
+  comes directly before `python3`, as in `${v:+python3 -I tools/x.py|w}`;
 - an edit to rule 3's right edge that the self-tests do not reach. The
   character and pair self-tests put after `.py` each character of a sample
   (each ASCII character, each code point that `str.isspace()` accepts or whose
@@ -228,8 +232,9 @@ except ImportError:
 REPO = Path(__file__).resolve().parent.parent
 
 # A floor on the launches the scan counts under .github/workflows, outside
-# shell comments, so that a scan that stops seeing launches fails. 53 was the
-# count when the floor was set; the workflows hold more launches now.
+# shell comments, so that a scan that stops seeing launches fails. The floor
+# sits below the count: the scan counted 55 in the commit that set the floor,
+# da03b1e, and counts more now.
 LAUNCH_FLOOR = 53
 
 # Launched scripts that load sibling modules, checked with planted modules.
@@ -512,8 +517,10 @@ EDGE_SAMPLE = [chr(n) for n in range(128)] + EDGE_WIDE + ["\u00e9", "\u03b1", "\
 # Run text that must be refused (True) or must pass (False).
 RUN_CASES = [
     # Forms close to the one form that are not it: another folder or suffix, a
-    # prefixed or versioned interpreter, another option, a .pyz name, and a PATH,
-    # ENV, BASH_ENV or GITHUB_PATH change that can redirect python3
+    # prefixed or versioned interpreter, another option, a .pyz name, and a
+    # PATH, ENV, BASH_ENV or GITHUB_PATH change that can redirect python3; and
+    # 2 forms that must pass, a read of PATH and a GITHUB_ENV write of a name
+    # other than BASH_ENV.
     ("tools/sub/x.py", True),
     ("python3 -I tools/sub/x.py", True),
     (f"python3 -I {X}c", True),
@@ -587,8 +594,11 @@ RUN_CASES = [
     (f'v="$python3 -I {X}"', True),
     # Rule 3's left edge: python3 directly after any character other than a
     # space, a tab, |, &, ; or ( is not a launch. Bash runs {,x}python3 as
-    # `python3 xpython3`, $(echo i)python3 as ipython3, and a quoted or assigned
-    # python3 as no command at all.
+    # `python3 xpython3`, $(echo i)python3 as ipython3, ${v}python3 as a
+    # command whose name starts with the value of v, a quoted python3 as text
+    # that echo prints, x=python3 -I tools/x.py as the command -I with x set
+    # to python3, and the expansion, with v set to 1, as python3 with the
+    # script word tools/x.py|w, which is not a file.
     ("{,x}python3 -I tools/x.py", True),
     (f"$(echo i)python3 -I {X}", True),
     (f"${{v}}python3 -I {X}", True),
@@ -934,10 +944,11 @@ def self_test() -> list[str]:
                 elif e + c in ("<(", ">(") and (not refused or (X, True) in launches):
                     errors.append(f"{pair}: expected a finding and no counted launch of {X}")
         # Rule 3's left edge, character by character, over the same sample:
-        # each character of the left edge, and a newline, which check_run reads
-        # as the start of a line, put directly before `python3 -I tools/x.py`
-        # gives no finding and exactly 1 counted launch, and every other
-        # character of the sample gives a finding and no counted launch.
+        # each character of the left edge, and a newline, which check_run
+        # reads as the start of a line, put directly before
+        # `python3 -I tools/x.py` gives no finding and exactly 1 counted
+        # launch, and every other character of the sample gives a finding and
+        # no counted launch.
         left = " \t|&;(\n"
         for c in EDGE_SAMPLE:
             refused, launches = check_run(f"{c}python3 -I {X}")

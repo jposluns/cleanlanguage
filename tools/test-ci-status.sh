@@ -2202,61 +2202,59 @@ run_contract_case "--timeout above the 86400-second bound is refused" 3 nogh own
 run_contract_case "--timeout far above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 2147484 "$C1"
 run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT" 5 3 --wait --timeout 2 --interval 86401
 
-# Wrapper path resolution fails closed. Each case runs
-# ci-status.sh from a working directory that holds a planted ci-status.py, which
-# records that it ran. The planted file must never run. RESOLVE is a space-separated
-# list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
-# first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
-# nopy (the tools directory holds ci-status.sh only). One more token may name how
-# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash, then prints
-# after=<status>; the caller must keep running and see status 3), stdin (bash
-# -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
-# pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
-# file), pathexec (ci-status.sh executed through PATH), posixsh (the wrapper run
-# by the first of dash, sh, ksh, mksh or posh that a probe confirms is not bash;
-# skipped when there is none), restricted (bash -r), setr (bash run with a
-# BASH_ENV file that runs set -r), setrsourced (bash -c runs set -r, then sources
-# ci-status.sh found through PATH, then prints after=<status>; the caller must
-# keep running and see status 3), or noread (the ci-status.py
-# beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
-# sourcedself (bash -c sources it with $0 set to the wrapper path, then prints
-# after=<status>; the caller must keep running and see status 3). Without one,
-# the wrapper runs as bash with its absolute path. A shell option token, errexit
-# (bash -e), nounset (bash -u) or pipefail (bash -o pipefail), runs that bash
-# with the option set. sourcedvars sources it from a caller that holds here, src,
-# cause, sourced and restricted, which must be left unchanged; sourcedro does the
-# same with those names (and rc) readonly, which must not turn the sourced path
-# into the executed one. hardlink runs a hard link to the copied wrapper placed
-# in the working directory, beside the planted ci-status.py, which must be
-# refused because the wrapper then has 2 links. fddecoy opens a hard link to the
-# copied wrapper (in the working directory) as fd 9, removes the link, creates a
-# regular decoy file named as /proc/self/fd/9 then reads (".../h.sh (deleted)"),
-# and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
-# that a python3 first on PATH retargets, just before the resolver runs, to a
-# directory holding a copy of the wrapper and the planted ci-status.py.
-# fdslashes, fdlink, fdslasheshold and fdlinkhold build the symlink form of
-# the descriptor decoy: a hard link to the copied wrapper opened as fd 9 and
-# removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
-# beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
-# symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
-# roflags and rotext run bash with a BASH_ENV file that marks the wrapper
-# variable __ci_status_flags (with a close-on-exec value) or __ci_status_text
-# (with a passing path) readonly, so the assignment fails: the wrapper must give
-# the cannot-find refusal, never run the gate on the value the caller set.
-# rorefuse runs a hard link to the copied wrapper, placed beside the planted
-# ci-status.py, with a BASH_ENV file that defines __ci_status_refuse as a no-op
-# and marks it readonly (readonly -f), so the wrapper cannot redefine it: the
-# wrapper must still give the cannot-find refusal, never run the planted file.
-# hold255self passes fd 255 open on the real copied wrapper and runs it normally,
-# so only the close-on-exec check can refuse it. dotdotproc and dotdotdevfd
-# open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
-# symlink to /proc/self/fd or to /dev/fd: every other layer would let that real
-# wrapper run, so only the descriptor-path test on the resolved source can
+# Wrapper path resolution fails closed. Each case runs ci-status.sh from a working
+# directory that holds a planted ci-status.py, which records that it ran. The
+# planted file must never run. RESOLVE is a space-separated list: noreadlink (a
+# readlink first on PATH that exits 1), nopyresolve (a python3 first on PATH that
+# exits 1 for python3 -I -c and runs the real python3 otherwise), nopy (the tools
+# directory holds ci-status.sh only). One more token may name how the wrapper is
+# invoked: sourced (bash -c sources it, so $0 is bash, then prints after=<status>;
+# the caller must keep running and see status 3), stdin (bash -s reads it from a
+# pipe), barename (bash ci-status.sh, found through PATH), pylink (a copied wrapper
+# beside a ci-status.py that is a symlink to the planted file), pathexec
+# (ci-status.sh executed through PATH), posixsh (the wrapper run by the first of
+# dash, sh, ksh, mksh or posh that a probe confirms is not bash; skipped when there
+# is none), restricted (bash -r), setr (bash run with a BASH_ENV file that runs set
+# -r), setrsourced (bash -c runs set -r, then sources ci-status.sh found through
+# PATH, then prints after=<status>; the caller must keep running and see status 3),
+# or noread (the ci-status.py beside the wrapper has mode 000; skipped as root,
+# where mode 000 is readable). sourcedself (bash -c sources it with $0 set to the
+# wrapper path, then prints after=<status>; the caller must keep running and see
+# status 3). Without one, the wrapper runs as bash with its absolute path. A shell
+# option token, errexit (bash -e), nounset (bash -u) or pipefail (bash -o pipefail),
+# runs that bash with the option set. sourcedvars sources it from a caller that
+# holds here, src, cause, sourced and restricted, which must be left unchanged;
+# sourcedro does the same with those names (and rc) readonly, which must not turn
+# the sourced path into the executed one. hardlink runs a hard link to the copied
+# wrapper placed in the working directory, beside the planted ci-status.py, which
+# must be refused because the wrapper then has 2 links. fddecoy opens a hard link to
+# the copied wrapper (in the working directory) as fd 9, removes the link, creates a
+# regular decoy file named as /proc/self/fd/9 then reads (".../h.sh (deleted)"), and
+# runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink that a
+# python3 first on PATH retargets, just before the resolver runs, to a directory
+# holding a copy of the wrapper and the planted ci-status.py. fdslashes, fdlink,
+# fdslasheshold and fdlinkhold build the symlink form of the descriptor decoy: a
+# hard link to the copied wrapper opened as fd 9 and removed, a symlink named
+# ".../h.sh (deleted)" to a decoy copy of the wrapper beside the planted
+# ci-status.py, and bash run on /dev//fd/9 (slashes) or on a symlink to /dev/fd/9
+# (link); the hold forms also pass fd 255 open on the decoy. roflags and rotext run
+# bash with a BASH_ENV file that marks the wrapper variable __ci_status_flags (with
+# a close-on-exec value) or __ci_status_text (with a passing path) readonly, so the
+# assignment fails: the wrapper must give the cannot-find refusal, never run the
+# gate on the value the caller set. rorefuse runs a hard link to the copied wrapper,
+# placed beside the planted ci-status.py, with a BASH_ENV file that defines
+# __ci_status_refuse as a no-op and marks it readonly (readonly -f), so the wrapper
+# cannot redefine it: the wrapper must still give the cannot-find refusal, never run
+# the planted file. hold255self passes fd 255 open on the real copied wrapper and
+# runs it normally, so only the close-on-exec check can refuse it. dotdotproc and
+# dotdotdevfd open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9,
+# with L a symlink to /proc/self/fd or to /dev/fd: every other layer would let that
+# real wrapper run, so only the descriptor-path test on the resolved source can
 # refuse it. dirfd opens the copied tools directory as fd 9 and runs bash on
-# /dev//fd/9/ci-status.sh; WANT A asserts property A only: the planted
-# ci-status.py must not run, and the wrapper must either run the real gate
-# (exit 0 with the sha line) or refuse (exit 3 with the message). Each refusal
-# has its own message, which the case checks.
+# /dev//fd/9/ci-status.sh; WANT A asserts property A only: the planted ci-status.py
+# must not run, and the wrapper must either run the real gate (exit 0 with the sha
+# line) or refuse (exit 3 with the message). Each refusal has its own message, which
+# the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found

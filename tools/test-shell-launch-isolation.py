@@ -39,22 +39,21 @@ in a backslash, as in bash, so it joins no line:
    `python3 -I "$(dirname "$0")/x.py"` is a finding. The .py path must end at
    the last character of that word that bash keeps once it removes quotes, so
    `python3 -I tools/x.py''` passes and `python3 -I tools/x.py"'"`, which bash
-   runs as `tools/x.py'`, is a finding. The rules read text, not
-   what runs. Rule 2 reads such a token inside quotes, a command substitution
-   or other text, so `"$here"/x.py`, `bash -c 'tools/x.py'`, `$PY tools/x.py`
-   and an argument after the program, such as a path that a `-c` or `-`
-   program reads, are findings. A .py or .pyz name spelt with quoting, a
-   backslash, a glob or a brace inside its suffix holds no such token;
-   Residuals names it with the other known misses. Text that reads as a launch
-   passes even when nothing runs it, as in
-   `grep -Fc 'python3 -I tools/x.py' f`; a .py path that a line names in any
-   other text, as in cp, test -f, an echo or another grep pattern, is a
-   finding until an exception names that line. LAUNCHERS names each shell
-   function that runs its arguments through a python3 -I launch, that launch,
-   and the lines of its script that may name the arguments as data. In
-   tools/pages-build.sh, gate runs its arguments as the launch
-   `python3 -I "$@"`, so a .py path that is the first word after a gate that
-   starts a line of that script is the program of that launch; the 6 gate
+   runs as `tools/x.py'`, is a finding. The rules read text, not what runs.
+   Rule 2 reads such a token inside quotes, a command substitution or other
+   text, so `"$here"/x.py`, `bash -c 'tools/x.py'`, `$PY tools/x.py` and an
+   argument after the program, such as a path that a `-c` or `-` program
+   reads, are findings. A .py or .pyz name spelt with quoting, a backslash, a
+   glob or a brace inside its suffix holds no such token; Residuals names it
+   with the other known misses. Text that reads as a launch passes even when
+   nothing runs it, as in `grep -Fc 'python3 -I tools/x.py' f`; a .py path
+   that a line names in any other text, as in cp, test -f, an echo or another
+   grep pattern, is a finding until an exception names that line. LAUNCHERS
+   names each shell function that runs its arguments through a python3 -I
+   launch, that launch, and the lines of its script that may name the
+   arguments as data. In tools/pages-build.sh, gate runs its arguments as the
+   launch `python3 -I "$@"`, so a .py path that is the first word after a gate
+   that starts a line of that script is the program of that launch; the 6 gate
    lines of that script pass rule 2 this way. The scan counts the definitions
    of the function in the forms `name()`, `name ()`, `function name` and
    `function name()`, wherever the body starts, in the script as it stands and
@@ -466,9 +465,11 @@ def kept_end(word: str, start: int) -> int:
     """Return where the last character of word that bash keeps once it removes quotes ends.
 
     word is a word that WORD matched at start in its line. The contents of a quoted part count, an
-    empty pair of quotes keeps nothing, and an unquoted backslash keeps only the character after
-    it. A backslash inside double quotes counts as kept, and a quote that the walk finds no close
-    for keeps the rest of the word: both readings can give a false finding, never a silent pass.
+    empty pair of quotes keeps nothing, and an unquoted backslash keeps only the character after it.
+    A backslash inside double quotes counts as kept, and a quote that the walk finds no close for
+    keeps the rest of the word: both readings can give a false finding, never a silent pass. A `$`
+    before a quoted part counts as kept too, so `tools/x.py$''` and `tools/x.py$""`, which bash runs
+    as `tools/x.py`, are false findings.
     """
     end = at = 0
     while at < len(word):
@@ -495,8 +496,8 @@ def line_findings(line: str, launchers: tuple[str, ...] = ()) -> list[str]:
         if not line.startswith(ISOLATED, at) or (at and line[at - 1] not in LAUNCH_BEFORE):
             found.append(INTERPRETER_REASON)
             break
-    # A .py path passes only where it ends the last character of its launch's program word that
-    # bash keeps.
+    # A .py path passes only where it ends at the last character of its launch's program word that
+    # bash keeps once it removes quotes.
     starts = [PROGRAM] + [re.compile(r"^[ \t]*" + re.escape(name) + r"[ \t]+" + WORD) for name in launchers]
     programs = {kept_end(m.group(1), m.start(1)) for start in starts for m in start.finditer(line)}
     if any(m.end() not in programs for m in PY_PATH.finditer(line)):
@@ -847,15 +848,22 @@ LINE_CASES = [
     ("python3 -I -X tools/y.py", True),
     ("python3 -I -Xutf8 tools/x.py", True),
     ("python3 -I -c 'print(1)' tools/x.py", True),
-    # The .py path must end the last character of the program word that bash keeps once it
-    # removes quotes: bash runs tools/x.py' for the first of these, and tools/x.py" or
-    # tools/x.py'' for the next 2.
+    # The .py path must end the last character of the program word that bash keeps once it removes
+    # quotes: bash runs tools/x.py' for the first of these, and tools/x.py" or tools/x.py'' for each
+    # of the next 2.
     ("python3 -I tools/x.py\"'\"", True),
     ("python3 -I tools/x.py'\"'", True),
     ("python3 -I tools/x.py\"''\"", True),
     ("python3 -I tools/x.py''", False),
     ('python3 -I tools/x.py""', False),
     ('python3 -I tools/"x.py"', False),
+    # An unquoted backslash keeps the quote after it, so the next quote opens a part that nothing
+    # closes and keeps the rest of the word: bash reads an unclosed quote in each of these.
+    ("python3 -I \\'tools/x.py'x", True),
+    ("python3 -I \\\"'tools/x.py\"", True),
+    # A $ before a quoted part counts as kept: bash runs tools/x.py for both, false findings.
+    ("python3 -I tools/x.py$''", True),
+    ('python3 -I tools/x.py$""', True),
     ('python3 -I - tools/x.py <<\'PY\'', True),
     ('python3 -I "$(tools/x.py)"', True),
     ("gate tools/x.py", True),
