@@ -193,10 +193,10 @@ Residuals, named here because the scan reads text the pull request controls:
   pipe into a shell;
 - a launch after a backquote or a `)` that rule 3's left edge reads as opening
   a command substitution or as ending a case pattern while bash reads it
-  otherwise, since the rule reads one line at a time, counts quoted backquotes
-  too and does not check that a case statement is open: the scan counts the
-  form as a launch with no finding, while bash may run another program or
-  nothing. Examples, run with a stub `python3` that prints its arguments: for
+  otherwise, since the rule reads line by line, counts quoted backquotes too
+  and does not check that a case statement is open: the scan counts the form
+  as a launch with no finding, while bash may run another program or nothing.
+  Examples, run with a stub `python3` that prints its arguments: for
   `v=$(echo`, then a line `i)python3 -I tools/x.py`, and for ``v=`echo``, then
   a line `` `python3 -I tools/x.py ``, where the `)` or the backquote closes a
   command substitution opened on the line before, and for

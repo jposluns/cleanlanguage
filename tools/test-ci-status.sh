@@ -2207,7 +2207,7 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # planted file must never run. RESOLVE is a space-separated list: noreadlink (a
 # readlink first on PATH that exits 1), nopyresolve (a python3 first on PATH that
 # exits 1 for python3 -I -c and runs the real python3 otherwise), nopy (the tools
-# directory holds ci-status.sh only). One more token may name how the wrapper is
+# directory holds ci-status.sh only). A further token may name how the wrapper is
 # invoked: sourced (bash -c sources it, so $0 is bash, then prints after=<status>;
 # the caller must keep running and see status 3), stdin (bash -s reads it from a
 # pipe), barename (bash ci-status.sh, found through PATH), pylink (a copied wrapper
