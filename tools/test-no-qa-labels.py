@@ -8,38 +8,37 @@ nothing to a later reader and mixes numbering schemes. Such text states the reas
 of the label.
 
 The test scans each file in SCANNED in two ways. Every physical line is matched against
-LABEL_PATTERNS. Every prose block is matched against both sets. A prose block is, in a Python
-file, a run of comments on consecutive lines or a string statement such as a docstring, and
-elsewhere a paragraph of consecutive non-blank lines. A comment run or a paragraph is matched line
-by line and then as one text with all its line breaks joined, so a label spread over any number of
-lines is caught and reported at the line where it starts. A string statement is matched once, as a
-whole, on its decoded value as Python builds it, and each match is reported at the physical line
-where it starts, so a label spread over its lines is caught there too. The value match does not
-split a value that Python reads as exempt or as a longer word or id into lines or parts that would
-read otherwise, but each physical line of the statement is still matched against LABEL_PATTERNS
-as source text, as every line is, so a part of such a value can still be caught on its own line,
-an accepted false failure listed below. Docstrings are found with ast.get_docstring, so the
-docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
-template string or bytes literal. Its prose is read from the parsed literal, never cut from the
-source: the decoded text of a plain or bytes literal, and only the top-level literal text of an
-f-string or template string, whose replacement fields are code and each read as one space, the whole
-field: any format spec or nested literal and, in a self-documenting field such as {x = }, the
-expression, the = and the spaces around it, which Python also puts into the value. Each part of an
-implicitly concatenated literal is read from its own delimiter, with its own prefix, and joined to
-the next part as Python joins them, with nothing between, and a backslash that ends a line of a part
-joins the next line with nothing between, while an unpaired backslash, one left over after the pairs
-before it, just before a replacement field, which escapes nothing, stays the backslash Python keeps;
-a line break inside one part, written or escaped, is the newline it is, with the space around
-it stripped. Every pattern but the round number pattern reads a line break, in a string value or
-between the lines of a comment run or paragraph, as one space; the round number pattern keeps it, so
-a letter exempts a colon round number only on the line of the number. Before Python 3.12 the
-tokenizer does not separate the fields of an f-string, so an f-string statement fails the scan
-there. PROSE_PATTERNS holds the widened bare finding id, which applies to prose only because code
-legitimately carries short identifiers such as the closure value "C1". A match on a line in
-ALLOWLIST, the reviewed set of lines whose match is a cross-reference to a named plan rather than a
-review label, passes. A scanned file that is missing, unreadable or does not tokenize and parse is a
-failure, never a skip, and an allowlist entry that no longer matches a scanned line is a failure
-too, so the allowlist cannot silently go stale.
+LABEL_PATTERNS. Every prose block is matched against both sets. A prose block is, in a Python file,
+a run of comments on consecutive lines or a string statement such as a docstring, and elsewhere a
+paragraph of consecutive non-blank lines. A comment run or a paragraph is matched line by line and
+then as 1 text with all its line breaks joined, so a label spread over any number of lines is caught
+and reported at the line where it starts. A string statement is matched 1 time, as a whole, on its
+decoded value as Python builds it, and each match is reported at the physical line where it starts,
+so a label spread over its lines is caught there too. The value match does not split a value that
+Python reads as exempt or as a longer word or id into lines or parts that would read otherwise, but
+each physical line of the statement is still matched against LABEL_PATTERNS as source text, as every
+line is, so a part of such a value can still be caught on its own line, an accepted false failure
+listed below. Docstrings are found with ast.get_docstring, so the docstring of a one-line suite
+counts too, and a string statement may be a plain, f-string, template string or bytes literal. Its
+prose is read from the parsed literal, never cut from the source: the decoded text of a plain or
+bytes literal, and only the top-level literal text of an f-string or template string, whose
+replacement fields are code and each read as 1 space, the whole field: any format spec or nested
+literal and, in a self-documenting field such as {x = }, the expression, the = and the spaces around
+it, which Python also puts into the value. Each part of an implicitly concatenated literal is read
+from its own delimiter, with its own prefix, and joined to the next part as Python joins them, with
+nothing between, and a backslash that ends a line of a part joins the next line with nothing
+between, while an unpaired backslash, one left over after the pairs before it, just before a
+replacement field, which escapes nothing, stays the backslash Python keeps; a line break inside 1
+part, written or escaped, is the newline it is, with the space around it stripped. Every pattern but
+the round number pattern reads a line break, in a string value or between the lines of a comment run
+or paragraph, as 1 space; the round number pattern keeps it, so a letter exempts a colon round
+number only on the line of the number. Before Python 3.12 the tokenizer does not separate the fields
+of an f-string, so an f-string statement fails the scan there. PROSE_PATTERNS holds the widened bare
+finding id, which applies to prose only because code legitimately carries short identifiers such as
+the closure value "C1". A match on a line in ALLOWLIST, the reviewed set of lines whose match is a
+cross-reference to a named plan rather than a review label, passes. A scanned file that is missing,
+unreadable or does not tokenize and parse is a failure, never a skip, and an allowlist entry that no
+longer matches a scanned line is a failure too, so the allowlist cannot silently go stale.
 
 A second, narrower pass, the history pass, reads every file that git ls-files lists under
 HISTORY_SCOPE (tools/, site-src/ and .github/), the files that the backlog probes read with git
@@ -52,112 +51,114 @@ sign and a number, or the word, a colon with any white space around it, an optio
 a number, each exempt where a letter follows the number, directly in the first form and after any
 spaces on the same line in the colon form, or where a decimal continuation follows it, as
 RoundNumberPattern states; the word fix, a hyphen or 1 space and the word round or rounds, in any
-case; QA, 1 space and the word round, in any case; the word finding or findings, in any case, 1
-space, an optional number sign and a digit; and DISCOVERY or VERIFY in capitals, then optionally 1
-space and the word round or rounds in lower case, then a hyphen or 1 space, an optional number sign
-and a digit. They also include the 2 backlog probes that the pass must fail on, each the git grep -i
-probe of its backlog row written as a case-insensitive Python pattern whose words are separated by 1
-space and whose word boundary counts only an ASCII letter, digit or underscore as a word character,
-as git grep does in the C locale. It skips only the fixture lines of this lint, the file
-FIXTURE_FILE names, and on each only the tokens of its fixture assignment. A fixture assignment is
-an assignment of data, made directly in the body of a class at the top level of this lint to names
-that FIXTURE_NAMES lists for that class, that lies between a comment line that is FIXTURE_START and
-the next comment line that is FIXTURE_END, where an assignment of data is one whose value holds no
-call, lambda, comprehension or formatted string, and a fixture line is a line of it that holds no
-comment. A line of a fixture assignment that holds any other token of a statement, such as a
-semicolon or a second statement before or after the assignment, is a failure; indentation, line ends
-and comments are not tokens of a statement. Every other line of this lint is read: its docstrings,
-its comments and its test code, and any comment inside a fixture block, or other statement there on
-a line that holds no fixture assignment, an assignment to another name or in a function or a nested
-class among them, and a string line that reads as a marker opens and closes no block. The
-HistoryPatternSelfCheck case pins those 7 patterns and the forms that HISTORY_UNMATCHED holds, which
-none of them matches, and the scope, the fixture rule, among it a fixture line whose value holds
-characters outside ASCII, and the reading of tracked files, against a run of git grep, are pinned
-too. A class at the top level of this lint that has a decorator is a failure, and so is a binding at
-module level, other than that class, of its name or of the name of a class that FIXTURE_NAMES lists,
-as the source spells it, such as a second class of that name, also one inside an if, try, with, for
-or while block, a function, an assignment, plain, augmented, annotated or by a walrus, an import, a
-for, with or except target, a match capture, a del, a global statement that names it, or a star
-import, which can bind any name; a binding inside a function, lambda or class body, or a
-comprehension target, is not at module level. A rebinding that the source does not spell, such as
-one through globals(), setattr or exec, passes, and so does a change that keeps the name but hides
-tests of the class from unittest, such as a base class other than unittest.TestCase, a method
-deleted from the class or a load_tests function. FixtureNameRegistry, a static check of the source,
-fails when a name in FIXTURE_NAMES is not the target of exactly 1 plain assignment made directly in
-the body of its class, when that assignment is not a fixture, or when no method of that class reads
-the name other than in an argument that it takes for a message. In the class body it counts only
-such a plain assignment, as in LABELS = () or LABELS = X = (), so a second one fails; any other
-binding of the name in the class, such as an annotated or augmented assignment, a tuple or for
-target, a def, a walrus, an import or a del in its body, or a method that rebinds the name on self,
-is not counted and passes the registry and the history pass, and some such bindings hide a fixture
-line from every self-check while the lint passes, such as PROSE: tuple = () after the fixture block
-of PatternSelfCheck. A read that it counts is an attribute of self, of cls or of the class by its
-name, as in self.PROSE, cls.PROSE or PatternSelfCheck.PROSE; a read through another expression, such
-as type(self).PROSE, self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE, is not counted,
-so a name read only that way fails. It takes for a message every positional argument after the first
-2, or after the first 1 for assertTrue, assertFalse, assertIsNone and assertIsNotNone, of a call of
-any method whose name starts with assert, and the value of a msg keyword, so a read passed as a
-later positional argument of such a call that is not a message, such as a callable argument of
-assertRaises, as in self.assertRaises(ValueError, list, self.PROSE), is not counted either, while a
-read passed as a keyword argument other than msg is counted. It cannot tell an example from other
-data, so a read that it counts passes it, whatever the read does with the value, such as a read
-through self.fail, a lambda, str(), len or subTest(msg=...), a read passed as a keyword argument of
-an assert call other than msg, such as a delta or places keyword of assertAlmostEqual or a keyword
-that assertRaises passes to its callable, or a read into an alias. The history patterns match no
-plan or contract id, so the pass covers files whose ids would fail the full patterns, such as
-tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that cannot be read as
-UTF-8, or that is missing, is a failure that names the file, and other conditions that the pass
-cannot read past are failures too, such as a fixture block left open, one that starts inside
-another, an end outside a block, a line of a fixture assignment that holds a token of a statement
-outside it, a carriage return in this lint and a git ls-files that fails. Its residuals: it matches
-single lines only, so a label split across lines or written in words passes; a line that names a
-review pass or a finding by number in a phrasing that no history pattern matches passes, such as the
-word pass after review or QA and before a number, the word review alone before a number, the word
-fix before a number with another verb, and a parenthesized or named finding id, which a pattern of
-LABEL_PATTERNS that is not a history pattern matches, and a word of a history pattern with a
-separator before its number that no history pattern reads, which the sentences after this list
-state; it reads no untracked file, as git grep reads none; it reads no tracked symbolic link and no
-submodule, as git grep reads neither, so the file that a tracked link points to is read only when it
-is itself a tracked file in the 3 folders; and it reads no tracked file outside them, among them
-.aiqt/, the adopted governance files, .baseline/, the pinned upstream package, whose
-SPECIFICATION.md has a line that the backlog probe of numbered review rounds matches, and plugin/,
-the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of numbered findings and
-rounds matches. The separators before a number that the history patterns read follow from their
-sources above. After the word finding or findings, in any case, they read 1 space and an optional
-number sign, so any other separator passes, such as a hyphen, a colon or none, as in finding-3 and
-finding:3. After DISCOVERY or VERIFY in capitals they read a hyphen or 1 space, either with an
-optional number sign, and after either word in any other case only 1 space directly before the
-digit, so any other separator passes after either word, such as a colon or none, as in VERIFY3 and
-DISCOVERY:3, and so does a hyphen or a number sign after either word other than in capitals, as in
-verify-3. Where no word before it completes another history pattern, such as the word fix before the
-word round, a round number that a letter or a decimal continuation exempts, as RoundNumberPattern
-states, is read only by the backlog probes, and only after the singular word round, in any case, and
-1 space directly before the digit, so it passes after the plural word or after any other separator,
-such as a hyphen, a colon, a number sign or none, as in rounds 7a, rounds 7.5, round-7a, round-7.5
-and round: 7 decimal places. HISTORY_UNMATCHED holds an example of each phrasing that the list of
-residuals above names for a line that names a review pass or a finding by number, and of each
-separator that these sentences give as passing, after each word that they give it for and, before a
-round number, both where a letter and where a decimal continuation exempts the number, in lower case
-other than after DISCOVERY or VERIFY in capitals, as in finding3, findings3, verify #3, discovery#3,
-VERIFY:3, round #7a, round#7.5 and round7a, an example of the plural word round before each such
-number, and examples in other cases. Its accepted false failures: ordinary text in which a space and
-a digit follow the word discovery, verify, finding or round, in any case, such as a count of files
-to verify or of files found, or a round number after the singular word round and 1 space that a
-letter or a decimal continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded;
-so is a line that the first probe matches only because a letter or digit outside ASCII comes just
-before its first word, which git grep passes under C.UTF-8 and fails under LC_ALL=C; and so is a
-line in which a capital I with a dot above, U+0130, stands for an i of a word of a history pattern,
-as in the forms DOTTED_CAPITAL_I holds, which neither probe matches under either locale and the pass
-fails, since the case-insensitive matching of Python folds that letter to i. A dotless i, U+0131, or
-a long s, U+017F, in place of an i or an s of a probe word, as in the forms C_UTF8_FOLDS holds, is
-caught too, and is no false failure, since a probe matches such a line under C.UTF-8. A further
-accepted false failure: a tracked file whose index entry and work-tree copy differ in a way that git
-grep reads otherwise, such as a file marked skip-worktree or a regular file in the index that is a
-symbolic link in the work tree, is read from the work tree, so a line there that a pattern matches
-fails the pass while git grep does not print it. The opposite case is a residual: a tracked file
-whose index entry git grep reads in place of its work-tree copy, such as a file marked
-assume-unchanged, is read from the work tree too, so a line that git grep prints from the index
-passes when the work-tree copy does not hold it.
+case, as a whole word, which no word character as the re module reads one, such as a letter, a digit
+or an underscore, directly follows; QA, 1 space and the word round, in any case, as a whole word in
+the same sense; the word finding or findings, in any case, 1 space, an optional number sign and a
+digit; and DISCOVERY or VERIFY in capitals, then optionally 1 space and the word round or rounds in
+lower case, then a hyphen or 1 space, an optional number sign and a digit. They also include the 2
+backlog probes that the pass must fail on, each the git grep -i probe of its backlog row written as
+a case-insensitive Python pattern whose words are separated by 1 space and whose word boundary
+counts only an ASCII letter, digit or underscore as a word character, as git grep does in the C
+locale. It skips only the fixture lines of this lint, the file FIXTURE_FILE names, and on each only
+the tokens of its fixture assignment. A fixture assignment is an assignment of data, made directly
+in the body of a class at the top level of this lint to names that FIXTURE_NAMES lists for that
+class, that lies between a comment line that is FIXTURE_START and the next comment line that is
+FIXTURE_END, where an assignment of data is one whose value holds no call, lambda, comprehension or
+formatted string, and a fixture line is a line of it that holds no comment. A line of a fixture
+assignment that holds any other token of a statement, such as a semicolon or a second statement
+before or after the assignment, is a failure; indentation, line ends and comments are not tokens of
+a statement. Every other line of this lint is read: its docstrings, its comments and its test code,
+and any comment inside a fixture block, or other statement there on a line that holds no fixture
+assignment, an assignment to another name or in a function or a nested class among them, and a
+string line that reads as a marker opens and closes no block. The HistoryPatternSelfCheck case pins
+those 7 patterns and the forms that HISTORY_UNMATCHED holds, which none of them matches, and the
+scope, the fixture rule, among it a fixture line whose value holds characters outside ASCII, and the
+reading of tracked files, against a run of git grep, are pinned too. A class at the top level of
+this lint that has a decorator is a failure, and so is a binding at module level, other than that
+class, of its name or of the name of a class that FIXTURE_NAMES lists, as the source spells it, such
+as a second class of that name, also one inside an if, try, with, for or while block, a function, an
+assignment, plain, augmented, annotated or by a walrus, an import, a for, with or except target, a
+match capture, a del, a global statement that names it, or a star import, which can bind any name; a
+binding inside a function, lambda or class body, or a comprehension target, is not at module level.
+A rebinding that the source does not spell, such as one through globals(), setattr or exec, passes,
+and so does a change that keeps the name but hides tests of the class from unittest, such as a base
+class other than unittest.TestCase, a method deleted from the class or a load_tests function.
+FixtureNameRegistry, a static check of the source, fails when a name in FIXTURE_NAMES is not the
+target of exactly 1 plain assignment made directly in the body of its class, when that assignment is
+not a fixture, or when no method of that class reads the name other than in an argument that it
+takes for a message. In the class body it counts only such a plain assignment, as in LABELS = () or
+LABELS = X = (), so a second one fails; any other binding of the name in the class, such as an
+annotated or augmented assignment, a tuple or for target, a def, a walrus, an import or a del in its
+body, or a method that rebinds the name on self, is not counted and passes the registry and the
+history pass, and some such bindings hide a fixture line from every self-check while the lint
+passes, such as PROSE: tuple = () after the fixture block of PatternSelfCheck. A read that it counts
+is an attribute of self, of cls or of the class by its name, as in self.PROSE, cls.PROSE or
+PatternSelfCheck.PROSE; a read through another expression, such as type(self).PROSE,
+self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE, is not counted, so a name read only
+that way fails. It takes for a message every positional argument after the first 2, or after the
+first 1 for assertTrue, assertFalse, assertIsNone and assertIsNotNone, of a call of any method whose
+name starts with assert, and the value of a msg keyword, so a read passed as a later positional
+argument of such a call that is not a message, such as a callable argument of assertRaises, as in
+self.assertRaises(ValueError, list, self.PROSE), is not counted either, while a read passed as a
+keyword argument other than msg is counted. It cannot tell an example from other data, so a read
+that it counts passes it, whatever the read does with the value, such as a read through self.fail, a
+lambda, str(), len or subTest(msg=...), a read passed as a keyword argument of an assert call other
+than msg, such as a delta or places keyword of assertAlmostEqual or a keyword that assertRaises
+passes to its callable, or a read into an alias. The history patterns match no plan or contract id,
+so the pass covers files whose ids would fail the full patterns, such as tools/test-ci-status.sh,
+whose $C1 and $C2 read as bare ids. A tracked file that cannot be read as UTF-8, or that is missing,
+is a failure that names the file, and other conditions that the pass cannot read past are failures
+too, such as a fixture block left open, one that starts inside another, an end outside a block, a
+line of a fixture assignment that holds a token of a statement outside it, a carriage return in this
+lint and a git ls-files that fails. Its residuals: it matches single lines only, so a label split
+across lines or written in words passes; a line that names a review pass or a finding by number in a
+phrasing that no history pattern matches passes, such as the word pass after review or QA and before
+a number, the word review alone before a number, the word fix before a number with another verb, and
+a parenthesized or named finding id, which a pattern of LABEL_PATTERNS that is not a history pattern
+matches, and a word of a history pattern with a separator before its number that no history pattern
+reads, which the sentences after this list state; it reads no untracked file, as git grep reads
+none; it reads no tracked symbolic link and no submodule, as git grep reads neither, so the file
+that a tracked link points to is read only when it is itself a tracked file in the 3 folders; and it
+reads no tracked file outside them, among them .aiqt/, the adopted governance files, .baseline/, the
+pinned upstream package, whose SPECIFICATION.md has a line that the backlog probe of numbered review
+rounds matches, and plugin/, the vendored hooks, whose aiqt_hooks.py has lines that the backlog
+probe of numbered findings and rounds matches. The separators before a number that the history
+patterns read follow from their sources above. After the word finding or findings, in any case, they
+read 1 space and an optional number sign, so any other separator passes, such as a hyphen, a colon
+or none, as in finding-3 and finding:3. After DISCOVERY or VERIFY in capitals they read a hyphen or
+1 space, either with an optional number sign, and after either word in any other case only 1 space
+directly before the digit, so any other separator passes after either word, such as a colon or none,
+as in VERIFY3 and DISCOVERY:3, and so does a hyphen or a number sign after either word other than in
+capitals, as in verify-3. Where no word before it completes another history pattern, such as the
+word fix, a hyphen or 1 space and the word round as a whole word, a round number that a letter or a
+decimal continuation exempts, as RoundNumberPattern states, is read only by the backlog probes, and
+only after the singular word round, in any case, and 1 space directly before the digit, so it passes
+after the plural word or after any other separator, such as a hyphen, a colon, a number sign or
+none, as in rounds 7a, rounds 7.5, round-7a, round-7.5 and round: 7 decimal places.
+HISTORY_UNMATCHED holds an example of each phrasing that the list of residuals above names for a
+line that names a review pass or a finding by number, and of each separator that these sentences
+give as passing, after each word that they give it for and, before a round number, both where a
+letter and where a decimal continuation exempts the number, in lower case other than after DISCOVERY
+or VERIFY in capitals, as in finding3, findings3, verify #3, discovery#3, VERIFY:3, round #7a,
+round#7.5 and round7a, an example of the plural word round before each such number, and examples in
+other cases. Its accepted false failures: ordinary text in which a space and a digit follow the word
+discovery, verify, finding or round, in any case, such as a count of files to verify or of files
+found, or a round number after the singular word round and 1 space that a letter or a decimal
+continuation follows, which LABEL_PATTERNS exempts, is caught, and is reworded; so is a line that
+the first probe matches only because a letter or digit outside ASCII comes just before its first
+word, which git grep passes under C.UTF-8 and fails under LC_ALL=C; and so is a line in which a
+capital I with a dot above, U+0130, stands for an i of a word of a history pattern, as in the forms
+DOTTED_CAPITAL_I holds, which neither probe matches under either locale and the pass fails, since
+the case-insensitive matching of Python folds that letter to i. A dotless i, U+0131, or a long s,
+U+017F, in place of an i or an s of a probe word, as in the forms C_UTF8_FOLDS holds, is caught too,
+and is no false failure, since a probe matches such a line under C.UTF-8. A further accepted false
+failure: a tracked file whose index entry and work-tree copy differ in a way that git grep reads
+otherwise, such as a file marked skip-worktree or a regular file in the index that is a symbolic
+link in the work tree, is read from the work tree, so a line there that a pattern matches fails the
+pass while git grep does not print it. The opposite case is a residual: a tracked file whose index
+entry git grep reads in place of its work-tree copy, such as a file marked assume-unchanged, is read
+from the work tree too, so a line that git grep prints from the index passes when the work-tree copy
+does not hold it.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -313,13 +314,13 @@ class RoundNumberPattern:
     re.Pattern.search does. Prose is searched for this pattern with its line breaks kept, so a
     letter on the next line never exempts the colon form.
 
-    The matches of both forms are found once for each text searched and kept, so the run of
+    The matches of both forms are found 1 time for each text searched and kept, so the run of
     searches made over one joined block or string value, one from every start position, costs time
-    linear in the text instead of a rescan of every remaining exempt match for each match.
-    A kept match is the match a search from any position up to its start would return: the re
-    module tests a word boundary against the whole text, not only from the search position, and
-    every match of either form starts where the word round starts and holds no other such start,
-    so a search from a later position cannot find a match that starts inside an earlier one.
+    linear in the text instead of a rescan of every remaining exempt match for each match. A kept
+    match is the match a search from any position up to its start would return: the re module tests
+    a word boundary against the whole text, not only from the search position, and every match of
+    either form starts where the word round starts and holds no other such start, so a search from a
+    later position cannot find a match that starts inside an earlier one.
     """
 
     PLAIN = re.compile(r"(?i)\brounds?[-\s]*#?[0-9]+(?!\.?[0-9])")
@@ -341,7 +342,7 @@ class RoundNumberPattern:
         return self.letter_at(text, self.SPACE.match(text, match.end()).end())
 
     def index(self, text):
-        """Find and keep the unexempt matches of both forms in text, once per text."""
+        """Find and keep the unexempt matches of both forms in text, 1 time per text."""
         if text is not self.text:
             self.plain = tuple(match for match in self.PLAIN.finditer(text)
                                if not self.letter_at(text, match.end()))
@@ -410,8 +411,8 @@ ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
 # git grep finds a boundary in no more places. A line that names a review pass or a finding by
 # number in a phrasing, or with a separator before its number, that none of them matches passes,
 # such as finding-3 or VERIFY3, and HISTORY_UNMATCHED holds the examples of such phrasings and
-# separators that the module docstring says that it holds, such as one of each phrasing that the
-# docstring's list of the history pass's residuals names for such a line. Plan and contract ids,
+# separators that the module docstring says that it holds, such as an example of each phrasing that
+# the docstring's list of the history pass's residuals names for such a line. Plan and contract ids,
 # such as C1 or T9, match none of them, so the pass needs no allowlist.
 HISTORY_SCOPE = ("tools", "site-src", ".github")
 HISTORY_LABEL_NAMES = ("a review round number", "a round of fixes", "a round of QA", "a numbered finding",
@@ -829,8 +830,8 @@ def split_hits(block):
 def value_hits(value, lines):
     """(line number, pattern name, matched text, crosses) for each match in a string value.
 
-    value and lines are what statement_value gives for one string statement. The value is searched
-    once as a whole for each pattern, from every start position: by the round number pattern with
+    value and lines are what statement_value gives for 1 string statement. The value is searched 1
+    time as a whole for each pattern, from every start position: by the round number pattern with
     its newlines kept, so a letter exempts the colon form only on the line of the number, and by
     every other pattern with each newline read as one space. A match is reported at the physical
     line where it starts, with any newline in its text shown as a space, and crosses is true when
@@ -921,7 +922,7 @@ def tracked_history_files(root=ROOT):
     """(repository-relative path, mode) for each file that git ls-files lists under HISTORY_SCOPE.
 
     The list is the index of the repository at root, the files that git grep reads, in sorted order,
-    each path once. A git ls-files that fails raises subprocess.CalledProcessError.
+    each path 1 time. A git ls-files that fails raises subprocess.CalledProcessError.
     """
     listed = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z", "--"] + list(HISTORY_SCOPE),
                             capture_output=True, check=True).stdout
@@ -1495,14 +1496,14 @@ class FixtureNameRegistry(unittest.TestCase):
     def problems(cls, text, fixture_names):
         """(class, name, problem) for each name of fixture_names that fails the registry in text.
 
-        A name fails when it is listed twice, when it is not the target of exactly 1 ast.Assign made
-        directly in the body of its class at the top level of text, when that assignment is not a
-        fixture as fixture_lines reads one, or when no method of its class reads it, as an attribute
-        of self, cls or the class by its ast.Name, other than in an argument that message_arguments
-        gives; a class that is not at the top level fails with the name None. Only an ast.Assign
-        counts, so a second binding of the name in the class by another form, such as an annotated
-        or augmented assignment, a tuple or for target, a def, a walrus, an import, a del or a
-        method that rebinds it on self, does not fail.
+        A name fails when it is listed 2 or more times, when it is not the target of exactly 1
+        ast.Assign made directly in the body of its class at the top level of text, when that
+        assignment is not a fixture as fixture_lines reads one, or when no method of its class reads
+        it, as an attribute of self, cls or the class by its ast.Name, other than in an argument
+        that message_arguments gives; a class that is not at the top level fails with the name None.
+        Only an ast.Assign counts, so a second binding of the name in the class by another form,
+        such as an annotated or augmented assignment, a tuple or for target, a def, a walrus, an
+        import, a del or a method that rebinds it on self, does not fail.
         """
         tree = ast.parse(text)
         skipped = fixture_lines(text)
@@ -1550,7 +1551,7 @@ class FixtureNameRegistry(unittest.TestCase):
         # a message argument of one, by position or as msg=, as a later positional argument of
         # assertRaises, which message_arguments gives as it gives a message, or not at all, each of
         # which fails the registry. A name that the class does not assign, and one that it assigns
-        # twice by a plain assignment, fail it too.
+        # by 2 plain assignments, fail it too.
         text = ("class NoReviewHistoryInScope:\n    {}\n    PLANTS = (\"x\",)\n    {}\n\n"
                 "    def test_x(self):\n        {{}}\n").format(FIXTURE_START, FIXTURE_END)
         unread = [("NoReviewHistoryInScope", "PLANTS", "read by no method of its class other than as a message")]
@@ -1757,11 +1758,11 @@ class PatternSelfCheck(unittest.TestCase):
     # to a label, in a statement with no label are neither caught nor an error.
     RAW_FSTRING_LABELS = ("x = 1\nrf\"the L5 {x} \\d case\"\n", "x = 1\nFR\x27the {x} L5\x27\n")
     RAW_FSTRING_CLEAN = ("x = 1\nrf\"C:\\x\\u {x} \\N done\"\n", "x = 1\nrf\"the L\\x35 {x} case\"\n")
-    # The prose of a string statement is matched once, as a whole, on its decoded value as Python
-    # builds it, never part by part and never with a line break between parts that the value
-    # lacks: parts that spell the exempt round number "round7th" over three lines, a bare id after
-    # the word point in the next part, and a longer id that two parts split, are not caught by the
-    # value match, and no physical line of these samples matches LABEL_PATTERNS on its own.
+    # The prose of a string statement is matched 1 time, as a whole, on its decoded value as Python
+    # builds it, never part by part and never with a line break between parts that the value lacks:
+    # parts that spell the exempt round number "round7th" over 3 lines, a bare id after the word
+    # point in the next part, and a longer id that 2 parts split, are not caught by the value match,
+    # and no physical line of these samples matches LABEL_PATTERNS on its own.
     VALUE_CLEAN = ("x = 1\n(\"fixed in round\"\n \"7\"\n \"th of the plan\")\n",
                    "x = 1\n(\"the open point \"\n \"C1 case\")\n",
                    "x = 1\n(\"the C1\"\n \"00 case\")\n")
