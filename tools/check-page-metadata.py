@@ -23,10 +23,11 @@ What it verifies, per page
    at that base, and git hash-object of the working-tree path gives that same
    blob, the last commit date is read at that base, so a branch whose own commits
    changed a page and then restored it is not asked to restamp it. That hash
-   applies the configured filters and follows a symbolic link, so its blob can
-   differ from the one that staging the page would keep. Otherwise, such as with
-   more than 1 merge base or in a clone without that ref, the date is read at
-   HEAD.
+   applies the attributes and filters that git reads, such as a clean filter from
+   local, global, system or environment configuration, follows a symbolic link
+   and does not see the working-tree mode, so it can differ from what staging the
+   page would keep. Otherwise, such as with more than 1 merge base or in a clone
+   without that ref, the date is read at HEAD.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -296,9 +297,11 @@ IMAGE_REFERENCES = ("og:image", "twitter:image")
 # with full history, such as a remote-less clone or a CI checkout that does
 # not create it, and then every page is dated at HEAD. With the ref,
 # last_change_date() dates a page at the 1 merge base of HEAD and this ref
-# when the page's mode and blob at HEAD equal those at that base and its
-# working-tree hash equals that blob, so a branch that changes a page and
-# then restores it is not asked to restamp it.
+# when the page's mode and blob at HEAD equal those at that base and git
+# hash-object of its working-tree path gives that blob, so a branch that
+# changes a page and then restores it is not asked to restamp it. The
+# working-tree mode is not compared, and the hash applies the attributes
+# and filters that git reads, as last_change_date() says.
 PROTECTED_REF = "refs/remotes/origin/main"
 
 
@@ -363,19 +366,24 @@ def last_change_date(relative: str) -> str | None:
     equal its mode and blob there, and git hash-object of the working-tree
     path gives that same blob, the branch's own commits left the file as that
     base has it, so the date is read there instead. git hash-object applies
-    the configured filters, such as a clean filter or a line-end conversion,
-    and follows a symbolic link, so its blob can differ from the one that
-    staging the file would keep. Otherwise the date is read at HEAD. A failed
-    git call means that the check could not run, so the gate exits 3.
+    the attributes and filters that git reads, such as those in the
+    repository's attributes files, in core.attributesFile, in the user's and
+    the system's attributes files, and in local, global, system or environment
+    configuration, such as GIT_CONFIG_COUNT; it follows a symbolic link; and
+    the working-tree mode is not compared. So the working-tree check can
+    differ from what staging the file would keep, such as for a clean filter
+    that maps an edit back to the blob at HEAD, or for an uncommitted
+    mode-only change. Otherwise the date is read at HEAD. A failed git call
+    means that the check could not run, so the gate exits 3.
     """
     revision = "HEAD"
     base = protected_base()
     if base is not None:
         here = blob_at("HEAD", relative)
-        # git hash-object of the working-tree path runs last, and only when
-        # the mode and blob at HEAD equal those at the base, so this function
-        # makes at most 6 git calls for a page, 1 of them git hash-object,
-        # where a reading at HEAD alone makes 1.
+        # git hash-object of the working-tree path runs only when the mode
+        # and blob at HEAD equal those at the base, so this function makes
+        # from 2 to 6 git calls for a page, at most 1 of them git
+        # hash-object, where the gate before this change made 1.
         if (here is not None and here == blob_at(base, relative)
                 and git("hash-object", "--", relative).strip() == here[1]):
             revision = base

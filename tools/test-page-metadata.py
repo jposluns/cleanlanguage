@@ -781,9 +781,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     mode and blob at HEAD equal its mode and blob there, and git hash-object of
     the working-tree page gives its blob at HEAD; otherwise it reads at HEAD,
     and a failed git call exits 3. Each test builds its history in a temporary
-    repository, runs git apart from the user's and the system's configuration
-    with a fixture identity and fixed commit dates, and checks the page against
-    a fixed TODAY."""
+    repository made with no template, with a fixture identity and fixed commit
+    dates, and checks the page against a fixed TODAY. isolate_git() keeps the
+    suite's and the gate's git calls from reading system and global
+    configuration, configuration from GIT_ variables, the user's and the
+    system's attributes and ignore files, and git's template directory. The
+    class still takes inputs from the machine, such as the git binary found on
+    PATH, with its version and built-in defaults, the locale, and the folder
+    that tempfile picks."""
 
     TODAY = "2026-03-01"
     MAIN_DATE = "2026-01-01"
@@ -792,13 +797,27 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         environ = mock.patch.dict(os.environ)
         environ.start()
         self.addCleanup(environ.stop)
+        self.isolate_git()
+        saved = (gate.REPO_ROOT, gate.SITE_ROOT)
+        self.addCleanup(self._restore_roots, saved)
+        self.start_repository()
+
+    def isolate_git(self) -> None:
+        # Remove every GIT_ variable, so no configuration comes from the
+        # environment; read /dev/null as the global configuration and no system
+        # configuration or system attributes file; and point HOME and
+        # XDG_CONFIG_HOME at a fresh empty folder, so git finds no user
+        # attributes or ignore file at their default paths. os.environ is
+        # restored when the test ends.
         for key in [key for key in os.environ if key.startswith("GIT_")]:
             del os.environ[key]
         os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
         os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
-        saved = (gate.REPO_ROOT, gate.SITE_ROOT)
-        self.addCleanup(self._restore_roots, saved)
-        self.start_repository()
+        os.environ["GIT_ATTR_NOSYSTEM"] = "1"
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        os.environ["HOME"] = home.name
+        os.environ["XDG_CONFIG_HOME"] = home.name
 
     def start_repository(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -808,7 +827,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         gate.SITE_ROOT = root / "site"
         gate.SITE_ROOT.mkdir()
         self.page = gate.SITE_ROOT / "index.html"
-        self.git("init", "-q", "-b", "main")
+        self.git("init", "-q", "--template=", "-b", "main")
 
     @staticmethod
     def _restore_roots(saved):
@@ -857,6 +876,45 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.assertTrue(
             any(f"the file last changed {changed}" in p and "tolerance" in p for p in problems),
             problems)
+
+    def record_gate_git(self) -> list[tuple[str, ...]]:
+        # Each git call the gate makes from here to the end of the test is
+        # recorded as its argument tuple.
+        calls: list[tuple[str, ...]] = []
+        real_git = gate.git
+
+        def recording_git(*args: str) -> str:
+            calls.append(args)
+            return real_git(*args)
+
+        patcher = mock.patch.object(gate, "git", recording_git)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+    def test_user_attributes_and_ignore_files_are_not_read(self):
+        # A user attributes file that re-encodes HTML and a user ignore file
+        # that lists the site folder, at both default paths, make git add of
+        # the page fail when git reads them; isolate_git() keeps git from
+        # reading them.
+        hostile = tempfile.TemporaryDirectory()
+        self.addCleanup(hostile.cleanup)
+        for config in (Path(hostile.name, ".config", "git"), Path(hostile.name, "xdg", "git")):
+            config.mkdir(parents=True)
+            (config / "attributes").write_text("*.html working-tree-encoding=UTF-16\n", encoding="utf-8")
+            (config / "ignore").write_text("README\nsite/\n", encoding="utf-8")
+        os.environ["HOME"] = hostile.name
+        os.environ["XDG_CONFIG_HOME"] = str(Path(hostile.name, "xdg"))
+        self.isolate_git()
+        self.change_and_restore_on_branch()
+        self.assertEqual(self.problems(), [])
+
+    def test_repository_has_no_template_files(self):
+        # git init --template= copies nothing from git's template directory,
+        # such as its sample hooks and its info/exclude file.
+        git_dir = gate.REPO_ROOT / ".git"
+        self.assertFalse((git_dir / "hooks").exists())
+        self.assertFalse((git_dir / "info").exists())
 
     def test_restored_page_with_main_stamp_passes(self):
         self.change_and_restore_on_branch()
@@ -944,6 +1002,25 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.git("merge", "-q", "--no-ff", "-m", "Merge main", "main", date="2026-02-04")
         self.assertEqual(self.problems(), [])
 
+    def test_restoring_branch_merged_into_main_passes(self):
+        # A merge the change keeps passing: main merges the restoring branch
+        # with no fast-forward, so main's tip is the first parent and the
+        # branch head the second, as a pull request's merge checkout has it.
+        # With the protected ref at main's tip before the merge, the page is
+        # read at that merge base; without the ref, it is read at HEAD, where
+        # git log follows the first parent whose page matches the merge's,
+        # which is main.
+        for protect in (True, False):
+            with self.subTest(protect=protect):
+                self.start_repository()
+                self.change_and_restore_on_branch(protect=False)
+                self.git("switch", "-q", "main")
+                self.commit_other_file("2026-02-03")
+                if protect:
+                    self.protect_main()
+                self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-04")
+                self.assertEqual(self.problems(), [])
+
     def test_criss_cross_reads_at_head_whichever_base_git_picks(self):
         # Branch a changes another file and branch b changes the page body.
         # main merges a and then b, and topic merges b and then a and restores
@@ -1028,19 +1105,33 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.commit_other_file(self.MAIN_DATE)
         self.protect_main()
         self.page.write_text(history_page(self.MAIN_DATE), encoding="utf-8")
-        calls = []
-        real_git = gate.git
-
-        def recording_git(*args: str) -> str:
-            calls.append(args)
-            return real_git(*args)
-
-        gate.git = recording_git
-        try:
-            problems = self.problems()
-        finally:
-            gate.git = real_git
+        calls = self.record_gate_git()
+        problems = self.problems()
         self.assertIn("git records no commit for this file, so its dates cannot be checked", problems)
+        self.assertFalse([call for call in calls if call[0] == "hash-object"], calls)
+
+    def test_blob_differing_from_base_reads_at_head_without_hashing(self):
+        # The branch changes the page body, so its blob at HEAD differs from
+        # the base's, and the page is read at HEAD without git hash-object.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", self.MAIN_DATE, body="Changed body.")
+        calls = self.record_gate_git()
+        self.assertEqual(gate.last_change_date("site/index.html"), "2026-02-01")
+        self.assertFalse([call for call in calls if call[0] == "hash-object"], calls)
+
+    def test_mode_differing_from_base_reads_at_head_without_hashing(self):
+        # The branch only sets the executable bit on the page, so its blob at
+        # HEAD equals the base's but its mode does not, and the page is read at
+        # HEAD without git hash-object.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.git("update-index", "--chmod=+x", "site/index.html")
+        self.git("commit", "-q", "-m", "Mode on 2026-02-01", date="2026-02-01")
+        calls = self.record_gate_git()
+        self.assertEqual(gate.last_change_date("site/index.html"), "2026-02-01")
         self.assertFalse([call for call in calls if call[0] == "hash-object"], calls)
 
 
