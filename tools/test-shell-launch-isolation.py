@@ -303,7 +303,6 @@ EXCEPTIONS = (
      'an error message that names the extractor; the line runs no Python'),
     ('tools/test-ci-status.sh',
      literal(
-         'if [ "$(grep -c -F "_actions_job(\\"$job\\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi',
          'cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"',
          'printf "raise SystemExit(7)\\n" > "$tmp/shadow/json.py"',
          'ln -s "$tools/ci-status.py" "$tmp/elsewhere/ci-status.py"',
@@ -340,6 +339,15 @@ EXCEPTIONS = (
      'the path is an argument of a python3 -I -c program whose closing quote is on the line, or on the line '
      'before it, which ends in a backslash that joins the 2; that program loads and runs the file in its '
      'isolated interpreter'),
+    ('tools/test-ci-status.sh',
+     literal(
+         'declared_jobs="$(declared_jobs_of "${here}/ci-status.py")" || declared_jobs=""',
+         'printf \'%s\\n\' "$3" > "$tmp/gate.py"',
+         'got="$(declared_jobs_of "$tmp/gate.py")" || got=""',
+     ),
+     (),
+     'the path is the argument of declared_jobs_of, whose python3 -I program loads the file in its isolated '
+     'interpreter, or the file that a printf redirection writes for it; no .py token on the line is a launch'),
     ('tools/test-ci-status.sh',
      literal(
          '% (show(starts), show(deadlines), show(gh_deadlines), show(kills), show(returns), now()))\'     '

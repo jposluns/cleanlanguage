@@ -2,58 +2,44 @@ name: CI status tests
 
 # Runs the offline tests for tools/ci-status.sh, the tool that reports the CI
 # verdict for a commit. The tests stub the GitHub CLI, so they need no network
-# and no token; they pin the required-check fail-safe (TODO 19, backlog row 66):
-# a passing commit missing any of the GitHub Actions checks Plugin manifests,
-# Skill discovery and Agent Plugins manifest (each matched by its exact display
-# name and the github-actions app) or the Cloudflare Pages build, or one that
-# cannot be read, is not reported green; presence is read from the same reading
-# as the verdict, and a required job is present only when one run of that
-# reading carries its whole display name under the github-actions app, so text
-# such as separators or a forged record inside a name cannot fabricate it,
-# though another job with the same display name does count; the
-# same set of checks compares equal regardless of API order; and a wait does not
-# overshoot its deadline. The 3 workflows that define those jobs are in the
-# paths filters, because the tests read each of them with an allow-list that
-# fails closed: the job keeps its declared display name; the on: block holds
-# only a pull_request trigger with nothing under it and a push trigger filtered
-# to main alone; the permissions block is exactly contents: read; a top-level
-# env, if present, holds only CLAUDE_CODE_VERSION, set to a dotted version
-# number such as 2.1.310; and the job with that display name holds only name,
-# runs-on set to ubuntu-latest, and steps. Each step holds an optional name and
-# either uses: naming an owner/repo action pinned to a full 40-character commit
-# sha, or run: with shell: bash, and nothing else. So that check refuses any
-# if:, needs: or continue-on-error: key, any other runner or shell, any local or
-# docker action, and any environment variable such as BASH_ENV or SHELLOPTS set
-# in the workflow, any of which could otherwise skip the job or its steps, or
-# pass over a failed step, and still read as passing; any line outside that
-# shape fails the check. That check runs in CI only in this job, which
-# tools/ci-status.sh does not insist on, so a pull request that adds such a key
-# to one of the 3 workflows and also alters or skips this job is not caught by
-# ci-status. What the commands the steps run and the pinned actions do,
-# including anything they write for later steps, and what the other jobs of the
-# workflow run, are not checked.
+# and no token; they pin the required-check fail-safe: a passing commit missing
+# any of the GitHub Actions checks Plugin manifests, Skill discovery, Agent
+# Plugins manifest and CI status tests (each matched by its exact display name
+# and the github-actions app) or the Cloudflare Pages build, or one that cannot
+# be read, is not reported green; presence is read from the same reading as the
+# verdict, and a required job is present only when one run of that reading
+# carries its whole display name under the github-actions app, so text such as
+# separators or a forged record inside a name cannot fabricate it, though
+# another job with the same display name does count; the same set of checks
+# compares equal regardless of API order; and a wait does not overshoot its
+# deadline. The tests read this workflow and the 3 workflows that define the
+# other required jobs with an allow-list that fails closed: the job keeps its
+# declared display name; the on: block holds only a pull_request trigger with
+# nothing under it and a push trigger filtered to main alone; the permissions
+# block is exactly contents: read; a top-level env, if present, holds only
+# CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310; and the
+# job with that display name holds only name, runs-on set to ubuntu-latest, and
+# steps. Each step holds an optional name and either uses: naming an owner/repo
+# action pinned to a full 40-character commit sha, or run: with shell: bash, and
+# nothing else. So that check refuses any if:, needs: or continue-on-error: key,
+# any other runner or shell, any local or docker action, and any environment
+# variable such as BASH_ENV or SHELLOPTS set in the workflow, any of which could
+# otherwise skip the job or its steps, or pass over a failed step, and still
+# read as passing; any line outside that shape fails the check. That check runs
+# in CI only in this job, which carries no paths filter, so it runs on every
+# pull request and every push to main, and tools/ci-status.sh insists on it: a
+# commit on which this job has not run, or has not passed, never reads green
+# through ci-status. The job runs the pull request's own copy of the tests, so a
+# pull request that weakens them also weakens this check of itself. What the
+# commands the steps run and the pinned actions do, including anything they
+# write for the steps after them, and what the other jobs of the workflow run,
+# are not checked.
 
 on:
   pull_request:
-    paths:
-      - "tools/ci-status.sh"
-      - "tools/ci-status.py"
-      - "tools/test-ci-status.sh"
-      - ".github/workflows/ci-status-test.yml"
-      - ".github/workflows/plugin-validate.yml"
-      - ".github/workflows/skill-discovery.yml"
-      - ".github/workflows/agent-plugin-manifest.yml"
   push:
     branches:
       - main
-    paths:
-      - "tools/ci-status.sh"
-      - "tools/ci-status.py"
-      - "tools/test-ci-status.sh"
-      - ".github/workflows/ci-status-test.yml"
-      - ".github/workflows/plugin-validate.yml"
-      - ".github/workflows/skill-discovery.yml"
-      - ".github/workflows/agent-plugin-manifest.yml"
 
 permissions:
   contents: read
