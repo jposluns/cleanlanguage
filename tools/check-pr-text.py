@@ -17,6 +17,8 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
 - an -ise spelling of a word whose -ize form the writing standard asks for, in either text, from
   a denylist of stems such as organis- and standardis-;
 - an empty or blank text, in either text, which includes a description whose body is null;
+- a code fence that is opened and never closed, in either text, reported at the line of its
+  opener, since every line after that opener is masked as fenced code;
 - in the squash message only, a line over 72 characters;
 - in the squash message only, a revision id: 7 to 40 characters from 0 to 9 and a to f, holding
   at least 1 digit and at least 1 letter, matched on the raw line, so a revision id written as
@@ -25,10 +27,13 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
 
 Before the label, dash and spelling checks, the gate masks fenced code blocks, inline code spans,
 URLs and text inside double quotes, since the writing standard keeps quoted language as it is.
-The width check skips fenced code and a line whose excess over 72 characters lies in 1 URL. The
-description has no width check, because a renderer reflows a Markdown paragraph, so an unwrapped
-paragraph is honest there, and no revision-id check, because a revision id is legitimate in a
-description. A carriage return before a line feed is dropped before any check.
+A fenced code block runs from its opener to its closing fence; when a fence is never closed, it
+runs to the end of the text, as a renderer shows those lines as code, and the unclosed fence is
+reported as a defect, so the masked lines do not pass unseen. The width check skips fenced code
+and a line whose excess over 72 characters lies in 1 URL. The description has no width check,
+because a renderer reflows a Markdown paragraph, so an unwrapped paragraph is honest there, and
+no revision-id check, because a revision id is legitimate in a description. A carriage return
+before a line feed is dropped before any check.
 
 The maintainer's decisions that this gate embodies:
 
@@ -215,21 +220,29 @@ def load_scan():
 
 
 def fenced(lines):
-    """The indexes of the lines inside a fenced code block, its fences included."""
+    """(inside, unclosed) for the fenced code blocks of lines.
+
+    inside holds the indexes of the lines inside a fenced code block, its fences included; when
+    a fence is opened and never closed, every line from its opener to the end is inside, as a
+    renderer shows them as code. unclosed is the index of that opener, or None when every fence
+    is closed.
+    """
     inside = set()
     opener = None
+    start = None
     for index, line in enumerate(lines):
         match = FENCE.match(line)
         if opener is None:
             if match:
                 opener = match.group(1)
+                start = index
                 inside.add(index)
             continue
         inside.add(index)
         if (match and match.group(1)[0] == opener[0] and len(match.group(1)) >= len(opener)
                 and not line[match.end():].strip()):
             opener = None
-    return inside
+    return inside, (start if opener is not None else None)
 
 
 def mask(line):
@@ -251,7 +264,10 @@ def check_text(report, prefix, text, squash, scan):
         report.defect(prefix, ": the text is empty")
         return
     lines = text.split("\n")
-    fence = fenced(lines)
+    fence, unclosed = fenced(lines)
+    if unclosed is not None:
+        report.defect(prefix, ":{0}: the code fence opened on line {0} is never closed".format(
+            unclosed + 1))
     prose = ["" if index in fence else mask(line) for index, line in enumerate(lines)]
     rel = prefix + ".md"
     hits = scan(rel, "\n".join(prose))

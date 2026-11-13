@@ -7,10 +7,12 @@ folder copies the gate and the label lint into a temporary tree, since the gate 
 its own path. Every review-history label and every dash a case feeds the gate is built when the
 case runs, by joining strings or from an escape, so this file carries none of them as text.
 
-The cases fall in 4 groups: a failing case for each mechanical defect class, a passing case for
-each exemption, a case for each kind of unreadable input and for a usage error, and honest texts
-that pass. The class of counts stated with their selection rule has no case: it stays a judgement
-for reviewers, because no part of it is mechanical.
+The cases fall in 4 groups: a failing case for each mechanical defect class, which includes a code
+fence that is never closed, in a description and in a squash message; a passing case for each
+exemption, which includes a closed fence that masks its lines and leaves the prose after it
+checked; a case for each kind of unreadable input and for a usage error; and honest texts that
+pass. The class of counts stated with their selection rule has no case: it stays a judgement for
+reviewers, because no part of it is mechanical.
 """
 import json
 import shutil
@@ -35,6 +37,7 @@ SHA1 = "e233a7f0c1d2b3a4e5f60718293a4b5c6d7e8f90"
 SHA256 = "a1" * 32
 CLEAN_SUBJECT = "Add the pull request text gate (#999)"
 CLEAN_SQUASH = CLEAN_SUBJECT + "\n\nAdd a gate that checks the texts of a pull request.\n"
+UNCLOSED = "the code fence opened on line {} is never closed"
 
 
 class GateCase(unittest.TestCase):
@@ -166,6 +169,16 @@ class DefectClasses(GateCase):
         self.assertResult(result, 1, 1)
         self.assertReports(result, "description: the text is empty")
 
+    def test_unclosed_fence_in_description_fails(self):
+        result = self.description("Intro.\n\n```\nThe gate " + EM_DASH + " a new check.\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:3: " + UNCLOSED.format(3))
+
+    def test_unclosed_fence_in_squash_message_fails(self):
+        result = self.squash(CLEAN_SQUASH + "\n```\n" + ROUND_LABEL + "\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "squash:5: " + UNCLOSED.format(5))
+
     def test_squash_subject_without_its_number_fails(self):
         result = self.squash("Add the pull request text gate\n\nA body.\n")
         self.assertResult(result, 1, 1)
@@ -207,6 +220,19 @@ class Exemptions(GateCase):
         fence = "```\n" + ROUND_LABEL + "\n" + "b" * 90 + "\n```\n"
         self.assertResult(self.squash(CLEAN_SQUASH + "\n" + fence), 0, 0)
         self.assertResult(self.description("Intro.\n\n" + fence), 0, 0)
+
+    def test_closed_fence_then_clean_prose_passes(self):
+        fence = "```\n" + ROUND_LABEL + "\n```\n"
+        self.assertResult(self.description("Intro.\n\n" + fence + "\nClean prose after it.\n"),
+                          0, 0)
+        self.assertResult(self.squash(CLEAN_SQUASH + "\n" + fence + "\nClean prose after it.\n"),
+                          0, 0)
+
+    def test_dash_after_closed_fence_fails(self):
+        fence = "```\ncode\n```\n"
+        result = self.description("Intro.\n\n" + fence + "\nThe gate " + EM_DASH + " new.\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:7: an em dash, U+2014")
 
     def test_label_in_backticks_passes(self):
         self.assertResult(self.description("The lint catches `" + ROUND_LABEL + "`.\n"), 0, 0)
