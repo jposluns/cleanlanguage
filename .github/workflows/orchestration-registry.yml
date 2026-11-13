@@ -16,25 +16,28 @@ name: Orchestration registry
 # fails when a comment or docstring in these sources, the workflows, the 2 launch scans,
 # tools/check-release-checksum-live.py, tools/test-release-checksum-live.py or
 # tools/test-skill-release-date.py names a review round or a finding id instead of stating
-# its reason, and when any line of a tracked file under tools/, site-src/ or .github/ names a
-# review pass or a finding by number, apart from the tokens of the marked fixture assignments
-# of the lint itself, whose lines fail when they hold any other token, such as a semicolon or
-# a second statement (tools/test-no-qa-labels.py). A further step runs a literal regression
-# check of the /flow command's mode text, since a session follows /flow when it reads the
-# host's mode record (tools/check-flow-mode.py). It fails when the file does not hold exactly
-# 1 line starting "- MODE (", when that line is not closed on the same line or does not name
-# exactly the 2 values that the host's mode writer writes, each once and in lower case, when
-# any line holds a bare "attended" outside the text between straight double quotes that the
-# check pairs left to right on that line, or when the sentence that an absent mode record is
-# read as unattended is missing. It reads words, not meaning: outside the MODE line, the bare
-# "attended" test is the only test that can fail a line, so a third mode value named there,
-# such as "supervised", passes, and one that holds a bare "attended", such as
-# "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
-# a quotation wrapped from the line above pairs that closing quote with the next opening
-# quote, so a bare "attended" between them passes; a sentence that contradicts the absent
-# rule passes, so does that sentence negated or inside a quotation that rejects it; and the
-# absent rule stated in other words fails. The step after it, tools/test-check-flow-mode.py,
-# runs a case for each of those verdicts.
+# its reason, and when a line of a tracked file under tools/, site-src/ or .github/ matches
+# one of the history patterns that the lint lists, such as the word round followed by a
+# number, the word finding followed by a number or a discovery or verify pass in capitals
+# followed by a number, or one of the 2 backlog probes, apart from the tokens of the marked
+# fixture assignments of the lint itself, whose lines fail when they hold any other token,
+# such as a semicolon or a second statement; a line that names a review pass or a finding by
+# number in a phrasing that no history pattern matches passes (tools/test-no-qa-labels.py). A
+# further step runs a literal regression check of the /flow command's mode text, since a
+# session follows /flow when it reads the host's mode record (tools/check-flow-mode.py). It
+# fails when the file does not hold exactly 1 line starting "- MODE (", when that line is not
+# closed on the same line or does not name exactly the 2 values that the host's mode writer
+# writes, each once and in lower case, when any line holds a bare "attended" outside the text
+# between straight double quotes that the check pairs left to right on that line, or when the
+# sentence that an absent mode record is read as unattended is missing. It reads words, not
+# meaning: outside the MODE line, the bare "attended" test is the only test that can fail a
+# line, so a third mode value named there, such as "supervised", passes, and one that holds a
+# bare "attended", such as "attended-only", fails; only the bare "attended" test skips quoted
+# text; a line that closes a quotation wrapped from the line above pairs that closing quote
+# with the next opening quote, so a bare "attended" between them passes; a sentence that
+# contradicts the absent rule passes, so does that sentence negated or inside a quotation
+# that rejects it; and the absent rule stated in other words fails. The step after it,
+# tools/test-check-flow-mode.py, runs a case for each of those verdicts.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable

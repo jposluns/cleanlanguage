@@ -963,8 +963,9 @@ LINE_CASES = [
     ("bash -c 'python3 -I tools/x.py'|w", False),
     ("python3 -I tools\\/x.py", False),
     # Each other character of WORD_END ends a word after an unquoted character of the word and after
-    # a closing quote: bash runs the script tools/x.py for each of these that has no (, and reports
-    # a syntax error at the ( of the other 2.
+    # a closing quote: bash runs the script tools/x.py for each of these that has no ( or <, reports
+    # a syntax error at the ( of 2 of them, and for the input redirection from w runs tools/x.py
+    # only when a file w exists, and otherwise reports that w is missing and runs nothing.
     ("python3 -I tools/x.py\tw", False),
     ("python3 -I tools/x.py|w", False),
     ("python3 -I tools/x.py&w", False),
