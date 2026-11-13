@@ -79,11 +79,12 @@ Exit codes:
   0  every page passed
   1  at least one page has a problem
   3  the check could not run: a shallow clone, whose history is
-     incomplete; a failed git call, such as git merge-base when
-     ``PROTECTED_REF`` shares no history with HEAD, or git hash-object
-     when it fails for the working-tree page, such as when a required
-     filter fails; a merge base list with no line; a page could not be
-     read; tools/sitemap-config.json could not be read or used to list the
+     incomplete; git could not be run, such as when it is not on PATH; a
+     failed git call, such as git merge-base when ``PROTECTED_REF`` shares
+     no history with HEAD, or git hash-object when it fails for the
+     working-tree page, such as when a required filter fails; a merge base
+     list with no line; a page could not be read;
+     tools/sitemap-config.json could not be read or used to list the
      pages; no content pages were found; or tools/web_metadata.py or
      tools/sitemap_engine.py could not be loaded
 """
@@ -313,9 +314,19 @@ PROTECTED_REF = "refs/remotes/origin/main"
 
 
 def git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True
-    )
+    """git's output for args, run in REPO_ROOT. Its stdout and stderr are
+    decoded as os.fsdecode() decodes a path, so a name that is not UTF-8,
+    such as a page path or a refname, reads as pathlib reads it, not as an
+    error. git that cannot be run, such as when it is not on PATH, or a git
+    call that fails means that the check could not run (exit 3)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), *args], capture_output=True,
+            encoding=sys.getfilesystemencoding(),
+            errors=sys.getfilesystemencodeerrors(),
+        )
+    except OSError as error:
+        die(f"git could not be run: {error}")
     if result.returncode != 0:
         die(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout
@@ -549,6 +560,35 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     return problems, author
 
 
+# A run of lone surrogates, each of which os.fsdecode() makes from a byte
+# that the file system encoding cannot decode, such as 0xff in a page path.
+_ESCAPED_BYTES = re.compile("([\udc80-\udcff]+)")
+
+
+def report(line: str = "") -> None:
+    """Write line and a newline to stdout. The line is first made into
+    bytes: each lone surrogate that os.fsdecode() made from a byte becomes
+    that byte, and the rest is encoded with the file system encoding, with
+    a backslash escape for a character it cannot encode. A stdout that has
+    a buffer attribute gets those bytes on that buffer, so stdout's error
+    handler is not applied, even when it is strict, and a path that is not
+    UTF-8 is named by its own bytes. A stdout that has no buffer attribute,
+    such as io.StringIO, gets them as text, decoded with the file system
+    encoding, with a backslash escape for a byte it cannot decode, so the
+    text holds no lone surrogate and, with UTF-8 as that encoding, the byte
+    0xff in such a path reads as the 4 characters \\xff."""
+    encoding = sys.getfilesystemencoding()
+    parts = _ESCAPED_BYTES.split(line + "\n")
+    data = b"".join(os.fsencode(part) if index % 2 else part.encode(encoding, "backslashreplace")
+                    for index, part in enumerate(parts))
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(data.decode(encoding, "backslashreplace"))
+        return
+    sys.stdout.flush()
+    buffer.write(data)
+
+
 def main() -> int:
     require_full_history()
     pages = content_pages()
@@ -577,17 +617,17 @@ def main() -> int:
         )
 
     if findings:
-        print("Page metadata problems found:")
+        report("Page metadata problems found:")
         for relative, problems in findings.items():
-            print(f"  {relative}")
+            report(f"  {relative}")
             for problem in problems:
-                print(f"    - {problem}")
+                report(f"    - {problem}")
         total = sum(len(v) for v in findings.values())
-        print(f"\n{total} problem(s) across {len(findings)} page(s).")
+        report(f"\n{total} problem(s) across {len(findings)} page(s).")
         return 1
 
     author = next(iter(authors), "(none)")
-    print(
+    report(
         f"All {len(pages)} content pages carry author and date metadata "
         f"consistent with git history. Author: {author}."
     )
