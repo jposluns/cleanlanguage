@@ -235,23 +235,59 @@ What it verifies
    pattern the same way, and also as able to match a file the pages load
    when the first segment of its path is 1 of ``LOADED_SEGMENTS`` (check 6)
    in any letter case: ``/assets/*``, ``/ASSETS/baseline/copy.js`` and
-   ``https://host/assets/baseline/baseline.css`` can. ``site/_redirects`` is
-   read with it: no rule there may have a source, its first field, that
-   ``reaches_page`` reads as able to match an install page or a file the
-   pages load, whatever its
-   destination and status, because a redirect sends the reader away from the
-   page and a rewrite (status 200) serves other content at its address, and
-   the same holds for a stylesheet, a script, a font or an image; a
-   blank line, and a line whose first field starts with ``#``, is skipped. So
+   ``https://host/assets/baseline/baseline.css`` can. Every rule of
+   ``site/_headers`` is read with ``reaches_page``, so a header rule under
+   ``/assets/`` fails, 1 for an exact path that the redirect reading below
+   accepts included. ``site/_redirects`` is read by ``redirect_problems``, from
+   the source of each rule, its first field, whatever its destination and
+   status, because a redirect sends the reader away from the page and a
+   rewrite (status 200) serves other content at its address, and the same
+   holds for a stylesheet, a script, a font or an image; a blank line, and a
+   line whose first field starts with ``#``, is skipped. A source that
+   ``reaches_install`` reads as able to match an install page fails. A source
+   whose first segment is 1 of ``LOADED_SEGMENTS`` in any letter case passes
+   only when all of these hold, and fails otherwise: it is an exact path
+   (``exact_path_problem``: it starts with ``/``, so it carries no scheme or
+   host, and each of its segments is not empty, is neither ``.`` nor ``..``
+   and holds only ASCII letters and digits, ``.``, ``_``, ``~`` and ``-``, so
+   it holds no ``*``, splat, ``:`` placeholder, ``%``, ``?``, ``#`` or
+   backslash and ends in no ``/``); no page of the site loads it, compared in
+   any letter case (``site_loads``: for every file under ``site/`` whose name
+   ends in ``.html`` or ``.htm``, each ``src``, ``srcset``, ``href``,
+   ``poster`` and ``data`` value on any start tag, read as the parser reads
+   it and as a text match finds it, a tag in a comment included, each
+   ``url()`` and ``@import`` of the page's text, and each ``url()`` and
+   ``@import`` of every stylesheet a page or a stylesheet loads, read from the
+   stylesheet's address, each target read as written, percent-decoded, with
+   ``.`` and ``..`` resolved and without a trailing ``/``; this reads more
+   than the loads, an ``href`` of an ``a`` element among them, and so fails
+   closed); nothing under ``site/`` occupies it, as a file, a folder, a link
+   or a page that Pages serves there without its ``.html``, and no leading
+   part of it is a file or a link, each compared in any letter case
+   (``occupied``); and ``reaches_install`` does not read it as able to match
+   an install page. A source that cannot be evaluated, because a page, a
+   stylesheet or a folder that the reading needs cannot be read or listed,
+   fails and names that input. Every other source passes. So
    ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
-   ``/* / 302``, ``/assets/baseline/baseline.css /assets/baseline/fonts.css
-   200`` and ``/assets/baseline/copy.js /assets/baseline/rail.js 302`` fail.
-   No committed source can match an install page or a file the pages load,
-   nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the release
-   writer, writes. These residuals are accepted: a rule of either file that
-   reaches an install page or a file the pages load through any matching
-   behaviour of Pages beyond that
-   reading passes. ``tools/test-release-links.py`` pins ``site/_redirects`` to
+   ``/* / 302``, ``/assets/* / 302``, ``/assets/baseline/logos/aiqt-*.svg
+   / 301``, ``/assets/baseline/baseline.css /assets/baseline/fonts.css
+   200``, ``/ASSETS/BASELINE/BASELINE.CSS / 302``,
+   ``/assets/baseline/copy.js /assets/baseline/rail.js 302`` and
+   ``/assets/baseline/logos/ / 301`` fail, and
+   ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
+   301`` passes while no page loads that path and no file occupies it. No
+   committed source can match an install page or a file the pages load,
+   nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the
+   release writer, writes; its 22 logo redirects pass as exact paths that no
+   page loads and no file occupies. These residuals are accepted: a rule of
+   either file that reaches an install page or a file the pages load through
+   any matching behaviour of Pages beyond that reading passes, such as a
+   handling of letter case, of a trailing slash, of percent-encoding or of
+   ``.html`` other than the one read here; a file that a script fetches, or
+   that a CSS escape in a ``url()`` names, is not read as a load; and the
+   accepted rules redirect paths that the pages do not load, so a reader who
+   asks for such a path gets the redirect's destination, whatever it is,
+   since the reading constrains only the source. ``tools/test-release-links.py`` pins ``site/_redirects`` to
    the release writer's output, so a hand edit that adds such a rule fails that
    test, but a change to the writer, with the file written again, does not. Nor
    does the gate read a header that Cloudflare adds outside ``site/_headers``
@@ -738,11 +774,14 @@ Exit codes:
 from __future__ import annotations
 
 import functools
+import html
 import os
+import posixpath
 import re
 import stat
 import sys
 import types
+import urllib.parse
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
@@ -1076,10 +1115,22 @@ PAGE_TAGS = (
 )
 # Checks 6 and 7: the first path segment of every file the 6 committed pages load (each src, each href of a link other
 # than the canonical link, and each url() of the 3 stylesheets, read from the stylesheet's address). Every src on the 6
-# pages must be a path under 1 of them (check 6), and no rule of site/_headers or site/_redirects may have a pattern or a
-# source that can match a path under 1 of them (check 7, reaches_page), so neither file can change, redirect or replace
-# what the pages load. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
+# pages must be a path under 1 of them (check 6). No rule of site/_headers may have a pattern that can match a path under
+# 1 of them (check 7, reaches_page). A source of site/_redirects under 1 of them passes only as an exact path that no page
+# of the site loads, that nothing under site/ occupies and that lies beneath no file, each compared in any letter case
+# (check 7, redirect_problems); any other source under 1 of them fails. So neither file can change, redirect or replace
+# what the pages load as this gate reads it; the accepted rules redirect paths that the pages do not load, and any
+# matching behaviour of Cloudflare Pages beyond this reading, such as another handling of letter case or of a trailing
+# slash, is a residual. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
 LOADED_SEGMENTS = ("assets",)
+# Check 7: a segment of an exact source of site/_redirects under 1 of LOADED_SEGMENTS (exact_path_problem()).
+EXACT_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+# Check 7: the attributes whose values the redirect reading reads as loads, on any start tag of any page (site_loads()).
+LOAD_ATTRIBUTES = ("data", "href", "poster", "src", "srcset")
+# Check 7: the same attributes as a text match finds them, a tag in a comment or a script included.
+LOAD_TEXT = re.compile(r"""(?<![\w-])(data|href|poster|src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", re.I)
+# Check 7: a url() or an @import of a page or a stylesheet, quoted or not (site_loads()).
+CSS_LOAD = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^"')\s]+))|@import\s+(?:"([^"]*)"|'([^']*)')""", re.I)
 # Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
 # file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
@@ -1746,16 +1797,237 @@ def head_problems(where: str, text: str, parser: PageParser) -> list[str]:
     return list(problems)
 
 
+def fold(path: str) -> str:
+    """Check 7: a path as the redirect reading compares it, in any letter case."""
+    return path.lower()
+
+
+def exact_path_problem(source: str) -> str | None:
+    """Check 7: why a source of site/_redirects is not an exact path (None if it is 1): it starts with "/", so it
+    carries no scheme or host, and each of its segments is EXACT_SEGMENT and neither "." nor "..", so it holds no *, no
+    splat, no : placeholder, no %, ?, # or backslash, no empty segment and no trailing "/"."""
+    if not source.startswith("/"):
+        return "it does not start with /, so it can carry a scheme and a host"
+    for segment in source.split("/")[1:]:
+        if not segment:
+            return "it has an empty segment or a trailing /"
+        if segment in (".", ".."):
+            return f'it has the segment "{segment}"'
+        if not EXACT_SEGMENT.fullmatch(segment):
+            return (f"its segment {segment} holds a character other than ASCII letters, digits, ., _, ~ and -, such as "
+                    "*, a : placeholder, %, ?, # or a backslash")
+    return None
+
+
+class LoadReader(HTMLParser):
+    """Check 7: every value of an attribute of LOAD_ATTRIBUTES on every start tag of a page, in the order the page gives
+    them, a repeated attribute included, and whether the tag is a link whose rel holds stylesheet."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.values: list[tuple[str, str, bool]] = []
+
+    def handle_starttag(self, tag: str, attrs_list) -> None:
+        rel = " ".join((v or "") for k, v in attrs_list if k.lower() == "rel").lower().split()
+        sheet = tag == "link" and "stylesheet" in rel
+        for k, v in attrs_list:
+            if k.lower() in LOAD_ATTRIBUTES and v is not None:
+                self.values.append((k.lower(), v, sheet))
+
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        self.handle_starttag(tag, attrs_list)
+
+
+def load_targets(address: str, value: str, srcset: bool = False) -> list[str]:
+    """Check 7: the targets of an attribute value or url() read from the file at address, each resolved from that
+    address: the candidates of a srcset, a backslash read as "/" and tabs and line breaks dropped, as a browser reads a
+    URL. A target whose scheme is not http or https (data:, mailto:) loads nothing from the site and is left out."""
+    value = value.replace("\\", "/")
+    for character in "\t\n\r":
+        value = value.replace(character, "")
+    parts = [candidate.strip(" \f").split(" ")[0] for candidate in value.split(",")] if srcset else [value.strip(" \f")]
+    targets = []
+    for part in parts:
+        if not part:
+            continue
+        joined = urllib.parse.urlsplit(urllib.parse.urljoin(address, part))
+        if joined.scheme in ("", "http", "https"):
+            targets.append(joined.path)
+    return targets
+
+
+def path_forms(path: str) -> set[str]:
+    """Check 7: the forms of a load's path that a server may answer at, folded: as written, percent-decoded, with runs
+    of "/" collapsed, with "." and ".." resolved, and without a trailing "/"."""
+    forms = {path, urllib.parse.unquote(path)}
+    for form in list(forms):
+        collapsed = re.sub("/+", "/", form)
+        forms |= {collapsed, posixpath.normpath(collapsed) if collapsed else collapsed}
+    forms |= {form.rstrip("/") for form in forms}
+    return {fold(form) for form in forms if form}
+
+
+def list_folder(folder: Path) -> list[os.DirEntry]:
+    """Check 7: the entries of a folder; an OSError passes through, so a folder that cannot be listed is named."""
+    with os.scandir(folder) as entries:
+        return list(entries)
+
+
+@functools.cache
+def site_loads() -> tuple[dict[str, list[str]], list[str]]:
+    """Check 7: the files that the pages of the site load, read from the committed tree: for every page under site/
+    (each file whose name ends in .html or .htm, in any letter case, at any depth, in folders read without following
+    a link), each value of an attribute of LOAD_ATTRIBUTES (src, srcset, href, poster and data) on any start tag,
+    read both as the parser reads the page and as a text match finds it, a tag in a comment or a script included, and
+    each url() and @import of the page's text; and each url() and @import of every stylesheet that a page or another
+    stylesheet loads (a link whose rel holds stylesheet, or a target whose path ends in .css), read from the
+    stylesheet's address. This reads more than the loads, and fails closed: an href of an a element counts as a load.
+    It returns the path forms of each target (path_forms()), each with where it is read, and each input that could not
+    be read or listed."""
+    site = REPO_ROOT / "site"
+    loads: dict[str, list[str]] = {}
+    unread: list[str] = []
+    sheets: list[str] = []
+
+    def add(address: str, where: str, value: str, srcset: bool = False, sheet: bool = False) -> None:
+        for target in load_targets(address, value, srcset):
+            for form in path_forms(target):
+                loads.setdefault(form, []).append(f"{where} ({target})")
+            if sheet or fold(target).endswith(".css"):
+                sheets.append(target)
+
+    def css(address: str, where: str, text: str) -> None:
+        for match in CSS_LOAD.finditer(text):
+            add(address, where, next(group for group in match.groups() if group is not None))
+
+    pages: list[Path] = []
+    folders = [site]
+    while folders:
+        folder = folders.pop()
+        try:
+            entries = list_folder(folder)
+        except OSError as error:
+            unread.append(f"the folder {folder.relative_to(REPO_ROOT)} could not be listed: {error}")
+            continue
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                folders.append(Path(entry.path))
+            elif fold(entry.name).endswith((".html", ".htm")):
+                pages.append(Path(entry.path))
+    for page in sorted(pages):
+        where = str(page.relative_to(REPO_ROOT))
+        address = "/" + str(page.relative_to(site))
+        try:
+            text = page.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            unread.append(f"the page {where} could not be read: {error}")
+            continue
+        reader = LoadReader()
+        reader.feed(text)
+        reader.close()
+        for name, value, sheet in reader.values:
+            add(address, where, value, name == "srcset", sheet)
+        for match in LOAD_TEXT.finditer(text):
+            add(address, where, html.unescape(match.group(2) or match.group(3) or match.group(4)),
+                fold(match.group(1)) == "srcset")
+        css(address, where, text)
+    done: set[str] = set()
+    while sheets:
+        target = sheets.pop()
+        if fold(target) in done:
+            continue
+        done.add(fold(target))
+        relative = posixpath.normpath(urllib.parse.unquote(target)).lstrip("/")
+        path = site / relative
+        try:
+            if relative.startswith("..") or path.is_symlink():
+                raise OSError("it does not lie under site/ as a file")
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            unread.append(f"the stylesheet {target}, read from site/{relative}, could not be read: {error}")
+            continue
+        css(target, f"site/{relative}", text)
+    return loads, unread
+
+
+def occupied(source: str) -> tuple[str | None, str | None]:
+    """Check 7: what under site/ occupies an exact source, compared in any letter case: an entry at its path, as a
+    file, a folder or a link, or a page there that Pages serves without its .html; or an entry at a leading part of
+    its path that is not a folder (a file or a link). It returns the entry found and the folder that could not be
+    listed, each None if there is none."""
+    segments = source.split("/")[1:]
+    folders = [REPO_ROOT / "site"]
+    for depth, segment in enumerate(segments):
+        last = depth == len(segments) - 1
+        names = {fold(segment)} | ({fold(segment) + ".html", fold(segment) + ".htm"} if last else set())
+        found: list[Path] = []
+        for folder in folders:
+            try:
+                entries = list_folder(folder)
+            except OSError as error:
+                return None, f"the folder {folder.relative_to(REPO_ROOT)} could not be listed: {error}"
+            for entry in entries:
+                if fold(entry.name) not in names:
+                    continue
+                if last or not entry.is_dir(follow_symlinks=False):
+                    return str(Path(entry.path).relative_to(REPO_ROOT)), None
+                found.append(Path(entry.path))
+        if not found:
+            return None, None
+        folders = found
+    return None, None
+
+
 def redirect_problems(redirects: str) -> list[str]:
-    """Check 7: each rule of site/_redirects whose source can match an install page or a file the pages load, read
-    with reaches_page."""
+    """Check 7: each rule of site/_redirects whose source fails the redirect reading. A source fails when reaches_install
+    reads it as able to match an install page. A source whose first segment is 1 of LOADED_SEGMENTS, in any letter
+    case, passes only when all of these hold, and fails otherwise: it is an exact path (exact_path_problem()); no page
+    of the site loads it, compared in any letter case (site_loads()); nothing under site/ occupies it, compared in any
+    letter case, and no leading part of it is a file or a link (occupied()); and reaches_install does not read it as
+    able to match an install page. A source that cannot be evaluated, because a page, a stylesheet or a folder that the
+    reading needs cannot be read or listed, fails and names that input. Every other source passes, whatever its
+    destination and status."""
     problems: list[str] = []
+    reach = ("which can match an install page or a file the install pages load; a rule there can send the reader away "
+             "from the page or serve other content.")
     for number, line in enumerate(redirects.splitlines(), 1):
         fields = line.split()
-        if fields and not fields[0].startswith("#") and reaches_page(fields[0]):
-            problems.append(f"site/_redirects line {number} has the source {fields[0]}, which can match an install "
-                            "page or a file the install pages load; a rule there can send the reader away from the "
-                            "page or serve other content.")
+        if not fields or fields[0].startswith("#"):
+            continue
+        source = fields[0]
+        head = f"site/_redirects line {number} has the source {source}, "
+        if reaches_install(source):
+            problems.append(head + reach)
+            continue
+        if fold(path_segment(source)) not in LOADED_SEGMENTS:
+            continue
+        inexact = exact_path_problem(source)
+        if inexact:
+            problems.append(head + reach + f" Under a loaded segment only an exact path passes, and {inexact}.")
+            continue
+        loads, unread = site_loads()
+        if unread:
+            problems.append(head + "which could not be evaluated: " + "; ".join(unread) + ". A source under a loaded "
+                            "segment passes only when every page, stylesheet and folder that its reading needs can be "
+                            "read.")
+            continue
+        if fold(source) in loads:
+            install = [where for where in loads[fold(source)] if where.startswith("site/install/")]
+            shown = ", ".join(sorted(set(install or loads[fold(source)])))
+            if install:
+                problems.append(head + reach + f" It is, in some letter case, a file that {shown} loads.")
+            else:
+                problems.append(head + f"which is, in some letter case, a file that a page of the site loads ({shown}); "
+                                "a rule there can send the reader away from that file or serve other content.")
+            continue
+        entry, unlisted = occupied(source)
+        if unlisted:
+            problems.append(head + f"which could not be evaluated: {unlisted}. A source under a loaded segment passes "
+                            "only when every page, stylesheet and folder that its reading needs can be read.")
+        elif entry is not None:
+            problems.append(head + f"at or above which {entry} exists, compared in any letter case; under a loaded "
+                            "segment only a path that no file, folder or link of the tree occupies, and that lies "
+                            "beneath no file, passes, so a rule there cannot hide or replace a file of the site.")
     return problems
 
 
@@ -2018,9 +2290,10 @@ def reaches_install(pattern: str) -> bool:
 
 
 def reaches_page(pattern: str) -> bool:
-    """Whether a URL pattern of site/_headers or a source of site/_redirects can match an install page or a file the
-    pages load (check 7): reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any letter
-    case."""
+    """Whether a URL pattern of site/_headers can match an install page or a file the pages load (check 7):
+    reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any letter case. Every rule of
+    site/_headers is read with it; site/_redirects is read by redirect_problems, which accepts under LOADED_SEGMENTS
+    only an exact path that no page loads and no file occupies."""
     return reaches_install(pattern) or path_segment(pattern).lower() in LOADED_SEGMENTS
 
 
@@ -2140,8 +2413,11 @@ def main() -> int:
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
         "rule that can match an install page or a file the pages load sets or detaches any header but those of "
-        "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
-        "or a file the pages load, and no Pages Function, site/_worker.js, Wrangler configuration or root "
+        "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page, "
+        "and each source under the loaded segments is an exact path that no page of the site loads, that nothing "
+        "under site/ occupies and that lies beneath no file, each compared in any letter case (any matching of "
+        "Cloudflare Pages beyond this reading is not read, and the accepted rules redirect paths that the pages do "
+        "not load), and no Pages Function, site/_worker.js, Wrangler configuration or root "
         "package.json, runtime.txt, requirements.txt, Pipfile or Gemfile exists."
     )
     return 0

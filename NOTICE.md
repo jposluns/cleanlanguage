@@ -23,7 +23,7 @@ Clean Language is developed independently. If you know of another project workin
 
 ## Site template
 
-Site template: the shared site template (baseline 1.11.4, https://posluns.ca/baseline/) is dedicated to the public domain under CC0 1.0 Universal, with 2 exceptions. The fonts Newsreader, Public Sans, JetBrains Mono and Dancing Script are licensed by their authors under the SIL Open Font License 1.1; their licence files are in assets/baseline/fonts/. The GitHub Invertocat, the LinkedIn [in] bug and the ORCID iD icon in assets/baseline/marks/ are trademarks of their owners, used under their owners' published terms as recorded in assets/baseline/marks/NOTICE.md, and are not covered by the CC0 grant.
+Site template: the shared site template (baseline 1.13.0, https://posluns.ca/baseline/) is dedicated to the public domain under CC0 1.0 Universal, with 3 exceptions. The fonts Newsreader, Public Sans, JetBrains Mono and Dancing Script and, where present, the card builder's Inter fonts are licensed by their authors under the SIL Open Font License 1.1; each font's licence file travels with its font files. The GitHub Invertocat, the LinkedIn [in] bug and the ORCID iD icon are trademarks of their owners, used under their owners' published terms as recorded in the NOTICE.md that travels with the marks, and are not covered by the CC0 grant. The project names that the logos carry (SecureConfig, OPFiles, AuditThis, CleanLanguage, AIQT, GRC Library, VendorReplies and NodeKeeper) and the projects' domain names are the projects' own names and marks, which CC0 1.0 does not license (its section 4(a)).
 
 ## Card builder fonts
 

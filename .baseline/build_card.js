@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* build_card.js: the link-preview card builder (baseline 1.9.0 and later; the dithering limit and the background
-   check from 1.9.2; the centred layout, the Teams crop and the version label from 1.10.0).
+   check from 1.9.2; the centred layout, the Teams crop and the version label from 1.10.0; the optional metal
+   wordmark from 1.11.5; the favicon.ico and the --icons-only mode from 1.12.2).
 
    From 1 data file and 1 approved illustration per site it renders, in headless Chromium with the bundled Inter
    fonts (card-fonts/, SIL OFL 1.1, never served):
@@ -9,7 +10,15 @@
                             crop in cyan dashes; for review, never served
      <site>-card-teams.png  the part of the card Teams shows (x 208 to 992, 784 by 630); for review, never served
      <site>-touch.png       the 180 by 180 Apple touch icon (the logo at 144 px, centred on the site's light --bg,
-                            opaque), when the data file names a logo
+                            opaque), when the data file names a logo; from 1.12.2 a PNG logo of at most 180 by 180
+                            px is placed unscaled at the centre instead, its transparent pixels showing the --bg
+     <site>-favicon.ico     from 1.12.2 (owner, 2026-11-09, D-080), when the data file names a favicon: 3 frames, 16,
+                            32 and 48 px, 32-bit RGBA stored as PNG, served by the site as /favicon.ico. From the
+                            site's <site>-favicon.svg each frame is rendered at its own size in the same headless
+                            Chromium, so no frame is a downscale; from a PNG (a site whose logo is photographic
+                            artwork, with no SVG favicon: vendorreplies.ai) the visible pixels are centred on a
+                            transparent square and downscaled (Lanczos, as Pillow resizes), and the 32 and 16 px
+                            frames are also written as <site>-favicon-32.png and <site>-favicon-16.png
      card-tags.html         the Open Graph and Twitter tags for the page head
      cardpreview.html       the before and after review page (noindex, no inline style or script, so it is
                             allowed under the family's CSP), with the before image and its Teams crop
@@ -33,6 +42,9 @@
    shared size (cap 34, floor 20), the subline at 27 px balanced and centred (or with sub_nowrap fitted to 704 px,
    cap 30, floor 18), and the optional formula row fitted to 704 px (cap 40, floor 20). Colours, weights and
    letter-spacing are those of the side layout.
+   From 1.11.5 (owner, 2026-11-07, D-054), 1 optional field, off by default, which leaves the page and every output
+   as in 1.11.4: word_style = "metal" (centred layout only) sets the wordmark's name in a platinum gradient and its
+   TLD and rule in a gold gradient (the posluns.ca series v6 gradients).
 
    Checks (any failure exits 1 and writes no card): every required field present and well formed; the
    illustration and logo SVGs hold no script, event attribute, javascript: URL, external reference, style,
@@ -44,24 +56,45 @@
    large text); the output exactly 1200 by 630; 2 renders of the same inputs give the same pixels; and, from 1.9.2,
    outside the safe area no pixel of the 256-colour card differs from the full-colour render by more than
    MARGIN_MAX levels in any channel (the background check, after auditthis.ai's report of stray pixels in 1.9.0).
+   With the metal wordmark (from 1.11.5) each gradient fill is measured at its worst stop. From 1.12.2 the favicon
+   SVG is checked as the logo is, and a PNG logo or favicon must be a well-formed 8-bit RGBA or RGB PNG, not
+   interlaced and without a tRNS chunk (a transparent colour, which the builder would not apply), of the sizes given under the data-file keys below; each favicon frame is exactly its size and holds
+   at least 1 visible pixel.
    The Teams crop is measured for both layouts and reported (the clearance of the content inside x 208 to 992, and
    what lies outside it); with the centre layout the safe area keeps the content inside it, and with the side layout
    it is a finding for the owner's review, never a failure.
 
    Usage:
      node build_card.js --data <site-card.toml> --out <folder> [--before <png>] [--palettes <palettes.css>]
+     node build_card.js --data <site-card.toml> --out <folder> --icons-only [--palettes <palettes.css>]
+   --icons-only  from 1.12.2: writes only the icons (<site>-touch.png, <site>-favicon.ico and, from a PNG favicon,
+              its 2 PNG frames) and card-report.txt, and no card; the data file then needs only site and a logo or a
+              favicon (the card fields may stay in it and are not read), so a site without a card, or one that keeps
+              its own card (vendorreplies.ai), builds its icons with the same tool
+   Data-file keys for the icons (from 1.12.2; each path relative to the data file, each file checked and listed with
+   its SHA-256 under the report's Inputs):
+     logo     the full-colour logo: an SVG (as before), or a PNG of at most 180 by 180 px, 8-bit RGBA or RGB
+     favicon  the site's favicon: <site>-favicon.svg (no script, style or external reference, as the logo), or a
+              PNG, 8-bit RGBA or RGB, whose visible pixels span at least 48 px, so no frame is enlarged
+   The icon PNGs (the .ico frames, the PNG favicons and a PNG logo's touch icon) are encoded as Pillow 12.1.1 encodes
+   them (per row the filter with the lowest sum of absolute differences, zlib level 6, or 9 for the touch icon, with
+   the filtered strategy), so with the same inputs, Chromium pixels and zlib they equal byte for byte the files
+   1.12.1 shipped in logos/, made by tools/build_icons.py; the report's Icons block records the Node.js and zlib
+   versions, which every icon PNG goes through. A touch icon from an SVG logo is written as before.
    --before   the card the site serves today, shown as "before" in cardpreview.html: a PNG of any size in the exact
-              proportion 1200:630, tested on the IHDR width and height before the image is decoded, in integers as
-              w and h greater than 0 and w * 630 === h * 1200 (600 by 315 and 2400 by 1260 pass; 1200 by 628 and
-              0 by 0 fail); from 1.11.3 any other size exits 1 before the image is decoded, a browser is launched
-              or a file written
+              proportion 1200:630. The file is checked in this order, and the first check it fails exits 1 with 1
+              message, before the image is decoded, a browser is launched or a file is written: (1) it starts with
+              the full 8-byte PNG signature; (2) it is at least 24 bytes long; (3) bytes 12 to 15 name the IHDR
+              chunk (1 to 3 from 1.11.3); (4) the IHDR length field, bytes 8 to 11, equals 13 (from 1.11.4); (5) the
+              IHDR width and height, in integers, are w and h greater than 0 with w * 630 === h * 1200 (from 1.11.3;
+              600 by 315 and 2400 by 1260 pass, 1200 by 628 and 0 by 0 fail)
    --palettes the baseline's palettes.css, for the touch icon's light --bg (default: the package's own,
               ../palettes.css); a data file may set touch_bg instead
    Needs Node.js 18 or later and the playwright package with its full Chromium build (npx playwright install
    chromium): from 1.11.2 the builder resolves chromium.executablePath() once, launches both browsers with
    exactly that executable, and refuses a headless-shell build, whose text edges differ, before rendering.
-   Nothing is fetched: every request the page makes is refused, and the fonts, illustration and logo are read
-   from disk.
+   Nothing is fetched: every request the page makes is refused, and the fonts, illustration, logo and favicon are
+   read from disk. With --icons-only and no SVG input no browser is launched.
    Exit status: 0 when every check passes and every file is written; 1 when any check fails or an input cannot
    be read; 2 for a usage error. Repeatable on 1 machine: the same inputs and the same Chromium build give the
    same SHA-256; another Chromium build may draw text edges differently, so the report records the build (the
@@ -75,7 +108,7 @@ const crypto = require("crypto");
 
 // The package version this builder belongs to; the report and the tags name it. The release checks fail when it
 // differs from the package's version.
-const VERSION = "1.11.4";
+const VERSION = "1.13.0";
 const W = 1200, H = 630, SAFE = { l: 120, t: 75, w: 960, h: 480 };
 const ART = 430, ART_BOX = 340, GAP = 28, COL = SAFE.w - ART_BOX - GAP;
 // The centred layout (from 1.10.0) and the Microsoft Teams crop it keeps clear of.
@@ -83,11 +116,19 @@ const TEAMS = { l: 208, r: 992 }, CSAFE = { l: 248, t: 50, w: 704, h: 530 };
 const C_ART_MAX = 250, C_ART_MIN = 140, C_GAP = 18;
 const GOLD = "#fbbf24", BLUE = "#5eb0ef";
 const FONT_FILES = [["Inter-Regular.otf", 400], ["Inter-Bold.otf", 700], ["Inter-ExtraBold.otf", 800]];
+// From 1.11.5 (owner, 2026-11-07, D-054): the optional metal wordmark, off by default. The gradients of the
+// posluns.ca series v6 cards (scripts/drafts/cards/build_cards.py: GOLD_GRAD, PLAT_GRAD), with their stops for the
+// contrast check. In each gradient every channel moves in 1 direction between 2 stops, so the darkest and the
+// lightest colours are stops; the check takes the worst stop.
+const GOLD_STOPS = ["#fff1b8", "#f6cf55", "#e0a521", "#fbdc7a"], PLAT_STOPS = ["#ffffff", "#e6e9ee", "#b9c0c9", "#f1f3f6"];
+const grad = (stops, at) => `linear-gradient(180deg, ${stops.map((c, i) => `${c} ${at[i]}%`).join(", ")})`;
+const GOLD_GRAD = grad(GOLD_STOPS, [0, 38, 62, 100]), PLAT_GRAD = grad(PLAT_STOPS, [0, 40, 62, 100]);
 
 class Fail extends Error {}
 function usage(msg) {
   if (msg) { console.error("usage error: " + msg); }
   console.error("usage: node build_card.js --data <site-card.toml> --out <folder> [--before <png>] [--palettes <palettes.css>]");
+  console.error("       node build_card.js --data <site-card.toml> --out <folder> --icons-only [--palettes <palettes.css>]");
   process.exit(2);
 }
 const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
@@ -132,32 +173,54 @@ const FIELDS = {
   site: "the template's site id, lowercase letters, digits and hyphens", name: "the wordmark name", tld: "the wordmark's TLD (default .ai)",
   line1: "statement line 1", line2: "statement line 2", sub: "the subline", sub_nowrap: "true keeps the subline on 1 line",
   formula: "optional formula row; {gold} and [blue] spans", layout: "optional: side (the default) or centre", art: "the approved illustration SVG, relative to the data file",
-  logo: "optional: the site's full-colour logo SVG, for the touch icon", word_colour: "the wordmark name's colour, #rrggbb",
+  logo: "optional: the site's full-colour logo, for the touch icon: an SVG, or (from 1.12.2) a PNG of at most 180 by 180 px", word_colour: "the wordmark name's colour, #rrggbb",
   background: "the card background, CSS gradients and colours only", touch_bg: "optional: the touch icon's background, #rrggbb",
   site_name: "optional: the site name in the tags (default name + tld)", domain: "optional (default: name + tld, lowercase)",
   title: "optional og:title", description: "optional og:description", alt: "optional og:image:alt",
+  word_style: "optional (from 1.11.5): flat (the default) or metal, the name in a platinum gradient and the TLD and rule in a gold gradient; layout = \"centre\" only",
+  favicon: "optional (from 1.12.2): the site's favicon, <site>-favicon.svg or a PNG, for <site>-favicon.ico",
 };
-function readData(file) {
+// The icon fields (from 1.12.2): the paths of the logo and the favicon, each an SVG or a PNG, and touch_bg.
+function readIconFields(d, file, dir) {
+  for (const k of ["logo", "favicon", "touch_bg"]) {
+    if (k in d && (typeof d[k] !== "string" || !d[k].trim())) { throw new Fail(`${file}: ${k} must be a non-empty string (${FIELDS[k]})`); }
+  }
+  for (const k of ["logo", "favicon"]) {
+    if (k in d && !/\.(svg|png)$/i.test(d[k])) { throw new Fail(`${file}: ${k} must name an .svg or a .png file (${FIELDS[k]})`); }
+  }
+  if (d.touch_bg && !/^#[0-9a-fA-F]{6}$/.test(d.touch_bg)) { throw new Fail(`${file}: touch_bg must be #rrggbb`); }
+  d.logoPath = d.logo ? path.resolve(dir, d.logo) : null;
+  d.faviconPath = d.favicon ? path.resolve(dir, d.favicon) : null;
+}
+function readData(file, iconsOnly = false) {
   let text;
   try { text = fs.readFileSync(file, "utf8"); } catch (e) { throw new Fail(`cannot read ${file}: ${e.message}`); }
   const d = parseToml(text, file);
   for (const k of Object.keys(d)) { if (!(k in FIELDS)) { throw new Fail(`${file}: unknown field ${k}`); } }
+  if (iconsOnly) { // from 1.12.2: only the site id and the icon fields are read
+    if (typeof d.site !== "string" || !/^[a-z0-9-]+$/.test(d.site)) { throw new Fail(`${file}: site is required (${FIELDS.site})`); }
+    readIconFields(d, file, path.dirname(path.resolve(file)));
+    if (!d.logoPath && !d.faviconPath) { throw new Fail(`${file}: --icons-only needs a logo or a favicon in the data file`); }
+    return d;
+  }
   for (const k of ["site", "name", "line1", "line2", "sub", "art", "word_colour", "background"]) {
     if (typeof d[k] !== "string" || !d[k].trim()) { throw new Fail(`${file}: ${k} is required (${FIELDS[k]})`); }
   }
-  for (const k of ["tld", "formula", "layout", "logo", "touch_bg", "site_name", "domain", "title", "description", "alt"]) {
+  for (const k of ["tld", "formula", "layout", "site_name", "domain", "title", "description", "alt"]) {
     if (k in d && typeof d[k] !== "string") { throw new Fail(`${file}: ${k} must be a string`); }
   }
   if ("sub_nowrap" in d && typeof d.sub_nowrap !== "boolean") { throw new Fail(`${file}: sub_nowrap must be true or false`); }
+  if ("word_style" in d && d.word_style !== "flat" && d.word_style !== "metal") { throw new Fail(`${file}: word_style must be "flat" or "metal"`); }
   d.layout = d.layout || "side";
   if (d.layout !== "side" && d.layout !== "centre") { throw new Fail(`${file}: layout must be "side" or "centre"`); }
+  if (d.word_style === "metal" && d.layout !== "centre") { throw new Fail(`${file}: word_style = "metal" needs layout = "centre"`); }
   if (!/^[a-z0-9-]+$/.test(d.site)) { throw new Fail(`${file}: site: ${FIELDS.site}`); }
   if (!/^#[0-9a-fA-F]{6}$/.test(d.word_colour)) { throw new Fail(`${file}: word_colour must be #rrggbb`); }
-  if (d.touch_bg && !/^#[0-9a-fA-F]{6}$/.test(d.touch_bg)) { throw new Fail(`${file}: touch_bg must be #rrggbb`); }
   if (!/^[a-zA-Z0-9#(),.%\s-]+$/.test(d.background) || /url\s*\(|expression|var\s*\(/i.test(d.background)) {
     throw new Fail(`${file}: background may hold only CSS gradients, colours, lengths and percentages`);
   }
   const dir = path.dirname(path.resolve(file));
+  readIconFields(d, file, dir);
   d.tld = d.tld || ".ai";
   d.site_name = d.site_name || d.name + d.tld;
   d.domain = d.domain || (d.name + d.tld).toLowerCase();
@@ -166,7 +229,6 @@ function readData(file) {
   d.description = d.description || d.sub;
   d.alt = d.alt || `${d.site_name}: ${d.line1} ${d.line2}`;
   d.artPath = path.resolve(dir, d.art);
-  d.logoPath = d.logo ? path.resolve(dir, d.logo) : null;
   return d;
 }
 
@@ -193,7 +255,7 @@ function checkSvg(file, label) {
 function crcTable() { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) { c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; } t[n] = c >>> 0; } return t; }
 const CRC = crcTable();
 function crc32(buf) { let c = 0xffffffff; for (let i = 0; i < buf.length; i++) { c = CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8); } return (c ^ 0xffffffff) >>> 0; }
-function decodePng(buf) {
+function decodePng(buf, channels = 3) { // channels 4 (from 1.12.2): RGBA, alpha 255 where the PNG has none
   if (buf.readUInt32BE(0) !== 0x89504e47) { throw new Fail("not a PNG"); }
   let p = 8, w = 0, h = 0, depth = 0, ctype = 0, inter = 0, plte = null; const idat = [];
   while (p < buf.length) {
@@ -204,7 +266,7 @@ function decodePng(buf) {
   }
   if (depth !== 8 || (ctype !== 2 && ctype !== 6 && !(ctype === 3 && plte)) || inter) { throw new Fail(`unsupported PNG (depth ${depth}, colour type ${ctype}, interlace ${inter})`); }
   const bpp = ctype === 6 ? 4 : ctype === 3 ? 1 : 3, stride = w * bpp, raw = zlib.inflateSync(Buffer.concat(idat));
-  const out = new Uint8Array(w * h * 3), prev = new Uint8Array(stride), cur = new Uint8Array(stride);
+  const n = channels, out = new Uint8Array(w * h * n), prev = new Uint8Array(stride), cur = new Uint8Array(stride);
   for (let y = 0; y < h; y++) {
     const f = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
     for (let x = 0; x < stride; x++) {
@@ -215,8 +277,10 @@ function decodePng(buf) {
       cur[x] = v & 0xff;
     }
     for (let x = 0; x < w; x++) {
-      if (ctype === 3) { const k = cur[x] * 3; out[(y * w + x) * 3] = plte[k]; out[(y * w + x) * 3 + 1] = plte[k + 1]; out[(y * w + x) * 3 + 2] = plte[k + 2]; continue; }
-      out[(y * w + x) * 3] = cur[x * bpp]; out[(y * w + x) * 3 + 1] = cur[x * bpp + 1]; out[(y * w + x) * 3 + 2] = cur[x * bpp + 2];
+      const o = (y * w + x) * n;
+      if (n === 4) { out[o + 3] = ctype === 6 ? cur[x * 4 + 3] : 255; }
+      if (ctype === 3) { const k = cur[x] * 3; out[o] = plte[k]; out[o + 1] = plte[k + 1]; out[o + 2] = plte[k + 2]; continue; }
+      out[o] = cur[x * bpp]; out[o + 1] = cur[x * bpp + 1]; out[o + 2] = cur[x * bpp + 2];
     }
     prev.set(cur);
   }
@@ -238,6 +302,141 @@ function rgbPng(img) {
   const rows = Buffer.alloc(img.h * (1 + img.w * 3));
   for (let y = 0; y < img.h; y++) { Buffer.from(img.px.buffer, img.px.byteOffset + y * img.w * 3, img.w * 3).copy(rows, y * (1 + img.w * 3) + 1); }
   return encodePng(img.w, img.h, rows, 2, null);
+}
+
+// ---------------------------------------------------------------- icons (from 1.12.2; owner, 2026-11-09, D-080)
+// The site's favicon.ico and, from a PNG logo, its touch icon. The PNGs inside are encoded as Pillow 12.1.1 encodes
+// them, the encoder of 1.12.1's tools/build_icons.py, so that the builder reproduces the files 1.12.1 shipped in
+// logos/: per row the filter (none, up, sub, then average when optimizing, then Paeth; a later one only when its sum
+// is lower) with the lowest sum of absolute signed bytes, and zlib level 6, or 9 when optimizing, memLevel 9, with
+// the filtered strategy.
+const ICO_SIZES = [16, 32, 48], TOUCH = 180, FAV_MIN = 48, PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function pillowPng(w, h, px, bpp, optimize = false) { // px: w * h * bpp bytes, RGBA (bpp 4) or RGB (bpp 3)
+  const st = w * bpp, rows = Buffer.alloc(h * (st + 1)), order = optimize ? [0, 2, 1, 3, 4] : [0, 2, 1, 4];
+  let prev = new Uint8Array(st);
+  for (let y = 0; y < h; y++) {
+    const cur = px.subarray(y * st, (y + 1) * st);
+    let best = null, bestType = 0, sum = Infinity;
+    for (const t of order) {
+      if (sum === 0) { break; }
+      const f = Buffer.alloc(st); let s = 0;
+      for (let x = 0; x < st; x++) {
+        const a = x >= bpp ? cur[x - bpp] : 0, b = prev[x], c = x >= bpp ? prev[x - bpp] : 0;
+        let p = 0;
+        if (t === 1) { p = a; } else if (t === 2) { p = b; } else if (t === 3) { p = (a + b) >> 1; }
+        else if (t === 4) { const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c); p = pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+        const v = (cur[x] - p) & 0xff; f[x] = v; s += v < 128 ? v : 256 - v;
+      }
+      if (s < sum) { sum = s; best = f; bestType = t; }
+    }
+    rows[y * (st + 1)] = bestType; best.copy(rows, y * (st + 1) + 1);
+    prev = cur;
+  }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = bpp === 4 ? 6 : 2;
+  const z = zlib.deflateSync(rows, { level: optimize ? 9 : 6, memLevel: 9, strategy: zlib.constants.Z_FILTERED });
+  return Buffer.concat([PNG_SIG, chunk("IHDR", ihdr), chunk("IDAT", z), chunk("IEND", Buffer.alloc(0))]);
+}
+// An ICO of PNG frames (ICONDIR type 1; each entry: width, height, 0 colours, 0 reserved, 0 planes, 32 bits per
+// pixel, the PNG's length and offset), the frames in the order given, as Pillow writes it.
+function icoFile(frames) { // frames: [{ n, px }] with px n * n * 4 RGBA bytes
+  const pngs = frames.map((f) => pillowPng(f.n, f.n, f.px, 4));
+  const head = Buffer.alloc(6 + 16 * frames.length); head.writeUInt16LE(1, 2); head.writeUInt16LE(frames.length, 4);
+  let off = head.length;
+  frames.forEach((f, i) => {
+    const e = 6 + 16 * i; head[e] = f.n < 256 ? f.n : 0; head[e + 1] = f.n < 256 ? f.n : 0; head.writeUInt16LE(32, e + 6);
+    head.writeUInt32LE(pngs[i].length, e + 8); head.writeUInt32LE(off, e + 12); off += pngs[i].length;
+  });
+  return { ico: Buffer.concat([head, ...pngs]), pngs };
+}
+// A PNG logo or favicon: the full signature, an IHDR of length 13, 8-bit RGBA or RGB, not interlaced, no tRNS chunk;
+// read as RGBA.
+function readPngInput(file, label) {
+  let b; try { b = fs.readFileSync(file); } catch (e) { throw new Fail(`cannot read the ${label} ${file}: ${e.message}`); }
+  if (b.length < 33 || !b.subarray(0, 8).equals(PNG_SIG) || b.readUInt32BE(8) !== 13 || b.toString("ascii", 12, 16) !== "IHDR") { throw new Fail(`the ${label} ${file} is not a valid PNG`); }
+  if (b[24] !== 8 || (b[25] !== 2 && b[25] !== 6) || b[28] !== 0) { throw new Fail(`the ${label} ${file} must be an 8-bit RGBA or RGB PNG, not interlaced (depth ${b[24]}, colour type ${b[25]}, interlace ${b[28]})`); }
+  // A tRNS chunk (a transparent colour) is refused: decodePng ignores it, so its pixels would come out opaque.
+  for (let p = 8; p + 8 <= b.length;) {
+    const len = b.readUInt32BE(p), type = b.toString("ascii", p + 4, p + 8);
+    if (type === "tRNS") { throw new Fail(`the ${label} ${file} carries a tRNS chunk (a transparent colour), which the builder does not apply; save it as 8-bit RGBA with an alpha channel`); }
+    if (type === "IEND") { break; }
+    p += 12 + len;
+  }
+  let img; try { img = decodePng(b, 4); } catch (e) { throw new Fail(`the ${label} ${file} cannot be decoded: ${e.message}`); }
+  if (!img.w || !img.h || img.px.length !== img.w * img.h * 4) { throw new Fail(`the ${label} ${file} cannot be decoded`); }
+  return { buf: b, img };
+}
+// Pillow's Image.paste(src, box, src) of RGBA onto RGBA: every channel, alpha included, blended by the source alpha.
+const div255 = (a) => { const t = a + 128; return ((t >> 8) + t) >> 8; };
+function pasteRgba(dst, dw, src, sw, sh, ox, oy) {
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const s = (y * sw + x) * 4, t = ((y + oy) * dw + x + ox) * 4, m = src[s + 3];
+      for (let c = 0; c < 4; c++) { dst[t + c] = div255(dst[t + c] * (255 - m) + src[s + c] * m); }
+    }
+  }
+}
+// Pillow's LANCZOS resize of an RGBA square (Resample.c): premultiplied alpha, a horizontal then a vertical pass of
+// 3-lobe Lanczos weights in 22-bit fixed point, then the alpha divided out again.
+const PB = 22;
+function lanczosCoeffs(inSize, outSize) {
+  const sinc = (x) => { if (x === 0) { return 1; } x *= Math.PI; return Math.sin(x) / x; };
+  const filter = (x) => (x >= -3 && x < 3 ? sinc(x) * sinc(x / 3) : 0);
+  const scale = inSize / outSize, fscale = Math.max(scale, 1), support = 3 * fscale, ss = 1 / fscale, out = [];
+  for (let xx = 0; xx < outSize; xx++) {
+    const centre = (xx + 0.5) * scale;
+    const xmin = Math.max(0, Math.trunc(centre - support + 0.5)), xmax = Math.min(inSize, Math.trunc(centre + support + 0.5)) - xmin;
+    const w = []; let ww = 0;
+    for (let x = 0; x < xmax; x++) { const v = filter((x + xmin - centre + 0.5) * ss); w.push(v); ww += v; }
+    out.push({ xmin, k: w.map((v) => { const q = ww !== 0 ? v / ww : v; return q < 0 ? Math.trunc(-0.5 + q * (1 << PB)) : Math.trunc(0.5 + q * (1 << PB)); }) });
+  }
+  return out;
+}
+function lanczosSquare(src, size, n) {
+  const clip8 = (v) => (v >= 2 ** (PB + 8) ? 255 : v <= 0 ? 0 : Math.floor(v / 2 ** PB));
+  const pre = new Uint8Array(src.length);
+  for (let i = 0; i < src.length; i += 4) { const a = src[i + 3]; for (let c = 0; c < 3; c++) { const t = src[i + c] * a + 128; pre[i + c] = ((t >> 8) + t) >> 8; } pre[i + 3] = a; }
+  const kk = lanczosCoeffs(size, n), y0 = kk[0].xmin, th = kk[n - 1].xmin + kk[n - 1].k.length - y0;
+  const tmp = new Uint8Array(n * th * 4), out = new Uint8Array(n * n * 4);
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < n; x++) { const { xmin, k } = kk[x]; for (let c = 0; c < 4; c++) { let s = 1 << (PB - 1); for (let j = 0; j < k.length; j++) { s += pre[((y + y0) * size + xmin + j) * 4 + c] * k[j]; } tmp[(y * n + x) * 4 + c] = clip8(s); } }
+  }
+  for (let y = 0; y < n; y++) {
+    const { xmin, k } = kk[y];
+    for (let x = 0; x < n; x++) { for (let c = 0; c < 4; c++) { let s = 1 << (PB - 1); for (let j = 0; j < k.length; j++) { s += tmp[((xmin + j - y0) * n + x) * 4 + c] * k[j]; } out[(y * n + x) * 4 + c] = clip8(s); } }
+  }
+  for (let i = 0; i < out.length; i += 4) { const a = out[i + 3]; if (a !== 0 && a !== 255) { for (let c = 0; c < 3; c++) { out[i + c] = Math.min(255, Math.floor((255 * out[i + c]) / a)); } } }
+  return out;
+}
+// The favicon frames from a PNG: its visible pixels (alpha above 0) centred on a transparent square, each frame
+// downscaled from that square, as 1.12.1's build_icons.py made vendorreplies.ai's.
+function pngFaviconFrames(img, file) {
+  let x0 = img.w, y0 = img.h, x1 = 0, y1 = 0;
+  for (let y = 0; y < img.h; y++) { for (let x = 0; x < img.w; x++) { if (img.px[(y * img.w + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1); } } }
+  if (x1 <= x0) { throw new Fail(`the favicon ${file} has no visible pixel`); }
+  const cw = x1 - x0, ch = y1 - y0, sq = Math.max(cw, ch);
+  if (sq < FAV_MIN) { throw new Fail(`the favicon ${file} has visible pixels ${cw} by ${ch} px; a PNG favicon needs at least ${FAV_MIN} px, so no frame is enlarged`); }
+  const crop = new Uint8Array(cw * ch * 4);
+  for (let y = 0; y < ch; y++) { crop.set(img.px.subarray(((y + y0) * img.w + x0) * 4, ((y + y0) * img.w + x1) * 4), y * cw * 4); }
+  const square = new Uint8Array(sq * sq * 4);
+  pasteRgba(square, sq, crop, cw, ch, (sq - cw) >> 1, (sq - ch) >> 1);
+  return ICO_SIZES.map((n) => ({ n, px: lanczosSquare(square, sq, n) }));
+}
+// The touch icon from a PNG logo of at most 180 by 180 px: unscaled, centred on the background, opaque RGB.
+function pngTouch(img, bg, file) {
+  if (img.w > TOUCH || img.h > TOUCH) { throw new Fail(`the logo ${file} is ${img.w} by ${img.h} px; a PNG logo is placed unscaled, so it must be at most ${TOUCH} by ${TOUCH} px`); }
+  const t = new Uint8Array(TOUCH * TOUCH * 4), [r, g, b] = hexRgb(bg);
+  for (let i = 0; i < TOUCH * TOUCH; i++) { t[i * 4] = r; t[i * 4 + 1] = g; t[i * 4 + 2] = b; t[i * 4 + 3] = 255; }
+  pasteRgba(t, TOUCH, img.px, img.w, img.h, (TOUCH - img.w) >> 1, (TOUCH - img.h) >> 1);
+  const rgb = new Uint8Array(TOUCH * TOUCH * 3);
+  for (let i = 0; i < TOUCH * TOUCH; i++) { rgb[i * 3] = t[i * 4]; rgb[i * 3 + 1] = t[i * 4 + 1]; rgb[i * 3 + 2] = t[i * 4 + 2]; }
+  return pillowPng(TOUCH, TOUCH, rgb, 3, true);
+}
+// An SVG favicon frame: the SVG drawn at n by n px on a transparent page in the builder's Chromium, as RGBA.
+async function svgFrame(page, svg, n) {
+  await page.setContent(`<!doctype html><html><body style="margin:0;background:transparent"><img src="data:image/svg+xml;base64,${svg.toString("base64")}" width="${n}" height="${n}" style="display:block"></body></html>`, { waitUntil: "load" });
+  const img = decodePng(await page.screenshot({ type: "png", omitBackground: true, clip: { x: 0, y: 0, width: n, height: n } }), 4);
+  if (img.w !== n || img.h !== n) { throw new Fail(`the ${n} px favicon frame rendered at ${img.w} by ${img.h} px`); }
+  return { n, px: img.px };
 }
 
 // ---------------------------------------------------------------- 256 colours: median cut, Floyd-Steinberg
@@ -383,7 +582,7 @@ function cardPageCentre(d, face, artUri) { // from 1.10.0: everything stacked an
   .sub.nowrap{white-space:nowrap;width:max-content;max-width:none}
   .formula{margin:0;line-height:1;font-weight:800;letter-spacing:-.01em;white-space:nowrap;width:max-content;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.6)}
   .formula .f{color:${GOLD}}.formula .g{color:${BLUE}}
-</style></head><body><div class="card"><div class="safe">
+${extraCss(d)}</style></head><body><div class="card"><div class="safe">
   <img class="art" src="${artUri}" alt="">
   <div class="text">
     <h1 class="brand" id="b"><span class="word">${esc(d.name)}</span><b>${esc(d.tld)}</b></h1>
@@ -393,6 +592,12 @@ function cardPageCentre(d, face, artUri) { // from 1.10.0: everything stacked an
     ${d.formula ? `<p class="formula" id="f">${formulaHtml(d.formula)}</p>` : ""}
   </div>
 </div></div></body></html>`;
+}
+// From 1.11.5: the CSS of the metal wordmark, "" when it is off, so the page, and every output, is then unchanged.
+// The metal wordmark trades text-shadow for filter: drop-shadow, because a text shadow paints over a fill clipped to
+// the text.
+function extraCss(d) {
+  return d.word_style === "metal" ? `  .brand{text-shadow:none;filter:drop-shadow(0 4px 14px rgba(0,0,0,.4))}.brand .word{background:${PLAT_GRAD};-webkit-background-clip:text;background-clip:text;color:transparent}.brand b{background:${GOLD_GRAD};-webkit-background-clip:text;background-clip:text;color:transparent}.rule{background:${GOLD_GRAD}}\n` : "";
 }
 const FIT = ({ COL, nowrap, centre, C }) => { // runs in the page; the round-2 fitting (side) or the centred fitting, in whole pixels
   if (centre) {
@@ -515,9 +720,10 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], val = () => { if (i + 1 >= argv.length) { usage(a + " needs a value"); } return argv[++i]; };
     if (a === "--data") { o.data = val(); } else if (a === "--out") { o.out = val(); } else if (a === "--before") { o.before = val(); }
-    else if (a === "--palettes") { o.palettes = val(); } else { usage("unknown argument " + a); }
+    else if (a === "--palettes") { o.palettes = val(); } else if (a === "--icons-only") { o.iconsOnly = true; } else { usage("unknown argument " + a); }
   }
   if (!o.data || !o.out) { usage("--data and --out are required"); }
+  if (o.iconsOnly && o.before) { usage("--before belongs to a card build, not to --icons-only"); }
   return o;
 }
 
@@ -538,34 +744,110 @@ function teamsCrop(img, before = null) {
   return { w: cw, h: img.h, px };
 }
 
-async function main() {
-  const o = parseArgs(process.argv.slice(2));
+// The browser: Playwright's full Chromium, resolved once; every launch passes this path, so the binary that renders
+// is the one the report records.
+function resolveChromium() {
   let chromium;
   try { ({ chromium } = require("playwright")); } catch (e) { throw new Fail("build_card.js needs the playwright package: " + e.message); }
-  // Resolved once; both launches pass this path, so the binary that renders is the one the report records.
   const exe = chromium.executablePath(), build = path.basename(exe);
   if (build.includes("headless-shell")) {
     throw new Fail(`the resolved browser build is ${build}, a headless shell, not full Chromium; install the full build with "npx playwright install chromium" and rerun`);
   }
-  const d = readData(o.data);
-  const inputs = [[o.data, fs.readFileSync(o.data)]];
-  const artSvg = checkSvg(d.artPath, "illustration"); inputs.push([d.artPath, artSvg]);
-  let logoSvg = null, touchBg = d.touch_bg || null;
+  return { chromium, exe, build };
+}
+
+// The icon inputs, read and checked before any browser is launched or any file is written: the logo (an SVG, or
+// from 1.12.2 a PNG), the touch icon's background, and from 1.12.2 the favicon (an SVG, or a PNG, whose frames are
+// made here). Each input file is added to the report's inputs, the favicon after the logo and the palettes.
+function readIcons(d, o, inputs) {
+  const ic = { logoSvg: null, touchPng: null, favSvg: null, frames: null, notes: [] };
+  let touchBg = d.touch_bg || null;
   if (d.logoPath) {
-    logoSvg = checkSvg(d.logoPath, "logo"); inputs.push([d.logoPath, logoSvg]);
+    let logoPng = null;
+    if (/\.png$/i.test(d.logoPath)) { logoPng = readPngInput(d.logoPath, "logo"); inputs.push([d.logoPath, logoPng.buf]); }
+    else { ic.logoSvg = checkSvg(d.logoPath, "logo"); inputs.push([d.logoPath, ic.logoSvg]); }
     if (!touchBg) {
       const pal = o.palettes || path.join(__dirname, "..", "palettes.css");
       let cssBuf; try { cssBuf = fs.readFileSync(pal); } catch (e) { throw new Fail(`cannot read ${pal} for the touch icon's --bg (or set touch_bg): ${e.message}`); }
-      inputs.push([pal, cssBuf]); // card-report.txt promises the SHA-256 of every input (lines 17 to 18)
+      inputs.push([pal, cssBuf]); // card-report.txt promises the SHA-256 of every input (the header, lines 18 to 19)
       const css = cssBuf.toString("utf8");
       const m = css.match(new RegExp(`\\.site-${d.site}\\s*\\{([^}]*)\\}`));
       const bg = m && m[1].match(/--bg:\s*(#[0-9a-fA-F]{6})/);
       if (!bg) { throw new Fail(`${pal} has no light --bg for site-${d.site}; set touch_bg in the data file`); }
       touchBg = bg[1];
     }
+    ic.touchBg = touchBg;
+    if (logoPng) {
+      ic.touchPng = pngTouch(logoPng.img, touchBg, d.logoPath);
+      ic.notes.push(`${d.site}-touch.png: 180 by 180 px, the ${logoPng.img.w} by ${logoPng.img.h} px PNG logo unscaled at the centre, on ${touchBg}`);
+    }
   }
+  if (d.faviconPath) {
+    if (/\.png$/i.test(d.faviconPath)) {
+      const fav = readPngInput(d.faviconPath, "favicon"); inputs.push([d.faviconPath, fav.buf]);
+      ic.frames = pngFaviconFrames(fav.img, d.faviconPath);
+      ic.notes.push(`${d.site}-favicon.ico: frames ${ICO_SIZES.join(", ")} px, each downscaled (Lanczos) from the PNG favicon's visible pixels on a transparent square; the 32 and 16 px frames also as ${d.site}-favicon-32.png and ${d.site}-favicon-16.png`);
+    } else {
+      ic.favSvg = checkSvg(d.faviconPath, "favicon"); inputs.push([d.faviconPath, ic.favSvg]);
+      ic.notes.push(`${d.site}-favicon.ico: frames ${ICO_SIZES.join(", ")} px, each rendered from the SVG favicon at its own size in Chromium`);
+    }
+  }
+  if (ic.notes.length) { ic.notes.push("The .ico frames, PNG favicons and PNG-logo touch icon encoded as Pillow 12.1.1 encodes them"); }
+  return ic;
+}
+// The report's Icons block: the notes, then the Node.js and zlib versions, which every icon PNG goes through.
+function iconsBlock(notes) {
+  return ["Icons:", ...notes.map((x) => "  " + x), `  Node.js ${process.versions.node}, zlib ${process.versions.zlib} (every icon PNG is compressed with this zlib)`, ""];
+}
+// The favicon frames from an SVG, rendered in a page of the given browser; every request refused.
+async function renderFavicon(browser, svg, onRequest) {
+  const page = await browser.newPage({ viewport: { width: 200, height: 200 }, deviceScaleFactor: 1 });
+  await page.route("**/*", (r) => { onRequest(); r.abort(); });
+  const frames = [];
+  for (const n of ICO_SIZES) { frames.push(await svgFrame(page, svg, n)); }
+  await page.close();
+  return frames;
+}
+// Each favicon frame exactly its size with at least 1 visible pixel; failures as messages.
+function checkFrames(frames) {
+  const bad = [];
+  for (const f of frames) {
+    if (f.px.length !== f.n * f.n * 4) { bad.push(`the ${f.n} px favicon frame is not ${f.n} by ${f.n} px`); continue; }
+    let vis = 0; for (let i = 3; i < f.px.length; i += 4) { if (f.px[i]) { vis++; } }
+    if (!vis) { bad.push(`the ${f.n} px favicon frame is empty`); }
+  }
+  return bad;
+}
+// The icon files, written by write(name, buf) in a fixed order: the favicon.ico and, from a PNG favicon, its 32 and
+// 16 px frames as PNG files. (The touch icon is written by the caller.)
+function writeFavicon(d, frames, write) {
+  const { ico, pngs } = icoFile(frames);
+  write(`${d.site}-favicon.ico`, ico);
+  if (!d.faviconPath || !/\.png$/i.test(d.faviconPath)) { return; }
+  write(`${d.site}-favicon-32.png`, pngs[ICO_SIZES.indexOf(32)]);
+  write(`${d.site}-favicon-16.png`, pngs[ICO_SIZES.indexOf(16)]);
+}
+// The touch icon of an SVG logo: the logo at 144 px centred on the background, opaque, as from 1.9.0.
+async function svgTouch(browser, svg, bg, onRequest) {
+  const page = await browser.newPage({ viewport: { width: 180, height: 180 }, deviceScaleFactor: 1 });
+  await page.route("**/*", (r) => { onRequest(); r.abort(); });
+  await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:180px;height:180px;overflow:hidden;background:${bg}}img{position:absolute;left:18px;top:18px;width:144px;height:144px;object-fit:contain}</style></head><body><img src="data:image/svg+xml;base64,${svg.toString("base64")}" alt=""></body></html>`, { waitUntil: "load" });
+  const tp = decodePng(await page.screenshot({ type: "png" }));
+  await page.close();
+  return rgbPng(tp);
+}
+
+async function main() {
+  const o = parseArgs(process.argv.slice(2));
+  if (o.iconsOnly) { return iconsOnly(o); }
+  const { chromium, exe, build } = resolveChromium();
+  const d = readData(o.data);
+  const inputs = [[o.data, fs.readFileSync(o.data)]];
+  const artSvg = checkSvg(d.artPath, "illustration"); inputs.push([d.artPath, artSvg]);
+  const ic = readIcons(d, o, inputs), { logoSvg } = ic;
   let before = null;
   if (o.before) {
+
     let b; try { b = fs.readFileSync(o.before); } catch (e) { throw new Fail(`cannot read --before ${o.before}: ${e.message}`); }
     // Before the IHDR width and height are read: the full 8-byte PNG signature, a length that holds an IHDR and
     // the IHDR chunk type at bytes 12 to 15, each failing through Fail with 1 clear message of its own, so a
@@ -623,8 +905,12 @@ async function main() {
   const again = await render("card");
   const safe = await render("safe");
   const bgr = await render("bg");
+  // From 1.12.2: the favicon frames of an SVG favicon, in the same browser, before any check is reported.
+  let frames = ic.frames;
+  if (ic.favSvg) { frames = await renderFavicon(browser, ic.favSvg, () => { refused++; }); }
   const version = browser.version();
   await browser.close();
+  if (frames) { failures.push(...checkFrames(frames)); }
 
   const { fit, m } = card;
   // Checks
@@ -646,6 +932,14 @@ async function main() {
   const con = { line1: worstContrast(bgr.img, b.l1, white, 1), line2: worstContrast(bgr.img, b.l2, white, 1), subline: worstContrast(bgr.img, b.sub, white, 0.88),
     wordmark: worstContrast(bgr.img, b.brand, hexRgb(d.word_colour), 1), wordmark_tld: worstContrast(bgr.img, b.brand, hexRgb(GOLD), 1) };
   if (b.formula) { Object.assign(con, { formula_white: worstContrast(bgr.img, b.formula, white, 1), formula_gold: worstContrast(bgr.img, b.formula, hexRgb(GOLD), 1), formula_blue: worstContrast(bgr.img, b.formula, hexRgb(BLUE), 1) }); }
+  // From 1.11.5 a gradient fill is measured at its worst stop: the lowest ratio of its stops against the brightest
+  // background pixel, and 1:1 when that pixel's luminance lies within the stops' own range.
+  const worstStops = (box, stops) => {
+    const r = stops.map((c) => worstContrast(bgr.img, box, hexRgb(c), 1)).reduce((x, y) => (y.ratio < x.ratio ? y : x));
+    const ls = stops.map((c) => lum(hexRgb(c))), lb = lum(hexRgb(r.bg));
+    return lb >= Math.min(...ls) && lb <= Math.max(...ls) ? { ratio: 1, bg: r.bg } : r;
+  };
+  if (d.word_style === "metal") { con.wordmark = worstStops(b.brand, PLAT_STOPS); con.wordmark_tld = worstStops(b.brand, GOLD_STOPS); }
   for (const [k, v] of Object.entries(con)) { const need = /^(line|sub)/.test(k) ? 4.5 : 3; if (v.ratio < need) { failures.push(`contrast of ${k} is ${v.ratio}:1 on ${v.bg} (needs ${need}:1)`); } }
 
   const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
@@ -672,6 +966,8 @@ async function main() {
   const q = quantize(card.img, safeArea);
   rows.push([`Background check: largest change outside the safe area (at most ${MARGIN_MAX})`, `${q.marginDev} levels`]);
   report.splice(report.indexOf("Inputs (SHA-256):") - 1, 0, `  ${rows[rows.length - 1][0]}: ${rows[rows.length - 1][1]}`);
+  // From 1.12.2: what the icons are made from, after the measurements and before the inputs.
+  if (ic.notes.length) { report.splice(report.indexOf("Inputs (SHA-256):"), 0, ...iconsBlock(ic.notes)); }
   if (q.marginDev > MARGIN_MAX) { failures.push(`the background check: a pixel outside the safe area differs from the full-colour render by ${q.marginDev} levels (at most ${MARGIN_MAX})`); }
   if (failures.length) {
     report.push("RESULT: fail", ...failures.map((x) => "  FAIL " + x));
@@ -692,13 +988,11 @@ async function main() {
   const teams = { after: { name: `${d.site}-card-teams.png`, w: teamsAfter.w, h: teamsAfter.h, size: teamsAfterPng.length, sha: sha(teamsAfterPng) }, before: null };
   if (logoSvg) {
     const browser2 = await chromium.launch({ executablePath: exe }); // exactly the resolved binary the report records
-    const page = await browser2.newPage({ viewport: { width: 180, height: 180 }, deviceScaleFactor: 1 });
-    await page.route("**/*", (r) => { refused++; r.abort(); });
-    await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:180px;height:180px;overflow:hidden;background:${touchBg}}img{position:absolute;left:18px;top:18px;width:144px;height:144px;object-fit:contain}</style></head><body><img src="data:image/svg+xml;base64,${logoSvg.toString("base64")}" alt=""></body></html>`, { waitUntil: "load" });
-    const tp = decodePng(await page.screenshot({ type: "png" }));
+    const touch = await svgTouch(browser2, logoSvg, ic.touchBg, () => { refused++; });
     await browser2.close();
-    write(`${d.site}-touch.png`, rgbPng(tp));
-  }
+    write(`${d.site}-touch.png`, touch);
+  } else if (ic.touchPng) { write(`${d.site}-touch.png`, ic.touchPng); } // from 1.12.2, a PNG logo
+  if (frames) { writeFavicon(d, frames, write); } // from 1.12.2
   const imgUrl = `https://${d.domain}/images/${d.site}-card.png`;
   write("card-tags.html", Buffer.from(tagsHtml(d, imgUrl)));
   if (before) {
@@ -708,6 +1002,45 @@ async function main() {
   }
   const after = { name: `${d.site}-card.png`, w: W, h: H, size: cardPng.length, sha: sha(cardPng) };
   write("cardpreview.html", Buffer.from(previewHtml(d, after, before, rows, teams)));
+  report.push("RESULT: pass", "", "Files written (SHA-256):", ...written.map(([n, buf]) => `  ${sha(buf)}  ${n}`));
+  fs.writeFileSync(path.join(o.out, "card-report.txt"), report.join("\n") + "\n");
+  console.log(report.join("\n"));
+  process.exit(0);
+}
+
+// --icons-only (from 1.12.2): the icons and the report, no card. Placed after main, so that in the source the
+// --before crop still comes before the first browser launch (release check t_v1113).
+async function iconsOnly(o) {
+  const d = readData(o.data, true);
+  const inputs = [[o.data, fs.readFileSync(o.data)]];
+  const ic = readIcons(d, o, inputs);
+  let refused = 0, head = "No browser launched (no SVG input)", touch = ic.touchPng, frames = ic.frames;
+  if (ic.logoSvg || ic.favSvg) {
+    const { chromium, exe, build } = resolveChromium();
+    const browser = await chromium.launch({ executablePath: exe }); // exactly the resolved binary the report records
+    if (ic.logoSvg) {
+      touch = await svgTouch(browser, ic.logoSvg, ic.touchBg, () => { refused++; });
+      ic.notes.unshift(`${d.site}-touch.png: 180 by 180 px, the SVG logo at 144 px centred on ${ic.touchBg}`);
+    }
+    if (ic.favSvg) { frames = await renderFavicon(browser, ic.favSvg, () => { refused++; }); }
+    head = `Chromium ${browser.version()} (${build}); ${refused} request(s) refused`;
+    await browser.close();
+  }
+  const report = [`build_card.js report for ${d.site} (baseline ${VERSION}, icons only)`, "", head, ""];
+  if (ic.notes.length) { report.push(...iconsBlock(ic.notes)); }
+  report.push("Inputs (SHA-256):", ...inputs.map(([p, buf]) => `  ${sha(buf)}  ${path.relative(process.cwd(), p) || p}`), "");
+  const failures = frames ? checkFrames(frames) : [];
+  fs.mkdirSync(o.out, { recursive: true });
+  if (failures.length) {
+    report.push("RESULT: fail", ...failures.map((x) => "  FAIL " + x));
+    fs.writeFileSync(path.join(o.out, "card-report.txt"), report.join("\n") + "\n");
+    console.log(report.join("\n"));
+    process.exit(1);
+  }
+  const written = [];
+  const write = (name, buf) => { fs.writeFileSync(path.join(o.out, name), buf); written.push([name, buf]); return buf; };
+  if (touch) { write(`${d.site}-touch.png`, touch); }
+  if (frames) { writeFavicon(d, frames, write); }
   report.push("RESULT: pass", "", "Files written (SHA-256):", ...written.map(([n, buf]) => `  ${sha(buf)}  ${n}`));
   fs.writeFileSync(path.join(o.out, "card-report.txt"), report.join("\n") + "\n");
   console.log(report.join("\n"));

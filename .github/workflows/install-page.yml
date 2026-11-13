@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "site/install/**"
+      - "site/**"
       - "site/_headers"
       - "site/_redirects"
       - "site/_worker.js"
@@ -47,6 +48,7 @@ on:
       - main
     paths:
       - "site/install/**"
+      - "site/**"
       - "site/_headers"
       - "site/_redirects"
       - "site/_worker.js"

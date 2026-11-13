@@ -24,14 +24,23 @@ https://posluns.ca/baseline/SHA256SUMS, and refuses to copy unless:
    bytes decoded without newline translation, by the gate's own
    ``notice_entry()``, which this tool loads from
    ``tools/check-baseline-pin.py`` next to it, so a README the gate would
-   refuse, such as one with a carriage return in any line, is refused here too.
+   refuse, such as one with a carriage return in any line, is refused here too,
+   and
+5. ``SHA256SUMS`` lists every logo in the gate's ``LOGOS`` under ``logos/``,
+   the logos the site's pages load, so the served files are never replaced
+   by a version that lacks one; a version that lacks any is refused in 1
+   line that names each one it lacks.
 
 It then copies these of the runtime and licence files that the baseline README
 lists ("Adoption in a repository", step 2): the stylesheets, the fonts with
 their licence files, 5 of its 6 scripts (``rail.js`` from 1.3.0, ``scheme.js``
 from 1.6.0; this site leaves out ``matrix.js``, by the owner's decision), the
-logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``
-(never ``reference/`` or ``tools/``), byte for byte
+logos that the site's pages load, which the gate's ``LOGOS`` names (from
+1.12.2 the README's step 2 copies from ``logos/`` only those, where earlier
+versions copied ``logos/`` whole), the marks with ``marks/NOTICE.md``,
+``LICENSE`` and ``NOTICE.md`` (never ``reference/`` or ``tools/``, and never a
+file whose name ends in ``.ico`` in any letter case, in any folder, since the
+site builds its own ``favicon.ico``), byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
 path in ``site-src/site.json`` (``site/draft/`` while staged). It copies each
 build tool in the gate's ``TOOLS`` from ``tools/`` in the version to the same
@@ -156,7 +165,8 @@ Exit codes:
      outside the folder; the folder lacks a file that SHA256SUMS lists, holds
      a file that it does not list, or holds an entry that is neither a
      regular file nor a folder, such as a link; SHA256SUMS does not list a
-     build tool in the gate's TOOLS, README.md or SPECIFICATION.md; its README
+     build tool in the gate's TOOLS, a logo in the gate's LOGOS, README.md or
+     SPECIFICATION.md; its README
      lacks the folder's version heading or the step 7 NOTICE entry, or holds
      a carriage return; the --from folder is a link, or is, is inside, or
      holds a folder or file it clears or writes; a folder or file it writes,
@@ -216,7 +226,10 @@ README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
 GATE = Path(__file__).resolve().parent / "check-baseline-pin.py"
 
 TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
-FOLDERS = ("fonts/", "logos/", "marks/")
+# The folders copied whole, apart from any .ico file. From logos/ only the gate's LOGOS are copied (wanted()).
+FOLDERS = ("fonts/", "marks/")
+LOGO_FOLDER = "logos/"
+ICO = ".ico"
 # Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
 # would accept a value that ends in one.
 SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)\n")
@@ -298,8 +311,8 @@ def write_new(target: Path, data: bytes) -> None:
 
 
 def load_gate():
-    """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and the
-    check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source, so
+    """tools/check-baseline-pin.py as a module, for its TOOLS, LOGOS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and
+    the check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source, so
     no cached byte code for it is read, and sys.dont_write_bytecode keeps any from being written: loading it writes
     nothing, not even under tools/__pycache__/, and a stale or planted cache file there is never run, as the normal
     loader would run one. The gate's tomllib guard exits on Python older than 3.11; its message is dropped and this
@@ -319,7 +332,14 @@ def load_gate():
     return module
 
 
-def wanted(name: str) -> bool:
+def wanted(name: str, logos: frozenset[str]) -> bool:
+    """Whether the version's file name is copied to the served copy folder: a top-level runtime or licence file, a file
+    under fonts/ or marks/, or a logo the site's pages load, logos/<name> with name in logos, the gate's LOGOS; never
+    a file whose name ends in .ico in any letter case, in any folder."""
+    if name.casefold().endswith(ICO):
+        return False
+    if name.startswith(LOGO_FOLDER):
+        return name[len(LOGO_FOLDER):] in logos
     return name in TOP_FILES or name.startswith(FOLDERS)
 
 
@@ -443,6 +463,8 @@ def main() -> int:
     # tools/test-baseline-pin.py appends to the gate runs before the first read of the version.
     gate = load_gate()
     tools = gate.TOOLS
+    # The logos the site's pages load, from the same gate, so that the copy and the gate cannot disagree on them.
+    logos = frozenset(gate.LOGOS)
 
     # Each file in the version is read once, and the bytes checked are the bytes written, so a file that changes
     # while this tool runs cannot be written unchecked.
@@ -472,10 +494,14 @@ def main() -> int:
     for tool_source in tools.values():
         if tool_source not in listed:
             die(1, f"SHA256SUMS does not list {tool_source}")
+    missing_logos = [LOGO_FOLDER + name for name in gate.LOGOS if LOGO_FOLDER + name not in listed]
+    if missing_logos:
+        die(1, f"SHA256SUMS does not list the logos the site's pages load (the gate's LOGOS): "
+               f"{', '.join(missing_logos)}")
     for name in DOCUMENTS:
         if name not in listed:
             die(1, f"SHA256SUMS does not list the document {name}")
-    chosen = sorted(name for name in listed if wanted(name))
+    chosen = sorted(name for name in listed if wanted(name, logos))
     kept = {*chosen, *tools.values(), *DOCUMENTS}
     contents: dict[str, bytes] = {}
     for name, digest in listed.items():

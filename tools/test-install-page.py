@@ -10,10 +10,32 @@ user and 1 as root, adding a cached file of it too), swaps 2 family pages, or
 adds a file that Cloudflare Pages runs or reads: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
-Pipfile or Gemfile. It runs the gate there as a separate process and asserts
+Pipfile or Gemfile. The copy holds the 3 stylesheets too, which the redirect
+reading of check 7 reads. For that reading, cases add a page outside the
+install pages, a stylesheet, a file under site/assets/, an unreadable page or
+a folder under site/assets/ that cannot be listed,
+or copy the whole committed site/ over the copy, and assert that a source of
+site/_redirects under /assets/ passes only as an exact path that no page of
+the site loads and no file occupies or lies above, in any letter case, and
+that a header rule for such a path still fails. It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
-refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
+refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
+of the gate alone: the probe loads the copy of the gate, has its
+site_loads() read the pages while the folder LOCKED_FOLDER can still be
+listed (exiting 4 if it names any input it could not read), replaces the
+gate's site_loads with a function that returns that result, so that main()
+lists no folder through site_loads() whether or not it is cached, wraps the
+gate's occupied() to record each folder it could not list, sets that
+folder's mode to 000 and runs the gate's main(). It exits 4 unless occupied()
+recorded the refusal that names that folder, and otherwise with main()'s
+code, and the case expects exit 1 and the refusal that names its redirect
+source and that folder. In a plain run site_loads() would refuse the folder
+first, in the same words, so the output alone cannot show which refusal was
+given; the stand-in keeps main() off that refusal, and the record of
+occupied() shows that its refusal is the one given. Root lists a folder
+whatever its mode, so under root that case is not run, and main() names it as skipped,
+as it names the 2 mode-000 load cases. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
 probe's name, as the gate gives them on a Python that reads that probe's
@@ -109,7 +131,10 @@ class, and in no li, such as the ChatGPT page's link to #get in its
 div.callout), and they must also pass with a further link back to #get in a
 Gemini step, which the gate passes. And it fails unless
 each of the 2 path lists of .github/workflows/install-page.yml covers every
-file the gate, this test and that workflow read and each path of the gate's SERVER_ENTRIES
+file the gate, this test and that workflow read (site_read_paths() among
+them: every page and stylesheet under site/, the path of each committed
+source of site/_redirects, and a new page or entry anywhere under site/,
+which the redirect reading reads or lists) and each path of the gate's SERVER_ENTRIES
 (check 10), as a file and at any depth under a directory, and holds no
 negative pattern (1 that starts with !, which GitHub reads in order as
 excluding what the patterns before it include; this check reads no order, so
@@ -118,7 +143,8 @@ written - "PATTERN" or - 'PATTERN', with no backslash or quote of that kind in
 it and nothing after the closing quote but spaces and a comment, so any other
 form fails, as does a list in any form it does not read as a list),
 and unless that check refuses the workflow with
-site/_redirects removed from 1 list or from both, with functions/** narrowed
+site/_redirects and site/** removed from 1 list or from both, with site/**
+alone removed from 1 list or from both, with functions/** narrowed
 to functions/* in 1 list or in both, or with !functions/** after
 functions/** in 1 list or in both, double-quoted, single-quoted, escaped as
 \\x21functions/** or followed by a comment, refuses those other forms, and
@@ -260,8 +286,11 @@ COPILOT = "site/install/copilot/index.html"
 OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
 REDIRECTS = "site/_redirects"
+# The 3 stylesheets are copied too: the redirect reading of check 7 reads every url() of each stylesheet that a page
+# loads, and fails when 1 cannot be read.
 FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
-         "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml"]
+         "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml",
+         "site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # The meta and link elements, by the gate's head_key(), whose attribute here the gate's HEAD_PIN leaves free (None):
 # the page's own text, address and dates, which the gate treats as metadata only and which change with each page and
 # release, and the address of a stylesheet, which check 6 holds to its exact form. Any other value is pinned.
@@ -326,6 +355,13 @@ INSTALL_HEADER = "which can match an install page"
 GIVEN = "which the committed pages do not give"
 HEAD_PINNED = "(HEAD_PIN)"
 REDIRECT = "which can match an install page or a file the install pages load; a rule there can send the reader away"
+# The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, that an install
+# page loads, and that a file of the tree occupies or lies beneath; and the 10 release lines of the committed file,
+# before its logo redirects.
+NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
+LOADED_THERE = REDIRECT + " from the page or serve other content. It is, in some letter case, a file that site/install/"
+OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
+RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:10])
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -590,6 +626,19 @@ def create(relative: str, text: str):
             raise AssertionError(f"{relative} already exists")
         path.write_text(text, encoding="utf-8")
     return apply
+
+
+def write(relative: str, text: str):
+    """Replace a file of the copy with text."""
+    def apply(root: Path) -> None:
+        (root / relative).write_text(text, encoding="utf-8")
+    return apply
+
+
+def whole_site(root: Path) -> None:
+    """Copy the whole committed site/ over the copy's, so that the redirect reading reads every page, stylesheet and
+    folder of the committed tree."""
+    shutil.copytree(REPO_ROOT / "site", root / "site", dirs_exist_ok=True, symlinks=True)
 
 
 def both(*faults):
@@ -1463,7 +1512,7 @@ CASES = [
     # No rule of site/_redirects may have a source that can match an install page, read as reaches_install reads a
     # pattern of site/_headers: a redirect sends the reader away, and a rewrite (200) serves other content there.
     ("a redirect from every install page to the home page", append(REDIRECTS, "/install/* / 302\n"),
-        (1, "site/_redirects line 11 has the source /install/*, " + REDIRECT)),
+        (1, "site/_redirects line 33 has the source /install/*, " + REDIRECT)),
     ("a rewrite of a family page to the home page", append(REDIRECTS, "/install/claude/ / 200\n"), (1, REDIRECT)),
     ("a redirect under a placeholder", append(REDIRECTS, "/:page/* / 301\n"), (1, REDIRECT)),
     ("a redirect from /INSTALL to the home page, indented", append(REDIRECTS, "  /INSTALL / 302\n"), (1, REDIRECT)),
@@ -1477,7 +1526,7 @@ CASES = [
     # segment of LOADED_SEGMENTS (assets), in any letter case.
     ("a rewrite of baseline.css to fonts.css",
         append(REDIRECTS, "/assets/baseline/baseline.css /assets/baseline/fonts.css 200\n"),
-        (1, "site/_redirects line 11 has the source /assets/baseline/baseline.css, " + REDIRECT)),
+        (1, "site/_redirects line 33 has the source /assets/baseline/baseline.css, " + REDIRECT)),
     ("a redirect of copy.js to rail.js", append(REDIRECTS, "/assets/baseline/copy.js /assets/baseline/rail.js 302\n"),
         (1, REDIRECT)),
     ("a redirect of every asset, in capitals", append(REDIRECTS, "/ASSETS/* / 302\n"), (1, REDIRECT)),
@@ -1488,6 +1537,69 @@ CASES = [
         append(REDIRECTS, "/images/old.png /images/cleanlanguage-card.png 301\n"), 0),
     ("a Content-Type header on the stylesheets",
         append(HEADERS, "\n/assets/baseline/*.css\n  Content-Type: text/plain\n"), (1, INSTALL_HEADER)),
+    # Under LOADED_SEGMENTS a source of site/_redirects passes only as an exact path that no page of the site loads,
+    # that nothing under site/ occupies and that lies beneath no file, each compared in any letter case.
+    ("1 exact redirect of a dropped logo, after the 10 release lines alone",
+        write(REDIRECTS, RELEASE_LINES + "/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
+        0),
+    ("the committed redirects with all 22 logo lines, beside the whole committed site", whole_site, 0),
+    ("a redirect of every asset", append(REDIRECTS, "/assets/* /assets/baseline/logos/aiqt.svg 302\n"),
+        (1, "site/_redirects line 33 has the source /assets/*, " + REDIRECT)),
+    ("a redirect of every logo", append(REDIRECTS, "/assets/baseline/logos/* /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect of every logo under a placeholder",
+        append(REDIRECTS, "/assets/baseline/logos/:name /assets/baseline/logos/aiqt.svg 301\n"), (1, NOT_EXACT)),
+    ("a redirect with a wildcard inside a segment",
+        append(REDIRECTS, "/assets/baseline/logos/aiqt-*.svg /assets/baseline/logos/aiqt.svg 301\n"), (1, NOT_EXACT)),
+    ("a redirect with a splat", append(REDIRECTS, "/assets/baseline/logos/old/* /assets/baseline/logos/:splat 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect of a logo the install pages load",
+        append(REDIRECTS, "/assets/baseline/logos/cleanlanguage.svg /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "has the source /assets/baseline/logos/cleanlanguage.svg, " + REDIRECT)),
+    ("a redirect of a logo the install pages load, in another letter case",
+        append(REDIRECTS, "/Assets/Baseline/Logos/CleanLanguage.SVG /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, LOADED_THERE)),
+    ("a redirect of baseline.css in capitals", append(REDIRECTS, "/ASSETS/BASELINE/BASELINE.CSS / 302\n"),
+        (1, LOADED_THERE)),
+    ("a dropped logo that another page of the site loads",
+        create("site/about/index.html", '<!doctype html>\n<img src="/assets/baseline/logos/AIQT-CARD.svg" alt="">\n'),
+        (1, "a file that a page of the site loads (site/about/index.html")),
+    ("a dropped logo that a stylesheet of another page loads",
+        both(create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/about.css">\n'),
+             create("site/assets/about.css", ".x { background: url(baseline/logos/aiqt-mono.svg); }\n")),
+        (1, "a file that a page of the site loads (site/assets/about.css")),
+    ("a dropped logo that a file occupies", create("site/assets/baseline/logos/aiqt-card.svg", "<svg></svg>\n"),
+        (1, "at or above which site/assets/baseline/logos/aiqt-card.svg exists, " + OCCUPIED)),
+    ("a dropped logo that a file occupies in another letter case",
+        create("site/assets/baseline/logos/AIQT-Card.svg", "<svg></svg>\n"),
+        (1, "at or above which site/assets/baseline/logos/AIQT-Card.svg exists, " + OCCUPIED)),
+    ("a redirect beneath an existing file", append(REDIRECTS, "/assets/baseline/baseline.css/old.svg /x.svg 301\n"),
+        (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
+    ("a redirect of a dropped logo under a full URL",
+        append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/aiqt-old.svg /x.svg 301\n"),
+        (1, "it does not start with /, so it can carry a scheme and a host")),
+    ("a redirect of a dropped logo with a trailing /",
+        append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg/ /x.svg 301\n"), (1, "an empty segment or a trailing /")),
+    ("a redirect with a . segment", append(REDIRECTS, "/assets/baseline/./logos/aiqt-old.svg /x.svg 301\n"),
+        (1, 'it has the segment "."')),
+    ("a redirect with a .. segment", append(REDIRECTS, "/assets/baseline/logos/../aiqt-old.svg /x.svg 301\n"),
+        (1, 'it has the segment ".."')),
+    ("a redirect with an empty segment", append(REDIRECTS, "/assets//baseline/logos/aiqt-old.svg /x.svg 301\n"),
+        (1, "an empty segment or a trailing /")),
+    ("a redirect with a percent sign", append(REDIRECTS, "/assets/baseline/logos/aiqt%2Dold.svg /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect with a question mark", append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg?a=1 /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect with a number sign", append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg#a /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a dropped logo that cannot be evaluated, a page being unreadable",
+        lambda root: (root / "site" / "broken.html").write_bytes(b"<!doctype html>\n\xff\n"),
+        (1, "which could not be evaluated: the page site/broken.html could not be read")),
+    ("a dropped logo that cannot be evaluated, a stylesheet being missing",
+        create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/gone.css">\n'),
+        (1, "which could not be evaluated: the stylesheet /assets/gone.css")),
+    ("a header rule for an exact path that the redirect reading accepts",
+        append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
     # Every src on the 6 pages is a path under LOADED_SEGMENTS, so check 7 covers what it loads.
     ("the rail's img loaded from another first segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
@@ -1587,7 +1699,7 @@ CASES = [
         edit(CLAUDE, 'src="/assets/baseline/copy.js?v=', 'src="/assets/baseline/copy2.js?v='), (1, OUTSIDE_PIN)),
     ("the rail's img loaded from another pinned file",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
-             'src="/assets/baseline/logos/cleanlanguage-mono.svg" alt="A document'), 0),
+             'src="/assets/baseline/logos/cleanlanguage-favicon.svg" alt="A document'), 0),
     # Every element on the 6 pages, checked or not, shown or hidden, is of a tag that the committed pages use (the gate's
     # PAGE_TAGS).
     ("a marquee around the label after the button row", wrap(PAGE, SCOPE, SCOPE, "<marquee>", "</marquee>"),
@@ -2624,6 +2736,21 @@ def glob_pattern(pattern: str) -> re.Pattern:
     return re.compile("".join({"**": ".*", "*": "[^/]*"}.get(part, re.escape(part)) for part in parts))
 
 
+def site_read_paths() -> list[str]:
+    """The paths under site/ that the redirect reading of check 7 reads, or would read once they exist: every
+    committed page and stylesheet under site/, the path of each source of the committed site/_redirects, a new page at
+    the top of site/ and at any depth, a new file under site/assets/ and a new entry at the top of site/, which the
+    reading lists in any letter case."""
+    site = REPO_ROOT / "site"
+    paths = [str(path.relative_to(REPO_ROOT)) for path in sorted(site.rglob("*"))
+             if path.suffix.lower() in (".html", ".htm", ".css")]
+    for line in (REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("/") and not fields[0].startswith("#"):
+            paths.append("site" + fields[0])
+    return paths + ["site/new.html", "site/a/b/new.html", "site/assets/a/new.svg", "site/Assets"]
+
+
 def workflow_path_problems(text: str | None = None) -> list[str]:
     """Each of the 2 path lists of WORKFLOW (pull_request and push) covers every file the gate, this test and the
     workflow read, and every path of the gate's SERVER_ENTRIES, as a file and at any depth under a directory, so that a
@@ -2669,7 +2796,8 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     lists = [held for held in lists if held]
     if len(lists) != 2:
         return problems + [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
-    read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO]
+    read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO,
+            *site_read_paths()]
     for number, held in enumerate(lists, 1):
         problems += [f"path list {number} of {WORKFLOW} holds the negative pattern {pattern}; this test does not read "
                      "the order of the patterns, so it refuses every negative 1." for pattern in held if pattern[:1] == "!"]
@@ -2696,10 +2824,19 @@ def workflow_case_problems() -> list[str]:
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
         return [f"{WORKFLOW} lists site/_redirects {text.count(line)} times, not once in each path list."]
+    # site/** covers site/_redirects too, so the removal takes both lines out.
+    site_tree = '      - "site/**"\n'
+    if text.count(site_tree) != 2:
+        return [f"{WORKFLOW} lists site/** {text.count(site_tree)} times, not once in each path list."]
     problems: list[str] = []
-    for name, edited in (("from the first path list", text.replace(line, "", 1)), ("from both", text.replace(line, ""))):
+    for name, edited in (("from the first path list", text.replace(line, "", 1).replace(site_tree, "", 1)),
+                         ("from both", text.replace(line, "").replace(site_tree, ""))):
         if not workflow_path_problems(edited):
-            problems.append(f"site/_redirects removed {name}: workflow_path_problems() found no problem.")
+            problems.append(f"site/_redirects and site/** removed {name}: workflow_path_problems() found no problem.")
+    for name, edited in (("from the first path list", text.replace(site_tree, "", 1)),
+                         ("from both", text.replace(site_tree, ""))):
+        if not workflow_path_problems(edited):
+            problems.append(f"site/** removed {name}: workflow_path_problems() found no problem.")
     tree = '      - "functions/**"\n'
     if text.count(tree) != 2:
         return problems + [f"{WORKFLOW} lists functions/** {text.count(tree)} times, not once in each path list."]
@@ -2926,10 +3063,59 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: f
                (3, f"check-install-page: {INLINE_GATE} {words}"))
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
-# Root reads a file whatever its mode, so under root a mode-000 case cannot fail to read: it is left out of CASES, and
-# main() names it as skipped.
-SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
-CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
+# The folder that the case of LOCKED_CASES sets to mode 000, and the probe that runs the gate for it. The probe loads
+# the copy of the gate and calls its site_loads() while that folder can still be listed; it exits 4 if that call
+# names any input it could not read or list. It then replaces the gate's site_loads with a function that returns the
+# result of that call, so that main() lists no folder through site_loads(), whether or not site_loads() is cached,
+# and wraps the gate's occupied() to record each folder that it could not list. It sets the folder's mode to 000 and
+# runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that folder, and otherwise
+# exits with main()'s code. In a plain run site_loads() lists the same folder first and refuses it in the same words
+# as occupied() does, so the case cannot tell the 2 refusals apart by its output; the stand-in for site_loads(),
+# which reports no unread input, keeps main() off that refusal, and the record of occupied() shows that its
+# refusal is the one given.
+LOCKED_FOLDER = "site/assets/old"
+LOCK_PROBE = """\
+import importlib.util, os, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+loads, unread = gate.site_loads()
+if unread:
+    print('lock probe: site_loads() could not read ' + '; '.join(unread) + ' before the folder was locked',
+          file=sys.stderr)
+    sys.exit(4)
+gate.site_loads = lambda: (loads, [])
+refusals = []
+listed = gate.occupied
+def occupied(source):
+    entry, unlisted = listed(source)
+    if unlisted is not None:
+        refusals.append(unlisted)
+    return entry, unlisted
+gate.occupied = occupied
+folder = Path(sys.argv[2]).resolve().relative_to(gate.REPO_ROOT)
+os.chmod(sys.argv[2], 0)
+code = gate.main()
+if not any(refusal.startswith(f'the folder {folder} could not be listed: ') for refusal in refusals):
+    print(f'lock probe: occupied() gave no refusal for the folder {folder}', file=sys.stderr)
+    sys.exit(4)
+sys.exit(code)
+"""
+LOCKED_CASES = [
+    ("a dropped logo that cannot be evaluated, its folder set to mode 000 after the pages' loads are read",
+        both(append(REDIRECTS, "/assets/old/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
+             lambda root: (root / LOCKED_FOLDER).mkdir()),
+        (1, "site/_redirects line 33 has the source /assets/old/aiqt-card.svg, which could not be evaluated: the "
+            f"folder {LOCKED_FOLDER} could not be listed")),
+]
+# Each case that main() runs through a probe in place of the gate alone: the probe, then the paths under the copy that
+# the probe is given after the copy of the gate.
+PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,))}
+# Root reads a file and lists a folder whatever its mode, so under root a mode-000 case cannot fail to read or list: it
+# is left out of CASES, and main() names it as skipped.
+SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES if "mode 000" in case[0] and os.geteuid() == 0]
+CASES += [case for case in LOAD_CASES + LOCKED_CASES if case[0] not in SKIPPED]
 
 
 def main() -> int:
@@ -2976,13 +3162,18 @@ def main() -> int:
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
-            result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
+            command = [sys.executable, "-I", str(root / "tools" / GATE.name)]
+            if name in PROBED:
+                probe, paths = PROBED[name]
+                command[2:2] = ["-c", probe]
+                command += [str(root / path) for path in paths]
+            result = subprocess.run(command, capture_output=True, text=True)
             code, words = expected if isinstance(expected, tuple) else (expected, "")
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
     for name in SKIPPED:
-        print(f"test-install-page: skipped {name}: root reads a file whatever its mode")
+        print(f"test-install-page: skipped {name}: root reads a file and lists a folder whatever its mode")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:

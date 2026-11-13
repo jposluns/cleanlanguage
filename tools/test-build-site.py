@@ -19,7 +19,11 @@ the committed release (check_committed_render) load the generator, or a
 changed copy of it, and take that page from verify_page(), which runs the
 whole build() and writes nothing, so a fault that makes the generator refuse
 any page fails these cases too; the pin's comment names how to update it.
-The first case runs ``--check`` on this repository. Another reads this
+The first case runs ``--check`` on this repository. One checks that
+``site/favicon.ico`` is an ICO file listed in ``static_files``, and another
+that the logos the built pages load are exactly the pin gate's ``LOGOS``,
+loading ``tools/check-baseline-pin.py`` from its path as
+``tools/copy-baseline.py`` does. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
 version as BASELINE, read by the generator's load_pin(). The configured base is
@@ -63,6 +67,7 @@ INPUTS = [
     "site/.well-known",
     "site/README.md",
     "site/images",
+    "site/favicon.ico",
     ".baseline/pin.toml",
     "tools/sitemap-config.json",
     "tools/check-install-page.py",
@@ -3086,8 +3091,8 @@ PIN_VERSION = "9.8.7"
 PIN_CHECKSUM = "0123456789abcdef" * 4
 PIN_DATE = "2000-01-02"
 VERIFY_PAGE_PIN = {
-    "placeholder": "5b26485f5d2e1c8a1bfd46ea52db8cfb0de1bb582debbc24cbf427764465b5dc",
-    "published": "53603672aea6647e4fddfb93567daba7d341629be6d14557ab65bda4c1a204ce",
+    "placeholder": "8d07b3e5fabc9efedff2fa449322b604a3cce274110fbf383ac2d3eabf8887c6",
+    "published": "5a1197e156cb8d5f8fee89521d350099442f3e778908320d5926116f59e72a29",
 }
 SITE_CSS_PIN = None
 PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
@@ -3446,6 +3451,66 @@ def check_staged_build(failures: list[str]) -> int:
     return 1
 
 
+# The favicon that the site builds with the card builder (baseline 1.12.2 and later) and serves at its root as
+# /favicon.ico, committed by hand from the builder's output and listed in site.json's static_files. An ICO file starts
+# with the bytes 00 00 01 00.
+FAVICON = "favicon.ico"
+ICO_MAGIC = b"\x00\x00\x01\x00"
+
+
+def check_favicon(failures: list[str]) -> int:
+    """site.json's static_files lists favicon.ico and site/favicon.ico is an ICO file. --check alone passes when the
+    file and its listing are removed together, so this case is what keeps them."""
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    if FAVICON not in config.get("static_files", []):
+        failures.append(f"favicon: site-src/site.json static_files does not list {FAVICON}, which the site serves at "
+                        "its root")
+    try:
+        head = (REPO_ROOT / "site" / FAVICON).read_bytes()[:len(ICO_MAGIC)]
+    except OSError as error:
+        failures.append(f"favicon: site/{FAVICON} could not be read: {error}")
+        return 1
+    if head != ICO_MAGIC:
+        failures.append(f"favicon: site/{FAVICON} starts with {head.hex()}, not the ICO header {ICO_MAGIC.hex()}")
+    return 1
+
+
+# The pin gate, whose LOGOS names the logos that tools/copy-baseline.py copies and the gate requires in the pin.
+PIN_GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
+LOGO_PATH = re.compile(r"assets/baseline/logos/([A-Za-z0-9._-]+)")
+
+
+def load_pin_gate():
+    """tools/check-baseline-pin.py as a module, loaded from its path and compiled from its source, as
+    tools/copy-baseline.py loads it, so no cached byte code for it is read."""
+    spec = importlib.util.spec_from_file_location("check_baseline_pin", PIN_GATE)
+    module = importlib.util.module_from_spec(spec)
+    exec(compile(PIN_GATE.read_bytes(), str(PIN_GATE), "exec", dont_inherit=True), module.__dict__)
+    return module
+
+
+def check_logo_set(failures: list[str]) -> int:
+    """The logos that the built pages load, the names of their assets/baseline/logos/ paths, are exactly the pin
+    gate's LOGOS, so a name added to the list or dropped from it, or a page that starts or stops loading a logo,
+    fails here."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"logo set: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        loaded = set()
+        for page in out.rglob("*.html"):
+            loaded.update(LOGO_PATH.findall(page.read_text(encoding="utf-8")))
+    logos = set(load_pin_gate().LOGOS)
+    if loaded != logos:
+        failures.append(f"logo set: the built pages load {sorted(loaded)}, but the pin gate's LOGOS is "
+                        f"{sorted(logos)}; only in the pages: {sorted(loaded - logos)}, only in LOGOS: "
+                        f"{sorted(logos - loaded)}")
+    return 1
+
+
 def check_version_literals(failures: list[str]) -> int:
     """This file's own source carries no ?v= token that starts with a digit and that KEPT_TOKENS does not name: a case
     writes the current baseline version as BASELINE, read from the pin."""
@@ -3501,6 +3566,8 @@ def main() -> int:
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
     ran += check_footer(failures)
+    ran += check_favicon(failures)
+    ran += check_logo_set(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
     ran += check_release_near_placeholder(failures)

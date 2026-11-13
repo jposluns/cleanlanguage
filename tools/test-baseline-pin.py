@@ -5,7 +5,10 @@ Each gate case but the last builds a small pinned tree in a temporary folder
 (under $TMPDIR), with the version's README and specification under
 ``.baseline/`` and a root ``NOTICE.md``, applies 1 fault, or none for the
 clean tree, runs the gate on that tree as a separate process and asserts its
-exit code, and for some cases a line of its output. A further gate case
+exit code, and for some cases a line of its output. Among the faults: a logo
+the pages do not load, copied and pinned; an .ico file copied and pinned under
+``logos/``, and 1 with an upper-case suffix under ``marks/``; and a logo the
+pages load dropped from the copy and the pin. A further gate case
 runs it on a tree whose root's name holds a newline and without
 ``SHA256SUMS``, and asserts that its error is 1 line with the newline
 written as ``\\n``. 2 more give it a ``site-src/site.json`` of 200,000
@@ -17,7 +20,10 @@ and assert:
 
 - what it copies and pins: the runtime and licence files to the served copy
   folder, under site/ or, with the base path /draft/, under site/draft/, and
-  never matrix.js, reference/ or tools/; the build tools, the palette gate and
+  never matrix.js, reference/ or tools/; from logos/ only the logos the pages
+  load, never another logo, an .ico under logos/ or, with an upper-case
+  suffix, under marks/, ``tools/build_icons.py`` or
+  ``tools/site-card.example.toml``; the build tools, the palette gate and
   the card builder with its fonts, copied, pinned and counted; the README and
   the specification copied to ``.baseline/`` unpinned; and the pin header;
 - what it refuses (exit 1) before any served file is replaced, each case
@@ -32,8 +38,9 @@ and assert:
   line end, or whose last line has no newline; a FIFO, or a link that leads
   to a FIFO, in place of SHA256SUMS or of the gate, each refused by the check
   made before the open, and a link in place of a file in the version folder;
-  a version without the palette gate, the card builder, the README or the
-  specification; a README that names another version, lacks its step 7 NOTICE
+  a version without the palette gate, the card builder, a logo the pages load
+  (``logos/vendorreplies.png``), the README or the specification; a README
+  that names another version, lacks its step 7 NOTICE
   entry, holds a second quoted paragraph in step 7 or has CRLF line ends, on
   every line or on the entry line only; a link or a file in place of
   ``.baseline/card-fonts/``, a link or a folder in place of
@@ -151,6 +158,12 @@ FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font
 for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE",
               "NOTICE.md"):
     FILES[_name] = f"/* {_name} */\n".encode()
+# The logos the site's pages load, which the gate requires in the pin (its LOGOS) and which the copy tool alone copies
+# from logos/. They are written out here, not read from the gate, so that a change to the gate's list fails a case.
+LOGO_NAMES = ("aiqt.svg", "auditthis.svg", "cleanlanguage-favicon.svg", "cleanlanguage-touch.png", "cleanlanguage.svg",
+              "grclibrary.svg", "opfiles.svg", "secureconfig.svg", "vendorreplies.png")
+for _name in LOGO_NAMES:
+    FILES[f"logos/{_name}"] = f"<!-- logos/{_name} -->\n".encode()
 # The pinned build tool, kept at .baseline/check_palette.py and never served.
 TOOL = b"# check_palette.py\n"
 TOOL_KEY = ".baseline/check_palette.py"
@@ -243,8 +256,38 @@ def fault_flip_byte(root: Path) -> None:
 
 
 def fault_extra_file(root: Path) -> None:
-    (copied(root) / "logos").mkdir()
+    (copied(root) / "logos").mkdir(exist_ok=True)
     (copied(root) / "logos" / "extra.svg").write_bytes(b"<svg/>")
+
+
+def pin_extra(root: Path, name: str, data: bytes) -> None:
+    """Add name, a file of the version, to the copy, to SHA256SUMS and to the pin with its digest, so that only a rule
+    on the name itself can refuse it."""
+    (copied(root) / name).parent.mkdir(parents=True, exist_ok=True)
+    (copied(root) / name).write_bytes(data)
+    with (root / ".baseline" / "SHA256SUMS").open("a", encoding="utf-8") as stream:
+        stream.write(f"{digest(data)}  {name}\n")
+    with (root / ".baseline" / "pin.toml").open("a", encoding="utf-8") as stream:
+        stream.write(f'"assets/baseline/{name}" = "{digest(data)}"\n')
+
+
+def fault_unloaded_logo_pinned(root: Path) -> None:
+    pin_extra(root, "logos/cleanlanguage-mono.svg", b"<!-- logos/cleanlanguage-mono.svg -->\n")
+
+
+def fault_ico_pinned_in_logos(root: Path) -> None:
+    pin_extra(root, "logos/cleanlanguage-favicon.ico", b"\x00\x00\x01\x00icon")
+
+
+def fault_ico_pinned_in_marks(root: Path) -> None:
+    # The suffix in upper case: the gate matches it in any letter case.
+    pin_extra(root, "marks/orcid-id.ICO", b"\x00\x00\x01\x00icon")
+
+
+def fault_required_logo_dropped(root: Path) -> None:
+    name = "logos/cleanlanguage-favicon.svg"
+    (copied(root) / name).unlink()
+    edit_pin(root, f'"assets/baseline/{name}" = "{digest(FILES[name])}"\n', "")
 
 
 def fault_missing_file(root: Path) -> None:
@@ -652,6 +695,15 @@ CASES = [
     ("a digest the published sums do not list", fault_digest_not_published, 1),
     ("rail.js dropped from the copy and the pin", fault_rail_js_dropped, 1),
     ("scheme.js dropped from the copy and the pin", fault_scheme_js_dropped, 1),
+    ("a logo the pages do not load, logos/cleanlanguage-mono.svg, copied and pinned", fault_unloaded_logo_pinned, 1,
+        "assets/baseline/logos/cleanlanguage-mono.svg is pinned, but it is not 1 of the logos the site's pages load"),
+    ("an .ico file copied and pinned under logos/", fault_ico_pinned_in_logos, 1,
+        "assets/baseline/logos/cleanlanguage-favicon.ico is an .ico file under the copy folder"),
+    ("an .ico file with an upper-case suffix copied and pinned under marks/", fault_ico_pinned_in_marks, 1,
+        "assets/baseline/marks/orcid-id.ICO is an .ico file under the copy folder"),
+    ("logos/cleanlanguage-favicon.svg dropped from the copy and the pin", fault_required_logo_dropped, 1,
+        "assets/baseline/logos/cleanlanguage-favicon.svg is part of the baseline's runtime and licence set but is not "
+        "pinned"),
     ("the pinned build tool edited", fault_tool_edited, 1),
     ("the pinned build tool deleted", fault_tool_deleted, 1),
     ("the build tool's pin entry removed", fault_tool_unpinned, 1),
@@ -939,6 +991,9 @@ COPY_REFUSALS = [
         "SHA256SUMS does not list tools/check_palette.py"),
     ("a version without the card builder", lambda package: package.pop(package_name(CARD_KEY)),
         f"SHA256SUMS does not list {package_name(CARD_KEY)}"),
+    ("a version without logos/vendorreplies.png, a logo the pages load",
+        lambda package: package.pop("logos/vendorreplies.png"),
+        "SHA256SUMS does not list the logos the site's pages load (the gate's LOGOS): logos/vendorreplies.png"),
     ("a version without README.md", lambda package: package.pop("README.md"),
         "SHA256SUMS does not list the document README.md"),
     ("a version without SPECIFICATION.md", lambda package: package.pop("SPECIFICATION.md"),
@@ -1809,6 +1864,39 @@ def copy_problems() -> list[str]:
     return problems
 
 
+# Files of a version that copy-baseline copies nowhere and pins nowhere, beside the logos the pages load: a logo the
+# pages do not load, an .ico under logos/, the icon maker (from 1.12.1), the card data template (which step 2 of the
+# baseline README names among the files never copied from 1.12.3) and, in its own case, an .ico with an upper-case
+# suffix under marks/, a folder otherwise copied whole.
+LOGO_EXTRAS = {"logos/cleanlanguage-mono.svg": b"<!-- logos/cleanlanguage-mono.svg -->\n",
+               "logos/cleanlanguage-favicon.ico": b"\x00\x00\x01\x00icon",
+               "tools/build_icons.py": b"# build_icons.py\n",
+               "tools/site-card.example.toml": b"# site-card.example.toml\n"}
+MARKS_ICO = {"marks/orcid-id.ICO": b"\x00\x00\x01\x00icon"}
+
+
+def logo_copy_problems() -> list[str]:
+    """copy-baseline copies from logos/ only the logos the pages load and no .ico in any folder: on a version that also
+    holds LOGO_EXTRAS, or MARKS_ICO, it exits 0, the served copy folder holds exactly FILES, and the pin names none of
+    the extras."""
+    problems = []
+    for name, extras in (("a version with a logo the pages do not load, an .ico under logos/, tools/build_icons.py "
+                          "and tools/site-card.example.toml", LOGO_EXTRAS),
+                         ("a version with an .ico with an upper-case suffix under marks/", MARKS_ICO)):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            result = run_copy(root, {**PACKAGE, **extras})
+            pin = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8") if result.returncode == 0 else ""
+            served = sorted(path.relative_to(root / "site" / "assets" / "baseline").as_posix()
+                            for path in (root / "site" / "assets" / "baseline").rglob("*") if path.is_file())
+            named = [extra for extra in extras if Path(extra).name in pin]
+            if result.returncode != 0 or served != sorted(FILES) or named:
+                problems.append(f"copy-baseline: {name} exits {result.returncode}, serves {served} and pins {named}; "
+                                f"expected 0, exactly the runtime and licence files with the logos the pages load, "
+                                f"and none of {sorted(extras)} pinned: {result.stderr.strip()[-200:]!r}")
+    return problems
+
+
 def pin_header_problems() -> list[str]:
     """The pin's header, as tools/copy-baseline.py writes it and as committed, gives each key's base."""
     with tempfile.TemporaryDirectory() as scratch:
@@ -1904,10 +1992,10 @@ def main() -> int:
                            + python_floor_problems() + copy_source_problems() + alias_problems()
                            + failure_problems() + whole_value_problems() + read_once_problems()
                            + planted_cache_problems() + sums_line_problems() + read_refusal_problems()
-                           + input_refusal_problems() + newline_path_problems())
-    # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
-    # base path /draft/ and the NOTICE.md entry naming the previous version.
-    ran = 11 + 7 + 1 + 1 + 2
+                           + input_refusal_problems() + newline_path_problems() + logo_copy_problems())
+    # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), in copy_problems() the
+    # base path /draft/ and the NOTICE.md entry naming the previous version, and the 2 of logo_copy_problems().
+    ran = 11 + 7 + 1 + 1 + 2 + 2
     ran += (len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
             + len(WHOLE_VALUE_REFUSALS) + len(SUMS_LINE_REFUSALS) + len(READ_REFUSALS) + len(INPUT_REFUSALS)
             + len(NEWLINE_PATHS))
