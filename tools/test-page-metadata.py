@@ -780,15 +780,22 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     refs/remotes/origin/main only when that base is the only one, the page's
     mode and blob at HEAD equal its mode and blob there, and git hash-object of
     the working-tree page gives its blob at HEAD; otherwise it reads at HEAD,
-    and a failed git call exits 3. Each test builds its history in a temporary
-    repository made with no template, with a fixture identity and fixed commit
-    dates, and checks the page against a fixed TODAY. isolate_git() keeps the
-    suite's and the gate's git calls from reading system and global
-    configuration, configuration from GIT_ variables, the user's and the
-    system's attributes and ignore files, and git's template directory. The
-    class still takes inputs from the machine, such as the git binary found on
-    PATH, with its version and built-in defaults, the locale, and the folder
-    that tempfile picks."""
+    and a failed git call exits 3. Each test runs in a temporary repository
+    made by start_repository() with git init --template=, each commit is made
+    through the class's git() with a fixture identity and a fixed date, and
+    each call of check_page() passes the fixed TODAY. isolate_git() keeps the
+    suite's and the gate's git calls from reading the system and global
+    configuration, configuration from GIT_ variables, the user's attributes and
+    ignore files, and the system's attributes file. Cases plant configuration
+    through GIT_CONFIG_COUNT before isolate_git() runs, a GIT_CONFIG_SYSTEM
+    file after it runs, and a user attributes file and a user ignore file at
+    both default paths, and test_repository_has_no_template_files checks for
+    template files. GIT_CONFIG_GLOBAL and HOME are overlapping layers: git
+    reads ~/.gitconfig only when both are dropped, so no case fails when only 1
+    of them is. No case plants a system attributes file, since git has no
+    variable that moves it. The class still takes inputs from the machine, such
+    as the git binary found on PATH, with its version and built-in defaults,
+    the locale, and the folder that tempfile picks."""
 
     TODAY = "2026-03-01"
     MAIN_DATE = "2026-01-01"
@@ -804,11 +811,16 @@ class ProtectedLineHistoryTest(unittest.TestCase):
 
     def isolate_git(self) -> None:
         # Remove every GIT_ variable, so no configuration comes from the
-        # environment; read /dev/null as the global configuration and no system
-        # configuration or system attributes file; and point HOME and
-        # XDG_CONFIG_HOME at a fresh empty folder, so git finds no user
-        # attributes or ignore file at their default paths. os.environ is
-        # restored when the test ends.
+        # environment, such as GIT_CONFIG_COUNT; read /dev/null as the global
+        # configuration and no system configuration or system attributes file;
+        # and point HOME and XDG_CONFIG_HOME at a fresh empty folder, so git
+        # finds no user attributes or ignore file at their default paths. The
+        # loop, GIT_CONFIG_NOSYSTEM and XDG_CONFIG_HOME each have a case that
+        # plants their input and fails without them. GIT_CONFIG_GLOBAL and HOME
+        # overlap: git reads ~/.gitconfig only when both are dropped, so no
+        # case fails when only 1 of them is. No case plants a system attributes
+        # file, since git has no variable that moves it. os.environ is restored
+        # when the test ends.
         for key in [key for key in os.environ if key.startswith("GIT_")]:
             del os.environ[key]
         os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -894,9 +906,11 @@ class ProtectedLineHistoryTest(unittest.TestCase):
 
     def test_user_attributes_and_ignore_files_are_not_read(self):
         # A user attributes file that re-encodes HTML and a user ignore file
-        # that lists the site folder, at both default paths, make git add of
-        # the page fail when git reads them; isolate_git() keeps git from
-        # reading them.
+        # that lists README and the site folder are planted at both default
+        # paths. Through the suite's git and the gate's git(), the page has
+        # no working-tree-encoding attribute, no file is ignored, and git
+        # add of the page and README succeeds, so the case fails when git
+        # reads either planted file.
         hostile = tempfile.TemporaryDirectory()
         self.addCleanup(hostile.cleanup)
         for config in (Path(hostile.name, ".config", "git"), Path(hostile.name, "xdg", "git")):
@@ -906,8 +920,47 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         os.environ["HOME"] = hostile.name
         os.environ["XDG_CONFIG_HOME"] = str(Path(hostile.name, "xdg"))
         self.isolate_git()
-        self.change_and_restore_on_branch()
-        self.assertEqual(self.problems(), [])
+        self.page.write_text(history_page(self.MAIN_DATE), encoding="utf-8")
+        (gate.REPO_ROOT / "README").write_text("fixture\n", encoding="utf-8")
+        gits = (("suite", self.git), ("gate", gate.git))
+        for label, git in gits:
+            with self.subTest(git=label):
+                self.assertEqual(git("check-attr", "working-tree-encoding", "--", "site/index.html"),
+                                 "site/index.html: working-tree-encoding: unspecified\n")
+                self.assertEqual(git("ls-files", "--others", "--ignored", "--exclude-standard"), "")
+        for label, git in gits:
+            with self.subTest(git=label):
+                git("add", "--", "site/index.html", "README")
+                git("rm", "-q", "--cached", "--", "site/index.html", "README")
+
+    def assert_no_signing_configuration(self) -> None:
+        for label, git in (("suite", self.git), ("gate", gate.git)):
+            with self.subTest(git=label):
+                keys = {line.partition("=")[0] for line in git("config", "--list").splitlines()}
+                self.assertFalse(keys & {"commit.gpgsign", "gpg.program"}, keys)
+
+    def test_configuration_from_git_variables_is_not_read(self):
+        # Configuration through GIT_CONFIG_COUNT, set before isolate_git()
+        # runs, signs each commit with a program that fails, so git commit
+        # fails when git reads it.
+        os.environ.update(GIT_CONFIG_COUNT="2",
+                          GIT_CONFIG_KEY_0="commit.gpgsign", GIT_CONFIG_VALUE_0="true",
+                          GIT_CONFIG_KEY_1="gpg.program", GIT_CONFIG_VALUE_1="false")
+        self.isolate_git()
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.assert_no_signing_configuration()
+
+    def test_system_configuration_is_not_read(self):
+        # A system configuration file, named by GIT_CONFIG_SYSTEM after
+        # isolate_git() runs, signs each commit with a program that fails,
+        # so git commit fails when git reads it.
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        system = Path(scratch.name, "gitconfig")
+        system.write_text("[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n", encoding="utf-8")
+        os.environ["GIT_CONFIG_SYSTEM"] = str(system)
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.assert_no_signing_configuration()
 
     def test_repository_has_no_template_files(self):
         # git init --template= copies nothing from git's template directory,
@@ -1003,13 +1056,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.assertEqual(self.problems(), [])
 
     def test_restoring_branch_merged_into_main_passes(self):
-        # A merge the change keeps passing: main merges the restoring branch
-        # with no fast-forward, so main's tip is the first parent and the
-        # branch head the second, as a pull request's merge checkout has it.
-        # With the protected ref at main's tip before the merge, the page is
-        # read at that merge base; without the ref, it is read at HEAD, where
-        # git log follows the first parent whose page matches the merge's,
-        # which is main.
+        # main merges the restoring branch with no fast-forward, so main's
+        # tip is the first parent and the branch head the second, as a pull
+        # request's merge checkout has it, and the page passes there. With
+        # the protected ref at main's tip before the merge, the page is read
+        # at that merge base; without the ref, it is read at HEAD, where git
+        # log follows the first parent whose page matches the merge's, which
+        # is main.
         for protect in (True, False):
             with self.subTest(protect=protect):
                 self.start_repository()
@@ -1020,6 +1073,44 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                     self.protect_main()
                 self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-04")
                 self.assertEqual(self.problems(), [])
+
+    def test_branch_restamp_merged_into_main_is_dated_at_branch_commit(self):
+        # main merges, with no fast-forward, a branch that changed the page
+        # and restamped it to 2026-02-01. git log at the merge follows the
+        # parent whose page matches the merge's, which is the branch, so the
+        # page is dated 2026-02-01, not 2026-02-20, the date of the merge.
+        # With no ref, and with the ref at main's tip before the merge, the
+        # page is read at HEAD, the latter once the blob comparison fails;
+        # with the ref at the tip after the merge, the merge base is the
+        # merge itself and the page is read there.
+        for protect in ("none", "before merge", "after merge"):
+            with self.subTest(protect=protect):
+                self.start_repository()
+                self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+                self.git("switch", "-q", "-c", "topic")
+                self.commit_page("2026-02-01", "2026-02-01", body="Changed body.")
+                self.git("switch", "-q", "main")
+                self.commit_other_file("2026-02-10")
+                if protect == "before merge":
+                    self.protect_main()
+                self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-20")
+                if protect == "after merge":
+                    self.protect_main()
+                self.assertEqual(gate.last_change_date("site/index.html"), "2026-02-01")
+                self.assertEqual(self.problems(), [])
+
+    def test_page_added_on_branch_merged_into_main_keeps_its_added_date(self):
+        # main merges, with no fast-forward, a branch that added the page on
+        # 2026-02-01, so the merge's diff against main's tip adds the page
+        # too. git log at HEAD finds the branch's commit as the one that
+        # added it, so the published stamp of 2026-02-01 matches.
+        self.commit_other_file(self.MAIN_DATE)
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", "2026-02-01", published="2026-02-01")
+        self.git("switch", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-20")
+        self.assertEqual(gate.added_date("site/index.html"), "2026-02-01")
+        self.assertEqual(self.problems(), [])
 
     def test_criss_cross_reads_at_head_whichever_base_git_picks(self):
         # Branch a changes another file and branch b changes the page body.

@@ -23,11 +23,15 @@ What it verifies, per page
    at that base, and git hash-object of the working-tree path gives that same
    blob, the last commit date is read at that base, so a branch whose own commits
    changed a page and then restored it is not asked to restamp it. That hash
-   applies the attributes and filters that git reads, such as a clean filter from
-   local, global, system or environment configuration, follows a symbolic link
-   and does not see the working-tree mode, so it can differ from what staging the
-   page would keep. Otherwise, such as with more than 1 merge base or in a clone
-   without that ref, the date is read at HEAD.
+   applies the attributes and filters that git reads and can apply, such as a
+   clean filter from local, global, system or environment configuration. An
+   attribute or a filter that is not required and that git cannot apply, such as
+   working-tree-encoding=UTF-16 on bytes with no byte order mark or a failing
+   clean filter, makes git hash-object print an error, exit 0 and hash the bytes
+   as they are. The hash also follows a symbolic link and does not see the
+   working-tree mode, so it can differ from what staging the page would keep.
+   Otherwise, such as with more than 1 merge base or in a clone without that ref,
+   the date is read at HEAD.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -74,10 +78,13 @@ never a pass. In CI that means ``actions/checkout`` needs ``fetch-depth: 0``.
 Exit codes:
   0  every page passed
   1  at least one page has a problem
-  3  the check could not run: no git history, a failed git call (such as
-     git merge-base when ``PROTECTED_REF`` shares no history with HEAD, or
-     git hash-object when the working-tree page cannot be hashed), a page
-     could not be read, or tools/web_metadata.py or
+  3  the check could not run: a shallow clone, whose history is
+     incomplete; a failed git call, such as git merge-base when
+     ``PROTECTED_REF`` shares no history with HEAD, or git hash-object
+     when it fails for the working-tree page, such as when a required
+     filter fails; a merge base list with no line; a page could not be
+     read; tools/sitemap-config.json could not be read or used to list the
+     pages; no content pages were found; or tools/web_metadata.py or
      tools/sitemap_engine.py could not be loaded
 """
 
@@ -301,7 +308,7 @@ IMAGE_REFERENCES = ("og:image", "twitter:image")
 # hash-object of its working-tree path gives that blob, so a branch that
 # changes a page and then restores it is not asked to restamp it. The
 # working-tree mode is not compared, and the hash applies the attributes
-# and filters that git reads, as last_change_date() says.
+# and filters that git reads and can apply, as last_change_date() says.
 PROTECTED_REF = "refs/remotes/origin/main"
 
 
@@ -366,15 +373,21 @@ def last_change_date(relative: str) -> str | None:
     equal its mode and blob there, and git hash-object of the working-tree
     path gives that same blob, the branch's own commits left the file as that
     base has it, so the date is read there instead. git hash-object applies
-    the attributes and filters that git reads, such as those in the
-    repository's attributes files, in core.attributesFile, in the user's and
-    the system's attributes files, and in local, global, system or environment
-    configuration, such as GIT_CONFIG_COUNT; it follows a symbolic link; and
-    the working-tree mode is not compared. So the working-tree check can
-    differ from what staging the file would keep, such as for a clean filter
-    that maps an edit back to the blob at HEAD, or for an uncommitted
-    mode-only change. Otherwise the date is read at HEAD. A failed git call
-    means that the check could not run, so the gate exits 3.
+    the attributes and filters that git reads and can apply, such as those in
+    the repository's attributes files, in core.attributesFile, in the user's
+    and the system's attributes files, and in local, global, system or
+    environment configuration, such as GIT_CONFIG_COUNT. An attribute or a
+    filter that is not required and that git cannot apply, such as
+    working-tree-encoding=UTF-16 on bytes with no byte order mark or a failing
+    clean filter, makes git hash-object print an error, exit 0 and hash the
+    bytes as they are, so the date can be read at the base where git add of
+    the file fails; a required filter that fails makes git hash-object fail,
+    so the gate exits 3. git hash-object follows a symbolic link, and the
+    working-tree mode is not compared. So the working-tree check can differ
+    from what staging the file would keep, such as for a clean filter that
+    maps an edit back to the blob at HEAD, or for an uncommitted mode-only
+    change. Otherwise the date is read at HEAD. A failed git call means that
+    the check could not run, so the gate exits 3.
     """
     revision = "HEAD"
     base = protected_base()
@@ -383,7 +396,7 @@ def last_change_date(relative: str) -> str | None:
         # git hash-object of the working-tree path runs only when the mode
         # and blob at HEAD equal those at the base, so this function makes
         # from 2 to 6 git calls for a page, at most 1 of them git
-        # hash-object, where the gate before this change made 1.
+        # hash-object.
         if (here is not None and here == blob_at(base, relative)
                 and git("hash-object", "--", relative).strip() == here[1]):
             revision = base
