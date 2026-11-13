@@ -23,7 +23,9 @@ suite, tools/test-check-pr-text.py, and the workflow
 .github/workflows/pr-text.yml, which runs the gate on every pull
 request with read-only permissions, keeps no credentials after
 checkout and stops the job after 10 minutes. tools/ci-status.py does
-not insist on the new check.
+not insist on the new check. tools/run_all_checks.sh runs the gate's
+suite, and tools/test-run-all-checks.py lists the workflow's event step
+as an exception, with the suite in its place.
 
 Residuals: a defect in a form the patterns miss, such as an upper-case
 revision id or an -ise stem the denylist lacks; a defect inside a
