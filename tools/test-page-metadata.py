@@ -4,9 +4,10 @@
 The gate must fail a page whose JSON-LD carries no author object with a
 non-empty name, not merely check agreement when a name happens to be present.
 These tests pin that requirement, and the preserved disagreement checks, on
-fixture pages. They run offline with the standard library: the fixtures patch
-the module's git readers, so no history is needed. The CI workflow invokes this
-file before the gate itself runs against the real pages.
+fixture pages. They run offline with the standard library. Most fixtures patch
+the module's git readers, so no history is needed; ProtectedLineHistoryTest
+builds its history with git in a temporary repository, so git must be on PATH.
+The CI workflow invokes this file before the gate runs against the real pages.
 
 They also pin the gate's meta-tag parsing, its handling of an unreadable
 (non-UTF-8) page, and its containment of image references to the site
@@ -26,6 +27,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-page-metadata.py"
 spec = importlib.util.spec_from_file_location("check_page_metadata", MODULE_PATH)
@@ -750,6 +752,211 @@ class SiblingLoadTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 3, result.stderr[-300:])
                 refusal = f"check-page-metadata: tools/sitemap_engine.py {words}"
                 self.assertIn(refusal, result.stderr)
+
+
+def history_page(modified: str, body: str = "First body.", published: str = "2026-01-01") -> str:
+    """An author-compliant page whose only varying inputs are its stamps and
+    body, so the sole problem that can surface is the modified-stamp one."""
+    json_ld = (
+        '<script type="application/ld+json">'
+        '{"@context": "https://schema.org", "@type": "Article",'
+        f' "datePublished": "{published}", "dateModified": "{modified}",'
+        ' "author": {"@type": "Person", "name": "Jeff Posluns"}}'
+        "</script>"
+    )
+    return (
+        "<!doctype html>\n<html><head>\n"
+        '<meta name="author" content="Jeff Posluns">\n'
+        f'<meta property="article:published_time" content="{published}">\n'
+        f'<meta property="article:modified_time" content="{modified}">\n'
+        '<meta property="article:author" content="https://posluns.ca">\n'
+        + json_ld
+        + f"\n</head><body><p>{body}</p></body></html>\n"
+    )
+
+
+class ProtectedLineHistoryTest(unittest.TestCase):
+    """last_change_date() dates a page at the commit where HEAD's history meets
+    refs/remotes/origin/main only when the page's blob at HEAD equals its blob
+    there and the working-tree page equals its blob at HEAD; otherwise it reads
+    at HEAD, and a failed git call exits 3. Each test builds its history in a
+    temporary repository, runs git apart from the user's and the system's
+    configuration with a fixture identity and fixed commit dates, and checks
+    the page against a fixed TODAY."""
+
+    TODAY = "2026-03-01"
+    MAIN_DATE = "2026-01-01"
+
+    def setUp(self):
+        environ = mock.patch.dict(os.environ)
+        environ.start()
+        self.addCleanup(environ.stop)
+        for key in [key for key in os.environ if key.startswith("GIT_")]:
+            del os.environ[key]
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        saved = (gate.REPO_ROOT, gate.SITE_ROOT)
+        self.addCleanup(self._restore_roots, saved)
+        root = Path(self._tmp.name).resolve()
+        gate.REPO_ROOT = root
+        gate.SITE_ROOT = root / "site"
+        gate.SITE_ROOT.mkdir()
+        self.page = gate.SITE_ROOT / "index.html"
+        self.git("init", "-q", "-b", "main")
+
+    @staticmethod
+    def _restore_roots(saved):
+        gate.REPO_ROOT, gate.SITE_ROOT = saved
+
+    def git(self, *args: str, date: str = MAIN_DATE) -> str:
+        stamp = f"{date} 12:00:00 +0000"
+        env = dict(os.environ,
+                   GIT_AUTHOR_NAME="Fixture Author", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                   GIT_COMMITTER_NAME="Fixture Author", GIT_COMMITTER_EMAIL="fixture@example.invalid",
+                   GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
+        result = subprocess.run(["git", "-C", str(gate.REPO_ROOT), *args],
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def commit_page(self, date: str, modified: str, body: str = "First body.",
+                    published: str = MAIN_DATE) -> None:
+        self.page.write_text(history_page(modified, body, published), encoding="utf-8")
+        self.git("add", "site/index.html")
+        self.git("commit", "-q", "-m", f"Page on {date}", date=date)
+
+    def commit_other_file(self, date: str) -> None:
+        (gate.REPO_ROOT / "README").write_text("fixture\n", encoding="utf-8")
+        self.git("add", "README")
+        self.git("commit", "-q", "-m", f"Other file on {date}", date=date)
+
+    def protect_main(self) -> None:
+        self.git("update-ref", "refs/remotes/origin/main", "main")
+
+    def change_and_restore_on_branch(self, protect: bool = True) -> None:
+        # main dates the page 2026-01-01 with a matching stamp; the branch
+        # changes its body on 2026-02-01 and restores it exactly on 2026-02-02.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        if protect:
+            self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", self.MAIN_DATE, body="Changed body.")
+        self.commit_page("2026-02-02", self.MAIN_DATE)
+
+    def problems(self) -> list[str]:
+        problems, _author = gate.check_page(self.page, self.TODAY)
+        return problems
+
+    def assert_stamp_problem(self, problems: list[str], changed: str) -> None:
+        self.assertTrue(
+            any(f"the file last changed {changed}" in p and "tolerance" in p for p in problems),
+            problems)
+
+    def test_restored_page_with_main_stamp_passes(self):
+        self.change_and_restore_on_branch()
+        self.assertEqual(self.problems(), [])
+
+    def test_content_change_without_restamp_fails(self):
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", self.MAIN_DATE, body="Changed body.")
+        self.assert_stamp_problem(self.problems(), "2026-02-01")
+
+    def test_date_only_restamp_to_branch_date_passes(self):
+        self.change_and_restore_on_branch()
+        self.commit_page("2026-02-03", "2026-02-03")
+        self.assertEqual(self.problems(), [])
+
+    def test_date_only_stale_restamp_fails(self):
+        # The stamp alone moves to 2026-01-12, 21 days before the branch's last
+        # commit, so the page differs from main and is read at HEAD.
+        self.change_and_restore_on_branch()
+        self.commit_page("2026-02-02", "2026-01-12")
+        self.assert_stamp_problem(self.problems(), "2026-02-02")
+
+    def test_missing_protected_ref_reads_at_head(self):
+        # A local main exists, but only refs/remotes/origin/main is read.
+        self.change_and_restore_on_branch(protect=False)
+        self.assert_stamp_problem(self.problems(), "2026-02-02")
+
+    def test_protected_ref_without_shared_history_exits_3(self):
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.git("switch", "-q", "--orphan", "unrelated")
+        self.commit_other_file(self.MAIN_DATE)
+        self.git("update-ref", "refs/remotes/origin/main", "unrelated")
+        self.git("switch", "-q", "main")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.check_page(self.page, self.TODAY)
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("merge-base", stderr.getvalue())
+
+    def test_working_tree_hash_failure_exits_3(self):
+        # A required clean filter that fails makes git hash-object fail for the
+        # page, which must stop the check rather than read as a mismatch.
+        self.change_and_restore_on_branch()
+        self.git("config", "filter.broken.clean", "false")
+        self.git("config", "filter.broken.required", "true")
+        info = gate.REPO_ROOT / ".git" / "info"
+        info.mkdir(exist_ok=True)
+        (info / "attributes").write_text("site/index.html filter=broken\n", encoding="utf-8")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.check_page(self.page, self.TODAY)
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("hash-object", stderr.getvalue())
+
+    def test_page_added_on_branch_is_dated_at_head(self):
+        self.commit_other_file(self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", "2026-02-01", published="2026-02-01")
+        self.assertEqual(self.problems(), [])
+
+    def test_push_to_main_without_restamp_fails(self):
+        # The page changes on main 40 days after its stamp, and the protected
+        # ref is HEAD itself, so the newest commit of the page is read there.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.commit_page("2026-02-10", self.MAIN_DATE, body="Changed body.")
+        self.protect_main()
+        self.assert_stamp_problem(self.problems(), "2026-02-10")
+
+    def test_pull_request_merge_of_restoring_branch_passes(self):
+        self.change_and_restore_on_branch()
+        self.git("switch", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-03")
+        self.assertEqual(self.problems(), [])
+
+    def test_uncommitted_edit_after_restore_reads_at_head(self):
+        self.change_and_restore_on_branch()
+        self.page.write_text(history_page(self.MAIN_DATE, body="Uncommitted body."), encoding="utf-8")
+        self.assert_stamp_problem(self.problems(), "2026-02-02")
+
+    def test_untracked_page_is_dated_at_head_without_hashing(self):
+        # A page with no blob at HEAD is dated at HEAD, where git records no
+        # commit for it, and its working-tree bytes are never hashed.
+        self.commit_other_file(self.MAIN_DATE)
+        self.protect_main()
+        self.page.write_text(history_page(self.MAIN_DATE), encoding="utf-8")
+        calls = []
+        real_git = gate.git
+
+        def recording_git(*args: str) -> str:
+            calls.append(args)
+            return real_git(*args)
+
+        gate.git = recording_git
+        try:
+            problems = self.problems()
+        finally:
+            gate.git = real_git
+        self.assertIn("git records no commit for this file, so its dates cannot be checked", problems)
+        self.assertFalse([call for call in calls if call[0] == "hash-object"], calls)
 
 
 if __name__ == "__main__":

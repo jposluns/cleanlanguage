@@ -13,12 +13,17 @@ What it verifies, per page
    ``article:modified_time``, and ``article:author``.
 2. Both dates are ``YYYY-MM-DD``.
 3. ``article:modified_time`` is not more than ``MODIFIED_STAMP_TOLERANCE_DAYS``
-   days older than the file's last commit date, and is not in the future. This
-   is the rot check: if a page changed well after the date it claims, the claim
-   is false. A bounded tolerance is allowed because a squash merge re-dates
-   edited pages to the merge day, which can be a day or more after the stamp was
-   set. The comparison is one-sided, so a stamp made in a working tree before the
-   commit lands does not fail spuriously.
+   days older than the file's last commit date, and is not in the future. This is
+   the rot check: if a page changed well after the date it claims, the claim is
+   false. A bounded tolerance is allowed because a squash merge re-dates edited
+   pages to the merge day, which can be a day or more after the stamp was set.
+   The comparison is one-sided, so a stamp made in a working tree before the
+   commit lands does not fail spuriously. When a page's blob at HEAD equals its
+   blob at the commit where HEAD's history meets ``PROTECTED_REF``, and the
+   working-tree page hashes to that same blob, the last commit date is read at
+   that commit, so a branch whose own commits changed a page and then restored it
+   is not asked to restamp it. Otherwise, and in a clone without that ref, the
+   date is read at HEAD.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -65,8 +70,11 @@ never a pass. In CI that means ``actions/checkout`` needs ``fetch-depth: 0``.
 Exit codes:
   0  every page passed
   1  at least one page has a problem
-  3  the check could not run: no git history, a page could not be read, or
-     tools/web_metadata.py or tools/sitemap_engine.py could not be loaded
+  3  the check could not run: no git history, a failed git call (such as
+     git merge-base when ``PROTECTED_REF`` shares no history with HEAD, or
+     git hash-object when the working-tree page cannot be hashed), a page
+     could not be read, or tools/web_metadata.py or
+     tools/sitemap_engine.py could not be loaded
 """
 
 from __future__ import annotations
@@ -281,6 +289,13 @@ REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "artic
 SITE_ORIGIN = "https://cleanlanguage.ai"
 IMAGE_REFERENCES = ("og:image", "twitter:image")
 
+# The protected line, as a clone with full history carries it. A page whose
+# blob at HEAD equals its blob where HEAD's history meets this ref, and whose
+# working-tree bytes hash to that same blob, is dated there, so a branch that
+# changes a page and then restores it is not asked to restamp a page whose
+# content is main's.
+PROTECTED_REF = "refs/remotes/origin/main"
+
 
 def git(*args: str) -> str:
     result = subprocess.run(
@@ -305,8 +320,51 @@ def added_date(relative: str) -> str | None:
     return lines[-1] if lines else None
 
 
+def protected_base() -> str | None:
+    """The commit where HEAD's history meets PROTECTED_REF, or None when this
+    clone has no ref of exactly that name. Any failed git call, such as git
+    merge-base when the ref shares no history with HEAD, means that the check
+    could not run (exit 3)."""
+    listing = git("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
+    for line in listing.splitlines():
+        name, _, tip = line.partition(" ")
+        if name == PROTECTED_REF:
+            return git("merge-base", "HEAD", tip).strip()
+    return None
+
+
+def blob_at(revision: str, relative: str) -> str | None:
+    """The object name of the file at relative in revision, or None when
+    revision has no file there. A failed git call means that the check could
+    not run (exit 3)."""
+    for entry in git("ls-tree", "-z", revision, "--", relative).split("\0"):
+        info, _, name = entry.partition("\t")
+        fields = info.split()
+        if name == relative and len(fields) == 3 and fields[1] == "blob":
+            return fields[2]
+    return None
+
+
 def last_change_date(relative: str) -> str | None:
-    lines = git("log", "-1", "--format=%cs", "--", relative).split()
+    """The date of the last commit that changed the file, read at HEAD.
+
+    When the file's blob at HEAD equals its blob at protected_base(), and git
+    hash-object of the working-tree file gives that same blob, the branch's
+    own commits left the file as that commit has it, so the date is read there
+    instead. Otherwise, and in a clone without the protected ref, the date is
+    read at HEAD. A failed git call means that the check could not run, so the
+    gate exits 3.
+    """
+    revision = "HEAD"
+    base = protected_base()
+    if base is not None:
+        here = blob_at("HEAD", relative)
+        # git hash-object runs last, and only for a page that HEAD tracks, so
+        # a page costs at most 1 hash of its working-tree bytes.
+        if (here is not None and here == blob_at(base, relative)
+                and git("hash-object", "--", relative).strip() == here):
+            revision = base
+    lines = git("log", "-1", "--format=%cs", revision, "--", relative).split()
     return lines[0] if lines else None
 
 
