@@ -71,55 +71,55 @@ its comments and its test code, and any comment inside a fixture block, or other
 a line that holds no fixture assignment, an assignment to another name or in a function or a nested
 class among them, and a string line that reads as a marker opens and closes no block. The
 HistoryPatternSelfCheck case pins those 7 patterns and the forms that HISTORY_UNMATCHED holds, which
-none of them matches and which the sentences below state, and the scope, the fixture rule, among it
-a fixture line whose value holds characters outside ASCII, and the reading of tracked files, against
-a run of git grep, are pinned too. A class at the top level of this lint that has a decorator is a
-failure, and so is a binding at module level, other than that class, of its name or of the name of a
-class that FIXTURE_NAMES lists, as the source spells it, such as a second class of that name, also
-one inside an if, try, with, for or while block, a function, an assignment, plain, augmented,
-annotated or by a walrus, an import, a for, with or except target, a match capture, a del, a global
-statement that names it, or a star import, which can bind any name; a binding inside a function,
-lambda or class body, or a comprehension target, is not at module level. A rebinding that the source
-does not spell, such as one through globals(), setattr or exec, passes, and so does a change that
-keeps the name but hides tests of the class from unittest, such as a base class other than
-unittest.TestCase, a method deleted from the class or a load_tests function. FixtureNameRegistry, a
-static check of the source, fails when a name in FIXTURE_NAMES is not the target of exactly 1 plain
-assignment made directly in the body of its class, when that assignment is not a fixture, or when no
-method of that class reads the name other than in an argument that it takes for a message. In the
-class body it counts only such a plain assignment, as in LABELS = () or LABELS = X = (), so a second
-one fails; any other binding of the name in the class, such as an annotated or augmented assignment,
-a tuple or for target, a def, a walrus, an import or a del in its body, or a method that rebinds the
-name on self, is not counted and passes the registry and the history pass, and some such bindings
-hide a fixture line from every self-check while the lint passes, such as PROSE: tuple = () after the
-fixture block of PatternSelfCheck. A read that it counts is an attribute of self, of cls or of the
-class by its name, as in self.PROSE, cls.PROSE or PatternSelfCheck.PROSE; a read through another
-expression, such as type(self).PROSE, self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE,
-is not counted, so a name read only that way fails. It takes for a message every positional argument
-after the first 2, or after the first 1 for assertTrue, assertFalse, assertIsNone and
-assertIsNotNone, of a call of any method whose name starts with assert, and the value of a msg
-keyword, so a read passed as a later positional argument of such a call that is not a message, such
-as a callable argument of assertRaises, as in self.assertRaises(ValueError, list, self.PROSE), is
-not counted either, while a read passed as a keyword argument other than msg is counted. It cannot
-tell an example from other data, so a read that it counts passes it, whatever the read does with the
-value, such as a read through self.fail, a lambda, str(), len or subTest(msg=...), a read passed as
-a keyword argument of an assert call other than msg, such as a delta or places keyword of
-assertAlmostEqual or a keyword that assertRaises passes to its callable, or a read into an alias.
-The history patterns match no plan or contract id, so the pass covers files whose ids would fail the
-full patterns, such as tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file
-that cannot be read as UTF-8, or that is missing, is a failure that names the file, and other
-conditions that the pass cannot read past are failures too, such as a fixture block left open, one
-that starts inside another, an end outside a block, a line of a fixture assignment that holds a
-token of a statement outside it, a carriage return in this lint and a git ls-files that fails. Its
-residuals: it matches single lines only, so a label split across lines or written in words passes; a
-line that names a review pass or a finding by number in a phrasing that no history pattern matches
-passes, such as the word pass after review or QA and before a number, the word review alone before a
-number, the word fix before a number with another verb, and a parenthesized or named finding id,
-which a pattern of LABEL_PATTERNS that is not a history pattern matches, and a word of a history
-pattern with a separator before its number that no history pattern reads, which the sentences after
-this list state; it reads no untracked file, as git grep reads none; it reads no tracked symbolic
-link and no submodule, as git grep reads neither, so the file that a tracked link points to is read
-only when it is itself a tracked file in the 3 folders; and it reads no tracked file outside them,
-among them .aiqt/, the adopted governance files, .baseline/, the pinned upstream package, whose
+none of them matches, and the scope, the fixture rule, among it a fixture line whose value holds
+characters outside ASCII, and the reading of tracked files, against a run of git grep, are pinned
+too. A class at the top level of this lint that has a decorator is a failure, and so is a binding at
+module level, other than that class, of its name or of the name of a class that FIXTURE_NAMES lists,
+as the source spells it, such as a second class of that name, also one inside an if, try, with, for
+or while block, a function, an assignment, plain, augmented, annotated or by a walrus, an import, a
+for, with or except target, a match capture, a del, a global statement that names it, or a star
+import, which can bind any name; a binding inside a function, lambda or class body, or a
+comprehension target, is not at module level. A rebinding that the source does not spell, such as
+one through globals(), setattr or exec, passes, and so does a change that keeps the name but hides
+tests of the class from unittest, such as a base class other than unittest.TestCase, a method
+deleted from the class or a load_tests function. FixtureNameRegistry, a static check of the source,
+fails when a name in FIXTURE_NAMES is not the target of exactly 1 plain assignment made directly in
+the body of its class, when that assignment is not a fixture, or when no method of that class reads
+the name other than in an argument that it takes for a message. In the class body it counts only
+such a plain assignment, as in LABELS = () or LABELS = X = (), so a second one fails; any other
+binding of the name in the class, such as an annotated or augmented assignment, a tuple or for
+target, a def, a walrus, an import or a del in its body, or a method that rebinds the name on self,
+is not counted and passes the registry and the history pass, and some such bindings hide a fixture
+line from every self-check while the lint passes, such as PROSE: tuple = () after the fixture block
+of PatternSelfCheck. A read that it counts is an attribute of self, of cls or of the class by its
+name, as in self.PROSE, cls.PROSE or PatternSelfCheck.PROSE; a read through another expression, such
+as type(self).PROSE, self.__class__.PROSE, getattr(self, "PROSE") or super().PROSE, is not counted,
+so a name read only that way fails. It takes for a message every positional argument after the first
+2, or after the first 1 for assertTrue, assertFalse, assertIsNone and assertIsNotNone, of a call of
+any method whose name starts with assert, and the value of a msg keyword, so a read passed as a
+later positional argument of such a call that is not a message, such as a callable argument of
+assertRaises, as in self.assertRaises(ValueError, list, self.PROSE), is not counted either, while a
+read passed as a keyword argument other than msg is counted. It cannot tell an example from other
+data, so a read that it counts passes it, whatever the read does with the value, such as a read
+through self.fail, a lambda, str(), len or subTest(msg=...), a read passed as a keyword argument of
+an assert call other than msg, such as a delta or places keyword of assertAlmostEqual or a keyword
+that assertRaises passes to its callable, or a read into an alias. The history patterns match no
+plan or contract id, so the pass covers files whose ids would fail the full patterns, such as
+tools/test-ci-status.sh, whose $C1 and $C2 read as bare ids. A tracked file that cannot be read as
+UTF-8, or that is missing, is a failure that names the file, and other conditions that the pass
+cannot read past are failures too, such as a fixture block left open, one that starts inside
+another, an end outside a block, a line of a fixture assignment that holds a token of a statement
+outside it, a carriage return in this lint and a git ls-files that fails. Its residuals: it matches
+single lines only, so a label split across lines or written in words passes; a line that names a
+review pass or a finding by number in a phrasing that no history pattern matches passes, such as the
+word pass after review or QA and before a number, the word review alone before a number, the word
+fix before a number with another verb, and a parenthesized or named finding id, which a pattern of
+LABEL_PATTERNS that is not a history pattern matches, and a word of a history pattern with a
+separator before its number that no history pattern reads, which the sentences after this list
+state; it reads no untracked file, as git grep reads none; it reads no tracked symbolic link and no
+submodule, as git grep reads neither, so the file that a tracked link points to is read only when it
+is itself a tracked file in the 3 folders; and it reads no tracked file outside them, among them
+.aiqt/, the adopted governance files, .baseline/, the pinned upstream package, whose
 SPECIFICATION.md has a line that the backlog probe of numbered review rounds matches, and plugin/,
 the vendored hooks, whose aiqt_hooks.py has lines that the backlog probe of numbered findings and
 rounds matches. The separators before a number that the history patterns read follow from their
@@ -410,8 +410,9 @@ ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
 # git grep finds a boundary in no more places. A line that names a review pass or a finding by
 # number in a phrasing, or with a separator before its number, that none of them matches passes,
 # such as finding-3 or VERIFY3, and HISTORY_UNMATCHED holds the examples of such phrasings and
-# separators that the module docstring states. Plan and contract ids, such as C1 or T9, match none
-# of them, so the pass needs no allowlist.
+# separators that the module docstring says that it holds, such as one of each phrasing that the
+# docstring's list of the history pass's residuals names for such a line. Plan and contract ids,
+# such as C1 or T9, match none of them, so the pass needs no allowlist.
 HISTORY_SCOPE = ("tools", "site-src", ".github")
 HISTORY_LABEL_NAMES = ("a review round number", "a round of fixes", "a round of QA", "a numbered finding",
                        "a numbered review pass")
