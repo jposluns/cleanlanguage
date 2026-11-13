@@ -17,13 +17,18 @@ name: Orchestration registry
 # tools/check-release-checksum-live.py, tools/test-release-checksum-live.py or
 # tools/test-skill-release-date.py names a review round or a finding id instead of stating
 # its reason, and when a line of a tracked file under tools/, site-src/ or .github/ matches
-# one of the history patterns that the lint lists, such as the word round followed by a
-# number, the word finding followed by a number or a discovery or verify pass in capitals
-# followed by a number, or one of the 2 backlog probes, apart from the tokens of the marked
-# fixture assignments of the lint itself, whose lines fail when they hold any other token,
-# such as a semicolon or a second statement; a line that names a review pass or a finding by
-# number in a phrasing that no history pattern matches passes (tools/test-no-qa-labels.py). A
-# further step runs a literal regression check of the /flow command's mode text, since a
+# one of the history patterns that the lint lists, such as the word round or rounds, in any
+# case, then any run of hyphens or white space, or none, an optional number sign and a
+# number, exempt where a letter or a decimal continuation follows as the lint states, the
+# word finding or findings, in any case, 1 space, an optional number sign and a digit, or
+# DISCOVERY or VERIFY in capitals, then optionally 1 space and the word round or rounds in
+# lower case, then a hyphen or 1 space, an optional number sign and a digit, or one of the 2
+# backlog probes, read case-insensitively with their words separated by 1 space, apart from
+# the tokens of the marked fixture assignments of the lint itself, whose lines fail when they
+# hold any other token, such as a semicolon or a second statement; a line that names a review
+# pass or a finding by number in a phrasing, or with a separator before its number, that no
+# history pattern matches passes, such as finding-3 or VERIFY3 (tools/test-no-qa-labels.py).
+# A further step runs a literal regression check of the /flow command's mode text, since a
 # session follows /flow when it reads the host's mode record (tools/check-flow-mode.py). It
 # fails when the file does not hold exactly 1 line starting "- MODE (", when that line is not
 # closed on the same line or does not name exactly the 2 values that the host's mode writer
