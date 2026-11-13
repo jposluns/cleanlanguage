@@ -24,7 +24,7 @@ it; a wait (`--wait`) ends red at once when a check did not pass, and otherwise
 ends not green when its window closes. A head that ran its checks before its
 merge with `main` came to conflict keeps those runs, so `tools/ci-status.sh` can
 read it green while GitHub refuses the merge. No workflow has a `merge_group`
-trigger, so a merge queue would never see these checks; on 2026-11-10 the
+trigger, so a merge queue would never see these checks; on 2026-10-31 the
 maintainer decided not to add one now, and one must be added before any merge
 queue is turned on.
 
