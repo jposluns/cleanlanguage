@@ -18,12 +18,15 @@ What it verifies, per page
    false. A bounded tolerance is allowed because a squash merge re-dates edited
    pages to the merge day, which can be a day or more after the stamp was set.
    The comparison is one-sided, so a stamp made in a working tree before the
-   commit lands does not fail spuriously. When a page's blob at HEAD equals its
-   blob at the commit where HEAD's history meets ``PROTECTED_REF``, and the
-   working-tree page hashes to that same blob, the last commit date is read at
-   that commit, so a branch whose own commits changed a page and then restored it
-   is not asked to restamp it. Otherwise, and in a clone without that ref, the
-   date is read at HEAD.
+   commit lands does not fail spuriously. When HEAD and ``PROTECTED_REF`` have
+   exactly 1 merge base, the page's mode and blob at HEAD equal its mode and blob
+   at that base, and git hash-object of the working-tree path gives that same
+   blob, the last commit date is read at that base, so a branch whose own commits
+   changed a page and then restored it is not asked to restamp it. That hash
+   applies the configured filters and follows a symbolic link, so its blob can
+   differ from the one that staging the page would keep. Otherwise, such as with
+   more than 1 merge base or in a clone without that ref, the date is read at
+   HEAD.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -289,11 +292,13 @@ REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "artic
 SITE_ORIGIN = "https://cleanlanguage.ai"
 IMAGE_REFERENCES = ("og:image", "twitter:image")
 
-# The protected line, as a clone with full history carries it. A page whose
-# blob at HEAD equals its blob where HEAD's history meets this ref, and whose
-# working-tree bytes hash to that same blob, is dated there, so a branch that
-# changes a page and then restores it is not asked to restamp a page whose
-# content is main's.
+# The protected line, read by exact refname. A clone can lack this ref even
+# with full history, such as a remote-less clone or a CI checkout that does
+# not create it, and then every page is dated at HEAD. With the ref,
+# last_change_date() dates a page at the 1 merge base of HEAD and this ref
+# when the page's mode and blob at HEAD equal those at that base and its
+# working-tree hash equals that blob, so a branch that changes a page and
+# then restores it is not asked to restamp it.
 PROTECTED_REF = "refs/remotes/origin/main"
 
 
@@ -321,48 +326,58 @@ def added_date(relative: str) -> str | None:
 
 
 def protected_base() -> str | None:
-    """The commit where HEAD's history meets PROTECTED_REF, or None when this
-    clone has no ref of exactly that name. Any failed git call, such as git
-    merge-base when the ref shares no history with HEAD, means that the check
-    could not run (exit 3)."""
+    """The merge base of HEAD and PROTECTED_REF when there is exactly 1, or
+    None when there are more than 1, since the base git prints then depends
+    on commit dates, or when git for-each-ref lists no ref of exactly that
+    name. A ref it does not list, such as a dangling symbolic ref, reads as
+    absent. Any failed git call, such as git merge-base when the ref shares
+    no history with HEAD, means that the check could not run (exit 3), as
+    does a merge base list with no line."""
     listing = git("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
     for line in listing.splitlines():
         name, _, tip = line.partition(" ")
         if name == PROTECTED_REF:
-            return git("merge-base", "HEAD", tip).strip()
+            bases = git("merge-base", "--all", "HEAD", tip).split()
+            if not bases:
+                die(f"git merge-base --all HEAD {tip} printed no merge base")
+            return bases[0] if len(bases) == 1 else None
     return None
 
 
-def blob_at(revision: str, relative: str) -> str | None:
-    """The object name of the file at relative in revision, or None when
-    revision has no file there. A failed git call means that the check could
-    not run (exit 3)."""
+def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
+    """The mode and object name of the file at relative in revision, or None
+    when revision has no file there. A failed git call means that the check
+    could not run (exit 3)."""
     for entry in git("ls-tree", "-z", revision, "--", relative).split("\0"):
         info, _, name = entry.partition("\t")
         fields = info.split()
         if name == relative and len(fields) == 3 and fields[1] == "blob":
-            return fields[2]
+            return fields[0], fields[2]
     return None
 
 
 def last_change_date(relative: str) -> str | None:
     """The date of the last commit that changed the file, read at HEAD.
 
-    When the file's blob at HEAD equals its blob at protected_base(), and git
-    hash-object of the working-tree file gives that same blob, the branch's
-    own commits left the file as that commit has it, so the date is read there
-    instead. Otherwise, and in a clone without the protected ref, the date is
-    read at HEAD. A failed git call means that the check could not run, so the
-    gate exits 3.
+    When protected_base() gives a merge base, the file's mode and blob at HEAD
+    equal its mode and blob there, and git hash-object of the working-tree
+    path gives that same blob, the branch's own commits left the file as that
+    base has it, so the date is read there instead. git hash-object applies
+    the configured filters, such as a clean filter or a line-end conversion,
+    and follows a symbolic link, so its blob can differ from the one that
+    staging the file would keep. Otherwise the date is read at HEAD. A failed
+    git call means that the check could not run, so the gate exits 3.
     """
     revision = "HEAD"
     base = protected_base()
     if base is not None:
         here = blob_at("HEAD", relative)
-        # git hash-object runs last, and only for a page that HEAD tracks, so
-        # a page costs at most 1 hash of its working-tree bytes.
+        # git hash-object of the working-tree path runs last, and only when
+        # the mode and blob at HEAD equal those at the base, so this function
+        # makes at most 6 git calls for a page, 1 of them git hash-object,
+        # where a reading at HEAD alone makes 1.
         if (here is not None and here == blob_at(base, relative)
-                and git("hash-object", "--", relative).strip() == here):
+                and git("hash-object", "--", relative).strip() == here[1]):
             revision = base
     lines = git("log", "-1", "--format=%cs", revision, "--", relative).split()
     return lines[0] if lines else None

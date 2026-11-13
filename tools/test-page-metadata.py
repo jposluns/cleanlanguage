@@ -776,13 +776,14 @@ def history_page(modified: str, body: str = "First body.", published: str = "202
 
 
 class ProtectedLineHistoryTest(unittest.TestCase):
-    """last_change_date() dates a page at the commit where HEAD's history meets
-    refs/remotes/origin/main only when the page's blob at HEAD equals its blob
-    there and the working-tree page equals its blob at HEAD; otherwise it reads
-    at HEAD, and a failed git call exits 3. Each test builds its history in a
-    temporary repository, runs git apart from the user's and the system's
-    configuration with a fixture identity and fixed commit dates, and checks
-    the page against a fixed TODAY."""
+    """last_change_date() dates a page at the merge base of HEAD and
+    refs/remotes/origin/main only when that base is the only one, the page's
+    mode and blob at HEAD equal its mode and blob there, and git hash-object of
+    the working-tree page gives its blob at HEAD; otherwise it reads at HEAD,
+    and a failed git call exits 3. Each test builds its history in a temporary
+    repository, runs git apart from the user's and the system's configuration
+    with a fixture identity and fixed commit dates, and checks the page against
+    a fixed TODAY."""
 
     TODAY = "2026-03-01"
     MAIN_DATE = "2026-01-01"
@@ -795,11 +796,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
             del os.environ[key]
         os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
         os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
         saved = (gate.REPO_ROOT, gate.SITE_ROOT)
         self.addCleanup(self._restore_roots, saved)
-        root = Path(self._tmp.name).resolve()
+        self.start_repository()
+
+    def start_repository(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
         gate.REPO_ROOT = root
         gate.SITE_ROOT = root / "site"
         gate.SITE_ROOT.mkdir()
@@ -926,11 +930,92 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.protect_main()
         self.assert_stamp_problem(self.problems(), "2026-02-10")
 
-    def test_pull_request_merge_of_restoring_branch_passes(self):
+    def test_main_merged_into_restoring_branch_passes(self):
+        # The branch takes main's newer commit by a merge whose first parent is
+        # the branch, as updating a pull request branch from main does. git log
+        # at HEAD follows the first parent that has the page as the merge has
+        # it, which is the branch's restore of 2026-02-02, so the page passes
+        # only when it is dated at the merge base, main's tip.
         self.change_and_restore_on_branch()
         self.git("switch", "-q", "main")
-        self.git("merge", "-q", "--no-ff", "-m", "Merge topic", "topic", date="2026-02-03")
+        self.commit_other_file("2026-02-03")
+        self.protect_main()
+        self.git("switch", "-q", "topic")
+        self.git("merge", "-q", "--no-ff", "-m", "Merge main", "main", date="2026-02-04")
         self.assertEqual(self.problems(), [])
+
+    def test_criss_cross_reads_at_head_whichever_base_git_picks(self):
+        # Branch a changes another file and branch b changes the page body.
+        # main merges a and then b, and topic merges b and then a and restores
+        # the page with main's first stamp, so HEAD and the protected ref have
+        # 2 merge bases, a and b, and the page at HEAD differs from main's tip.
+        # The 2 builds swap the commit dates of a and b so that git picks each
+        # base once, and the page is read at HEAD in both.
+        for picked, a_date, b_date in (("a", "2026-02-03", "2026-02-02"),
+                                        ("b", "2026-02-02", "2026-02-03")):
+            with self.subTest(picked=picked):
+                self.start_repository()
+                self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+                root = self.git("rev-parse", "HEAD").strip()
+                self.git("switch", "-q", "-c", "a")
+                self.commit_other_file(a_date)
+                self.git("switch", "-q", "-c", "b", root)
+                self.commit_page(b_date, self.MAIN_DATE, body="Changed body.")
+                self.git("switch", "-q", "main")
+                self.git("merge", "-q", "--no-ff", "-m", "Merge a", "a", date="2026-02-05")
+                self.git("merge", "-q", "--no-ff", "-m", "Merge b", "b", date="2026-02-06")
+                self.protect_main()
+                self.git("switch", "-q", "-c", "topic", root)
+                self.git("merge", "-q", "--no-ff", "-m", "Merge b", "b", date="2026-02-07")
+                self.git("merge", "-q", "--no-ff", "-m", "Merge a", "a", date="2026-02-08")
+                self.commit_page("2026-02-12", self.MAIN_DATE)
+                names = {self.git("rev-parse", name).strip(): name for name in ("a", "b")}
+                bases = self.git("merge-base", "--all", "HEAD", "refs/remotes/origin/main").split()
+                self.assertEqual(sorted(names.get(base) for base in bases), ["a", "b"])
+                pick = self.git("merge-base", "HEAD", "refs/remotes/origin/main").strip()
+                self.assertEqual(names.get(pick), picked)
+                self.assert_stamp_problem(self.problems(), "2026-02-12")
+
+    def test_ref_below_protected_refname_reads_at_head(self):
+        # git for-each-ref lists refs/remotes/origin/main/x for the protected
+        # refname, but only a ref of exactly that name is read.
+        self.change_and_restore_on_branch(protect=False)
+        self.git("update-ref", "refs/remotes/origin/main/x", "main")
+        listed = self.git("for-each-ref", "--format=%(refname)", "refs/remotes/origin/main")
+        self.assertEqual(listed.split(), ["refs/remotes/origin/main/x"])
+        self.assert_stamp_problem(self.problems(), "2026-02-02")
+
+    def test_failed_ls_tree_exits_3(self):
+        # The merge base's root tree object is removed, so git ls-tree fails
+        # there. The other file makes HEAD's tree differ from it, and the
+        # restore is HEAD itself, so git ls-tree and git log at HEAD still
+        # succeed. check_page() reads the added date first, which needs the
+        # same tree, so the case calls last_change_date() directly.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.commit_page("2026-02-01", self.MAIN_DATE, body="Changed body.")
+        self.commit_other_file("2026-02-01")
+        self.commit_page("2026-02-02", self.MAIN_DATE)
+        tree = self.git("rev-parse", "refs/remotes/origin/main^{tree}").strip()
+        self.assertNotEqual(self.git("rev-parse", "HEAD^{tree}").strip(), tree)
+        (gate.REPO_ROOT / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.last_change_date("site/index.html")
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("ls-tree", stderr.getvalue())
+
+    def test_mode_only_change_reads_at_head(self):
+        # The branch only sets the executable bit on the page, so its blob at
+        # HEAD equals main's but its mode does not.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.protect_main()
+        self.git("switch", "-q", "-c", "topic")
+        self.git("update-index", "--chmod=+x", "site/index.html")
+        self.git("commit", "-q", "-m", "Mode on 2026-02-01", date="2026-02-01")
+        self.assert_stamp_problem(self.problems(), "2026-02-01")
 
     def test_uncommitted_edit_after_restore_reads_at_head(self):
         self.change_and_restore_on_branch()
@@ -939,7 +1024,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
 
     def test_untracked_page_is_dated_at_head_without_hashing(self):
         # A page with no blob at HEAD is dated at HEAD, where git records no
-        # commit for it, and its working-tree bytes are never hashed.
+        # commit for it, and git hash-object never runs for it.
         self.commit_other_file(self.MAIN_DATE)
         self.protect_main()
         self.page.write_text(history_page(self.MAIN_DATE), encoding="utf-8")
