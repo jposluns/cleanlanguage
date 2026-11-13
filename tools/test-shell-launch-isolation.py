@@ -466,11 +466,12 @@ LOOKUP = re.compile(AFTER_LAUNCH_BEFORE + r"command -[vV] $")
 # A token whose text ends in a literal .py or .pyz, inside quotes or not. A suffix spelt with quoting, a
 # backslash, a glob or a brace, such as .p''y or .p?, is not one, so the scan does not read it.
 PY_PATH = re.compile(r"\.pyz?(?![\w.-])")
-# A shell word, quoted parts included, which ends at a space, a tab, one of ; & | < > ( ) or a
-# backquote, as WORD_END and the module docstring's word model state; any other character, such as
-# U+00A0 or a form feed, belongs to the word, as in bash. A quoted part may not hold a space or tab,
-# so a word that the match starts inside a string cannot run on through the string's closing quote
-# to a later path.
+# A shell word, quoted parts included, which ends at a space, a tab or one of ; & | < > ( ), the
+# characters of WORD_END, or at a backquote, which WORD_END does not hold, which this pattern leaves
+# out of its unquoted class and which quote_continues tests apart, as the module docstring's word
+# model states; any other character, such as U+00A0 or a form feed, belongs to the word, as in bash.
+# A quoted part may not hold a space or tab, so a word that the match starts inside a string cannot
+# run on through the string's closing quote to a later path.
 WORD = r"((?:\"[^\" \t]*\"|'[^' \t]*'|[^ \t\"';&|<>()`])+)"
 
 
@@ -490,7 +491,10 @@ INTERPRETER_REASON = "python or pypy word that does not start python3 -I"
 PATH_REASON = ".py path that does not end the program word of python3 -I launch text"
 # A here-document operator and the blanks after it; heredoc_word reads the delimiter word that follows.
 HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*")
-# The characters that end an unquoted shell word.
+# The characters that end an unquoted shell word other than the backquote, which ends one too: WORD
+# leaves it out of its unquoted class and quote_continues tests it apart. heredoc_word reads a
+# here-document delimiter word up to an unquoted one of these characters or the end of the line, so
+# a backquote does not end that word.
 WORD_END = set(" \t|&;()<>")
 # A python3 -I launch that reads its program from a here-document on standard input.
 STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I " + options(" ") + r"(?:-- )?-(?=\s|$)")
