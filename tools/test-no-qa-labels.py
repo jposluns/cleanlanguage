@@ -1615,10 +1615,10 @@ class PatternSelfCheck(unittest.TestCase):
              "round 7th", "round 7a", "round 7.5", "round 7\u0434",
              "verify 3 files", "the finding is")
     # Both forms are exempt before a letter of any script, so at least 1 sample stands for each of
-    # the 5 letter categories, from scripts the samples above do not use: Cyrillic small and capital
-    # letters (Ll, Lu), Arabic and Hebrew letters (Lo), modifier letters (Lm), titlecase letters
-    # (Lt) and the ideographic iteration mark (Lm), with and without a space. They pass, so the
-    # exemption cannot narrow to some scripts or drop a category silently.
+    # the 5 letter categories: Cyrillic small and capital letters (Ll, Lu), Arabic and Hebrew
+    # letters (Lo), modifier letters (Lm), titlecase letters (Lt) and the ideographic iteration mark
+    # (Lm), with and without a space. They pass, so the exemption cannot narrow to some scripts or
+    # drop a category silently.
     LETTER_EXEMPT = ("round: 7 \u0434\u043d\u044f", "round: 7\u0434", "round: 7 \u0414",
                      "round: 7 \u0645", "round: 7\u05d0", "round: 7 \u02b0", "round: 7\u02e0",
                      "round: 7\u3005", "round: 7 \u01c5", "round: 7\u1f88")
