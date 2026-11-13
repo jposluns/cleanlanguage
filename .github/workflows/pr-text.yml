@@ -1,0 +1,46 @@
+name: Pull request text
+
+# Checks the pull request description and the committed squash-message file
+# .github/squash/<number>.txt with the text gate in tools/check-pr-text.py.
+# The trigger is pull_request, never pull_request_target: the description is
+# the author's untrusted text, so the job holds read permissions only and keeps
+# no credentials after checkout, and the gate reads the description from the
+# event payload file named in GITHUB_EVENT_PATH, so no GitHub expression
+# carries untrusted text into a run: line. The types list includes edited so
+# that an edit of the description asks for a new run. There is no push
+# trigger: a push carries no pull request payload, so a push run would have
+# nothing to check.
+#
+# The check is advisory: tools/ci-status.py does not insist on it, and the
+# maintainer decides whether it becomes required once its false-failure rate
+# on real descriptions is measured. Making it insisted on would also need
+# changes to tools/test-ci-status.sh, whose workflow-shape check refuses a
+# types: filter and a step with: key in the workflows it reads.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # A unique display name, so a status check would name this job alone.
+    name: Pull request text
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The gate needs no credentials after checkout, so none are kept.
+          persist-credentials: false
+      - name: Check that python3 is the release that .python-version names
+        shell: bash
+        run: python3 -I tools/check-python-version.py
+      - name: Run the text gate tests
+        shell: bash
+        run: python3 -I tools/test-check-pr-text.py
+      - name: Check the pull request text
+        shell: bash
+        run: python3 -I tools/check-pr-text.py --event "$GITHUB_EVENT_PATH"
