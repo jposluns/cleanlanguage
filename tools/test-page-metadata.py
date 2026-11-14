@@ -545,6 +545,10 @@ class OriginMatchTest(_PatchedGateTest):
         problems = self._problems(_img_meta("https://cleanlanguage.ai:443/card.png"),
                                   files=["card.png"])
         self.assertEqual(problems, [])
+        # The same port on a missing file must be reported as missing, so a gate
+        # that read :443 as off-origin and skipped the URL fails this test.
+        problems = self._problems(_img_meta("https://cleanlanguage.ai:443/missing.png"))
+        self.assertTrue(any("does not exist" in p for p in problems))
 
     def test_subdomain_lookalike_is_ignored(self):
         problems = self._problems(_img_meta("https://cleanlanguage.ai.evil/card.png"))
