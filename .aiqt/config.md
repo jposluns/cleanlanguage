@@ -66,23 +66,40 @@ co-author or session trailer.
 
 A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) arms part of the
 orchestrator suite. It declares `companion_stores`, `record`, `lease`, `state_dir`, and an
-empty `dispatch_tools`. Two of the 12 orchestrator hooks deny on the presence of the registry
+empty `dispatch_tools`. 2 of the 12 orchestrator hooks deny on the presence of the registry
 alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
 `orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
 read or whose working directory it cannot walk. They carry 1 disclosed residual that touches
-a common idiom: the detach scan reads some here-document bodies as shell text. A foreground
-Bash here-document whose body holds an `&` is denied as though it were a detach when its
-delimiter is unquoted (`<<EOF`). A body with an odd number of apostrophes is denied as an
+a common idiom: the detach scan reads some here-document bodies as shell text. In hook runs
+of single foreground commands, every here-document form it denied was a `cat` form. A
+`cat > file` write under an unquoted delimiter (`<<EOF`) whose body holds an `&` is denied as
+a detach. A `cat` here-document whose body holds an odd number of apostrophes is denied as an
 open quote when the command also holds an `&`, unless the whole command is a plain
-`cat > file` write under a quoted delimiter. An `&` in a body under a quoted delimiter
-(`<<'EOF'`) read at the top level of the command or in the `"$(cat <<'EOF' ... EOF)"` form is
-not denied, and nor is an apostrophe in a body when the command holds no `&` and no form that
-can start a background job without one, such as `setsid`, `eval` or `coproc`. Write
-multi-line content through the Write or Edit tool (which these Bash guards never see) or
-through `printf` when the body carries such characters; a body with an `&` and no apostrophe
-can also go under a quoted delimiter.
+`cat > file` write: `cat <<'EOF' | tee file` with an `&` in the body is denied, and so is a
+`cat > file` write followed by `ls 2>&1`. The same runs did not deny a plain `cat > file`
+write for an `&` or an apostrophe in its body under a quoted delimiter (`<<'EOF'`), or for an
+apostrophe under an unquoted delimiter; a `python3 -I -` here-document for an `&` or an
+apostrophe in its body under either delimiter, with or without a `2>&1` on its line or after
+it; or the `"$(cat <<'EOF' ... EOF)"` form with an `&` in its body. Forms not named here were
+not tried. Write multi-line content through the Write or Edit tool (which these Bash guards
+never see) or through `printf` when the body carries such characters.
+
+`gate_weakening` (gatdis) denies the 5 write-then-run commit probes that
+`tools/test-gate-weakening-probes.py` holds: a script written by a here-document or by
+`printf` that runs `git commit --no-verify` or `git commit -n`, then run with bash, sh or
+python3. It does not deny every write-then-run commit that skips hooks. In hook runs, a
+written script that runs `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a
+script decoded from base64 and then run with bash, got no decision from any of the 19 Bash
+handlers. The direct `git -c core.hooksPath=/dev/null commit` and
+`echo --no-verify | xargs git commit` forms get no decision from `gate_weakening`, as before
+the refresh; in runs on a branch and on a detached HEAD, `protected_line` (artbr1) denied
+both as a segment outside its commit grammar, which the hook before the refresh did not.
+
+Since the refresh, `protected_line` (artbr1) denies a Bash `git commit` on a detached HEAD,
+with the reason "Git or filesystem probe did not succeed cleanly", where the hook before the
+refresh gave no decision: its probe of the branch that HEAD names fails when HEAD names none.
 
 The declared `lease` makes scope live: while the lease file is present, non-empty, and
 fresh, every session whose working directory resolves to this checkout and which can

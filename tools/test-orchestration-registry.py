@@ -1838,18 +1838,28 @@ class HookCountDisclosure(unittest.TestCase):
     and the orchestrator hooks are the registered handlers whose names begin with orch_. Each document
     sentence that states a count is anchored, its integers are read from the text, and each must equal
     the derived count, so a re-vendor that adds or removes a hook, or a document whose count moves, turns
-    this red until the 2 documents and the hooks agree."""
+    this red until the 2 documents and the hooks agree. The Bash handler count is the number of
+    PreToolUse registrations whose matcher names Bash.
+
+    A sentence that states a count of hooks it lists by name is checked against its own list: each count
+    must equal the number of names listed, each name must be a registered handler, and a name counted as
+    an orchestrator hook must begin with orch_. That the refresh added the hooks .aiqt/config.md lists
+    is not checked here, since the hooks before the refresh are not in the tree."""
 
     # (document, anchored pattern, the derived count each group must equal)
     SENTENCES = (
         (CONFIG_MD, r"The plugin registers (\d+) hooks: (\d+) orchestrator hooks and (\d+) others\.",
          ("total", "orch", "other")),
-        (CONFIG_MD, r"Two of the (\d+) orchestrator hooks deny on the presence of the registry alone",
+        (CONFIG_MD, r"\d+ of the (\d+) orchestrator hooks deny on the presence of the registry alone",
          ("orch",)),
+        (CONFIG_MD, r"got no decision from any of the (\d+) Bash handlers", ("bash",)),
         (CLAUDE_MD, r"The plugin registers (\d+) hooks, (\d+) orchestrator hooks and (\d+) others \(",
          ("total", "orch", "other")),
         (CLAUDE_MD, r"what each of the (\d+) orchestrator hooks does under it today", ("orch",)),
     )
+    ADDED = (r"The refresh to pack commit [0-9a-f]+ added (\d+) of them: (\d+) orchestrator hooks "
+             r"\(([^)]*)\) and (\d+) others \(([^)]*)\)\.")
+    REGISTRY_ALONE = r"(\d+) of the \d+ orchestrator hooks deny on the presence of the registry alone: ([^.]*)\."
 
     def _registered(self):
         """The handler name of every registration in the vendored hooks.json, in file order."""
@@ -1873,7 +1883,46 @@ class HookCountDisclosure(unittest.TestCase):
     def _counts(self):
         names = self._registered()
         orch = sum(1 for name in names if name.startswith("orch_"))
-        return {"total": len(names), "orch": orch, "other": len(names) - orch}
+        data = json.loads(REAL_HOOKS_JSON.read_text(encoding="utf-8"))
+        bash = sum(len(group["hooks"]) for group in data["hooks"].get("PreToolUse", [])
+                   if "Bash" in group.get("matcher", "").split("|"))
+        return {"total": len(names), "orch": orch, "other": len(names) - orch, "bash": bash}
+
+    def _config_text(self):
+        return " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
+
+    def _listed(self, text):
+        """The backquoted hook names in a list such as "`a`, `b` and `c`"."""
+        return re.findall(r"`(\w+)`", text)
+
+    def test_added_hooks_sentence_counts_the_hooks_it_lists(self):
+        found = re.findall(self.ADDED, self._config_text())
+        self.assertEqual(len(found), 1, "the anchored sentence must appear exactly once")
+        total, orch_count, orch_list, other_count, other_list = found[0]
+        orch_names, other_names = self._listed(orch_list), self._listed(other_list)
+        registered = set(self._registered())
+        handlers = set(self._handlers())
+        self.assertEqual(int(orch_count), len(orch_names))
+        self.assertEqual(int(other_count), len(other_names))
+        self.assertEqual(int(total), len(orch_names) + len(other_names))
+        self.assertEqual(len(set(orch_names + other_names)), len(orch_names + other_names))
+        for name in orch_names + other_names:
+            with self.subTest(hook=name):
+                self.assertIn(name, registered)
+                self.assertIn(name, handlers)
+                self.assertEqual(name.startswith("orch_"), name in orch_names)
+
+    def test_registry_alone_sentence_counts_the_hooks_it_lists(self):
+        found = re.findall(self.REGISTRY_ALONE, self._config_text())
+        self.assertEqual(len(found), 1, "the anchored sentence must appear exactly once")
+        count, listed = found[0]
+        names = self._listed(listed)
+        self.assertEqual(int(count), len(names))
+        registered = set(self._registered())
+        for name in names:
+            with self.subTest(hook=name):
+                self.assertIn(name, registered)
+                self.assertTrue(name.startswith("orch_"))
 
     def test_each_registration_names_a_distinct_handler(self):
         names = self._registered()

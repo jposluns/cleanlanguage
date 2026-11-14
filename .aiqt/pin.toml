@@ -73,10 +73,14 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # 2026-11-14: the whole hooks plugin (plugin.json, hooks.json and aiqt_hooks.py) was refreshed
 # to guardrails main at commit 730c039b, whose own .aiqt/manifest.toml reads release-version
 # 1.0.5 and whose .aiqt/release/root.txt names that manifest's sha256 (below). This is a COMMIT
-# pin, not a release pin: no pack release carries these hooks (v1.0.5, the only tag, ships
-# plugin 0.4.0), and the pack plans release 1.1.1 with no date set; a re-pin to that release
-# replaces this block once it is cut. The refresh closes the write-then-run hook bypass that
-# the 2eb6812c hooks allowed. Still a SCOPED hooks-only advance; the rule corpus is unchanged.
+# pin, not a release pin: no pack release carries these hooks (v1.0.5, the only annotated tag
+# of the pack's 7 tags and the only release tag, ships plugin 0.4.0; the other 6, skill-v1.0.4
+# and 5 pre-rebase tags, are lightweight), and the pack plans release 1.1.1 with no date set;
+# a re-pin to that release replaces this block once it is cut. The refreshed gate_weakening
+# denies the 5 write-then-run commit probes of tools/test-gate-weakening-probes.py, which the
+# 2eb6812c hooks allowed; other write-then-run forms, such as a script that sets
+# core.hooksPath or a base64-decoded script, still get no decision (see .aiqt/config.md).
+# Still a SCOPED hooks-only advance; the rule corpus is unchanged.
 # The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
 advanced = "2026-11-14"
 source-commit = "730c039bdfb1bdeaf3d0350fbc0b7edfb27cbaae" # guardrails main, untagged
