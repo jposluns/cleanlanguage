@@ -83,9 +83,10 @@ Exit codes:
      failed git call, such as git merge-base when ``PROTECTED_REF`` shares
      no history with HEAD, or git hash-object when it fails for the
      working-tree page, such as when a required filter fails; a merge base
-     list with no line; a page could not be read;
-     tools/sitemap-config.json could not be read or used to list the
-     pages; no content pages were found; or tools/web_metadata.py or
+     list with no line; git output that the gate cannot use, such as a
+     byte that is not ASCII in a date or an object name; a page could not
+     be read; tools/sitemap-config.json could not be read or used to list
+     the pages; no content pages were found; or tools/web_metadata.py or
      tools/sitemap_engine.py could not be loaded
 """
 
@@ -313,27 +314,57 @@ IMAGE_REFERENCES = ("og:image", "twitter:image")
 PROTECTED_REF = "refs/remotes/origin/main"
 
 
-def git(*args: str) -> str:
-    """git's output for args, run in REPO_ROOT. Its stdout and stderr are
-    decoded as os.fsdecode() decodes a path, so a name that is not UTF-8,
-    such as a page path or a refname, reads as pathlib reads it, not as an
-    error. git that cannot be run, such as when it is not on PATH, or a git
-    call that fails means that the check could not run (exit 3)."""
+# The variables through which git reads a pathspec as a glob, as a literal
+# path or with no regard to case. git() removes them and sets
+# GIT_LITERAL_PATHSPECS, so a page path is read as that path.
+PATHSPEC_VARIABLES = ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
+
+
+def git(*args: str) -> bytes:
+    """git's stdout for args, run in REPO_ROOT, as bytes that are neither
+    decoded nor translated. blob_at() splits the git ls-tree -z output at
+    each NUL byte and each entry at its first tab, and protected_base()
+    splits the git for-each-ref listing at each line feed and each line at
+    its first space. The other readings split or strip the output at
+    whitespace, and a date, a merge base, an object name or a mode is
+    decoded as ASCII. An argument that holds a path is a str, which
+    subprocess encodes as os.fsencode() does. git runs with
+    GIT_LITERAL_PATHSPECS set to 1 and without the variables in
+    PATHSPEC_VARIABLES, so git log and git ls-tree read a page path such as
+    site/[ab]/index.html as that path and not as a glob. git that cannot be
+    run, such as when it is not on PATH, or a git call that fails means
+    that the check could not run (exit 3); the message shows git's stderr
+    decoded with os.fsdecode()."""
+    environment = {key: value for key, value in os.environ.items() if key not in PATHSPEC_VARIABLES}
+    environment["GIT_LITERAL_PATHSPECS"] = "1"
     try:
-        result = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), *args], capture_output=True,
-            encoding=sys.getfilesystemencoding(),
-            errors=sys.getfilesystemencodeerrors(),
-        )
+        result = subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True,
+                                env=environment)
     except OSError as error:
         die(f"git could not be run: {error}")
     if result.returncode != 0:
-        die(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        die(f"git {' '.join(args)} failed: {os.fsdecode(result.stderr).strip()}")
     return result.stdout
 
 
+def ascii_output(output: bytes, args: tuple[str, ...]) -> str:
+    """output, which git printed for args, decoded as ASCII. It is used for
+    the output that git prints in ASCII, such as a date, an object name or a
+    mode, so a byte that is not ASCII there is output that the gate cannot
+    use, and the check could not run (exit 3)."""
+    try:
+        return output.decode("ascii")
+    except UnicodeDecodeError:
+        die(f"git {' '.join(args)} printed a byte that is not ASCII: {output!r}")
+
+
+def git_ascii(*args: str) -> str:
+    """git's stdout for args, decoded as ascii_output() decodes it."""
+    return ascii_output(git(*args), args)
+
+
 def require_full_history() -> None:
-    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+    if git("rev-parse", "--is-shallow-repository").strip() == b"true":
         die(
             "the repository is a shallow clone, so file history cannot be read. "
             "Unshallow it, or set fetch-depth: 0 on actions/checkout."
@@ -342,7 +373,7 @@ def require_full_history() -> None:
 
 def added_date(relative: str) -> str | None:
     """The date the path was added, or None if history does not record it."""
-    lines = git("log", "--diff-filter=A", "--format=%cs", "--", relative).split()
+    lines = git_ascii("log", "--diff-filter=A", "--format=%cs", "--", relative).split()
     return lines[-1] if lines else None
 
 
@@ -350,15 +381,18 @@ def protected_base() -> str | None:
     """The merge base of HEAD and PROTECTED_REF when there is exactly 1, or
     None when there are more than 1, since the base git prints then depends
     on commit dates, or when git for-each-ref lists no ref of exactly that
-    name. A ref it does not list, such as a dangling symbolic ref, reads as
-    absent. Any failed git call, such as git merge-base when the ref shares
-    no history with HEAD, means that the check could not run (exit 3), as
-    does a merge base list with no line."""
-    listing = git("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
-    for line in listing.splitlines():
-        name, _, tip = line.partition(" ")
-        if name == PROTECTED_REF:
-            bases = git("merge-base", "--all", "HEAD", tip).split()
+    name. Its listing is split at each line feed, which git refuses in a
+    refname, and each refname is compared, as bytes, with PROTECTED_REF. A
+    ref it does not list, such as a dangling symbolic ref, reads as absent.
+    Any failed git call, such as git merge-base when the ref shares no
+    history with HEAD, means that the check could not run (exit 3), as does
+    a merge base list with no line."""
+    args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
+    for line in git(*args).split(b"\n"):
+        name, _, tip = line.partition(b" ")
+        if name == PROTECTED_REF.encode("ascii"):
+            tip = ascii_output(tip, args)
+            bases = git_ascii("merge-base", "--all", "HEAD", tip).split()
             if not bases:
                 die(f"git merge-base --all HEAD {tip} printed no merge base")
             return bases[0] if len(bases) == 1 else None
@@ -367,13 +401,16 @@ def protected_base() -> str | None:
 
 def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
     """The mode and object name of the file at relative in revision, or None
-    when revision has no file there. A failed git call means that the check
-    could not run (exit 3)."""
-    for entry in git("ls-tree", "-z", revision, "--", relative).split("\0"):
-        info, _, name = entry.partition("\t")
+    when revision has no blob there. git ls-tree -z ends each entry with a
+    NUL byte, and the entry's name is compared, as bytes, with
+    os.fsencode(relative). A failed git call means that the check could not
+    run (exit 3)."""
+    args = ("ls-tree", "-z", revision, "--", relative)
+    for entry in git(*args).split(b"\0"):
+        info, _, name = entry.partition(b"\t")
         fields = info.split()
-        if name == relative and len(fields) == 3 and fields[1] == "blob":
-            return fields[0], fields[2]
+        if name == os.fsencode(relative) and len(fields) == 3 and fields[1] == b"blob":
+            return ascii_output(fields[0], args), ascii_output(fields[2], args)
     return None
 
 
@@ -409,9 +446,9 @@ def last_change_date(relative: str) -> str | None:
         # from 2 to 6 git calls for a page, at most 1 of them git
         # hash-object.
         if (here is not None and here == blob_at(base, relative)
-                and git("hash-object", "--", relative).strip() == here[1]):
+                and git_ascii("hash-object", "--", relative).strip() == here[1]):
             revision = base
-    lines = git("log", "-1", "--format=%cs", revision, "--", relative).split()
+    lines = git_ascii("log", "-1", "--format=%cs", revision, "--", relative).split()
     return lines[0] if lines else None
 
 
@@ -560,33 +597,13 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     return problems, author
 
 
-# A run of lone surrogates, each of which os.fsdecode() makes from a byte
-# that the file system encoding cannot decode, such as 0xff in a page path.
-_ESCAPED_BYTES = re.compile("([\udc80-\udcff]+)")
-
-
 def report(line: str = "") -> None:
-    """Write line and a newline to stdout. The line is first made into
-    bytes: each lone surrogate that os.fsdecode() made from a byte becomes
-    that byte, and the rest is encoded with the file system encoding, with
-    a backslash escape for a character it cannot encode. A stdout that has
-    a buffer attribute gets those bytes on that buffer, so stdout's error
-    handler is not applied, even when it is strict, and a path that is not
-    UTF-8 is named by its own bytes. A stdout that has no buffer attribute,
-    such as io.StringIO, gets them as text, decoded with the file system
-    encoding, with a backslash escape for a byte it cannot decode, so the
-    text holds no lone surrogate and, with UTF-8 as that encoding, the byte
-    0xff in such a path reads as the 4 characters \\xff."""
+    """Print line, with each byte that os.fsdecode() could not decode, such
+    as 0xff in a page path, shown as a backslash escape, such as the 4
+    characters \\xff. With UTF-8 as the file system encoding, a line that
+    holds no such byte is printed unchanged."""
     encoding = sys.getfilesystemencoding()
-    parts = _ESCAPED_BYTES.split(line + "\n")
-    data = b"".join(os.fsencode(part) if index % 2 else part.encode(encoding, "backslashreplace")
-                    for index, part in enumerate(parts))
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is None:
-        sys.stdout.write(data.decode(encoding, "backslashreplace"))
-        return
-    sys.stdout.flush()
-    buffer.write(data)
+    print(line.encode(encoding, "surrogateescape").decode(encoding, "backslashreplace"))
 
 
 def main() -> int:

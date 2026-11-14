@@ -17,6 +17,7 @@ directory.
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import importlib.util
 import io
 import os
@@ -775,6 +776,11 @@ def history_page(modified: str, body: str = "First body.", published: str = "202
     )
 
 
+def gate_git_text(*args: str) -> str:
+    """The gate's git() output for args, decoded as strict UTF-8."""
+    return gate.git(*args).decode("utf-8")
+
+
 class ProtectedLineHistoryTest(unittest.TestCase):
     """last_change_date() dates a page at the merge base of HEAD and
     refs/remotes/origin/main only when that base is the only one, the page's
@@ -783,12 +789,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     and a failed git call exits 3. Each test runs in a temporary repository
     made by start_repository() with git init --template=, each commit is made
     through the class's git() with a fixture identity and a fixed date, and
-    each call of check_page() passes the fixed TODAY. isolate_git() keeps the
-    suite's and the gate's git calls from reading the system and global
-    configuration, configuration from GIT_ variables, the user's attributes and
-    ignore files, and the system's attributes file. Cases plant configuration
-    through GIT_CONFIG_COUNT before isolate_git() runs, a ~/.gitconfig in a
-    HOME set before it runs, a GIT_CONFIG_SYSTEM file after it runs, and a user
+    each call of check_page() passes the fixed TODAY, since run_main() makes it
+    the date that main() reads. isolate_git() keeps the suite's and the gate's
+    git calls from reading the system and global configuration, configuration
+    from GIT_ variables, the user's attributes and ignore files, and the
+    system's attributes file. Cases plant configuration through
+    GIT_CONFIG_COUNT before isolate_git() runs, a ~/.gitconfig in a HOME set
+    before it runs, a GIT_CONFIG_SYSTEM file after it runs, and a user
     attributes file and a user ignore file at both default paths, and
     test_repository_has_no_template_files checks for template files.
     GIT_CONFIG_GLOBAL and HOME are overlapping layers: git reads ~/.gitconfig
@@ -911,6 +918,41 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return calls
 
+    def run_main(self, stdout) -> int:
+        # main() runs on self.page alone with stdout as given, and reads the
+        # class's TODAY as today's date through a date class whose today()
+        # gives it. The case fails when main() raises.
+        today = dt.date.fromisoformat(self.TODAY)
+
+        class FixedDate(dt.date):
+            @classmethod
+            def today(cls):
+                return cls(today.year, today.month, today.day)
+
+        stderr = io.StringIO()
+        with mock.patch.object(gate, "content_pages", lambda: [self.page]), \
+                mock.patch.object(gate.dt, "date", FixedDate), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                return gate.main()
+            except (Exception, SystemExit) as error:
+                self.fail(f"main() raised {error!r}: {stderr.getvalue()}")
+
+    def make_folder(self, folder: Path) -> None:
+        # A folder that cannot be made fails the case rather than skipping it.
+        try:
+            folder.mkdir()
+        except OSError as error:
+            self.fail(f"the folder {ascii(folder.name)} could not be made: {error!r}")
+
+    def commit_page_at(self, page: Path, date: str, modified: str, published: str = MAIN_DATE,
+                       body: str = "First body.") -> None:
+        # The page at the path given is written and committed with every
+        # other change in the working tree.
+        page.write_text(history_page(modified, body, published), encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"Page on {date}", date=date)
+
     def test_user_attributes_and_ignore_files_are_not_read(self):
         # A user attributes file that re-encodes HTML and a user ignore file
         # that lists README and the site folder are planted at both default
@@ -928,7 +970,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.isolate_git()
         self.page.write_text(history_page(self.MAIN_DATE), encoding="utf-8")
         (gate.REPO_ROOT / "README").write_text("fixture\n", encoding="utf-8")
-        gits = (("suite", self.git), ("gate", gate.git))
+        gits = (("suite", self.git), ("gate", gate_git_text))
         for label, git in gits:
             with self.subTest(git=label):
                 self.assertEqual(git("check-attr", "working-tree-encoding", "--", "site/index.html"),
@@ -940,7 +982,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 git("rm", "-q", "--cached", "--", "site/index.html", "README")
 
     def assert_no_signing_configuration(self) -> None:
-        for label, git in (("suite", self.git), ("gate", gate.git)):
+        for label, git in (("suite", self.git), ("gate", gate_git_text)):
             with self.subTest(git=label):
                 keys = {line.partition("=")[0] for line in git("config", "--list").splitlines()}
                 self.assertFalse(keys & {"commit.gpgsign", "gpg.program"}, keys)
@@ -1208,6 +1250,39 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.assertEqual(listed.split(), ["refs/remotes/origin/main/x"])
         self.assert_stamp_problem(self.problems(), "2026-02-02")
 
+    def test_ref_named_across_a_unicode_line_separator_reads_at_head(self):
+        # With no protected ref, a ref at main is named
+        # refs/remotes/origin/main/x, then U+0085, U+2028 or U+2029, then the
+        # protected refname, which git for-each-ref lists on 1 line. The gate
+        # splits its listing only at a line feed, so it finds no ref of
+        # exactly the protected refname and dates the page at HEAD. The suite
+        # reads no git output that holds such a name, since its git() decodes
+        # strictly.
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=ascii(separator)):
+                self.start_repository()
+                self.change_and_restore_on_branch(protect=False)
+                self.git("update-ref", f"refs/remotes/origin/main/x{separator}refs/remotes/origin/main",
+                         "main")
+                self.assert_stamp_problem(self.problems(), "2026-02-02")
+
+    def test_ref_named_across_a_line_separator_at_unrelated_commit_reads_at_head(self):
+        # With no protected ref, the ref named across U+2028 points at a
+        # commit that shares no history with HEAD. The gate reads no merge
+        # base for it, so it dates the page at HEAD and does not stop.
+        self.change_and_restore_on_branch(protect=False)
+        self.git("switch", "-q", "--orphan", "unrelated")
+        self.commit_other_file(self.MAIN_DATE)
+        self.git("update-ref", "refs/remotes/origin/main/x\u2028refs/remotes/origin/main", "unrelated")
+        self.git("switch", "-q", "topic")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                problems = self.problems()
+            except SystemExit as error:
+                self.fail(f"exit {error.code}: {stderr.getvalue()}")
+        self.assert_stamp_problem(problems, "2026-02-02")
+
     def test_ref_below_protected_refname_with_non_utf8_name_reads_at_head(self):
         # git for-each-ref lists a ref below the protected refname whose last
         # name byte is 0xff, which is not UTF-8. The gate reads its name and
@@ -1218,26 +1293,68 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.assert_stamp_problem(self.problems(), "2026-02-02")
 
     def test_restored_page_in_non_utf8_folder_passes(self):
-        # A page in a folder named by the byte 0xff, which is not UTF-8, and
-        # a page in a folder named a are each changed and restored exactly on
-        # a branch, with the protected ref at main. The gate reads git
-        # ls-tree's name for each as pathlib names the page, so each is dated
-        # at the merge base and passes, and neither stops the check.
-        for folder in (os.fsdecode(b"\xff"), "a"):
+        # A page in a folder named by the byte 0xff, which is not UTF-8, by
+        # a, CR and b, by a, CR, LF and b, or by a is changed and restored
+        # exactly on a branch, with the protected ref at main. The name that
+        # git ls-tree prints for each equals the page's path in bytes, so
+        # each is dated at the merge base and passes, and none stops the
+        # check.
+        for folder in (os.fsdecode(b"\xff"), "a\rb", "a\r\nb", "a"):
             with self.subTest(folder=ascii(folder)):
                 self.start_repository()
                 self.page = gate.SITE_ROOT / folder / "index.html"
-                self.page.parent.mkdir()
+                self.make_folder(self.page.parent)
                 for date, body in ((self.MAIN_DATE, "First body."), ("2026-02-01", "Changed body."),
                                    ("2026-02-02", "First body.")):
-                    self.page.write_text(history_page(self.MAIN_DATE, body), encoding="utf-8")
-                    self.git("add", "-A")
-                    self.git("commit", "-q", "-m", f"Page on {date}", date=date)
+                    self.commit_page_at(self.page, date, self.MAIN_DATE, body=body)
                     if date == self.MAIN_DATE:
                         self.protect_main()
                         self.git("switch", "-q", "-c", "topic")
                 stderr = io.StringIO()
                 with contextlib.redirect_stderr(stderr):
+                    try:
+                        problems = self.problems()
+                    except SystemExit as error:
+                        self.fail(f"exit {error.code}: {stderr.getvalue()}")
+                self.assertEqual(problems, [])
+
+    def test_page_in_glob_named_folder_is_dated_by_its_own_commit(self):
+        # site/[ab]/index.html is committed on 2026-01-01 with that stamp,
+        # and site/a/index.html, which the glob [ab] matches, on 2026-02-20.
+        # The page is dated by its own commit, so it has no problem.
+        self.page = gate.SITE_ROOT / "[ab]" / "index.html"
+        self.make_folder(self.page.parent)
+        self.commit_page_at(self.page, self.MAIN_DATE, self.MAIN_DATE)
+        other = gate.SITE_ROOT / "a" / "index.html"
+        self.make_folder(other.parent)
+        self.commit_page_at(other, "2026-02-20", "2026-02-20", published="2026-02-20")
+        self.assertEqual(self.problems(), [])
+
+    def test_page_in_glob_named_folder_keeps_its_own_added_date(self):
+        # site/a/index.html is added on 2026-01-01, and site/[ab]/index.html
+        # on 2026-02-01 with a published stamp of 2026-01-01. The page's
+        # added date is that of its own commit, so the stamp is a problem.
+        other = gate.SITE_ROOT / "a" / "index.html"
+        self.make_folder(other.parent)
+        self.commit_page_at(other, self.MAIN_DATE, self.MAIN_DATE)
+        self.page = gate.SITE_ROOT / "[ab]" / "index.html"
+        self.make_folder(self.page.parent)
+        self.commit_page_at(self.page, "2026-02-01", "2026-02-01")
+        self.assertEqual(gate.added_date("site/[ab]/index.html"), "2026-02-01")
+        self.assertTrue([p for p in self.problems() if p.startswith("article:published_time is 2026-01-01")])
+
+    def test_pathspec_variables_do_not_change_restored_page_result(self):
+        # Each of the 4 variables through which git reads a pathspec as a
+        # glob, a literal path or with no regard to case is set to 1 before
+        # the gate runs on a page restored exactly with the protected ref.
+        # The page passes and the check does not stop.
+        for variable in ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
+                         "GIT_LITERAL_PATHSPECS"):
+            with self.subTest(variable=variable):
+                self.start_repository()
+                self.change_and_restore_on_branch()
+                stderr = io.StringIO()
+                with mock.patch.dict(os.environ, {variable: "1"}), contextlib.redirect_stderr(stderr):
                     try:
                         problems = self.problems()
                     except SystemExit as error:
@@ -1336,66 +1453,53 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.problems()
         self.assertFalse([call for call in calls if call[0] == "hash-object"], calls)
 
-    def test_report_names_non_utf8_page_on_strict_stdout(self):
+    def commit_non_utf8_page(self) -> str:
         # A page in a folder named by the byte 0xff, which is not UTF-8, is
-        # stamped 40 days before its only commit, and main() runs with a
-        # stdout whose error handler is strict. The report names the page by
-        # its own bytes and main() returns 1, so the case fails when a
-        # report line encodes the page's path through that stdout.
+        # stamped 40 days before its only commit. The return value is the
+        # report line that names it, with the byte shown as decoding it
+        # with the file system encoding and a backslash escape shows it.
         self.page = gate.SITE_ROOT / os.fsdecode(b"\xff") / "index.html"
-        self.page.parent.mkdir()
-        self.page.write_text(history_page(self.MAIN_DATE, published="2026-02-10"), encoding="utf-8")
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "Page on 2026-02-10", date="2026-02-10")
+        self.make_folder(self.page.parent)
+        self.commit_page_at(self.page, "2026-02-10", self.MAIN_DATE, published="2026-02-10")
+        return "  site/" + b"\xff".decode(sys.getfilesystemencoding(), "backslashreplace") + "/index.html"
+
+    def test_report_names_non_utf8_page_on_strict_stdout(self):
+        # main() runs on the page of commit_non_utf8_page() with a stdout
+        # whose error handler is strict, returns 1 and reports the page,
+        # named with the backslash escape, and its stamp problem.
+        named = self.commit_non_utf8_page()
         output = io.BytesIO()
         stdout = io.TextIOWrapper(output, encoding="utf-8", errors="strict", newline="\n")
-        stderr = io.StringIO()
-        with mock.patch.object(gate, "content_pages", lambda: [self.page]), \
-                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            try:
-                code = gate.main()
-            except (Exception, SystemExit) as error:
-                self.fail(f"main() raised {error!r}: {stderr.getvalue()}")
-            stdout.flush()
+        code = self.run_main(stdout)
+        stdout.flush()
         lines = output.getvalue().split(b"\n")
         self.assertEqual(code, 1)
-        self.assertIn(b"  site/\xff/index.html", lines)
+        self.assertIn(named.encode("utf-8"), lines)
         self.assertTrue(any(b"the file last changed 2026-02-10" in line and b"tolerance" in line
                             for line in lines), lines)
 
     def test_report_to_stdout_without_buffer_names_non_utf8_page(self):
-        # A page in a folder named by the byte 0xff, which is not UTF-8, is
-        # stamped 40 days before its only commit, and main() runs with an
-        # io.StringIO as stdout, which has no buffer attribute. main()
-        # returns 1, the report names the page with the byte decoded by the
-        # file system encoding with a backslash escape, and holds the stamp
-        # problem and no lone surrogate, so the case fails when report()
-        # needs a buffer on stdout. A folder that cannot be made fails the
-        # case rather than skipping it.
-        self.page = gate.SITE_ROOT / os.fsdecode(b"\xff") / "index.html"
-        try:
-            self.page.parent.mkdir()
-        except OSError as error:
-            self.fail(f"the folder named by the byte 0xff could not be made: {error!r}")
-        self.page.write_text(history_page(self.MAIN_DATE, published="2026-02-10"), encoding="utf-8")
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "Page on 2026-02-10", date="2026-02-10")
+        # main() runs on the page of commit_non_utf8_page() with an
+        # io.StringIO as stdout, which has no buffer attribute, returns 1
+        # and reports the page, named with the backslash escape, its stamp
+        # problem and no lone surrogate.
+        named = self.commit_non_utf8_page()
         stdout = io.StringIO()
-        stderr = io.StringIO()
-        with mock.patch.object(gate, "content_pages", lambda: [self.page]), \
-                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            try:
-                code = gate.main()
-            except (Exception, SystemExit) as error:
-                self.fail(f"main() raised {error!r}: {stderr.getvalue()}")
+        code = self.run_main(stdout)
         text = stdout.getvalue()
         lines = text.split("\n")
         self.assertEqual(code, 1)
-        folder = b"\xff".decode(sys.getfilesystemencoding(), "backslashreplace")
-        self.assertIn(f"  site/{folder}/index.html", lines)
+        self.assertIn(named, lines)
         self.assertTrue(any("the file last changed 2026-02-10" in line and "tolerance" in line
                             for line in lines), lines)
         self.assertFalse([char for char in text if "\udc80" <= char <= "\udcff"], ascii(text))
+
+    def test_report_to_no_stdout_returns_exit_code(self):
+        # main() runs on the page of commit_non_utf8_page() with sys.stdout
+        # None, the state Python gives when file descriptor 1 is closed,
+        # and returns 1 without raising.
+        self.commit_non_utf8_page()
+        self.assertEqual(self.run_main(None), 1)
 
 
 if __name__ == "__main__":
