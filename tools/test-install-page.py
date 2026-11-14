@@ -7,7 +7,7 @@ changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
 tools/check-headers.py or tools/check-inline-code.py (in 2 cases as another
 user and 1 as root, adding a cached file of it too), swaps 2 family pages, or
-adds a file that Cloudflare Pages runs or reads: package.json,
+adds a file that Cloudflare Pages may run or read: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
 Pipfile or Gemfile. The copy holds the 3 stylesheets too, which the name
@@ -19,8 +19,8 @@ as a source, an unreadable page or stylesheet, a link, a folder set to mode
 or copy the whole committed site/ over the copy, and assert that a source of
 site/_redirects under /assets/ passes only as an exact path whose file name
 no file under site/ but site/_redirects names and that no file occupies or
-lies above, in any letter case, that a rule whose destination can lead to
-such a source fails, and
+lies above, in any letter case, that a rule whose destination the gate
+reads, failing closed, as able to lead to such a source fails, and
 that a header rule for such a path still fails. It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
@@ -351,16 +351,19 @@ LATER_TAG = "a later html or body start tag carries attributes"
 OTHER_SHEET = "the only stylesheets that the rule pin reads"
 # The gate's messages for an html or body start tag with attributes that is not an ancestor of every checked element,
 # a page without the doctype, a Link header in site/_headers, and a header outside INSTALL_HEADERS under a URL pattern
-# that can match an install page; and the opening lines that the generator writes.
+# that the gate reads, failing closed, as able to match an install page; and the opening lines that the generator
+# writes.
 NOT_ANCESTOR = "an html or body start tag that is not an ancestor of every checked element carries attributes"
 NO_DOCTYPE = "the page does not begin with <!doctype html>"
 LINK_SET = "sets a Link header"
-INSTALL_HEADER = "which can match an install page"
+INSTALL_HEADER = "which this gate reads, failing closed, as able to match an install page"
 # The gate's messages for an attribute outside its ATTRIBUTE_PIN, a meta, link or base element outside its HEAD_PIN,
-# and a rule of site/_redirects whose source can match an install page or a file the pages load.
+# and a rule of site/_redirects whose source the gate reads, failing closed, as able to match an install page or a file
+# the pages load.
 GIVEN = "which the committed pages do not give"
 HEAD_PINNED = "(HEAD_PIN)"
-REDIRECT = "which can match an install page or a file the install pages load; a rule there can send the reader away"
+REDIRECT = ("which this gate reads, failing closed, as able to match an install page or a file the install pages load; "
+            "a rule that matches such a path can send the reader away")
 # The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, whose file name an
 # install page names, whose file name another file under site/ names, that a file of the tree occupies or lies
 # beneath, and that cannot be evaluated; and the 10 release lines of the committed file, before its logo redirects.
@@ -372,8 +375,8 @@ OCCUPIED = "compared in any letter case; under a loaded segment only a path that
 UNEVALUATED = "which could not be evaluated: "
 RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:10])
 # The gate's words for a rule of site/_redirects whose destination names the file name of the source that the
-# committed line 11 holds, and for 1 whose destination holds a placeholder or a splat, so that each can lead to a
-# source that the redirect reading accepts.
+# committed line 11 holds, and for 1 whose destination holds a placeholder or a splat, so that the gate reads each as
+# able to lead to a source that the redirect reading accepts.
 LEADS = ("which names the file name of a source that the redirect reading accepts under a loaded segment, compared in "
          "any letter case: line 11 (/assets/baseline/logos/aiqt-card.svg)")
 EXPANDS = ("as a placeholder or a splat does; the reading does not expand either, so it reads the destination as able "
@@ -383,7 +386,7 @@ EXPANDS = ("as a placeholder or a splat does; the reading does not expand either
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
 NONE_GIVEN = "which the committed pages give no"
 OUTSIDE_LOADS = "(LOADED_SEGMENTS)"
-SERVER_ENTRY = "exists; Cloudflare Pages runs it, or reads it"
+SERVER_ENTRY = "exists; Cloudflare Pages may run it, or read it"
 PIN_UNREAD = "check-install-page: tools/check-baseline-pin.py could not read the baseline pin"
 # The gate's words for a load outside the baseline pin, an element of a tag that the committed pages do not use, a
 # family link whose label is not its family's name, and a switch that is not exactly the template's.
@@ -391,7 +394,7 @@ OUTSIDE_PIN = "which is not 1 of the files tools/check-baseline-pin.py pins"
 PAGE_TAG = "a tag that the committed pages do not use (PAGE_TAGS)"
 WRONG_LABEL = "the claude family link's visible label is not \"Claude\""
 SWITCH = "the page carries the light and dark switch 0 times"
-MISNESTED = "open inside it; a browser can keep that element open, reopen it or ignore the end tag"
+MISNESTED = "open inside it; a browser may keep that element open, reopen it or ignore the end tag"
 # The words of a Gemini step, which a case extends with a link; the step stays found when it holds 1 already.
 GEMINI_STEP = "<strong>New Gem</strong>"
 VERIFIED = '<p class="verified">'
@@ -1117,7 +1120,7 @@ CASES = [
         STEPS + "<li>" + STEPS + "<li>Save the file.</li></ol></li></ol>")(root),
         (1, "an ol inside a step list carries the class 'steps'")),
     # Each checked element, each of its ancestors and each element it holds carries only the classes the committed
-    # pages give it there (the gate's CLASS_PIN), so no stylesheet rule outside the rule pin can reach it.
+    # pages give it there (the gate's CLASS_PIN), so that no stylesheet rule outside the rule pin reaches it by a class.
     ("the hero's h1 with a class", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="fresh">')),
         (1, "the hero's h1 carries the class 'fresh'")),
     ("the pick label with a further class", edit(PAGE, PICK, PICK.replace("lbl blk", "lbl blk fresh")),
@@ -1587,8 +1590,9 @@ CASES = [
     ("a lower-case link header that only preloads a stylesheet, on every page",
         edit(HEADERS, SITE_LINE, SITE_LINE + "\n  link: </assets/baseline/fonts.css>; rel=preload; as=style"),
         (1, LINK_SET)),
-    # Under a URL pattern that can match an install page, /* included, only the headers and values of INSTALL_HEADERS
-    # may appear, and no detach; the gate reads a pattern from its text alone and fails closed (reaches_install).
+    # Under a URL pattern that the gate reads as able to match an install page, /* included, only the headers and values
+    # of INSTALL_HEADERS may appear, and no detach; the gate reads a pattern from its text alone and fails closed
+    # (reaches_install).
     ("a Refresh header that sends the reader away from the install pages",
         append(HEADERS, "\n/install/*\n  Refresh: 0; url=/\n"), (1, INSTALL_HEADER)),
     ("a Link header under a family page", append(HEADERS, "\n/install/claude/\n  Link: </>; rel=preload\n"),
@@ -1954,8 +1958,9 @@ CASES = [
         named('<link rel="stylesheet" href="/assets/gone.css">', "/assets/gone.css"), naming("gone.css")),
     ("a header rule for an exact path that the redirect reading accepts",
         append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
-    # No field of site/_redirects after a source may lead to a source that the redirect reading accepts, since a page
-    # that loads the rule's source would reach that source though no file under site/ names its file name. Each is read
+    # No field of site/_redirects after a source may be one that the gate reads, failing closed, as able to lead to a
+    # source that the redirect reading accepts, so that a page that loads the rule's source does not reach that source
+    # through the rule though no file under site/ names its file name. Each is read
     # by its tokens, folded, as written and percent-decoded, so the file name stays a token whatever stands around it;
     # and a : or a * after any http:// or https:// at its start fails.
     ("a page that loads a path that a redirect sends to an accepted logo source",
@@ -1988,7 +1993,8 @@ CASES = [
         (1, "site/_redirects line 34 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
     ("a redirect to a longer file name that holds an accepted one",
         leads("/assets/baseline/logos/old-aiqt-card.svg"), 0),
-    # Every src on the 6 pages is a path under LOADED_SEGMENTS, so check 7 covers what it loads.
+    # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
+    # header and redirect rule.
     ("the rail's img loaded from another first segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
              'src="/images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_LOADS)),
@@ -2073,7 +2079,7 @@ CASES = [
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
         '<img src="/assets/install-illustration.svg" alt=""><p class="verified">'),
-        (1, "an img loads '/assets/install-illustration.svg', " + OUTSIDE_PIN)),
+        (1, "an img may load '/assets/install-illustration.svg', " + OUTSIDE_PIN)),
     ("the rail's img loaded through a .. segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
              'src="/assets/../images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_PIN)),
@@ -2159,7 +2165,8 @@ HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
 WRAP_RULE = ".wrap { margin: 0; padding: 0 var(--pad); }"
 # A class name, a ] and a comma in a string count for no selector, and a quote after an even run of backslashes ends
-# its string: "\\" is 1 backslash. Each rule can match a pinned element, or sets a custom property a pinned rule uses.
+# its string: "\\" is 1 backslash. can_match() reads each rule as able to match a pinned element, or the rule sets a
+# custom property a pinned rule uses.
 STRING_RULE = 'h1[title="].fresh"] { display: none; }'
 QUOTE_RULE = 'h1[title="\\"].fresh"] { display: none; }'
 ESCAPE_RULE = '[title="\\\\"] .fresh, h1 { display: none; }'
@@ -2457,8 +2464,8 @@ def committed_rules(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
 
 
 def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
-    """The rules of STYLESHEETS under root that can match an element the gate's CLASS_PIN names are exactly those of
-    PIN_FILE under root (RULE_PIN, for the committed tree)."""
+    """The rules of STYLESHEETS under root that can_match() reads as able to match an element the gate's CLASS_PIN
+    names are exactly those of PIN_FILE under root (RULE_PIN, for the committed tree)."""
     held, problems = committed_rules(root)
     try:
         pin = (root / PIN_FILE).read_text(encoding="utf-8").splitlines()
@@ -2508,8 +2515,9 @@ def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
             continue
         problems += [f"the stylesheets no longer give the pinned rule {line.partition(' ')[2]!r} there, or give it "
                      "changed." for line in pin[first:last]]
-        problems += [f"the stylesheets give the rule {text!r}, {ADDED}; it can match an element the gate's "
-                     "CLASS_PIN names, or sets a custom property that a pinned rule uses." for _, text in held[start:end]]
+        problems += [f"the stylesheets give the rule {text!r}, {ADDED}; can_match() reads it as able to "
+                     "match an element the gate's CLASS_PIN names, or it sets a custom property that a pinned rule "
+                     "uses." for _, text in held[start:end]]
     return problems
 
 
@@ -2643,7 +2651,8 @@ def header_pin_problems(loader=load_gate) -> list[str]:
     if ({pattern: sorted(held, key=repr) for pattern, held in recorded.items()}
             != {pattern: sorted(held, key=repr) for pattern, held in found.items()}):
         return [f"INSTALL_HEADERS of tools/{GATE.name} holds {recorded}; the committed {HEADERS} sets {found} under "
-                "the URL patterns that can match an install page or a file the install pages load."]
+                "the URL patterns that reaches_page() reads as able to match an install page or a file the install "
+                "pages load."]
     return []
 
 
