@@ -504,9 +504,9 @@ class ImageReferenceTest(_PatchedGateTest):
 
     def test_traversal_to_missing_target_is_reported_outside(self):
         # A traversal to a MISSING out-of-tree target must be reported as a
-        # containment violation, not as a plain "does not exist": the gate must
-        # check containment first, so the assertion on the "outside" message
-        # fails any gate that reports this missing target as "does not exist".
+        # containment violation, not as a plain "does not exist": the test needs
+        # exactly 1 problem, naming the target as outside the site directory, and
+        # fails a gate that reports this missing target only as "does not exist".
         problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
         self.assertEqual(len(problems), 1)
         self.assertIn("outside the site directory", problems[0])
@@ -586,8 +586,8 @@ class MultiImageTest(_PatchedGateTest):
         self.assertTrue(any("missing.png" in p for p in problems))
 
     def test_twitter_image_reference_is_checked(self):
-        # Parity: og:image present, twitter:image missing -> the twitter reference
-        # is reported, which guards the loop over both image references.
+        # og:image names an existing file and twitter:image a missing one, so a
+        # gate that checks only the first image reference fails this test.
         extra = (_img_meta("https://cleanlanguage.ai/card.png") + "\n"
                  + '<meta name="twitter:image" content="https://cleanlanguage.ai/missing.png">')
         problems = self._problems(extra, files=["card.png"])
@@ -620,8 +620,8 @@ class MetaContextTest(_PatchedGateTest):
         self.assertEqual(problems, [])
 
     def test_meta_after_closed_template_still_counts(self):
-        # Parity guard against over-suppression: the author after a closed
-        # template is active and satisfies the requirement.
+        # The author after a closed template is active and satisfies the
+        # requirement: a gate that ignores meta past </template> fails this test.
         problems, author = self._check(
             '<template><meta name="robots" content="noindex"></template>\n'
             '<meta name="author" content="Jeff Posluns">')
