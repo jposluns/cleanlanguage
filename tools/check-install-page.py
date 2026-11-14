@@ -298,9 +298,14 @@ What it verifies
    that file name do not hide it, and when it holds a ``:`` or a ``*`` after
    any ``http://`` or ``https://`` at its start, as a placeholder or a splat
    does, a port included, since the reading does not expand a placeholder
-   or a splat and so reads such a field as able to give any path. Every
-   rule is read so, so in a chain of rules each rule that leads to an
-   accepted source fails.
+   or a splat and so reads such a field as able to give any path. This
+   reading refuses more than it must, by design, and fails closed: a token
+   fails wherever it stands, so a field fails too where that token does not
+   point at the accepted source, such as the same file name in another
+   folder or inside the query of a URL on another host, and so does a URL
+   with a port, whose ``:`` the reading does not tell apart from a
+   placeholder. Every rule is read so, so in a chain of rules each rule
+   that leads to an accepted source fails.
    So
    ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
    ``/* / 302``, ``/assets/* / 302``, ``/assets/baseline/logos/aiqt-*.svg
@@ -347,7 +352,10 @@ What it verifies
    asks for such a path gets the redirect's destination, whatever it is,
    since the reading holds a destination only to naming the file name of no
    accepted source and to holding no ``:`` or ``*`` after any ``http://`` or
-   ``https://`` at its start.
+   ``https://`` at its start. The reverse is by design and not a residual:
+   that reading also refuses destinations that do not point at an accepted
+   source, such as the same file name in another folder or inside the
+   query of a URL on another host, and a URL with a port.
    ``tools/test-release-links.py`` pins ``site/_redirects`` to
    the release writer's output, so a hand edit that adds such a rule fails that
    test, but a change to the writer, with the file written again, does not. Nor
@@ -2179,7 +2187,11 @@ def destination_problem(destination: str, accepted: list[tuple[int, str]]) -> st
     around it, such as a scheme and any host, dot segments, a relative path, a query or a fragment. A ":" or a "*" in
     the form after any DESTINATION_SCHEME at its start, as a placeholder or a splat holds, leads to every accepted
     source: the reading does not expand a placeholder or a splat, so it reads such a form as able to give any path,
-    and a port there fails too."""
+    and a port there fails too. This refuses more than it must, by design, and fails closed: a token fails wherever it
+    stands, so a field fails too where that token does not point at an accepted source, such as the same file name in
+    another folder or inside the query of a URL on another host, and so does a URL with a port, whose ":" the reading
+    does not tell apart from a placeholder. So a failure here shows that the field may lead to an accepted source, not
+    that it does."""
     forms = destination_forms(destination)
     tokens = {token for form in forms for token in NAME_TOKEN.findall(fold(form))}
     named = [(number, source) for number, source in accepted if fold(source.rsplit("/", 1)[1]) in tokens]
@@ -2213,11 +2225,13 @@ def redirect_problems(redirects: str) -> list[str]:
     whose source fails and each rule of a chain included, fails when its destination or a later field of its line can
     lead to an accepted source (destination_problem(): a token that is the file name of an accepted source, in any
     letter case, as written or percent-decoded, or a : or a * after any http:// or https:// at its start, as a
-    placeholder or a splat holds), naming its line and the line of that source, since a page that loads its source can
-    then reach the accepted source though no file under site/ names that file name. A destination that leads to an
-    accepted source through a matching behaviour of Cloudflare Pages beyond this reading, such as a handling of .html,
-    and a load from another host or a redirect that another host makes, are residuals, as are the loads that
-    site_names() does not find."""
+    placeholder or a splat holds), naming its line and the line of that source, since a page that loads its source may
+    then lead to the accepted source though no file under site/ names that file name. This refuses more than it must,
+    by design, and fails closed: it also refuses a field that does not point at an accepted source, such as the same
+    file name in another folder or inside the query of a URL on another host, and a URL with a port, so its message
+    says only that such a page may lead there. A destination that leads to an accepted source through a matching
+    behaviour of Cloudflare Pages beyond this reading, such as a handling of .html, and a load from another host or a
+    redirect that another host makes, are residuals, as are the loads that site_names() does not find."""
     problems: list[str] = []
     reach = ("which can match an install page or a file the install pages load; a rule there can send the reader away "
              "from the page or serve other content.")
@@ -2271,7 +2285,7 @@ def redirect_problems(redirects: str) -> list[str]:
             if why:
                 what = "the destination" if index == 0 else "after its destination the field"
                 problems.append(f"site/_redirects line {number} has {what} {field}, {why}. A page that loads this "
-                                "rule's source can reach the accepted source through it, though no file under site/ "
+                                "rule's source may lead to the accepted source through it, though no file under site/ "
                                 "names the accepted source's file name, so no rule may lead to an accepted source.")
                 break
     return problems
