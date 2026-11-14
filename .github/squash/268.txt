@@ -29,5 +29,9 @@ such as code in an indented block; a run outside the precondition of
 the exit contract, such as a label lint that ends the gate process or
 replaces its standard output; a message typed into the merge dialog
 that differs from the committed file; a description edited after the
-last run; and a change to the gate outside the operators of the
-sweep, such as a change of 2 tokens at once.
+last run; a change to the gate outside the operators of the sweep,
+such as a change of 2 tokens at once; a mutant whose gate never ends,
+which the sweep kills only by a memory limit, a CPU limit or a wall
+timeout that the suite sets for each child; and the top suite process
+itself, which the suite does not limit and which in CI only the job's
+time limit bounds.

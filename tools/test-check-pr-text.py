@@ -2,10 +2,18 @@
 """Tests for tools/check-pr-text.py, the pull request text gate.
 
 Each case runs the gate as a separate process, as CI and a hand run do, with a temporary folder as
-its working directory, and checks its exit status and its output. A case that needs a squash
-folder copies the gate and the label lint into a temporary tree, since the gate finds both from
-its own path. Every review-history label and every dash a case feeds the gate is built when the
-case runs, by joining strings or from an escape, so this file carries none of them as text.
+its working directory, and checks its exit status and its output. The suite starts every child
+through run_child(), which sets a memory limit, a CPU limit and, where a case asks, a stack limit
+in the child before it runs the gate or the suite, and enforces a wall timeout on the child from
+the process that started it, so a gate that never ends stops at a limit. When a child of the top
+suite process hits its wall timeout, run_child() kills its whole process group, which holds every
+process the child started through run_child(); LIMIT_LAUNCH and run_child() state which process
+runs under which limit. The suite sets no limit on its own top process: in CI the job's time
+limit in the workflow bounds it, and on a local run nothing in the suite does. A case that needs
+a squash folder copies the gate and the label lint into a temporary tree, since the gate finds
+both from its own path. Every review-history label and every dash a case feeds the gate is built
+when the case runs, by joining strings or from an escape, so this file carries none of them as
+text.
 
 The cases fall in 5 groups. DefectClasses holds a failing case for each mechanical defect class,
 which includes a code fence that is never closed and a blank text, in each text, and the digit
@@ -18,20 +26,27 @@ UnreadableInputs holds a case for each branch of the exit contract and each kind
 input and usage error, where the deeply nested payload runs the gate under a soft stack limit of
 1 MiB that the case sets, or the hard limit when that is lower, so the JSON reader overflows its
 stack on any runner. OutputAndHonestTexts holds the output prefixes and escapes, runs from other
-folders and without -B, a bound on the time of the inline-code scan, the job's time limit in the
-workflow, and honest texts that pass. MutantSweep generates the mutation sites of the gate from
-its source, checks that each has a row or an argument that it is equivalent, and runs the cases
-each row names on a copy of the gate with the site applied; its docstring states its operators,
-its kill and equivalence criterion and its residual. The class of counts stated with their
-selection rule has no case: it stays a judgement for reviewers, because no part of it is
-mechanical.
+folders and without -B, a bound on the time of the inline-code scan, a case that the scan ends
+on each shape of backtick run, the memory, CPU and wall limits of a child, a case that a
+grandchild ends with its timed-out parent, a static case that every child runs under its limits,
+the job's time limit in the workflow, and honest texts that pass. MutantSweep generates the
+mutation sites of the gate from its source, checks that each has a row or an argument that it is
+equivalent, and runs the cases each row names on a copy of the gate with the site applied; its
+docstring states its operators, its kill and equivalence criterion, its rule for a child that
+hits a limit and its residual. The class of counts stated with their selection rule has no case:
+it stays a judgement for reviewers, because no part of it is mechanical.
 """
 import ast
 import collections
+import contextlib
 import io
 import json
+import os
 import re
+import resource
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -96,24 +111,181 @@ def url_stopper_set():
 # The inline-code scan must finish this many backticks within this many seconds.
 BACKTICK_RUN = 20000
 TIME_BOUND = 10
+# The wall timeout, in seconds, of the case that runs the code-span scan on each shape of run.
+SPAN_TIMEOUT = 10
 # The deep-nesting case runs the gate with this many levels under a soft stack limit of
-# DEEP_STACK bytes, or the hard limit when that is lower, so the JSON reader overflows its
-# stack, and so reaches the RecursionError branch, whatever stack limit the runner has.
+# DEEP_STACK bytes, or the hard limit when that is lower, which LIMIT_LAUNCH sets, so the JSON
+# reader overflows its stack, and so reaches the RecursionError branch, whatever stack limit
+# the runner has.
 DEEP_LEVELS = 100000
 DEEP_STACK = 1024 * 1024
-# A child that sets the soft stack limit given as its first argument, never above the hard
-# limit, then replaces itself with the gate run with the rest of its arguments.
-STACK_LAUNCH = ("import os, resource, sys\n"
-                "soft = int(sys.argv[1])\n"
-                "hard = resource.getrlimit(resource.RLIMIT_STACK)[1]\n"
-                "if hard != resource.RLIM_INFINITY:\n"
-                "    soft = min(soft, hard)\n"
-                "resource.setrlimit(resource.RLIMIT_STACK, (soft, hard))\n"
-                "os.execv(sys.executable, [sys.executable, '-I', '-B', *sys.argv[2:]])\n")
+# Every child this suite starts goes through run_child(), which starts LIMIT_LAUNCH: a child
+# that sets RLIMIT_AS, its address space, to the memory limit given as its first argument;
+# when its second argument is not "-", the soft stack limit given there; RLIMIT_CPU to a soft
+# limit of the seconds given as its third argument, which sends SIGXCPU, and a hard limit
+# CPU_GRACE s above it, which sends SIGKILL; and RLIMIT_CORE to a soft limit of 0, so a child
+# that SIGXCPU ends writes no core file. Each limit is never above the hard limit it inherits.
+# It then sets CHILD_MARK in its environment and replaces itself with python3 run with the rest
+# of its arguments. Each process the child starts inherits each limit and the mark, and a limit
+# set below an inherited one is the lower of the 2; RLIMIT_CPU bounds the CPU time of each
+# process on its own, not the sum over a tree, and not the time a process waits or sleeps.
+# run_child() enforces the wall timeout, from the process that starts the child.
+CHILD_MARK = "CHECK_PR_TEXT_CHILD"
+CPU_GRACE = 5
+LIMIT_LAUNCH = ("import os, resource, sys\n"
+                "def cap(kind, soft, hard=None):\n"
+                "    inherited = resource.getrlimit(kind)[1]\n"
+                "    hard = inherited if hard is None else hard\n"
+                "    if inherited != resource.RLIM_INFINITY:\n"
+                "        soft, hard = min(soft, inherited), min(hard, inherited)\n"
+                "    return soft, hard\n"
+                "memory = cap(resource.RLIMIT_AS, int(sys.argv[1]))[0]\n"
+                "resource.setrlimit(resource.RLIMIT_AS, (memory, memory))\n"
+                "if sys.argv[2] != '-':\n"
+                "    resource.setrlimit(resource.RLIMIT_STACK,\n"
+                "                       cap(resource.RLIMIT_STACK, int(sys.argv[2])))\n"
+                "cpu = int(sys.argv[3])\n"
+                "resource.setrlimit(resource.RLIMIT_CPU,\n"
+                "                   cap(resource.RLIMIT_CPU, cpu, cpu + " + str(CPU_GRACE) + "))\n"
+                "resource.setrlimit(resource.RLIMIT_CORE,\n"
+                "                   (0, resource.getrlimit(resource.RLIMIT_CORE)[1]))\n"
+                "os.environ['" + CHILD_MARK + "'] = '1'\n"
+                "os.execv(sys.executable, [sys.executable, *sys.argv[4:]])\n")
+# The memory limit and the wall timeout of each gate child, from measured runs under each stack
+# limit: the largest and slowest gate child, the gate on the 5460060-byte input of the quote
+# pair enumeration, reached a maxrss of 319 MiB in at most 14.2 s, and failed under an address
+# space of 320 MiB but passed under 384 MiB.
+GATE_MEMORY = 1024 * 1024 * 1024
+GATE_TIMEOUT = 60
+# The CPU limit of each child but a sweep child, in seconds, equal to GATE_TIMEOUT: a backstop
+# for a child whose enforcing process is gone, such as a gate child whose sweep child something
+# outside the suite killed. The child of most CPU time, the gate child on the input of the
+# quote pair enumeration, used 15.3 s under an 8192 KiB stack and 12.2 s with no stack limit,
+# so GATE_CPU is 3.9 times the larger. A child of 1 thread uses at most 1 s of CPU time per
+# second of wall time, so while its enforcing process lives, its CPU limit can end it before
+# its wall timeout only by the moments between its start and the start of that timeout; on a
+# slower runner, a child that nears GATE_CPU nears its wall timeout first, and the margin
+# covers a runner 3.9 times slower. Its cost is 2 more calls that set a limit in each child.
+# It bounds CPU time, not wall time, and does not end a process that waits or sleeps.
+GATE_CPU = 60
+# The memory limit of each sweep child, the suite run on the named cases of 1 row. Each gate
+# child it starts inherits it, so in a sweep a gate child runs under SWEEP_MEMORY too; the run
+# of every named case on an unmutated copy, with the gate children it started, reached a
+# maxrss of 26 MiB in at most 35.8 s. At most SWEEP_WORKERS sweep children run at once, each
+# with at most 1 gate child, so the children of a sweep hold at most
+# SWEEP_WORKERS * 2 * SWEEP_MEMORY bytes of address space.
+SWEEP_MEMORY = 192 * 1024 * 1024
+# Each line that run_child() writes to standard error when a child hits a limit starts so.
+LIMIT_HIT = "limit hit: "
+# The case that a grandchild ends with its timed-out parent runs this parent, which imports the
+# suite and starts ORPHAN_SPIN through run_child(), as a sweep child starts a gate child, under
+# a wall timeout of ORPHAN_TIMEOUT s; each writes its PID to a file in the case's temporary
+# folder. ORPHAN_BOUND, the seconds the case waits for the grandchild after the timeout of its
+# parent, is well under GATE_CPU, so the CPU limit cannot end the grandchild within it.
+ORPHAN_PARENT = (
+    "import importlib.util, os, sys\n"
+    "suite_path, fd, folder, spin = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]\n"
+    "open(os.path.join(folder, 'parent.pid'), 'w').write(str(os.getpid()))\n"
+    "spec = importlib.util.spec_from_file_location('suite', suite_path)\n"
+    "suite = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(suite)\n"
+    "suite.run_child(['-I', '-B', '-c', spin, fd, folder], memory=suite.GATE_MEMORY,\n"
+    "                timeout=suite.GATE_TIMEOUT, cwd=folder, pass_fds=(fd,))\n")
+ORPHAN_SPIN = ("import os, sys\n"
+               "open(os.path.join(sys.argv[2], 'grandchild.pid'), 'w').write(str(os.getpid()))\n"
+               "os.write(int(sys.argv[1]), b'started\\n')\n"
+               "while True:\n"
+               "    pass\n")
+ORPHAN_TIMEOUT = 5
+ORPHAN_BOUND = 5
+
+
+def memory_limit(memory):
+    """The address space limit a child asked for memory bytes gets: never above the inherited."""
+    hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+    return memory if hard == resource.RLIM_INFINITY else min(memory, hard)
+
+
+def cpu_limits(cpu):
+    """The (soft, hard) CPU limits in seconds for cpu, each never above the inherited hard."""
+    hard = resource.getrlimit(resource.RLIMIT_CPU)[1]
+    if hard == resource.RLIM_INFINITY:
+        return cpu, cpu + CPU_GRACE
+    return min(cpu, hard), min(cpu + CPU_GRACE, hard)
+
+
+def cpu_hit(returncode, cpu):
+    """The limit a child that ended with returncode hit, when a CPU limit ends it so, or None.
+
+    The soft CPU limit ends a child by SIGXCPU and the hard one by SIGKILL; any SIGKILL that
+    run_child() did not send, such as one from the kernel when memory runs out, is named so too.
+    """
+    if returncode not in (-signal.SIGXCPU, -signal.SIGKILL):
+        return None
+    return "the CPU limit of {} s ({})".format(cpu_limits(cpu)[0],
+                                               signal.Signals(-returncode).name)
+
+
+def run_child(args, *, memory, timeout, cwd, stack=None, cpu=GATE_CPU, **options):
+    """The finished python3 child run with args under memory, CPU and wall limits.
+
+    The child runs through LIMIT_LAUNCH with RLIMIT_AS set to memory bytes, RLIMIT_CPU set to
+    cpu seconds and a hard limit CPU_GRACE s above it, and, when stack is given, the soft stack
+    limit set to stack bytes. This process enforces the wall timeout of timeout seconds: on that
+    timeout, or on any other exception while the child runs, KeyboardInterrupt included, it
+    kills the child and reaps it before it re-raises.
+
+    The nested shape, a call made inside a child that run_child() started, as a sweep child runs
+    a gate child: LIMIT_LAUNCH sets CHILD_MARK in each child, so a call reads from it whether it
+    is outermost. Only an outermost call starts its child in a new session, and so a new process
+    group, and on a timeout or an exception it kills that whole group with os.killpg and
+    SIGKILL. A nested call keeps its child in the process group of its caller, which is the
+    group of the outermost child above it, so that os.killpg reaches it: when SWEEP_TIMEOUT
+    stops a sweep child, the gate child it is running ends with it. If every call started a new
+    session, the gate child would be in a group of its own, which the kill of the sweep child's
+    group would not reach. A nested call that times out kills its own child by its PID alone,
+    since a kill of the group would kill its caller too; a process that child started stays in
+    the outermost group, which only the outermost call's timeout or exception kills. A gate child
+    starts no process. A child in a new session also leaves the group of the process that starts
+    it, so a signal sent to that group, such as SIGINT from a terminal, does not reach it.
+
+    A child stopped by its wall timeout raises subprocess.TimeoutExpired. A child whose output
+    names MemoryError, as the gate's report does when it stops on its memory limit, and a child
+    that cpu_hit() reads as ended by its CPU limit, are returned. For each, 1 line that starts
+    with LIMIT_HIT and names the limit goes to standard error, where the sweep reads it.
+    """
+    command = [sys.executable, "-I", "-B", "-c", LIMIT_LAUNCH, str(memory),
+               "-" if stack is None else str(stack), str(cpu), *map(str, args)]
+    outermost = os.environ.get(CHILD_MARK) != "1"
+    with subprocess.Popen(command, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          start_new_session=outermost, **options) as child:
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+        except BaseException as error:
+            if outermost and child.returncode is None:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.kill()
+            child.wait()
+            if isinstance(error, subprocess.TimeoutExpired):
+                print("{}the wall timeout of {} s".format(LIMIT_HIT, timeout), file=sys.stderr,
+                      flush=True)
+            raise
+    done = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    found = done.stdout + done.stderr
+    if ("MemoryError" if isinstance(found, str) else b"MemoryError") in found:
+        print("{}the memory limit of {} bytes".format(LIMIT_HIT, memory_limit(memory)),
+              file=sys.stderr, flush=True)
+    hit = cpu_hit(done.returncode, cpu)
+    if hit:
+        print(LIMIT_HIT + hit, file=sys.stderr, flush=True)
+    return done
 
 
 class GateCase(unittest.TestCase):
-    """Helpers that write inputs and run the gate."""
+    """Helpers that write inputs and run the gate, each run a child under run_child()."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -126,11 +298,10 @@ class GateCase(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def run_gate(self, *args, gate=GATE, cwd=None, timeout=120):
-        """(exit status, output lines) of the gate run with args."""
-        done = subprocess.run([sys.executable, "-I", "-B", str(gate), *map(str, args)],
-                              cwd=str(cwd or self.cwd), capture_output=True, text=True,
-                              encoding="utf-8", timeout=timeout)
+    def run_gate(self, *args, gate=GATE, cwd=None, timeout=GATE_TIMEOUT, memory=GATE_MEMORY):
+        """(exit status, output lines) of the gate run with args, under memory and timeout."""
+        done = run_child(["-I", "-B", gate, *args], memory=memory, timeout=timeout,
+                         cwd=cwd or self.cwd, text=True, encoding="utf-8")
         return done.returncode, done.stdout.splitlines()
 
     def tree(self, squash=None, number=999, lint=True):
@@ -851,10 +1022,9 @@ class UnreadableInputs(GateCase):
         for text in ("[" * DEEP_LEVELS, '{"pull_request": ' + "[" * DEEP_LEVELS):
             with self.subTest(start=text[:20]):
                 path = self.write("deep.json", text)
-                done = subprocess.run([sys.executable, "-I", "-B", "-c", STACK_LAUNCH,
-                                       str(DEEP_STACK), str(gate), "--event", str(path)],
-                                      cwd=str(self.cwd), capture_output=True, text=True,
-                                      encoding="utf-8", timeout=120)
+                done = run_child(["-I", "-B", gate, "--event", path], memory=GATE_MEMORY,
+                                 timeout=GATE_TIMEOUT, cwd=self.cwd, stack=DEEP_STACK,
+                                 text=True, encoding="utf-8")
                 result = done.returncode, done.stdout.splitlines()
                 self.assertUnreadable(result, "not JSON")
                 self.assertRegex(result[1][0], r"^unreadable: .*: not JSON: "
@@ -924,9 +1094,8 @@ class UnreadableInputs(GateCase):
         code = ("import os, runpy, sys; os.mkdir(sys.argv[1]); os.chdir(sys.argv[1]);"
                 " os.rmdir(sys.argv[1]); sys.argv = [sys.argv[2], '--squash', 'x.txt'];"
                 " runpy.run_path(sys.argv[0], run_name='__main__')")
-        done = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(folder), str(GATE)],
-                              cwd=str(self.cwd), capture_output=True, text=True,
-                              encoding="utf-8", timeout=120)
+        done = run_child(["-I", "-B", "-c", code, folder, GATE], memory=GATE_MEMORY,
+                         timeout=GATE_TIMEOUT, cwd=self.cwd, text=True, encoding="utf-8")
         result = (done.returncode, done.stdout.splitlines())
         self.assertUnreadable(result, "the working directory cannot be read")
         self.assertTrue(result[1][0].endswith(
@@ -1121,8 +1290,8 @@ class OutputAndHonestTexts(GateCase):
 
     def test_carriage_return_and_del_are_escaped(self):
         path = self.write("description.md", "a\r::error::b\x7fc " + EM_DASH + " d\n")
-        done = subprocess.run([sys.executable, "-I", "-B", str(GATE), "--description",
-                               str(path)], cwd=str(self.cwd), capture_output=True, timeout=120)
+        done = run_child(["-I", "-B", GATE, "--description", path], memory=GATE_MEMORY,
+                         timeout=GATE_TIMEOUT, cwd=self.cwd)
         self.assertEqual(done.returncode, 1, done.stdout)
         self.assertNotIn(b"\r", done.stdout)
         self.assertNotIn(b"\x7f", done.stdout)
@@ -1171,6 +1340,125 @@ class OutputAndHonestTexts(GateCase):
         self.assertLess(time.monotonic() - start, TIME_BOUND)
         self.assertResult(result, 0, 0)
 
+    def test_code_span_scan_ends_on_each_run_shape(self):
+        # A closed span, a lone run, and a run with no closer before a closed span, each
+        # under a wall timeout of SPAN_TIMEOUT s and GATE_MEMORY bytes, so a scan that stops
+        # advancing fails here by a limit in seconds; the output pins which runs were masked.
+        text = ("A closed `span " + EM_DASH + "` here.\nA lone ` run " + EM_DASH
+                + " here.\nA run `` with no closer, then `code " + EM_DASH + "` here.\n")
+        result = self.run_gate("--description", self.write("description.md", text),
+                               timeout=SPAN_TIMEOUT)
+        self.assertEqual(result, (1, ["description:2: an em dash, U+2014: A lone ` run "
+                                      "\\u2014 here.", "pr-text: 1 defect(s)"]))
+
+    def test_child_over_its_memory_limit_fails_by_it(self):
+        code = ("import resource, sys; print(*resource.getrlimit(resource.RLIMIT_AS));"
+                " sys.stdout.flush(); bytearray(int(sys.argv[1]))")
+        limit = memory_limit(GATE_MEMORY)
+        done = run_child(["-I", "-B", "-c", code, limit + 64 * 1024 * 1024], memory=GATE_MEMORY,
+                         timeout=GATE_TIMEOUT, cwd=self.cwd, text=True, encoding="utf-8")
+        self.assertEqual(done.stdout.split(), [str(limit)] * 2, done.stderr)
+        self.assertNotEqual(done.returncode, 0, done.stderr)
+        self.assertIn("MemoryError", done.stderr)
+
+    def test_child_over_its_wall_timeout_is_stopped(self):
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_child(["-I", "-B", "-c", "while True: pass"], memory=GATE_MEMORY, timeout=1,
+                      cwd=self.cwd)
+        self.assertLess(time.monotonic() - start, SPAN_TIMEOUT)
+
+    def test_child_reads_its_cpu_limit(self):
+        code = "import resource; print(*resource.getrlimit(resource.RLIMIT_CPU))"
+        done = run_child(["-I", "-B", "-c", code], memory=GATE_MEMORY, timeout=GATE_TIMEOUT,
+                         cwd=self.cwd, text=True, encoding="utf-8")
+        self.assertEqual(done.stdout.split(), [str(limit) for limit in cpu_limits(GATE_CPU)],
+                         done.stderr)
+
+    def test_child_over_its_cpu_limit_is_named(self):
+        # A child that spins under a CPU limit of 1 s ends by SIGXCPU within its wall timeout,
+        # and run_child() names the limit on a LIMIT_HIT line, which the sweep reads.
+        found = io.StringIO()
+        with contextlib.redirect_stderr(found):
+            done = run_child(["-I", "-B", "-c", "while True: pass"], memory=GATE_MEMORY,
+                             timeout=SPAN_TIMEOUT, cwd=self.cwd, cpu=1)
+        self.assertEqual(done.returncode, -signal.SIGXCPU, found.getvalue())
+        self.assertEqual(found.getvalue(), "{}the CPU limit of {} s (SIGXCPU)\n".format(
+            LIMIT_HIT, cpu_limits(1)[0]))
+
+    def stop_recorded(self, folder):
+        """Kill each process whose PID a case recorded in folder; ignore one already gone."""
+        for name in ("grandchild.pid", "parent.pid"):
+            path = folder / name
+            if path.exists() and path.read_text().strip().isdigit():
+                try:
+                    os.kill(int(path.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_grandchild_ends_with_its_timed_out_parent(self):
+        # The nested shape of the sweep: a parent child started through run_child() starts a
+        # spinning grandchild through run_child() and is stopped by its own wall timeout. Once
+        # the parent is gone and this process has closed its copy, only the grandchild holds
+        # the write end of the pipe, so the read end sees EOF only when the grandchild has
+        # ended, whether or not a parent has reaped it. The cleanup kills each recorded PID.
+        read, write = os.pipe()
+        self.addCleanup(os.close, read)
+        self.addCleanup(self.stop_recorded, self.tmp)
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                run_child(["-I", "-B", "-c", ORPHAN_PARENT, SUITE, write, self.tmp, ORPHAN_SPIN],
+                          memory=GATE_MEMORY, timeout=ORPHAN_TIMEOUT, cwd=self.cwd,
+                          pass_fds=(write,))
+        finally:
+            os.close(write)
+        found, ended = b"", False
+        deadline = time.monotonic() + ORPHAN_BOUND
+        while not ended and select.select([read], [], [], max(0, deadline - time.monotonic()))[0]:
+            chunk = os.read(read, 64)
+            found, ended = found + chunk, not chunk
+        self.assertEqual(found, b"started\n", "the grandchild did not start")
+        self.assertTrue(ended, "the grandchild ran on {} s after the timeout of its parent".format(
+            ORPHAN_BOUND))
+
+    def test_every_child_runs_under_its_limits(self):
+        # The one call that starts a process is in run_child(): it starts LIMIT_LAUNCH, an
+        # outermost call in a new session, waits with a timeout, and kills the child's group
+        # on a timeout; run_child() takes its memory limit and timeout with no default, and
+        # LIMIT_LAUNCH sets the memory and CPU limits and the mark of a nested call.
+        def starts_a_process(node):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)):
+                return False
+            module, name = node.func.value.id, node.func.attr
+            return (module == "subprocess" and name in (
+                "run", "Popen", "call", "check_call", "check_output", "getoutput",
+                "getstatusoutput") or module == "os" and name.startswith(
+                    ("exec", "spawn", "system", "popen", "fork", "posix_spawn")))
+        tree = ast.parse(SUITE.read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree) if starts_a_process(node)]
+        self.assertEqual([ast.unparse(node.func) for node in calls], ["subprocess.Popen"])
+        child = next(node for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef) and node.name == "run_child")
+        call = next(node for node in ast.walk(child) if starts_a_process(node))
+        self.assertIn(("start_new_session", "outermost"),
+                      [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords])
+        self.assertEqual(ast.unparse(call.args[0]), "command")
+        made = [ast.unparse(node) for node in ast.walk(child) if isinstance(node, ast.Call)]
+        self.assertIn("child.communicate(timeout=timeout)", made)
+        self.assertIn("os.killpg(child.pid, signal.SIGKILL)", made)
+        assigned = [ast.unparse(node) for node in ast.walk(child) if isinstance(node, ast.Assign)]
+        self.assertIn("outermost = os.environ.get(CHILD_MARK) != '1'", assigned)
+        command = next(node.value for node in ast.walk(child) if isinstance(node, ast.Assign)
+                       and ast.unparse(node.targets[0]) == "command")
+        self.assertEqual([ast.unparse(item) for item in command.elts[:5]],
+                         ["sys.executable", "'-I'", "'-B'", "'-c'", "LIMIT_LAUNCH"])
+        self.assertEqual([arg.arg for arg in child.args.kwonlyargs[:2]], ["memory", "timeout"])
+        self.assertEqual(child.args.kw_defaults[:2], [None, None])
+        self.assertIn("resource.setrlimit(resource.RLIMIT_AS", LIMIT_LAUNCH)
+        self.assertIn("resource.setrlimit(resource.RLIMIT_CPU", LIMIT_LAUNCH)
+        self.assertIn("os.environ['" + CHILD_MARK + "'] = '1'", LIMIT_LAUNCH)
+
     def test_workflow_job_has_a_time_limit(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         found = re.findall(r"(?m)^    timeout-minutes: ([0-9]+)$", text)
@@ -1197,9 +1485,8 @@ class OutputAndHonestTexts(GateCase):
         # The workflow runs the gate with -I alone, so the gate itself keeps the lint it
         # loads from writing a bytecode file into the tree.
         gate = self.tree(squash=CLEAN_SQUASH)
-        done = subprocess.run([sys.executable, "-I", str(gate), "--event",
-                               str(self.event("A body."))], cwd=str(self.cwd),
-                              capture_output=True, text=True, encoding="utf-8", timeout=120)
+        done = run_child(["-I", gate, "--event", self.event("A body.")], memory=GATE_MEMORY,
+                         timeout=GATE_TIMEOUT, cwd=self.cwd, text=True, encoding="utf-8")
         self.assertEqual(done.returncode, 0, done.stdout)
         self.assertFalse((gate.parent / "__pycache__").exists())
 
@@ -2212,14 +2499,14 @@ SWEEP_ROWS = {
     'in code_spans(), the statement `while index < len(runs):` deleted, at its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), the statement `if closer[index] is None:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (O + 'test_code_span_scan_ends_on_each_run_shape',),
     'in code_spans(), the statement `index += 1` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (O + 'test_code_span_scan_ends_on_each_run_shape',),
     'in code_spans(), the statement `spans.append((runs[index][0], runs[closer[index]][1]))` '
     'deleted, at its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), the statement `index = closer[index] + 1` deleted, at its 1st occurrence':
-        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+        (O + 'test_code_span_scan_ends_on_each_run_shape',),
     'in code_spans(), the statement `return spans` deleted, at its 1st occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `0` changed up to `1` in `index = 0`, at its 1st occurrence':
@@ -2251,7 +2538,7 @@ SWEEP_ROWS = {
     'in code_spans(), `1` changed up to `2` in `index += 1`, at its 1st occurrence':
         (E + 'test_span_after_a_lone_backtick_is_masked',),
     'in code_spans(), `1` changed down to `0` in `index += 1`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (O + 'test_code_span_scan_ends_on_each_run_shape',),
     'in code_spans(), `1` changed up to `2` in `width = runs[index][1] - runs[index][0]`, at '
     'its 1st occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
@@ -3640,8 +3927,41 @@ HAND_ROWS = (
 )
 SWEEP_TARGETS = {"gate": Path("tools") / "check-pr-text.py",
                  "workflow": Path(".github") / "workflows" / "pr-text.yml"}
+# At most this many sweep children run at once, and each is stopped after SWEEP_TIMEOUT s.
 SWEEP_WORKERS = 8
 SWEEP_TIMEOUT = 300
+# The CPU limit of each sweep child, in seconds, equal to SWEEP_TIMEOUT, so that, as with
+# GATE_CPU, the wall timeout stops a sweep child of 1 thread first while the top suite process
+# lives, and a sweep child that spins after that process is gone ends by it. A sweep child, not
+# counting its gate children, used at most 0.48 s under an 8192 KiB stack and 0.44 s with no
+# stack limit, so SWEEP_CPU is over 600 times that; the margin is set by the timeout, not by
+# the measure, and leaves room for a row that names a case of more CPU time in the suite
+# process. Its cost and residual are those of GATE_CPU: a sweep child that waits on its gate
+# child uses no CPU time, so after the top suite process is gone it runs on, at most until its
+# named cases end, each gate child under its own limits and the timeout the sweep child still
+# enforces.
+SWEEP_CPU = 300
+# The rows whose mutated gate never ends on an input of their named cases, each with the limit
+# that stops it and the argument, read from the mutated code, that the gate no longer ends.
+SCAN_STALLS = ("In the loop `while index < len(runs):`, {}, so on the first run {} index stays "
+               "where it is, nothing is appended, and the loop runs at constant memory until "
+               "the wall timeout stops it.")
+RUNAWAY_SITES = {
+    'in code_spans(), the statement `index = closer[index] + 1` deleted, at its 1st occurrence':
+        ("memory limit",
+         "In the loop `while index < len(runs):`, the else branch appends a span and no longer "
+         "moves index past its closer, so on the first run that has a closer it appends the "
+         "same span on each pass and the list grows until the memory limit stops the gate."),
+    'in code_spans(), the statement `if closer[index] is None:` deleted, at its 1st occurrence':
+        ("wall timeout", SCAN_STALLS.format("the whole if and else are replaced by pass",
+                                            "of any kind")),
+    'in code_spans(), the statement `index += 1` deleted, at its 1st occurrence':
+        ("wall timeout", SCAN_STALLS.format("the branch for a run with no closer is pass",
+                                            "with no closer")),
+    'in code_spans(), `1` changed down to `0` in `index += 1`, at its 1st occurrence':
+        ("wall timeout", SCAN_STALLS.format("the branch for a run with no closer adds 0",
+                                            "with no closer")),
+}
 
 
 class MutantSweep(unittest.TestCase):
@@ -3675,7 +3995,24 @@ class MutantSweep(unittest.TestCase):
     nothing. HAND_ROWS holds rows the generator does not make, which it leaves alone.
 
     The kill criterion: a row is killed when its named cases, run on a copy of the tree with
-    the site or the hand row applied, exit 1 with FAILED. A site is equivalent only when the
+    the site or the hand row applied, exit 1 with FAILED, under the limit-hit rule. Each sweep
+    child runs in a new session under SWEEP_MEMORY and SWEEP_CPU, and under SWEEP_TIMEOUT,
+    which the top suite process enforces; each gate child it starts runs in its process group
+    under the lower of GATE_MEMORY and SWEEP_MEMORY, under GATE_CPU and under its case's wall
+    timeout, which the sweep child enforces. When SWEEP_TIMEOUT stops a sweep child, the top
+    suite process kills its whole process group, so a gate child it is running ends with it.
+    A child hits a limit when a gate child reports MemoryError, is ended by its CPU limit or is
+    stopped by its timeout, which run_child() names on a LIMIT_HIT line, or when the sweep child
+    itself raises MemoryError, is ended by SWEEP_CPU or is stopped by SWEEP_TIMEOUT. The
+    limit-hit rule: RUNAWAY_SITES lists each row whose mutated gate never
+    ends on an input of its named cases, with the limit that stops it and the argument, read
+    from the mutated code, that the gate no longer ends or grows with no bound. A listed row is
+    killed only when its named cases fail and the child hit that limit; a row not listed that
+    hits any limit fails the sweep, naming the row and the limit, and is not killed. The 4
+    listed rows each name test_code_span_scan_ends_on_each_run_shape, which runs the gate on a
+    closed span, a lone run and a run with no closer under a wall timeout of SPAN_TIMEOUT s, so
+    each is killed in seconds: the row that grows by the memory limit, the 3 that spin by the
+    timeout. A site is equivalent only when the
     mutated gate gives the same exit status and the same output, byte for byte, as the gate on
     every input; each entry of EQUIVALENT_SITES carries the argument. A site that changes only
     the reason in a line is not equivalent: it has a row whose case pins that reason. For each
@@ -3687,7 +4024,8 @@ class MutantSweep(unittest.TestCase):
     Residual: a change outside the operators passes unswept unless a hand row holds it, such as
     a change of 2 tokens at once, a changed string constant, a changed message, a changed
     docstring, a deleted statement at module level, a member deleted from a class of 1 member,
-    and a change in the "if __name__" block or in the label lint.
+    and a change in the "if __name__" block or in the label lint. A listed row is killed by a
+    limit, not by a wrong output of a gate that ends.
     """
 
     def copy_tree(self, root):
@@ -3699,25 +4037,44 @@ class MutantSweep(unittest.TestCase):
             shutil.copyfile(source, root / target)
 
     def run_cases(self, root, ids):
-        """(exit status, last line of the report) of the named cases run in root."""
+        """(exit status, last line of the report, limits hit) of the named cases run in root.
+
+        The limits hit are the LIMIT_HIT lines of the child, and a MemoryError of the child
+        itself, its own CPU limit as cpu_hit() reads it, or its own timeout, each named once.
+        """
         try:
-            done = subprocess.run([sys.executable, "-I", "-B",
-                                   str(root / "tools" / SUITE.name), *ids],
-                                  cwd=str(root), capture_output=True, text=True,
-                                  encoding="utf-8", timeout=SWEEP_TIMEOUT)
+            done = run_child(["-I", "-B", root / "tools" / SUITE.name, *ids],
+                             memory=SWEEP_MEMORY, timeout=SWEEP_TIMEOUT, cwd=root, text=True,
+                             encoding="utf-8", cpu=SWEEP_CPU)
         except subprocess.TimeoutExpired:
-            return None, "timed out after {} s".format(SWEEP_TIMEOUT)
+            return None, "timed out", ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)]
         lines = done.stderr.strip().splitlines()
-        return done.returncode, lines[-1] if lines else ""
+        hits = sorted({line[len(LIMIT_HIT):] for line in lines if line.startswith(LIMIT_HIT)})
+        if "MemoryError" in done.stderr and not hits:
+            hits = ["the memory limit of {} bytes".format(SWEEP_MEMORY)]
+        own = cpu_hit(done.returncode, SWEEP_CPU)
+        if own and own not in hits:
+            hits.append(own)
+        return done.returncode, lines[-1] if lines else "", hits
 
     def missing_cases(self, ids):
         return [case for case in ids
                 if not hasattr(globals().get(case.partition(".")[0]), case.partition(".")[2])]
 
-    def killed(self, path, mutated, ids, root):
-        """None when the named cases fail on the mutated file, or the reason they do not."""
+    def killed(self, words, path, mutated, ids, root):
+        """None when the named cases fail on the mutated file, or the reason they do not.
+
+        A row hits a limit, and that kills it, only when RUNAWAY_SITES lists it with that
+        limit; a row that hits any other limit is not killed.
+        """
         path.write_text(mutated, encoding="utf-8")
-        code, last = self.run_cases(root, ids)
+        code, last, hits = self.run_cases(root, ids)
+        limit = RUNAWAY_SITES.get(words, (None,))[0]
+        if limit is None and hits:
+            return "hit a limit but is not a runaway site: " + "; ".join(hits)
+        if limit is not None and not any(limit in hit for hit in hits):
+            return "a runaway site whose cases did not fail by its {}: exit {}, {}".format(
+                limit, code, last)
         if code == 1 and last.startswith("FAILED"):
             return None
         return "survived: exit {}, {}".format(code, last)
@@ -3738,7 +4095,7 @@ class MutantSweep(unittest.TestCase):
             mutated = apply_site(path.read_text(encoding="utf-8"), site)
             if mutated is None:
                 return "the old text does not occur {} times".format(site.count)
-            return self.killed(path, mutated, ids, root)
+            return self.killed(words, path, mutated, ids, root)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -3756,7 +4113,7 @@ class MutantSweep(unittest.TestCase):
             found = text.count(old)
             if found != count:
                 return "the text occurs {} times, not {}".format(found, count)
-            return self.killed(path, text.replace(old, new), ids, root)
+            return self.killed(words, path, text.replace(old, new), ids, root)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -3783,6 +4140,12 @@ class MutantSweep(unittest.TestCase):
         for words, argument in EQUIVALENT_SITES.items():
             with self.subTest(site=words):
                 self.assertTrue(argument.strip())
+        rows = set(SWEEP_ROWS) | set(names)
+        for words, (limit, argument) in RUNAWAY_SITES.items():
+            with self.subTest(runaway=words):
+                self.assertIn(words, rows)
+                self.assertIn(limit, ("memory limit", "wall timeout"))
+                self.assertTrue(argument.strip())
 
     def test_generated_sites_are_adequate(self):
         generated = set(self.sites)
@@ -3799,8 +4162,7 @@ class MutantSweep(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
         self.copy_tree(root)
-        code, last = self.run_cases(root, ids)
-        self.assertEqual((code, last), (0, "OK"))
+        self.assertEqual(self.run_cases(root, ids), (0, "OK", []))
 
     def test_each_row_is_killed(self):
         with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
