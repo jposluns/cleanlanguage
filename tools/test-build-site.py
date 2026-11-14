@@ -22,7 +22,9 @@ any page fails these cases too; the pin's comment names how to update it.
 The first case runs ``--check`` on this repository. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
-version as BASELINE, read by the generator's load_pin(). The configured base is
+version as BASELINE, read by the generator's load_pin(). Another reads the
+same source and fails when main() does not call a top-level check_*
+function. The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -31,6 +33,7 @@ when every case passes; 1 otherwise, naming each failing case.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import html
 import importlib.util
@@ -2803,11 +2806,11 @@ STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) cha
 def check_stated_count(failures: list[str]) -> int:
     """The instructions page states the download's character count as saved:
     its bytes decoded as UTF-8 with no newline translation and nothing
-    stripped. The second case gives the download a CR LF line end and a
-    non-ASCII character, so a count that strips a newline, translates line
+    stripped. The second case gives the download a CR LF line end and 2
+    non-ASCII characters, so a count that strips a newline, translates line
     ends or counts bytes states the wrong number."""
     extra = "Caf\u00e9 \u00e0 la carte.\r\n"
-    cases = [("clean build", b""), ("download with a CR LF line and a non-ASCII character", extra.encode("utf-8"))]
+    cases = [("clean build", b""), ("download with a CR LF line and 2 non-ASCII characters", extra.encode("utf-8"))]
     for name, suffix in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -3485,6 +3488,20 @@ def check_version_literals(failures: list[str]) -> int:
     return 1
 
 
+def check_case_groups_called(failures: list[str]) -> int:
+    """Every top-level check_* function of this file's own source is a case group that main() calls, so a case group
+    whose call is deleted fails here instead of only lowering the printed total."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    called = {node.func.id for function in functions if function.name == "main" for node in ast.walk(function)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    uncalled = [function.name for function in functions
+                if function.name.startswith("check_") and function.name not in called]
+    if uncalled:
+        failures.append(f"case groups: main() does not call {', '.join(uncalled)}")
+    return 1
+
+
 def main() -> int:
     failures: list[str] = []
     ran = 0
@@ -3504,6 +3521,7 @@ def main() -> int:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_version_literals(failures)
+    ran += check_case_groups_called(failures)
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
     ran += check_source_passes(failures)

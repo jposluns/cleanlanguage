@@ -4,7 +4,7 @@
 ``site/instructions/index.html`` shows the full Clean Language rule set so a
 reader can copy it without downloading anything. The text is embedded in the
 page rather than fetched at runtime, which means the page now holds a second copy
-of ``site/downloads/cleanlanguage.md`` and the two can drift. This
+of ``site/downloads/cleanlanguage.md`` and the 2 can drift. This
 check makes that drift fail.
 
 Why the page is static
@@ -64,21 +64,29 @@ recorded hash and deliberate review.
 
 Exit codes:
   0  the page matches and is static
-  1  every check was evaluated, and the text drifted, the stated count is wrong,
-     or inline code was reintroduced
-  3  a check could not be evaluated: a file could not be read or decoded,
-     tools/check-inline-code.py could not be loaded, the expected markup was not
-     found, exactly 1 stated count was not found, or the Python version is 3.7 or
-     later and not one that tools/check-inline-code.py supports
+  1  every check was evaluated, and the embedded text drifted, the copy button
+     is missing or not first in the block, the stated count is wrong, or inline
+     code was reintroduced
+  3  a check could not be evaluated. Before any check runs, the gate stops on
+     2 conditions: the download or the page is missing or not a regular file,
+     or the download could not be read or decoded. While the checks run, it
+     collects these refusals: the embedded block was not found exactly once;
+     the stated count was not found exactly once; tools/check-inline-code.py is
+     not a regular file, could not be read or loaded, or defines no
+     inline_code_problems or no UnsupportedPython; or the Python version is 3.7
+     or later and not one that tools/check-inline-code.py supports
+
+The page read is not guarded: a page that cannot be read or decoded ends in a
+traceback with exit 1.
 
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
 could not be evaluated is reported on stderr, prefixed "check-instructions-page: ".
 The gate runs every check it can evaluate and prints every problem it found
-before it exits, so a problem is never hidden behind a check that could not be
-evaluated; it exits 3 whenever a check could not be evaluated, whatever else it
-found. A missing download or page, or an unreadable download, stops the gate
-with exit 3 before any check runs.
+before it exits, so a problem is never hidden behind a refusal collected while
+the checks run; it exits 3 whenever a check could not be evaluated, whatever
+else it found. The 2 conditions that stop the gate before any check runs are
+reported on stderr in the same way, and no check runs after them.
 """
 
 from __future__ import annotations
@@ -171,8 +179,10 @@ def first_difference(a: str, b: str) -> str:
 
 def main() -> int:
     for path in (SOURCE, *(page for page, _ in PAGES)):
-        if not path.is_file():
+        if not path.exists():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
+        if not path.is_file():
+            die(f"{path.relative_to(REPO_ROOT)} is not a regular file")
 
     try:
         saved = len(SOURCE.read_bytes().decode("utf-8"))

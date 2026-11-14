@@ -4,9 +4,14 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
 asserts its exit code and, where the case names them, the words of the gate's
-refusal. Exit 0 when every case passes; 1 otherwise. One further case runs the
+refusal. Exit 0 when every case passes; 1 otherwise. 1 further case runs the
 gate under a faked Python version tuple outside the supported set of
 tools/check-inline-code.py and asserts exit 3 with the gate's own message.
+
+Some cases change the download and the embedded block alike, with 2 non-ASCII
+characters or a CR LF line end, so that only the stated count decides the
+result: a gate that counts bytes or newline-translated text fails them. The
+CR LF fixture is written byte for byte.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -68,6 +73,25 @@ def edit(relative: str, old: str, new: str):
         if old not in text:
             raise AssertionError(f"{old!r} is not in {relative}")
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    return apply
+
+
+def edit_bytes(relative: str, old: bytes, new: bytes):
+    """Like edit, but on the file's bytes, with no newline translation, and the old bytes must occur exactly once."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        data = path.read_bytes()
+        if data.count(old) != 1:
+            raise AssertionError(f"{old!r} occurs {data.count(old)} times in {relative}, expected 1")
+        path.write_bytes(data.replace(old, new))
+    return apply
+
+
+def directory(relative: str):
+    """Replace a file by an empty directory of the same name."""
+    def apply(root: Path) -> None:
+        (root / relative).unlink()
+        (root / relative).mkdir()
     return apply
 
 
@@ -160,18 +184,42 @@ CASES = [
     ("I3: an event handler after a slash", edit(PAGE, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
     ("I4: a javascript: link", edit(PAGE, "</main>", '<a href="javascript:alert(1)">x</a></main>'), 1),
     ("a script from another origin", edit(PAGE, "</main>", '<script src="https://example.com/x.js"></script></main>'), 1),
-    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
+    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(),
+        (3, "check-instructions-page: tools/check-inline-code.py could not be read")),
     ("P3: a javascript: link after a </noscript> inside an attribute", edit(PAGE, "</main>",
         "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
-    ("the page missing", lambda root: (root / PAGE).unlink(), 3),
+    ("the page missing", lambda root: (root / PAGE).unlink(), (3, f"check-instructions-page: {PAGE} does not exist")),
+    ("the download a directory", directory(FILES[0]),
+        (3, f"check-instructions-page: {FILES[0]} is not a regular file")),
     ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'),
         (3, f'check-instructions-page: expected exactly 1 <pre id="instructions-text"> block in {PAGE}, found 2')),
+    ("no embedded block and the stated count wrong",
+        faults(edit(PAGE, '<pre id="instructions-text"', '<pre id="instructions-gone"'),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")),
+        (3, f'check-instructions-page: expected exactly 1 <pre id="instructions-text"> block in {PAGE}, found 0',
+         f"the page states {SAVED - 1} characters for the full download")),
     ("the stated count wrong", edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), 1),
+    ("the stated count 1 too high", edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)"),
+        (1, "", f"the page states {SAVED + 1} characters for the full download")),
     ("the stated count wrong beside the right number elsewhere", edit(PAGE, f"saves ({SAVED} characters). Copy",
-        f"saves ({SAVED - 1} characters). See {SAVED}. Copy"), 1),
+        f"saves ({SAVED - 1} characters). See ({SAVED} characters). Copy"), 1),
     ("the stated count removed", edit(PAGE, f" ({SAVED} characters)", ""), (3, f"{COUNT_WORDS} 0")),
+    ("the fixed word saves changed", edit(PAGE, f"download saves ({SAVED} characters)",
+        f"download holds ({SAVED} characters)"), (3, f"{COUNT_WORDS} 0")),
     ("a second stated count", edit(PAGE, "</main>",
         f"<p>the same content the full download saves ({SAVED} characters)</p></main>"), (3, f"{COUNT_WORDS} 2")),
+    ("2 non-ASCII characters in the download and the block",
+        faults(edit(FILES[0], "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order")), 0),
+    ("2 non-ASCII characters in the download and the block, the page stating the byte count",
+        faults(edit(FILES[0], "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 2} characters)")),
+        (1, "", f"the page states {SAVED + 2} characters for the full download")),
+    ("a CR LF in the download, LF in the block, the page stating the count as saved",
+        faults(edit_bytes(FILES[0], b"Apply the precedence order", b"Apply the precedence\r\norder"),
+               edit_bytes(PAGE, b"Apply the precedence order", b"Apply the precedence\norder"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
     ("the download undecodable",
         lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
     ("the text drifted and the stated count removed",
