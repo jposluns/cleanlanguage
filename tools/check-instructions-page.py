@@ -41,8 +41,9 @@ template:
    the parser reads differently from a browser.
 3. The page states the character count of ``site/downloads/cleanlanguage.md``
    as saved, its bytes decoded as UTF-8 with no newline translation and nothing
-   stripped, parsed from the 1 sentence that names the download and counted
-   independently of ``tools/build-site.py``.
+   stripped, parsed from the sentence's fixed words (``the same content the
+   full download saves (N characters)``), which must occur exactly once in the
+   page source, and counted independently of ``tools/build-site.py``.
 
 The template puts the page's copy button inside the block (template
 specification 7.11). Exactly that button, ``<button class="copy" type="button"
@@ -75,6 +76,11 @@ Exit codes:
      not a regular file, could not be read or loaded, or defines no
      inline_code_problems or no UnsupportedPython; or the Python version is 3.7
      or later and not one that tools/check-inline-code.py supports
+
+A symbolic link is not followed: a download, a page or
+tools/check-inline-code.py that is a symbolic link is not a regular file,
+whatever the link points to, as tools/build-site.py also refuses such a
+download.
 
 The page read is not guarded: a page that cannot be read or decoded ends in a
 traceback with exit 1.
@@ -109,8 +115,9 @@ PAGES = [(PAGE, COPY_BUTTON)]
 # The embedded block. Matched on its id so a class or attribute change does not
 # quietly stop this check from finding anything to compare.
 EMBEDDED = re.compile(r'<pre id="instructions-text"[^>]*>(.*?)</pre>', re.S)
-# The stated count. Matched on the sentence's fixed words, so a number
-# elsewhere on the page can never stand in for the stated count.
+# The stated count. Matched on the sentence's fixed words over the whole page
+# source, so a number in another form beside the sentence is not read as the
+# stated count.
 STATED = re.compile(r"the same content the full download saves \((\d+) characters\)")
 INLINE_GATE = Path(__file__).resolve().parent / "check-inline-code.py"
 INLINE_RULE = (
@@ -179,9 +186,11 @@ def first_difference(a: str, b: str) -> str:
 
 def main() -> int:
     for path in (SOURCE, *(page for page, _ in PAGES)):
-        if not path.exists():
+        try:
+            info = os.lstat(path)
+        except OSError:
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
-        if not path.is_file():
+        if not stat.S_ISREG(info.st_mode):
             die(f"{path.relative_to(REPO_ROOT)} is not a regular file")
 
     try:

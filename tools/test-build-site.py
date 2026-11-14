@@ -2806,17 +2806,31 @@ STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) cha
 def check_stated_count(failures: list[str]) -> int:
     """The instructions page states the download's character count as saved:
     its bytes decoded as UTF-8 with no newline translation and nothing
-    stripped. The second case gives the download a CR LF line end and 2
-    non-ASCII characters, so a count that strips a newline, translates line
-    ends or counts bytes states the wrong number."""
-    extra = "Caf\u00e9 \u00e0 la carte.\r\n"
-    cases = [("clean build", b""), ("download with a CR LF line and 2 non-ASCII characters", extra.encode("utf-8"))]
-    for name, suffix in cases:
+    stripped. The first case builds from the committed download. The second
+    gives the download an extra line with a CR LF line end and 2 non-ASCII
+    characters, so a count that translates line ends or counts bytes states the
+    wrong number. The third removes the download's final newline, which must be
+    exactly 1 LF, so a count that strips a final line end and adds 1 for it
+    states the wrong number."""
+    extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
+
+    def without_final_newline(data: bytes) -> bytes | None:
+        if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
+            return None
+        return data[:-1]
+
+    cases = [("clean build", lambda data: data),
+             ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra),
+             ("download without its final newline", without_final_newline)]
+    for name, change in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             download = root / "site/downloads/cleanlanguage.md"
-            if suffix:
-                download.write_bytes(download.read_bytes() + suffix)
+            data = change(download.read_bytes())
+            if data is None:
+                failures.append(f"stated count, {name}: the download does not end in exactly 1 LF")
+                continue
+            download.write_bytes(data)
             out = Path(scratch) / "out"
             result = run(root, "--out", str(out))
             if result.returncode != 0:
@@ -3489,10 +3503,11 @@ def check_version_literals(failures: list[str]) -> int:
 
 
 def check_case_groups_called(failures: list[str]) -> int:
-    """Every top-level check_* function of this file's own source is a case group that main() calls, so a case group
-    whose call is deleted fails here instead of only lowering the printed total."""
+    """For every top-level check_* function of this file's own source, def or async def, main() holds a call by that
+    name somewhere inside it, so a case group whose call is deleted fails here instead of only lowering the printed
+    total. It does not check that the call can run or that its count and failures are kept."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     called = {node.func.id for function in functions if function.name == "main" for node in ast.walk(function)
               if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     uncalled = [function.name for function in functions

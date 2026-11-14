@@ -2,16 +2,23 @@
 """Tests for tools/check-instructions-page.py on the instructions page generated on the template.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
-asserts its exit code and, where the case names them, the words of the gate's
-refusal. Exit 0 when every case passes; 1 otherwise. 1 further case runs the
-gate under a faked Python version tuple outside the supported set of
+(under $TMPDIR), applies the case's fault (none for the committed tree; for
+some cases a sequence of 2 or 3 changes), runs the gate there as a separate
+process and asserts its exit code and, where the case names them, the words of
+the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
+runs the gate under a faked Python version tuple outside the supported set of
 tools/check-inline-code.py and asserts exit 3 with the gate's own message.
 
-Some cases change the download and the embedded block alike, with 2 non-ASCII
-characters or a CR LF line end, so that only the stated count decides the
-result: a gate that counts bytes or newline-translated text fails them. The
-CR LF fixture is written byte for byte.
+Some cases change the download so that only the stated count decides the
+result; in each, the embedded text still matches as the gate compares it. The
+2 non-ASCII cases give the download and the block the same 2 characters, so a
+gate that counts bytes fails them. The CR LF case gives the download a CR LF
+where the block keeps LF, which the gate's comparison still matches, so a gate
+that counts newline-translated text fails it. The 2 final-line-end cases remove
+the download's final LF or make it CR LF, and each asserts that the download
+ended in exactly 1 LF before the edit: a gate that strips the final line end
+and adds 1 for it fails the first, and a gate that also strips a final CR
+fails both. The CR LF and final-line-end fixtures are written byte for byte.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -84,6 +91,27 @@ def edit_bytes(relative: str, old: bytes, new: bytes):
         if data.count(old) != 1:
             raise AssertionError(f"{old!r} occurs {data.count(old)} times in {relative}, expected 1")
         path.write_bytes(data.replace(old, new))
+    return apply
+
+
+def final_line_end(relative: str, new: bytes):
+    """Replace the file's final line end, which must be exactly 1 LF, by the new bytes, with no newline translation."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        data = path.read_bytes()
+        if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
+            raise AssertionError(f"{relative} does not end in exactly 1 LF: {data[-2:]!r}")
+        path.write_bytes(data[:-1] + new)
+    return apply
+
+
+def symlinked(relative: str):
+    """Move a file to a regular copy beside it and put a symbolic link to that copy in its place."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        copy = path.with_name(path.name + ".copy")
+        path.rename(copy)
+        os.symlink(copy.name, path)
     return apply
 
 
@@ -191,6 +219,10 @@ CASES = [
     ("the page missing", lambda root: (root / PAGE).unlink(), (3, f"check-instructions-page: {PAGE} does not exist")),
     ("the download a directory", directory(FILES[0]),
         (3, f"check-instructions-page: {FILES[0]} is not a regular file")),
+    ("the download a symbolic link to a regular copy", symlinked(FILES[0]),
+        (3, f"check-instructions-page: {FILES[0]} is not a regular file")),
+    ("the page a symbolic link to a regular copy", symlinked(PAGE),
+        (3, f"check-instructions-page: {PAGE} is not a regular file")),
     ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'),
         (3, f'check-instructions-page: expected exactly 1 <pre id="instructions-text"> block in {PAGE}, found 2')),
     ("no embedded block and the stated count wrong",
@@ -219,6 +251,12 @@ CASES = [
     ("a CR LF in the download, LF in the block, the page stating the count as saved",
         faults(edit_bytes(FILES[0], b"Apply the precedence order", b"Apply the precedence\r\norder"),
                edit_bytes(PAGE, b"Apply the precedence order", b"Apply the precedence\norder"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+    ("the download without its final newline, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b""),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")), 0),
+    ("the download ending in CR LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b"\r\n"),
                edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
     ("the download undecodable",
         lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
