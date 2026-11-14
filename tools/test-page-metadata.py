@@ -350,8 +350,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
 
     def test_stamp_within_tolerance_passes(self):
         # modified = D (2026-01-10); the file last changed D + 4 days, within the
-        # 7-day tolerance; today is well after both. The OLD gate flagged any
-        # changed > modified; the NEW gate tolerates the short window.
+        # 7-day tolerance; today is well after both. A gate that flagged any
+        # changed > modified would fail this page; the tolerance must pass it.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-14", today="2026-02-01")
@@ -379,7 +379,7 @@ class ModifiedStampToleranceTest(unittest.TestCase):
         self.assertEqual(problems, [], problems)
 
     def test_stamp_one_day_past_tolerance_fails(self):
-        # The file last changed D + 8 days, one day past the boundary.
+        # The file last changed D + 8 days, 1 day past the boundary.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-18", today="2026-02-01")
@@ -397,8 +397,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
 
     def test_invalid_calendar_date_is_reported_not_crashed(self):
         # An ISO-shaped but invalid date (fromisoformat rejects it) must produce
-        # a clean problem, not a traceback. Before the guard, the tolerance math
-        # raised ValueError here.
+        # a clean problem, not a traceback: tolerance math that parsed the date
+        # unguarded would raise ValueError here.
         problems = self.check(
             published="2026-01-01", modified="2026-13-40",
             changed="2026-01-14", today="2026-02-01")
@@ -504,9 +504,9 @@ class ImageReferenceTest(_PatchedGateTest):
 
     def test_traversal_to_missing_target_is_reported_outside(self):
         # A traversal to a MISSING out-of-tree target must be reported as a
-        # containment violation, not as a plain "does not exist": the old
-        # unresolved code emitted "does not exist", so asserting the
-        # "outside" message makes this a real change-detector for fix (c).
+        # containment violation, not as a plain "does not exist": the gate must
+        # check containment first, so the assertion on the "outside" message
+        # fails any gate that reports this missing target as "does not exist".
         problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
         self.assertEqual(len(problems), 1)
         self.assertIn("outside the site directory", problems[0])
@@ -541,7 +541,7 @@ class OriginMatchTest(_PatchedGateTest):
 
     def test_explicit_default_port_maps_to_the_file(self):
         # :443 is the default https port, so this is on-origin and maps to
-        # card.png. The old gate looked for site/:443/card.png and false-failed.
+        # card.png. A gate that looked up site/:443/card.png would fail the page.
         problems = self._problems(_img_meta("https://cleanlanguage.ai:443/card.png"),
                                   files=["card.png"])
         self.assertEqual(problems, [])
@@ -557,8 +557,8 @@ class OriginMatchTest(_PatchedGateTest):
 
     def test_backslash_url_missing_is_reported(self):
         # A browser normalizes the backslash to a slash, so this is on-origin and
-        # points at a missing file. The old textual check also caught it; the new
-        # parser must not silently pass it.
+        # points at a missing file. A parser that kept the backslash in the host
+        # would treat the URL as off-origin and silently pass it.
         problems = self._problems(_img_meta("https://cleanlanguage.ai\\missing.png"))
         self.assertTrue(any("does not exist" in p for p in problems))
 
@@ -587,7 +587,7 @@ class MultiImageTest(_PatchedGateTest):
 
     def test_twitter_image_reference_is_checked(self):
         # Parity: og:image present, twitter:image missing -> the twitter reference
-        # is reported (passes before and after; guards the reference loop).
+        # is reported, which guards the loop over both image references.
         extra = (_img_meta("https://cleanlanguage.ai/card.png") + "\n"
                  + '<meta name="twitter:image" content="https://cleanlanguage.ai/missing.png">')
         problems = self._problems(extra, files=["card.png"])
