@@ -28,22 +28,24 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
 - in the squash message only, a subject that does not end with " (#<number>)".
 
 Before the label, dash and spelling checks, the gate masks fenced code blocks, inline code spans,
-URLs, and the text between 2 double quote marks on 1 line, which holds quoted language and also
-any other text between 2 such marks, such as the text between 2 inch marks. Each masked
-character becomes a space, so a word boundary next to a masked span survives.
+URLs, and the text on 1 line between a pair of straight double quote marks, or between U+201C
+and the next U+201D, which holds quoted language and also any other text between such a pair,
+such as the text between 2 inch marks. A mixed or reversed pair, such as a straight mark closed
+by U+201D, or U+201D before U+201C, is not masked. Each masked character becomes a space, so a
+word boundary next to a masked span survives.
 
 A fenced code block opens on a line of 0 to 3 spaces and then 3 or more backticks or tildes; a
 backtick opener with a backtick in the rest of its line is not a fence. The block runs to the
 next line of 0 to 3 spaces and then at least as many of the opener's character, followed by
-nothing but whitespace. When a fence is never closed, the block runs to the end of the text, as
-a renderer shows those lines as code, and the unclosed fence is reported as a defect, so the
-masked lines do not pass unseen. An inline code span opens on a run of backticks and closes on
-the next run of exactly as many backticks on the same line; a run with no such closer is plain
-text. The scan that finds the spans takes time linear in the length of the line. A URL starts
-with http:// or https:// and ends before the first whitespace, angle bracket, quote mark,
-backtick, U+2013 or U+2014; a parenthesis is part of it only in a pair, such as (bar), with no
-parenthesis inside; and a trailing full stop, comma, semicolon, colon, exclamation mark or
-question mark is not part of it.
+nothing but spaces or tabs, as CommonMark reads it. When a fence is never closed, the block runs
+to the end of the text, as a renderer shows those lines as code, and the unclosed fence is
+reported as a defect, so the masked lines do not pass unseen. An inline code span opens on a run
+of backticks and closes on the next run of exactly as many backticks on the same line; a run
+with no such closer is plain text. The scan that finds the spans takes time linear in the length
+of the line. A URL starts with http:// or https:// and ends before the first whitespace, angle
+bracket, quote mark (straight, or U+2018, U+2019, U+201C or U+201D), backtick, U+2013 or U+2014;
+a parenthesis is part of it only in a pair, such as (bar), with no parenthesis inside; and a
+trailing full stop, comma, semicolon, colon, exclamation mark or question mark is not part of it.
 
 The width check skips fenced code and a line whose excess over 72 characters lies in 1 URL: the
 URL starts within the first 73 characters, so that every character past the 72nd is part of it,
@@ -80,11 +82,14 @@ no list of known gaps can close that set. The known residual forms are these: a 
 phrasing the lint does not list, such as a review pass named in words (the lint's docstring
 names its own residual forms); a revision id in a form the pattern misses, such as one in upper
 case, one of more than 40 characters or one made only of digits; an -ise stem the denylist does
-not hold, such as vaporis-; a dash other than U+2013 and U+2014, such as the figure dash U+2012
-or the horizontal bar U+2015; a defect inside a masked region, such as an em dash inside double
-quotes, between 2 inch marks or in the lines that an unclosed fence masks; a message typed into
-the merge dialog that differs from the committed file; and a description edited after the last
-run.
+not hold, such as vaporis-; a listed stem with a prefix or a further suffix, such as the stem
+organ after the prefix re- or before the ending -isational, or the stem author after un-; a
+dash other than U+2013 and U+2014, such as the figure dash U+2012 or the horizontal bar U+2015;
+a defect inside a masked region, such as an em dash inside double quotes, between 2 inch marks
+or in the lines that an unclosed fence masks; a defect in a region that the gate masks but a
+renderer shows as prose, such as a fence inside an HTML block or a span opened by a backtick
+escaped with a backslash; a message typed into the merge dialog that differs from the
+committed file; and a description edited after the last run.
 
 The known false failures are a class, accepted with no escape: honest text that the gate reads
 otherwise than a renderer shows it, or that its patterns cannot tell from a defect. Examples:
@@ -108,18 +113,28 @@ With --number N, the subject must end with " (#N)"; N is a number of 1 to 18 dig
 leading zero. Without it, the number comes from the file name when the path ends
 .github/squash/<number>.txt, where <number> is such a number; otherwise, as for 0.txt or 007.txt,
 the gate prints the line "pr-text: subject binding not checked", which is not a defect, and goes
-on. The bound of 18 digits keeps every conversion of digits to a number far under the limit of
-4300 digits that Python sets.
+on. The bound of 18 digits keeps the conversions of the --number value and of the squash file
+name to a number far under the limit of 4300 digits that Python sets. A payload whose number
+has more than 4300 digits is reported as unreadable, with "not JSON", since the JSON reader
+refuses it.
 
-Exit 0 when the texts are clean, 1 on any defect, and 2 on unreadable input or a usage error.
-Unreadable input is a missing or unparseable payload, an event that is not a pull request or
-whose body is neither null nor text, a missing or undecodable squash file or text file, a
-working directory that cannot be read when a relative squash path needs it, a lint that cannot
-be loaded or that exits while it loads, and any other error the gate meets, such as a scan of
-the lint that raises or exits. Every output line starts with 1 of the fixed ASCII prefixes
-description, squash, unreadable: and pr-text:, and every character outside printable ASCII in a
-reported line is written as a backslash escape, so no author text starts a line of output. The
-last line is "pr-text: <n> defect(s)", also on exit 2.
+The exit status and the output, for the inputs the gate reads (the 2 texts, the event payload,
+the squash file and the arguments): exit 0 when the texts are clean, 1 on any defect, and 2 on
+unreadable input or a usage error. Unreadable input is a missing or unparseable payload, an
+event that is not a pull request or whose body is neither null nor text, a missing or
+undecodable squash file or text file, a working directory that cannot be read when a relative
+squash path needs it, a lint that cannot be loaded or that raises, exits or is interrupted
+while it loads, and any other exception raised while the gate reads and checks, such as from a
+scan of the lint, SystemExit and KeyboardInterrupt among them. Every output line starts with 1 of
+the fixed ASCII prefixes description, squash, unreadable: and pr-text:, and every character
+outside printable ASCII in a reported line is written as a backslash escape, so no author text
+starts a line of output. The last line is "pr-text: <n> defect(s)", also on exit 2.
+
+Residual of that promise: the label lint is trusted repository code that runs in the gate
+process, so a lint that ends the process, such as with os._exit, writes to standard output or
+closes it can end the gate with another status, with no count line or with a line that has no
+prefix. So can a standard output that cannot be written, and an input that never ends, such as
+a FIFO given as the squash file, which the job's time limit ends.
 """
 import importlib.util
 import json
@@ -140,7 +155,8 @@ LINT_FAILURE = "label lint {} cannot be loaded: {}"
 
 FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 BACKTICKS = re.compile(r"`+")
-URL = re.compile(r"\bhttps?://(?:[^\s<>\"'`()\u2013\u2014]|\([^\s<>\"'`()\u2013\u2014]*\))*"
+URL = re.compile(r"\bhttps?://(?:[^\s<>\"'`()\u2013\u2014\u201c\u201d\u2018\u2019]"
+                 r"|\([^\s<>\"'`()\u2013\u2014\u201c\u201d\u2018\u2019]*\))*"
                  r"(?<![.,;:!?])")
 QUOTED = re.compile(r"\"[^\"\n]*\"|\u201c[^\u201d\n]*\u201d")
 MASKS = (URL, QUOTED)
@@ -247,20 +263,16 @@ def read_event(path):
 def describe(error):
     """The type name and message of a caught error, as plain text that cannot raise.
 
-    An error from the lint can carry a message whose formatting raises, even SystemExit; that
-    is caught with every other exception except KeyboardInterrupt, and the type name, or a
+    An error from the lint can carry a message whose formatting raises, even SystemExit or
+    KeyboardInterrupt; that is caught with every other exception, and the type name, or a
     fixed phrase, stands in for the part that cannot be formatted.
     """
     try:
         name = str.__str__(str(type(error).__name__))
-    except KeyboardInterrupt:
-        raise
     except BaseException:
         name = "an exception"
     try:
         text = str.__str__(str(error))
-    except KeyboardInterrupt:
-        raise
     except BaseException:
         return name + " (its message cannot be formatted)"
     return name + ": " + text
@@ -269,8 +281,8 @@ def describe(error):
 def load_scan():
     """The scan function of the label lint, loaded by file path; a failure is unreadable input.
 
-    A lint that exits while it loads raises SystemExit, which is caught with every other
-    exception except KeyboardInterrupt, so it cannot end the gate with no report.
+    A lint that exits or is interrupted while it loads raises SystemExit or KeyboardInterrupt,
+    which is caught with every other exception and reported.
     """
     sys.dont_write_bytecode = True
     try:
@@ -278,8 +290,6 @@ def load_scan():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         scan = module.scan
-    except KeyboardInterrupt:
-        raise
     except BaseException as error:
         raise Unreadable(LINT_FAILURE.format(LINT, describe(error))) from error
     return scan
@@ -315,7 +325,7 @@ def fenced(lines):
             continue
         inside.add(index)
         if (match and match.group(1)[0] == opener[0] and len(match.group(1)) >= len(opener)
-                and not line[match.end():].strip()):
+                and not line[match.end():].strip(" \t")):
             opener = None
     return inside, (start if opener is not None else None)
 
@@ -489,12 +499,11 @@ def main(argv):
     except Unreadable as error:
         report.note("unreadable:", " {}".format(error))
         status = EXIT_UNREADABLE
-    except KeyboardInterrupt:
-        raise
     except BaseException as error:
-        # A scan of the lint, or a hit it returns, that raises SystemExit is caught here, as
-        # load_scan() catches a lint that exits while it loads, so it cannot end the gate with
-        # no report. describe() keeps an error whose message raises from escaping this handler.
+        # A scan of the lint, or a hit it returns, that raises SystemExit or KeyboardInterrupt
+        # is caught here, as load_scan() catches a lint that does so while it loads, so it
+        # cannot end the gate with no report. describe() keeps an error whose message raises
+        # from escaping this handler.
         report.note("unreadable:", " the gate stopped on an unexpected error: {}".format(
             describe(error)))
         status = EXIT_UNREADABLE

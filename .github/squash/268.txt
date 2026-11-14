@@ -9,17 +9,23 @@ text, and a code fence that is opened and never closed. A blank text
 holds nothing once whitespace, zero-width spaces, byte order marks and
 HTML comments are removed. In the squash message it also checks line
 width, revision ids and a subject that ends with the pull request
-number. Fenced code, inline code, URLs and text between 2 double quote
-marks on 1 line are masked from the label, dash and spelling checks; a
-fence that is never closed masks the rest of the text and is reported
-at its opener. A URL ends before an em or en dash, an unpaired
-parenthesis or trailing punctuation, and the width check skips fenced
-code and a line whose excess lies in 1 URL that reaches its end. The
-gate finds the lint and the squash folder from its own path, makes no
-git call, and exits 2 on unreadable input, on any other error it meets
-and on a usage error, with the defect count as its last line. Its
-inline-code scan takes time linear in the length of a line. Add its
-suite, tools/test-check-pr-text.py, and the workflow
+number. Fenced code, inline code, URLs and the text on 1 line between
+a pair of straight double quote marks, or between U+201C and the next
+U+201D, are masked from the label, dash and spelling checks; a mixed
+or reversed pair is not masked. A fence closes only on a closer
+followed by nothing but spaces or tabs; a fence that is never closed
+masks the rest of the text and is reported at its opener. A URL ends
+before whitespace, an angle bracket, a straight or curly quote mark,
+a backtick, an em or en dash, an unpaired parenthesis or trailing
+punctuation, and the width check skips fenced code and a line whose
+excess lies in 1 URL that reaches its end. The gate finds the lint
+and the squash folder from its own path and makes no git call. For
+the inputs it reads, it exits 2 on unreadable input, on any other
+exception raised while it runs, an interrupt among them, and on a
+usage error, with the defect count as its last line. Its inline-code
+scan takes time linear in the length of a line. Add its suite,
+tools/test-check-pr-text.py, with a mutant sweep that records a
+failing case for each guard it lists, and the workflow
 .github/workflows/pr-text.yml, which runs the gate on every pull
 request with read-only permissions, keeps no credentials after
 checkout and stops the job after 10 minutes. tools/ci-status.py does
@@ -28,14 +34,22 @@ suite, and tools/test-run-all-checks.py lists the workflow's event step
 as an exception, with the suite in its place.
 
 Residuals: a defect in a form the patterns miss, such as an upper-case
-revision id or an -ise stem the denylist lacks; a defect inside a
-masked region, such as an em dash inside double quotes, between 2 inch
-marks or in the lines that an unclosed fence masks; a false failure on
-honest text, such as code in an indented block, a list item or a
-blockquote, a code span or a quotation that wraps a line, a URL in
-angle brackets or backticks or followed by punctuation that runs past
-72 characters, a line that combining marks push past 72 code points, a
-hex run with digits and letters in a squash message, or a bare id of 1
-or 2 capital letters and 1 or 2 digits; a message typed into the merge
-dialog that differs from the committed file; and a description edited
-after the last run.
+revision id, an -ise stem the denylist lacks, or a listed stem with a
+prefix such as re- or un- or a further suffix such as -isational; a
+defect inside a masked region, such as an em dash inside double
+quotes, between 2 inch marks or in the lines that an unclosed fence
+masks, or in a region the gate masks but a renderer shows as prose,
+such as a fence inside an HTML block or a span opened by a backtick
+escaped with a backslash; a false failure on honest text, such as code
+in an indented block, a list item or a blockquote, a code span or a
+quotation that wraps a line, a URL in angle brackets or backticks or
+followed by punctuation that runs past 72 characters, a line that
+combining marks push past 72 code points, a hex run with digits and
+letters in a squash message, or a bare id of 1 or 2 capital letters
+and 1 or 2 digits; a lint that ends the gate process, writes to
+standard output or closes it, since the lint is trusted repository
+code run in that process, a standard output that cannot be written,
+or an input that never ends, such as a FIFO, any of which can end the
+gate with another status, with no count line or with a line that has
+no prefix; a message typed into the merge dialog that differs from the
+committed file; and a description edited after the last run.

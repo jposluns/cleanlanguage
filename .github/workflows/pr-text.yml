@@ -14,8 +14,9 @@ name: Pull request text
 # The check is advisory: tools/ci-status.py does not insist on it, and the
 # maintainer decides whether it becomes required once its false-failure rate
 # on real descriptions is measured. Making it insisted on would also need
-# changes to tools/test-ci-status.sh, whose workflow-shape check refuses a
-# types: filter and a step with: key in the workflows it reads.
+# changes to tools/test-ci-status.sh, whose workflow-shape check refuses this
+# workflow as it stands, such as its lack of a push trigger, its types:
+# filter, the timeout-minutes key of the job and a with: key of a step.
 
 on:
   pull_request:
