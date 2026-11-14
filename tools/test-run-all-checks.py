@@ -101,7 +101,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "run_all_checks.sh"
 # The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading
 # the change to SCRIPT.
-SCRIPT_SHA256 = "51ee5f1528b4a13e98228dfde9f2b758ca3cf98c4fa846d8339dc2e4d4b11cad"
+SCRIPT_SHA256 = "46d79d0f9f20be066278da47eb8d1628075bce55b3040b72b1a7b0f3ad9e8b18"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIN_WORKFLOW = WORKFLOWS / "plugin-validate.yml"
 STAGED_RUN = "\n".join((
@@ -119,6 +119,9 @@ EXCEPTIONS = {
         ("plugin_manifests", "the script reads claude --version and compares it with the pin"),
     ("plugin-validate.yml", STAGED_RUN):
         ('claude plugin validate "${staged}/skills" --strict', "the script stages the skill the same way"),
+    ("pr-text.yml", 'python3 -I tools/check-pr-text.py --event "$GITHUB_EVENT_PATH"'):
+        ("python3 -I tools/test-check-pr-text.py",
+         "the suite runs the gate's --event mode on payload fixtures, not on the pull request's own payload"),
 }
 RUN_LINE = re.compile(r"run (.+)")
 CLAUDE_LINE = re.compile(r"  (claude .+) \|\| status=1")
