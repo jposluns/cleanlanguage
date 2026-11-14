@@ -140,6 +140,7 @@ run python3 -I tools/check-release-checksum-live.py
 # release-dry-run.yml, after the 3 of its steps above
 run python3 -I tools/test-skill-version-consumers.py
 run python3 -I tools/test-release-skill-workflow.py
+run python3 -I tools/test-release-package-dist.py
 run bash tools/test-version-selectors.sh
 run tools/release-dry-run.sh
 # site-draft.yml
