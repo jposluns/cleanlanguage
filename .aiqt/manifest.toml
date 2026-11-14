@@ -2262,17 +2262,17 @@ sha256 = "32b54f2e5fb666a1318cab9a1bea9b96d8eb68f9e5ce89af85db8c5baae87ed5"
 [[sources]]
 path = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
 bytes = 288
-sha256 = "d0a878cceb8a33d2baa4c0f658e1cac39b92fbdccdf859e6bc73eedfb49f2915"
+sha256 = "6a019cab82e0df55d88b44b1199d10bf95d37c5bd959fffd57b7aa36df84c591"
 
 [[sources]]
 path = "plugin/aiqt-guardrails-hooks/hooks/hooks.json"
-bytes = 8663
-sha256 = "18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c"
+bytes = 11073
+sha256 = "2fab2f7388e32e7dd07302193217079e070c069c014f43195ade463e707c7813"
 
 [[sources]]
 path = "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py"
-bytes = 704505
-sha256 = "1052f4f48f2fe0e839c665455ad2af2c21abf3fe389fa8acb832fcdf842062ce"
+bytes = 2489505
+sha256 = "b8d02451c808defefad5462a05f78e04409408b238883d8384fe68badd05497f"
 
 [[sources]]
 path = "roadmap.toml"

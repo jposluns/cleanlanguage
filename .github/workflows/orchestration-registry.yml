@@ -11,7 +11,9 @@ name: Orchestration registry
 #
 # The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
 # script, then drive the real hook with each stage-2 arming key against a contrast without
-# that key, together with the project orch_doctor tool. Each is its own named step, so a run
+# that key, together with the project orch_doctor tool, and feed the vendored gate_weakening hook
+# write-then-run commit probes held as JSON payload data (tools/test-gate-weakening-probes.py),
+# which it must deny. Each is its own named step, so a run
 # that omits one is visible in the step list, not only in the overall colour. A lint step fails
 # when a comment or docstring in these sources names a review round or a finding id instead of
 # stating its reason (tools/test-no-qa-labels.py). A further step runs a literal regression check
@@ -82,6 +84,10 @@ jobs:
       - name: Run the stage-2 hook behaviour and doctor tests
         shell: bash
         run: python3 -I tools/test-orch-stage2-hooks.py
+
+      - name: Run the gate_weakening write-then-run probe tests
+        shell: bash
+        run: python3 -I tools/test-gate-weakening-probes.py
 
       - name: Run the repository AskUserQuestion guard tests
         shell: bash

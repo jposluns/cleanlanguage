@@ -70,11 +70,12 @@ originals; the 3 concrete clauses they drop are restored in
 The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
 blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
 for dev-time sessions through [`settings.json`](settings.json) and the local
-marketplace at `plugin/`. All 14 core hooks can fire (`gensrc_guard` was armed in PR #156).
+marketplace at `plugin/`. The plugin registers 31 hooks, 12 orchestrator hooks and 19
+others (`gensrc_guard` was armed in PR #156).
 `write_scope_guard` keeps its structural cross-repository write denial, now exempting one
 declared companion store (`/opt/cleanlanguage/private`, the record store), while its slice
 confinement stays un-armed. A minimal orchestration registry is declared; what each of the
-10 orchestrator hooks does under it today, including the stop guard denial and the operator
+12 orchestrator hooks does under it today, including the stop guard denial and the operator
 escape that releases it, is described in [`../.aiqt/config.md`](../.aiqt/config.md).
 
 ## Asking the maintainer questions

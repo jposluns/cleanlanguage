@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "probe",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-p4.sh\nbash /tmp/probe-p4.sh"
+  }
+}

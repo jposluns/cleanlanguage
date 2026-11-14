@@ -111,6 +111,7 @@ run python3 -I tools/test-orch-stage1-hooks.py
 run python3 -I tools/test-orch-enumerate-backlog.py
 run python3 -I tools/test-orch-migrate-todo.py
 run python3 -I tools/test-orch-stage2-hooks.py
+run python3 -I tools/test-gate-weakening-probes.py
 run python3 -I tools/test-ask-mode-guard.py
 run python3 -I tools/check-flow-mode.py
 run python3 -I tools/test-check-flow-mode.py

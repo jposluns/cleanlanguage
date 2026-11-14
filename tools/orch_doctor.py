@@ -1,128 +1,144 @@
 #!/usr/bin/env python3
 """Project-owned operator tool for the AIQT orchestration hooks (item 28.2 stage 2, PR1-f).
 
-The vendored hook names this file in two banners (aiqt_hooks.py:9792 and :9844, "python3
+The vendored hook names this file in its resume banners (aiqt_hooks.py:32997 and :33003, "python3
 tools/orch_doctor.py --resume-audit"). The pack ships its own orch_doctor.py, but that copy imports
 symbols absent from the hook vendored here, so this repository carries its own. It imports the
 VENDORED hook by path and reuses its functions, so it never reimplements a decision:
 
   preflight [stop|idle]  Preview what a Stop (stop) or a scheduling call (idle) would decide now. It
-                         follows the hook order exactly: registry, then scope (aiqt_hooks.py:8584-8585
-                         for a Stop, :8662-8663 for a scheduling call), then for idle the roster test
-                         (:8664-8667), and only then the context and the enumeration (:8586, :8671).
+                         follows the hook order exactly: registry, then scope (_orch_scope_live at
+                         aiqt_hooks.py:23574-23576 for a Stop, _orch_scope_live at :23681-23683 for a
+                         scheduling call), then for idle the roster test (yield_tools at :23684-23687),
+                         and only then the context and the enumeration (_orch_build_ctx at :23577,
+                         _orch_build_ctx at :23691).
                          Out of scope, or for idle out of the roster, it reports the ALLOW the hook
                          gives there WITHOUT building the context or running the enumerator, since
                          the hook does neither, and an enumerator the preview ran could change what
                          a later Stop decides. In scope it
                          calls _orch_build_ctx(reg, root, kind, data, record_checkpoint=True)
-                         (aiqt_hooks.py:8434), the posture of the hook itself, with the two write
+                         (aiqt_hooks.py:23409), the posture of the hook itself, with the two write
                          primitives that call reaches replaced, for that call only, by stand-ins
                          that write nothing (the checkpoint writes, below), and decide_yield
-                         (aiqt_hooks.py:8180), then prints
+                         (aiqt_hooks.py:23038), then prints
                          the verdict, the reason, the disposition table, and the verdict with the
                          escape sentinel forced off, so the operator sees what the Stop would do
                          without the sentinel. A Stop DENY holds only when the hook can save the
                          denial counter to turn-state.json; when it cannot, the hook fails open with
-                         a warning instead (aiqt_hooks.py:8590-8596, the save at :7752-7760). The
-                         doctor therefore checks, with os.access and without writing, whether that
-                         save could succeed, and when it could not it reports the fail-open
-                         ALLOW_WITH_FINDINGS the hook would give, with the reason. A scheduling DENY
-                         stands whether or not the counter is saved (aiqt_hooks.py:8694-8698), so
-                         the check applies to stop only.
+                         a warning instead (_orch_record_denial at aiqt_hooks.py:23588-23594, the
+                         save at :22350-22359, through _orch_write_json_atomic). The doctor
+                         therefore checks, with lstat
+                         and os.access and without writing, whether that save could succeed, and
+                         when it could not it reports the fail-open ALLOW_WITH_FINDINGS the hook
+                         would give, with the reason. A scheduling DENY stands whether or not the
+                         counter is saved (_orch_record_denial at aiqt_hooks.py:23727-23744), so the
+                         check applies to stop only.
                          The checkpoint writes: the checkpoint union
-                         (_orch_checkpoint_union, aiqt_hooks.py:8335-8431, via :8457) makes the
-                         only other hook writes inside _orch_build_ctx and its callees: a guard
-                         event at :8410, :8416 and :8425, whose result is ignored; the checkpoint
-                         rewrite at :8414, whose failure changes no verdict by itself but skips the
-                         marker write; and, only when that rewrite succeeds and no init marker
-                         exists (:8419), the init-marker write at :8424, whose failure injects a
-                         cannot-evaluate row (:8428), so that a Stop the hook would otherwise allow
-                         is denied. Both writes go through _orch_write_json_atomic
-                         (aiqt_hooks.py:7712-7725: os.makedirs of the state directory at :7718, an
-                         open for writing of <path>.tmp at :7720, os.replace at :7722). Its
-                         stand-in decides each outcome with lstat, stat and os.access only
-                         (_atomic_write_outcome), without writing, and returns it to the hook code,
-                         so the hook itself decides whether the marker write is reached and what it
-                         injects; the stand-in for _orch_guard_event writes nothing and reports
-                         success, since no caller on this path reads its result. The predicted
-                         outcome of each write is printed. A write whose open for writing could
-                         block (a FIFO, a device or a socket at the temporary path, a symbolic link
-                         there whose target is one of these or cannot be examined, or a temporary
-                         path that cannot be examined) is reported as not previewed, exit 2,
-                         whatever its other outcomes would decide, since a blocked hook gives no
-                         verdict at all. A write that only writing could decide
-                         but that cannot block, a symbolic link at the temporary path to a regular
-                         file, a directory or an absent path (which the open would follow), is
-                         reported as not previewed, exit 2, whenever its outcome could change the
-                         verdict, and a write to any other path, which this preview does not model,
-                         is reported the same way. The doctor itself WRITES NOTHING: no
+                         (_orch_checkpoint_union, aiqt_hooks.py:23286-23406, via :23439) makes the
+                         only other hook writes inside _orch_build_ctx and its callees: the guard
+                         events of _orch_event_warn (:22313), whose result adds at most a warning
+                         and never changes the decision; the checkpoint rewrite at :23373, whose
+                         failure changes no verdict by itself but skips the marker write and adds a
+                         recording-failure warning; and, only when that rewrite succeeds and no init
+                         marker exists (os.path.lexists at :23384), the init-marker write at :23389,
+                         whose failure injects a cannot-evaluate row (injected.append at :23394), so
+                         that a Stop the hook would otherwise allow is denied. Both writes go through
+                         _orch_write_json_atomic (aiqt_hooks.py:22204-22295: os.makedirs of the state
+                         directory at :22240, the open of that directory at :22241, the lstat of the
+                         target (os.stat at :22259), a temporary file created under a random name
+                         with O_CREAT|O_EXCL|O_NOFOLLOW
+                         at :22263-22264, os.replace at :22284; None on success, else a failure
+                         detail). Its stand-in decides each outcome with lstat, stat and os.access
+                         only (_atomic_write_outcome), without writing, and returns it to the hook
+                         code in the hook writer's own form, so the hook itself decides whether the
+                         marker write is reached, what it injects and which recording-failure
+                         warnings it adds; the stand-in for _orch_guard_event writes nothing and
+                         reports success. The predicted outcome of each write is printed. Because
+                         the hook writer creates its temporary file under a fresh random name and
+                         never opens an existing entry, no entry at a temporary-like path can block,
+                         obstruct or redirect the write, and every outcome is decided from the state
+                         directory and the target. A write to any other path, which this preview
+                         does not model, is reported as not previewed, exit 2. An ALLOW that the
+                         hook would give with a recording-failure warning (a failed checkpoint
+                         rewrite, or for a schedule_idle call a wake digest that cannot be saved to
+                         turn-state.json, _orch_register_wake, :23638-23660, called at :23748) is
+                         reported as ALLOW_WITH_FINDINGS, as the hook surfaces it (:23618-23621 for
+                         a Stop, :23949 for a scheduling call). The doctor itself WRITES NOTHING: no
                          checkpoint, no init marker, no guard event, no turn-state, no spoof record,
                          and no bytecode cache. It does run the enumerator the registry declares,
-                         exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the
+                         exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:22812-22845: the
                          declared argv as a subprocess with cwd = the root, no shell). That program
                          is outside this tool, and anything it writes is its own, not the doctor's;
                          the output says so.
                          For idle, roster membership is modelled exactly as the hook tests it
-                         (aiqt_hooks.py:8664-8667): a tool outside a list-valued yield_tools roster,
+                         (aiqt_hooks.py:23684-23687): a tool outside a list-valued yield_tools roster,
                          or any tool when yield_tools is not a list, is allowed unjudged. The
-                         quiet-duration check (aiqt_hooks.py:8675-8692) runs inline in the hook before
+                         quiet-duration check (aiqt_hooks.py:23700-23719) runs inline in the hook before
                          the verdict and writes a guard event, so it cannot be called without
                          writing and is NOT previewed: when the wake text carries a quiet-duration
                          claim (the hook regex _ORCH_QUIET_CLAIM_RE plus the word "quiet"), a verdict
                          other than DENY is reported as unpreviewed, exit 2.
                          The event fields: the previewed handler (orch_stop_guard through
-                         _orch_stop_family, aiqt_hooks.py:8569-8614, for stop; orch_yield_tool,
-                         :8646-8721, for idle), traced into _orch_root and _orch_build_ctx, reads
+                         _orch_stop_family, aiqt_hooks.py:23559-23622, for stop; orch_yield_tool,
+                         :23663, for idle), traced into _orch_root and _orch_build_ctx, reads
                          these fields of the event, and the doctor passes each exactly as the hook
                          reads it, from one input (_event_data):
-                           data cwd               :7592         --root
-                           data session_id        :8584, :8662  --session-id
-                           data stop_hook_active  :8482         --stop-hook-active (true only)
-                           data tool_name         :8664         --tool (idle)
-                           data tool_input        :8668         built from the two inputs below
-                           tool_input stop        :8669         --tool-stop (true only, idle)
-                           tool_input values      :8670         --wake-text, as tool_input prompt
-                           tool_input prompt      :8702         not previewed (see below)
+                           data cwd               :21722          --root
+                           data session_id        :23574, :23681  --session-id
+                           data stop_hook_active  :23465          --stop-hook-active (true only)
+                           data tool_name         :23684          --tool (idle)
+                           data tool_input        :23688          built from the two inputs below
+                           tool_input stop        :23689          --tool-stop (true only, idle)
+                           tool_input values      :23690          --wake-text, as tool_input prompt
+                           tool_input prompt      :23748          not previewed (see below)
                          The hook tests stop_hook_active and stop with "is True", so an absent
                          field stands for every other value. With --tool-stop the scheduling call
-                         is judged as kind stop, as the hook judges it (:8669): the loop signal
-                         and the stop counter apply, the quiet-claim check does not (:8681), and
-                         the denial-counter check does not, since a scheduling DENY stands
-                         (:8694-8698). tool_input prompt is read at :8702 only after an allowed
+                         is judged as kind stop, as the hook judges it (:23689): the loop signal
+                         and the stop counter apply, the quiet-claim check (for kind
+                         "schedule_idle" at :23706 only) does not, and the denial-counter check does
+                         not, since a scheduling DENY stands
+                         (:23727-23744). tool_input prompt is read at :23748 only after an allowed
                          schedule verdict, for the wake-digest write (_orch_register_wake,
-                         :8630-8643); it never changes the verdict, so it needs no input. The test
+                         :23638-23660); it never changes the verdict, so it needs no input. The test
                          suite scans the hook source for every event field these paths read and
                          holds each to a reviewed table, so a new field fails the suite.
                          Before each hook reader is called, the doctor checks every path that
                          reader would open with a plain blocking open, each resolved as the hook
-                         resolves it (_orch_path, aiqt_hooks.py:7630-7635; the state directory by
-                         _orch_state_dir_for_root, :7654-7659), and a path is checked only when
+                         resolves it (_orch_path, aiqt_hooks.py:22122-22127; the state directory by
+                         _orch_state_dir_for_root, :22146-22151), and a path is checked only when
                          the hook call path would reach its open, each earlier exit the hook takes
                          modelled from its source. The registry files come
-                         first (:7606-7626): the machine-local file is always reached, and the
+                         first (:22081-22118): the machine-local file is always reached, and the
                          committed file only when the lstat of the local file raised
-                         FileNotFoundError (:7609-7611), since a present local file returns at
-                         :7617-7626 whatever its content and an lstat fault returns at :7612-7617.
-                         Before the scope test (_orch_scope_live, :7779-7817) it checks lease.path
-                         only when the hook would open the lease for holder scoping (:7807: the
-                         stat at :7791 succeeds, the lease is non-empty and fresh, :7792-7799,
-                         holder_is_session_id is set, :7800, and a session id is given, :7804),
-                         and mode.path (opened at :7771 via :7817) only when no earlier return is
-                         taken (a live lease returns at :7799-7811, an unstattable holder lease at
-                         :7814-7815). Before the context is built (_orch_build_ctx, :8434-8489) it
-                         checks turn-state.json (:7745, via :8441) and then, only when the
-                         enumerator would run (a dict with a non-empty argv of non-empty strings,
-                         :7967-7971), the enumerator argv from argv[2] on (run with cwd = the root,
-                         :7976) and the paths read after a successful enumeration (:8448):
-                         dispatch-ledger.jsonl (:7998, opened at :7678), record.pending_decisions
-                         (:8044), backlog-checkpoint.json (:8365) and, when attestations is
-                         declared (:8068-8070), attestations-validated.json (:8073); the register
-                         (:9507 via :8086, :9462 via :8093) only when os.stat succeeds on that
-                         snapshot (a failed snapshot open returns at :8075-8076), and its
-                         <path>.anchor (:9543) and guard-events.jsonl (:9566) only when os.stat
-                         succeeds on the register too (a failed register open holds at :9510, so
-                         the reader returns at :8087-8089). Each is checked with os.stat only,
-                         never opened. One that exists
+                         FileNotFoundError (:22084-22086), since a present local file returns at
+                         :22093-22118 (os.open) whatever its content and an lstat fault returns at
+                         :22087-22092 (`except OSError as exc`).
+                         Before the scope test (_orch_scope_live, :22593-22651) it checks lease.path
+                         only when the hook would open the lease for holder scoping (:22637: the
+                         stat at :22614 succeeds, the lease is non-empty and fresh, :22615-22629,
+                         holder_is_session_id is set, :22630, and a session id is given, :22634),
+                         and mode.path (os.open at :22442 via _orch_mode at :22651) only when no
+                         earlier return is taken (a live lease returns at :22629-22641, an
+                         unstattable holder lease, holder_is_session_id at :22648-22649). Before the
+                         context is built (_orch_build_ctx, :23409-23472) it checks turn-state.json
+                         (:22343, via _orch_turn_state at :23417) and then, only when the enumerator
+                         would run (a dict with a non-empty argv of non-empty strings,
+                         :22817-22825), the enumerator argv from argv[2] on (run with cwd = the
+                         root, subprocess.run at :22830) and the paths read after a successful
+                         enumeration (`status == "ok"` at :23430): dispatch-ledger.jsonl
+                         (_orch_live_ledger_ids at :22854, opened by _orch_read_jsonl at :22170),
+                         record.pending_decisions
+                         (:22902), backlog-checkpoint.json (:23321) and, when attestations is
+                         declared (`reg.get("attestations")` at :22926-22928),
+                         attestations-validated.json (:22931); the register
+                         (_orch_register_authority at :32581 via :22944, and `open` at :32536 via
+                         _orch_chained_rows at :22951) only when os.stat succeeds on that snapshot (a
+                         failed snapshot open takes `return "unreadable"` at :22933-22934), and its
+                         <path>.anchor (os.open at :32628) and guard-events.jsonl (:32680) only when
+                         os.stat succeeds on the register too (a failed register open takes
+                         `return ("hold"` at :32584, so the reader returns at :22945-22947 on
+                         `astatus != "ok"`). Each is checked with os.stat only, never opened. One
+                         that exists
                          and is not a regular file (a FIFO, which would block the hook open
                          indefinitely; a directory; a device; or a symlink to one of these) is
                          reported as cannot-evaluate, exit 2, naming the path and its type, and the
@@ -131,39 +147,48 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          paths only the resume audit opens (the handoff and findings records,
                          mistakes_register and the audit state files) are not checked here, since
                          the preview never opens them, and the escape sentinel is opened
-                         non-blocking (:7831) and needs no check.
+                         non-blocking (os.open at :22667) and needs no check.
 
   --resume-audit         Run the resume audit on demand. It delegates to orch_resume_audit in the
-                         vendored hook (aiqt_hooks.py:9765-9794), so the probes (_orch_resume_probes,
-                         aiqt_hooks.py:9351-9413, including the attestation snapshot refresh at
-                         :9411), the resume-barrier.json write (:9781-9785), and the findings guard
-                         event are exactly those of the hook. The same kind of special-file check
-                         runs first, over the paths the audit opens with a blocking open, each
-                         checked only when the audit would reach its open: record.handoff (:9359),
-                         record.findings (:9387 and :9425), record.pending_decisions (:9387), when
-                         declared (:9640) the attestations register (:9462 via :9642, :9507 via
-                         :9643) and, only when os.stat succeeds on the register (a failed register
-                         open holds at :9510), its <path>.anchor (:9543), mistakes_register
-                         (:9679), and the state files guard-events.jsonl (read at :9566, appended
-                         at :7667 through :9789), escape-spoof.json (:9748), forced-exit.jsonl
-                         (:9705), forced-exit-surfaced.json (:9717) only when os.stat succeeds on
-                         forced-exit.jsonl and it is not empty (no rows return at :9713-9714),
-                         forced-exit-surfaced.json.tmp (written at :7720 through :9734) only when
-                         the surfaced file is reached and its stat raises nothing other than
-                         FileNotFoundError (any other open error returns at :9721-9724) and, when
-                         attestations is declared, attestations-validated.json.tmp (:7720 through
-                         :9670). With an unreadable
-                         registry the hook opens only resume-barrier.json.unused (:9777) and
-                         guard-events.jsonl (:9789). A special file at one of these is reported as
+                         vendored hook (aiqt_hooks.py:32930-33014), so the probes (_orch_resume_probes,
+                         aiqt_hooks.py:32398-32482, including the attestation snapshot refresh,
+                         _orch_validate_attestations at :32480), the resume-barrier.json write
+                         (:32983-32985), and the findings guard event are exactly those of the hook.
+                         The same kind of special-file check runs first, over the paths the audit
+                         opens with a blocking open, each checked only when the audit would reach
+                         its open: record.handoff (_orch_record_surface_read at :32420),
+                         record.findings (:32450 and _orch_record_surface_read at :32497),
+                         record.pending_decisions (:32450), when declared (at_path at :32754) the
+                         attestations register (`open` at :32536 via _orch_chained_rows at :32756,
+                         `open` at :32581 via _orch_register_authority at :32757) and, only when
+                         os.stat succeeds on the register (a failed register open takes
+                         `return ("hold"` at :32584), its <path>.anchor (os.open at :32628),
+                         mistakes_register (:32794), and the state files guard-events.jsonl (read at
+                         :32680, appended by _orch_append_jsonl at :22159 through _orch_event_warn at
+                         :32994), escape-spoof.json (:32872), forced-exit.jsonl (:32820),
+                         forced-exit-surfaced.json (:32832) only when os.stat succeeds on
+                         forced-exit.jsonl and it is not empty (no rows return at :32828-32829),
+                         forced-exit-surfaced.json.tmp (written by os.open at :22264 through
+                         _orch_write_json_atomic at :32851) only when the surfaced file is reached
+                         and its stat raises nothing other than FileNotFoundError (any other open
+                         error takes `return findings` at :32836-32839) and, when attestations is
+                         declared, attestations-validated.json.tmp (os.open at :22264 through
+                         _orch_write_json_atomic at :32784). With an unreadable registry the hook
+                         opens only resume-barrier.json.unused (_orch_append_jsonl at :32977) and
+                         guard-events.jsonl (_orch_event_warn at :32994). A special file at one of
+                         these is reported as
                          cannot-evaluate, exit 2, and the audit is not run. The audit runs no
-                         enumerator and does not open the lease (os.stat only, :9398), the mode
+                         enumerator and does not open the lease (os.stat only, :32460), the mode
                          record, turn-state.json, dispatch-ledger.jsonl or
                          backlog-checkpoint.json, so a special file at one of those, or at an
                          enumerator operand, does not refuse the audit. The hook swallows a failed
-                         barrier write (aiqt_hooks.py:9786-9787), so the doctor records the barrier
+                         barrier write (`except (OSError, ValueError) as exc` at
+                         aiqt_hooks.py:32986-32992), so the doctor records the barrier
                          mtime and content BEFORE the audit and requires that the audit rewrote it:
                          the file must have changed and its ts must fall within this run. A barrier
-                         the hook could not rewrite (for example a read-only file) is reported as
+                         the hook could not rewrite (for example one in a state directory the hook
+                         cannot write; a read-only barrier file is replaced, not opened, by the
+                         hook writer, aiqt_hooks.py:32889-32920) is reported as
                          unverified, exit 2, never as the stale state it still holds. Otherwise it
                          reports the observed rewritten state, never the return value of the call.
                          The barrier is read only as a regular file: it is opened non-blocking and
@@ -177,18 +202,18 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
 Options:
   --root DIR         The repository whose registry is read. Default: the git top level of the
                      current working directory, resolved the same way the hook resolves data["cwd"]
-                     (_orch_root -> _recovery_toplevel, aiqt_hooks.py:7590-7595).
+                     (_orch_root -> _recovery_toplevel, aiqt_hooks.py:21720-21725).
   --session-id ID    preflight only: the session id used for holder-scoped lease checks
-                     (aiqt_hooks.py:7800-7811). Default: none.
+                     (holder_is_session_id at aiqt_hooks.py:22630-22641). Default: none.
   --stop-hook-active preflight only: preview an event whose stop_hook_active is true, which sets
-                     the loop signal (aiqt_hooks.py:8482) and so, for the stop kind, the loop-bound
-                     release (aiqt_hooks.py:8192-8195). Default: absent.
+                     the loop signal (aiqt_hooks.py:23465) and so, for the stop kind, the loop-bound
+                     release ("loop_signal" at aiqt_hooks.py:23060-23063). Default: absent.
   --tool-stop        preflight idle only: preview a scheduling call whose tool_input stop is true,
-                     which the hook judges as kind stop (aiqt_hooks.py:8669). Default: absent.
+                     which the hook judges as kind stop (aiqt_hooks.py:23689). Default: absent.
   --wake-text TEXT   preflight idle only: the text a scheduling call would carry (the hook joins
-                     the string values of tool_input, aiqt_hooks.py:8670), used for the wake-hygiene
-                     check (aiqt_hooks.py:8476-8478) and to detect a quiet-duration claim that is
-                     not previewed. Default: none.
+                     the string values of tool_input, aiqt_hooks.py:23690), used for the wake-hygiene
+                     check (wake_named at aiqt_hooks.py:23458-23460) and to detect a quiet-duration
+                     claim that is not previewed. Default: none.
   --tool NAME        preflight idle only: the scheduling tool whose call is previewed, matched
                      against yield_tools as the hook matches it. Default: ScheduleWakeup.
 
@@ -197,9 +222,8 @@ Exit status:
                  1 when it is DENY or ALLOW_WITH_FINDINGS, 2 on a usage error, an unresolvable root,
                  an absent or unreadable registry, a registry file or a path the preview would
                  open (see above) that exists and is not a regular file, an idle verdict that
-                 hangs on the quiet-claim check, which is not previewed, or a checkpoint write
-                 whose open for writing could block, or whose outcome could change the verdict
-                 and cannot be decided without writing.
+                 hangs on the quiet-claim check, which is not previewed, or a hook write that the
+                 preview does not model.
   --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
                  true, 2 on a usage error, an unresolvable root, an absent registry, a registry
                  file or a path the audit would open (see above) that exists and is not a regular
@@ -214,8 +238,8 @@ writer, or an effective uid that differs from the real one, so its answer can be
 direction. The checkpoint-write prediction (_atomic_write_outcome) is the same kind of
 approximation: it cannot foresee a full disk, a quota, a sticky directory owned by another user, a
 race with another writer, or an effective uid that differs from the real one; and like the
-special-file check it is a point-in-time lstat and stat, so a temporary path replaced by a FIFO
-between the prediction and the hook open can still block the hook. The enumerator is a
+special-file check it is a point-in-time lstat and stat, so a state directory or target changed
+between the prediction and the hook write can change the outcome. The enumerator is a
 program the registry declares; whatever it writes is outside the
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
@@ -259,7 +283,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "scripts", "aiqt_hooks.py")
 
 # preflight kind -> the decide_yield kind the hook passes (Stop and TeammateIdle use "stop",
-# aiqt_hooks.py:8621 and :8627; a scheduling call that parks the run uses "schedule_idle", :8669,
+# aiqt_hooks.py:23629 and :23635; a scheduling call that parks the run uses "schedule_idle", :23689,
 # unless its tool_input stop is true, which _preflight derives from the event data as the hook
 # does).
 KINDS = {"stop": "stop", "idle": "schedule_idle"}
@@ -296,150 +320,99 @@ def _resolve_root(hook, root_arg):
 
 
 class _Unpreviewed(Exception):
-    """A hook write whose outcome could change the verdict and that cannot be decided without
-    writing; the preview reports it as not previewed, exit 2."""
+    """A hook write that this preview does not model; the preview reports it as not previewed,
+    exit 2."""
 
 
-# The third outcome of _atomic_write_outcome: the open for writing could block the hook.
-BLOCKS = "blocks"
-
-
-def _atomic_write_outcome(path):
-    """(outcome, reason) for _orch_write_json_atomic(path, obj) (aiqt_hooks.py:7712-7725), decided
-    with lstat, stat and os.access only, so nothing is written. outcome is True when the write would
-    succeed, False when it would fail (reason says why), None when only the write itself could
-    decide between those two (reason says why), and BLOCKS when the open for writing could block
-    (reason says why), a third outcome that is never verdict-neutral, since a blocked hook gives no
-    verdict at all. It follows the three steps of the hook: os.makedirs of the parent (7718), which
+def _atomic_write_outcome(path, o_walk=None):
+    """(outcome, reason) for _orch_write_json_atomic(path, obj) (aiqt_hooks.py:22204-22250, the save
+    itself in _orch_write_json_at, :22253-22295), decided with lstat, stat and os.access only, so
+    nothing is written. outcome is True when the write would succeed and False when it would fail
+    (reason says why). It follows the steps of the hook: os.makedirs of the parent (:22240), which
     fails when the parent, or the nearest existing ancestor of an absent parent, is not a directory
-    or cannot be written; the open for writing of path + ".tmp" (7720), which fails on a directory
-    there, on a regular file that is not writable, or when it must create the file in a directory
-    that cannot be written, which follows a symbolic link to a regular file, a directory or an absent
-    path there (undecided), and which could block on a FIFO, a device or a socket there, on a
-    symbolic link whose target is one of these or cannot be examined, or on a temporary path that
-    lstat cannot examine (BLOCKS: anything not classified as regular or absent); and os.replace
-    (7722), which fails when the directory cannot be written or path is a directory, and which opens
-    nothing, so path itself cannot block. os.access is an approximation (see Residuals)."""
+    or cannot be written; the open of the parent directory (os.open at :22241, with O_PATH where it
+    exists, else O_RDONLY, which also needs read permission on the parent); the lstat of the target
+    through that descriptor (os.stat at :22259), which needs search permission on the parent and
+    fails on any error other than an absent target; the create of a temporary file under a random
+    name with O_CREAT|O_EXCL|O_NOFOLLOW (:22263-22264), which needs write and search permission on
+    the parent and opens no existing file, so no entry at any fixed temporary-like name can block
+    it, obstruct it or be followed; and os.replace onto the target (:22284), which fails when the
+    target is a directory and replaces any other entry there (a read-only file or a symbolic link
+    included) without opening it. The write therefore cannot block, and every outcome is decided here. o_walk
+    is the flag the hook opens the parent with (hook._ORCH_O_WALK); None means O_PATH where the
+    platform has it. os.access is an approximation (see Residuals)."""
     parent = os.path.dirname(path)
-    tmp = path + ".tmp"
     if os.path.lexists(parent) and not os.path.isdir(parent):
-        return False, ("{} exists but is not a directory, so os.makedirs raises (aiqt_hooks.py:7718)"
-                       .format(parent))
+        return False, ("{} exists but is not a directory, so os.makedirs raises "
+                       "(aiqt_hooks.py:22240)".format(parent))
     if not os.path.isdir(parent):
         # os.makedirs would create it under the nearest existing ancestor, and then the temporary
-        # file and the rename land in a new empty directory this process created.
+        # file and the replace land in a new empty directory this process created.
         ancestor = os.path.dirname(parent)
         while ancestor and not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
             ancestor = os.path.dirname(ancestor)
         if not os.path.isdir(ancestor) or not os.access(ancestor, os.W_OK | os.X_OK):
-            return False, ("{} is absent and cannot be created under {} (aiqt_hooks.py:7718)"
-                           .format(parent, ancestor))
+            return False, ("{} is absent and cannot be created under {} "
+                           "(os.makedirs at aiqt_hooks.py:22240)".format(parent, ancestor))
         return True, None
+    if o_walk is None:
+        o_walk = getattr(os, "O_PATH", os.O_RDONLY)
+    if o_walk == os.O_RDONLY and not os.access(parent, os.R_OK):
+        return False, ("{} is not readable, and the hook opens it with O_RDONLY where O_PATH is "
+                       "absent (os.open at aiqt_hooks.py:22241)".format(parent))
     if not os.access(parent, os.X_OK):
-        return False, "{} is not searchable (aiqt_hooks.py:7720)".format(parent)
-    writable = os.access(parent, os.W_OK)
-    try:
-        st = os.lstat(tmp)
-    except FileNotFoundError:
-        st = None
-    except OSError as exc:
-        return BLOCKS, ("{} cannot be examined ({}), so it is not known to be a regular file or "
-                        "absent, and the open for writing at aiqt_hooks.py:7720 could block on it"
-                        .format(tmp, exc))
-    if st is None:
-        if not writable:
-            return False, ("{} cannot be created in {}, which is not writable (aiqt_hooks.py:7720)"
-                           .format(tmp, parent))
-    elif stat.S_ISLNK(st.st_mode):
-        # The open follows the link, so its target decides whether the open could block.
-        try:
-            resolved = os.stat(tmp)
-        except FileNotFoundError:
-            resolved = None
-        except OSError as exc:
-            return BLOCKS, ("{} is a symbolic link whose target cannot be examined ({}), and the "
-                            "open for writing at aiqt_hooks.py:7720, which follows it, could block"
-                            .format(tmp, exc))
-        if resolved is not None and not (stat.S_ISREG(resolved.st_mode)
-                                         or stat.S_ISDIR(resolved.st_mode)):
-            return BLOCKS, ("{} is a symbolic link to a {}, which the open for writing at "
-                            "aiqt_hooks.py:7720 follows and could block on"
-                            .format(tmp, _kind_of(resolved.st_mode)))
-        return None, ("{} is a symbolic link to {}, which the open for writing at aiqt_hooks.py:7720 "
-                      "would follow".format(tmp, "an absent path" if resolved is None
-                                            else "a " + ("regular file" if stat.S_ISREG(
-                                                resolved.st_mode) else "directory")))
-    elif stat.S_ISDIR(st.st_mode):
-        return False, ("{} is a directory, so the open for writing raises (aiqt_hooks.py:7720)"
-                       .format(tmp))
-    elif not stat.S_ISREG(st.st_mode):
-        return BLOCKS, ("{} is a {}, which the open for writing at aiqt_hooks.py:7720 could block on"
-                        .format(tmp, _kind_of(st.st_mode)))
-    elif not os.access(tmp, os.W_OK):
-        return False, "{} is not writable (aiqt_hooks.py:7720)".format(tmp)
-    if not writable:
-        return False, ("{} is not writable, so the rename at aiqt_hooks.py:7722 raises"
-                       .format(parent))
+        return False, ("{} is not searchable, so the lstat of the target raises "
+                       "(os.stat at aiqt_hooks.py:22259)".format(parent))
     try:
         target = os.lstat(path)
     except FileNotFoundError:
         target = None
     except OSError as exc:
-        return None, "{} cannot be examined ({})".format(path, exc)
+        return False, ("{} cannot be examined ({}), so the lstat of the target raises "
+                       "(os.stat at aiqt_hooks.py:22259)".format(path, exc))
+    if not os.access(parent, os.W_OK):
+        return False, ("{} is not writable, so the temporary file cannot be created in it "
+                       "(os.open at aiqt_hooks.py:22263-22264)".format(parent))
     if target is not None and stat.S_ISDIR(target.st_mode):
-        return False, ("{} is a directory, so the rename over it raises (aiqt_hooks.py:7722)"
-                       .format(path))
+        return False, ("{} is a directory, so the replace onto it raises "
+                       "(os.replace at aiqt_hooks.py:22284)".format(path))
     return True, None
 
 
 def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
     """(ctx, notes): the context exactly as the hook builds it, _orch_build_ctx with
-    record_checkpoint=True (aiqt_hooks.py:8434), with hook._orch_write_json_atomic and
+    record_checkpoint=True (aiqt_hooks.py:23409), with hook._orch_write_json_atomic and
     hook._orch_guard_event replaced for this call only by stand-ins that write nothing. The
-    stand-in write returns the outcome _atomic_write_outcome predicts for the checkpoint rewrite
-    (aiqt_hooks.py:8414) and the init-marker write (8424), so the hook code itself decides whether
-    the marker write is reached (8419) and whether it injects the cannot-evaluate row (8428); notes
-    lists the predicted writes. Raises _Unpreviewed for a write the preview does not model, for a
-    write whose open for writing could block (BLOCKS), whatever its other outcomes would decide,
-    since a blocked hook gives no verdict, or for an undecided write whose outcome could change the
-    verdict: an undecided checkpoint rewrite, which cannot block, is accepted only when the marker
-    exists or its write would succeed, since either outcome of the rewrite then injects nothing,
-    and an undecided marker write is never accepted."""
+    stand-in write returns what the hook writer returns for the outcome _atomic_write_outcome
+    predicts (None on success, else a short failure detail, aiqt_hooks.py:22204-22209) for the
+    checkpoint rewrite (:23373) and the init-marker write (:23389), so the hook code itself decides
+    whether the marker write is reached (os.path.lexists at :23384), whether it injects the
+    cannot-evaluate row (injected.append at :23394) and which recording-failure warnings it adds to
+    ctx["record_warn"]; notes lists the predicted writes. Raises _Unpreviewed for a write the
+    preview does not model."""
     sd = hook._orch_state_dir_for_root(root)
     checkpoint = os.path.join(sd, "backlog-checkpoint.json")
     marker = os.path.join(sd, "checkpoint-init.marker")
+    o_walk = getattr(hook, "_ORCH_O_WALK", None)
     notes = []
 
     def write(path, _obj):
         if path not in (checkpoint, marker):
             raise _Unpreviewed("the hook would write {}, a write this preview does not model"
                                .format(path))
-        outcome, reason = _atomic_write_outcome(path)
-        what = "checkpoint rewrite" if path == checkpoint else "init-marker write"
-        if outcome == BLOCKS:
-            # A blocked open is a third outcome beside success and failure: the hook gives no
-            # verdict at all, so it is never verdict-neutral.
-            raise _Unpreviewed("the {} could block the hook open for writing, so the hook could "
-                               "give no verdict at all: {}".format(what, reason))
-        if outcome is None and path == checkpoint and (
-                os.path.lexists(marker) or _atomic_write_outcome(marker)[0] is True):
-            # Either outcome leaves the verdict unchanged: with a marker present the write at 8424
-            # is skipped, and with a marker write that would succeed nothing is injected.
-            notes.append("checkpoint rewrite (aiqt_hooks.py:8414): undecided ({}); either outcome "
-                         "leaves the verdict unchanged".format(reason))
-            return True
-        if outcome is None:
-            raise _Unpreviewed("the {} could change the verdict and cannot be decided without "
-                               "writing: {}".format(what, reason))
-        if path == checkpoint:
-            notes.append("checkpoint rewrite (aiqt_hooks.py:8414): {}".format(
+        outcome, reason = _atomic_write_outcome(path, o_walk)
+        if path == checkpoint:  # the checkpoint rewrite, the first _orch_write_json_atomic call
+            notes.append("checkpoint rewrite (aiqt_hooks.py:23373): {}".format(
                 "would succeed" if outcome else "would FAIL ({}); the hook then skips the "
-                "init-marker write (aiqt_hooks.py:8419)".format(reason)))
-        else:
-            notes.append("init-marker write (aiqt_hooks.py:8424): {}".format(
+                "init-marker write (os.path.lexists at aiqt_hooks.py:23384) and adds a "
+                "recording-failure warning".format(reason)))
+        else:  # the init-marker write, the second _orch_write_json_atomic call of the union
+            notes.append("init-marker write (aiqt_hooks.py:23389): {}".format(
                 "would succeed" if outcome else "would FAIL ({}); the hook then injects a "
-                "cannot-evaluate row (aiqt_hooks.py:8428)".format(reason)))
-        return outcome
+                "cannot-evaluate row (injected.append at aiqt_hooks.py:23394)".format(reason)))
+        # The hook writer returns None on success, else a failure detail
+        # (_orch_write_json_atomic at aiqt_hooks.py:22208-22209).
+        return None if outcome else "predicted failure: {}".format(reason)
 
     def event(*_args, **_kwargs):
         return True
@@ -454,36 +427,15 @@ def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
     return ctx, notes
 
 
-def _counter_save_blocker(state_dir):
+def _counter_save_blocker(state_dir, o_walk=None):
     """None when the hook could plausibly save the denial counter, else the reason it could not.
-    It mirrors _orch_save_turn_state (aiqt_hooks.py:7752-7760: os.makedirs(state_dir), then open
-    turn-state.json for writing) with os.access only, so it writes nothing. os.access is an
-    approximation (see Residuals)."""
-    path = os.path.join(state_dir, "turn-state.json")
-    if os.path.lexists(state_dir) and not os.path.isdir(state_dir):
-        return "the state directory {} exists but is not a directory".format(state_dir)
-    if not os.path.isdir(state_dir):
-        # os.makedirs would create it under the nearest existing ancestor.
-        ancestor = os.path.dirname(state_dir)
-        while ancestor and not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
-            ancestor = os.path.dirname(ancestor)
-        if not os.path.isdir(ancestor) or not os.access(ancestor, os.W_OK | os.X_OK):
-            return ("the state directory {} is absent and cannot be created under {}"
-                    .format(state_dir, ancestor))
-        return None
-    if os.path.isdir(path):
-        return "{} is a directory".format(path)
-    if os.path.exists(path):
-        if not os.access(path, os.W_OK):
-            return "{} is not writable".format(path)
-        if not os.access(state_dir, os.X_OK):
-            return "the state directory {} is not searchable".format(state_dir)
-        return None
-    # Absent, or a dangling symlink, which the open would create at its target.
-    parent = os.path.dirname(os.path.realpath(path))
-    if not os.path.isdir(parent) or not os.access(parent, os.W_OK | os.X_OK):
-        return "{} is absent and cannot be created in {}".format(path, parent)
-    return None
+    The hook saves it through _orch_save_turn_state (aiqt_hooks.py:22350-22359), which writes
+    turn-state.json through _orch_write_json_atomic, so the outcome is the one
+    _atomic_write_outcome predicts for that path: the state directory decides it, and a read-only
+    turn-state.json is replaced, not opened. It uses lstat and os.access only, so it writes nothing.
+    os.access is an approximation (see Residuals)."""
+    ok, reason = _atomic_write_outcome(os.path.join(state_dir, "turn-state.json"), o_walk)
+    return None if ok else reason
 
 
 def _special_path(label, path):
@@ -520,11 +472,12 @@ def _stat_fails(path):
 
 
 def _registry_read_paths(hook, root):
-    """The registry files _orch_registry (aiqt_hooks.py:7606-7626) opens, in the order of
-    _ORCH_REGISTRY_FILES (7548). A file is opened (7619) only when its lstat succeeds (7609), and
-    the loop moves on to the next file only when that lstat raised FileNotFoundError (7610-7611): a
-    present file returns at 7617-7626 whatever its content, and an lstat fault returns bad at
-    7612-7617, so no later registry file is reached."""
+    """The registry files _orch_registry (aiqt_hooks.py:22081-22118) opens, in the order of
+    _ORCH_REGISTRY_FILES (21649). A file is opened (os.open at 22095) only when its lstat succeeds
+    (os.lstat at 22084), and the loop moves on to the next file only when that lstat raised
+    FileNotFoundError (22085-22086): a present file returns at 22093-22118 (os.open) whatever its
+    content, and an lstat fault returns bad at 22087-22092 (`except OSError as exc`), so no later
+    registry file is reached."""
     out = []
     for rel in hook._ORCH_REGISTRY_FILES:
         path = os.path.join(root, *rel.split("/"))
@@ -553,12 +506,12 @@ def _section(reg, key):
 
 def _state_path(hook, root, name):
     """A fixed hook state file under the state directory, resolved exactly as every hook reader
-    resolves it (_orch_state_dir_for_root, aiqt_hooks.py:7654-7659)."""
+    resolves it (_orch_state_dir_for_root, aiqt_hooks.py:22146-22151)."""
     return os.path.join(hook._orch_state_dir_for_root(root), name)
 
 
 def _lease_fresh_states(hook, lease, st):
-    """The freshness values the hook can compute for this lease (aiqt_hooks.py:7792-7798): {True}
+    """The freshness values the hook can compute for this lease (aiqt_hooks.py:22615-22627): {True}
     without a positive max_age_hours, else the value at the clock now and SCOPE_MARGIN seconds later,
     so a lease that crosses a bound of the window between this check and the hook call is treated as
     possibly either side (the window is at least _ORCH_CLOCK_SKEW wide, more than the margin, so the
@@ -571,17 +524,20 @@ def _lease_fresh_states(hook, lease, st):
 
 
 def _scope_read_paths(hook, reg, root, session_id):
-    """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:7779-7817) opens with a plain
+    """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:22593-22651) opens with a plain
     blocking open, each only when the hook reaches that open:
-      lease.path  opened at 7806-7808 only when the lease section is a non-empty object (7786-7787),
-                  its path resolves (7788-7789), os.stat succeeds (7791), the lease is non-empty and
-                  fresh (7792-7799), holder_is_session_id is set (7800) and the session id is a
-                  non-empty string (7804-7805; otherwise the hook returns False unopened).
-      mode.path   opened by _orch_mode at 7770-7772 via 7817 unless the hook returned first: a live
-                  lease returns at 7799-7811, and a lease os.stat cannot reach returns False in
-                  holder mode (7812-7815). A stat that succeeds on a stale or empty lease, or a
-                  failed stat without holder mode, falls through to the mode read.
-    The lease is never opened otherwise (the os.stat at 7791 does not block), so a FIFO there, whose
+      lease.path  opened at 22636-22638 only when the lease section is a non-empty object (22608-22610),
+                  its path resolves (_orch_path at 22611-22612), os.stat succeeds (22614), the lease
+                  is non-empty and fresh (_orch_lease_age_class at 22615-22629),
+                  holder_is_session_id is set (22630) and the session id is a non-empty string
+                  (22634-22635; otherwise the hook returns False unopened).
+      mode.path   opened by _orch_mode_read at 22441-22454, which _orch_mode reaches through
+                  _orch_mode_detail, via 22651 unless the hook returned first: a live lease returns
+                  (st.st_size at 22629-22641), and a lease os.stat cannot reach returns False in
+                  holder mode (holder_is_session_id at 22646-22649). A stat that succeeds on a
+                  stale or empty lease, or a failed stat without holder mode, falls through to the
+                  mode read.
+    The lease is never opened otherwise (the os.stat at 22614 does not block), so a FIFO there, whose
     size is 0, is not checked."""
     lease = reg.get("lease") if isinstance(reg.get("lease"), dict) else None
     lease_path = hook._orch_path(root, lease.get("path")) if lease else None
@@ -607,10 +563,10 @@ def _scope_read_paths(hook, reg, root, session_id):
 
 
 def _enumerator_runs(reg):
-    """True when _orch_enumerate (aiqt_hooks.py:7962-7989) reaches the subprocess at 7976: the
-    enumerator is an object (7967-7968) whose argv is a non-empty list of non-empty strings
-    (7970-7972). Otherwise it returns NO_ENUMERATOR or ENUMERATOR_ERROR unrun, and _orch_build_ctx
-    skips every reader after the enumeration (8448)."""
+    """True when _orch_enumerate (aiqt_hooks.py:22812-22845) reaches the subprocess at 22830: the
+    enumerator is an object (22817-22820) whose argv is a non-empty list of non-empty strings
+    (22824-22826). Otherwise it returns NO_ENUMERATOR or ENUMERATOR_ERROR unrun, and _orch_build_ctx
+    skips every reader after the enumeration (23430)."""
     spec = reg.get("enumerator")
     if not isinstance(spec, dict):
         return False
@@ -619,31 +575,34 @@ def _enumerator_runs(reg):
 
 
 def _ctx_read_paths(hook, reg, root):
-    """The paths _orch_build_ctx (aiqt_hooks.py:8434-8489) opens with a plain blocking open for
+    """The paths _orch_build_ctx (aiqt_hooks.py:23409-23472) opens with a plain blocking open for
     reading, traced through every reader it calls, each only when the call reaches it:
-      turn-state.json              _orch_turn_state, lexists then open at 7743-7745 (via 8441), always
-      enumerator argv[2] on        opened by the enumerator, run with cwd = the root (7976, via 8447),
+      turn-state.json              _orch_turn_state, lexists then open at 22341-22343 (via 23417), always
+      enumerator argv[2] on        opened by the enumerator, run with cwd = the root (22830, via 23428),
                                    only when the enumerator runs (_enumerator_runs)
-      dispatch-ledger.jsonl        _orch_live_ledger_ids 7998-7999, opened at 7678 (via 8449)
-      record.pending_decisions     _orch_pending_haystack, opened at 8043-8045 (via 8451)
-      attestations-validated.json  _orch_attestation_refs, opened at 8072-8074 (via 8452), when
-                                   attestations is declared (8068-8070)
-      attestations                 _orch_register_authority 9507 (via 8086) and _orch_chained_rows
-                                   9462 (via 8093), only when os.stat succeeds on the snapshot
-                                   (a failed snapshot open returns at 8075-8076)
-      attestations.anchor          _orch_register_authority 9543, and guard-events.jsonl
-      guard-events.jsonl           (_orch_pointer_resolves 9566, opened at 7678, via 8096 and 9616),
-                                   only when os.stat succeeds on the register too (a failed
-                                   register open holds at 9509-9510, returned at 8087-8089)
-      backlog-checkpoint.json      _orch_checkpoint_union, lexists then open at 8362-8365 (via 8457)
-    Every reader after the enumeration runs only on a successful enumeration (8448); the doctor
-    models the part a registry read decides (_enumerator_runs) and checks the rest whenever the
-    enumerator runs, since only running it decides whether it succeeds. Not modelled, so checked
-    conservatively: the snapshot content (8076-8084), whether git tracks the register (9516-9540),
-    and a guard-events pointer in a register row (9564). Not opened for reading with a blocking open,
-    so not checked here: the checkpoint-init marker (lexists only at 8376 and 8419) and the escape
-    sentinel (opened non-blocking at 7831-7832, via 8480). The writes at 8413-8430 are modelled by
-    _build_ctx_previewed and _atomic_write_outcome instead."""
+      dispatch-ledger.jsonl        _orch_live_ledger_ids 22854-22855, opened at 22170 (via 23431)
+      record.pending_decisions     _orch_pending_haystack, opened at 22902-22905 (via 23433)
+      attestations-validated.json  _orch_attestation_refs, opened at 22930-22932 (via 23434), when
+                                   attestations is declared (22926-22928)
+      attestations                 _orch_register_authority 32581 (via 22944) and _orch_chained_rows
+                                   32536 (via 22951), only when os.stat succeeds on the snapshot
+                                   (a failed snapshot open takes `return "unreadable"` at 22933-22934)
+      attestations.anchor          _orch_register_authority 32628, and guard-events.jsonl
+      guard-events.jsonl           (_orch_pointer_resolves 32680, opened at 22170, via 22954 and 32730),
+                                   only when os.stat succeeds on the register too (a failed register
+                                   open takes `return ("hold"` at 32583-32584, returned at
+                                   22945-22947 (`astatus != "ok"`))
+      backlog-checkpoint.json      _orch_checkpoint_union, lexists then open at 23318-23321 (via 23439)
+    Every reader after the enumeration runs only on a successful enumeration (`status == "ok"` at
+    23430); the doctor models the part a registry read decides (_enumerator_runs) and checks the rest
+    whenever the enumerator runs, since only running it decides whether it succeeds. Not modelled, so
+    checked conservatively: the snapshot content (22934-22942), whether git tracks the register
+    (`ls-files` at 32590-32621), and a guard-events pointer in a register row (pointer.startswith at
+    32678). Not opened for reading with a blocking open, so not checked here: the checkpoint-init
+    marker (read by os.path.lexists at 23332 and 23384 only) and the escape sentinel (opened
+    non-blocking by os.open at 22667-22668, via _orch_escape_active at 23462). The writes
+    (_orch_write_json_atomic at 23369-23396) are modelled by _build_ctx_previewed and
+    _atomic_write_outcome instead."""
     out = [_site("ctx.turn_state", "hook state file turn-state.json",
                  _state_path(hook, root, "turn-state.json"))]
     if not _enumerator_runs(reg):
@@ -674,8 +633,8 @@ def _ctx_read_paths(hook, reg, root):
 
 def _forced_exit_may_have_rows(log):
     """False when _orch_read_jsonl(forced-exit.jsonl) cannot return a row: os.stat fails, so the
-    open at 7678 raises and returns ([], 0) or (None, 0) (7680-7683), or the file is empty, so
-    there are no lines; either way _orch_forced_exit_findings returns at 9706-9714 before the
+    open at 22170 raises and returns ([], 0) or (None, 0) (22172-22175), or the file is empty, so
+    there are no lines; either way _orch_forced_exit_findings returns at 32821-32829 before the
     surfaced set. A non-empty file may still hold no rows, which only reading it decides, so it
     counts as possibly having rows."""
     try:
@@ -685,9 +644,10 @@ def _forced_exit_may_have_rows(log):
 
 
 def _open_fails_other_than_absent(path):
-    """True when os.stat on path raises an error other than FileNotFoundError: the open at 9717
-    then raises that error too, and _orch_forced_exit_findings returns at 9721-9724 before the
-    surfaced-set rewrite, whereas FileNotFoundError reads as an empty set (9719-9720)."""
+    """True when os.stat on path raises an error other than FileNotFoundError: the open of
+    surfaced_path at 32832 then raises that error too, and _orch_forced_exit_findings returns at
+    32836-32839 before the surfaced-set rewrite, whereas FileNotFoundError reads as an empty set
+    (32834-32835)."""
     try:
         os.stat(path)
     except FileNotFoundError:
@@ -698,36 +658,41 @@ def _open_fails_other_than_absent(path):
 
 
 def _audit_read_paths(hook, reg, root):
-    """The paths orch_resume_audit (aiqt_hooks.py:9765-9794) opens with a plain blocking open on a
-    readable registry, traced through _orch_resume_probes (9351-9413) and every reader it calls,
+    """The paths orch_resume_audit (aiqt_hooks.py:32930-33014) opens with a plain blocking open on a
+    readable registry, traced through _orch_resume_probes (32398-32482) and every reader it calls,
     each only when the audit reaches it:
-      record.handoff                  opened at 9358-9360, when declared
-      record.findings                 opened at 9386-9388, and at 9424-9426 (via 9410), when declared
-      record.pending_decisions        opened at 9386-9388, when declared
-      attestations                    _orch_chained_rows 9462 (via 9642) and _orch_register_authority
-                                      9507 (via 9643), when declared (9638-9640)
-      attestations.anchor             _orch_register_authority 9543, only when os.stat succeeds on
-                                      the register (a failed register open holds at 9509-9510)
-      attestations-validated.json.tmp written by _orch_write_json_atomic at 7719-7720 (via 9670),
+      record.handoff                  opened at 32420-32428, when declared
+      record.findings                 opened at 32450, and at 32497-32502 (via 32479), when declared
+      record.pending_decisions        opened at 32450, when declared
+      attestations                    _orch_chained_rows 32536 (via 32756) and _orch_register_authority
+                                      32581 (via 32757), when declared (at_path at 32752-32754)
+      attestations.anchor             _orch_register_authority 32628, only when os.stat succeeds
+                                      on the register (a failed register open takes
+                                      `return ("hold"` at 32583-32584)
+      attestations-validated.json.tmp written by _orch_write_json_atomic at 22263-22264 (via 32784),
                                       when attestations is declared
-      mistakes_register               _orch_chained_rows 9461-9463 (via 9677-9679), when declared
-      guard-events.jsonl              read by _orch_pointer_resolves at 9566 (via 9657 and 9689),
-                                      opened at 7678; appended by _orch_guard_event at 7667 (via
-                                      9789); both depend on file content, so always checked
-      escape-spoof.json               lexists then open at 9747-9748 (via 9412)
-      forced-exit.jsonl               _orch_forced_exit_findings 9704-9705, opened at 7678
-      forced-exit-surfaced.json       opened at 9716-9717, only when the log may hold rows
-                                      (_forced_exit_may_have_rows; no rows return at 9713-9714)
-      forced-exit-surfaced.json.tmp   written at 7719-7720 (via 9734), only when the surfaced file
-                                      is reached and its open does not fail other than as absent
-                                      (_open_fails_other_than_absent; 9721-9724)
-    resume-barrier.json (written at 9783) is read before the audit by _barrier_snapshot, which
+      mistakes_register               _orch_chained_rows 32535-32537 (via 32792-32794), when declared
+      guard-events.jsonl              read by _orch_pointer_resolves at 32680 (via 32771 and 32804),
+                                      opened by _orch_read_jsonl at 22170; appended by _orch_guard_event
+                                      at 22159 (via 32994); both depend on file content, so always
+                                      checked
+      escape-spoof.json               lexists then open at 32871-32872 (via
+                                      _orch_pending_artefact_findings at 32481)
+      forced-exit.jsonl               _orch_forced_exit_findings 32819-32820, opened at 22170
+      forced-exit-surfaced.json       opened at 32831-32832, only when the log may hold rows
+                                      (_forced_exit_may_have_rows; no rows return at 32828-32829)
+      forced-exit-surfaced.json.tmp   written by _orch_write_json_atomic at 22263-22264 (via 32851),
+                                      only when the surfaced file is reached and its open does not
+                                      fail other than as absent (_open_fails_other_than_absent;
+                                      `return findings` at 32836-32839)
+    resume-barrier.json (written at 32984) is read before the audit by _barrier_snapshot, which
     refuses a special file there. The audit runs no enumerator and does not open the lease (os.stat
-    only, 9398), the mode record, turn-state.json, dispatch-ledger.jsonl or backlog-checkpoint.json,
+    only, 32460), the mode record, turn-state.json, dispatch-ledger.jsonl or backlog-checkpoint.json,
     so none of those is checked here. Not modelled, so checked conservatively: whether git tracks the
-    register (9516-9540), the rows and pointers a register holds (9564, 9657, 9689), the rows the
-    forced-exit log and the surfaced set hold (9706-9733), and whether there are findings to record
-    (9788-9789)."""
+    register (`ls-files` at 32590-32621), the rows and pointers a register holds (pointer.startswith
+    at 32678, _orch_attestation_derive at 32771, _orch_pointer_resolves at 32804), the rows the
+    forced-exit log and the surfaced set hold (_orch_forced_exit_findings at 32821-32848), and
+    whether there are findings to record (`if findings` at 32993-32994)."""
     rec = _section(reg, "record")
     out = [_site("audit.handoff", "declared record.handoff", hook._orch_path(root, rec.get("handoff"))),
            _site("audit.findings", "declared record.findings",
@@ -761,10 +726,12 @@ def _audit_read_paths(hook, reg, root):
 
 
 def _audit_bad_registry_paths(hook, root):
-    """On an unreadable registry the audit opens only resume-barrier.json.unused (appended at 7667,
-    via 9777) and guard-events.jsonl (appended at 7667, via 9789, since the unreadable registry is
-    itself a finding, 9778), beside the barrier, under the state directory the hook resolves for
-    that registry (aiqt_hooks.py:9775). Both are always reached."""
+    """On an unreadable registry the audit opens only resume-barrier.json.unused (appended by
+    _orch_append_jsonl at 22159, via 32977) and guard-events.jsonl (appended by _orch_append_jsonl
+    at 22159, via _orch_event_warn at 32994, since the unreadable registry is itself a finding,
+    _orch_resume_audit_findings at 32981), beside the barrier, under the state directory the hook
+    resolves for that registry (_orch_state_dir_for_root at aiqt_hooks.py:32975). Both are always
+    reached."""
     return [_site("audit_bad.unused", "hook state file resume-barrier.json.unused",
                   _state_path(hook, root, "resume-barrier.json.unused")),
             _site("audit_bad.guard_events", "hook state file guard-events.jsonl",
@@ -804,8 +771,8 @@ def _event_data(kind_name, session_id, stop_hook_active, tool, tool_stop, wake_t
     each field in the form the hook reads it (the event-field table in the module docstring; the
     class probe in tools/test-orch-stage2-hooks.py keeps it in step with the hook source). cwd is
     not carried: --root stands for it, resolved as _orch_root resolves data["cwd"]
-    (aiqt_hooks.py:7590-7595). A flag that is off leaves its field absent, which the hook reads
-    exactly as any value other than true (its tests are "is True", aiqt_hooks.py:8482 and 8669)."""
+    (aiqt_hooks.py:21720-21725). A flag that is off leaves its field absent, which the hook reads
+    exactly as any value other than true (its tests are "is True", aiqt_hooks.py:23465 and 23689)."""
     data = {}
     if session_id:
         data["session_id"] = session_id
@@ -832,10 +799,12 @@ def _preflight(hook, root, kind_name, data):
     if status == "bad":
         print("registry: unreadable ({})".format(reg))
         print("posture on an unreadable registry: a Stop fails open with a warning "
-              "(aiqt_hooks.py:8579-8583); a scheduling call is denied (aiqt_hooks.py:8654-8661)")
+              "(aiqt_hooks.py:23569-23573); a scheduling call is denied "
+              "(_deny at aiqt_hooks.py:23673-23680)")
         return 2
     print("registry: ok")
-    # The session id exactly as both handlers read it (aiqt_hooks.py:8584 and 8662).
+    # The session id exactly as both handlers read it: "session_id" at aiqt_hooks.py:23574 for a
+    # Stop and "session_id" at 23681 for a scheduling call.
     session_id = data.get("session_id")
     special = _first_special(_scope_read_paths(hook, reg, root, session_id))
     if special is not None:
@@ -847,8 +816,9 @@ def _preflight(hook, root, kind_name, data):
                              "not live (the hook allows without judging)"))
     if not scope_live:
         # The hook returns here, before the context is built or the enumerator runs
-        # (aiqt_hooks.py:8584-8585 for a Stop, :8662-8663 for a scheduling call), so neither does
-        # the preview: an enumerator run here could change what a later Stop decides.
+        # (_orch_scope_live at aiqt_hooks.py:23574-23576 for a Stop, _orch_scope_live at
+        # :23681-23683 for a scheduling call), so neither does the preview: an enumerator run here
+        # could change what a later Stop decides.
         print("enumeration: not run (out of scope, the hook allows before it enumerates)")
         print("writes: the doctor itself wrote nothing, and no enumerator ran")
         print("effective verdict: ALLOW (out of scope)")
@@ -859,7 +829,7 @@ def _preflight(hook, root, kind_name, data):
         tool = data.get("tool_name")
         declared = reg.get("yield_tools")
         # Exactly the hook test: allowed unjudged unless yield_tools is a list holding the tool
-        # (aiqt_hooks.py:8664-8667).
+        # (aiqt_hooks.py:23684-23687).
         in_roster = isinstance(declared, list) and tool in declared
         if isinstance(declared, list):
             print("yield_tools roster: {}".format(", ".join(str(t) for t in declared) or "(empty)"))
@@ -867,47 +837,52 @@ def _preflight(hook, root, kind_name, data):
             print("yield_tools roster: not a declared list")
         print("tool {}: {}".format(tool, "in the roster, judged" if in_roster else
                                    "not in the roster; the hook allows it unjudged "
-                                   "(aiqt_hooks.py:8664-8667)"))
+                                   "(aiqt_hooks.py:23684-23687)"))
         if not in_roster:
-            # The hook returns here too, before the context or the enumeration (aiqt_hooks.py:8667).
+            # The hook returns here too, before the context or the enumeration
+            # (_allow at aiqt_hooks.py:23687).
             print("enumeration: not run (out of the roster, the hook allows before it enumerates)")
             print("writes: the doctor itself wrote nothing, and no enumerator ran")
             print("effective verdict: ALLOW (out of the roster)")
             return 0
-        # Exactly the hook derivation of the kind and the wake text (aiqt_hooks.py:8668-8670).
+        # Exactly the hook derivation of the kind and the wake text from the event
+        # (tool_input at aiqt_hooks.py:23688-23690).
         tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
         kind = "stop" if tool_input.get("stop") is True else "schedule_idle"
         wake_text = " ".join(str(v) for v in tool_input.values() if isinstance(v, str))
         print("judged kind: {}".format(
-            "stop (tool_input stop is true, aiqt_hooks.py:8669)" if kind == "stop"
-            else "schedule_idle (aiqt_hooks.py:8669)"))
+            "stop (tool_input stop is true, aiqt_hooks.py:23689)" if kind == "stop"
+            else "schedule_idle (aiqt_hooks.py:23689)"))
         if kind != "schedule_idle":
             print("quiet-claim check: not applicable; the hook runs it only for the schedule_idle "
-                  "kind (aiqt_hooks.py:8681)")
+                  "kind (aiqt_hooks.py:23706)")
         else:
             quiet_claim = (bool(hook._ORCH_QUIET_CLAIM_RE.search(wake_text))
                            and "quiet" in wake_text.lower())
             if quiet_claim:
                 print("quiet-claim check: NOT PREVIEWED; the wake text carries a quiet-duration "
                       "claim, which the hook judges inline against the measured gap since the last "
-                      "human input before the verdict below (aiqt_hooks.py:8675-8692); it cannot "
-                      "be called without writing a guard event")
+                      "human input before the verdict below "
+                      "(_ORCH_QUIET_CLAIM_RE at aiqt_hooks.py:23700-23719); it cannot be called "
+                      "without writing a guard event")
             else:
-                print("quiet-claim check: not previewed (aiqt_hooks.py:8675-8692); the wake text "
-                      "carries no quiet-duration claim, so the check does not fire")
+                print("quiet-claim check: not previewed "
+                      "(_ORCH_QUIET_CLAIM_RE at aiqt_hooks.py:23700-23719); the wake text carries no "
+                      "quiet-duration claim, so the check does not fire")
     special = _first_special(_ctx_read_paths(hook, reg, root))
     if special is not None:
         # _orch_build_ctx opens these with a plain blocking open (see _ctx_read_paths), so a FIFO
         # there would hang the preview; the context is not built and no enumerator runs.
         return _refuse_special(special)
-    # The context as each handler builds it: a Stop passes no wake text (aiqt_hooks.py:8586), a
-    # scheduling call the joined tool_input text (:8671); both pass the event data, whose
-    # stop_hook_active sets the loop signal (:8482).
+    # The context as each handler builds it: a Stop passes no wake text (_orch_build_ctx at
+    # aiqt_hooks.py:23577), a scheduling call the joined tool_input text (:23691); both pass the
+    # event data, whose stop_hook_active sets the loop signal (:23465).
     try:
         ctx, notes = _build_ctx_previewed(hook, reg, root, kind, data, wake_text)
     except _Unpreviewed as exc:
         print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs "
-              "it (aiqt_hooks.py:7962-7989), and anything that program writes is its own")
+              "it (_orch_enumerate at aiqt_hooks.py:22812-22845), and anything that program writes "
+              "is its own")
         print("hook write: NOT PREVIEWED; {}".format(exc))
         print("effective verdict: UNPREVIEWED (the verdict depends on a hook write that cannot be "
               "decided without writing)")
@@ -917,16 +892,18 @@ def _preflight(hook, root, kind_name, data):
     else:
         print("enumeration: {}: {}".format(ctx["enum_status"], ctx["enum_detail"]))
     print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs it "
-          "(aiqt_hooks.py:7962-7989), and anything that program writes is its own")
+          "(_orch_enumerate at aiqt_hooks.py:22812-22845), and anything that program writes is its "
+          "own")
     if ctx["enum_status"] != "ok":
         print("checkpoint writes: none; the hook reaches the checkpoint union only after a "
-              "successful enumeration (aiqt_hooks.py:8448)")
+              "successful enumeration (_orch_build_ctx at aiqt_hooks.py:23430)")
     for note in notes:
         print("predicted hook write, not made: {}".format(note))
     if ctx["enum_status"] == "ok" and not any(n.startswith("init-marker") for n in notes):
-        print("predicted hook write, not made: init-marker write (aiqt_hooks.py:8424): not "
+        # The init-marker write is the second _orch_write_json_atomic call of the union.
+        print("predicted hook write, not made: init-marker write (aiqt_hooks.py:23389): not "
               "reached (the marker exists, or the checkpoint rewrite would fail)")
-    print("loop signal: {}".format("set (stop_hook_active is true, aiqt_hooks.py:8482)"
+    print("loop signal: {}".format("set (stop_hook_active is true, aiqt_hooks.py:23465)"
                                    if ctx["loop_signal"] else "not set"))
     if ctx["escape"]:
         print("escape sentinel: active (an operator release is open)")
@@ -945,29 +922,47 @@ def _preflight(hook, root, kind_name, data):
     print("judged reason: {}".format(reason))
     print("verdict without the escape sentinel: {}".format(verdict_ne))
     print("reason without the escape sentinel: {}".format(reason_ne))
+    o_walk = getattr(hook, "_ORCH_O_WALK", None)
+    blocker = _counter_save_blocker(hook._orch_state_dir_for_root(root), o_walk)
     if kind_name == "stop":
-        blocker = _counter_save_blocker(hook._orch_state_dir_for_root(root))
         if blocker is None:
             print("denial counter: could be saved (an os.access check; the hook saves it on a DENY)")
         else:
             print("denial counter: could NOT be saved ({}; an os.access check)".format(blocker))
             if effective == "DENY":
-                # aiqt_hooks.py:8590-8596: an unsaved counter never reaches the loop bound, so the
-                # Stop fails open with a warning rather than re-denying.
+                # _orch_record_denial at aiqt_hooks.py:23588-23594: an unsaved counter never
+                # reaches the loop bound, so the Stop fails open with a warning rather than
+                # re-denying.
                 print("effective verdict: ALLOW_WITH_FINDINGS (the fail-open allow the hook gives "
-                      "when the denial counter cannot be saved, aiqt_hooks.py:8590-8596; the judged "
-                      "DENY would not hold. Underlying: {})".format(reason))
+                      "when the denial counter cannot be saved, "
+                      "_orch_record_denial at aiqt_hooks.py:23588-23594; the "
+                      "judged DENY would not hold. Underlying: {})".format(reason))
                 _print_disposition(disposition)
                 return 1
     else:
         print("denial counter: not checked; a scheduling DENY stands whether or not the counter "
-              "is saved (aiqt_hooks.py:8694-8698)")
+              "is saved (_orch_record_denial at aiqt_hooks.py:23727-23744)")
+    # The hook adds a recording-failure warning to an allow when a checkpoint write fails
+    # (ctx["record_warn"], aiqt_hooks.py:23439, surfaced at :23618-23621 for a Stop and :23949 for
+    # a scheduling call), and, for an allowed schedule_idle call, when the wake digest cannot be
+    # saved to turn-state.json (_orch_register_wake, :23638-23660); the ALLOW stands, with that
+    # warning as a finding.
+    record_warn = list(ctx.get("record_warn") or [])
+    if kind == "schedule_idle" and effective != "DENY" and blocker is not None:
+        record_warn.append("the wake digest could not be saved to turn-state.json ({})"
+                           .format(blocker))
     if quiet_claim and effective != "DENY":
         # The quiet-claim check runs before decide_yield and may deny; a DENY stands either way.
         print("effective verdict: UNPREVIEWED ({} unless the quiet-claim check denies)"
               .format(effective))
         _print_disposition(disposition)
         return 2
+    if effective == "ALLOW" and record_warn:
+        print("recording failures the hook would report: {}".format(" ".join(record_warn)))
+        print("effective verdict: ALLOW_WITH_FINDINGS (the ALLOW stands, and the hook reports the "
+              "recording failures above with it)")
+        _print_disposition(disposition)
+        return 1
     print("effective verdict: {}".format(effective))
     _print_disposition(disposition)
     return 0 if effective == "ALLOW" else 1
@@ -1111,8 +1106,9 @@ def main(argv):
         return 2
     if (args.tool_stop or args.wake_text is not None) \
             and (args.resume_audit or args.kind != "idle"):
-        # A Stop event carries no tool_input (aiqt_hooks.py:8586 passes no wake text), so an input
-        # the previewed handler never reads is refused rather than silently ignored.
+        # A Stop event carries no tool_input (_orch_build_ctx at aiqt_hooks.py:23577 passes no
+        # wake text), so an input the previewed handler never reads is refused rather than
+        # silently ignored.
         parser.print_usage(sys.stderr)
         print("orch_doctor.py: --tool-stop and --wake-text apply only to preflight idle",
               file=sys.stderr)

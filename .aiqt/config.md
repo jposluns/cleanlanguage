@@ -38,9 +38,13 @@ Basis: an expensive codex applicability assessment and a fable value ranking, bo
 ## Hooks
 
 The AIQT Guardrails hooks plugin is enabled for dev-time sessions through
-`.claude/settings.json` and the local marketplace at `plugin/`. All 14 core hooks can
-fire: `gensrc_guard` was armed by authoring `.aiqt/gensrc.json` (PR #156), which lists
-this repository's generated artefacts (the sitemap and the portable text).
+`.claude/settings.json` and the local marketplace at `plugin/`. The plugin registers 31
+hooks: 12 orchestrator hooks and 19 others. The refresh to pack commit 730c039b added 7 of
+them: 2 orchestrator hooks (`orch_lease_heartbeat_post` and `orch_lease_heartbeat_stop`) and
+5 others (`git_stash_ref`, `inline_errexit`, `pgrep_self_match`, `review_dispatch_pin` and
+`review_workdir_hold`). `gensrc_guard` was armed by authoring `.aiqt/gensrc.json` (PR #156),
+which lists this repository's generated artefacts (the sitemap and the portable text), and
+since that refresh it also watches Bash commands as well as Write and Edit calls.
 `write_scope_guard` remains partly armed: without its per-slice `write-scope.json`
 declaration, and with no committed `.aiqt/frozen.json` floor, its slice confinement and
 frozen-floor denial are un-armed, but its structural cross-repository and nested-repository
@@ -62,15 +66,23 @@ co-author or session trailer.
 
 A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) arms part of the
 orchestrator suite. It declares `companion_stores`, `record`, `lease`, `state_dir`, and an
-empty `dispatch_tools`. Two of the 10 orchestrator hooks deny on the presence of the registry
+empty `dispatch_tools`. Two of the 12 orchestrator hooks deny on the presence of the registry
 alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
-background dispatch piped into `head` or `tail`), and a backgrounded poll loop. They carry
-one disclosed residual that touches a common idiom: the detach scan does not model
-here-document bodies, so a foreground Bash heredoc whose body contains a literal `&` or an
-odd number of apostrophes is denied as though it were a detach. Write multi-line content
-through the Write or Edit tool (which these Bash guards never see) or through `printf` rather
-than a Bash heredoc when the body carries such characters.
+background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
+`orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
+read or whose working directory it cannot walk. They carry 1 disclosed residual that touches
+a common idiom: the detach scan reads some here-document bodies as shell text. A foreground
+Bash here-document whose body holds an `&` is denied as though it were a detach when its
+delimiter is unquoted (`<<EOF`). A body with an odd number of apostrophes is denied as an
+open quote when the command also holds an `&`, unless the whole command is a plain
+`cat > file` write under a quoted delimiter. An `&` in a body under a quoted delimiter
+(`<<'EOF'`) read at the top level of the command or in the `"$(cat <<'EOF' ... EOF)"` form is
+not denied, and nor is an apostrophe in a body when the command holds no `&` and no form that
+can start a background job without one, such as `setsid`, `eval` or `coproc`. Write
+multi-line content through the Write or Edit tool (which these Bash guards never see) or
+through `printf` when the body carries such characters; a body with an `&` and no apostrophe
+can also go under a quoted delimiter.
 
 The declared `lease` makes scope live: while the lease file is present, non-empty, and
 fresh, every session whose working directory resolves to this checkout and which can

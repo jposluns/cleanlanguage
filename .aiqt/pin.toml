@@ -22,7 +22,7 @@ adopted = "2026-09-05"
 # the adopted subset. Both are recorded regardless of the version label.
 pack = "1.0.0"          # VERSION, changelog.toml, manifest.toml release-version
 skill = "1.0.4"         # .aiqt/core/skill/skill-source.md meta.version
-hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json
+hooks-plugin = "0.5.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, from pack commit 730c039b (see [hooks-update])
 
 [integrity]
 tree-sha256 = "9dbbe17c9bb1372b0bff9b01216d6860851d7b735983a0c40691d91329ca1fe4"
@@ -70,13 +70,25 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # hooks-only advance; the orchestrator suite stays inert (no registry). Adopted per maintainer
 # decision 2026-09-13 (32-adopt, option C sequenced, Step 1). Prior advance: 2026-09-12 PR #232
 # fa5f942 (round-2 hardening).
-advanced = "2026-09-13"
-source-commit = "2eb6812c" # guardrails main PR #233; file == upstream HEAD 0510edd
+# 2026-11-14: the whole hooks plugin (plugin.json, hooks.json and aiqt_hooks.py) was refreshed
+# to guardrails main at commit 730c039b, whose own .aiqt/manifest.toml reads release-version
+# 1.0.5 and whose .aiqt/release/root.txt names that manifest's sha256 (below). This is a COMMIT
+# pin, not a release pin: no pack release carries these hooks (v1.0.5, the only tag, ships
+# plugin 0.4.0), and the pack plans release 1.1.1 with no date set; a re-pin to that release
+# replaces this block once it is cut. The refresh closes the write-then-run hook bypass that
+# the 2eb6812c hooks allowed. Still a SCOPED hooks-only advance; the rule corpus is unchanged.
+# The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
+advanced = "2026-11-14"
+source-commit = "730c039bdfb1bdeaf3d0350fbc0b7edfb27cbaae" # guardrails main, untagged
+source-release-version = "1.0.5"  # release-version in the manifest of that commit
+source-manifest-root = "sha256:d3e787d0bf055106035db1f782dd4fb7f5e4a816283e9f29a9f96e019e512446"
 files = [
-  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 704505 B, sha256 1052f4f48f2fe0e839c665455ad2af2c21abf3fe389fa8acb832fcdf842062ce
-  "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
+  "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",   # 288 B, sha256 6a019cab82e0df55d88b44b1199d10bf95d37c5bd959fffd57b7aa36df84c591
+  "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 11073 B, sha256 2fab2f7388e32e7dd07302193217079e070c069c014f43195ade463e707c7813
+  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 2489505 B, sha256 b8d02451c808defefad5462a05f78e04409408b238883d8384fe68badd05497f
 ]
-verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
+verified = "each file byte-equal to its [[sources]] entry in the manifest of commit 730c039b, and that manifest's sha256 equal to the commit's .aiqt/release/root.txt"
+# Prior source-commit: 2eb6812c (guardrails main PR #233; file == upstream HEAD 0510edd).
 
 [rules-update]
 # 2026-09-13: added guardrails PR #205's rule "explicit-binding-over-ambient-context"
