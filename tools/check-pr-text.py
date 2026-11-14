@@ -27,25 +27,33 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
   inline code still fails;
 - in the squash message only, a subject that does not end with " (#<number>)".
 
-Before the label, dash and spelling checks, the gate masks fenced code blocks, inline code spans,
-URLs, and the text on 1 line between a pair of straight double quote marks, or between U+201C
-and the next U+201D, which holds quoted language and also any other text between such a pair,
-such as the text between 2 inch marks. A mixed or reversed pair, such as a straight mark closed
-by U+201D, or U+201D before U+201C, is not masked. Each masked character becomes a space, so a
-word boundary next to a masked span survives.
+Before the label, dash and spelling checks, the gate masks fenced code blocks, then on each
+other line the inline code spans, the URLs and the quoted text, in that order. Each masked
+character becomes a space, so a word boundary next to a masked span survives.
 
-A fenced code block opens on a line of 0 to 3 spaces and then 3 or more backticks or tildes; a
-backtick opener with a backtick in the rest of its line is not a fence. The block runs to the
-next line of 0 to 3 spaces and then at least as many of the opener's character, followed by
-nothing but spaces or tabs, as CommonMark reads it. When a fence is never closed, the block runs
-to the end of the text, as a renderer shows those lines as code, and the unclosed fence is
-reported as a defect, so the masked lines do not pass unseen. An inline code span opens on a run
-of backticks and closes on the next run of exactly as many backticks on the same line; a run
-with no such closer is plain text. The scan that finds the spans takes time linear in the length
-of the line. A URL starts with http:// or https:// and ends before the first whitespace, angle
-bracket, quote mark (straight, or U+2018, U+2019, U+201C or U+201D), backtick, U+2013 or U+2014;
-a parenthesis is part of it only in a pair, such as (bar), with no parenthesis inside; and a
-trailing full stop, comma, semicolon, colon, exclamation mark or question mark is not part of it.
+- A fenced code block opens on a line of 0 to 3 spaces and then 3 or more backticks or tildes;
+  a backtick opener with a backtick in the rest of its line is not a fence. The block, its
+  opener line included, runs to the next line of 0 to 3 spaces and then at least as many of the
+  opener's character, followed by nothing but spaces and tabs; any other character after that
+  run, other whitespace included, leaves the fence open. When a fence is never
+  closed, the block runs to the end of the text, as a renderer shows those lines as code, and
+  the unclosed fence is reported as a defect, so the masked lines do not pass unseen.
+- An inline code span opens on a run of backticks and closes on the next run of exactly as many
+  backticks on the same line; a run with no such closer is plain text. The scan that finds the
+  spans takes time linear in the length of the line.
+- A URL starts with http:// or https:// after a word boundary and runs to the end of its line or
+  to the first character of its stopper set: whitespace as Python's \\s reads it, the angle
+  brackets, the straight double and single quote marks, the backtick, the parentheses, U+2013,
+  U+2014, U+2018, U+2019, U+201C and U+201D. A parenthesis is part of it only in a pair, such as
+  (bar), that holds no stopper; a trailing full stop, comma, semicolon, colon, exclamation mark
+  or question mark is not part of it. Any other character glued to a URL, such as a comma,
+  U+201E or U+00BB, joins it, so the text after that character up to the next stopper is masked
+  with the URL.
+- Quoted text is the text on 1 line between a pair of straight double quote marks, or between
+  U+201C and the next U+201D, which holds quoted language and also any other text between such
+  a pair, such as the text between 2 inch marks. These 2 pairs are the only ones masked: a mixed
+  or reversed pair, such as a straight mark closed by U+201D, or U+201D before U+201C, and a
+  pair of other marks, such as U+201E and U+201C, are read as prose.
 
 The width check skips fenced code and a line whose excess over 72 characters lies in 1 URL: the
 URL starts within the first 73 characters, so that every character past the 72nd is part of it,
@@ -87,8 +95,9 @@ organ after the prefix re- or before the ending -isational, or the stem author a
 dash other than U+2013 and U+2014, such as the figure dash U+2012 or the horizontal bar U+2015;
 a defect inside a masked region, such as an em dash inside double quotes, between 2 inch marks
 or in the lines that an unclosed fence masks; a defect in a region that the gate masks but a
-renderer shows as prose, such as a fence inside an HTML block or a span opened by a backtick
-escaped with a backslash; a message typed into the merge dialog that differs from the
+renderer shows as prose, such as a fence inside an HTML block, a span opened by a backtick
+escaped with a backslash, or the text glued after a URL by a character outside its stopper set,
+such as a comma, U+201E or U+00BB; a message typed into the merge dialog that differs from the
 committed file; and a description edited after the last run.
 
 The known false failures are a class, accepted with no escape: honest text that the gate reads
@@ -109,36 +118,49 @@ path, never from the working directory, and reads any UTF-8 text file.
     check-pr-text.py --description PATH           a description file
     check-pr-text.py --squash PATH [--number N]   a squash-message file
 
-With --number N, the subject must end with " (#N)"; N is a number of 1 to 18 digits with no
-leading zero. Without it, the number comes from the file name when the path ends
-.github/squash/<number>.txt, where <number> is such a number; otherwise, as for 0.txt or 007.txt,
-the gate prints the line "pr-text: subject binding not checked", which is not a defect, and goes
-on. The bound of 18 digits keeps the conversions of the --number value and of the squash file
-name to a number far under the limit of 4300 digits that Python sets. A payload whose number
-has more than 4300 digits is reported as unreadable, with "not JSON", since the JSON reader
-refuses it.
+The subject binding and the digit bound. In --squash mode with --number N, the subject must
+end with " (#N)"; N must be a number of 1 to 18 digits with no leading zero, and any other value
+is a usage error. In --squash mode without --number, the number comes from the file name when
+the path ends .github/squash/<number>.txt, where <number> is such a number; otherwise, as for
+0.txt, 007.txt or a name of 19 digits, the gate prints the line "pr-text: subject binding not
+checked", which is not a defect, and goes on. The bound of 18 digits keeps the conversions of
+the --number value and of the squash file name to a number far under the limit of 4300 digits
+that Python sets. In --event mode the number is the payload's pull request number, a positive
+integer of any length the JSON reader accepts, and the squash file of that number,
+.github/squash/<number>.txt, binds the subject; a payload number of more than 4300 digits is
+unreadable, with "not JSON", since the JSON reader refuses it.
 
-The exit status and the output, for the inputs the gate reads (the 2 texts, the event payload,
-the squash file and the arguments): exit 0 when the texts are clean, 1 on any defect, and 2 on
-unreadable input or a usage error. Unreadable input is a missing or unparseable payload, an
-event that is not a pull request or whose body is neither null nor text, a missing or
-undecodable squash file or text file, a working directory that cannot be read when a relative
-squash path needs it, a lint that cannot be loaded or that raises, exits or is interrupted
-while it loads, and any other exception raised while the gate reads and checks, such as from a
-scan of the lint, SystemExit and KeyboardInterrupt among them. Every output line starts with 1 of
-the fixed ASCII prefixes description, squash, unreadable: and pr-text:, and every character
-outside printable ASCII in a reported line is written as a backslash escape, so no author text
-starts a line of output. The last line is "pr-text: <n> defect(s)", also on exit 2.
+The exit contract. The gate decides its exit status in this order:
 
-Residual of that promise: the label lint is trusted repository code that runs in the gate
-process, so a lint that ends the process, such as with os._exit, writes to standard output or
-closes it can end the gate with another status, with no count line or with a line that has no
-prefix. So can a standard output that cannot be written, and an input that never ends, such as
-a FIFO given as the squash file, which the job's time limit ends. So can a payload nested so
-deeply that its parse uses up the memory of the gate process: the JSON reader recurses once for
-each level, and under a stack limit it stops with a RecursionError, reported as "not JSON", once
-the stack is full, but on a stack with no limit it can grow until memory runs out and the
-process ends by a signal.
+1. A usage error exits 2, with a line that starts "pr-text: " and names the error and the usage.
+2. Otherwise, an unreadable input, or any exception the gate catches while it reads and checks,
+   exits 2 with a line that starts "unreadable: ", also after defects were reported.
+3. Otherwise, the gate exits 1 when it reported a defect.
+4. Otherwise, it exits 0.
+
+In each case the last line is "pr-text: <n> defect(s)", where <n> counts the defects reported
+before the gate stopped. Every output line starts with 1 of the fixed ASCII prefixes
+description, squash, unreadable: and pr-text:, and every character outside printable ASCII in a
+reported line is written as a backslash escape, so no author text starts a line of output.
+
+Unreadable input is a missing or unparseable payload, an event that is not a pull request or
+whose body is neither null nor text, a payload number that is not a positive integer, a missing
+or undecodable squash file or text file, a working directory that cannot be read when a
+relative squash path needs it, and a lint that cannot be loaded or that raises, exits or is
+interrupted while it loads. The gate catches every exception raised while it reads and checks,
+SystemExit and KeyboardInterrupt among them, such as from a scan of the lint, and reports it as
+unreadable with its type name.
+
+The precondition of the contract: it holds when the label lint, which is trusted repository
+code run in the gate process, returns from loading and from each scan call without changing the
+state of that process, for example by ending it, as with os._exit, or by writing to, closing or
+replacing standard output. Outside it as well are a standard output that cannot be written, an
+input that never ends, such as a FIFO given as the squash file, which the job's time limit ends,
+and a payload nested so deeply that its parse uses up memory on a stack with no limit: the JSON
+reader recurses once for each level, and under a stack limit it stops with a RecursionError,
+reported as "not JSON", once the stack is full, but on a stack with no limit it can grow until
+memory runs out and the process ends by a signal. A run outside the precondition can end with
+another status, with no count line or with a line that has no prefix.
 """
 import importlib.util
 import json
@@ -157,7 +179,7 @@ EXIT_USAGE = 2
 USAGE = "usage: check-pr-text.py --event PATH | --description PATH | --squash PATH [--number N]"
 LINT_FAILURE = "label lint {} cannot be loaded: {}"
 
-FENCE = re.compile(r"^ {0,3}(`{3,}(?=[^`]*$)|~{3,})")
+FENCE = re.compile(r" {0,3}(`{3,}(?=[^`]*$)|~{3,})")
 BACKTICKS = re.compile(r"`+")
 URL = re.compile(r"\bhttps?://(?:[^\s<>\"'`()\u2013\u2014\u201c\u201d\u2018\u2019]"
                  r"|\([^\s<>\"'`()\u2013\u2014\u201c\u201d\u2018\u2019]*\))*"
@@ -446,8 +468,7 @@ def number_from_name(path):
     except OSError as error:
         raise Unreadable("squash file {}: the working directory cannot be read: {}".format(
             path, error.strerror or error)) from error
-    if len(parts) >= 3 and parts[-3:-1] == (".github", "squash") and SQUASH_NAME.fullmatch(
-            parts[-1]):
+    if parts[-3:-1] == (".github", "squash") and SQUASH_NAME.fullmatch(parts[-1]):
         return bounded_number(parts[-1][:-len(".txt")])
     return None
 

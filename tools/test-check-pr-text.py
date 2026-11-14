@@ -7,23 +7,28 @@ folder copies the gate and the label lint into a temporary tree, since the gate 
 its own path. Every review-history label and every dash a case feeds the gate is built when the
 case runs, by joining strings or from an escape, so this file carries none of them as text.
 
-The cases fall in 5 groups: a failing case for each mechanical defect class, which includes a code
-fence that is never closed, in a description and in a squash message, and a blank text, in each;
-cases at the edges of the exemptions and scope limits, which pass honest text inside an edge and
-fail text just outside it, such as the prose after a closed fence, a dash closed up after a URL,
-each character that ends a URL, a fence closer the gate does not accept and the digit bound of a
-squash file name; a case for each kind of unreadable input, an interrupt raised by the lint among
-them, and for a usage error, each of which exits 2 with the defect count as its last line, where
-the deeply nested payload runs the gate under a soft stack limit of 1 MiB that the case sets, or
-the hard limit when that is lower, so the JSON reader overflows its stack on any runner; output
-prefixes and escapes, runs from other folders, a bound on the time of the inline-code scan, the
-job's time limit in the workflow, and honest texts that pass; and the mutant sweep, MutantSweep,
-the record that each guard it lists has a case that fails without it. Its docstring names the
-substitutions it leaves out as equivalent, each with its reason: the line feed removed from either
-class of the quote mask, the isinstance test of the payload and the len(parts) guard of the file
-name binding. The class of counts stated with their selection rule has no case: it stays a
-judgement for reviewers, because no part of it is mechanical.
+The cases fall in 5 groups. DefectClasses holds a failing case for each mechanical defect class,
+which includes a code fence that is never closed and a blank text, in each text, and the digit
+bound and the subject binding. Exemptions holds the cases at the edges of the masks, the
+exemptions and the scope limits, which pass honest text inside an edge and fail text just outside
+it, and 3 cases that enumerate every code point from U+0000 to U+FFFF but the surrogates and
+compare the gate with the sets its docstring names: the characters that end a URL, the
+characters that may follow a fence closer's run, and the quote pairs that the quote mask masks.
+UnreadableInputs holds a case for each branch of the exit contract and each kind of unreadable
+input and usage error, where the deeply nested payload runs the gate under a soft stack limit of
+1 MiB that the case sets, or the hard limit when that is lower, so the JSON reader overflows its
+stack on any runner. OutputAndHonestTexts holds the output prefixes and escapes, runs from other
+folders and without -B, a bound on the time of the inline-code scan, the job's time limit in the
+workflow, and honest texts that pass. MutantSweep generates the mutation sites of the gate from
+its source, checks that each has a row or an argument that it is equivalent, and runs the cases
+each row names on a copy of the gate with the site applied; its docstring states its operators,
+its kill and equivalence criterion and its residual. The class of counts stated with their
+selection rule has no case: it stays a judgement for reviewers, because no part of it is
+mechanical.
 """
+import ast
+import collections
+import io
 import json
 import re
 import shutil
@@ -31,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tokenize
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -68,6 +74,25 @@ UNCLOSED = "the code fence opened on line {} is never closed"
 URL_STOPPERS = (" ", "\t", "<", ">", '"', "'", "`", "(", ")", EN_DASH, EM_DASH,
                 "\u201c", "\u201d", "\u2018", "\u2019")
 ISE_ENDINGS = ("e", "es", "ed", "ing", "er", "ers", "able", "ation", "ations")
+# The sets the gate docstring names, each checked by enumerating U+0000 to U+FFFF: the marks
+# that end a URL besides whitespace as Python's \s reads it, the characters that may follow a
+# fence closer's run, and the 2 quote pairs the quote mask masks.
+URL_STOPPER_MARKS = "<>\"'`()" + EN_DASH + EM_DASH + "\u2018\u2019\u201c\u201d"
+FENCE_CLOSER_TAIL = " \t"
+QUOTE_PAIRS = (('"', '"'), ("\u201c", "\u201d"))
+# The code points of the Unicode Quotation_Mark property, each pair of which the quote mask
+# enumeration checks.
+QUOTATION_MARKS = (0x22, 0x27, 0xab, 0xbb, 0x2018, 0x2019, 0x201a, 0x201b, 0x201c, 0x201d,
+                   0x201e, 0x201f, 0x2039, 0x203a, 0x2e42, 0x300c, 0x300d, 0x300e, 0x300f,
+                   0x301d, 0x301e, 0x301f, 0xfe41, 0xfe42, 0xfe43, 0xfe44, 0xff02, 0xff07,
+                   0xff62, 0xff63)
+
+
+def url_stopper_set():
+    """Each code point up to U+FFFF but U+000A that ends a URL, as the gate docstring names."""
+    return {chr(code) for code in range(0x10000)
+            if not 0xd800 <= code <= 0xdfff and code != 0x0a
+            and (re.match(r"\s", chr(code)) or chr(code) in URL_STOPPER_MARKS)}
 # The inline-code scan must finish this many backticks within this many seconds.
 BACKTICK_RUN = 20000
 TIME_BOUND = 10
@@ -177,6 +202,18 @@ class DefectClasses(GateCase):
         result = self.squash(CLEAN_SQUASH + "\nBuilt on e233a7f.\n")
         self.assertResult(result, 1, 1)
         self.assertReports(result, "squash:5: a revision id: e233a7f")
+
+    def test_revision_id_with_its_only_digit_or_letter_first_fails(self):
+        for run in ("1abcdef", "a123456"):
+            with self.subTest(run=run):
+                result = self.squash(CLEAN_SQUASH + "\nBuilt on " + run + ".\n")
+                self.assertResult(result, 1, 1)
+                self.assertReports(result, "squash:5: a revision id: " + run)
+
+    def test_number_option_of_1_digit_binds(self):
+        path = self.write("squash.txt", "Add a thing (#5)\n\nBody.\n")
+        self.assertResult(self.run_gate("--squash", path, "--number", "5"), 0, 0)
+        self.assertResult(self.run_gate("--squash", path, "--number", "6"), 1, 1)
 
     def test_full_revision_id_in_squash_message_fails(self):
         self.assertResult(self.squash(CLEAN_SQUASH + "\nBuilt on " + SHA1 + ".\n"), 1, 1)
@@ -373,9 +410,36 @@ class DefectClasses(GateCase):
         self.assertResult(self.run_gate("--event", self.event("A body.", number=1), gate=gate),
                           0, 0)
 
+    def test_event_number_of_19_digits_binds_the_subject(self):
+        number = 1234567890123456789
+        for subject, status in ((number, 0), (5, 1)):
+            with self.subTest(subject=subject):
+                gate = self.tree(squash="Add a thing (#{})\n\nBody.\n".format(subject),
+                                 number=number)
+                result = self.run_gate("--event", self.event("A body.", number=number),
+                                       gate=gate)
+                self.assertResult(result, status, status)
+                shutil.rmtree(self.tmp / "tree")
+
+    def test_blank_text_reports_only_that_it_is_empty(self):
+        result = self.description("<!--\n```\n" + EM_DASH)
+        self.assertResult(result, 1, 1)
+        self.assertEqual(result[1][0], "description: the text is empty", result[1])
+
+    def test_squash_name_with_a_further_suffix_is_not_bound(self):
+        folder = self.tmp / "other" / ".github" / "squash"
+        folder.mkdir(parents=True)
+        for name in ("5.txt.bak", "5xtxt"):
+            with self.subTest(name=name):
+                (folder / name).write_text("Add a thing (#4)\n\nBody.\n", encoding="utf-8")
+                result = self.run_gate("--squash", folder / name)
+                self.assertResult(result, 0, 0)
+                self.assertIn("pr-text: subject binding not checked", result[1])
+
 
 class Exemptions(GateCase):
-    """Each exemption and scope limit: honest text inside it passes, and text outside it fails."""
+    """Each mask, exemption and scope limit: honest text inside it passes, and text outside it
+    fails; the URL stoppers, the fence closer's tail and the quote pairs by enumeration."""
 
     def test_label_and_width_inside_fence_pass(self):
         fence = "```\n" + ROUND_LABEL + "\n" + "b" * 90 + "\n```\n"
@@ -464,6 +528,59 @@ class Exemptions(GateCase):
         result = self.description("Use `a` here " + EM_DASH + " and `b` there.\n")
         self.assertResult(result, 1, 1)
         self.assertReports(result, "description:1: an em dash, U+2014")
+
+    def test_backtick_run_inside_a_line_is_not_a_fence(self):
+        result = self.description("Intro ```\nprose " + EM_DASH + " x\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:2: an em dash, U+2014")
+
+    def test_indented_shorter_closer_leaves_fence_open(self):
+        result = self.description("````\ncode\n ```\nprose " + EM_DASH + "\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:1: " + UNCLOSED.format(1))
+
+    def test_long_line_next_to_a_fence_fails(self):
+        long = "c" * 73
+        result = self.squash(CLEAN_SQUASH + "\n" + long + "\n```\ncode\n```\n" + long + "\n")
+        self.assertResult(result, 1, 2)
+        self.assertReports(result, "squash:5: 73 characters, over 72")
+        self.assertReports(result, "squash:9: 73 characters, over 72")
+
+    def test_span_after_a_lone_backtick_is_masked(self):
+        text = "A lone ` backtick, then ``" + ISE_WORD + "`` here.\n"
+        self.assertResult(self.description(text), 0, 0)
+
+    def test_span_right_after_another_span_is_masked(self):
+        self.assertResult(self.description("Use ``a`` `" + ISE_WORD + "` here.\n"), 0, 0)
+
+    def test_masked_span_reads_as_spaces(self):
+        # Each character of a code span or of a quoted pair, its marks included, becomes a
+        # space, so the label around it reads as the lint's phrase with spaces in it.
+        for span in ("`x`", '""', "\u201c\u201d"):
+            with self.subTest(span=span):
+                text = "This was " + ROUND_LABEL.replace(" 7", span + "7") + ".\n"
+                result = self.description(text)
+                self.assertResult(result, 1, 1)
+                self.assertReports(result, "description:1: a review round number")
+
+    def test_tilde_fence_of_4_closes_only_on_4_or_more(self):
+        result = self.description("~~~~\ncode\n~~~~\nprose " + EM_DASH + "\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:4: an em dash, U+2014")
+        result = self.description("~~~~\ncode\n~~~\nprose " + EM_DASH + "\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:1: " + UNCLOSED.format(1))
+
+    def test_url_of_only_its_scheme_ending_a_long_line_passes(self):
+        line = "a" * 66 + " https://"
+        self.assertResult(self.squash(CLEAN_SQUASH + "\n" + line + "\n"), 0, 0)
+
+    def test_empty_parenthesis_pair_is_part_of_a_url(self):
+        self.assertResult(self.description("See https://e.com/x()" + ISE_WORD + " here.\n"),
+                          0, 0)
+
+    def test_empty_comment_then_text_is_not_blank(self):
+        self.assertResult(self.description("<!----> Real text.\n"), 0, 0)
 
     def test_inline_span_at_line_start_is_not_a_fence(self):
         self.assertResult(self.description("```x`y``` is inline code.\n"), 0, 0)
@@ -606,9 +723,99 @@ class Exemptions(GateCase):
     def test_revision_id_in_description_passes(self):
         self.assertResult(self.description("Built on e233a7f and " + SHA1 + ".\n"), 0, 0)
 
+    def test_dash_on_closed_fence_opener_line_passes(self):
+        text = "Intro.\n\n~~~ text " + EM_DASH + " x\ncode\n~~~\n"
+        self.assertResult(self.description(text), 0, 0)
+
+    def test_ise_stem_inside_a_longer_word_is_not_matched(self):
+        self.assertResult(self.description("We re" + ISE_WORD + " it.\n"), 0, 0)
+
+    def test_url_glued_after_a_letter_is_not_masked(self):
+        result = self.description("Seehttps://e.com/" + ISE_WORD + " here.\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:1: an -ise spelling: " + ISE_WORD)
+
+    def test_word_inside_http_url_passes(self):
+        self.assertResult(self.description("See http://e.com/" + ISE_WORD + " here.\n"), 0, 0)
+
+    def test_text_between_2_comments_is_not_blank(self):
+        self.assertResult(self.description("<!-- a --> Real text here. <!-- b -->\n"), 0, 0)
+
+    def test_comment_opener_broken_by_a_zero_width_space_is_text(self):
+        self.assertResult(self.description("<\u200b!-- x -->\n"), 0, 0)
+
+    def enumerate_lines(self, build, skip=("\n",)):
+        """The code points from U+0000 to U+FFFF, surrogates and skip left out, and the
+        description of 1 line per code point that build makes, with the gate's result."""
+        chars = [chr(code) for code in range(0x10000)
+                 if not 0xd800 <= code <= 0xdfff and chr(code) not in skip]
+        lines = [build(char) for char in chars]
+        code, output = self.description("\n".join(lines) + "\n")
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertEqual(output[-1], "pr-text: {} defect(s)".format(len(output) - 1),
+                         output[-3:])
+        return chars, output
+
+    def reported(self, output, fragment):
+        """The line numbers of the output lines that hold fragment."""
+        found = set()
+        for line in output:
+            match = re.match(r"description:([0-9]+): ", line)
+            if match and fragment in line:
+                found.add(int(match.group(1)))
+        return found
+
+    def test_url_ends_only_before_its_stopper_set(self):
+        # 1 line per code point: a URL, the code point, then an -ise word. The word is
+        # reported only when the code point ends the URL; U+000A ends every line.
+        chars, output = self.enumerate_lines(
+            lambda char: "https://e.com/x" + char + ISE_WORD)
+        ended = {chars[number - 1] for number in self.reported(output, "an -ise spelling")}
+        self.assertEqual(sorted(map(ord, ended)), sorted(map(ord, url_stopper_set())))
+
+    def test_fence_closer_takes_only_spaces_and_tabs_after_its_run(self):
+        # Per code point: an opener, a closer followed by the code point, a dash line that is
+        # prose only when that closer closed the fence, then 2 lines that leave no fence open
+        # whichever way the closer went.
+        # U+000D is left out, since a carriage return before a line feed is dropped, and a
+        # backtick lengthens the closer's run of backticks, which then still closes.
+        chars = [chr(code) for code in range(0x10000)
+                 if not 0xd800 <= code <= 0xdfff and chr(code) not in ("\n", "\r")]
+        blocks = ["```\n```" + char + "\nx " + EM_DASH + "\n```" + char + "\n````\n"
+                  for char in chars]
+        code, output = self.description("Intro.\n\n" + "".join(blocks))
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertNotIn("never closed", "\n".join(output[-3:]))
+        closed = {chars[(number - 5) // 5] for number in self.reported(output, "an em dash")}
+        self.assertEqual(sorted(map(ord, closed)), sorted(map(ord, FENCE_CLOSER_TAIL + "`")))
+
+    def test_quote_mask_masks_only_its_2_pairs(self):
+        # Each code point as an opener closed by itself, by the straight mark and by U+201D,
+        # and as a closer after the straight mark and after U+201C, and every ordered pair of
+        # 2 quotation marks; the backtick, which opens a code span, and U+000A are left out.
+        # A dash between the 2 marks is reported only when the pair is not masked.
+        chars = [chr(code) for code in range(0x10000)
+                 if not 0xd800 <= code <= 0xdfff and chr(code) not in ("\n", "`")]
+        pairs = []
+        for char in chars:
+            pairs.extend([(char, char), (char, '"'), (char, chr(0x201d)), ('"', char),
+                          (chr(0x201c), char)])
+        marks = [chr(code) for code in QUOTATION_MARKS]
+        pairs.extend((opener, closer) for opener in marks for closer in marks)
+        pairs = sorted(set(pairs))
+        text = "".join("a " + opener + "x " + EM_DASH + " y" + closer + " b\n"
+                       for opener, closer in pairs)
+        code, output = self.description(text)
+        self.assertIn(code, (0, 1), output[-3:])
+        shown = self.reported(output, "an em dash")
+        masked = {pairs[number - 1] for number in range(1, len(pairs) + 1)
+                  if number not in shown}
+        self.assertEqual(masked, set(QUOTE_PAIRS))
+
 
 class UnreadableInputs(GateCase):
-    """Each input the gate cannot read exits 2, never 0, with the defect count last.
+    """The exit contract: each kind of usage error and unreadable input exits 2, with the count
+    of the defects reported before it as the last line, and each reason line is pinned.
 
     The deeply nested payload runs the gate under a soft stack limit of DEEP_STACK, 1 MiB, or
     the hard limit when that is lower, set in a child that then replaces itself with the gate,
@@ -704,7 +911,8 @@ class UnreadableInputs(GateCase):
     def test_unreadable_line_names_its_input(self):
         result = self.run_gate("--description", self.tmp / "none.md")
         self.assertResult(result, 2, 0)
-        self.assertTrue(result[1][0].startswith("unreadable: description file "), result[1])
+        self.assertEqual(result[1][0], "unreadable: description file {}: No such file or "
+                         "directory".format(self.tmp / "none.md"), result[1])
 
     def test_payload_number_below_1_exits_2(self):
         gate = self.tree(squash="Add a thing (#0)\n\nBody.\n", number=0)
@@ -719,8 +927,10 @@ class UnreadableInputs(GateCase):
         done = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(folder), str(GATE)],
                               cwd=str(self.cwd), capture_output=True, text=True,
                               encoding="utf-8", timeout=120)
-        self.assertUnreadable((done.returncode, done.stdout.splitlines()),
-                              "the working directory cannot be read")
+        result = (done.returncode, done.stdout.splitlines())
+        self.assertUnreadable(result, "the working directory cannot be read")
+        self.assertTrue(result[1][0].endswith(
+            "the working directory cannot be read: No such file or directory"), result[1])
 
     def test_unloadable_lint_exits_2(self):
         gate = self.tree(squash=CLEAN_SQUASH, lint=False)
@@ -849,6 +1059,33 @@ class UnreadableInputs(GateCase):
         self.assertUsage(self.run_gate("--squash", path, "--number", "9" * 5000),
                          "--number takes at most 18 digits")
 
+    def test_defect_then_unreadable_squash_file_exits_2_with_its_count(self):
+        gate = self.tree(squash=None)
+        code, lines = self.run_gate("--event", self.event("A body " + EM_DASH + " x.\n",
+                                                          number=998), gate=gate)
+        self.assertEqual(code, 2, lines)
+        self.assertEqual(len(lines), 3, lines)
+        self.assertTrue(lines[0].startswith("description:1: an em dash, U+2014"), lines)
+        self.assertTrue(lines[1].startswith("unreadable: squash file "), lines)
+        self.assertEqual(lines[2], "pr-text: 1 defect(s)")
+
+    def test_payload_number_true_is_not_an_integer(self):
+        gate = self.tree(squash="Add a thing (#1)\n\nBody.\n", number=1)
+        self.assertUnreadable(self.run_gate("--event", self.event("A body.", number=True),
+                                            gate=gate),
+                              "no positive integer pull request number")
+
+    def test_payload_that_is_a_list_is_not_a_pull_request_event(self):
+        gate = self.tree(squash=CLEAN_SQUASH)
+        payload = self.write("event.json", json.dumps([{"pull_request": {"number": 999}}]))
+        self.assertUnreadable(self.run_gate("--event", payload, gate=gate),
+                              "not a pull request event")
+
+    def test_number_option_with_trailing_text_is_a_usage_error(self):
+        path = self.write("squash.txt", CLEAN_SQUASH)
+        self.assertUsage(self.run_gate("--squash", path, "--number", "5x"),
+                         "--number takes a positive integer")
+
     def test_number_option_of_18_digits_binds_and_19_is_a_usage_error(self):
         path = self.write("squash.txt", "Add a thing (#" + "9" * 18 + ")\n\nBody.\n")
         self.assertResult(self.run_gate("--squash", path, "--number", "9" * 18), 0, 0)
@@ -951,418 +1188,2506 @@ class OutputAndHonestTexts(GateCase):
         body = "A body " + EM_DASH + " with 1 dash.\n"
         self.assertResult(self.run_gate("--event", self.event(body), gate=gate), 1, 1)
 
+    def test_event_description_has_no_width_or_revision_check(self):
+        gate = self.tree(squash=CLEAN_SQUASH)
+        body = ("Built on e233a7f." + " word" * 40)[:127]
+        self.assertResult(self.run_gate("--event", self.event(body), gate=gate), 0, 0)
+
+    def test_gate_run_without_dash_b_writes_no_bytecode(self):
+        # The workflow runs the gate with -I alone, so the gate itself keeps the lint it
+        # loads from writing a bytecode file into the tree.
+        gate = self.tree(squash=CLEAN_SQUASH)
+        done = subprocess.run([sys.executable, "-I", str(gate), "--event",
+                               str(self.event("A body."))], cwd=str(self.cwd),
+                              capture_output=True, text=True, encoding="utf-8", timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertFalse((gate.parent / "__pycache__").exists())
+
 
 D = "DefectClasses."
 E = "Exemptions."
 U = "UnreadableInputs."
 O = "OutputAndHonestTexts."
-NL = "\n"
-# The 2 character classes of the URL pattern share this text; the second follows "|\(".
-URL_CLASS = r"""\s<>\"'`()\u2013\u2014\u201c\u201d\u2018\u2019"""
-URL_MEMBERS = (
-    ("whitespace", r"\s"), ("the opening angle bracket", "<"),
-    ("the closing angle bracket", ">"), ("the straight double quote mark", r"\""),
-    ("the straight single quote mark", "'"), ("the backtick", "`"),
-    ("the opening parenthesis", "("), ("the closing parenthesis", ")"),
-    ("U+2013", r"\u2013"), ("U+2014", r"\u2014"), ("U+201C", r"\u201c"),
-    ("U+201D", r"\u201d"), ("U+2018", r"\u2018"), ("U+2019", r"\u2019"),
+
+
+# The site generator of the sweep: it reads the gate source and yields each mutation
+# site of the closed set OPERATORS; see MutantSweep.
+GATE_FUNCTIONS = ("compile", "fullmatch", "match", "search")
+MATCH_METHODS = ("fullmatch", "match", "search")
+COMPARE_PARTNERS = {ast.Lt: ast.LtE, ast.LtE: ast.Lt, ast.Gt: ast.GtE, ast.GtE: ast.Gt,
+                    ast.Eq: ast.NotEq, ast.NotEq: ast.Eq, ast.Is: ast.IsNot,
+                    ast.IsNot: ast.Is, ast.In: ast.NotIn, ast.NotIn: ast.In}
+COMPARE_TEXT = {ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">=", ast.Eq: "==",
+                ast.NotEq: "!=", ast.Is: "is", ast.IsNot: "is not", ast.In: "in",
+                ast.NotIn: "not in"}
+# The closed set of operators the generator applies, in the order it reports them.
+OPERATORS = (
+    "statement deleted", "comparison changed", "boolean operator swapped", "not removed",
+    "boolean constant flipped", "integer constant changed", "exception type removed",
+    "BaseException narrowed", "handler body replaced by raise", "match method changed",
+    "any and all swapped", "pattern member removed", "regex anchor deleted",
+    "regex lookaround deleted", "regex alternative deleted", "regex class member deleted",
+    "regex class made plain", "regex quantifier changed", "regex escape removed",
+    "regex flag removed",
 )
-TRAILING_MARKS = (("full stop", "."), ("comma", ","), ("semicolon", ";"), ("colon", ":"),
-                  ("exclamation mark", "!"), ("question mark", "?"))
-MARKS = "".join(mark for _, mark in TRAILING_MARKS)
-LOOKBEHIND = "(?<![" + MARKS + "])"
+REGEX_META = ".^$*+?{}[]()|\\"
+REGEX_CLASS_ESCAPES = "sSdDwWntrfv"
+REGEX_ANCHOR_ESCAPES = "bBAZ"
+PLACEHOLDER = "\x00"
+Site = collections.namedtuple("Site", "words operator old new occurrence count")
+
+
+class UnknownConstruct(Exception):
+    """A construct of the gate's source that the generator does not know."""
+
+
+def ordinal(number):
+    """1st, 2nd, 3rd, 4th and so on."""
+    if number % 100 in (11, 12, 13):
+        return "{}th".format(number)
+    return "{}{}".format(number, {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th"))
+
+
+def occurrences(text, old):
+    """The offsets of every occurrence of old in text, overlapping ones included."""
+    found = []
+    start = text.find(old)
+    while start != -1:
+        found.append(start)
+        start = text.find(old, start + 1)
+    return found
+
+
+def apply_site(text, site):
+    """text with the site applied, or None when its old text no longer occurs as recorded."""
+    starts = occurrences(text, site.old)
+    if len(starts) != site.count or not 1 <= site.occurrence <= len(starts):
+        return None
+    start = starts[site.occurrence - 1]
+    return text[:start] + site.new + text[start + len(site.old):]
+
+
+class SourceMap:
+    """Offsets of the gate source by line and column; the gate is ASCII, so a column is a byte."""
+
+    def __init__(self, text):
+        if not text.isascii():
+            raise UnknownConstruct("the gate source is not ASCII")
+        self.text = text
+        self.starts = [0]
+        for index, char in enumerate(text):
+            if char == "\n":
+                self.starts.append(index + 1)
+
+    def offset(self, line, column):
+        return self.starts[line - 1] + column
+
+    def start(self, node):
+        return self.offset(node.lineno, node.col_offset)
+
+    def end(self, node):
+        return self.offset(node.end_lineno, node.end_col_offset)
+
+    def line_start(self, line):
+        return self.starts[line - 1]
+
+    def line_end(self, line):
+        """The offset just past the line feed that ends line."""
+        return self.starts[line] if line < len(self.starts) else len(self.text)
+
+    def segment(self, node):
+        return self.text[self.start(node):self.end(node)]
+
+
+def edited(text, edits):
+    """text with each (start, end, replacement) edit made; edits do not overlap."""
+    for start, end, new in sorted(edits, reverse=True):
+        text = text[:start] + new + text[end:]
+    return text
+
+
+def as_site(text, mutated, words, operator):
+    """The site that turns text into mutated, as the smallest block of whole lines."""
+    old_lines = text.split("\n")
+    new_lines = mutated.split("\n")
+    first = 0
+    while first < min(len(old_lines), len(new_lines)) and old_lines[first] == new_lines[first]:
+        first += 1
+    tail = 0
+    while (tail < min(len(old_lines), len(new_lines)) - first
+           and old_lines[-1 - tail] == new_lines[-1 - tail]):
+        tail += 1
+    if first == 0:
+        raise UnknownConstruct("a change on the first line: " + words)
+    old_block = old_lines[first:len(old_lines) - tail]
+    new_block = new_lines[first:len(new_lines) - tail]
+    old = "\n" + "".join(line + "\n" for line in old_block)
+    new = "\n" + "".join(line + "\n" for line in new_block)
+    offset = sum(len(line) + 1 for line in old_lines[:first]) - 1
+    starts = occurrences(text, old)
+    site = Site(words, operator, old, new, starts.index(offset) + 1, len(starts))
+    if apply_site(text, site) != mutated:
+        raise UnknownConstruct("a site that does not reproduce its change: " + words)
+    return site
+
+
+def scope_name(stack):
+    """The words that name where a node is: a function, a method or a module constant."""
+    return "in " + stack[-1] if stack else "at module level"
+
+
+def regex_parse(pattern):
+    """The mutation sites of 1 pattern, as (operator, words, edits on the pattern) triples.
+
+    The tokenizer knows the constructs the gate's patterns use: literals, the escapes \\s \\S
+    \\d \\D \\w \\W \\n \\t \\r \\f \\v \\uXXXX \\xXX, an escaped metacharacter or quote mark,
+    the anchors ^ $ \\A \\Z \\b \\B, the dot, character classes with ranges and negation,
+    groups (plain, (?:, (?=, (?!, (?<= and (?<!), inline flags such as (?i), alternation and the
+    quantifiers * + ? {m} {m,} {m,n}, each greedy or lazy. Anything else raises
+    UnknownConstruct with its text.
+    """
+    found = []
+    position = [0]
+
+    def peek(offset=0):
+        index = position[0] + offset
+        return pattern[index] if index < len(pattern) else ""
+
+    def escape_length(index):
+        """The length of the escape that starts at index, and whether it is an anchor."""
+        char = pattern[index + 1] if index + 1 < len(pattern) else ""
+        if char in REGEX_ANCHOR_ESCAPES and char:
+            return 2, "anchor"
+        if char == "u":
+            if not re.fullmatch(r"[0-9a-fA-F]{4}", pattern[index + 2:index + 6]):
+                raise UnknownConstruct("a short \\u escape in " + pattern)
+            return 6, "atom"
+        if char == "x":
+            return 4, "atom"
+        if char and char in REGEX_CLASS_ESCAPES:
+            return 2, "atom"
+        if char and char in REGEX_META:
+            return 2, "meta"
+        if char in ("\"", "'"):
+            return 2, "atom"
+        raise UnknownConstruct("the escape \\{} in {}".format(char, pattern))
+
+    def quantifier(atom_start):
+        start = position[0]
+        char = peek()
+        if char in ("*", "+", "?"):
+            position[0] += 1
+            kind = char
+        elif char == "{":
+            match = re.compile(r"\{([0-9]+)(,?)([0-9]*)\}").match(pattern, start)
+            if not match:
+                raise UnknownConstruct("a brace that is not a quantifier in " + pattern)
+            position[0] = match.end()
+            kind = "{}"
+        else:
+            return
+        text = pattern[start:position[0]]
+        lazy = peek() == "?"
+        if peek() == "+":
+            raise UnknownConstruct("a possessive quantifier in " + pattern)
+        if lazy:
+            position[0] += 1
+        whole = pattern[start:position[0]]
+        changes = []
+        if kind == "*":
+            changes.append("+")
+        elif kind == "+":
+            changes.append("*")
+        elif kind == "?":
+            changes.append("")
+        else:
+            low, comma, high = match.group(1), match.group(2), match.group(3)
+            low = int(low)
+            if comma and high:
+                high = int(high)
+                if low >= 1:
+                    changes.append("{{{},{}}}".format(low - 1, high))
+                if low + 1 <= high:
+                    changes.append("{{{},{}}}".format(low + 1, high))
+                if high - 1 >= max(low, 1):
+                    changes.append("{{{},{}}}".format(low, high - 1))
+                changes.append("{{{},{}}}".format(low, high + 1))
+            elif comma:
+                if low >= 1:
+                    changes.append("{{{},}}".format(low - 1))
+                changes.append("{{{},}}".format(low + 1))
+            else:
+                if low >= 1:
+                    changes.append("{{{}}}".format(low - 1))
+                changes.append("{{{}}}".format(low + 1))
+        for change in changes:
+            new = change + ("?" if lazy and change else "")
+            found.append(("regex quantifier changed",
+                          "the quantifier `{}` changed to `{}`".format(whole, new or "nothing"),
+                          [(start, position[0], new)]))
+        if lazy:
+            found.append(("regex quantifier changed",
+                          "the lazy quantifier `{}` made greedy".format(whole),
+                          [(position[0] - 1, position[0], "")]))
+        else:
+            found.append(("regex quantifier changed",
+                          "the quantifier `{}` made lazy".format(whole),
+                          [(position[0], position[0], "?")]))
+
+    def char_class():
+        start = position[0]
+        position[0] += 1
+        negated = peek() == "^"
+        if negated:
+            position[0] += 1
+        members = []
+        if peek() == "]":
+            raise UnknownConstruct("a class that starts with ] in " + pattern)
+        while True:
+            char = peek()
+            if not char:
+                raise UnknownConstruct("an unclosed class in " + pattern)
+            if char == "]":
+                position[0] += 1
+                break
+            member_start = position[0]
+            if char == "\\":
+                length, kind = escape_length(position[0])
+                if kind == "anchor":
+                    raise UnknownConstruct("an anchor escape in a class in " + pattern)
+                position[0] += length
+            elif char == "[":
+                raise UnknownConstruct("a nested class in " + pattern)
+            else:
+                position[0] += 1
+            if peek() == "-" and peek(1) not in ("]", ""):
+                position[0] += 1
+                if peek() == "\\":
+                    position[0] += escape_length(position[0])[0]
+                else:
+                    position[0] += 1
+            members.append((member_start, position[0]))
+        text = pattern[start:position[0]]
+        if len(members) >= 2:
+            for member_start, member_end in members:
+                found.append(("regex class member deleted",
+                              "the member `{}` deleted from the class `{}`".format(
+                                  pattern[member_start:member_end], text),
+                              [(member_start, member_end, "")]))
+        if negated:
+            found.append(("regex class made plain",
+                          "the negated class `{}` made plain".format(text),
+                          [(start + 1, start + 2, "")]))
+
+    def sequence(depth):
+        """Parse branches up to a closing parenthesis or the end; record the alternatives."""
+        branches = []
+        branch_start = position[0]
+        while True:
+            char = peek()
+            if char == "" or char == ")":
+                if char == ")" and depth == 0:
+                    raise UnknownConstruct("an unbalanced ) in " + pattern)
+                branches.append((branch_start, position[0]))
+                break
+            if char == "|":
+                branches.append((branch_start, position[0]))
+                position[0] += 1
+                branch_start = position[0]
+                continue
+            atom()
+        if len(branches) >= 2:
+            for index, (start, end) in enumerate(branches):
+                if index == 0:
+                    span = (start, branches[1][0])
+                else:
+                    span = (branches[index - 1][1], end)
+                found.append(("regex alternative deleted",
+                              "the alternative `{}` deleted".format(pattern[start:end]),
+                              [(span[0], span[1], "")]))
+
+    def atom():
+        start = position[0]
+        char = peek()
+        if char == "(":
+            head = pattern[start:start + 4]
+            flags = re.compile(r"\(\?([a-zA-Z]+)\)").match(pattern, start)
+            if flags:
+                position[0] = flags.end()
+                found.append(("regex flag removed",
+                              "the inline flag `{}` deleted".format(flags.group(0)),
+                              [(start, flags.end(), "")]))
+                return
+            if head.startswith("(?<=") or head.startswith("(?<!"):
+                kind, position[0] = "lookbehind", start + 4
+            elif head.startswith("(?=") or head.startswith("(?!"):
+                kind, position[0] = "lookahead", start + 3
+            elif head.startswith("(?:"):
+                kind, position[0] = "group", start + 3
+            elif head.startswith("(?"):
+                raise UnknownConstruct("the group {} in {}".format(head, pattern))
+            else:
+                kind, position[0] = "group", start + 1
+            sequence(1)
+            if peek() != ")":
+                raise UnknownConstruct("an unclosed group in " + pattern)
+            position[0] += 1
+            if kind != "group":
+                found.append(("regex lookaround deleted",
+                              "the {} `{}` deleted".format(kind, pattern[start:position[0]]),
+                              [(start, position[0], "")]))
+                if peek() in ("*", "+", "?", "{"):
+                    raise UnknownConstruct("a repeated lookaround in " + pattern)
+                return
+            quantifier(start)
+            return
+        if char == "[":
+            char_class()
+            quantifier(start)
+            return
+        if char in ("^", "$"):
+            position[0] += 1
+            found.append(("regex anchor deleted", "the anchor `{}` deleted".format(char),
+                          [(start, start + 1, "")]))
+            return
+        if char == "\\":
+            length, kind = escape_length(start)
+            position[0] += length
+            text = pattern[start:position[0]]
+            if kind == "anchor":
+                found.append(("regex anchor deleted", "the anchor `{}` deleted".format(text),
+                              [(start, position[0], "")]))
+                return
+            if kind == "meta":
+                found.append(("regex escape removed",
+                              "the escape of `{}` removed".format(text),
+                              [(start, start + 1, "")]))
+            quantifier(start)
+            return
+        if char in ("*", "+", "?", "{"):
+            raise UnknownConstruct("a quantifier with nothing to repeat in " + pattern)
+        position[0] += 1
+        quantifier(start)
+
+    sequence(0)
+    return found
+
+
+def string_tokens(source):
+    """The (start, end, text) offsets of every string token of source."""
+    tokens = []
+    smap = SourceMap(source)
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.STRING:
+            tokens.append((smap.offset(*token.start), smap.offset(*token.end), token.string))
+    return tokens
+
+
+def pattern_pieces(node, smap, tokens):
+    """(pattern, offsets) of a pattern expression: each source offset, or None for a part
+    that is not a string literal, which stands as 1 placeholder character."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = pattern_pieces(node.left, smap, tokens)
+        right = pattern_pieces(node.right, smap, tokens)
+        return left[0] + right[0], left[1] + right[1]
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        text, offsets = "", []
+        start, end = smap.start(node), smap.end(node)
+        for token_start, token_end, token in tokens:
+            if token_start < start or token_end > end:
+                continue
+            prefix = re.match(r"[A-Za-z]*", token).group(0)
+            quote = token[len(prefix)]
+            if token[len(prefix):len(prefix) + 3] == quote * 3:
+                raise UnknownConstruct("a triple-quoted pattern: " + token)
+            body = token[len(prefix) + 1:-1]
+            if "r" not in prefix.lower() and "\\" in body:
+                raise UnknownConstruct("a pattern literal that is not raw: " + token)
+            text += body
+            offsets.extend(range(token_start + len(prefix) + 1, token_end - 1))
+        if text != node.value:
+            raise UnknownConstruct("a pattern literal the tokens do not rebuild: " + token)
+        return text, offsets
+    return PLACEHOLDER, [None]
+
+
+def pattern_edits(offsets, edits):
+    """The source edits of edits on a pattern, or None when one touches a placeholder."""
+    source = []
+    for start, end, new in edits:
+        if start == end:
+            if start == 0 or offsets[start - 1] is None:
+                return None
+            source.append((offsets[start - 1] + 1, offsets[start - 1] + 1, new))
+            continue
+        span = offsets[start:end]
+        if None in span:
+            return None
+        runs = [[span[0], span[0] + 1]]
+        for offset in span[1:]:
+            if offset == runs[-1][1]:
+                runs[-1][1] = offset + 1
+            else:
+                runs.append([offset, offset + 1])
+        source.append((runs[0][0], runs[0][1], new))
+        source.extend((run_start, run_end, "") for run_start, run_end in runs[1:])
+    return source
+
+
+def is_re_call(node):
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "re"
+            and node.func.attr in GATE_FUNCTIONS)
+
+
+def generate_sites(source):
+    """Every mutation site of the gate source, for the closed set of OPERATORS."""
+    smap = SourceMap(source)
+    tree = ast.parse(source)
+    tokens = string_tokens(source)
+    raw = []
+
+    def add(operator, words, edits):
+        raw.append((operator, words, edited(source, edits)))
+
+    body = list(tree.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    body = [node for node in body if not (
+        isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")]
+    pattern_names = set()
+    pattern_calls = []
+
+    def statements(stack, block, inside):
+        """Deletion sites of each statement of a block, and of each block within it."""
+        for statement in block:
+            if (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)):
+                continue
+            if isinstance(statement, (ast.FunctionDef, ast.ClassDef)):
+                continue
+            if inside:
+                first = smap.line_start(statement.lineno)
+                last = smap.line_end(statement.end_lineno)
+                line = source[first:smap.line_end(statement.lineno)]
+                indent = line[:len(line) - len(line.lstrip(" "))]
+                only = len([s for s in block if not (
+                    isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]) == 1
+                head = line.strip()
+                add("statement deleted", "{}, the statement `{}` deleted".format(
+                    scope_name(stack), head),
+                    [(first, last, indent + "pass\n" if only else "")])
+            for field in ("body", "orelse", "finalbody"):
+                inner = getattr(statement, field, None)
+                if isinstance(inner, list) and inner and isinstance(inner[0], ast.stmt):
+                    statements(stack, inner, inside)
+            for handler in getattr(statement, "handlers", []):
+                statements(stack, handler.body, inside)
+
+    def expressions(stack, node):
+        """The expression sites of node and every node within it."""
+        for child in ast.walk(node):
+            where = scope_name(stack)
+            if isinstance(child, ast.Compare):
+                operands = [child.left] + list(child.comparators)
+                for index, operator in enumerate(child.ops):
+                    gap_start = smap.end(operands[index])
+                    gap_end = smap.start(operands[index + 1])
+                    gap = source[gap_start:gap_end]
+                    old = COMPARE_TEXT[type(operator)]
+                    new = COMPARE_TEXT[COMPARE_PARTNERS[type(operator)]]
+                    match = re.search(r"(?<![<>=!a-z])" + re.escape(old).replace(r"\ ", r"\s+")
+                                      + r"(?![<>=a-z])", gap)
+                    if not match:
+                        raise UnknownConstruct("a comparison whose operator is not found: " + gap)
+                    add("comparison changed", "{}, `{}` changed to `{}` in `{}`".format(
+                        where, old, new, smap.segment(child)),
+                        [(gap_start + match.start(), gap_start + match.end(), new)])
+            elif isinstance(child, ast.BoolOp):
+                old = "and" if isinstance(child.op, ast.And) else "or"
+                new = "or" if old == "and" else "and"
+                for index in range(len(child.values) - 1):
+                    gap_start = smap.end(child.values[index])
+                    gap = source[gap_start:smap.start(child.values[index + 1])]
+                    match = re.search(r"\b" + old + r"\b", gap)
+                    if not match:
+                        raise UnknownConstruct("a boolean operator not found: " + gap)
+                    add("boolean operator swapped", "{}, `{}` changed to `{}` before `{}`".format(
+                        where, old, new, smap.segment(child.values[index + 1])),
+                        [(gap_start + match.start(), gap_start + match.end(), new)])
+            elif isinstance(child, ast.UnaryOp) and isinstance(child.op, ast.Not):
+                add("not removed", "{}, `not` removed from `{}`".format(
+                    where, smap.segment(child)),
+                    [(smap.start(child), smap.start(child.operand), "")])
+            elif isinstance(child, ast.Constant) and isinstance(child.value, bool):
+                add("boolean constant flipped", "{}, `{}` changed to `{}` in `{}`".format(
+                    where, child.value, not child.value, line_of(child)),
+                    [(smap.start(child), smap.end(child), str(not child.value))])
+            elif (isinstance(child, ast.Constant) and isinstance(child.value, int)
+                  and not isinstance(child.value, bool)):
+                text = smap.segment(child)
+                for step, way in ((1, "up"), (-1, "down")):
+                    value = child.value + step
+                    new = format(value, "#x") if text.startswith("0x") else str(value)
+                    add("integer constant changed", "{}, `{}` changed {} to `{}` in `{}`".format(
+                        where, text, way, new, line_of(child)),
+                        [(smap.start(child), smap.end(child), new)])
+            elif isinstance(child, ast.Call):
+                function = child.func
+                if (isinstance(function, ast.Attribute) and function.attr in MATCH_METHODS):
+                    end = smap.end(function)
+                    for other in MATCH_METHODS:
+                        if other != function.attr:
+                            add("match method changed", "{}, `{}` changed to `{}` in `{}`".format(
+                                where, function.attr, other, line_of(child)),
+                                [(end - len(function.attr), end, other)])
+                if isinstance(function, ast.Name) and function.id in ("any", "all"):
+                    other = "all" if function.id == "any" else "any"
+                    add("any and all swapped", "{}, `{}` changed to `{}`".format(
+                        where, function.id, other),
+                        [(smap.start(function), smap.end(function), other)])
+                if is_re_call(child):
+                    pattern_calls.append((stack[-1] if stack else None, child))
+            elif isinstance(child, ast.ExceptHandler):
+                handler_sites(stack, child)
+
+    def line_of(node):
+        line = source[smap.line_start(node.lineno):smap.line_end(node.lineno)]
+        return line.strip()
+
+    def handler_sites(stack, handler):
+        where = scope_name(stack)
+        head = line_of(handler)
+        kind = handler.type
+        if isinstance(kind, ast.Tuple) and len(kind.elts) >= 2:
+            names = [smap.segment(element) for element in kind.elts]
+            for index, name in enumerate(names):
+                rest = names[:index] + names[index + 1:]
+                new = "(" + ", ".join(rest) + ("," if len(rest) == 1 else "") + ")"
+                add("exception type removed", "{}, `{}` removed from `{}`".format(
+                    where, name, head), [(smap.start(kind), smap.end(kind), new)])
+        if isinstance(kind, ast.Name) and kind.id == "BaseException":
+            add("BaseException narrowed", "{}, `BaseException` changed to `Exception` in `{}`"
+                .format(where, head), [(smap.start(kind), smap.end(kind), "Exception")])
+        first = smap.line_start(handler.body[0].lineno)
+        last = smap.line_end(handler.body[-1].end_lineno)
+        line = source[first:smap.line_end(handler.body[0].lineno)]
+        indent = line[:len(line) - len(line.lstrip(" "))]
+        add("handler body replaced by raise", "{}, the body of `{}` replaced by `raise`".format(
+            where, head), [(first, last, indent + "raise\n")])
+
+    for node in body:
+        if isinstance(node, ast.FunctionDef):
+            stack = [node.name + "()"]
+            statements(stack, node.body, True)
+            expressions(stack, node)
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef):
+                    stack = ["{}.{}()".format(node.name, item.name)]
+                    statements(stack, item.body, True)
+                    expressions(stack, item)
+                elif not (isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant)):
+                    raise UnknownConstruct("a class body statement: " + line_of(item))
+        else:
+            name = None
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+            stack = ["the constant " + name] if name else []
+            expressions(stack, node)
+
+    constants = {node.targets[0].id: node.value for node in body
+                 if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)}
+    for scope, call in pattern_calls:
+        if not call.args:
+            raise UnknownConstruct("a re call with no pattern")
+        where = "in the pattern " + (scope[len("the constant "):] if scope and scope.startswith(
+            "the constant ") else "of `{}` in {}".format(smap.segment(call.func), scope))
+        argument = call.args[0]
+        for part in ast.walk(argument):
+            if (isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute)
+                    and part.func.attr == "join" and part.args
+                    and isinstance(part.args[0], ast.Name)):
+                pattern_names.add(part.args[0].id)
+        pattern, offsets = pattern_pieces(argument, smap, tokens)
+        for operator, words, edits in regex_parse(pattern):
+            source_edits = pattern_edits(offsets, edits)
+            if source_edits is None:
+                raise UnknownConstruct("a regex site that touches a joined part: " + words)
+            add(operator, "{}, {}".format(where, words), source_edits)
+        if call.func.attr == "compile":
+            extra = list(call.args[1:]) + [keyword.value for keyword in call.keywords]
+            for flag in extra:
+                add("regex flag removed", "{}, the flags argument `{}` removed".format(
+                    where, smap.segment(flag)),
+                    [(smap.end(argument), smap.end(flag), "")])
+    for name in sorted(pattern_names):
+        value = constants.get(name)
+        if not (isinstance(value, ast.Tuple) and all(
+                isinstance(element, ast.Constant) and isinstance(element.value, str)
+                for element in value.elts)):
+            raise UnknownConstruct("a joined pattern part that is not a tuple of strings: " + name)
+        for element in value.elts:
+            start, end = smap.start(element), smap.end(element)
+            tail = re.compile(r", ?|,").match(source, end)
+            add("pattern member removed", "in the constant {}, the member `{}` removed".format(
+                name, element.value), [(start, tail.end() if tail else end, "")])
+
+    counted = collections.Counter()
+    sites = []
+    for operator, words, mutated in raw:
+        counted[words] += 1
+        full = "{}, at its {} occurrence".format(words, ordinal(counted[words]))
+        sites.append(as_site(source, mutated, full, operator))
+    return sites
+
+# The generated sites that have a row: the words of the site, then the cases that must fail
+# once it is applied.
+SWEEP_ROWS = {
+    'in the constant WIDTH, `72` changed up to `73` in `WIDTH = 72`, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in the constant WIDTH, `72` changed down to `71` in `WIDTH = 72`, at its 1st occurrence':
+        (D + 'test_squash_line_of_72_characters_passes',),
+    'in the constant MAX_DIGITS, `18` changed up to `19` in `MAX_DIGITS = 18`, at its 1st '
+    'occurrence':
+        (D + 'test_squash_name_of_19_digits_is_not_bound',),
+    'in the constant MAX_DIGITS, `18` changed down to `17` in `MAX_DIGITS = 18`, at its 1st '
+    'occurrence':
+        (D + 'test_squash_name_of_18_digits_binds_the_subject',),
+    'in the constant EXIT_DEFECT, `1` changed up to `2` in `EXIT_DEFECT = 1`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the constant EXIT_DEFECT, `1` changed down to `0` in `EXIT_DEFECT = 1`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the constant EXIT_UNREADABLE, `2` changed up to `3` in `EXIT_UNREADABLE = 2`, at its '
+    '1st occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in the constant EXIT_UNREADABLE, `2` changed down to `1` in `EXIT_UNREADABLE = 2`, at its '
+    '1st occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in the constant EXIT_USAGE, `2` changed up to `3` in `EXIT_USAGE = 2`, at its 1st '
+    'occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in the constant EXIT_USAGE, `2` changed down to `1` in `EXIT_USAGE = 2`, at its 1st '
+    'occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in ascii_text(), the statement `out = []` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), the statement `for char in text:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), the statement `code = ord(char)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), the statement `if 0x20 <= code < 0x7f:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), the statement `out.append(char)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), the statement `elif code < 0x100:` deleted, at its 1st occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), the statement `out.append("\\\\x{:02x}".format(code))` deleted, at its '
+    '1st occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), the statement `elif code < 0x10000:` deleted, at its 1st occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), the statement `out.append("\\\\u{:04x}".format(code))` deleted, at its '
+    '1st occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), the statement `out.append("\\\\U{:08x}".format(code))` deleted, at its '
+    '1st occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), the statement `return "".join(out)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), `<=` changed to `<` in `0x20 <= code < 0x7f`, at its 1st occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `<` changed to `<=` in `0x20 <= code < 0x7f`, at its 1st occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), `0x20` changed up to `0x21` in `if 0x20 <= code < 0x7f:`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in ascii_text(), `0x20` changed down to `0x1f` in `if 0x20 <= code < 0x7f:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `0x7f` changed up to `0x80` in `if 0x20 <= code < 0x7f:`, at its 1st '
+    'occurrence':
+        (O + 'test_carriage_return_and_del_are_escaped',),
+    'in ascii_text(), `0x7f` changed down to `0x7e` in `if 0x20 <= code < 0x7f:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `<` changed to `<=` in `code < 0x100`, at its 1st occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `0x100` changed up to `0x101` in `elif code < 0x100:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `0x100` changed down to `0xff` in `elif code < 0x100:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `<` changed to `<=` in `code < 0x10000`, at its 1st occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `0x10000` changed up to `0x10001` in `elif code < 0x10000:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in ascii_text(), `0x10000` changed down to `0xffff` in `elif code < 0x10000:`, at its 1st '
+    'occurrence':
+        (O + 'test_reported_line_escapes_each_range_edge',),
+    'in emit(), the statement `print(prefix + ascii_text(detail))` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.__init__(), the statement `self.count = 0` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.__init__(), `0` changed up to `1` in `self.count = 0`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.__init__(), `0` changed down to `-1` in `self.count = 0`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.defect(), the statement `self.count += 1` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.defect(), the statement `emit(prefix, detail)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.defect(), `1` changed up to `2` in `self.count += 1`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.defect(), `1` changed down to `0` in `self.count += 1`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in Report.note(), the statement `emit(prefix, detail)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the statement `try:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the statement `data = Path(path).read_bytes()` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the statement `raise Unreadable("{} {}: {}".format(what, path, '
+    'error.strerror or error)) from error` deleted, at its 1st occurrence':
+        (U + 'test_folder_given_as_text_file_exits_2',),
+    'in read_utf8(), the statement `try:` deleted, at its 2nd occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the statement `text = data.decode("utf-8", "strict")` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the statement `raise Unreadable("{} {}: not UTF-8: {}".format(what, path, '
+    'error)) from error` deleted, at its 1st occurrence':
+        (U + 'test_undecodable_squash_file_exits_2',),
+    'in read_utf8(), the statement `return text.replace("\\r\\n", "\\n")` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in read_utf8(), the body of `except OSError as error:` replaced by `raise`, at its 1st '
+    'occurrence':
+        (U + 'test_folder_given_as_text_file_exits_2',),
+    'in read_utf8(), the body of `except UnicodeDecodeError as error:` replaced by `raise`, at '
+    'its 1st occurrence':
+        (U + 'test_undecodable_squash_file_exits_2',),
+    'in read_utf8(), `or` changed to `and` before `error`, at its 1st occurrence':
+        (U + 'test_unreadable_line_names_its_input',),
+    'in read_event(), the statement `text = read_utf8(path, "event payload")` deleted, at its '
+    '1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `try:` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `event = json.loads(text)` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `raise Unreadable("event payload {}: not JSON: '
+    '{}".format(path, error)) from error` deleted, at its 1st occurrence':
+        (U + 'test_deeply_nested_payload_exits_2',),
+    'in read_event(), the statement `pull = event.get("pull_request") if isinstance(event, '
+    'dict) else None` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `if not isinstance(pull, dict):` deleted, at its 1st '
+    'occurrence':
+        (U + 'test_other_event_type_exits_2',),
+    'in read_event(), the statement `raise Unreadable("event payload {}: not a pull request '
+    'event".format(path))` deleted, at its 1st occurrence':
+        (U + 'test_other_event_type_exits_2',),
+    'in read_event(), the statement `number = pull.get("number")` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `if type(number) is not int or number < 1:` deleted, at its '
+    '1st occurrence':
+        (U + 'test_payload_number_below_1_exits_2',),
+    'in read_event(), the statement `raise Unreadable("event payload {}: no positive integer '
+    'pull request number".format(path))` deleted, at its 1st occurrence':
+        (U + 'test_payload_number_below_1_exits_2',),
+    'in read_event(), the statement `body = pull.get("body")` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), the statement `if body is None:` deleted, at its 1st occurrence':
+        (D + 'test_null_body_fails',),
+    'in read_event(), the statement `body = ""` deleted, at its 1st occurrence':
+        (D + 'test_null_body_fails',),
+    'in read_event(), the statement `if not isinstance(body, str):` deleted, at its 1st '
+    'occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in read_event(), the statement `raise Unreadable("event payload {}: the pull request body '
+    'is not text".format(path))` deleted, at its 1st occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in read_event(), the statement `return number, body.replace("\\r\\n", "\\n")` deleted, at '
+    'its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), `ValueError` removed from `except (ValueError, RecursionError) as '
+    'error:`, at its 1st occurrence':
+        (U + 'test_unparseable_payload_exits_2',),
+    'in read_event(), `RecursionError` removed from `except (ValueError, RecursionError) as '
+    'error:`, at its 1st occurrence':
+        (U + 'test_deeply_nested_payload_exits_2',),
+    'in read_event(), the body of `except (ValueError, RecursionError) as error:` replaced by '
+    '`raise`, at its 1st occurrence':
+        (U + 'test_deeply_nested_payload_exits_2',),
+    'in read_event(), `not` removed from `not isinstance(pull, dict)`, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), `or` changed to `and` before `number < 1`, at its 1st occurrence':
+        (U + 'test_payload_number_below_1_exits_2',),
+    'in read_event(), `is` changed to `is not` in `body is None`, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), `not` removed from `not isinstance(body, str)`, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), `is not` changed to `is` in `type(number) is not int`, at its 1st '
+    'occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in read_event(), `<` changed to `<=` in `number < 1`, at its 1st occurrence':
+        (D + 'test_payload_number_1_is_read',),
+    'in read_event(), `1` changed up to `2` in `if type(number) is not int or number < 1:`, at '
+    'its 1st occurrence':
+        (D + 'test_payload_number_1_is_read',),
+    'in read_event(), `1` changed down to `0` in `if type(number) is not int or number < 1:`, '
+    'at its 1st occurrence':
+        (U + 'test_payload_number_below_1_exits_2',),
+    'in describe(), the statement `try:` deleted, at its 1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the statement `name = str.__str__(str(type(error).__name__))` deleted, at '
+    'its 1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the statement `name = "an exception"` deleted, at its 1st occurrence':
+        (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
+    'in describe(), the statement `try:` deleted, at its 2nd occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the statement `text = str.__str__(str(error))` deleted, at its 1st '
+    'occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the statement `return name + " (its message cannot be formatted)"` deleted, '
+    'at its 1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the statement `return name + ": " + text` deleted, at its 1st occurrence':
+        (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
+    'in describe(), `BaseException` changed to `Exception` in `except BaseException:`, at its '
+    '1st occurrence':
+        (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
+    'in describe(), the body of `except BaseException:` replaced by `raise`, at its 1st '
+    'occurrence':
+        (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
+    'in describe(), `BaseException` changed to `Exception` in `except BaseException:`, at its '
+    '2nd occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in describe(), the body of `except BaseException:` replaced by `raise`, at its 2nd '
+    'occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in load_scan(), the statement `sys.dont_write_bytecode = True` deleted, at its 1st '
+    'occurrence':
+        (O + 'test_gate_run_without_dash_b_writes_no_bytecode',),
+    'in load_scan(), the statement `try:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), the statement `spec = '
+    'importlib.util.spec_from_file_location("pr_text_label_lint", LINT)` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), the statement `module = importlib.util.module_from_spec(spec)` deleted, at '
+    'its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), the statement `spec.loader.exec_module(module)` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), the statement `scan = module.scan` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), the statement `raise Unreadable(LINT_FAILURE.format(LINT, '
+    'describe(error))) from error` deleted, at its 1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in load_scan(), the statement `return scan` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in load_scan(), `True` changed to `False` in `sys.dont_write_bytecode = True`, at its 1st '
+    'occurrence':
+        (O + 'test_gate_run_without_dash_b_writes_no_bytecode',),
+    'in load_scan(), `BaseException` changed to `Exception` in `except BaseException as '
+    'error:`, at its 1st occurrence':
+        (U + 'test_lint_that_exits_on_load_exits_2',),
+    'in load_scan(), the body of `except BaseException as error:` replaced by `raise`, at its '
+    '1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in blank(), the statement `return not INVISIBLE.sub("", COMMENT.sub("", text))` deleted, '
+    'at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in blank(), `not` removed from `not INVISIBLE.sub("", COMMENT.sub("", text))`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `inside = set()` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `opener = None` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `for index, line in enumerate(lines):` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `match = FENCE.match(line)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `if opener is None:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `if match:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `opener = match.group(1)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `start = index` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `inside.add(index)` deleted, at its 1st occurrence':
+        (E + 'test_dash_on_closed_fence_opener_line_passes',),
+    'in fenced(), the statement `continue` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), the statement `inside.add(index)` deleted, at its 2nd occurrence':
+        (D + 'test_unclosed_fence_in_description_fails',),
+    'in fenced(), the statement `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)` deleted, at its 1st occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), the statement `opener = None` deleted, at its 2nd occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), the statement `return inside, (start if opener is not None else None)` '
+    'deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `match` changed to `fullmatch` in `match = FENCE.match(line)`, at its 1st '
+    'occurrence':
+        (E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence',),
+    'in fenced(), `match` changed to `search` in `match = FENCE.match(line)`, at its 1st '
+    'occurrence':
+        (E + 'test_backtick_run_inside_a_line_is_not_a_fence',),
+    'in fenced(), `is` changed to `is not` in `opener is None`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `and` changed to `or` before `match.group(1)[0] == opener[0]`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `and` changed to `or` before `len(match.group(1)) >= len(opener)`, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `and` changed to `or` before `not line[match.end():].strip(" \\t")`, at its '
+    '1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `==` changed to `!=` in `match.group(1)[0] == opener[0]`, at its 1st '
+    'occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), `>=` changed to `>` in `len(match.group(1)) >= len(opener)`, at its 1st '
+    'occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), `not` removed from `not line[match.end():].strip(" \\t")`, at its 1st '
+    'occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), `is not` changed to `is` in `opener is not None`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `1` changed up to `2` in `opener = match.group(1)`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in fenced(), `1` changed down to `0` in `opener = match.group(1)`, at its 1st occurrence':
+        (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
+    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), `1` changed down to `0` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
+        (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
+    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
+        (E + 'test_closed_fence_then_clean_prose_passes',),
+    'in fenced(), `1` changed down to `0` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
+        (E + 'test_indented_shorter_closer_leaves_fence_open',),
+    'in code_spans(), the statement `runs = [match.span() for match in '
+    'BACKTICKS.finditer(line)]` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `closer = [None] * len(runs)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `later = {}` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `for index in range(len(runs) - 1, -1, -1):` deleted, at '
+    'its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), the statement `width = runs[index][1] - runs[index][0]` deleted, at its '
+    '1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `closer[index] = later.get(width)` deleted, at its 1st '
+    'occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), the statement `later[width] = index` deleted, at its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), the statement `spans = []` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `index = 0` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `while index < len(runs):` deleted, at its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), the statement `if closer[index] is None:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `index += 1` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), the statement `spans.append((runs[index][0], runs[closer[index]][1]))` '
+    'deleted, at its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), the statement `index = closer[index] + 1` deleted, at its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in code_spans(), the statement `return spans` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `0` changed up to `1` in `index = 0`, at its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), `0` changed down to `-1` in `index = 0`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `<` changed to `<=` in `index < len(runs)`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `is` changed to `is not` in `closer[index] is None`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
+    'its 1st occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
+    'at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
+    'its 2nd occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
+    'at its 2nd occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
+    'its 3rd occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
+    'at its 3rd occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed up to `2` in `index += 1`, at its 1st occurrence':
+        (E + 'test_span_after_a_lone_backtick_is_masked',),
+    'in code_spans(), `1` changed down to `0` in `index += 1`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed up to `2` in `width = runs[index][1] - runs[index][0]`, at '
+    'its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in code_spans(), `1` changed down to `0` in `width = runs[index][1] - runs[index][0]`, at '
+    'its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in code_spans(), `0` changed up to `1` in `width = runs[index][1] - runs[index][0]`, at '
+    'its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in code_spans(), `0` changed down to `-1` in `width = runs[index][1] - runs[index][0]`, at '
+    'its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in code_spans(), `1` changed up to `2` in `index = closer[index] + 1`, at its 1st '
+    'occurrence':
+        (E + 'test_span_right_after_another_span_is_masked',),
+    'in code_spans(), `1` changed down to `0` in `index = closer[index] + 1`, at its 1st '
+    'occurrence':
+        (E + 'test_span_closes_on_the_nearest_run_of_its_length',),
+    'in code_spans(), `0` changed up to `1` in `spans.append((runs[index][0], '
+    'runs[closer[index]][1]))`, at its 1st occurrence':
+        (E + 'test_masked_span_reads_as_spaces',),
+    'in code_spans(), `0` changed down to `-1` in `spans.append((runs[index][0], '
+    'runs[closer[index]][1]))`, at its 1st occurrence':
+        (E + 'test_masked_span_reads_as_spaces',),
+    'in code_spans(), `1` changed up to `2` in `spans.append((runs[index][0], '
+    'runs[closer[index]][1]))`, at its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in code_spans(), `1` changed down to `0` in `spans.append((runs[index][0], '
+    'runs[closer[index]][1]))`, at its 1st occurrence':
+        (E + 'test_masked_span_reads_as_spaces',),
+    'in masked(), the statement `chars = list(line)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in masked(), the statement `for start, end in spans:` deleted, at its 1st occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in masked(), the statement `chars[start:end] = MASK_CHAR * (end - start)` deleted, at its '
+    '1st occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in masked(), the statement `return "".join(chars)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in mask(), the statement `line = masked(line, code_spans(line))` deleted, at its 1st '
+    'occurrence':
+        (E + 'test_label_in_backticks_passes',),
+    'in mask(), the statement `for pattern in MASKS:` deleted, at its 1st occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in mask(), the statement `line = masked(line, [match.span() for match in '
+    'pattern.finditer(line)])` deleted, at its 1st occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in mask(), the statement `return line` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in excess_is_url(), the statement `return any(match.start() <= WIDTH and match.end() >= '
+    'len(line)` deleted, at its 1st occurrence':
+        (E + 'test_long_url_line_passes',),
+    'in excess_is_url(), `any` changed to `all`, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in excess_is_url(), `and` changed to `or` before `match.end() >= len(line)`, at its 1st '
+    'occurrence':
+        (E + 'test_curly_quoted_url_ending_a_long_squash_line_fails',),
+    'in excess_is_url(), `<=` changed to `<` in `match.start() <= WIDTH`, at its 1st occurrence':
+        (E + 'test_url_starting_at_character_73_passes',),
+    'in excess_is_url(), `>=` changed to `>` in `match.end() >= len(line)`, at its 1st '
+    'occurrence':
+        (E + 'test_long_url_line_passes',),
+    'in check_text(), the statement `if blank(text):` deleted, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in check_text(), the statement `report.defect(prefix, ": the text is empty")` deleted, at '
+    'its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in check_text(), the statement `return` deleted, at its 1st occurrence':
+        (D + 'test_blank_text_reports_only_that_it_is_empty',),
+    'in check_text(), the statement `lines = text.split("\\n")` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `fence, unclosed = fenced(lines)` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `if unclosed is not None:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `report.defect(prefix, ":{0}: the code fence opened on line '
+    '{0} is never closed".format(` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `prose = ["" if index in fence else mask(line) for index, '
+    'line in enumerate(lines)]` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `rel = prefix + ".md"` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `hits = scan(rel, "\\n".join(prose))` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `for hit in hits:` deleted, at its 1st occurrence':
+        (D + 'test_fix_label_in_description_fails',),
+    'in check_text(), the statement `report.defect(prefix, hit[len(rel):])` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_fix_label_in_description_fails',),
+    'in check_text(), the statement `for number, line in enumerate(prose, 1):` deleted, at its '
+    '1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `for name, dash in DASHES:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `if dash in line:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `report.defect(prefix, ":{}: {}: {}".format(number, name, '
+    'line.strip()))` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `for match in ISE.finditer(line):` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in check_text(), the statement `report.defect(prefix, ":{}: an -ise spelling: '
+    '{}".format(number, match.group(0)))` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in check_text(), the statement `width_applies = squash` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `revision_applies = squash` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), the statement `if width_applies:` deleted, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), the statement `for number, line in enumerate(lines, 1):` deleted, at its '
+    '1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), the statement `exempt = number - 1 in fence or excess_is_url(line)` '
+    'deleted, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), the statement `if len(line) > WIDTH and not exempt:` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), the statement `report.defect(prefix, ":{}: {} characters, over {}: '
+    '{}".format(` deleted, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), the statement `if revision_applies:` deleted, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_text(), the statement `for number, raw in enumerate(lines, 1):` deleted, at its '
+    '1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_text(), the statement `for match in REVISION.finditer(raw):` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_text(), the statement `report.defect(prefix, ":{}: a revision id: '
+    '{}".format(number, match.group(0)))` deleted, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_text(), `is not` changed to `is` in `unclosed is not None`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `1` changed up to `2` in `for number, line in enumerate(prose, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `1` changed down to `0` in `for number, line in enumerate(prose, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `in` changed to `not in` in `index in fence`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `in` changed to `not in` in `dash in line`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `1` changed up to `2` in `for number, line in enumerate(lines, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), `1` changed down to `0` in `for number, line in enumerate(lines, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), `or` changed to `and` before `excess_is_url(line)`, at its 1st occurrence':
+        (E + 'test_label_and_width_inside_fence_pass',),
+    'in check_text(), `and` changed to `or` before `not exempt`, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_text(), `1` changed up to `2` in `for number, raw in enumerate(lines, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_revision_id_in_squash_message_fails',),
+    'in check_text(), `1` changed down to `0` in `for number, raw in enumerate(lines, 1):`, at '
+    'its 1st occurrence':
+        (D + 'test_revision_id_in_squash_message_fails',),
+    'in check_text(), `in` changed to `not in` in `number - 1 in fence`, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), `>` changed to `>=` in `len(line) > WIDTH`, at its 1st occurrence':
+        (D + 'test_squash_line_of_72_characters_passes',),
+    'in check_text(), `not` removed from `not exempt`, at its 1st occurrence':
+        (D + 'test_squash_line_over_72_characters_fails',),
+    'in check_text(), `1` changed up to `2` in `unclosed + 1))`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `1` changed down to `0` in `unclosed + 1))`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: an -ise spelling: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: an -ise '
+    'spelling: {}".format(number, match.group(0)))`, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in check_text(), `1` changed up to `2` in `exempt = number - 1 in fence or '
+    'excess_is_url(line)`, at its 1st occurrence':
+        (E + 'test_long_line_next_to_a_fence_fails',),
+    'in check_text(), `1` changed down to `0` in `exempt = number - 1 in fence or '
+    'excess_is_url(line)`, at its 1st occurrence':
+        (E + 'test_long_line_next_to_a_fence_fails',),
+    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: a revision id: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: a revision id: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_squash(), the statement `check_text(report, "squash", text, True, scan)` deleted, '
+    'at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), the statement `if blank(text):` deleted, at its 1st occurrence':
+        (D + 'test_empty_squash_file_fails',),
+    'in check_squash(), the statement `return` deleted, at its 1st occurrence':
+        (D + 'test_empty_squash_file_fails',),
+    'in check_squash(), the statement `if number is None:` deleted, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_squash(), the statement `report.note("pr-text:", " subject binding not checked")` '
+    'deleted, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_squash(), the statement `return` deleted, at its 2nd occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_squash(), the statement `subject = text.split("\\n", 1)[0]` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), the statement `suffix = " (#{})".format(number)` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), the statement `if not subject.endswith(suffix):` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in check_squash(), the statement `report.defect("squash", \':1: the subject does not end '
+    'with "{}": {}\'.format(` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in check_squash(), `is` changed to `is not` in `number is None`, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_squash(), `not` removed from `not subject.endswith(suffix)`, at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), `True` changed to `False` in `check_text(report, "squash", text, True, '
+    'scan)`, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in check_squash(), `0` changed up to `1` in `subject = text.split("\\n", 1)[0]`, at its '
+    '1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), `0` changed down to `-1` in `subject = text.split("\\n", 1)[0]`, at its '
+    '1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in check_squash(), `1` changed down to `0` in `subject = text.split("\\n", 1)[0]`, at its '
+    '1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in bounded_number(), the statement `if len(digits) > MAX_DIGITS:` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_squash_name_of_19_digits_is_not_bound',),
+    'in bounded_number(), the statement `return None` deleted, at its 1st occurrence':
+        (D + 'test_squash_name_of_19_digits_is_not_bound',),
+    'in bounded_number(), the statement `return int(digits)` deleted, at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in bounded_number(), `>` changed to `>=` in `len(digits) > MAX_DIGITS`, at its 1st '
+    'occurrence':
+        (D + 'test_squash_name_of_18_digits_binds_the_subject',),
+    'in number_from_name(), the statement `try:` deleted, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in number_from_name(), the statement `parts = Path(path).absolute().parts` deleted, at its '
+    '1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in number_from_name(), the statement `raise Unreadable("squash file {}: the working '
+    'directory cannot be read: {}".format(` deleted, at its 1st occurrence':
+        (U + 'test_removed_working_directory_exits_2',),
+    'in number_from_name(), the statement `if parts[-3:-1] == (".github", "squash") and '
+    'SQUASH_NAME.fullmatch(parts[-1]):` deleted, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), the statement `return bounded_number(parts[-1][:-len(".txt")])` '
+    'deleted, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), the body of `except OSError as error:` replaced by `raise`, at its '
+    '1st occurrence':
+        (U + 'test_removed_working_directory_exits_2',),
+    'in number_from_name(), `and` changed to `or` before `SQUASH_NAME.fullmatch(parts[-1])`, at '
+    'its 1st occurrence':
+        (D + 'test_number_name_outside_a_squash_folder_is_not_bound',),
+    'in number_from_name(), `==` changed to `!=` in `parts[-3:-1] == (".github", "squash")`, at '
+    'its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `fullmatch` changed to `match` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_squash_name_with_a_further_suffix_is_not_bound',),
+    'in number_from_name(), `fullmatch` changed to `search` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_squash_names_with_a_leading_zero_are_not_bound',),
+    'in number_from_name(), `or` changed to `and` before `error`, at its 1st occurrence':
+        (U + 'test_removed_working_directory_exits_2',),
+    'in number_from_name(), `1` changed up to `2` in `if parts[-3:-1] == (".github", "squash") '
+    'and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `1` changed down to `0` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `3` changed up to `4` in `if parts[-3:-1] == (".github", "squash") '
+    'and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `3` changed down to `2` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `1` changed up to `2` in `if parts[-3:-1] == (".github", "squash") '
+    'and SQUASH_NAME.fullmatch(parts[-1]):`, at its 2nd occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `1` changed down to `0` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 2nd occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `1` changed up to `2` in `return '
+    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in number_from_name(), `1` changed down to `0` in `return '
+    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in parse(), the statement `if not argv:` deleted, at its 1st occurrence':
+        (U + 'test_no_arguments_is_a_usage_error',),
+    'in parse(), the statement `raise Usage("no mode given")` deleted, at its 1st occurrence':
+        (U + 'test_no_arguments_is_a_usage_error',),
+    'in parse(), the statement `options = {}` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `rest = list(argv)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `while rest:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `flag = rest.pop(0)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `if flag not in ("--event", "--description", "--squash", '
+    '"--number"):` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `raise Usage("unknown argument {}".format(flag))` deleted, at '
+    'its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `if flag in options or not rest:` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `raise Usage("{} needs 1 value and is given once".format(flag))` '
+    'deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `options[flag] = rest.pop(0)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `modes = [flag for flag in ("--event", "--description", '
+    '"--squash") if flag in options]` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `if len(modes) != 1:` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `raise Usage("give exactly 1 of --event, --description and '
+    '--squash")` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `number = None` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), the statement `if "--number" in options:` deleted, at its 1st occurrence':
+        (D + 'test_number_option_binding_passes',),
+    'in parse(), the statement `if modes[0] != "--squash":` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `raise Usage("--number applies to --squash only")` deleted, at '
+    'its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `if not re.fullmatch(r"[1-9][0-9]*", options["--number"]):` '
+    'deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `raise Usage("--number takes a positive integer")` deleted, at '
+    'its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), the statement `number = bounded_number(options["--number"])` deleted, at its '
+    '1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), the statement `if number is None:` deleted, at its 1st occurrence':
+        (U + 'test_number_option_of_18_digits_binds_and_19_is_a_usage_error',),
+    'in parse(), the statement `raise Usage("--number takes at most {} '
+    'digits".format(MAX_DIGITS))` deleted, at its 1st occurrence':
+        (U + 'test_number_option_of_18_digits_binds_and_19_is_a_usage_error',),
+    'in parse(), the statement `return modes[0], options[modes[0]], number` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `not` removed from `not argv`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `!=` changed to `==` in `len(modes) != 1`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `in` changed to `not in` in `"--number" in options`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `not in` changed to `in` in `flag not in ("--event", "--description", '
+    '"--squash", "--number")`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `or` changed to `and` before `not rest`, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in parse(), `1` changed up to `2` in `if len(modes) != 1:`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `1` changed down to `0` in `if len(modes) != 1:`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `!=` changed to `==` in `modes[0] != "--squash"`, at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), `not` removed from `not re.fullmatch(r"[1-9][0-9]*", options["--number"])`, at '
+    'its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), `is` changed to `is not` in `number is None`, at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), `0` changed up to `1` in `flag = rest.pop(0)`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `0` changed down to `-1` in `flag = rest.pop(0)`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `in` changed to `not in` in `flag in options`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `not` removed from `not rest`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `0` changed up to `1` in `options[flag] = rest.pop(0)`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `0` changed down to `-1` in `options[flag] = rest.pop(0)`, at its 1st '
+    'occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), `in` changed to `not in` in `flag in options`, at its 2nd occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `fullmatch` changed to `match` in `if not re.fullmatch(r"[1-9][0-9]*", '
+    'options["--number"]):`, at its 1st occurrence':
+        (U + 'test_number_option_with_trailing_text_is_a_usage_error',),
+    'in parse(), `fullmatch` changed to `search` in `if not re.fullmatch(r"[1-9][0-9]*", '
+    'options["--number"]):`, at its 1st occurrence':
+        (U + 'test_number_option_with_a_leading_zero_is_a_usage_error',),
+    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
+    '1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in parse(), `0` changed up to `1` in `if modes[0] != "--squash":`, at its 1st occurrence':
+        (D + 'test_em_dash_in_squash_message_fails',),
+    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
+    '2nd occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `report = Report()` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `try:` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `mode, path, given_number = parse(argv)` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `scan = load_scan()` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `if mode == "--event":` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `number, body = read_event(path)` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in main(), the statement `check_text(report, "description", body, False, scan)` deleted, '
+    'at its 1st occurrence':
+        (D + 'test_null_body_fails',),
+    'in main(), the statement `squash_path = SQUASH_DIR / "{}.txt".format(number)` deleted, at '
+    'its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in main(), the statement `check_squash(report, read_utf8(squash_path, "squash file"), '
+    'number, scan)` deleted, at its 1st occurrence':
+        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+    'in main(), the statement `elif mode == "--description":` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `check_text(report, "description", read_utf8(path, "description '
+    'file"), False, scan)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the statement `number = given_number if given_number is not None else '
+    'number_from_name(path)` deleted, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in main(), the statement `check_squash(report, read_utf8(path, "squash file"), number, '
+    'scan)` deleted, at its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in main(), the statement `status = EXIT_DEFECT if report.count else 0` deleted, at its 1st '
+    'occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in main(), the statement `report.note("pr-text:", " {}; {}".format(error, USAGE))` '
+    'deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in main(), the statement `status = EXIT_USAGE` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in main(), the statement `report.note("unreadable:", " {}".format(error))` deleted, at its '
+    '1st occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in main(), the statement `status = EXIT_UNREADABLE` deleted, at its 1st occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in main(), the statement `report.note("unreadable:", " the gate stopped on an unexpected '
+    'error: {}".format(` deleted, at its 1st occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in main(), the statement `status = EXIT_UNREADABLE` deleted, at its 2nd occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in main(), the statement `report.note("pr-text:", " {} defect(s)".format(report.count))` '
+    'deleted, at its 1st occurrence':
+        (D + 'test_em_dash_fails',),
+    'in main(), the statement `return status` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), the body of `except Usage as error:` replaced by `raise`, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in main(), the body of `except Unreadable as error:` replaced by `raise`, at its 1st '
+    'occurrence':
+        (U + 'test_body_that_is_a_number_exits_2',),
+    'in main(), `BaseException` changed to `Exception` in `except BaseException as error:`, at '
+    'its 1st occurrence':
+        (U + 'test_scan_that_exits_exits_2',),
+    'in main(), the body of `except BaseException as error:` replaced by `raise`, at its 1st '
+    'occurrence':
+        (U + 'test_error_whose_message_exits_exits_2',),
+    'in main(), `==` changed to `!=` in `mode == "--event"`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), `==` changed to `!=` in `mode == "--description"`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in main(), `0` changed up to `1` in `status = EXIT_DEFECT if report.count else 0`, at its '
+    '1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in main(), `0` changed down to `-1` in `status = EXIT_DEFECT if report.count else 0`, at '
+    'its 1st occurrence':
+        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in main(), `False` changed to `True` in `check_text(report, "description", body, False, '
+    'scan)`, at its 1st occurrence':
+        (O + 'test_event_description_has_no_width_or_revision_check',),
+    'in main(), `False` changed to `True` in `check_text(report, "description", read_utf8(path, '
+    '"description file"), False, scan)`, at its 1st occurrence':
+        (E + 'test_long_description_paragraph_passes',),
+    'in main(), `is not` changed to `is` in `given_number is not None`, at its 1st occurrence':
+        (D + 'test_number_comes_from_squash_file_name',),
+    'in the pattern FENCE, the quantifier `{0,3}` changed to `{1,3}`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern FENCE, the quantifier `{0,3}` changed to `{0,2}`, at its 1st occurrence':
+        (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
+    'in the pattern FENCE, the quantifier `{0,3}` changed to `{0,4}`, at its 1st occurrence':
+        (E + 'test_fence_indented_4_spaces_is_not_a_fence',),
+    'in the pattern FENCE, the quantifier `{3,}` changed to `{2,}`, at its 1st occurrence':
+        (E + 'test_run_of_2_backticks_or_tildes_is_not_a_fence',),
+    'in the pattern FENCE, the quantifier `{3,}` changed to `{4,}`, at its 1st occurrence':
+        (D + 'test_unclosed_fence_in_description_fails',),
+    'in the pattern FENCE, the negated class `[^`]` made plain, at its 1st occurrence':
+        (E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence',),
+    'in the pattern FENCE, the quantifier `*` changed to `+`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern FENCE, the anchor `$` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern FENCE, the lookahead `(?=[^`]*$)` deleted, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern FENCE, the quantifier `{3,}` changed to `{2,}`, at its 2nd occurrence':
+        (E + 'test_run_of_2_backticks_or_tildes_is_not_a_fence',),
+    'in the pattern FENCE, the quantifier `{3,}` changed to `{4,}`, at its 2nd occurrence':
+        (E + 'test_tilde_fence_masks_its_lines',),
+    'in the pattern FENCE, the quantifier `{3,}` made lazy, at its 2nd occurrence':
+        (E + 'test_tilde_fence_of_4_closes_only_on_4_or_more',),
+    'in the pattern FENCE, the alternative ``{3,}(?=[^`]*$)` deleted, at its 1st occurrence':
+        (E + 'test_label_and_width_inside_fence_pass',),
+    'in the pattern FENCE, the alternative `~{3,}` deleted, at its 1st occurrence':
+        (E + 'test_tilde_fence_masks_its_lines',),
+    'in the pattern BACKTICKS, the quantifier `+` changed to `*`, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern BACKTICKS, the quantifier `+` made lazy, at its 1st occurrence':
+        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
+    'in the pattern URL, the anchor `\\b` deleted, at its 1st occurrence':
+        (E + 'test_url_glued_after_a_letter_is_not_masked',),
+    'in the pattern URL, the quantifier `?` changed to `nothing`, at its 1st occurrence':
+        (E + 'test_word_inside_http_url_passes',),
+    'in the pattern URL, the member `\\s` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `<` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `>` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\"` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    "in the pattern URL, the member `'` deleted from the class "
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member ``` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `(` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `)` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u2013` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u2014` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u201c` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u201d` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u2018` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the member `\\u2019` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 1st occurrence':
+        (E + 'test_each_url_stopper_ends_the_url',),
+    'in the pattern URL, the negated class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]` made plain, at its 1st '
+    'occurrence':
+        (E + 'test_ise_word_inside_url_passes',),
+    'in the pattern URL, the escape of `\\(` removed, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern URL, the member `\\s` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `<` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `>` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\"` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    "in the pattern URL, the member `'` deleted from the class "
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member ``` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `(` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `)` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u2013` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u2014` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u201c` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u201d` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u2018` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the member `\\u2019` deleted from the class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
+        (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
+    'in the pattern URL, the negated class '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]` made plain, at its 2nd '
+    'occurrence':
+        (E + 'test_long_url_with_a_parenthesis_pair_passes',),
+    'in the pattern URL, the quantifier `*` changed to `+`, at its 1st occurrence':
+        (E + 'test_empty_parenthesis_pair_is_part_of_a_url',),
+    'in the pattern URL, the escape of `\\)` removed, at its 1st occurrence':
+        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+    'in the pattern URL, the alternative '
+    '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]` deleted, at its 1st occurrence':
+        (E + 'test_ise_word_inside_url_passes',),
+    'in the pattern URL, the alternative '
+    '`\\([^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]*\\)` deleted, at its 1st '
+    'occurrence':
+        (E + 'test_long_url_with_a_parenthesis_pair_passes',),
+    'in the pattern URL, the quantifier `*` changed to `+`, at its 2nd occurrence':
+        (E + 'test_url_of_only_its_scheme_ending_a_long_line_passes',),
+    'in the pattern URL, the quantifier `*` made lazy, at its 2nd occurrence':
+        (E + 'test_ise_word_inside_url_passes',),
+    'in the pattern URL, the member `.` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the member `,` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the member `;` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the member `:` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the member `!` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the member `?` deleted from the class `[.,;:!?]`, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern URL, the lookbehind `(?<![.,;:!?])` deleted, at its 1st occurrence':
+        (E + 'test_url_ending_in_each_trailing_mark_past_72_characters_fails',),
+    'in the pattern QUOTED, the member `\\"` deleted from the class `[^\\"\\n]`, at its 1st '
+    'occurrence':
+        (E + 'test_text_between_2_quoted_pairs_is_checked',),
+    'in the pattern QUOTED, the negated class `[^\\"\\n]` made plain, at its 1st occurrence':
+        (E + 'test_label_inside_double_quotes_passes',),
+    'in the pattern QUOTED, the quantifier `*` changed to `+`, at its 1st occurrence':
+        (E + 'test_masked_span_reads_as_spaces',),
+    'in the pattern QUOTED, the member `\\u201d` deleted from the class `[^\\u201d\\n]`, at its '
+    '1st occurrence':
+        (E + 'test_text_between_2_quoted_pairs_is_checked',),
+    'in the pattern QUOTED, the negated class `[^\\u201d\\n]` made plain, at its 1st occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in the pattern QUOTED, the quantifier `*` changed to `+`, at its 2nd occurrence':
+        (E + 'test_masked_span_reads_as_spaces',),
+    'in the pattern QUOTED, the alternative `\\"[^\\"\\n]*\\"` deleted, at its 1st occurrence':
+        (E + 'test_label_inside_double_quotes_passes',),
+    'in the pattern QUOTED, the alternative `\\u201c[^\\u201d\\n]*\\u201d` deleted, at its 1st '
+    'occurrence':
+        (E + 'test_dash_inside_curly_quotes_passes',),
+    'in the pattern COMMENT, the quantifier `*?` changed to `+?`, at its 1st occurrence':
+        (E + 'test_empty_comment_then_text_is_not_blank',),
+    'in the pattern COMMENT, the lazy quantifier `*?` made greedy, at its 1st occurrence':
+        (E + 'test_empty_comment_then_text_is_not_blank',),
+    'in the pattern COMMENT, the anchor `\\Z` deleted, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in the pattern COMMENT, the alternative `-->` deleted, at its 1st occurrence':
+        (E + 'test_empty_comment_then_text_is_not_blank',),
+    'in the pattern COMMENT, the alternative `\\Z` deleted, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in the pattern COMMENT, the flags argument `re.S` removed, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in the pattern INVISIBLE, the member `\\s` deleted from the class `[\\s\\u200b\\ufeff]`, '
+    'at its 1st occurrence':
+        (D + 'test_empty_description_fails',),
+    'in the pattern INVISIBLE, the member `\\u200b` deleted from the class '
+    '`[\\s\\u200b\\ufeff]`, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in the pattern INVISIBLE, the member `\\ufeff` deleted from the class '
+    '`[\\s\\u200b\\ufeff]`, at its 1st occurrence':
+        (D + 'test_blank_description_fails',),
+    'in the pattern ISE, the inline flag `(?i)` deleted, at its 1st occurrence':
+        (D + 'test_ise_spelling_with_a_capital_fails',),
+    'in the pattern ISE, the anchor `\\b` deleted, at its 1st occurrence':
+        (E + 'test_ise_stem_inside_a_longer_word_is_not_matched',),
+    'in the pattern ISE, the alternative `e` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `es` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `ed` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `ing` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `er` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `ers` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `able` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `ation` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the alternative `ations` deleted, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern ISE, the anchor `\\b` deleted, at its 2nd occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the pattern REVISION, the anchor `\\b` deleted, at its 1st occurrence':
+        (E + 'test_41_character_hex_run_passes',),
+    'in the pattern REVISION, the member `a-f` deleted from the class `[0-9a-f]`, at its 1st '
+    'occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in the pattern REVISION, the quantifier `*` changed to `+`, at its 1st occurrence':
+        (D + 'test_revision_id_with_its_only_digit_or_letter_first_fails',),
+    'in the pattern REVISION, the lookahead `(?=[0-9a-f]*[0-9])` deleted, at its 1st occurrence':
+        (E + 'test_word_of_letters_a_to_f_passes',),
+    'in the pattern REVISION, the member `0-9` deleted from the class `[0-9a-f]`, at its 2nd '
+    'occurrence':
+        (D + 'test_revision_id_with_its_only_digit_or_letter_first_fails',),
+    'in the pattern REVISION, the quantifier `*` changed to `+`, at its 2nd occurrence':
+        (D + 'test_revision_id_with_its_only_digit_or_letter_first_fails',),
+    'in the pattern REVISION, the lookahead `(?=[0-9a-f]*[a-f])` deleted, at its 1st occurrence':
+        (E + 'test_run_of_digits_passes',),
+    'in the pattern REVISION, the member `0-9` deleted from the class `[0-9a-f]`, at its 3rd '
+    'occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in the pattern REVISION, the member `a-f` deleted from the class `[0-9a-f]`, at its 3rd '
+    'occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in the pattern REVISION, the quantifier `{7,40}` changed to `{6,40}`, at its 1st occurrence':
+        (E + 'test_6_character_hex_word_with_digit_passes',),
+    'in the pattern REVISION, the quantifier `{7,40}` changed to `{8,40}`, at its 1st occurrence':
+        (D + 'test_revision_id_in_squash_message_fails',),
+    'in the pattern REVISION, the quantifier `{7,40}` changed to `{7,39}`, at its 1st occurrence':
+        (D + 'test_full_revision_id_in_squash_message_fails',),
+    'in the pattern REVISION, the quantifier `{7,40}` changed to `{7,41}`, at its 1st occurrence':
+        (E + 'test_41_character_hex_run_passes',),
+    'in the pattern REVISION, the anchor `\\b` deleted, at its 2nd occurrence':
+        (E + 'test_41_character_hex_run_passes',),
+    'in the pattern SQUASH_NAME, the quantifier `*` changed to `+`, at its 1st occurrence':
+        (D + 'test_squash_names_with_a_leading_zero_are_not_bound',),
+    'in the pattern SQUASH_NAME, the escape of `\\.` removed, at its 1st occurrence':
+        (D + 'test_squash_name_with_a_further_suffix_is_not_bound',),
+    'in the pattern of `re.fullmatch` in parse(), the quantifier `*` changed to `+`, at its 1st '
+    'occurrence':
+        (D + 'test_number_option_of_1_digit_binds',),
+    'in the constant ISE_STEMS, the member `apolog` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `author` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `capital` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `categor` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `central` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `character` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `critic` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `custom` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `emphas` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `final` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `formal` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `general` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `harmon` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `initial` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `legal` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `local` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `maxim` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `memor` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `minim` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `mobil` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `modern` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `neutral` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `normal` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `optim` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `organ` removed, at its 1st occurrence':
+        (D + 'test_each_ise_ending_fails',),
+    'in the constant ISE_STEMS, the member `parameter` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `priorit` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `random` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `real` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `recogn` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `sanit` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `serial` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `special` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `stabil` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `standard` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `summar` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `synchron` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `token` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `util` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+    'in the constant ISE_STEMS, the member `visual` removed, at its 1st occurrence':
+        (D + 'test_every_ise_stem_fails',),
+}
+
+# The generated sites that are equivalent: the mutated gate gives the same exit status and the
+# same output, byte for byte, as the gate on every input. Each entry carries the argument.
+EQUIVALENT_SITES = {
+    'in fenced(), the statement `start = None` deleted, at its 1st occurrence':
+        'start is read only in the return, and only when opener is not None, which holds only '
+        'after the loop has set start, so the value None is never read.',
+    'in fenced(), `0` changed up to `1` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
+        'match.group(1) and opener are each a run of 3 or more of 1 character, so index 1 names '
+        'the same character as index 0.',
+    'in fenced(), `0` changed down to `-1` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
+        'match.group(1) and opener are each a run of 3 or more of 1 character, so index -1 '
+        'names the same character as index 0.',
+    'in fenced(), `0` changed up to `1` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
+        'match.group(1) and opener are each a run of 3 or more of 1 character, so index 1 names '
+        'the same character as index 0.',
+    'in fenced(), `0` changed down to `-1` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
+        'match.group(1) and opener are each a run of 3 or more of 1 character, so index -1 '
+        'names the same character as index 0.',
+    'in check_squash(), `1` changed up to `2` in `subject = text.split("\\n", 1)[0]`, at its '
+    '1st occurrence':
+        'the subject is the text before the first line feed, and a split of at most 2 gives the '
+        'same first piece as a split of at most 1.',
+    'in number_from_name(), the statement `return None` deleted, at its 1st occurrence':
+        'the function then ends and returns None, the same value.',
+    'in parse(), `0` changed down to `-1` in `return modes[0], options[modes[0]], number`, at '
+    'its 1st occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so index -1 '
+        'names the same flag as index 0.',
+    'in parse(), `0` changed down to `-1` in `if modes[0] != "--squash":`, at its 1st occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so index -1 '
+        'names the same flag as index 0.',
+    'in parse(), `0` changed down to `-1` in `return modes[0], options[modes[0]], number`, at '
+    'its 2nd occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so index -1 '
+        'names the same flag as index 0.',
+    'in the pattern FENCE, the quantifier `{0,3}` made lazy, at its 1st occurrence':
+        'the character after the spaces must be a backtick or a tilde, so a lazy run of spaces '
+        'ends where the greedy run ends, and match() returns the same match.',
+    'in the pattern FENCE, the quantifier `{3,}` made lazy, at its 1st occurrence':
+        'the lookahead after the run of backticks requires that no backtick follows, so a lazy '
+        'run grows to the end of the run, as the greedy one does.',
+    'in the pattern FENCE, the quantifier `*` made lazy, at its 1st occurrence':
+        'a lookahead asks only whether its pattern matches, and a lazy run matches where the '
+        'greedy run matches, so the lookahead gives the same answer.',
+    'in the pattern URL, the quantifier `?` made lazy, at its 1st occurrence':
+        'the 3 characters :// must follow, so a lazy s is taken exactly when the text has it, '
+        'and the match is the same.',
+    'in the pattern URL, the quantifier `*` made lazy, at its 1st occurrence':
+        'the class refuses the mark that follows the run, so a lazy run grows to the first such '
+        'mark, where the greedy run stops, and the match is the same.',
+    'in the pattern QUOTED, the member `\\n` deleted from the class `[^\\"\\n]`, at its 1st '
+    'occurrence':
+        'the mask reads 1 line, which holds no line feed, so the class never meets one.',
+    'in the pattern QUOTED, the quantifier `*` made lazy, at its 1st occurrence':
+        'the class refuses the mark that follows the run, so a lazy run grows to the first such '
+        'mark, where the greedy run stops, and the match is the same.',
+    'in the pattern QUOTED, the member `\\n` deleted from the class `[^\\u201d\\n]`, at its 1st '
+    'occurrence':
+        'the mask reads 1 line, which holds no line feed, so the class never meets one.',
+    'in the pattern QUOTED, the quantifier `*` made lazy, at its 2nd occurrence':
+        'the class refuses the mark that follows the run, so a lazy run grows to the first such '
+        'mark, where the greedy run stops, and the match is the same.',
+    'in the pattern REVISION, the member `0-9` deleted from the class `[0-9a-f]`, at its 1st '
+    'occurrence':
+        'the lookahead reads a run of hex digits, so the first character after its leading '
+        'letters a to f is a digit exactly when the run holds a digit; the lookahead matches on '
+        'the same runs as before.',
+    'in the pattern REVISION, the quantifier `*` made lazy, at its 1st occurrence':
+        'a lookahead asks only whether its pattern matches, and a lazy run matches where the '
+        'greedy run matches, so the lookahead gives the same answer.',
+    'in the pattern REVISION, the member `a-f` deleted from the class `[0-9a-f]`, at its 2nd '
+    'occurrence':
+        'the lookahead reads a run of hex digits, so the first character after its leading '
+        'digits is a letter a to f exactly when the run holds such a letter; the lookahead '
+        'matches on the same runs as before.',
+    'in the pattern REVISION, the quantifier `*` made lazy, at its 2nd occurrence':
+        'a lookahead asks only whether its pattern matches, and a lazy run matches where the '
+        'greedy run matches, so the lookahead gives the same answer.',
+    'in the pattern REVISION, the quantifier `{7,40}` made lazy, at its 1st occurrence':
+        'the word boundary after the run needs a character that is not a hex digit, so a lazy '
+        'run grows to the end of the hex run, where the greedy run ends, and the matches are '
+        'the same.',
+    'in the pattern SQUASH_NAME, the quantifier `*` made lazy, at its 1st occurrence':
+        'the pattern is matched with fullmatch, which must reach the end of the text either '
+        'way, so a lazy run matches the same texts.',
+    'in the pattern of `re.fullmatch` in parse(), the quantifier `*` made lazy, at its 1st '
+    'occurrence':
+        'the pattern is matched with fullmatch, which must reach the end of the text either '
+        'way, so a lazy run matches the same texts.',
+}
 
 
 def row(words, old, new, ids, count=1, target="gate"):
-    """1 row of the sweep: (words, target file, old text, new text, count, case ids)."""
+    """1 hand row: (words, target file, old text, new text, count, case ids)."""
     return (words, target, old, new, count, tuple(ids))
 
 
-SWEEP_ROWS = (
-    # The fence pattern: the indent bound, each alternative and the run lengths.
-    row("the fence indent bound dropped", "^ {0,3}(", "^(",
-        [E + "test_fence_indented_1_to_3_spaces_masks_its_lines"]),
-    row("the fence indent bound narrowed to 2 spaces", "^ {0,3}(", "^ {0,2}(",
-        [E + "test_fence_indented_1_to_3_spaces_masks_its_lines"]),
-    row("the fence indent bound widened to 4 spaces", "^ {0,3}(", "^ {0,4}(",
-        [E + "test_fence_indented_4_spaces_is_not_a_fence"]),
-    row("the fence indent bound widened to any number of spaces", "^ {0,3}(", "^ *(",
-        [E + "test_fence_indented_4_spaces_is_not_a_fence"]),
-    row("a backtick fence opened by 2 backticks", "(`{3,}(?=", "(`{2,}(?=",
-        [E + "test_run_of_2_backticks_or_tildes_is_not_a_fence"]),
-    row("a backtick fence opened only by 4 backticks", "(`{3,}(?=", "(`{4,}(?=",
-        [D + "test_unclosed_fence_in_description_fails"]),
-    row("a tilde fence opened by 2 tildes", "|~{3,})", "|~{2,})",
-        [E + "test_run_of_2_backticks_or_tildes_is_not_a_fence"]),
-    row("the tilde alternative of the fence pattern removed", "|~{3,})", ")",
-        [E + "test_tilde_fence_masks_its_lines"]),
-    row("the backtick alternative of the fence pattern removed", "(`{3,}(?=[^`]*$)|~{3,})",
-        "(~{3,})", [E + "test_label_and_width_inside_fence_pass"]),
-    row("the lookahead dropped from the backtick fence opener", "(?=[^`]*$)", "",
-        [D + "test_backtick_in_fence_info_string_is_not_a_fence"]),
-    # The fence closer.
-    row("a closer of the other character accepted", "match.group(1)[0] == opener[0]", "True",
-        [E + "test_other_character_closer_leaves_fence_open"]),
-    row("a shorter closer accepted", "len(match.group(1)) >= len(opener)", "True",
-        [E + "test_shorter_closer_leaves_fence_open"]),
-    row("a closer of the same length refused", ">= len(opener)", "> len(opener)",
-        [E + "test_closed_fence_then_clean_prose_passes"]),
-    row("the closer strip widened back to any whitespace", '.strip(" \\t")', ".strip()",
-        [E + "test_closer_followed_by_other_whitespace_leaves_fence_open"]),
-    row("the closer strip narrowed to spaces", '.strip(" \\t")', '.strip(" ")',
-        [E + "test_closer_followed_by_a_tab_or_a_space_closes_fence"]),
-    row("the closer strip narrowed to tabs", '.strip(" \\t")', '.strip("\\t")',
-        [E + "test_closer_followed_by_a_tab_or_a_space_closes_fence"]),
-    row("a closer with trailing text accepted", NL + '                and not line[match.end():]'
-        '.strip(" \\t")):', "):", [E + "test_closer_with_trailing_text_leaves_fence_open"]),
-    row("the fenced lines dropped from the fenced set", "return inside, (start if",
-        "return set(), (start if", [E + "test_label_and_width_inside_fence_pass"]),
-    row("the unclosed-fence report made never to apply", "if unclosed is not None:",
-        "if False:", [D + "test_unclosed_fence_in_description_fails"]),
-    # The inline code spans.
-    row("a span that closes on the farthest run of the same length", "later[width] = index",
-        "later.setdefault(width, index)",
-        [E + "test_span_closes_on_the_nearest_run_of_its_length"]),
-    row("the step of the inline-span scan changed", "index = closer[index] + 1", "index += 1",
-        [E + "test_span_scan_resumes_after_its_closer"]),
-    row("no closer found for any backtick run", "closer[index] = later.get(width)",
-        "closer[index] = None", [E + "test_label_in_backticks_passes"]),
-    row("the inline-code mask skipped", "line = masked(line, code_spans(line))",
-        "line = masked(line, [])", [E + "test_label_in_backticks_passes"]),
-    # The URL pattern: the curly marks, the parenthesis pair and the trailing marks.
-    row("the curly quote marks removed from both classes of the URL pattern",
-        r"\u2014\u201c\u201d\u2018\u2019]", r"\u2014]",
-        [E + "test_dash_after_curly_quoted_url_fails",
-         E + "test_curly_quoted_url_ending_a_long_squash_line_fails"], count=2),
-    row("the parenthesis-pair branch of the URL pattern disabled", "|\\([^", "|(?!)\\([^",
-        [E + "test_long_url_with_a_parenthesis_pair_passes"]),
-    row("the trailing-mark lookbehind of the URL pattern dropped", 'r"' + LOOKBEHIND + '")',
-        'r"")', [E + "test_url_ending_in_each_trailing_mark_past_72_characters_fails"]),
-    # The masks.
-    row("the mask written with an underscore", 'MASK_CHAR = " "', 'MASK_CHAR = "_"',
-        [D + "test_label_right_after_masked_span_fails"]),
-    row("the URL mask removed", "MASKS = (URL, QUOTED)", "MASKS = (QUOTED,)",
-        [E + "test_ise_word_inside_url_passes"]),
-    row("the quote mask removed", "MASKS = (URL, QUOTED)", "MASKS = (URL,)",
-        [E + "test_label_inside_double_quotes_passes"]),
-    row("the straight-quote alternative of the quote mask removed", r'\"[^\"\n]*\"|', "",
-        [E + "test_label_inside_double_quotes_passes"]),
-    row("the curly-quote alternative of the quote mask removed", r"|\u201c[^\u201d\n]*\u201d",
-        "", [E + "test_dash_inside_curly_quotes_passes"]),
-    row("the straight double quote mark removed from its quote-mask class", r'[^\"\n]',
-        r"[^\n]", [E + "test_text_between_2_quoted_pairs_is_checked"]),
-    row("U+201D removed from its quote-mask class", r"[^\u201d\n]", r"[^\n]",
-        [E + "test_text_between_2_quoted_pairs_is_checked"]),
-    # The blank test.
-    row("the unclosed comment no longer runs to the end", r"(?:-->|\Z)", "-->",
-        [D + "test_blank_description_fails"]),
-    row("a comment no longer spans lines", '", re.S)', '")',
-        [D + "test_blank_description_fails"]),
-    row("whitespace removed from the invisible characters", r"[\s\u200b\ufeff]",
-        r"[\u200b\ufeff]", [D + "test_empty_description_fails"]),
-    row("U+200B removed from the invisible characters", r"[\s\u200b\ufeff]", r"[\s\ufeff]",
-        [D + "test_blank_description_fails"]),
-    row("U+FEFF removed from the invisible characters", r"[\s\u200b\ufeff]", r"[\s\u200b]",
-        [D + "test_blank_description_fails"]),
-    row("the blank test reduced to whitespace only",
-        'return not INVISIBLE.sub("", COMMENT.sub("", text))', "return not text.strip()",
-        [D + "test_blank_description_fails"]),
-    row("the empty-text check made never to apply",
-        "if blank(text):" + NL + "        report.defect(prefix",
-        "if False:" + NL + "        report.defect(prefix", [D + "test_empty_description_fails"]),
-    row("the squash check made to go on after a blank text",
-        "if blank(text):" + NL + "        return", "if False:" + NL + "        return",
-        [D + "test_empty_squash_file_fails"]),
-    # The -ise pattern: its flag and each ending; the stems follow the table.
-    row("the -ise pattern made case-sensitive", 'r"(?i)\\b(?:"', 'r"\\b(?:"',
-        [D + "test_ise_spelling_with_a_capital_fails"]),
-    # The label, dash, width and revision checks.
-    row("the label scan replaced by an empty list of hits", 'hits = scan(rel, "\\n".join(prose))',
-        "hits = []", [D + "test_label_in_description_fails"]),
-    row("the em dash removed from the dash check", '("an em dash, U+2014", "\\u2014"),', "",
-        [D + "test_em_dash_fails"]),
-    row("the en dash removed from the dash check", '("an en dash, U+2013", "\\u2013"),', "",
-        [D + "test_en_dash_fails"]),
-    row("the width limit raised by 1", "WIDTH = 72", "WIDTH = 73",
-        [D + "test_squash_line_over_72_characters_fails"]),
-    row("the width limit lowered by 1", "WIDTH = 72", "WIDTH = 71",
-        [D + "test_squash_line_of_72_characters_passes"]),
-    row("a line of exactly the width limit failed", "if len(line) > WIDTH and not exempt:",
-        "if len(line) >= WIDTH and not exempt:", [D + "test_squash_line_of_72_characters_passes"]),
-    row("the width check applied to the description", "width_applies = squash",
-        "width_applies = True", [E + "test_long_description_paragraph_passes"]),
-    row("the revision check applied to the description", "revision_applies = squash",
-        "revision_applies = True", [E + "test_revision_id_in_description_passes"]),
-    row("the URL-excess width exemption removed",
-        "exempt = number - 1 in fence or excess_is_url(line)", "exempt = number - 1 in fence",
-        [E + "test_long_url_line_passes"]),
-    row("the fenced-code width exemption removed",
-        "exempt = number - 1 in fence or excess_is_url(line)", "exempt = excess_is_url(line)",
-        [E + "test_label_and_width_inside_fence_pass"]),
-    row("the URL start bound moved by 1", "match.start() <= WIDTH", "match.start() < WIDTH",
-        [E + "test_url_starting_at_character_73_passes"]),
-    row("the URL start bound dropped", "match.start() <= WIDTH and ", "",
-        [E + "test_url_starting_past_72_characters_fails"]),
-    row("the URL end test made strict", "match.end() >= len(line)", "match.end() > len(line)",
-        [E + "test_long_url_line_passes"]),
-    row("the URL end test dropped", "match.end() >= len(line)", "True",
-        [E + "test_long_line_with_url_before_the_excess_fails"]),
-    row("the fenced lines given to the prose checks", '"" if index in fence else mask(line)',
-        "mask(line)", [E + "test_label_and_width_inside_fence_pass"]),
-    row("the revision check run on the masked lines", "for number, raw in enumerate(lines, 1):",
-        "for number, raw in enumerate(prose, 1):",
-        [D + "test_revision_id_in_backticks_in_squash_message_fails"]),
-    row("the revision upper bound widened to 41", "{7,40}", "{7,41}",
-        [E + "test_41_character_hex_run_passes"]),
-    row("the revision lower bound lowered to 6", "{7,40}", "{6,40}",
-        [E + "test_6_character_hex_word_with_digit_passes"]),
-    row("the revision lower bound raised to 8", "{7,40}", "{8,40}",
-        [D + "test_revision_id_in_squash_message_fails"]),
-    row("the digit lookahead dropped from the revision pattern", "(?=[0-9a-f]*[0-9])", "",
-        [E + "test_word_of_letters_a_to_f_passes"]),
-    row("the letter lookahead dropped from the revision pattern", "(?=[0-9a-f]*[a-f])", "",
-        [E + "test_run_of_digits_passes"]),
-    row("the revision pattern made to match nothing", 'REVISION = re.compile(r"\\b',
-        'REVISION = re.compile(r"(?!)\\b', [D + "test_revision_id_in_squash_message_fails"]),
-    # The subject binding and the digit bound.
-    row("the subject suffix check made never to apply", "if not subject.endswith(suffix):",
-        "if False:", [D + "test_squash_subject_without_its_number_fails"]),
-    row("the binding note skipped when no number is known",
-        "if number is None:" + NL + "        report.note",
-        "if False:" + NL + "        report.note",
-        [D + "test_binding_not_checked_line_is_not_a_defect"]),
-    row("the digit bound off by 1 upwards", "if len(digits) > MAX_DIGITS:",
-        "if len(digits) > MAX_DIGITS + 1:", [D + "test_squash_name_of_19_digits_is_not_bound",
-                                            U + "test_number_option_of_18_digits_binds_and_19_"
-                                            "is_a_usage_error"]),
-    row("the digit bound off by 1 downwards", "if len(digits) > MAX_DIGITS:",
-        "if len(digits) >= MAX_DIGITS:", [D + "test_squash_name_of_18_digits_binds_the_subject"]),
-    row("the digit bound made never to apply", "if len(digits) > MAX_DIGITS:", "if False:",
-        [U + "test_number_option_over_the_digit_bound_is_a_usage_error",
-         U + "test_squash_name_too_long_to_open_exits_2"]),
-    row("the digit bound raised to 19", "MAX_DIGITS = 18", "MAX_DIGITS = 19",
-        [D + "test_squash_name_of_19_digits_is_not_bound"]),
-    row("the digit bound raised to 100", "MAX_DIGITS = 18", "MAX_DIGITS = 100",
-        [D + "test_squash_name_of_19_digits_is_not_bound"]),
-    row("the digit bound lowered to 17", "MAX_DIGITS = 18", "MAX_DIGITS = 17",
-        [D + "test_squash_name_of_18_digits_binds_the_subject"]),
-    row("the squash folder test dropped from the file name binding",
-        'parts[-3:-1] == (".github", "squash") and ', "",
-        [D + "test_number_name_outside_a_squash_folder_is_not_bound"]),
-    row("the squash name pattern made to allow a leading zero", r'r"[1-9][0-9]*\.txt"',
-        r'r"[0-9]+\.txt"', [D + "test_squash_names_with_a_leading_zero_are_not_bound"]),
-    row("the number option ignored in favour of the file name",
-        "number = given_number if given_number is not None else number_from_name(path)",
-        "number = number_from_name(path)", [D + "test_number_option_binding_passes"]),
-    # The readers and the payload.
-    row("the CRLF replace in the text reader dropped", 'return text.replace("\\r\\n", "\\n")',
-        "return text", [O + "test_squash_file_with_crlf_line_endings_passes"]),
-    row("the CRLF replace in the payload reader dropped",
-        'return number, body.replace("\\r\\n", "\\n")', "return number, body",
-        [O + "test_event_body_with_crlf_line_endings_passes"]),
-    row("UTF-8 decoded with replacement", '"utf-8", "strict"', '"utf-8", "replace"',
-        [U + "test_undecodable_text_exits_2"]),
-    row("the decode handler narrowed to an exception that never occurs",
-        "except UnicodeDecodeError as error:", "except ImportError as error:",
-        [U + "test_undecodable_text_exits_2"]),
-    row("the file read handler narrowed to a missing file",
-        "    except OSError as error:" + NL + '        raise Unreadable("{} {}: {}"',
-        "    except FileNotFoundError as error:" + NL + '        raise Unreadable("{} {}: {}"',
-        [U + "test_folder_given_as_text_file_exits_2"]),
-    row("a missing file read as empty",
+# Hand-written rows of changes the generator does not make, such as a change of several tokens,
+# a restored clause or a change of the workflow; the adequacy test leaves them alone.
+HAND_ROWS = (
+    row(
+        'the integer type test of the payload number widened to isinstance',
+        'type(number) is not int',
+        'not isinstance(number, int)',
+        [U + 'test_payload_number_true_is_not_an_integer']),
+    row(
+        'the test that the payload is an object dropped',
+        'pull = event.get("pull_request") if isinstance(event, dict) else None',
+        'pull = event.get("pull_request")',
+        [U + 'test_payload_that_is_a_list_is_not_a_pull_request_event']),
+    row(
+        'the 2 substitutions of the blank test swapped',
+        'return not INVISIBLE.sub("", COMMENT.sub("", text))',
+        'return not COMMENT.sub("", INVISIBLE.sub("", text))',
+        [E + 'test_comment_opener_broken_by_a_zero_width_space_is_text']),
+    row(
+        'the fence indent bound dropped',
+        'r" {0,3}(',
+        'r"(',
+        [E + 'test_fence_indented_1_to_3_spaces_masks_its_lines']),
+    row(
+        'the fence indent bound widened to any number of spaces',
+        'r" {0,3}(',
+        'r" *(',
+        [E + 'test_fence_indented_4_spaces_is_not_a_fence']),
+    row(
+        'a closer of the other character accepted',
+        'match.group(1)[0] == opener[0]',
+        'True',
+        [E + 'test_other_character_closer_leaves_fence_open']),
+    row(
+        'a shorter closer accepted',
+        'len(match.group(1)) >= len(opener)',
+        'True',
+        [E + 'test_shorter_closer_leaves_fence_open']),
+    row(
+        'the closer strip widened back to any whitespace',
+        '.strip(" \\t")',
+        '.strip()',
+        [E + 'test_closer_followed_by_other_whitespace_leaves_fence_open']),
+    row(
+        'the closer strip narrowed to spaces',
+        '.strip(" \\t")',
+        '.strip(" ")',
+        [E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence']),
+    row(
+        'the closer strip narrowed to tabs',
+        '.strip(" \\t")',
+        '.strip("\\t")',
+        [E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence']),
+    row(
+        'a closer with trailing text accepted',
+        '\n                and not line[match.end():].strip(" \\t")):',
+        '):',
+        [E + 'test_closer_with_trailing_text_leaves_fence_open']),
+    row(
+        'the fenced lines dropped from the fenced set',
+        'return inside, (start if',
+        'return set(), (start if',
+        [E + 'test_label_and_width_inside_fence_pass']),
+    row(
+        'the unclosed-fence report made never to apply',
+        'if unclosed is not None:',
+        'if False:',
+        [D + 'test_unclosed_fence_in_description_fails']),
+    row(
+        'a span that closes on the farthest run of the same length',
+        'later[width] = index',
+        'later.setdefault(width, index)',
+        [E + 'test_span_closes_on_the_nearest_run_of_its_length']),
+    row(
+        'the step of the inline-span scan changed',
+        'index = closer[index] + 1',
+        'index += 1',
+        [E + 'test_span_scan_resumes_after_its_closer']),
+    row(
+        'no closer found for any backtick run',
+        'closer[index] = later.get(width)',
+        'closer[index] = None',
+        [E + 'test_label_in_backticks_passes']),
+    row(
+        'the inline-code mask skipped',
+        'line = masked(line, code_spans(line))',
+        'line = masked(line, [])',
+        [E + 'test_label_in_backticks_passes']),
+    row(
+        'the curly quote marks removed from both classes of the URL pattern',
+        '\\u2014\\u201c\\u201d\\u2018\\u2019]',
+        '\\u2014]',
+        [
+         E + 'test_dash_after_curly_quoted_url_fails',
+         E + 'test_curly_quoted_url_ending_a_long_squash_line_fails',
+        ], count=2),
+    row(
+        'the parenthesis-pair branch of the URL pattern disabled',
+        '|\\([^',
+        '|(?!)\\([^',
+        [E + 'test_long_url_with_a_parenthesis_pair_passes']),
+    row(
+        'the mask written with an underscore',
+        'MASK_CHAR = " "',
+        'MASK_CHAR = "_"',
+        [D + 'test_label_right_after_masked_span_fails']),
+    row(
+        'the URL mask removed',
+        'MASKS = (URL, QUOTED)',
+        'MASKS = (QUOTED,)',
+        [E + 'test_ise_word_inside_url_passes']),
+    row(
+        'the quote mask removed',
+        'MASKS = (URL, QUOTED)',
+        'MASKS = (URL,)',
+        [E + 'test_label_inside_double_quotes_passes']),
+    row(
+        'the unclosed comment no longer runs to the end',
+        '(?:-->|\\Z)',
+        '-->',
+        [D + 'test_blank_description_fails']),
+    row(
+        'the blank test reduced to whitespace only',
+        'return not INVISIBLE.sub("", COMMENT.sub("", text))',
+        'return not text.strip()',
+        [D + 'test_blank_description_fails']),
+    row(
+        'the empty-text check made never to apply',
+        'if blank(text):\n        report.defect(prefix',
+        'if False:\n        report.defect(prefix',
+        [D + 'test_empty_description_fails']),
+    row(
+        'the squash check made to go on after a blank text',
+        'if blank(text):\n        return',
+        'if False:\n        return',
+        [D + 'test_empty_squash_file_fails']),
+    row(
+        'the label scan replaced by an empty list of hits',
+        'hits = scan(rel, "\\n".join(prose))',
+        'hits = []',
+        [D + 'test_label_in_description_fails']),
+    row(
+        'the em dash removed from the dash check',
+        '("an em dash, U+2014", "\\u2014"),',
+        '',
+        [D + 'test_em_dash_fails']),
+    row(
+        'the en dash removed from the dash check',
+        '("an en dash, U+2013", "\\u2013"),',
+        '',
+        [D + 'test_en_dash_fails']),
+    row(
+        'the width check applied to the description',
+        'width_applies = squash',
+        'width_applies = True',
+        [E + 'test_long_description_paragraph_passes']),
+    row(
+        'the revision check applied to the description',
+        'revision_applies = squash',
+        'revision_applies = True',
+        [E + 'test_revision_id_in_description_passes']),
+    row(
+        'the URL-excess width exemption removed',
+        'exempt = number - 1 in fence or excess_is_url(line)',
+        'exempt = number - 1 in fence',
+        [E + 'test_long_url_line_passes']),
+    row(
+        'the fenced-code width exemption removed',
+        'exempt = number - 1 in fence or excess_is_url(line)',
+        'exempt = excess_is_url(line)',
+        [E + 'test_label_and_width_inside_fence_pass']),
+    row(
+        'the URL start bound dropped',
+        'match.start() <= WIDTH and ',
+        '',
+        [E + 'test_url_starting_past_72_characters_fails']),
+    row(
+        'the URL end test dropped',
+        'match.end() >= len(line)',
+        'True',
+        [E + 'test_long_line_with_url_before_the_excess_fails']),
+    row(
+        'the fenced lines given to the prose checks',
+        '"" if index in fence else mask(line)',
+        'mask(line)',
+        [E + 'test_label_and_width_inside_fence_pass']),
+    row(
+        'the revision check run on the masked lines',
+        'for number, raw in enumerate(lines, 1):',
+        'for number, raw in enumerate(prose, 1):',
+        [D + 'test_revision_id_in_backticks_in_squash_message_fails']),
+    row(
+        'the revision pattern made to match nothing',
+        'REVISION = re.compile(r"\\b',
+        'REVISION = re.compile(r"(?!)\\b',
+        [D + 'test_revision_id_in_squash_message_fails']),
+    row(
+        'the subject suffix check made never to apply',
+        'if not subject.endswith(suffix):',
+        'if False:',
+        [D + 'test_squash_subject_without_its_number_fails']),
+    row(
+        'the binding note skipped when no number is known',
+        'if number is None:\n        report.note',
+        'if False:\n        report.note',
+        [D + 'test_binding_not_checked_line_is_not_a_defect']),
+    row(
+        'the digit bound off by 1 upwards',
+        'if len(digits) > MAX_DIGITS:',
+        'if len(digits) > MAX_DIGITS + 1:',
+        [
+         D + 'test_squash_name_of_19_digits_is_not_bound',
+         U + 'test_number_option_of_18_digits_binds_and_19_is_a_usage_error',
+        ]),
+    row(
+        'the digit bound made never to apply',
+        'if len(digits) > MAX_DIGITS:',
+        'if False:',
+        [
+         U + 'test_number_option_over_the_digit_bound_is_a_usage_error',
+         U + 'test_squash_name_too_long_to_open_exits_2',
+        ]),
+    row(
+        'the digit bound raised to 100',
+        'MAX_DIGITS = 18',
+        'MAX_DIGITS = 100',
+        [D + 'test_squash_name_of_19_digits_is_not_bound']),
+    row(
+        'the squash folder test dropped from the file name binding',
+        'parts[-3:-1] == (".github", "squash") and ',
+        '',
+        [D + 'test_number_name_outside_a_squash_folder_is_not_bound']),
+    row(
+        'the squash name pattern made to allow a leading zero',
+        'r"[1-9][0-9]*\\.txt"',
+        'r"[0-9]+\\.txt"',
+        [D + 'test_squash_names_with_a_leading_zero_are_not_bound']),
+    row(
+        'the number option ignored in favour of the file name',
+        'number = given_number if given_number is not None else number_from_name(path)',
+        'number = number_from_name(path)',
+        [D + 'test_number_option_binding_passes']),
+    row(
+        'the CRLF replace in the text reader dropped',
+        'return text.replace("\\r\\n", "\\n")',
+        'return text',
+        [O + 'test_squash_file_with_crlf_line_endings_passes']),
+    row(
+        'the CRLF replace in the payload reader dropped',
+        'return number, body.replace("\\r\\n", "\\n")',
+        'return number, body',
+        [O + 'test_event_body_with_crlf_line_endings_passes']),
+    row(
+        'UTF-8 decoded with replacement',
+        '"utf-8", "strict"',
+        '"utf-8", "replace"',
+        [U + 'test_undecodable_text_exits_2']),
+    row(
+        'the decode handler narrowed to an exception that never occurs',
+        'except UnicodeDecodeError as error:',
+        'except ImportError as error:',
+        [U + 'test_undecodable_text_exits_2']),
+    row(
+        'the file read handler narrowed to a missing file',
+        '    except OSError as error:\n        raise Unreadable("{} {}: {}"',
+        '    except FileNotFoundError as error:\n        raise Unreadable("{} {}: {}"',
+        [U + 'test_folder_given_as_text_file_exits_2']),
+    row(
+        'a missing file read as empty',
         'raise Unreadable("{} {}: {}".format(what, path, error.strerror or error)) from error',
-        'return ""', [U + "test_missing_squash_file_exits_2"]),
-    row("ValueError dropped from the JSON catch", "except (ValueError, RecursionError) as error:",
-        "except (RecursionError,) as error:", [U + "test_unparseable_payload_exits_2"]),
-    row("RecursionError dropped from the JSON catch",
-        "except (ValueError, RecursionError) as error:", "except (ValueError,) as error:",
-        [U + "test_deeply_nested_payload_exits_2"]),
-    row("a payload with no pull request read as the pull request itself",
-        'pull = event.get("pull_request") if', "pull = event if",
-        [U + "test_other_event_type_exits_2"]),
-    row("the pull request test made never to apply", "if not isinstance(pull, dict):",
-        "if False:", [U + "test_other_event_type_exits_2"]),
-    row("the integer type test of the number dropped", "type(number) is not int or ", "",
-        [U + "test_payload_without_number_exits_2"]),
-    row("the number bound lowered so a payload number of 0 passes", "number < 1", "number < 0",
-        [U + "test_payload_number_below_1_exits_2"]),
-    row("the number bound raised so a payload number of 1 fails", "number < 1", "number <= 1",
-        [D + "test_payload_number_1_is_read"]),
-    row("a null body no longer read as empty", "if body is None:", "if False:",
-        [D + "test_null_body_fails"]),
-    row("the body-not-text check made never to apply", "if not isinstance(body, str):",
-        "if False:", [U + "test_body_that_is_a_number_exits_2"]),
-    row("the handler for an unreadable working directory narrowed to one that never occurs",
-        "    except OSError as error:" + NL + '        raise Unreadable("squash file {}: the',
-        "    except ZeroDivisionError as error:" + NL
-        + '        raise Unreadable("squash file {}: the',
-        [U + "test_removed_working_directory_exits_2"]),
-    # The lint and the error descriptions.
-    row("the lint found from the working directory",
+        'return ""',
+        [U + 'test_missing_squash_file_exits_2']),
+    row(
+        'a payload with no pull request read as the pull request itself',
+        'pull = event.get("pull_request") if',
+        'pull = event if',
+        [U + 'test_other_event_type_exits_2']),
+    row(
+        'the pull request test made never to apply',
+        'if not isinstance(pull, dict):',
+        'if False:',
+        [U + 'test_other_event_type_exits_2']),
+    row(
+        'the integer type test of the number dropped',
+        'type(number) is not int or ',
+        '',
+        [U + 'test_payload_without_number_exits_2']),
+    row(
+        'a null body no longer read as empty',
+        'if body is None:',
+        'if False:',
+        [D + 'test_null_body_fails']),
+    row(
+        'the body-not-text check made never to apply',
+        'if not isinstance(body, str):',
+        'if False:',
+        [U + 'test_body_that_is_a_number_exits_2']),
+    row(
+        'the handler for an unreadable working directory narrowed to one that never occurs',
+        '    except OSError as error:\n        raise Unreadable("squash file {}: the',
+        '    except ZeroDivisionError as error:\n        raise Unreadable("squash file {}: the',
+        [U + 'test_removed_working_directory_exits_2']),
+    row(
+        'the lint found from the working directory',
         'LINT = ROOT / "tools" / "test-no-qa-labels.py"',
         'LINT = Path("tools") / "test-no-qa-labels.py"',
-        [O + "test_event_from_another_working_directory"]),
-    row("the squash folder taken from the working directory",
-        'SQUASH_DIR = ROOT / ".github" / "squash"', 'SQUASH_DIR = Path(".github") / "squash"',
-        [O + "test_event_from_another_working_directory"]),
-    row("Exception caught, not BaseException, when the lint loads",
-        "    except BaseException as error:" + NL + "        raise Unreadable(LINT_FAILURE",
-        "    except Exception as error:" + NL + "        raise Unreadable(LINT_FAILURE",
-        [U + "test_lint_that_exits_on_load_exits_2"]),
-    row("an unloadable lint read as a scan with no hits",
-        "raise Unreadable(LINT_FAILURE.format(LINT, describe(error))) from error",
-        "return lambda rel, text: []", [U + "test_unloadable_lint_exits_2"]),
-    row("the message of an error raised while the lint loads formatted directly",
-        "LINT_FAILURE.format(LINT, describe(error))", "LINT_FAILURE.format(LINT, error)",
-        [U + "test_error_whose_message_exits_exits_2"]),
-    row("str.__str__ dropped where the type name is described",
-        "name = str.__str__(str(type(error).__name__))", "name = str(type(error).__name__)",
-        [U + "test_type_name_of_a_str_subclass_is_described_as_text"]),
-    row("str.__str__ dropped where an error is described", "text = str.__str__(str(error))",
-        "text = str(error)", [U + "test_message_of_a_str_subclass_is_described_as_text"]),
-    row("the handler that names an error type narrowed to Exception",
-        "    except BaseException:" + NL + "        name = ",
-        "    except Exception:" + NL + "        name = ",
-        [U + "test_error_whose_type_name_cannot_be_formatted_exits_2"]),
-    row("the handler that formats a message narrowed to Exception",
-        "    except BaseException:" + NL + "        return name",
-        "    except Exception:" + NL + "        return name",
-        [U + "test_error_whose_message_exits_exits_2"]),
-    row("a KeyboardInterrupt re-raise restored where a message is formatted",
-        "text = str.__str__(str(error))" + NL + "    except BaseException:",
-        "text = str.__str__(str(error))" + NL + "    except KeyboardInterrupt:" + NL
-        + "        raise" + NL + "    except BaseException:",
-        [U + "test_error_whose_message_raises_an_interrupt_exits_2"]),
-    row("a KeyboardInterrupt re-raise restored where the lint loads",
-        "scan = module.scan" + NL + "    except BaseException",
-        "scan = module.scan" + NL + "    except KeyboardInterrupt:" + NL + "        raise" + NL
-        + "    except BaseException", [U + "test_lint_interrupted_while_it_loads_exits_2"]),
-    row("a KeyboardInterrupt re-raise restored in main()",
-        "status = EXIT_UNREADABLE" + NL + "    except BaseException",
-        "status = EXIT_UNREADABLE" + NL + "    except KeyboardInterrupt:" + NL + "        raise"
-        + NL + "    except BaseException", [U + "test_scan_interrupted_exits_2"]),
-    row("Exception caught, not BaseException, in main()",
-        "    except BaseException as error:" + NL + "        # A scan",
-        "    except Exception as error:" + NL + "        # A scan",
-        [U + "test_scan_that_exits_exits_2"]),
-    row("the catch-all handler of main() narrowed to one that never occurs",
-        "    except BaseException as error:" + NL + "        # A scan",
-        "    except ZeroDivisionError as error:" + NL + "        # A scan",
-        [U + "test_scan_that_raises_exits_2"]),
-    row("the message of an error caught in main() formatted directly",
-        "describe(error)))" + NL + "        status", "error))" + NL + "        status",
-        [U + "test_error_whose_message_exits_exits_2"]),
-    # The arguments and the exits.
-    row("the no-argument guard of parse() dropped", "if not argv:", "if False:",
-        [U + "test_no_arguments_is_a_usage_error"]),
-    row("the unknown-argument guard of parse() dropped",
-        'if flag not in ("--event", "--description", "--squash", "--number"):', "if False:",
-        [U + "test_bad_arguments_are_usage_errors"]),
-    row("the duplicate-flag test dropped", "if flag in options or not rest:", "if not rest:",
-        [U + "test_flag_given_twice_is_a_usage_error"]),
-    row("the missing-value test dropped", "if flag in options or not rest:",
-        "if flag in options:", [U + "test_bad_arguments_are_usage_errors"]),
-    row("the mode count test made to allow no mode", "if len(modes) != 1:",
-        "if len(modes) > 1:", [U + "test_bad_arguments_are_usage_errors"]),
-    row("the mode count test made to allow 2 modes", "if len(modes) != 1:",
-        "if len(modes) < 1:", [U + "test_bad_arguments_are_usage_errors"]),
-    row("the number option allowed with every mode", 'if modes[0] != "--squash":', "if False:",
-        [U + "test_bad_arguments_are_usage_errors"]),
-    row("the number option made to allow a leading zero", 'r"[1-9][0-9]*", options',
-        'r"[0-9]+", options', [U + "test_number_option_with_a_leading_zero_is_a_usage_error"]),
-    row("the number option bound made never to apply",
-        "if number is None:" + NL + "            raise Usage",
-        "if False:" + NL + "            raise Usage",
-        [U + "test_number_option_over_the_digit_bound_is_a_usage_error"]),
-    row("the usage handler of main() narrowed to one that never occurs",
-        "except Usage as error:", "except ZeroDivisionError as error:",
-        [U + "test_no_arguments_is_a_usage_error"]),
-    row("the unreadable handler of main() narrowed to one that never occurs",
-        "except Unreadable as error:", "except ZeroDivisionError as error:",
-        [U + "test_unreadable_line_names_its_input"]),
-    row("unreadable input given exit 0", "EXIT_UNREADABLE = 2", "EXIT_UNREADABLE = 0",
-        [U + "test_missing_payload_exits_2"]),
-    row("a usage error given exit 0", "EXIT_USAGE = 2", "EXIT_USAGE = 0",
-        [U + "test_no_arguments_is_a_usage_error"]),
-    row("a defect given exit 0", "status = EXIT_DEFECT if report.count else 0", "status = 0",
-        [D + "test_em_dash_fails"]),
-    row("the count line dropped",
-        '    report.note("pr-text:", " {} defect(s)".format(report.count))' + NL, "",
-        [D + "test_em_dash_fails"]),
-    # The output.
-    row("report lines printed without their prefix", "print(prefix + ascii_text(detail))",
-        "print(ascii_text(detail))", [O + "test_defect_lines_start_with_their_prefix"]),
-    row("report lines printed without escapes", "print(prefix + ascii_text(detail))",
-        "print(prefix + detail)", [O + "test_carriage_return_and_del_are_escaped"]),
-    row("the space escaped", "if 0x20 <= code < 0x7f:", "if 0x20 < code < 0x7f:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    row("the tilde escaped", "if 0x20 <= code < 0x7f:", "if 0x20 <= code < 0x7e:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    row("DEL printed raw", "if 0x20 <= code < 0x7f:", "if 0x20 <= code <= 0x7f:",
-        [O + "test_carriage_return_and_del_are_escaped"]),
-    row("U+0100 written as a 2-digit escape", "elif code < 0x100:", "elif code <= 0x100:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    row("U+00FF written as a 4-digit escape", "elif code < 0x100:", "elif code < 0xff:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    row("U+10000 written as a 4-digit escape", "elif code < 0x10000:", "elif code <= 0x10000:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    row("U+FFFF written as an 8-digit escape", "elif code < 0x10000:", "elif code < 0xffff:",
-        [O + "test_reported_line_escapes_each_range_edge"]),
-    # The workflow.
-    row("the job's time limit removed from the workflow", "    timeout-minutes: 10" + NL, "",
-        [O + "test_workflow_job_has_a_time_limit"], target="workflow"),
-) + tuple(
-    row("{} removed from the first class of the URL pattern".format(name),
-        "(?:[^" + URL_CLASS + "]", "(?:[^" + URL_CLASS.replace(member, "", 1) + "]",
-        [E + "test_each_url_stopper_ends_the_url"])
-    for name, member in URL_MEMBERS
-) + tuple(
-    row("{} removed from the parenthesis-pair class of the URL pattern".format(name),
-        "|\\([^" + URL_CLASS + "]", "|\\([^" + URL_CLASS.replace(member, "", 1) + "]",
-        [E + "test_each_url_stopper_ends_a_parenthesis_pair"])
-    for name, member in URL_MEMBERS
-) + tuple(
-    row("the {} removed from the trailing-mark lookbehind".format(name), LOOKBEHIND,
-        "(?<![" + MARKS.replace(mark, "") + "])",
-        [E + "test_url_ending_in_each_trailing_mark_past_72_characters_fails"])
-    for name, mark in TRAILING_MARKS
-) + tuple(
-    row("the ending -{} removed from the -ise pattern".format(ending), "|".join(ISE_ENDINGS),
-        "|".join(other for other in ISE_ENDINGS if other != ending),
-        [D + "test_each_ise_ending_fails"])
-    for ending in ISE_ENDINGS
-) + tuple(
-    row("the stem {} removed from the -ise denylist".format(stem), '"{}",'.format(stem), "",
-        [D + "test_every_ise_stem_fails"])
-    for stem in ISE_STEMS
+        [O + 'test_event_from_another_working_directory']),
+    row(
+        'the squash folder taken from the working directory',
+        'SQUASH_DIR = ROOT / ".github" / "squash"',
+        'SQUASH_DIR = Path(".github") / "squash"',
+        [O + 'test_event_from_another_working_directory']),
+    row(
+        'an unloadable lint read as a scan with no hits',
+        'raise Unreadable(LINT_FAILURE.format(LINT, describe(error))) from error',
+        'return lambda rel, text: []',
+        [U + 'test_unloadable_lint_exits_2']),
+    row(
+        'the message of an error raised while the lint loads formatted directly',
+        'LINT_FAILURE.format(LINT, describe(error))',
+        'LINT_FAILURE.format(LINT, error)',
+        [U + 'test_error_whose_message_exits_exits_2']),
+    row(
+        'str.__str__ dropped where the type name is described',
+        'name = str.__str__(str(type(error).__name__))',
+        'name = str(type(error).__name__)',
+        [U + 'test_type_name_of_a_str_subclass_is_described_as_text']),
+    row(
+        'str.__str__ dropped where an error is described',
+        'text = str.__str__(str(error))',
+        'text = str(error)',
+        [U + 'test_message_of_a_str_subclass_is_described_as_text']),
+    row(
+        'a KeyboardInterrupt re-raise restored where a message is formatted',
+        'text = str.__str__(str(error))\n    except BaseException:',
+        'text = str.__str__(str(error))\n    except KeyboardInterrupt:\n        raise\n    '
+        'except BaseException:',
+        [U + 'test_error_whose_message_raises_an_interrupt_exits_2']),
+    row(
+        'a KeyboardInterrupt re-raise restored where the lint loads',
+        'scan = module.scan\n    except BaseException',
+        'scan = module.scan\n    except KeyboardInterrupt:\n        raise\n    except '
+        'BaseException',
+        [U + 'test_lint_interrupted_while_it_loads_exits_2']),
+    row(
+        'a KeyboardInterrupt re-raise restored in main()',
+        'status = EXIT_UNREADABLE\n    except BaseException',
+        'status = EXIT_UNREADABLE\n    except KeyboardInterrupt:\n        raise\n    except '
+        'BaseException',
+        [U + 'test_scan_interrupted_exits_2']),
+    row(
+        'the catch-all handler of main() narrowed to one that never occurs',
+        '    except BaseException as error:\n        # A scan',
+        '    except ZeroDivisionError as error:\n        # A scan',
+        [U + 'test_scan_that_raises_exits_2']),
+    row(
+        'the message of an error caught in main() formatted directly',
+        'describe(error)))\n        status',
+        'error))\n        status',
+        [U + 'test_error_whose_message_exits_exits_2']),
+    row(
+        'the no-argument guard of parse() dropped',
+        'if not argv:',
+        'if False:',
+        [U + 'test_no_arguments_is_a_usage_error']),
+    row(
+        'the unknown-argument guard of parse() dropped',
+        'if flag not in ("--event", "--description", "--squash", "--number"):',
+        'if False:',
+        [U + 'test_bad_arguments_are_usage_errors']),
+    row(
+        'the duplicate-flag test dropped',
+        'if flag in options or not rest:',
+        'if not rest:',
+        [U + 'test_flag_given_twice_is_a_usage_error']),
+    row(
+        'the missing-value test dropped',
+        'if flag in options or not rest:',
+        'if flag in options:',
+        [U + 'test_bad_arguments_are_usage_errors']),
+    row(
+        'the mode count test made to allow no mode',
+        'if len(modes) != 1:',
+        'if len(modes) > 1:',
+        [U + 'test_bad_arguments_are_usage_errors']),
+    row(
+        'the mode count test made to allow 2 modes',
+        'if len(modes) != 1:',
+        'if len(modes) < 1:',
+        [U + 'test_bad_arguments_are_usage_errors']),
+    row(
+        'the number option allowed with every mode',
+        'if modes[0] != "--squash":',
+        'if False:',
+        [U + 'test_bad_arguments_are_usage_errors']),
+    row(
+        'the number option made to allow a leading zero',
+        'r"[1-9][0-9]*", options',
+        'r"[0-9]+", options',
+        [U + 'test_number_option_with_a_leading_zero_is_a_usage_error']),
+    row(
+        'the number option bound made never to apply',
+        'if number is None:\n            raise Usage',
+        'if False:\n            raise Usage',
+        [U + 'test_number_option_over_the_digit_bound_is_a_usage_error']),
+    row(
+        'the usage handler of main() narrowed to one that never occurs',
+        'except Usage as error:',
+        'except ZeroDivisionError as error:',
+        [U + 'test_no_arguments_is_a_usage_error']),
+    row(
+        'the unreadable handler of main() narrowed to one that never occurs',
+        'except Unreadable as error:',
+        'except ZeroDivisionError as error:',
+        [U + 'test_unreadable_line_names_its_input']),
+    row(
+        'unreadable input given exit 0',
+        'EXIT_UNREADABLE = 2',
+        'EXIT_UNREADABLE = 0',
+        [U + 'test_missing_payload_exits_2']),
+    row(
+        'a usage error given exit 0',
+        'EXIT_USAGE = 2',
+        'EXIT_USAGE = 0',
+        [U + 'test_no_arguments_is_a_usage_error']),
+    row(
+        'a defect given exit 0',
+        'status = EXIT_DEFECT if report.count else 0',
+        'status = 0',
+        [D + 'test_em_dash_fails']),
+    row(
+        'report lines printed without their prefix',
+        'print(prefix + ascii_text(detail))',
+        'print(ascii_text(detail))',
+        [O + 'test_defect_lines_start_with_their_prefix']),
+    row(
+        'report lines printed without escapes',
+        'print(prefix + ascii_text(detail))',
+        'print(prefix + detail)',
+        [O + 'test_carriage_return_and_del_are_escaped']),
+    row(
+        "the job's time limit removed from the workflow",
+        '    timeout-minutes: 10\n',
+        '',
+        [O + 'test_workflow_job_has_a_time_limit'], target='workflow'),
 )
 SWEEP_TARGETS = {"gate": Path("tools") / "check-pr-text.py",
                  "workflow": Path(".github") / "workflows" / "pr-text.yml"}
-SWEEP_WORKERS = 4
+SWEEP_WORKERS = 8
 SWEEP_TIMEOUT = 300
 
 
 class MutantSweep(unittest.TestCase):
-    """The recorded mutant sweep: each guard it lists has a case that fails without it.
+    """The mutant sweep: a site generated from the gate source, or a hand row, per guard.
 
-    Each row of SWEEP_ROWS names a guard of the gate, or of the workflow, in words, with the
-    exact text to replace, its replacement, the number of times the text must occur and the
-    cases that must fail once it is replaced. For each row the sweep copies the gate, this
-    suite, the label lint and the workflow into a fresh temporary tree, checks that the text
-    occurs exactly that many times, so that a row that no longer applies fails, applies the
-    replacement and runs the named cases there in a separate process; the row passes only when
-    that run exits 1 with FAILED. The named cases also run, and pass, on an unmutated copy. No
-    row names a case of this class, so the sweep cannot run itself.
+    generate_sites() reads tools/check-pr-text.py, leaves out its docstrings and its
+    "if __name__" block, and yields every site of a closed set of operators, OPERATORS. In the
+    Python code, from its ast: each statement of a function body deleted, or replaced by pass
+    when it is the only statement of its block; each comparison operator replaced by its
+    partner (< and <=, > and >=, == and !=, is and is not, in and not in); each and or or
+    swapped; each not removed; each True or False flipped; each integer constant changed by 1
+    up and by 1 down; in each except clause, each member of its tuple removed, BaseException
+    replaced by Exception and the handler body replaced by raise; each call of fullmatch, match
+    or search replaced by each of the other 2; any and all swapped; and each member of a tuple
+    of strings joined into a pattern, such as ISE_STEMS, removed. In each pattern literal given
+    to re.compile, re.fullmatch, re.match or re.search, the pieces joined to build ISE
+    included, read by regex_parse(): each anchor and word boundary deleted; each lookahead and
+    lookbehind deleted; each alternative of each alternation deleted; each member or range of a
+    class of 2 or more members deleted, and a negated class made plain; each quantifier changed
+    ({m,n} with m and n each 1 up and 1 down where valid, * to +, + to *, ? removed) and made
+    lazy or greedy; each escaped metacharacter unescaped; and each inline flag and each flags
+    argument removed. regex_parse() raises UnknownConstruct on a construct it does not know, so
+    a new construct fails the adequacy test by name. Each site is named in words, from where it
+    is, the operator and the text it changes, and its occurrence, with its exact old text,
+    whole lines, its new text and the number of times its old text occurs.
 
-    These substitutions are left out of the table as equivalent, each with its reason:
-    - the line feed removed from either class of the quote mask: the mask reads 1 line, which
-      holds no line feed, so the class never meets one;
-    - the isinstance test of the payload dropped: a payload that is JSON but not an object
-      then raises AttributeError, which the catch-all handler reports with exit 2, an
-      unreadable line and the count line, so only the reason in that line differs;
-    - the len(parts) guard of the file name binding dropped: a path of fewer than 3 parts
-      cannot have .github and squash as the 2 parts before its last, so the test after the
-      guard gives the same answer.
+    The adequacy test runs no mutant. It fails when a generated site has neither a row in
+    SWEEP_ROWS nor an entry in EQUIVALENT_SITES, when a row or an entry names a site the
+    generator does not yield, and when an operator of OPERATORS yields no site, since each of
+    them has a site in the gate as it stands, so a broken generator cannot pass by yielding
+    nothing. HAND_ROWS holds rows the generator does not make, which it leaves alone.
+
+    The kill criterion: a row is killed when its named cases, run on a copy of the tree with
+    the site or the hand row applied, exit 1 with FAILED. A site is equivalent only when the
+    mutated gate gives the same exit status and the same output, byte for byte, as the gate on
+    every input; each entry of EQUIVALENT_SITES carries the argument. A site that changes only
+    the reason in a line is not equivalent: it has a row whose case pins that reason. For each
+    row the sweep copies the gate, this suite, the label lint and the workflow into a fresh
+    temporary tree, checks that the old text occurs the recorded number of times, applies the
+    change and runs the named cases there in a separate process. The named cases also pass on
+    an unmutated copy. No row names a case of this class, so the sweep cannot run itself.
+
+    Residual: a change outside the operators passes unswept unless a hand row holds it, such as
+    a change of 2 tokens at once, a changed string constant, a changed message, a changed
+    docstring, a deleted statement at module level, a member deleted from a class of 1 member,
+    and a change in the "if __name__" block or in the label lint.
     """
 
     def copy_tree(self, root):
@@ -1385,11 +3710,42 @@ class MutantSweep(unittest.TestCase):
         lines = done.stderr.strip().splitlines()
         return done.returncode, lines[-1] if lines else ""
 
-    def mutate(self, sweep_row):
-        """None when the row is killed, or the reason it is not."""
+    def missing_cases(self, ids):
+        return [case for case in ids
+                if not hasattr(globals().get(case.partition(".")[0]), case.partition(".")[2])]
+
+    def killed(self, path, mutated, ids, root):
+        """None when the named cases fail on the mutated file, or the reason they do not."""
+        path.write_text(mutated, encoding="utf-8")
+        code, last = self.run_cases(root, ids)
+        if code == 1 and last.startswith("FAILED"):
+            return None
+        return "survived: exit {}, {}".format(code, last)
+
+    def mutate_site(self, item):
+        """None when the generated site of a row is killed, or the reason it is not."""
+        words, ids = item
+        missing = self.missing_cases(ids)
+        if missing:
+            return "names a case that does not exist: " + ", ".join(missing)
+        site = self.sites.get(words)
+        if site is None:
+            return "names a site the generator does not yield"
+        root = Path(tempfile.mkdtemp())
+        try:
+            self.copy_tree(root)
+            path = root / SWEEP_TARGETS["gate"]
+            mutated = apply_site(path.read_text(encoding="utf-8"), site)
+            if mutated is None:
+                return "the old text does not occur {} times".format(site.count)
+            return self.killed(path, mutated, ids, root)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def mutate_hand(self, sweep_row):
+        """None when a hand row is killed, or the reason it is not."""
         words, target, old, new, count, ids = sweep_row
-        missing = [case for case in ids
-                   if not hasattr(globals().get(case.partition(".")[0]), case.partition(".")[2])]
+        missing = self.missing_cases(ids)
         if missing:
             return "names a case that does not exist: " + ", ".join(missing)
         root = Path(tempfile.mkdtemp())
@@ -1400,30 +3756,46 @@ class MutantSweep(unittest.TestCase):
             found = text.count(old)
             if found != count:
                 return "the text occurs {} times, not {}".format(found, count)
-            path.write_text(text.replace(old, new), encoding="utf-8")
-            code, last = self.run_cases(root, ids)
-            if code == 1 and last.startswith("FAILED"):
-                return None
-            return "survived: exit {}, {}".format(code, last)
+            return self.killed(path, text.replace(old, new), ids, root)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def setUp(self):
+        self.sites = {site.words: site
+                      for site in generate_sites(GATE.read_text(encoding="utf-8"))}
+
     def test_rows_are_well_formed(self):
-        names = [sweep_row[0] for sweep_row in SWEEP_ROWS]
-        self.assertEqual(len(names), len(set(names)), "each row needs its own name")
-        for words, target, old, new, count, ids in SWEEP_ROWS:
+        names = [sweep_row[0] for sweep_row in HAND_ROWS]
+        self.assertEqual(len(names), len(set(names)), "each hand row needs its own name")
+        self.assertFalse(set(SWEEP_ROWS) & set(EQUIVALENT_SITES))
+        for words, target, old, new, count, ids in HAND_ROWS:
             with self.subTest(row=words):
                 self.assertIn(target, SWEEP_TARGETS)
                 self.assertNotEqual(old, new)
                 self.assertGreaterEqual(count, 1)
+        for words, ids in list(SWEEP_ROWS.items()) + [(r[0], r[5]) for r in HAND_ROWS]:
+            with self.subTest(row=words):
                 self.assertTrue(ids)
                 for case in ids:
                     class_name, _, method = case.partition(".")
                     self.assertNotEqual(class_name, type(self).__name__, "the sweep would recurse")
                     self.assertTrue(hasattr(globals().get(class_name), method), case)
+        for words, argument in EQUIVALENT_SITES.items():
+            with self.subTest(site=words):
+                self.assertTrue(argument.strip())
+
+    def test_generated_sites_are_adequate(self):
+        generated = set(self.sites)
+        listed = set(SWEEP_ROWS) | set(EQUIVALENT_SITES)
+        self.assertEqual(sorted(generated - listed), [], "generated sites with no row")
+        self.assertEqual(sorted(listed - generated), [], "rows of sites not generated")
+        counts = collections.Counter(site.operator for site in self.sites.values())
+        self.assertEqual([operator for operator in OPERATORS if not counts[operator]], [],
+                         "operators with no site")
 
     def test_named_cases_pass_unmutated(self):
-        ids = sorted({case for sweep_row in SWEEP_ROWS for case in sweep_row[5]})
+        ids = sorted({case for ids in SWEEP_ROWS.values() for case in ids}
+                     | {case for sweep_row in HAND_ROWS for case in sweep_row[5]})
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
         self.copy_tree(root)
@@ -1432,8 +3804,12 @@ class MutantSweep(unittest.TestCase):
 
     def test_each_row_is_killed(self):
         with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
-            results = list(pool.map(self.mutate, SWEEP_ROWS))
-        for sweep_row, reason in zip(SWEEP_ROWS, results):
+            site_results = list(pool.map(self.mutate_site, SWEEP_ROWS.items()))
+            hand_results = list(pool.map(self.mutate_hand, HAND_ROWS))
+        for words, reason in zip(SWEEP_ROWS, site_results):
+            with self.subTest(row=words):
+                self.assertIsNone(reason, words)
+        for sweep_row, reason in zip(HAND_ROWS, hand_results):
             with self.subTest(row=sweep_row[0]):
                 self.assertIsNone(reason, sweep_row[0])
 
