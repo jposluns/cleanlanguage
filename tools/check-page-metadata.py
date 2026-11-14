@@ -13,12 +13,25 @@ What it verifies, per page
    ``article:modified_time``, and ``article:author``.
 2. Both dates are ``YYYY-MM-DD``.
 3. ``article:modified_time`` is not more than ``MODIFIED_STAMP_TOLERANCE_DAYS``
-   days older than the file's last commit date, and is not in the future. This
-   is the rot check: if a page changed well after the date it claims, the claim
-   is false. A bounded tolerance is allowed because a squash merge re-dates
-   edited pages to the merge day, which can be a day or more after the stamp was
-   set. The comparison is one-sided, so a stamp made in a working tree before the
-   commit lands does not fail spuriously.
+   days older than the file's last commit date, and is not in the future. This is
+   the rot check: if a page changed well after the date it claims, the claim is
+   false. A bounded tolerance is allowed because a squash merge re-dates edited
+   pages to the merge day, which can be a day or more after the stamp was set.
+   The comparison is one-sided, so a stamp made in a working tree before the
+   commit lands does not fail spuriously. When HEAD and ``PROTECTED_REF`` have
+   exactly 1 merge base, the page's mode and blob at HEAD equal its mode and blob
+   at that base, and git hash-object of the working-tree path gives that same
+   blob, the last commit date is read at that base, so a branch whose own commits
+   changed a page and then restored it is not asked to restamp it. That hash
+   applies the attributes and filters that git reads and can apply, such as a
+   clean filter from local, global, system or environment configuration. An
+   attribute or a filter that is not required and that git cannot apply, such as
+   working-tree-encoding=UTF-16 on bytes with no byte order mark or a failing
+   clean filter, makes git hash-object print an error, exit 0 and hash the bytes
+   as they are. The hash also follows a symbolic link and does not see the
+   working-tree mode, so it can differ from what staging the page would keep.
+   Otherwise, such as with more than 1 merge base or in a clone without that ref,
+   the date is read at HEAD.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -65,8 +78,16 @@ never a pass. In CI that means ``actions/checkout`` needs ``fetch-depth: 0``.
 Exit codes:
   0  every page passed
   1  at least one page has a problem
-  3  the check could not run: no git history, a page could not be read, or
-     tools/web_metadata.py or tools/sitemap_engine.py could not be loaded
+  3  the check could not run: a shallow clone, whose history is
+     incomplete; git could not be run, such as when it is not on PATH; a
+     failed git call, such as git merge-base when ``PROTECTED_REF`` shares
+     no history with HEAD, or git hash-object when it fails for the
+     working-tree page, such as when a required filter fails; a merge base
+     list with no line; git output that the gate cannot use, such as a
+     byte that is not ASCII in a date or an object name; a page could not
+     be read; tools/sitemap-config.json could not be read or used to list
+     the pages; no content pages were found; or tools/web_metadata.py or
+     tools/sitemap_engine.py could not be loaded
 """
 
 from __future__ import annotations
@@ -281,18 +302,69 @@ REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "artic
 SITE_ORIGIN = "https://cleanlanguage.ai"
 IMAGE_REFERENCES = ("og:image", "twitter:image")
 
+# The protected line, read by exact refname. A clone can lack this ref even
+# with full history, such as a remote-less clone or a CI checkout that does
+# not create it, and then every page is dated at HEAD. With the ref,
+# last_change_date() dates a page at the 1 merge base of HEAD and this ref
+# when the page's mode and blob at HEAD equal those at that base and git
+# hash-object of its working-tree path gives that blob, so a branch that
+# changes a page and then restores it is not asked to restamp it. The
+# working-tree mode is not compared, and the hash applies the attributes
+# and filters that git reads and can apply, as last_change_date() says.
+PROTECTED_REF = "refs/remotes/origin/main"
 
-def git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True
-    )
+
+# The variables through which git reads a pathspec as a glob, as a literal
+# path or with no regard to case. git() removes them and sets
+# GIT_LITERAL_PATHSPECS, so a page path is read as that path.
+PATHSPEC_VARIABLES = ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")
+
+
+def git(*args: str) -> bytes:
+    """git's stdout for args, run in REPO_ROOT, as bytes that are neither
+    decoded nor translated. blob_at() splits the git ls-tree -z output at
+    each NUL byte and each entry at its first tab, and protected_base()
+    splits the git for-each-ref listing at each line feed and each line at
+    its first space. The other readings split or strip the output at
+    whitespace, and a date, a merge base, an object name or a mode is
+    decoded as ASCII. An argument that holds a path is a str, which
+    subprocess encodes as os.fsencode() does. git runs with
+    GIT_LITERAL_PATHSPECS set to 1 and without the variables in
+    PATHSPEC_VARIABLES, so git log and git ls-tree read a page path such as
+    site/[ab]/index.html as that path and not as a glob. git that cannot be
+    run, such as when it is not on PATH, or a git call that fails means
+    that the check could not run (exit 3); the message shows git's stderr
+    decoded with os.fsdecode()."""
+    environment = {key: value for key, value in os.environ.items() if key not in PATHSPEC_VARIABLES}
+    environment["GIT_LITERAL_PATHSPECS"] = "1"
+    try:
+        result = subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True,
+                                env=environment)
+    except OSError as error:
+        die(f"git could not be run: {error}")
     if result.returncode != 0:
-        die(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        die(f"git {' '.join(args)} failed: {os.fsdecode(result.stderr).strip()}")
     return result.stdout
 
 
+def ascii_output(output: bytes, args: tuple[str, ...]) -> str:
+    """output, which git printed for args, decoded as ASCII. It is used for
+    the output that git prints in ASCII, such as a date, an object name or a
+    mode, so a byte that is not ASCII there is output that the gate cannot
+    use, and the check could not run (exit 3)."""
+    try:
+        return output.decode("ascii")
+    except UnicodeDecodeError:
+        die(f"git {' '.join(args)} printed a byte that is not ASCII: {output!r}")
+
+
+def git_ascii(*args: str) -> str:
+    """git's stdout for args, decoded as ascii_output() decodes it."""
+    return ascii_output(git(*args), args)
+
+
 def require_full_history() -> None:
-    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+    if git("rev-parse", "--is-shallow-repository").strip() == b"true":
         die(
             "the repository is a shallow clone, so file history cannot be read. "
             "Unshallow it, or set fetch-depth: 0 on actions/checkout."
@@ -301,12 +373,82 @@ def require_full_history() -> None:
 
 def added_date(relative: str) -> str | None:
     """The date the path was added, or None if history does not record it."""
-    lines = git("log", "--diff-filter=A", "--format=%cs", "--", relative).split()
+    lines = git_ascii("log", "--diff-filter=A", "--format=%cs", "--", relative).split()
     return lines[-1] if lines else None
 
 
+def protected_base() -> str | None:
+    """The merge base of HEAD and PROTECTED_REF when there is exactly 1, or
+    None when there are more than 1, since the base git prints then depends
+    on commit dates, or when git for-each-ref lists no ref of exactly that
+    name. Its listing is split at each line feed, which git refuses in a
+    refname, and each refname is compared, as bytes, with PROTECTED_REF. A
+    ref it does not list, such as a dangling symbolic ref, reads as absent.
+    Any failed git call, such as git merge-base when the ref shares no
+    history with HEAD, means that the check could not run (exit 3), as does
+    a merge base list with no line."""
+    args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
+    for line in git(*args).split(b"\n"):
+        name, _, tip = line.partition(b" ")
+        if name == PROTECTED_REF.encode("ascii"):
+            tip = ascii_output(tip, args)
+            bases = git_ascii("merge-base", "--all", "HEAD", tip).split()
+            if not bases:
+                die(f"git merge-base --all HEAD {tip} printed no merge base")
+            return bases[0] if len(bases) == 1 else None
+    return None
+
+
+def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
+    """The mode and object name of the file at relative in revision, or None
+    when revision has no blob there. git ls-tree -z ends each entry with a
+    NUL byte, and the entry's name is compared, as bytes, with
+    os.fsencode(relative). A failed git call means that the check could not
+    run (exit 3)."""
+    args = ("ls-tree", "-z", revision, "--", relative)
+    for entry in git(*args).split(b"\0"):
+        info, _, name = entry.partition(b"\t")
+        fields = info.split()
+        if name == os.fsencode(relative) and len(fields) == 3 and fields[1] == b"blob":
+            return ascii_output(fields[0], args), ascii_output(fields[2], args)
+    return None
+
+
 def last_change_date(relative: str) -> str | None:
-    lines = git("log", "-1", "--format=%cs", "--", relative).split()
+    """The date of the last commit that changed the file, read at HEAD.
+
+    When protected_base() gives a merge base, the file's mode and blob at HEAD
+    equal its mode and blob there, and git hash-object of the working-tree
+    path gives that same blob, the branch's own commits left the file as that
+    base has it, so the date is read there instead. git hash-object applies
+    the attributes and filters that git reads and can apply, such as those in
+    the repository's attributes files, in core.attributesFile, in the user's
+    and the system's attributes files, and in local, global, system or
+    environment configuration, such as GIT_CONFIG_COUNT. An attribute or a
+    filter that is not required and that git cannot apply, such as
+    working-tree-encoding=UTF-16 on bytes with no byte order mark or a failing
+    clean filter, makes git hash-object print an error, exit 0 and hash the
+    bytes as they are, so the date can be read at the base where git add of
+    the file fails; a required filter that fails makes git hash-object fail,
+    so the gate exits 3. git hash-object follows a symbolic link, and the
+    working-tree mode is not compared. So the working-tree check can differ
+    from what staging the file would keep, such as for a clean filter that
+    maps an edit back to the blob at HEAD, or for an uncommitted mode-only
+    change. Otherwise the date is read at HEAD. A failed git call means that
+    the check could not run, so the gate exits 3.
+    """
+    revision = "HEAD"
+    base = protected_base()
+    if base is not None:
+        here = blob_at("HEAD", relative)
+        # git hash-object of the working-tree path runs only when the mode
+        # and blob at HEAD equal those at the base, so this function makes
+        # from 2 to 6 git calls for a page, at most 1 of them git
+        # hash-object.
+        if (here is not None and here == blob_at(base, relative)
+                and git_ascii("hash-object", "--", relative).strip() == here[1]):
+            revision = base
+    lines = git_ascii("log", "-1", "--format=%cs", revision, "--", relative).split()
     return lines[0] if lines else None
 
 
@@ -455,6 +597,20 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     return problems, author
 
 
+def report(line: str = "") -> None:
+    """Print line with print(), with each lone surrogate from \\udc80 to
+    \\udcff, which os.fsdecode() gives for a byte that the file system
+    encoding could not decode, such as 0xff in a page path, shown as a
+    backslash escape, such as the 4 characters \\xff. Every other character
+    is printed unchanged, under any file system encoding. Under a file
+    system encoding that is not UTF-8, such as ascii under LC_ALL=C with
+    UTF-8 mode off, a byte of a UTF-8 path that it cannot decode is also
+    shown as an escape, such as \\xc3\\xa9 for a folder named by the UTF-8
+    bytes 0xc3 0xa9, where printing the line unchanged would write those 2
+    bytes to a stdout whose error handler is surrogateescape."""
+    print(re.sub("[\udc80-\udcff]", lambda match: f"\\x{ord(match.group()) - 0xdc00:02x}", line))
+
+
 def main() -> int:
     require_full_history()
     pages = content_pages()
@@ -483,17 +639,17 @@ def main() -> int:
         )
 
     if findings:
-        print("Page metadata problems found:")
+        report("Page metadata problems found:")
         for relative, problems in findings.items():
-            print(f"  {relative}")
+            report(f"  {relative}")
             for problem in problems:
-                print(f"    - {problem}")
+                report(f"    - {problem}")
         total = sum(len(v) for v in findings.values())
-        print(f"\n{total} problem(s) across {len(findings)} page(s).")
+        report(f"\n{total} problem(s) across {len(findings)} page(s).")
         return 1
 
     author = next(iter(authors), "(none)")
-    print(
+    report(
         f"All {len(pages)} content pages carry author and date metadata "
         f"consistent with git history. Author: {author}."
     )
