@@ -22,7 +22,9 @@ any page fails these cases too; the pin's comment names how to update it.
 The first case runs ``--check`` on this repository. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
-version as BASELINE, read by the generator's load_pin(). The configured base is
+version as BASELINE, read by the generator's load_pin(). Another reads the
+same source and fails when main() does not call a top-level check_*
+function. The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -31,6 +33,7 @@ when every case passes; 1 otherwise, naming each failing case.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import html
 import importlib.util
@@ -2797,6 +2800,49 @@ def check_family_pages(failures: list[str]) -> int:
     return 2
 
 
+STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) characters\)")
+
+
+def check_stated_count(failures: list[str]) -> int:
+    """The instructions page states the download's character count as saved:
+    its bytes decoded as UTF-8 with no newline translation and nothing
+    stripped. The first case builds from the committed download. The second
+    gives the download an extra line with a CR LF line end and 2 non-ASCII
+    characters, so a count that translates line ends or counts bytes states the
+    wrong number. The third removes the download's final newline, which must be
+    exactly 1 LF, so a count that strips a final line end and adds 1 for it
+    states the wrong number."""
+    extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
+
+    def without_final_newline(data: bytes) -> bytes | None:
+        if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
+            return None
+        return data[:-1]
+
+    cases = [("clean build", lambda data: data),
+             ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra),
+             ("download without its final newline", without_final_newline)]
+    for name, change in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            download = root / "site/downloads/cleanlanguage.md"
+            data = change(download.read_bytes())
+            if data is None:
+                failures.append(f"stated count, {name}: the download does not end in exactly 1 LF")
+                continue
+            download.write_bytes(data)
+            out = Path(scratch) / "out"
+            result = run(root, "--out", str(out))
+            if result.returncode != 0:
+                failures.append(f"stated count, {name}: build exit {result.returncode}: {result.stderr.strip()[:200]}")
+                continue
+            held = len(download.read_bytes().decode("utf-8"))
+            stated = STATED_COUNT.findall((out / "instructions/index.html").read_text(encoding="utf-8"))
+            if stated != [str(held)]:
+                failures.append(f"stated count, {name}: the page states {stated} characters, the download holds {held}")
+    return len(cases)
+
+
 VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
 # The seventh footer card of template specification 7.19 (baseline 1.11.0), byte for byte as the footer of the 1.11.1
 # package's reference/landing.html gives it, apart from the logo path: ../logos/ there, /assets/baseline/logos/ here.
@@ -3456,6 +3502,21 @@ def check_version_literals(failures: list[str]) -> int:
     return 1
 
 
+def check_case_groups_called(failures: list[str]) -> int:
+    """For every top-level check_* function of this file's own source, def or async def, main() holds a call by that
+    name somewhere inside it, so a case group whose call is deleted fails here instead of only lowering the printed
+    total. It does not check that the call can run or that its count and failures are kept."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    called = {node.func.id for function in functions if function.name == "main" for node in ast.walk(function)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    uncalled = [function.name for function in functions
+                if function.name.startswith("check_") and function.name not in called]
+    if uncalled:
+        failures.append(f"case groups: main() does not call {', '.join(uncalled)}")
+    return 1
+
+
 def main() -> int:
     failures: list[str] = []
     ran = 0
@@ -3475,6 +3536,7 @@ def main() -> int:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_version_literals(failures)
+    ran += check_case_groups_called(failures)
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
     ran += check_source_passes(failures)
@@ -3500,6 +3562,7 @@ def main() -> int:
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
+    ran += check_stated_count(failures)
     ran += check_footer(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)

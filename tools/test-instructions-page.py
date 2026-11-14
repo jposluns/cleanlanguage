@@ -2,11 +2,37 @@
 """Tests for tools/check-instructions-page.py on the instructions page generated on the template.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
-asserts its exit code and, where the case names them, the words of the gate's
-refusal. Exit 0 when every case passes; 1 otherwise. One further case runs the
-gate under a faked Python version tuple outside the supported set of
+(under $TMPDIR), applies the case's fault (none for the committed tree; for
+some cases a sequence of 2 or 3 changes), runs the gate there as a separate
+process and asserts its exit code and, where the case names them, the words of
+the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
+runs the gate under a faked Python version tuple outside the supported set of
 tools/check-inline-code.py and asserts exit 3 with the gate's own message.
+
+Some cases change the download so that only the stated count decides the
+result; in each, the embedded text still matches as the gate compares it. The
+2 non-ASCII cases give the download and the block the same 2 characters, so a
+gate that counts bytes fails them. The CR LF case gives the download a CR LF
+where the block keeps LF, which the gate's comparison still matches, so a gate
+that counts newline-translated text fails it. The 2 final-line-end cases remove
+the download's final LF or make it CR LF, and each asserts that the download
+ended in exactly 1 LF before the edit: a gate that strips the final line end
+and adds 1 for it fails the first, and a gate that also strips a final CR
+fails both. The CR LF and final-line-end fixtures are written byte for byte.
+
+A case may also name words that the gate must print on stdout, so a case with
+2 faults shows that a check the gate could not evaluate hides no problem it
+found. A fixture that cannot be built, for example because an edit's anchor is
+not on the page, is a failing case named with the reason, and every other case
+still runs. If the download cannot be read or decoded, the suite names it and
+exits 1 before any case runs.
+
+3 further cases run a copy of this suite in a temporary repository: with the
+download missing, with the download undecodable, and with a page that states 1
+character fewer than the download holds. Each asserts exit 1, the refusal or
+the failure list, and no traceback. The copy is run with --inner, which leaves
+these 3 cases out, so it never runs a copy of itself; each run of the copy has
+a timeout.
 """
 
 from __future__ import annotations
@@ -22,6 +48,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-instructions-page.py"
+SUITE = Path(__file__).resolve()
+# Given to a copy of this suite, so that the copy leaves out SUITE_CASES and never runs a copy of itself.
+INNER = "--inner"
+SUITE_TIMEOUT = 600
 PAGE = "site/instructions/index.html"
 FILES = ["site/downloads/cleanlanguage.md", PAGE, "tools/check-inline-code.py"]
 BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
@@ -51,6 +81,65 @@ def edit(relative: str, old: str, new: str):
             raise AssertionError(f"{old!r} is not in {relative}")
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
     return apply
+
+
+def edit_bytes(relative: str, old: bytes, new: bytes):
+    """Like edit, but on the file's bytes, with no newline translation, and the old bytes must occur exactly once."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        data = path.read_bytes()
+        if data.count(old) != 1:
+            raise AssertionError(f"{old!r} occurs {data.count(old)} times in {relative}, expected 1")
+        path.write_bytes(data.replace(old, new))
+    return apply
+
+
+def final_line_end(relative: str, new: bytes):
+    """Replace the file's final line end, which must be exactly 1 LF, by the new bytes, with no newline translation."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        data = path.read_bytes()
+        if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
+            raise AssertionError(f"{relative} does not end in exactly 1 LF: {data[-2:]!r}")
+        path.write_bytes(data[:-1] + new)
+    return apply
+
+
+def symlinked(relative: str):
+    """Move a file to a regular copy beside it and put a symbolic link to that copy in its place."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        copy = path.with_name(path.name + ".copy")
+        path.rename(copy)
+        os.symlink(copy.name, path)
+    return apply
+
+
+def directory(relative: str):
+    """Replace a file by an empty directory of the same name."""
+    def apply(root: Path) -> None:
+        (root / relative).unlink()
+        (root / relative).mkdir()
+    return apply
+
+
+def faults(*steps):
+    def apply(root: Path) -> None:
+        for step in steps:
+            step(root)
+    return apply
+
+
+def build(scratch: str, fault, name: str, failures: list[str]) -> Path | None:
+    """The fixture of a case, or None, with a failure recorded, when it cannot be built."""
+    try:
+        root = make_root(Path(scratch))
+        if fault:
+            fault(root)
+    except Exception as error:
+        failures.append(f"{name}: the fixture could not be built: {type(error).__name__}: {error}")
+        return None
+    return root
 
 
 def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
@@ -95,6 +184,18 @@ def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, o
             ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
 
 
+def saved_count() -> int:
+    """The full download's character count as saved: its bytes decoded as UTF-8, nothing stripped. Every case
+    copies the download, so a download that cannot be read or decoded stops the suite with its name and exit 1."""
+    try:
+        return len((REPO_ROOT / FILES[0]).read_bytes().decode("utf-8"))
+    except (OSError, UnicodeError) as error:
+        print(f"test-instructions-page: {FILES[0]} could not be read: {error}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+SAVED = saved_count()
+COUNT_WORDS = f"check-instructions-page: expected exactly 1 stated count of the full download in {PAGE}, found"
 CASES = [
     ("the committed tree", None, 0),
     ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
@@ -111,11 +212,63 @@ CASES = [
     ("I3: an event handler after a slash", edit(PAGE, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
     ("I4: a javascript: link", edit(PAGE, "</main>", '<a href="javascript:alert(1)">x</a></main>'), 1),
     ("a script from another origin", edit(PAGE, "</main>", '<script src="https://example.com/x.js"></script></main>'), 1),
-    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
+    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(),
+        (3, "check-instructions-page: tools/check-inline-code.py could not be read")),
     ("P3: a javascript: link after a </noscript> inside an attribute", edit(PAGE, "</main>",
         "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
-    ("the page missing", lambda root: (root / PAGE).unlink(), 3),
-    ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
+    ("the page missing", lambda root: (root / PAGE).unlink(), (3, f"check-instructions-page: {PAGE} does not exist")),
+    ("the download a directory", directory(FILES[0]),
+        (3, f"check-instructions-page: {FILES[0]} is not a regular file")),
+    ("the download a symbolic link to a regular copy", symlinked(FILES[0]),
+        (3, f"check-instructions-page: {FILES[0]} is not a regular file")),
+    ("the page a symbolic link to a regular copy", symlinked(PAGE),
+        (3, f"check-instructions-page: {PAGE} is not a regular file")),
+    ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'),
+        (3, f'check-instructions-page: expected exactly 1 <pre id="instructions-text"> block in {PAGE}, found 2')),
+    ("no embedded block and the stated count wrong",
+        faults(edit(PAGE, '<pre id="instructions-text"', '<pre id="instructions-gone"'),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")),
+        (3, f'check-instructions-page: expected exactly 1 <pre id="instructions-text"> block in {PAGE}, found 0',
+         f"the page states {SAVED - 1} characters for the full download")),
+    ("the stated count wrong", edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), 1),
+    ("the stated count 1 too high", edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)"),
+        (1, "", f"the page states {SAVED + 1} characters for the full download")),
+    ("the stated count wrong beside the right number elsewhere", edit(PAGE, f"saves ({SAVED} characters). Copy",
+        f"saves ({SAVED - 1} characters). See ({SAVED} characters). Copy"), 1),
+    ("the stated count removed", edit(PAGE, f" ({SAVED} characters)", ""), (3, f"{COUNT_WORDS} 0")),
+    ("the fixed word saves changed", edit(PAGE, f"download saves ({SAVED} characters)",
+        f"download holds ({SAVED} characters)"), (3, f"{COUNT_WORDS} 0")),
+    ("a second stated count", edit(PAGE, "</main>",
+        f"<p>the same content the full download saves ({SAVED} characters)</p></main>"), (3, f"{COUNT_WORDS} 2")),
+    ("2 non-ASCII characters in the download and the block",
+        faults(edit(FILES[0], "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order")), 0),
+    ("2 non-ASCII characters in the download and the block, the page stating the byte count",
+        faults(edit(FILES[0], "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, "Apply the precedence order", "Apply the pr\u00e9c\u00e9dence order"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 2} characters)")),
+        (1, "", f"the page states {SAVED + 2} characters for the full download")),
+    ("a CR LF in the download, LF in the block, the page stating the count as saved",
+        faults(edit_bytes(FILES[0], b"Apply the precedence order", b"Apply the precedence\r\norder"),
+               edit_bytes(PAGE, b"Apply the precedence order", b"Apply the precedence\norder"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+    ("the download without its final newline, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b""),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")), 0),
+    ("the download ending in CR LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b"\r\n"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+    ("the download undecodable",
+        lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
+    ("the text drifted and the stated count removed",
+        faults(edit(PAGE, "Apply the precedence order", "Apply the precedence orders"),
+               edit(PAGE, f" ({SAVED} characters)", "")),
+        (3, f"{COUNT_WORDS} 0", "the embedded text does not match")),
+    ("the stated count wrong and the inline-code gate missing",
+        faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"),
+               lambda root: (root / "tools/check-inline-code.py").unlink()),
+        (3, "check-instructions-page: tools/check-inline-code.py could not be read",
+         f"the page states {SAVED - 1} characters for the full download")),
 ]
 LOAD_CASES = [(f"tools/check-inline-code.py {name}",
                lambda root, fault=fault: fault(root / "tools/check-inline-code.py"),
@@ -128,25 +281,62 @@ SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteui
 CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
 
 
+def copy_suite(root: Path) -> None:
+    shutil.copyfile(SUITE, root / "tools" / SUITE.name)
+
+
+# (name, fault, the words the copy of the suite must print); each copy must exit 1 with no traceback.
+SUITE_CASES = [
+    ("the suite with the download missing", faults(copy_suite, lambda root: (root / FILES[0]).unlink()),
+        [f"test-instructions-page: {FILES[0]} could not be read"]),
+    ("the suite with the download undecodable", faults(copy_suite, lambda root: (root / FILES[0]).write_bytes(b"\xff")),
+        [f"test-instructions-page: {FILES[0]} could not be read"]),
+    ("the suite with a page that states 1 character fewer",
+        faults(copy_suite, edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")),
+        ["test-instructions-page: failures:", "the committed tree: exit 1, expected 0",
+         "the stated count wrong: the fixture could not be built: AssertionError"]),
+]
+
+
 def main() -> int:
+    inner = INNER in sys.argv[1:]
     failures: list[str] = []
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
-            root = make_root(Path(scratch))
-            if fault:
-                fault(root)
+            root = build(scratch, fault, name, failures)
+            if root is None:
+                continue
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            code, words = expected if isinstance(expected, tuple) else (expected, "")
-            if result.returncode != code or words not in result.stderr:
+            code, words, out_words = (expected + ("",) * 2)[:3] if isinstance(expected, tuple) else (expected, "", "")
+            if result.returncode != code or words not in result.stderr or out_words not in result.stdout:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
+                                + (f" and {out_words!r} on stdout" if out_words else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
     with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
-                                capture_output=True, text=True)
-        if result.returncode != 3 or not result.stderr.startswith("check-instructions-page: "):
-            failures.append(f"another Python version: exit {result.returncode}, expected 3 from check-instructions-page: "
-                            f"{(result.stdout + result.stderr).strip()[:300]}")
+        root = build(scratch, None, "another Python version", failures)
+        if root is not None:
+            result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                    capture_output=True, text=True)
+            if result.returncode != 3 or not result.stderr.startswith("check-instructions-page: "):
+                failures.append(f"another Python version: exit {result.returncode}, "
+                                "expected 3 from check-instructions-page: "
+                                f"{(result.stdout + result.stderr).strip()[:300]}")
+    for name, fault, words in [] if inner else SUITE_CASES:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = build(scratch, fault, name, failures)
+            if root is None:
+                continue
+            try:
+                result = subprocess.run([sys.executable, "-I", str(root / "tools" / SUITE.name), INNER],
+                                        capture_output=True, text=True, timeout=SUITE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{name}: the copy of the suite did not finish within {SUITE_TIMEOUT} s")
+                continue
+            output = result.stdout + result.stderr
+            missing = [word for word in words if word not in output]
+            if result.returncode != 1 or missing or "Traceback" in output:
+                failures.append(f"{name}: exit {result.returncode}, expected 1 with {missing!r} and no traceback: "
+                                f"{output.strip()[-300:]}")
     for name in SKIPPED:
         print(f"test-instructions-page: skipped {name}: root reads a file whatever its mode")
     if failures:
@@ -154,7 +344,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-instructions-page: all {len(CASES) + 1} cases passed.")
+    print(f"test-instructions-page: all {len(CASES) + 1 + (0 if inner else len(SUITE_CASES))} cases passed.")
     return 0
 
 
