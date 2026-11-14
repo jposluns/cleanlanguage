@@ -239,8 +239,9 @@ What it verifies
    ``site/_headers`` is read with ``reaches_page``, so a header rule under
    ``/assets/`` fails, 1 for an exact path that the redirect reading below
    accepts included. ``site/_redirects`` is read by ``redirect_problems``, from
-   the source of each rule, its first field, whatever its destination and
-   status, because a redirect sends the reader away from the page and a
+   the source of each rule, its first field, judged whatever its destination
+   and status, and then from its destination (below), because a redirect
+   sends the reader away from the page and a
    rewrite (status 200) serves other content at its address, and the same
    holds for a stylesheet, a script, a font or an image; a blank line, and a
    line whose first field starts with ``#``, is skipped. A source that
@@ -258,17 +259,19 @@ What it verifies
    included, is read whole, as UTF-8 when its name ends in 1 of
    ``TEXT_SUFFIXES`` and otherwise 1 character for each byte, and split into
    tokens of ASCII letters, digits, ``.``, ``_``, ``~`` and ``-``, as written,
-   with the references to the entities that an XML document's internal
-   subset declares expanded, with HTML character references decoded once and
-   twice, with the text of each ``style`` or ``script`` element read without
-   the comments, processing instructions, CDATA section markers and child
-   elements that an XML parser, or the HTML parser in an SVG element of a
-   page, drops from it, with CSS and JavaScript escapes decoded, with every
-   line continuation (a backslash before a line break, which a CSS or
-   JavaScript string drops) removed, with every tab, line feed and carriage
-   return (which the URL parser removes from a URL) removed, and
-   percent-decoded, each step adding forms to those before it; apart from
-   the residuals below, a page or stylesheet that loads the
+   with each reference to an entity that the file declares with a literal
+   value (``<!ENTITY e "abc">``) expanded, with HTML character references
+   decoded once and twice, with the text of each ``style`` or ``script``
+   element read without the comments, processing instructions, CDATA
+   section markers and child elements inside it, by 2 readings of its tags
+   (``XML_MARKUP`` and ``HTML_MARKUP``), with CSS and JavaScript escapes
+   decoded, with every line continuation (a backslash before a line break)
+   removed, with every tab, line feed and carriage return removed, and
+   percent-decoded, each step adding forms to those before it, so that a
+   name that 1 of those splits or hides is read whole; apart from
+   the residuals below and a load through a rule of ``site/_redirects``,
+   which the destination reading below refuses, a page or stylesheet that
+   loads the
    path by any attribute, ``srcset`` candidate, ``<base>``, ``url()``,
    ``image-set()`` or ``@import``, or by a manifest, an SVG or a document
    that it loads, writes its file name in 1 of those forms, so the search
@@ -283,7 +286,21 @@ What it verifies
    ``TEXT_SUFFIXES`` is not UTF-8, a file's entity references expand beyond
    ``ENTITY_LIMIT`` or ``ENTITY_ROUNDS``, or an entry there is a link or
    neither a file nor a folder, fails and names that input. Every other
-   source passes.
+   source passes. A rule whose destination, or a later field of its line,
+   can lead to a source that this reading accepts fails too, and names its
+   line and the line of that source (``destination_problem``), since a page
+   that loads the rule's source can then reach the accepted source though no
+   file under ``site/`` names its file name. Each such field is read as
+   written and percent-decoded again and again until nothing changes, folded,
+   and split into tokens as the name search splits a file; it fails when a
+   token is the file name of an accepted source, so a scheme and any host,
+   dot segments, a relative path, a backslash, a query and a fragment around
+   that file name do not hide it, and when it holds a ``:`` or a ``*`` after
+   any ``http://`` or ``https://`` at its start, as a placeholder or a splat
+   does, a port included, since the reading does not expand a placeholder
+   or a splat and so reads such a field as able to give any path. Every
+   rule is read so, so in a chain of rules each rule that leads to an
+   accepted source fails.
    So
    ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
    ``/* / 302``, ``/assets/* / 302``, ``/assets/baseline/logos/aiqt-*.svg
@@ -293,35 +310,44 @@ What it verifies
    ``/assets/baseline/logos/ / 301`` fail, and
    ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
    301`` passes while no file under ``site/`` but ``site/_redirects`` names
-   ``aiqt-card.svg`` and no file occupies that path. No committed source can
+   ``aiqt-card.svg`` and no file occupies that path; beside it,
+   ``/foo.svg /assets/baseline/logos/AIQT-Card.SVG?x=1 301`` and
+   ``/foo/* /assets/baseline/:splat 301`` fail. No committed source can
    match an install page or a file the pages load as this reading reads it,
    nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the
    release writer, writes; its 22 logo redirects pass as exact paths whose
-   file names no other file under ``site/`` names and that no file occupies.
+   file names no other file under ``site/`` names and that no file occupies,
+   and no committed destination names the file name of 1 of them or holds a
+   ``:`` or a ``*`` after its ``https://``.
    These residuals are accepted: a rule of either file that reaches an
-   install page or a file the pages load through any matching behaviour of
-   Pages beyond that reading passes, such as a handling of letter case, of a
-   trailing slash, of percent-encoding or of ``.html`` other than the one
-   read here; a page can load a path whose file name no file under ``site/``
+   install page or a file the pages load, or a destination that leads to an
+   accepted source, through any matching behaviour of Pages beyond that
+   reading passes, such as a handling of letter case, of a trailing slash,
+   of percent-encoding or of ``.html`` other than the one read here; a page
+   can reach an accepted source through a load from another host, or
+   through a redirect that another host makes, which the gate does not
+   read; a page can load a path whose file name no file under ``site/``
    writes in a form that the name search decodes, so the search does not
-   find it: a name that a script or an XSLT stylesheet builds from parts or
-   computes; a name written with an escape that the search does not decode,
-   or with escapes nested in another order (a percent escape encoded twice,
-   a character reference that a CSS or JavaScript escape writes, or a CSS
-   escape that a JavaScript escape writes); a name split by markup inside a
-   ``style`` or ``script`` element that the search's reading of tags reads
-   otherwise than a browser's parser does, such as a child tag whose
-   unquoted attribute value holds a quote; a name split by a reference to
-   an entity that a parameter entity or an external DTD declares; a name
-   split by a character that a browser keeps in a path,
-   percent-encoded, and that the search therefore does not remove, should
-   Cloudflare Pages drop it from the decoded path (a form feed, a space,
-   another control character, U+0000, U+00AD or another default-ignorable
-   character); or a name held only in compressed or UTF-16 form, such as in
-   a ``.woff2`` font, a PNG text chunk or a PDF stream; and an accepted rule
+   find it, such as a name that a script or an XSLT stylesheet builds from
+   parts or computes; a name written with an escape that the search does
+   not decode, or with escapes nested in another order (a percent escape
+   encoded twice, a character reference that a CSS or JavaScript escape
+   writes, or a CSS escape that a JavaScript escape writes); a name split by
+   markup inside a ``style`` or ``script`` element that the search's reading
+   of tags does not model, such as a child tag whose unquoted attribute
+   value holds a quote; a name split by a reference to an entity that a
+   parameter entity or an external DTD declares; a name split by a
+   character that the search does not remove, such as a tab, a line feed or
+   a carriage return that only the percent-decoding gives, a form feed, a
+   space, another control character, U+0000, U+00AD or another
+   default-ignorable character, should a browser or Cloudflare Pages drop
+   it; or a name held only in compressed or UTF-16 form, such as in a
+   ``.woff2`` font, a PNG text chunk or a PDF stream; and an accepted rule
    redirects a path whose file name the search did not find, so a reader who
    asks for such a path gets the redirect's destination, whatever it is,
-   since the reading constrains only the source.
+   since the reading holds a destination only to naming the file name of no
+   accepted source and to holding no ``:`` or ``*`` after any ``http://`` or
+   ``https://`` at its start.
    ``tools/test-release-links.py`` pins ``site/_redirects`` to
    the release writer's output, so a hand edit that adds such a rule fails that
    test, but a change to the writer, with the file written again, does not. Nor
@@ -1152,55 +1178,57 @@ PAGE_TAGS = (
 # pages must be a path under 1 of them (check 6). No rule of site/_headers may have a pattern that can match a path under
 # 1 of them (check 7, reaches_page). A source of site/_redirects under 1 of them passes only as an exact path whose file
 # name no file under site/ but site/_redirects names, that nothing under site/ occupies and that lies beneath no file,
-# each compared in any letter case (check 7, redirect_problems); any other source under 1 of them fails. A load by a
-# file name that no file under site/ writes in a form the name search decodes, such as 1 that a script builds, is not
-# read, nor is any matching behaviour of Cloudflare Pages beyond this reading, such as another handling of letter case
-# or of a trailing slash. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
+# each compared in any letter case (check 7, redirect_problems); any other source under 1 of them fails, and so does a
+# rule of site/_redirects whose destination can lead to an accepted source (destination_problem()). A load by a file
+# name that no file under site/ writes in a form the name search decodes, such as 1 that a script builds, is not read,
+# nor is a load from another host or a redirect that another host makes, nor any matching behaviour of Cloudflare
+# Pages beyond this reading, such as another handling of letter case or of a trailing slash.
+# tools/test-install-page.py fails unless this is exactly what the committed tree loads.
 LOADED_SEGMENTS = ("assets",)
 # Check 7: a segment of an exact source of site/_redirects under 1 of LOADED_SEGMENTS (exact_path_problem()).
 EXACT_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+# Check 7: an http:// or https:// at the start of a field of site/_redirects after its source, in any letter case, which
+# destination_problem() sets aside before it looks for a ":" or a "*", as a placeholder or a splat holds, in the rest.
+DESTINATION_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 # Check 7: a token of a file's folded text as the name search reads it (site_names()): a run of the characters that a
 # segment of an exact source holds, so whitespace, a quote, "/", a backslash, ",", "(", ")" and every other character
-# end a token, and a file name is named only as a whole token. A tab, a line break or a line continuation that a
-# browser drops inside a URL or a string ends a token only in the forms that keep it; name_tokens() also reads forms
-# with each removed (LINE_CONTINUATION, URL_DROPPED), so a name that they split is named whole too. So do the "<", "!",
-# "?", "[", "]" and ">" of markup that an XML or HTML parser drops from the text of a style or script element, a
-# comment, a processing instruction, a CDATA section's markers or a child element; name_tokens() also reads the text
-# of each such element without that markup (XML_MARKUP, HTML_MARKUP), and each form with the references to the
-# entities that an XML document's internal subset declares expanded (XML_ENTITY), so a name that they split is named
-# whole too. A name that markup splits where that reading of tags differs from a browser's, such as at a child tag
-# whose unquoted attribute value holds a quote, or that a reference to an entity declared through a parameter entity
-# or in an external DTD splits, is not read.
+# end a token, and a file name is named only as a whole token. A tab, a line break or a line continuation inside a
+# name ends a token only in the forms that keep it; name_tokens() also reads forms with each removed
+# (LINE_CONTINUATION, URL_DROPPED), so a name that they split is named whole too. So do the "<", "!", "?", "[", "]"
+# and ">" of a comment, a processing instruction, a CDATA section's markers or a child element in the text of a style
+# or script element; name_tokens() also reads the text of each such element without that markup (XML_MARKUP,
+# HTML_MARKUP), and each form with the references to the entities that the file declares with a literal value
+# expanded (XML_ENTITY), so a name that they split is named whole too. A name that markup splits where that reading of
+# tags does not model the markup, such as at a child tag whose unquoted attribute value holds a quote, or that a
+# reference to an entity declared through a parameter entity or in an external DTD splits, is not read.
 NAME_TOKEN = re.compile(r"[a-z0-9._~-]+")
-# Check 7: the suffixes of the files under site/ whose text a browser decodes, which the name search reads only as
-# UTF-8, so that 1 in another encoding fails closed; it reads every other file 1 character for each byte (latin-1).
+# Check 7: the suffixes of the files under site/ that the name search reads as text, and only as UTF-8, so that 1 in
+# another encoding fails closed; it reads every other file 1 character for each byte (latin-1).
 TEXT_SUFFIXES = (".css", ".htm", ".html", ".js", ".json", ".mjs", ".svg", ".webmanifest", ".xhtml", ".xml")
 # Check 7: a CSS escape, of 1 to 6 hexadecimal digits with 1 whitespace after them or of 1 other character, and a
 # JavaScript escape of 1 character (\u{...}, \uXXXX or \xXX), which the name search decodes. CSS_ESCAPE leaves a
 # backslash before a line break, a line continuation, as it is (LINE_CONTINUATION removes it).
 CSS_ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|([^\n\r\f0-9a-fA-F]))")
 JS_ESCAPE = re.compile(r"\\u\{([0-9a-fA-F]{1,6})\}|\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})")
-# Check 7: every escape of a JavaScript string literal, as a script outside strict mode reads it, which the name
-# search decodes in a further form (js_unescape()): \u{...}, \uXXXX and \xXX; a legacy octal escape, such as \56 for
-# "." or \11 for a tab; a line continuation, which gives nothing; \b, \f, \n, \r, \t and \v; and a backslash before
-# any other character, which gives that character. A JSON string's escapes are among them.
+# Check 7: the escapes of a JavaScript string literal that the name search decodes in a further form (js_unescape()):
+# \u{...}, \uXXXX and \xXX; a legacy octal escape, such as \56 for "." or \11 for a tab; a line continuation, which it
+# decodes to nothing; \b, \f, \n, \r, \t and \v; and a backslash before any other character, which it decodes to that
+# character. It decodes them in every file, a JSON file such as a manifest included.
 JS_STRING_ESCAPE = re.compile(r"\\(?:u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})"
                               r"|([0-3][0-7]{0,2}|[4-7][0-7]?)|(\r\n|[\n\r\u2028\u2029])|(.))", re.DOTALL)
 JS_SINGLE_ESCAPES = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
-# Check 7: a line continuation, a backslash before CR LF, a line feed, a carriage return or a form feed, which a CSS
-# string drops (CSS Syntax), or before CR LF, a line feed, a carriage return, U+2028 or U+2029, which a JavaScript
-# string drops; and a tab, a line feed or a carriage return, which the URL parser removes from anywhere in its input
-# before it parses (URL Standard). The name search adds a form with each removed (name_tokens()).
+# Check 7: a line continuation, a backslash before CR LF, a line feed, a carriage return, a form feed, U+2028 or
+# U+2029; and a tab, a line feed or a carriage return, anywhere in the text. The name search adds a form with each
+# removed (name_tokens()), so that a name that 1 of them splits in a string or a URL is read whole.
 LINE_CONTINUATION = re.compile(r"\\(?:\r\n|[\n\r\f\u2028\u2029])")
 URL_DROPPED = re.compile(r"[\t\n\r]")
-# Check 7: a style or script element, in any letter case and with any prefix, whose text a CSS or JavaScript parser
-# receives as the element's child text content (DOM Standard): the text and the CDATA sections directly inside it,
-# joined, without a comment, a processing instruction or a child element with what it holds. An XML document reads
-# it so (XML 1.0), and so does the HTML parser for an SVG element inside a page (foreign content); there the
-# tokenizer also drops a bogus comment (<?...>, <!...>, or </ before a character that is not a letter), ends a
-# comment at -->, --!>, <!--> or <!---> and ignores a stray end tag. XML_MARKUP and HTML_MARKUP are the markup of each
-# reading, and markup_texts() reads the text of each such element by each, in the whole file and in each stretch
-# from such a start tag to the first end tag of its name, where a plain HTML style or script element ends.
+# Check 7: a style or script element, in any letter case and with any prefix, whose text the name search also reads
+# as the text and the CDATA sections directly inside it, joined, without a comment, a processing instruction or a
+# child element with what it holds, so that a name that such markup splits is read whole. XML_MARKUP and HTML_MARKUP
+# are 2 readings of that markup: HTML_MARKUP also ends a comment at --!>, <!--> or <!--->, ends <?...> at the first
+# >, and reads </ before a character that is not a letter as markup up to the next >. markup_texts() reads the text
+# of each such element by each, in the whole file and in each stretch from such a start tag to the first end tag of
+# its name (RAW_ELEMENT).
 STYLE_OR_SCRIPT = re.compile(r"<(?:[^\s/>:]+:)?(?:style|script)(?=[\s/>])", re.IGNORECASE)
 RAW_ELEMENT = re.compile(r"<(?:[^\s/>:]+:)?(style|script)(?=[\s/>])[^>]*+>.*?(?:</(?:[^\s/>:]+:)?\1(?=[\s/>])|\Z)",
                          re.IGNORECASE | re.DOTALL)
@@ -1210,11 +1238,12 @@ XML_MARKUP = re.compile(r"<!--.*?(?:-->|\Z)|<\?.*?(?:\?>|\Z)|<!\[CDATA\[(?P<cdat
                         + MARKUP_TAGS, re.DOTALL)
 HTML_MARKUP = re.compile(r"<!--(?:-?>|.*?(?:--!?>|\Z))|<!\[CDATA\[(?P<cdata>.*?)(?:\]\]>|\Z)|<[?!][^>]*+(?:>|\Z)"
                          r"|</(?![A-Za-z])[^>]*+(?:>|\Z)" + MARKUP_TAGS, re.DOTALL)
-# Check 7: a general entity that the internal subset of an XML document's DOCTYPE declares with a literal value, such
-# as <!ENTITY e "abc">, whose reference (&e;) an XML parser replaces with that value in text and in attribute values
-# (XML 1.0), and which html.unescape() does not know. The name search adds a form with each such reference expanded,
-# again for an entity that a value names (entities_expanded()), at most ENTITY_ROUNDS times and to at most
-# ENTITY_LIMIT more characters; a file that needs more fails closed, as an XML parser refuses a recursive entity.
+# Check 7: a general entity that a file declares with a literal value, such as <!ENTITY e "abc">, which html.unescape()
+# does not know. The name search adds a form with each reference to such an entity (&e;) replaced by that value,
+# wherever the reference stands, text and attribute values included, again for an entity that a value names
+# (entities_expanded()), at most ENTITY_ROUNDS times and to at most ENTITY_LIMIT more characters, so that a name that
+# such a reference splits or holds is read whole; a file that needs more fails closed, since the search then does not
+# know which names the file holds.
 XML_ENTITY = re.compile(r"<!ENTITY\s+([^\s%\"'<>&;]+)\s+(?:\"([^\"]*)\"|'([^']*)')")
 ENTITY_ROUNDS = 16
 ENTITY_LIMIT = 1 << 22
@@ -1910,7 +1939,7 @@ def exact_path_problem(source: str) -> str | None:
 
 def code_point(digits: str) -> str:
     """Check 7: the character that an escape's hexadecimal digits give, or U+FFFD for 0, a surrogate or a value above
-    U+10FFFF, as CSS reads such an escape."""
+    U+10FFFF, for a CSS and a JavaScript escape alike."""
     value = int(digits, 16)
     return chr(value) if 0 < value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF else chr(0xFFFD)
 
@@ -1955,11 +1984,11 @@ def entities_expanded(text: str) -> str:
 
 
 def markup_texts(text: str, markup: re.Pattern, nested: bool) -> list[str]:
-    """Check 7: the child text content of each style or script element (STYLE_OR_SCRIPT) of text as markup reads it:
-    the text and CDATA content directly inside the element, joined, without its markup and without what a child
-    element holds. With nested, as an XML parser reads it, an end tag closes the innermost open child; without, as
-    the HTML parser reads foreign content, an end tag of the element's own name closes the element, 1 of another name
-    closes a child if 1 is open, and a stray 1 is dropped."""
+    """Check 7: the text of each style or script element (STYLE_OR_SCRIPT) of text as markup reads it: the text and
+    CDATA content directly inside the element, joined, without its markup and without what a child element holds.
+    With nested, the reading used with XML_MARKUP, an end tag closes the innermost open child; without, the reading
+    used with HTML_MARKUP, an end tag of the element's own name closes the element, 1 of another name closes a child
+    if 1 is open, and a stray 1 is dropped."""
     texts: list[str] = []
     parts: list[str] = []
     name = None
@@ -1993,9 +2022,9 @@ def markup_texts(text: str, markup: re.Pattern, nested: bool) -> list[str]:
 
 
 def markup_forms(text: str) -> set[str]:
-    """Check 7: the text of each style or script element of text without the markup that an XML parser or the HTML
-    parser drops from it (markup_texts()), read by each in the whole text and in each stretch from such a start tag to
-    the first end tag of its name (RAW_ELEMENT)."""
+    """Check 7: the text of each style or script element of text without its markup (markup_texts()), read by
+    XML_MARKUP and by HTML_MARKUP in the whole text and in each stretch from such a start tag to the first end tag of
+    its name (RAW_ELEMENT)."""
     if not STYLE_OR_SCRIPT.search(text):
         return set()
     stretches = [text] + [match.group(0) for match in RAW_ELEMENT.finditer(text)]
@@ -2005,24 +2034,24 @@ def markup_forms(text: str) -> set[str]:
 
 def name_tokens(text: str) -> set[str]:
     """Check 7: the tokens (NAME_TOKEN) of a file's text, folded, in each form that the name search reads: as written,
-    and with the references to the entities that an XML document's internal subset declares expanded
-    (entities_expanded()); each of those with HTML character references decoded once and twice (a srcdoc value is
-    decoded once as an attribute and again as the document it holds); the text of each style or script element of
-    each form so far without the comments, processing instructions, CDATA section markers and child elements that an
-    XML parser or the HTML parser drops from it (markup_forms()); each form so far with CSS escapes decoded and with
-    JavaScript escapes decoded (JS_ESCAPE, and every JavaScript string escape, js_unescape()); each form so far with
-    every line continuation removed; each form so far with every tab, line feed and carriage return removed; and each
-    form so far percent-decoded, as a server reads a path. Each step adds forms and keeps those before it, so a token
-    as written stays, such as a srcset URL that a tab separates from its descriptor. The element texts come after the
-    character references are decoded, and read every form before, so a CDATA section is read both with its references
-    decoded and as written, and before every later step, so a name that markup and a tab, an escape or a percent
-    escape split is read whole. The removals come after the decodings, so a tab or a line break written as a
+    and with the references to the entities that the text declares with a literal value expanded
+    (entities_expanded()); each of those with HTML character references decoded once and twice (twice so that a
+    reference that a decoded reference writes, as in an escaped srcdoc value, is decoded too); the text of each style
+    or script element of each form so far without the comments, processing instructions, CDATA section markers and
+    child elements inside it, by XML_MARKUP and by HTML_MARKUP (markup_forms()); each form so far with CSS escapes
+    decoded and with JavaScript escapes decoded (JS_ESCAPE, and the JavaScript string escapes of JS_STRING_ESCAPE,
+    js_unescape()); each form so far with every line continuation removed; each form so far with every tab, line feed
+    and carriage return removed; and each form so far percent-decoded. Each step adds forms and keeps those before it,
+    so a token as written stays, such as a srcset URL that a tab separates from its descriptor. The element texts come
+    after the character references are decoded, and read every form before, so a CDATA section is read both with its
+    references decoded and as written, and before every later step, so a name that markup and a tab, an escape or a
+    percent escape split is read whole. The removals come after the decodings, so a tab or a line break written as a
     character reference (&#9;, &Tab;, &NewLine;), a CSS escape (\\9, \\a) or a JavaScript escape (\\u0009, \\x0a, \\t,
-    \\n) is removed too, and before the percent-decoding, as the URL parser removes them before a server decodes the
-    path; a percent-encoded tab or line break is kept, as the URL parser keeps it. It does not read a name that a script
-    or an XSLT stylesheet builds, an escape it does not decode, markup in a style or script element that its reading
-    of tags reads otherwise than a browser (such as a child tag whose unquoted attribute value holds a quote), a
-    reference to an entity that a parameter entity or an external DTD declares, or a character it keeps."""
+    \\n) is removed too, and before the percent-decoding, so a percent escape that a tab splits is decoded; a tab or a
+    line break that only the percent-decoding gives is kept, and a name that it splits is not read whole. It does not
+    read a name that a script or an XSLT stylesheet builds, an escape it does not decode, markup in a style or script
+    element that its reading of tags does not model (such as a child tag whose unquoted attribute value holds a
+    quote), a reference to an entity that a parameter entity or an external DTD declares, or a character it keeps."""
     forms = {text, entities_expanded(text)}
     for _ in range(2):
         forms |= {html.unescape(form) for form in forms}
@@ -2051,22 +2080,23 @@ def list_folder(folder: Path) -> list[os.DirEntry]:
 def site_names() -> tuple[dict[str, list[str]], list[str]]:
     """Check 7: the file names that the files under site/ name, read from the committed tree with no grammar of loads:
     every file at any depth, in folders read without following a link, binary files included, except site/_redirects,
-    which names every source that the reading judges. A file whose name ends in 1 of TEXT_SUFFIXES, in any letter case,
+    which names every source that the reading judges; redirect_problems() reads each field there after a source by
+    destination_problem() instead. A file whose name ends in 1 of TEXT_SUFFIXES, in any letter case,
     is read as UTF-8, and any other file 1 character for each byte, so an ASCII name in it is found in any encoding
     that keeps ASCII; each is read whole, comments, scripts and attribute values included, into its tokens
-    (name_tokens()). A page or stylesheet that loads a path writes that path's file name, its last segment, in 1 of
-    the forms read, a tab, a line break, a line continuation, an internal entity reference, or a comment, a
-    processing instruction, a CDATA section marker or a child element in the text of a style or script element
-    inside it included, whatever the attribute, srcset candidate, <base>, url(), image-set(), @import, manifest, SVG
-    or document that loads it, unless a script or an XSLT stylesheet builds it, an escape that name_tokens() does not
-    decode or escapes nested in another order hide it, markup in a style or script element that the search's reading
-    of tags reads otherwise than a browser, or a reference to an entity that a parameter entity or an external DTD
-    declares, splits it, a character that name_tokens() keeps splits it, or the file holds it only in compressed or
-    UTF-16 form. This reads more than the loads and fails closed: a file that names a file name without loading it
-    counts too. It returns each token with the files that hold it, and each input that could not be read or listed: a
-    folder that cannot be listed, a file that cannot be read or decoded or whose entity references expand too far
-    (entities_expanded()), and an entry that is a link or neither a file nor a folder, which the search does not
-    follow or read."""
+    (name_tokens()). So the search finds a load of a path whose file name, its last segment, the loading page or
+    stylesheet writes in 1 of the forms read, a tab, a line break, a line continuation, an internal entity reference,
+    or a comment, a processing instruction, a CDATA section marker or a child element in the text of a style or
+    script element inside it included, whatever the attribute, srcset candidate, <base>, url(), image-set(), @import,
+    manifest, SVG or document that loads it. It does not find a load whose file name no file writes so, such as 1
+    that a script or an XSLT stylesheet builds, that an escape that name_tokens() does not decode or escapes nested in
+    another order hide, that markup in a style or script element that the search's reading of tags does not model, a
+    reference to an entity that a parameter entity or an external DTD declares, or a character that name_tokens()
+    keeps splits, or that the file holds only in compressed or UTF-16 form. This reads more than the loads and fails
+    closed: a file that names a file name without loading it counts too. It returns each token with the files that
+    hold it, and each input that could not be read or listed: a folder that cannot be listed, a file that cannot be
+    read or decoded or whose entity references expand too far (entities_expanded()), and an entry that is a link or
+    neither a file nor a folder, which the search does not follow or read."""
     site = REPO_ROOT / "site"
     names: dict[str, list[str]] = {}
     unread: list[str] = []
@@ -2131,28 +2161,75 @@ def occupied(source: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def destination_forms(destination: str) -> list[str]:
+    """Check 7: a field of site/_redirects after its source, as written and percent-decoded again and again until
+    nothing changes, so that a percent escape encoded more than once is decoded too."""
+    forms = [destination]
+    while (decoded := urllib.parse.unquote(forms[-1])) != forms[-1]:
+        forms.append(decoded)
+    return forms
+
+
+def destination_problem(destination: str, accepted: list[tuple[int, str]]) -> str | None:
+    """Check 7: why a field of site/_redirects after its source, its destination or a later field, can lead to a source
+    that the redirect reading accepts under 1 of LOADED_SEGMENTS (accepted: each such source with its line number), or
+    None. It reads each form of destination_forms() and fails closed. A token (NAME_TOKEN) of the folded form that is
+    the file name of an accepted source, its last segment folded, leads there: every character outside NAME_TOKEN, "/",
+    "?", "#", ":", "@", "%" and a backslash among them, ends a token, so the file name stays a token whatever stands
+    around it, such as a scheme and any host, dot segments, a relative path, a query or a fragment. A ":" or a "*" in
+    the form after any DESTINATION_SCHEME at its start, as a placeholder or a splat holds, leads to every accepted
+    source: the reading does not expand a placeholder or a splat, so it reads such a form as able to give any path,
+    and a port there fails too."""
+    forms = destination_forms(destination)
+    tokens = {token for form in forms for token in NAME_TOKEN.findall(fold(form))}
+    named = [(number, source) for number, source in accepted if fold(source.rsplit("/", 1)[1]) in tokens]
+    if named:
+        shown = ", ".join(f"line {number} ({source})" for number, source in named)
+        return ("which names the file name of a source that the redirect reading accepts under a loaded segment, "
+                f"compared in any letter case: {shown}")
+    for form in forms:
+        scheme = DESTINATION_SCHEME.match(form)
+        if accepted and re.search(r"[:*]", form[scheme.end() if scheme else 0:]):
+            shown = ", ".join(str(number) for number, _ in accepted)
+            return ("which holds a : or a * after any http:// or https:// at its start, as a placeholder or a splat "
+                    "does; the reading does not expand either, so it reads the destination as able to give the path "
+                    f"of every source that it accepts under a loaded segment: lines {shown}")
+    return None
+
+
 def redirect_problems(redirects: str) -> list[str]:
-    """Check 7: each rule of site/_redirects whose source fails the redirect reading. A source fails when reaches_install
+    """Check 7: each rule of site/_redirects whose source fails the redirect reading, and each rule whose destination,
+    or a later field of its line, can lead to a source that the reading accepts. A source fails when reaches_install
     reads it as able to match an install page. A source whose first segment is 1 of LOADED_SEGMENTS, in any letter
     case, passes only when all of these hold, and fails otherwise: it is an exact path (exact_path_problem()); no file
     under site/ but site/_redirects names its file name, compared in any letter case (site_names(), which reads no
     grammar of loads; a page that loads the path by a name that a script builds, that an escape it does not decode
-    hides, or that markup it reads otherwise than a browser, an entity it does not expand or a character it keeps
+    hides, or that markup its reading of tags does not model, an entity it does not expand or a character it keeps
     splits, is a residual); nothing under site/ occupies it, compared in any letter case, and no leading part of it is
     a file or a link (occupied()); and reaches_install does not read it as able to match an install page. A source
     that cannot be evaluated, because a file or a folder under site/ cannot be read or listed, a file's entity
     references expand too far, or an entry there is a link or neither a file nor a folder, fails and names that
-    input. Every other source passes, whatever its
-    destination and status."""
+    input. Every other source passes, whatever its destination and status, and is accepted. Then every rule, a rule
+    whose source fails and each rule of a chain included, fails when its destination or a later field of its line can
+    lead to an accepted source (destination_problem(): a token that is the file name of an accepted source, in any
+    letter case, as written or percent-decoded, or a : or a * after any http:// or https:// at its start, as a
+    placeholder or a splat holds), naming its line and the line of that source, since a page that loads its source can
+    then reach the accepted source though no file under site/ names that file name. A destination that leads to an
+    accepted source through a matching behaviour of Cloudflare Pages beyond this reading, such as a handling of .html,
+    and a load from another host or a redirect that another host makes, are residuals, as are the loads that
+    site_names() does not find."""
     problems: list[str] = []
     reach = ("which can match an install page or a file the install pages load; a rule there can send the reader away "
              "from the page or serve other content.")
     unreadable = (". A source under a loaded segment passes only when every file and folder under site/ can be read "
                   "or listed and no entry there is a link or neither a file nor a folder.")
+    rules: list[tuple[int, list[str]]] = []
+    accepted: list[tuple[int, str]] = []
     for number, line in enumerate(redirects.splitlines(), 1):
         fields = line.split()
         if not fields or fields[0].startswith("#"):
             continue
+        rules.append((number, fields))
         source = fields[0]
         head = f"site/_redirects line {number} has the source {source}, "
         if reaches_install(source):
@@ -2186,6 +2263,17 @@ def redirect_problems(redirects: str) -> list[str]:
             problems.append(head + f"at or above which {entry} exists, compared in any letter case; under a loaded "
                             "segment only a path that no file, folder or link of the tree occupies, and that lies "
                             "beneath no file, passes, so a rule there cannot hide or replace a file of the site.")
+        else:
+            accepted.append((number, source))
+    for number, fields in rules:
+        for index, field in enumerate(fields[1:]):
+            why = destination_problem(field, accepted)
+            if why:
+                what = "the destination" if index == 0 else "after its destination the field"
+                problems.append(f"site/_redirects line {number} has {what} {field}, {why}. A page that loads this "
+                                "rule's source can reach the accepted source through it, though no file under site/ "
+                                "names the accepted source's file name, so no rule may lead to an accepted source.")
+                break
     return problems
 
 
@@ -2574,11 +2662,13 @@ def main() -> int:
         "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page, "
         "and each source under the loaded segments is an exact path whose file name no file under site/ but "
         "site/_redirects names in a form the name search reads, that nothing under site/ occupies and that lies "
-        "beneath no file, each compared in any letter case (a load by a name that no file writes in such a form, "
-        "such as 1 that a script or an XSLT stylesheet builds, that an escape the search does not decode hides, that "
-        "markup the search reads otherwise than a browser, an entity it does not expand or a character it keeps "
-        "splits, or that only compressed or UTF-16 text holds, and any matching of Cloudflare Pages beyond this "
-        "reading are not read), "
+        "beneath no file, each compared in any letter case, and no destination there can lead to such a source, by "
+        "naming its file name or by holding a : or a * after any http:// or https:// at its start (a load by a name "
+        "that no file writes in such a form, such as 1 that a script or an XSLT stylesheet builds, that an escape "
+        "the search does not decode hides, that markup the search's reading of tags does not model, an entity it "
+        "does not expand or a character it keeps splits, or that only compressed or UTF-16 text holds, a load "
+        "from another host or a redirect that another host makes, and any matching of Cloudflare Pages beyond "
+        "this reading are not read), "
         "and no Pages Function, site/_worker.js, Wrangler configuration or root "
         "package.json, runtime.txt, requirements.txt, Pipfile or Gemfile exists."
     )

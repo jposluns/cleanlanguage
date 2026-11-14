@@ -19,7 +19,8 @@ as a source, an unreadable page or stylesheet, a link, a folder set to mode
 or copy the whole committed site/ over the copy, and assert that a source of
 site/_redirects under /assets/ passes only as an exact path whose file name
 no file under site/ but site/_redirects names and that no file occupies or
-lies above, in any letter case, and
+lies above, in any letter case, that a rule whose destination can lead to
+such a source fails, and
 that a header rule for such a path still fails. It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
@@ -370,6 +371,13 @@ NAMED = "a file under site/ names in some letter case ("
 OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
 UNEVALUATED = "which could not be evaluated: "
 RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:10])
+# The gate's words for a rule of site/_redirects whose destination names the file name of the source that the
+# committed line 11 holds, and for 1 whose destination holds a placeholder or a splat, so that each can lead to a
+# source that the redirect reading accepts.
+LEADS = ("which names the file name of a source that the redirect reading accepts under a loaded segment, compared in "
+         "any letter case: line 11 (/assets/baseline/logos/aiqt-card.svg)")
+EXPANDS = ("as a placeholder or a splat does; the reading does not expand either, so it reads the destination as able "
+           "to give the path of every source that it accepts")
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -655,15 +663,21 @@ def named(body: str, source: str, relative: str = "site/about/index.html", *more
     return both(create(relative, "<!doctype html>\n" + body + "\n"), *more, append(REDIRECTS, f"{source} /y 301\n"))
 
 
+def leads(destination: str, source: str = "/foo.svg"):
+    """A new page that loads /foo.svg, and a redirect of source to destination after the committed rules."""
+    return both(create("site/about/index.html", '<!doctype html>\n<img alt="" src="/foo.svg">\n'),
+                append(REDIRECTS, f"{source} {destination} 301\n"))
+
+
 def naming(name: str, where: str = "site/about/index.html") -> tuple[int, str]:
     """The exit code and words of the gate's refusal of a source whose file name is name, named by the file where
     alone."""
     return (1, f"whose file name {name} {NAMED}{where});")
 
 
-# Markup that an XML parser, or the HTML parser in an SVG element of a page, drops from the text of a style or script
-# element, so that the element's text joins a file name that it splits: each is the text before the element's
-# statement, the markup inside the file name, the text after the statement and a letter for the file name.
+# Markup inside a file name in the text of a style or script element, which the name search reads without that markup,
+# so that it reads the file name whole: each is the text before the element's statement, the markup inside the file
+# name, the text after the statement and a letter for the file name.
 SPLITS = {
     "a comment": ("", "<!--x-->", "", "c"),
     "an empty CDATA section": ("", "<![CDATA[]]>", "", "b"),
@@ -1724,9 +1738,9 @@ CASES = [
     ("a stylesheet that is not UTF-8",
         lambda root: (root / "site" / "bad.css").write_bytes(b".x { content: '\xff'; }\n"),
         (1, UNEVALUATED + "the file site/bad.css could not be read")),
-    # A tab, a line feed or a carriage return that the URL parser removes, and a line continuation that a CSS or
-    # JavaScript string drops, inside a file name: the name search reads forms with each removed, after each decoding
-    # and before the percent-decoding, so each source fails.
+    # A tab, a line feed, a carriage return or a line continuation inside a file name, written as it is, as a character
+    # reference or as an escape: the name search reads forms with each removed, after each decoding and before the
+    # percent-decoding, so each source fails.
     ("an img whose name a tab splits", named('<img alt="" src="/assets/ab\tc.svg">', "/assets/abc.svg"),
         naming("abc.svg")),
     ("an img whose name a line feed splits", named('<img alt="" src="/assets/gh\nij.svg">', "/assets/ghij.svg"),
@@ -1793,10 +1807,9 @@ CASES = [
         named('<link rel="manifest" href="/app.webmanifest">', "/assets/mtq.png", "site/about/index.html",
               create("site/app.webmanifest", '{"icons": [{"src": "/assets/mt\\tq.png", "sizes": "192x192"}]}\n')),
         naming("mtq.png", "site/app.webmanifest")),
-    # Markup that an XML parser, or the HTML parser in an SVG element of a page, drops from the text of a style or
-    # script element, and a reference to an entity that an XML document's internal subset declares, inside a file
-    # name: the name search reads each element's text without that markup, and each form with each such reference
-    # expanded, so each source fails.
+    # Markup in the text of a style or script element, and a reference to an entity that the file declares with a
+    # literal value, inside a file name: the name search reads each element's text without that markup, and each form
+    # with each such reference expanded, so each source fails.
     *markup_cases(),
     ("a style element of an SVG file whose file name a child element with text splits",
         both(create("site/assets/fct.svg",
@@ -1869,8 +1882,8 @@ CASES = [
         create("site/assets/loop.svg", '<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]>'
                + SVG_FILE.format("<text>&a;</text>")),
         (1, UNEVALUATED + "the file site/assets/loop.svg could not be read: its XML entity references still expand")),
-    # A plain style element of a page is raw text, where a comment marker is text and splits nothing; the name search
-    # reads it without the comment too, which fails closed.
+    # The name search reads the text of a plain style element of a page without a comment in it too, so a name that a
+    # comment marker splits there makes the source fail, whether or not the marker splits the name for the page.
     ("a plain style element of a page whose url() a comment marker splits",
         named('<style>p{background:url("/assets/hc<!--x-->tl.svg")}</style>', "/assets/hctl.svg"),
         naming("hctl.svg")),
@@ -1941,6 +1954,40 @@ CASES = [
         named('<link rel="stylesheet" href="/assets/gone.css">', "/assets/gone.css"), naming("gone.css")),
     ("a header rule for an exact path that the redirect reading accepts",
         append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
+    # No field of site/_redirects after a source may lead to a source that the redirect reading accepts, since a page
+    # that loads the rule's source would reach that source though no file under site/ names its file name. Each is read
+    # by its tokens, folded, as written and percent-decoded, so the file name stays a token whatever stands around it;
+    # and a : or a * after any http:// or https:// at its start fails.
+    ("a page that loads a path that a redirect sends to an accepted logo source",
+        both(whole_site, edit("site/license/index.html", "</body>", '<img alt="" src="/foo.svg">\n</body>'),
+             append(REDIRECTS, "/foo.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
+    ("a redirect to an accepted logo source in another letter case", leads("/ASSETS/Baseline/Logos/AIQT-Card.SVG"),
+        (1, "site/_redirects line 33 has the destination /ASSETS/Baseline/Logos/AIQT-Card.SVG, " + LEADS)),
+    ("a redirect to an accepted logo source under a full URL on another host",
+        leads("https://other.example/assets/baseline/logos/aiqt-card.svg"), (1, LEADS)),
+    ("a redirect to an accepted logo source with a query and a fragment",
+        leads("/assets/baseline/logos/aiqt-card.svg?x=1#top"), (1, LEADS)),
+    ("a redirect to an accepted logo source, percent-encoded", leads("/assets/baseline/logos/aiqt%2Dcard%2Esvg"),
+        (1, LEADS)),
+    ("a redirect to an accepted logo source, percent-encoded twice",
+        leads("/assets/baseline/logos/aiqt%252Dcard.svg"), (1, LEADS)),
+    ("a redirect to an accepted logo source through dot segments",
+        leads("/assets/baseline/old/../logos/./aiqt-card.svg"), (1, LEADS)),
+    ("a redirect to an accepted logo source by a relative path", leads("../baseline/logos/aiqt-card.svg"), (1, LEADS)),
+    ("a redirect to an accepted logo source written with backslashes",
+        leads("\\assets\\baseline\\logos\\aiqt-card.svg"), (1, LEADS)),
+    ("a redirect whose destination holds a placeholder", leads("/assets/baseline/logos/:name", "/foo/:name"),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/:name, which holds a : or a * after "
+            "any http:// or https:// at its start, " + EXPANDS)),
+    ("a redirect whose destination holds a splat", leads("/assets/baseline/:splat", "/foo/*"), (1, EXPANDS)),
+    ("a redirect to another host with a port", leads("https://other.example:8443/x.svg"), (1, EXPANDS)),
+    ("a chain of 2 redirects whose second leads from an accepted source to another",
+        both(leads("/assets/baseline/logos/aiqt-zz.svg"),
+             append(REDIRECTS, "/assets/baseline/logos/aiqt-zz.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
+        (1, "site/_redirects line 34 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
+    ("a redirect to a longer file name that holds an accepted one",
+        leads("/assets/baseline/logos/old-aiqt-card.svg"), 0),
     # Every src on the 6 pages is a path under LOADED_SEGMENTS, so check 7 covers what it loads.
     ("the rail's img loaded from another first segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
