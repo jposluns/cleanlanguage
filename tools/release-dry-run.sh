@@ -197,10 +197,14 @@ first_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
 second_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
 [ "${first_sum}" = "${second_sum}" ] \
   || fail "the build is not reproducible: ${first_sum} vs ${second_sum} under a different umask/ZIPOPT"
+# The real checksum of the zip just built, for step 2. It is read here because
+# the refused build in 1b removes the packager's outputs from dist/.
+checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${dry_version}.zip.sha256")"
 
 # 1b. Prove the release-date check is live: the same commit, asked to release
 #     on the sentinel day its Released line does not name, must be refused for
-#     exactly that reason, before anything is built.
+#     exactly that reason, before anything is built, and must leave no zip and
+#     no .sha256 in dist/.
 if date_err="$(tools/release-package.sh --tag "${dry_tag}" --release-date "${seed_date}" 2>&1 >/dev/null)"; then
   fail "the packager accepted a release date (${seed_date}) that the Released line does not name"
 fi
@@ -208,11 +212,15 @@ case "${date_err}" in
   *"does not match the release date (${seed_date})"*) ;;
   *) fail "the packager refused the sentinel release date for another reason: ${date_err}" ;;
 esac
+for output in cleanlanguage.zip cleanlanguage.zip.sha256 \
+  "cleanlanguage-${dry_version}.zip" "cleanlanguage-${dry_version}.zip.sha256"; do
+  [ ! -e "dist/${output}" ] \
+    || fail "the refused build left dist/${output} in place"
+done
 
 # 2. Point the site at the dry-run release, exactly as the orchestrator's
 #    post-release flip does,
-#    including the real checksum of the zip just built.
-checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${dry_version}.zip.sha256")"
+#    including the real checksum of the zip built in step 1, read after 1a.
 python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}"
 

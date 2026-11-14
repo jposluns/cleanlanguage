@@ -2,7 +2,7 @@ name: Release dry run
 
 # Proves the local, side-effect-free part of the release path without publishing: packaging, the site
 # rewrite, the date stamps, and the gates the post-release site pull request
-# must pass. The Python version check and 5 test suites run in the checkout,
+# must pass. The Python version check and 6 test suites run in the checkout,
 # and the version-consumer tests among them also build in temporary worktrees
 # made from the checkout. The last step, tools/release-dry-run.sh, does the
 # packaging, the rewrite, the stamping, and the gate checks in a throwaway git
@@ -77,6 +77,10 @@ jobs:
       - name: Release workflow date-check behaviour
         shell: bash
         run: python3 -I tools/test-release-skill-workflow.py
+
+      - name: Packager output in dist/
+        shell: bash
+        run: python3 -I tools/test-release-package-dist.py
 
       - name: Version-selector contract
         shell: bash

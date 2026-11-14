@@ -49,9 +49,18 @@
 #      same git tree, excluding the plugin manifest, and verifies every
 #      archived file's bytes against its git blob, so a git attribute such as
 #      export-subst cannot change the shipped bytes unnoticed.
+#   7. Moves the 2 verified zips into dist/, then their .sha256 files. Steps 5
+#      and 6 build and verify the outputs in a folder inside dist/
+#      (dist/.release-package.XXXXXX), so dist/ never holds an unverified
+#      output.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
-# .sha256 beside each. It never tags, pushes, or talks to the network.
+# .sha256 beside each, only after every check passes. Before its first check
+# it removes the outputs that an earlier build left (dist/cleanlanguage.zip,
+# dist/cleanlanguage-*.zip, the .sha256 beside each, and its own staging
+# folders), and it removes them again on any failed exit, so a refused build
+# leaves no zip and no .sha256 in dist/. Every other file in dist/ is kept.
+# It never tags, pushes, or talks to the network.
 #
 # Usage:
 #   tools/release-package.sh                 Build and verify at HEAD.
@@ -73,6 +82,17 @@ fail() {
   printf 'release-package: %s\n' "$1" >&2
   exit 1
 }
+
+# The packager's own outputs in dist/ and its staging folders there. Only these
+# are ever removed; every other file in dist/ is kept.
+remove_outputs() {
+  rm -f dist/cleanlanguage.zip dist/cleanlanguage.zip.sha256 \
+    dist/cleanlanguage-*.zip dist/cleanlanguage-*.zip.sha256 \
+    && rm -rf dist/.release-package.*
+}
+# Remove an earlier build's outputs before the first check, so a build refused
+# at any check never leaves them in dist/ for a reader to take for its own.
+remove_outputs || fail "could not remove the earlier outputs from dist/"
 
 tag=""
 release_date=""
@@ -372,7 +392,19 @@ sys.exit(1 if bad else 0)
 fi
 
 staging="$(mktemp -d)"
-trap 'rm -rf "${staging}"' EXIT
+out=""
+# On every exit, remove both work folders. On a failed exit, also remove any
+# output already moved into dist/, so a failure during or after the move
+# leaves no zip and no .sha256 there.
+cleanup() {
+  local rc=$?
+  rm -rf "${staging}"
+  [ -z "${out}" ] || rm -rf "${out}"
+  if [ "${rc}" -ne 0 ]; then
+    remove_outputs || true
+  fi
+}
+trap cleanup EXIT
 git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
 # Keep the downloadable skill zip free of plugin metadata: the Claude manifest
 # (.claude-plugin/plugin.json) and the Agent Plugins manifest (the root
@@ -409,19 +441,20 @@ find "${staging}" -type d -exec chmod 755 {} +
 find "${staging}" -type f -exec chmod 644 {} +
 find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
 
-rm -rf dist
 mkdir -p dist
-dist_dir="$(pwd)/dist"
+# Build and verify in a folder inside dist/, on the same filesystem, so the
+# move after the checks is a rename and dist/ never holds an unverified output.
+out="$(mktemp -d "$(pwd)/dist/.release-package.XXXXXX")"
 # Clear ZIP and ZIPOPT so an ambient option (for example ZIPOPT=-0) cannot
 # change the archive bytes; -D omits directory records (whose modes and order
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
 # bytes at any clock time and umask, given the same zip implementation.
 (cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
-  | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${dist_dir}/cleanlanguage.zip")
-cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
-(cd dist && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
-(cd dist && sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256")
+  | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${out}/cleanlanguage.zip")
+cp "${out}/cleanlanguage.zip" "${out}/cleanlanguage-${version}.zip"
+(cd "${out}" && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
+(cd "${out}" && sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256")
 
 expected="$(
   {
@@ -433,7 +466,7 @@ expected="$(
     printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
-actual="$(unzip -Z1 dist/cleanlanguage.zip | grep -v '/$' | LC_ALL=C sort)"
+actual="$(unzip -Z1 "${out}/cleanlanguage.zip" | grep -v '/$' | LC_ALL=C sort)"
 if [ "${expected}" != "${actual}" ]; then
   echo "release-package: the archive entry list does not match the git tree:" >&2
   diff <(printf '%s\n' "${expected}") <(printf '%s\n' "${actual}") >&2 || true
@@ -486,13 +519,18 @@ while IFS= read -r entry; do
     references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;
   esac
-  if ! cmp -s <(unzip -p dist/cleanlanguage.zip "${entry}") <(git cat-file blob "${blob}"); then
+  if ! cmp -s <(unzip -p "${out}/cleanlanguage.zip" "${entry}") <(git cat-file blob "${blob}"); then
     echo "release-package: archived ${entry} differs from its git blob (${blob})" >&2
     exit 1
   fi
 done <<EOF_ENTRIES
 ${actual}
 EOF_ENTRIES
+
+# Every check passed. Move the 2 zips into dist/, then their .sha256 files, so a
+# .sha256 in dist/ always has its zip beside it.
+mv -f "${out}/cleanlanguage.zip" "${out}/cleanlanguage-${version}.zip" dist/
+mv -f "${out}/cleanlanguage.zip.sha256" "${out}/cleanlanguage-${version}.zip.sha256" dist/
 
 echo "release-package: dist/cleanlanguage-${version}.zip built and verified for version ${version}."
 printf '%s\n' "${actual}" | sed 's/^/  /'
