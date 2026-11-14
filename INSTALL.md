@@ -174,7 +174,7 @@ gemini skills list
 /path/to/cleanlanguage/tools/release-package.sh
 ```
 
-This builds `dist/cleanlanguage.zip`, the same archive the release publishes: `SKILL.md` at the archive root beside its `references/`, the agent configuration, and the icons.
+This builds `dist/cleanlanguage.zip` from the files committed at HEAD: `SKILL.md` at the archive root beside its `references/`, the agent configuration, the icons, and the licence and notice files. The build matches the archive a release publishes only when you make it at the commit that release was built from, with the same zip implementation; the release workflow publishes a release only when its tag names the commit it built, so check out the release's tag first: `git -C /path/to/cleanlanguage checkout v<version>`. A build at any other commit gives different bytes, because the packaged files change between releases and the packager stamps every entry with the commit's own time.
 
 ## Package contents and assurance
 
