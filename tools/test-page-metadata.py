@@ -412,14 +412,15 @@ class ModifiedStampToleranceTest(unittest.TestCase):
     def test_missing_or_malformed_stamp_reports_only_that_problem(self):
         # A page with no published or no modified stamp, or with one that is
         # not YYYY-MM-DD, such as one with a digit too few or too many in a
-        # part, reports that problem alone: the date checks skip a stamp
-        # that is absent or malformed.
+        # part, a letter in a part, or a line feed and more after the date,
+        # reports that problem alone: the date checks skip a stamp that is
+        # absent or malformed.
         gate.added_date = lambda relative: "2026-01-01"
         gate.last_change_date = lambda relative: "2026-01-02"
         page = Path(self._tmp.name) / "index.html"
         stamps = {"article:published_time": "2026-01-01", "article:modified_time": "2026-01-02"}
         malformed = (None, "Jan 2", "026-01-02", "02026-01-02", "2026-1-02", "2026-001-02", "2026-01-2",
-                     "2026-01-002")
+                     "2026-01-002", "202A-01-02", "2026-0A-02", "2026-01-0A", "2026-01-02x", "2026-01-02\nx")
         for label, value in itertools.product(stamps, malformed):
             with self.subTest(label=label, value=value):
                 meta = f'<meta property="{label}" content="{stamps[label]}">\n'
@@ -467,6 +468,17 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             published="2026-01-01", modified="2026-13-40",
             changed="2026-01-14", today="2026-02-01")
         self.assertTrue(any("not a real calendar date" in p for p in problems), problems)
+
+    def test_stamp_in_other_decimal_digits_has_the_form(self):
+        # ISO_DATE reads \d as any decimal digit, so a modified stamp written
+        # in Arabic-Indic digits has the form YYYY-MM-DD, and it is reported
+        # as not a real calendar date, since dt.date.fromisoformat() does not
+        # read those digits.
+        stamp = "\u0662\u0660\u0662\u0666-\u0660\u0661-\u0661\u0660"
+        problems = self.check(
+            published="2026-01-01", modified=stamp,
+            changed="2026-01-14", today="2026-02-01")
+        self.assertEqual(problems, [f"article:modified_time {stamp} is not a real calendar date"])
 
 
 GATE_PAGE = """<!doctype html>
@@ -1779,6 +1791,50 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                  (("log", "-1"), b"yesterday\n"),
                  (("log", "-1"), b"20260202\n"),
                  (("log", "-1"), b"2026-02-02\n2026-02-02\n")]
+        # Output that is not of the form that git prints there: a ref
+        # listing line whose refname is neither the protected refname nor
+        # below it, or whose refname and object name are joined by a
+        # character other than a space; a merge base line that is not 1
+        # object name, or merge base output that does not end with a line
+        # feed; a tree entry whose mode and type are not a pair that git
+        # prints, whose fields are joined by other than 1 space, or which
+        # has no object name; a line that git prints with leading or
+        # trailing whitespace, with a CR or with a blank line, or with no
+        # line feed at its end; an object name in upper case or of 88 or
+        # 104 digits; and git hash-object output with no line.
+        cases += [(("for-each-ref",), b"refs/remotes/origin/mainx {main}\nrefs/remotes/origin/main {main}\n"),
+                  (("for-each-ref",), b"refs/heads/main {main}\n"),
+                  (("for-each-ref",), b"refs/remotes/origin/main\x0b{main}\n"),
+                  (("for-each-ref",), b"refs/remotes/origin/main\t{main}\n"),
+                  (("merge-base",), b"{main} {main}\n"),
+                  (("merge-base",), b"{main}\t{main}\n"),
+                  (("merge-base",), b"{main}"),
+                  (("merge-base",), b"{main}\r\n"),
+                  (("merge-base",), b"\n{main}\n"),
+                  *[(("ls-tree",), entry.replace(b"100644 blob", pair))
+                    for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
+                                 b"040000 blob", b"040000 commit", b"160000 blob", b"160000 tree",
+                                 b"100664 blob", b"000000 blob", b"100644  blob", b"100644\x0bblob",
+                                 b"100644\x0cblob")],
+                  (("ls-tree",), entry.replace(b" {blob}", b"")),
+                  (("rev-parse",), b"false"),
+                  (("rev-parse",), b" false\n"),
+                  (("rev-parse",), b"false\n\n"),
+                  (("rev-parse",), b"false\r\n"),
+                  (("rev-parse",), b"true"),
+                  (("hash-object",), b"{blob}"),
+                  (("hash-object",), b" {blob}\n"),
+                  (("hash-object",), b"{blob}\n\n"),
+                  (("hash-object",), b"{blob}\r\n"),
+                  (("hash-object",), b""),
+                  *[(("hash-object",), name + b"\n")
+                    for name in (b"A" * 40, b"0" * 40 + b"A" * 24, b"0" * 88, b"0" * 104)],
+                  (("log", "--diff-filter=A"), b"2026-01-01"),
+                  (("log", "--diff-filter=A"), b"2026-01-01 \n"),
+                  (("log", "--diff-filter=A"), b"\n2026-01-01\n"),
+                  (("log", "--diff-filter=A"), b"2026-01-01\r\n"),
+                  (("log", "-1"), b"2026-02-02"),
+                  (("log", "-1"), b"\n")]
         for prefix, output in cases:
             with self.subTest(prefix=prefix, output=output):
                 problems, stderr = self.check_with_fake_git(prefix, output)
@@ -1818,6 +1874,49 @@ class ProtectedLineHistoryTest(unittest.TestCase):
             problems, stderr = self.check_with_fake_git(("hash-object",), b"0123456789abcdef" * 4 + b"\n")
             self.assertIsNotNone(problems, stderr)
             self.assert_stamp_problem(problems, "2026-02-02")
+
+    def test_real_git_output_is_read(self):
+        # Real git prints, through the gate's git(), a tree entry of mode
+        # 100644, 100755 or 120000 with the type blob, 040000 with tree and
+        # 160000 with commit, 1 line for the shallow status, the git
+        # hash-object result, each date and the merge base, and a ref
+        # listing of the protected refname alone, which leaves out
+        # refs/remotes/origin/mainx and refs/remotes/origin/main-y. The
+        # gate reads each: blob_at() gives the mode and blob of each blob
+        # entry and None for the others, and protected_base() gives main's
+        # tip.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        site = gate.SITE_ROOT
+        (site / "run.sh").write_text("fixture\n", encoding="utf-8")
+        (site / "run.sh").chmod(0o755)
+        os.symlink("index.html", site / "link.html")
+        (site / "folder").mkdir()
+        (site / "folder" / "inner.html").write_text("fixture\n", encoding="utf-8")
+        self.git("add", "-A")
+        commit = self.git("rev-parse", "HEAD").strip()
+        self.git("update-index", "--add", "--cacheinfo", f"160000,{commit},site/gitlink")
+        self.git("commit", "-q", "-m", "Entries on 2026-01-01")
+        main = self.git("rev-parse", "HEAD").strip()
+        for ref in ("refs/remotes/origin/main", "refs/remotes/origin/mainx", "refs/remotes/origin/main-y"):
+            self.git("update-ref", ref, main)
+        for path, mode, kind in (("site/index.html", "100644", "blob"), ("site/run.sh", "100755", "blob"),
+                                 ("site/link.html", "120000", "blob"), ("site/folder", "040000", "tree"),
+                                 ("site/gitlink", "160000", "commit")):
+            with self.subTest(path=path):
+                name = self.git("rev-parse", f"HEAD:{path}").strip()
+                self.assertEqual(gate.git("ls-tree", "-z", "HEAD", "--", path),
+                                 f"{mode} {kind} {name}\t{path}\0".encode("ascii"))
+                self.assertEqual(gate.blob_at("HEAD", path), (mode, name) if kind == "blob" else None)
+        self.assertEqual(gate.git("rev-parse", "--is-shallow-repository"), b"false\n")
+        blob = self.git("rev-parse", "HEAD:site/index.html").strip()
+        self.assertEqual(gate.git("hash-object", "--", "site/index.html"), blob.encode("ascii") + b"\n")
+        self.assertEqual(gate.git("log", "--format=%cs", "HEAD", "--", "site"), b"2026-01-01\n" * 2)
+        listing = f"refs/remotes/origin/main {main}\n".encode("ascii")
+        self.assertEqual(gate.git("for-each-ref", "--format=%(refname) %(objectname)", "refs/remotes/origin/main"),
+                         listing)
+        self.assertEqual(gate.git("merge-base", "--all", "HEAD", main), main.encode("ascii") + b"\n")
+        self.assertEqual(gate.protected_base(), main)
+        gate.require_full_history()
 
 
 if __name__ == "__main__":

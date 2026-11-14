@@ -326,10 +326,11 @@ def git(*args: str) -> bytes:
     each NUL byte, each entry at its first tab and the part before that tab
     at each space, and protected_base() splits the git for-each-ref listing
     at each line feed and each line at its first space. The other readings
-    split or strip the output at whitespace, and a date, a merge base, an
-    object name or a mode is decoded as ASCII. Each reading accepts only
-    the values that it can use, and any other output means that the check
-    could not run (exit 3), as unusable() says. An argument that holds a
+    decode the output as ASCII and split it at each line feed, as
+    output_lines() says, and a date, a merge base, an object name or a mode
+    is decoded as ASCII. Each reading accepts only output of the form that
+    git prints there, and any other output means that the check could not
+    run (exit 3), as unusable() says. An argument that holds a
     path is a str, which subprocess encodes as os.fsencode() does. git runs
     with GIT_LITERAL_PATHSPECS set to 1 and without the variables in
     PATHSPEC_VARIABLES, so git log and git ls-tree read a page path such as
@@ -351,22 +352,23 @@ def git(*args: str) -> bytes:
 
 def ascii_output(output: bytes, args: tuple[str, ...]) -> str:
     """output, which git printed for args, decoded as ASCII. It is used for
-    the output that git prints in ASCII, such as a date, an object name or a
-    mode, so a byte that is not ASCII there is output that the gate cannot
-    use, and the check could not run (exit 3)."""
+    the output that git prints in ASCII, such as a date or an object name,
+    so a byte that is not ASCII there is output that the gate cannot use,
+    and the check could not run (exit 3)."""
     try:
         return output.decode("ascii")
     except UnicodeDecodeError:
         die(f"git {' '.join(args)} printed a byte that is not ASCII: {output!r}")
 
 
-# An object name as git prints it: 40 hexadecimal digits under SHA-1 and 64
-# under SHA-256.
+# An object name as git prints it: 40 lower-case hexadecimal digits under
+# SHA-1 and 64 under SHA-256.
 OBJECT_NAME = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
-# The mode of a tree entry as git ls-tree prints it: 6 octal digits.
-TREE_MODE = re.compile(r"[0-7]{6}")
-# The object types that git ls-tree prints for a tree entry.
-TREE_TYPES = frozenset({b"blob", b"tree", b"commit"})
+# The mode and type pairs that git ls-tree prints for a tree entry: a
+# regular file, an executable file or a symbolic link is a blob, a folder
+# is a tree, and a gitlink is a commit.
+TREE_ENTRIES = frozenset({(b"100644", b"blob"), (b"100755", b"blob"), (b"120000", b"blob"),
+                          (b"040000", b"tree"), (b"160000", b"commit")})
 # A date as git log --format=%cs prints it.
 COMMIT_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -386,13 +388,24 @@ def object_name(text: str, args: tuple[str, ...], output: bytes) -> str:
     return text
 
 
+def output_lines(output: bytes, args: tuple[str, ...]) -> list[str]:
+    """The lines of output, which git printed for args, decoded as ASCII
+    and split at each line feed, as git ends each line that it prints with
+    a line feed. Output that is not empty and does not end with a line feed
+    stops the check (exit 3)."""
+    lines = ascii_output(output, args).split("\n")
+    if lines.pop() != "":
+        unusable(args, output)
+    return lines
+
+
 def commit_dates(*args: str, most: int | None = None) -> list[str]:
-    """The dates that git log prints for args, 1 for each commit that it
-    lists, when each is a calendar date in the form YYYY-MM-DD and, when
-    most is given, there are at most that many. Any other output stops the
-    check (exit 3)."""
+    """The dates that git log prints for args, 1 line for each commit that
+    it lists, when each line is a calendar date in the form YYYY-MM-DD and,
+    when most is given, there are at most that many. Any other output stops
+    the check (exit 3)."""
     output = git(*args)
-    dates = ascii_output(output, args).split()
+    dates = output_lines(output, args)
     if most is not None and len(dates) > most:
         unusable(args, output)
     for date in dates:
@@ -407,18 +420,18 @@ def commit_dates(*args: str, most: int | None = None) -> list[str]:
 
 def require_full_history() -> None:
     """Stop the check (exit 3) unless git rev-parse --is-shallow-repository
-    prints false, as it does in a repository with full history: true means
-    a shallow clone, and any other output is output that the gate cannot
-    use."""
+    prints the 1 line false, as it does in a repository with full history:
+    the 1 line true means a shallow clone, and any other output is output
+    that the gate cannot use."""
     args = ("rev-parse", "--is-shallow-repository")
     output = git(*args)
-    status = ascii_output(output, args).strip()
-    if status == "true":
+    status = output_lines(output, args)
+    if status == ["true"]:
         die(
             "the repository is a shallow clone, so file history cannot be read. "
             "Unshallow it, or set fetch-depth: 0 on actions/checkout."
         )
-    if status != "false":
+    if status != ["false"]:
         unusable(args, output)
 
 
@@ -439,21 +452,25 @@ def protected_base() -> str | None:
     history with HEAD, means that the check could not run (exit 3), as does
     a merge base list with no line. So does output that the gate cannot
     use: a listing that is not empty and does not end with a line feed, a
-    line with no refname or with no object name after its first space, the
-    protected refname listed twice, or a merge base that is not an object
-    name."""
+    line whose part before its first space is neither PROTECTED_REF nor a
+    refname below it, which are the only refs that git lists for that
+    pattern, a line with no object name after its first space, the
+    protected refname listed twice, merge base output that is not empty
+    and does not end with a line feed, or a merge base line that is not 1
+    object name."""
     args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
     output = git(*args)
     lines = output.split(b"\n")
     if lines.pop() != b"":
         unusable(args, output)
+    protected = PROTECTED_REF.encode("ascii")
     tip = None
     for line in lines:
         name, _, line_tip = line.partition(b" ")
-        if not name:
+        if name != protected and not name.startswith(protected + b"/"):
             unusable(args, output)
         line_tip = object_name(ascii_output(line_tip, args), args, output)
-        if name == PROTECTED_REF.encode("ascii"):
+        if name == protected:
             if tip is not None:
                 unusable(args, output)
             tip = line_tip
@@ -461,7 +478,7 @@ def protected_base() -> str | None:
         return None
     merge_args = ("merge-base", "--all", "HEAD", tip)
     output = git(*merge_args)
-    bases = ascii_output(output, merge_args).split()
+    bases = output_lines(output, merge_args)
     if not bases:
         die(f"git merge-base --all HEAD {tip} printed no merge base")
     for base in bases:
@@ -476,8 +493,9 @@ def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
     os.fsencode(relative). A failed git call means that the check could not
     run (exit 3), and so does output that the gate cannot use: output that
     is not empty and does not end with a NUL byte, more than 1 entry, or an
-    entry that is not a mode of 6 octal digits, a space, the type blob, tree
-    or commit, a space, an object name, a tab and os.fsencode(relative)."""
+    entry that is not a mode and type pair in TREE_ENTRIES, joined by 1
+    space, then a space, an object name, a tab and os.fsencode(relative).
+    The part before the tab is split at each single space."""
     args = ("ls-tree", "-z", revision, "--", relative)
     output = git(*args)
     entries = output.split(b"\0")
@@ -488,14 +506,11 @@ def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
     for entry in entries:
         info, _, name = entry.partition(b"\t")
         fields = info.split(b" ")
-        if name != os.fsencode(relative) or len(fields) != 3 or fields[1] not in TREE_TYPES:
-            unusable(args, output)
-        mode = ascii_output(fields[0], args)
-        if TREE_MODE.fullmatch(mode) is None:
+        if name != os.fsencode(relative) or len(fields) != 3 or (fields[0], fields[1]) not in TREE_ENTRIES:
             unusable(args, output)
         blob = object_name(ascii_output(fields[2], args), args, output)
         if fields[1] == b"blob":
-            return mode, blob
+            return fields[0].decode("ascii"), blob
     return None
 
 
@@ -521,8 +536,8 @@ def last_change_date(relative: str) -> str | None:
     maps an edit back to the blob at HEAD, or for an uncommitted mode-only
     change. Otherwise the date is read at HEAD. A failed git call means that
     the check could not run, so the gate exits 3, and so does output that the
-    gate cannot use, such as a git hash-object result that is not an object
-    name or more than 1 date from git log -1.
+    gate cannot use, such as a git hash-object result that is not 1 line
+    holding an object name or more than 1 date from git log -1.
     """
     revision = "HEAD"
     base = protected_base()
@@ -535,7 +550,10 @@ def last_change_date(relative: str) -> str | None:
         if here is not None and here == blob_at(base, relative):
             args = ("hash-object", "--", relative)
             output = git(*args)
-            if object_name(ascii_output(output, args).strip(), args, output) == here[1]:
+            lines = output_lines(output, args)
+            if len(lines) != 1:
+                unusable(args, output)
+            if object_name(lines[0], args, output) == here[1]:
                 revision = base
     dates = commit_dates("log", "-1", "--format=%cs", revision, "--", relative, most=1)
     return dates[0] if dates else None
