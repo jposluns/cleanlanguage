@@ -50,16 +50,26 @@
 #      archived file's bytes against its git blob, so a git attribute such as
 #      export-subst cannot change the shipped bytes unnoticed.
 #   7. Moves the 2 verified zips into dist/, then their .sha256 files. Steps 5
-#      and 6 build and verify the outputs in a folder inside dist/
-#      (dist/.release-package.XXXXXX), so dist/ never holds an unverified
-#      output.
+#      and 6 build and verify the outputs in a staging folder inside dist/
+#      (dist/.release-package.XXXXXX), so no unverified output ever sits
+#      under an output name in dist/.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
-# .sha256 beside each, only after every check passes. Before its first check
-# it removes the outputs that an earlier build left (dist/cleanlanguage.zip,
-# dist/cleanlanguage-*.zip, the .sha256 beside each, and its own staging
-# folders), and it removes them again on any failed exit, so a refused build
-# leaves no zip and no .sha256 in dist/. Every other file in dist/ is kept.
+# .sha256 beside each, only after every check passes. It refuses a dist that
+# is a symbolic link, or that exists and is not a folder, before it removes
+# or writes anything. Before its first check it removes the outputs that an
+# earlier build left: each regular file named cleanlanguage.zip,
+# cleanlanguage-X.Y.Z.zip, or the .sha256 of either, and each staging folder
+# named .release-package. followed by 6 letters or digits. It removes
+# nothing else in dist/: a file or folder of any other name is kept, and so
+# is a folder or symbolic link that carries an output name. From the point
+# where it starts the archive, an exit trap removes the outputs again on a
+# failed exit; an exit before that point needs no second removal, since the
+# build has written nothing to dist/ by then. So a refused build leaves in
+# dist/ no zip and no .sha256 that a build wrote, unless a removal itself
+# fails: the build then still fails, and an output that it could not remove
+# stays. A folder named like an output (for example dist/cleanlanguage.zip/)
+# is kept, so the move onto it fails and the build exits 1.
 # It never tags, pushes, or talks to the network.
 #
 # Usage:
@@ -83,16 +93,44 @@ fail() {
   exit 1
 }
 
-# The packager's own outputs in dist/ and its staging folders there. Only these
-# are ever removed; every other file in dist/ is kept.
+# A dist that is a symbolic link would send every removal and every output to
+# wherever it points, which may lie outside this checkout, and a dist that is
+# a file cannot hold the outputs, so both are refused before anything is
+# removed.
+if [ -L dist ]; then
+  fail "dist is a symbolic link; the packager writes only into a real dist/ folder"
+elif [ -e dist ] && [ ! -d dist ]; then
+  fail "dist exists and is not a folder"
+fi
+
+# The packager's own outputs in dist/ and its staging folders there, matched
+# by exact name and type, so a file it did not write is never removed: a
+# regular file named cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256
+# of either, and a folder named .release-package. followed by the 6 letters
+# or digits that mktemp gives. A symbolic link is neither, so it is kept.
+# Every removal is tried, so a failed removal does not stop the others; the
+# return status is 1 if any failed.
 remove_outputs() {
-  rm -f dist/cleanlanguage.zip dist/cleanlanguage.zip.sha256 \
-    dist/cleanlanguage-*.zip dist/cleanlanguage-*.zip.sha256 \
-    && rm -rf dist/.release-package.*
+  local path name rc=0
+  [ -d dist ] || return 0
+  for path in dist/* dist/.release-package.*; do
+    name="${path#dist/}"
+    if [[ "${name}" =~ ^cleanlanguage(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip(\.sha256)?$ ]]; then
+      if [ -f "${path}" ] && [ ! -L "${path}" ]; then
+        rm -f -- "${path}" || rc=1
+      fi
+    elif [[ "${name}" =~ ^\.release-package\.[A-Za-z0-9]{6}$ ]]; then
+      if [ -d "${path}" ] && [ ! -L "${path}" ]; then
+        rm -rf -- "${path}" || rc=1
+      fi
+    fi
+  done
+  return "${rc}"
 }
 # Remove an earlier build's outputs before the first check, so a build refused
 # at any check never leaves them in dist/ for a reader to take for its own.
-remove_outputs || fail "could not remove the earlier outputs from dist/"
+remove_outputs \
+  || fail "could not remove every earlier output from dist/; any it could not remove is still there"
 
 tag=""
 release_date=""
@@ -395,14 +433,18 @@ staging="$(mktemp -d)"
 out=""
 # On every exit, remove both work folders. On a failed exit, also remove any
 # output already moved into dist/, so a failure during or after the move
-# leaves no zip and no .sha256 there.
+# leaves no zip and no .sha256 there. Each removal runs whatever an earlier
+# one returned, since a failed command would otherwise end the trap under
+# set -e; an output that a failed removal leaves stays in dist/. The trap
+# ends with the build's own exit code.
 cleanup() {
   local rc=$?
-  rm -rf "${staging}"
-  [ -z "${out}" ] || rm -rf "${out}"
   if [ "${rc}" -ne 0 ]; then
     remove_outputs || true
   fi
+  rm -rf "${staging}" || true
+  [ -z "${out}" ] || rm -rf "${out}" || true
+  exit "${rc}"
 }
 trap cleanup EXIT
 git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
@@ -442,8 +484,9 @@ find "${staging}" -type f -exec chmod 644 {} +
 find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
 
 mkdir -p dist
-# Build and verify in a folder inside dist/, on the same filesystem, so the
-# move after the checks is a rename and dist/ never holds an unverified output.
+# Build and verify in a staging folder inside dist/, on the same filesystem,
+# so the move after the checks is a rename and no unverified output ever sits
+# under an output name in dist/.
 out="$(mktemp -d "$(pwd)/dist/.release-package.XXXXXX")"
 # Clear ZIP and ZIPOPT so an ambient option (for example ZIPOPT=-0) cannot
 # change the archive bytes; -D omits directory records (whose modes and order
