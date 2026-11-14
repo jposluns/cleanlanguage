@@ -151,25 +151,34 @@ LIMIT_LAUNCH = ("import os, resource, sys\n"
                 "                   (0, resource.getrlimit(resource.RLIMIT_CORE)[1]))\n"
                 "os.environ['" + CHILD_MARK + "'] = '1'\n"
                 "os.execv(sys.executable, [sys.executable, *sys.argv[4:]])\n")
-# The memory limit and the wall timeout of each gate child, from measured runs under each stack
-# limit: the largest and slowest gate child, the gate on the 5460060-byte input of the quote
-# pair enumeration, reached a maxrss of 319 MiB in at most 14.2 s, and failed under an address
-# space of 320 MiB but passed under 384 MiB.
+# The memory limit of each gate child and the default wall timeout of a gate child, from runs
+# under each stack limit made on the drafting machine when these values were chosen and not
+# repeated since: the largest and slowest gate child, the gate on the 5460060-byte input of the
+# quote pair enumeration, reached a maxrss of 319 MiB in at most 14.2 s, and failed under an
+# address space of 320 MiB but passed under 384 MiB.
 GATE_MEMORY = 1024 * 1024 * 1024
 GATE_TIMEOUT = 60
-# The CPU limit of each child but a sweep child, in seconds, equal to GATE_TIMEOUT: a backstop
+# The default CPU limit of run_child(), in seconds, equal to GATE_TIMEOUT, the default wall
+# timeout of a gate child. Every child but a sweep child runs under it, except the child of
+# test_child_over_its_cpu_limit_is_named, which runs under a CPU limit of 1 s. A case that sets
+# a shorter wall timeout, TIME_BOUND or SPAN_TIMEOUT of 10 s, ORPHAN_TIMEOUT of 5 s or 1 s,
+# keeps GATE_CPU, so the CPU limit of its child is above its wall timeout. It is a backstop
 # for a child whose enforcing process is gone, such as a gate child whose sweep child something
-# outside the suite killed. The child of most CPU time, the gate child on the input of the
-# quote pair enumeration, used 15.3 s under an 8192 KiB stack and 12.2 s with no stack limit,
-# so GATE_CPU is 3.9 times the larger. A child of 1 thread uses at most 1 s of CPU time per
-# second of wall time, so while its enforcing process lives, its CPU limit can end it before
-# its wall timeout only by the moments between its start and the start of that timeout; on a
-# slower runner, a child that nears GATE_CPU nears its wall timeout first, and the margin
-# covers a runner 3.9 times slower. Its cost is 2 more calls that set a limit in each child.
-# It bounds CPU time, not wall time, and does not end a process that waits or sleeps.
+# outside the suite killed. In the runs with a logging hook from which it was chosen, made on
+# the drafting machine, the run with no stack limit while other work ran there, the child of
+# most CPU time, the gate child on the input of the quote pair enumeration, used 15.3 s under
+# an 8192 KiB stack and 12.2 s with no stack limit, so GATE_CPU is 3.9 times the larger. A
+# child of 1 thread uses at most 1 s of CPU time per second of wall time, so while its
+# enforcing process lives, a CPU limit at or above its wall timeout can end it before that
+# timeout only by the moments between its start and the start of that timeout; on a slower
+# runner, a child that nears GATE_CPU nears its wall timeout first, and for that gate child,
+# whose wall timeout is GATE_TIMEOUT, the margin covers a runner 3.9 times slower. Its cost is
+# 2 more calls that set a limit in each child. It bounds CPU time, not wall time, and does not
+# end a process that waits or sleeps.
 GATE_CPU = 60
 # The memory limit of each sweep child, the suite run on the named cases of 1 row. Each gate
-# child it starts inherits it, so in a sweep a gate child runs under SWEEP_MEMORY too; the run
+# child it starts inherits it, so in a sweep a gate child runs under SWEEP_MEMORY too; in a
+# run made on the drafting machine when this value was chosen and not repeated since, the run
 # of every named case on an unmutated copy, with the gate children it started, reached a
 # maxrss of 26 MiB in at most 35.8 s. At most SWEEP_WORKERS sweep children run at once, each
 # with at most 1 gate child, so the children of a sweep hold at most
@@ -3930,11 +3939,13 @@ SWEEP_TARGETS = {"gate": Path("tools") / "check-pr-text.py",
 # At most this many sweep children run at once, and each is stopped after SWEEP_TIMEOUT s.
 SWEEP_WORKERS = 8
 SWEEP_TIMEOUT = 300
-# The CPU limit of each sweep child, in seconds, equal to SWEEP_TIMEOUT, so that, as with
-# GATE_CPU, the wall timeout stops a sweep child of 1 thread first while the top suite process
-# lives, and a sweep child that spins after that process is gone ends by it. A sweep child, not
-# counting its gate children, used at most 0.48 s under an 8192 KiB stack and 0.44 s with no
-# stack limit, so SWEEP_CPU is over 600 times that; the margin is set by the timeout, not by
+# The CPU limit of each sweep child, in seconds, equal to SWEEP_TIMEOUT, the wall timeout of
+# each sweep child, so that, as with a child whose CPU limit is at or above its wall timeout,
+# the wall timeout stops a sweep child of 1 thread first while the top suite process lives,
+# and a sweep child that spins after that process is gone ends by it. In the runs with a
+# logging hook named at GATE_CPU, a sweep child, not counting its gate children, used at most
+# 0.48 s under an 8192 KiB stack and 0.44 s with no stack limit, so SWEEP_CPU is over 600
+# times that; the margin is set by the timeout, not by
 # the measure, and leaves room for a row that names a case of more CPU time in the suite
 # process. Its cost and residual are those of GATE_CPU: a sweep child that waits on its gate
 # child uses no CPU time, so after the top suite process is gone it runs on, at most until its
