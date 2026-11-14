@@ -69,6 +69,7 @@ They run offline: nothing reaches GitHub or any network.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
@@ -518,6 +519,58 @@ def script_reads(script: str) -> set[str]:
     return read - assigned
 
 
+# The options git and gh accept before their subcommand that take the next
+# argument as their value. Any other leading argument that starts with - is
+# read as an option with no separate value.
+LEADING_VALUE_OPTIONS = {
+    "git": ("-c", "-C", "--git-dir", "--work-tree", "--namespace"),
+    "gh": ("-R", "--repo"),
+}
+# The gh api options that add parameters or a request body. A call that holds
+# any of them and gives no method is read as POST, the default the gh api
+# manual names for a call with parameters; --input is read the same way.
+API_BODY_OPTIONS = ("-f", "-F", "--field", "--raw-field", "--input")
+
+
+def subcommand(name, args):
+    """args from the subcommand on, past any leading options of git or gh."""
+    takes_value = LEADING_VALUE_OPTIONS.get(name, ())
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        index += 2 if args[index] in takes_value else 1
+    return args[index:]
+
+
+def api_method(args):
+    """The HTTP method of a gh api call, given its arguments after api: the
+    --method or -X value when one is given, otherwise POST when a body
+    option is present and GET when none is."""
+    method = None
+    body = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("-X", "--method"):
+            method = args[index + 1] if index + 1 < len(args) else ""
+            index += 2
+            continue
+        if arg.startswith("--method="):
+            method = arg[len("--method="):]
+        elif arg.startswith("-X"):
+            method = arg[2:]
+        elif arg in API_BODY_OPTIONS or arg.startswith(("--field=", "--raw-field=", "--input=")):
+            body = True
+        elif arg[:2] in ("-f", "-F") and len(arg) > 2:
+            body = True
+        index += 1
+    if method is None:
+        return "POST" if body else "GET"
+    return method.upper()
+
+
+# Every fake records its call, then classifies it with the same 2 functions
+# the predicates below use, so a fake routes a call with leading options as
+# the real command would.
 FAKE_COMMON = """
 import hashlib, json, os, sys
 STATE = os.environ["FAKE_STATE"]
@@ -531,9 +584,24 @@ def read(name, default=""):
         return default
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+LEADING_VALUE_OPTIONS = """ + repr(LEADING_VALUE_OPTIONS) + """
+API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + inspect.getsource(subcommand) + inspect.getsource(api_method) + """
+SUB = subcommand(NAME, ARGS)
 """
 
+# The state files through which the fakes model a change: the local tag, the
+# tag on origin, and every gh call that writes, which the fake gh appends to
+# gh_writes. A step that changed nothing leaves all 3 as they were.
+FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
+
 FAKE_GH = FAKE_COMMON + """
+# Every release subcommand that changes a release, and every API call with a
+# method other than GET, is a write: it is appended to gh_writes, whatever the
+# call log holds, so a no-change assertion can read the fake's own state.
+RELEASE_READS = (["view"], ["download"], ["list"])
+if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["api"] and api_method(SUB[1:]) != "GET"):
+    with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
+        writes.write(json.dumps(SUB) + "\\n")
 if ARGS[:1] == ["api"]:
     # Row 59: every API path is answered from one shared state, so the exact
     # path each call names is logged for ApiPathTest to pin.
@@ -590,20 +658,20 @@ sys.exit(0)
 """
 
 FAKE_VCS = FAKE_COMMON + """
-if ARGS[:1] == ["rev-parse"]:
+if SUB[:1] == ["rev-parse"]:
     print(read("commit"))
-elif ARGS[:1] == ["ls-remote"]:
+elif SUB[:1] == ["ls-remote"]:
     # The state file "ls_remote" set to FAIL makes the lookup itself fail.
     if read("ls_remote") == "FAIL":
         sys.exit(128)
     tag = read("remote_tag")
     if tag:
         print(tag + "\\trefs/tags/" + os.environ["RELEASE_TAG"])
-elif ARGS[:1] == ["tag"]:
+elif SUB[:1] == ["tag"]:
     # The local tag points at the commit named last.
     with open(os.path.join(STATE, "local_tag"), "w", encoding="utf-8") as handle:
         handle.write(ARGS[-1])
-elif ARGS[:1] == ["push"] and ARGS[-1] == "refs/tags/" + os.environ["RELEASE_TAG"]:
+elif SUB[:1] == ["push"] and ARGS[-1] == "refs/tags/" + os.environ["RELEASE_TAG"]:
     # A tag push moves the remote tag to the local one, so a later run reads
     # the tag where an earlier run left it.
     with open(os.path.join(STATE, "remote_tag"), "w", encoding="utf-8") as handle:
@@ -773,9 +841,16 @@ class WorkflowStepTest(unittest.TestCase):
         env.update({key: value for key, value in self.carried.items() if key in written})
         return env
 
+    def fake_write_state(self):
+        """The fakes' tag and write state, each file's text or None."""
+        return {name: (self.state / name).read_text(encoding="utf-8") if (self.state / name).exists() else None
+                for name in FAKE_WRITE_STATE}
+
     def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = ()):
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
+        # The fake state as the run found it, for a later no-change assertion.
+        self.state_before_run = self.fake_write_state()
         script = self.state / "step.sh"
         script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
         proc = subprocess.run(
@@ -869,24 +944,45 @@ def ignore_lookup_failure(script: str) -> str:
     return script.replace(lookup[0], lookup[0] + " || true", 1)
 
 
+# Each predicate reads a recorded call by its subcommand, past any leading
+# options of git or gh, so git -c NAME=VALUE tag and gh -R REPO release create
+# are classified as tag and create calls.
+def sub(call):
+    return subcommand(call[0], call[1])
+
+
 def is_push(call):
-    return call[0] == VCS and call[1][:1] == ["push"]
+    return call[0] == VCS and sub(call)[:1] == ["push"]
 
 
 def is_create(call):
-    return call[0] == "gh" and call[1][:2] == ["release", "create"]
+    return call[0] == "gh" and sub(call)[:2] == ["release", "create"]
 
 
 def is_upload(call):
-    return call[0] == "gh" and call[1][:2] == ["release", "upload"]
+    return call[0] == "gh" and sub(call)[:2] == ["release", "upload"]
 
 
 def is_tag(call):
-    return call[0] == VCS and call[1][:1] == ["tag"]
+    return call[0] == VCS and sub(call)[:1] == ["tag"]
+
+
+def is_lookup(call):
+    return call[0] == VCS and sub(call)[:1] == ["ls-remote"]
+
+
+def is_release_change(call):
+    """A gh release subcommand other than the reads view, download and list."""
+    return call[0] == "gh" and sub(call)[:1] == ["release"] and sub(call)[1:2] not in (["view"], ["download"], ["list"])
+
+
+def is_api_write(call):
+    """A gh api call whose method is not GET, given or implied by a body option."""
+    return call[0] == "gh" and sub(call)[:1] == ["api"] and api_method(sub(call)[1:]) != "GET"
 
 
 def is_mutation(call):
-    return is_push(call) or is_tag(call) or is_create(call) or is_upload(call)
+    return is_push(call) or is_tag(call) or is_release_change(call) or is_api_write(call)
 
 
 def is_date(call):
@@ -894,11 +990,20 @@ def is_date(call):
 
 
 def is_field_read(field):
-    return lambda call: call[0] == "gh" and call[1][:1] == ["api"] and "--jq" in call[1] and call[1][-1] == "." + field
+    """A gh api call that reads field through --jq or -q, the option and its
+    value matched as a pair wherever they stand among the arguments."""
+    def reads(call):
+        if call[0] != "gh" or sub(call)[:1] != ["api"]:
+            return False
+        args = sub(call)[1:]
+        value = "." + field
+        return any((arg in ("--jq", "-q") and args[index + 1:index + 2] == [value]) or arg == "--jq=" + value
+                   for index, arg in enumerate(args))
+    return reads
 
 
 def is_tag_operation(call):
-    return call[0] == VCS and call[1][:1] in (["tag"], ["push"])
+    return is_tag(call) or is_push(call)
 
 
 # Extractors that cannot run at all: the interpreter fails before main, on a
@@ -1467,6 +1572,17 @@ class RerunTest(WorkflowStepTest):
                         self.assertNotIn("kept its assets", out)
 
 
+# The tag check of the push branch of the publish step, each line stripped of
+# its indentation, as the witness that replaces it requires it to read.
+TAG_PUSH_CHECK = (
+    "if [ \"${remote_tag_sha}\" != \"${built_commit}\" ]; then",
+    "echo \"Tag ${RELEASE_TAG} resolves to ${remote_tag_sha:-nothing} on origin, not the built commit"
+    " ${built_commit}; refusing to publish mismatched bytes.\" >" + chr(38) + "2",
+    "exit 1",
+    "fi",
+)
+
+
 class ImmutableReleaseTest(WorkflowStepTest):
     """Item 57: this workflow never republishes a published release. The force
     input is refused against a published release and only moves the tag of a release that is not
@@ -1481,6 +1597,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
 
     def assert_no_mutation(self, calls):
         self.assertFalse([c for c in calls if is_mutation(c)], calls)
+        # The fakes' own state as well as the call log, so a write whose call
+        # the log does not show still fails this assertion.
+        self.assertEqual(self.fake_write_state(), self.state_before_run, calls)
 
     def test_force_against_a_published_release_is_refused(self):
         # The same commit, force set.
@@ -1774,58 +1893,77 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertFalse(any(is_upload(c) or is_push(c) for c in calls), calls)
         self.assertIn("First-publication readback", out)
 
+    # The tag-push runs of an unpublished release whose tag on origin is not
+    # the built commit: dated and undated, with the tag at another commit and
+    # with no tag, each with the value the refusal names for that tag.
+    TAG_PUSH_MISMATCHES = tuple((dated, remote_tag, shown) for dated in (True, False)
+                                for remote_tag, shown in ((OTHER_COMMIT, OTHER_COMMIT), ("", "nothing")))
+
+    def tag_push_mismatch(self, dated, remote_tag):
+        self.reset_calls()
+        self.runner["GITHUB_EVENT_NAME"] = "push"
+        self.carried["RELEASE_DATED"] = "1" if dated else "0"
+        self.carried["RELEASE_DATE"] = "2026-11-15" if dated else ""
+        self.set_state(status="404", remote_tag=remote_tag, local_tag=None, gh_writes=None)
+
     def test_tag_push_of_an_unpublished_release_refuses_mismatched_bytes(self):
         # A tag-triggered run publishes only the commit that its tag names on
         # origin. With the tag at another commit or gone when the step reads
         # it, the run refuses before any tag operation or create call, on a
         # dated release (past the early window check) and an undated one.
-        for dated in (True, False):
-            for remote_tag, shown in ((OTHER_COMMIT, OTHER_COMMIT), ("", "nothing")):
-                with self.subTest(dated=dated, remote_tag=shown):
-                    self.reset_calls()
-                    self.runner["GITHUB_EVENT_NAME"] = "push"
-                    self.carried["RELEASE_DATED"] = "1" if dated else "0"
-                    self.carried["RELEASE_DATE"] = "2026-11-15" if dated else ""
-                    self.set_state(status="404", remote_tag=remote_tag)
-                    code, out, err = self.run_step(PUBLISH)
-                    self.assertEqual(code, 1, err)
-                    self.assertIn("Tag v1.0.15 resolves to " + shown + " on origin, not the built commit "
-                                  + COMMIT, err)
-                    self.assertIn("refusing to publish mismatched bytes", err)
-                    self.assertNotIn("Refusing to publish v1.0.15", err)
-                    self.assert_superseded_advice(out + err, 0)
-                    calls = self.calls()
-                    self.assert_no_mutation(calls)
-                    self.assertEqual(len([c for c in calls if c[0] == VCS and c[1][:1] == ["ls-remote"]]), 1, calls)
-                    # Only the early window check reads the clock; the binding
-                    # check before the create call is never reached.
-                    self.assertEqual(len([c for c in calls if is_date(c)]), 1 if dated else 0, calls)
-                    self.assertFalse(any(is_field_read("immutable")(c) for c in calls), calls)
+        for dated, remote_tag, shown in self.TAG_PUSH_MISMATCHES:
+            with self.subTest(dated=dated, remote_tag=shown):
+                self.tag_push_mismatch(dated, remote_tag)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Tag v1.0.15 resolves to " + shown + " on origin, not the built commit "
+                              + COMMIT, err)
+                self.assertIn("refusing to publish mismatched bytes", err)
+                self.assertNotIn("Refusing to publish v1.0.15", err)
+                # No release is published, so no text names a corrective
+                # version: neither the superseded-release advice nor any line
+                # holding the word corrective or the words new version.
+                self.assert_superseded_advice(out + err, 0)
+                for marker in ("corrective", "new version"):
+                    self.assertNotIn(marker, (out + err).lower())
+                calls = self.calls()
+                self.assert_no_mutation(calls)
+                # The fakes' tag and write state is the state the run started
+                # from, whatever the call log shows.
+                self.assertEqual(self.fake_write_state(),
+                                 {"local_tag": None, "remote_tag": remote_tag, "gh_writes": None}, calls)
+                self.assertEqual(len([c for c in calls if is_lookup(c)]), 1, calls)
+                # Only the early window check reads the clock; the binding
+                # check before the create call is never reached.
+                self.assertEqual(len([c for c in calls if is_date(c)]), 1 if dated else 0, calls)
+                self.assertFalse(any(is_field_read("immutable")(c) for c in calls), calls)
 
     def test_without_its_tag_check_a_tag_push_publishes_mismatched_bytes(self):
         # The witness for the case above: with the tag check of the push
-        # branch replaced by the no-op :, the same runs create the release,
-        # so that case fails if the check is dropped. The check is found by
-        # its refusal line, which must occur exactly once, and its 4 lines
-        # must read as pinned here, so a reworded check fails this test
-        # rather than letting it pass on a script it no longer changes.
+        # branch replaced by the no-op :, each of the 4 runs of that case
+        # exits 0 and creates the release, which shows that the case above
+        # fails whenever the check is dropped. The check is found by its
+        # refusal line, which must occur on exactly 1 line, and each of its
+        # 4 lines, stripped of indentation, must equal TAG_PUSH_CHECK, so a
+        # changed check fails this test rather than letting it pass on a
+        # script it no longer changes.
         lines = step_script(PUBLISH).splitlines(keepends=True)
         hits = [i for i, line in enumerate(lines) if "refusing to publish mismatched bytes" in line]
         self.assertEqual(len(hits), 1, hits)
         start = hits[0] - 1
         block = [line.strip() for line in lines[start:start + 4]]
-        self.assertEqual(block[0], 'if [ "${remote_tag_sha}" != "${built_commit}" ]; then', block)
-        self.assertEqual(block[2:], ["exit 1", "fi"], block)
+        self.assertEqual(block, list(TAG_PUSH_CHECK), block)
         mutant = "".join(lines[:start]) + ":\n" + "".join(lines[start + 4:])
-        for remote_tag in (OTHER_COMMIT, ""):
-            with self.subTest(remote_tag=remote_tag or "nothing"):
-                self.reset_calls()
-                self.runner["GITHUB_EVENT_NAME"] = "push"
-                self.set_state(status="404", remote_tag=remote_tag)
+        for dated, remote_tag, shown in self.TAG_PUSH_MISMATCHES:
+            with self.subTest(dated=dated, remote_tag=shown):
+                self.tag_push_mismatch(dated, remote_tag)
                 code, _out, err = self.run_step(PUBLISH, mutant)
                 self.assertEqual(code, 0, err)
                 self.assertNotIn("mismatched bytes", err)
-                self.assertTrue(any(is_create(c) for c in self.calls()), self.calls())
+                calls = self.calls()
+                self.assertEqual(len([c for c in calls if is_create(c)]), 1, calls)
+                writes = [json.loads(line)[:3] for line in (self.fake_write_state()["gh_writes"] or "").splitlines()]
+                self.assertEqual(writes, [["release", "create", "v1.0.15"]], calls)
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
