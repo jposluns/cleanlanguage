@@ -505,7 +505,7 @@ class ImageReferenceTest(_PatchedGateTest):
     def test_traversal_to_missing_target_is_reported_outside(self):
         # A traversal to a MISSING out-of-tree target must be reported as a
         # containment violation, not as a plain "does not exist": the test needs
-        # exactly 1 problem, naming the target as outside the site directory, and
+        # exactly 1 problem, whose text holds "outside the site directory", and
         # fails a gate that reports this missing target only as "does not exist".
         problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
         self.assertEqual(len(problems), 1)
