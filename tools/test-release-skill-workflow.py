@@ -1774,6 +1774,59 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertFalse(any(is_upload(c) or is_push(c) for c in calls), calls)
         self.assertIn("First-publication readback", out)
 
+    def test_tag_push_of_an_unpublished_release_refuses_mismatched_bytes(self):
+        # A tag-triggered run publishes only the commit that its tag names on
+        # origin. With the tag at another commit or gone when the step reads
+        # it, the run refuses before any tag operation or create call, on a
+        # dated release (past the early window check) and an undated one.
+        for dated in (True, False):
+            for remote_tag, shown in ((OTHER_COMMIT, OTHER_COMMIT), ("", "nothing")):
+                with self.subTest(dated=dated, remote_tag=shown):
+                    self.reset_calls()
+                    self.runner["GITHUB_EVENT_NAME"] = "push"
+                    self.carried["RELEASE_DATED"] = "1" if dated else "0"
+                    self.carried["RELEASE_DATE"] = "2026-11-15" if dated else ""
+                    self.set_state(status="404", remote_tag=remote_tag)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    self.assertIn("Tag v1.0.15 resolves to " + shown + " on origin, not the built commit "
+                                  + COMMIT, err)
+                    self.assertIn("refusing to publish mismatched bytes", err)
+                    self.assertNotIn("Refusing to publish v1.0.15", err)
+                    self.assert_superseded_advice(out + err, 0)
+                    calls = self.calls()
+                    self.assert_no_mutation(calls)
+                    self.assertEqual(len([c for c in calls if c[0] == VCS and c[1][:1] == ["ls-remote"]]), 1, calls)
+                    # Only the early window check reads the clock; the binding
+                    # check before the create call is never reached.
+                    self.assertEqual(len([c for c in calls if is_date(c)]), 1 if dated else 0, calls)
+                    self.assertFalse(any(is_field_read("immutable")(c) for c in calls), calls)
+
+    def test_without_its_tag_check_a_tag_push_publishes_mismatched_bytes(self):
+        # The witness for the case above: with the tag check of the push
+        # branch replaced by the no-op :, the same runs create the release,
+        # so that case fails if the check is dropped. The check is found by
+        # its refusal line, which must occur exactly once, and its 4 lines
+        # must read as pinned here, so a reworded check fails this test
+        # rather than letting it pass on a script it no longer changes.
+        lines = step_script(PUBLISH).splitlines(keepends=True)
+        hits = [i for i, line in enumerate(lines) if "refusing to publish mismatched bytes" in line]
+        self.assertEqual(len(hits), 1, hits)
+        start = hits[0] - 1
+        block = [line.strip() for line in lines[start:start + 4]]
+        self.assertEqual(block[0], 'if [ "${remote_tag_sha}" != "${built_commit}" ]; then', block)
+        self.assertEqual(block[2:], ["exit 1", "fi"], block)
+        mutant = "".join(lines[:start]) + ":\n" + "".join(lines[start + 4:])
+        for remote_tag in (OTHER_COMMIT, ""):
+            with self.subTest(remote_tag=remote_tag or "nothing"):
+                self.reset_calls()
+                self.runner["GITHUB_EVENT_NAME"] = "push"
+                self.set_state(status="404", remote_tag=remote_tag)
+                code, _out, err = self.run_step(PUBLISH, mutant)
+                self.assertEqual(code, 0, err)
+                self.assertNotIn("mismatched bytes", err)
+                self.assertTrue(any(is_create(c) for c in self.calls()), self.calls())
+
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
             with self.subTest(force=force):
