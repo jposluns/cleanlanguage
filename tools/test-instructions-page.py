@@ -4,8 +4,8 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies the case's fault (none for the committed tree; for
 some cases a sequence of 2 or 3 changes), runs the gate there as a separate
-process and asserts its exit code and, where the case names them, the words of
-the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
+process and asserts its exit code, that the gate wrote no traceback on stderr,
+and, where the case names them, the words of the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
 runs the gate under a faked Python version tuple outside the supported set of
 tools/check-inline-code.py and asserts exit 3 with the gate's own message.
 
@@ -18,7 +18,13 @@ that counts newline-translated text fails it. The 2 final-line-end cases remove
 the download's final LF or make it CR LF, and each asserts that the download
 ended in exactly 1 LF before the edit: a gate that strips the final line end
 and adds 1 for it fails the first, and a gate that also strips a final CR
-fails both. The CR LF and final-line-end fixtures are written byte for byte.
+fails both. The 2 leading-content cases put U+FEFF or a blank line before the
+download's first character and the same character before the block's text,
+right after the copy button, so the block still matches; each asserts that the
+download began with a character that is neither U+FEFF nor whitespace before
+the edit. A gate that decodes the download as utf-8-sig fails the first, and a
+gate that strips leading whitespace fails the second. The CR LF, final-line-end
+and leading-content fixtures are written byte for byte.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -103,6 +109,25 @@ def final_line_end(relative: str, new: bytes):
             raise AssertionError(f"{relative} does not end in exactly 1 LF: {data[-2:]!r}")
         path.write_bytes(data[:-1] + new)
     return apply
+
+
+def leading(relative: str, new: bytes):
+    """Put the new bytes before the file's first byte, with no newline translation; the file must begin with a
+    character that is neither U+FEFF nor whitespace."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        data = path.read_bytes()
+        if not data or data.startswith(b"\xef\xbb\xbf") or data[:1].isspace():
+            raise AssertionError(f"{relative} does not begin with a character other than U+FEFF and whitespace: "
+                                 f"{data[:3]!r}")
+        path.write_bytes(new + data)
+    return apply
+
+
+def raising(path: Path) -> None:
+    """Define, after every other definition of the file, an inline_code_problems that raises ValueError."""
+    path.write_bytes(path.read_bytes() + b'\n\ndef inline_code_problems(text, svg=False):\n'
+                     b'    raise ValueError("inline check failed")\n')
 
 
 def symlinked(relative: str):
@@ -258,6 +283,16 @@ CASES = [
     ("the download ending in CR LF, the page stating the count as saved",
         faults(final_line_end(FILES[0], b"\r\n"),
                edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+    ("the download beginning with U+FEFF, the page stating the count as saved",
+        faults(leading(FILES[0], b"\xef\xbb\xbf"),
+               edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\xef\xbb\xbf"),
+               edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
+                          f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
+    ("the download beginning with a blank line, the page stating the count as saved",
+        faults(leading(FILES[0], b"\n"),
+               edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\n"),
+               edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
+                          f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
     ("the download undecodable",
         lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
     ("the text drifted and the stated count removed",
@@ -275,6 +310,16 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}",
                (3, f"check-instructions-page: tools/check-inline-code.py {words}"))
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
+LOAD_CASES += [
+    ("tools/check-inline-code.py a symbolic link to a regular copy", symlinked("tools/check-inline-code.py"),
+        (3, "check-instructions-page: tools/check-inline-code.py is not a regular file")),
+    ("tools/check-inline-code.py raising ValueError while it checks the page, and the stated count wrong",
+        faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"),
+               lambda root: raising(root / "tools/check-inline-code.py")),
+        (3, "check-instructions-page: tools/check-inline-code.py could not check the page: "
+            "ValueError('inline check failed')",
+         f"the page states {SAVED - 1} characters for the full download")),
+]
 # Root reads a file whatever its mode, so under root a mode-000 case cannot
 # fail to read: it is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
@@ -308,9 +353,11 @@ def main() -> int:
                 continue
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
             code, words, out_words = (expected + ("",) * 2)[:3] if isinstance(expected, tuple) else (expected, "", "")
-            if result.returncode != code or words not in result.stderr or out_words not in result.stdout:
+            traceback = "Traceback" in result.stderr
+            if result.returncode != code or words not in result.stderr or out_words not in result.stdout or traceback:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
                                 + (f" and {out_words!r} on stdout" if out_words else "")
+                                + (" and no traceback" if traceback else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
     with tempfile.TemporaryDirectory() as scratch:
         root = build(scratch, None, "another Python version", failures)

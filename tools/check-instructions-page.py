@@ -73,9 +73,10 @@ Exit codes:
      or the download could not be read or decoded. While the checks run, it
      collects these refusals: the embedded block was not found exactly once;
      the stated count was not found exactly once; tools/check-inline-code.py is
-     not a regular file, could not be read or loaded, or defines no
-     inline_code_problems or no UnsupportedPython; or the Python version is 3.7
-     or later and not one that tools/check-inline-code.py supports
+     not a regular file, could not be read or loaded, defines no
+     inline_code_problems or no UnsupportedPython, or raised an exception while
+     it checked the page; or the Python version is 3.7 or later and not one that
+     tools/check-inline-code.py supports
 
 A symbolic link is not followed: a download, a page or
 tools/check-inline-code.py that is a symbolic link is not a regular file,
@@ -83,7 +84,12 @@ whatever the link points to, as tools/build-site.py also refuses such a
 download.
 
 The page read is not guarded: a page that cannot be read or decoded ends in a
-traceback with exit 1.
+traceback with exit 1. Nor is the gate's own use of what
+tools/check-inline-code.py defines: an UnsupportedPython that is not an
+exception class, a module __getattr__ that raises an exception other than
+AttributeError, an exception whose repr raises, or a problem that cannot be
+formatted as text ends in a traceback with exit 1. A SystemExit or
+KeyboardInterrupt raised by that file is not caught.
 
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
@@ -91,7 +97,7 @@ could not be evaluated is reported on stderr, prefixed "check-instructions-page:
 The gate runs every check it can evaluate and prints every problem it found
 before it exits, so a problem is never hidden behind a refusal collected while
 the checks run; it exits 3 whenever a check could not be evaluated, whatever
-else it found. The 2 conditions that stop the gate before any check runs are
+else it found, apart from the tracebacks named above. The 2 conditions that stop the gate before any check runs are
 reported on stderr in the same way, and no check runs after them.
 """
 
@@ -164,12 +170,16 @@ def load_inline_gate():
 
 
 def inline_code_problems(text: str) -> list[str]:
-    """Check 2: each piece of inline code, read with tools/check-inline-code.py."""
+    """Check 2: each piece of inline code, read with tools/check-inline-code.py. Its UnsupportedPython, or any other
+    exception (Exception) raised while it checks the page or while its problems are read, means that check 2 could
+    not be evaluated (Refused, exit 3); SystemExit and KeyboardInterrupt are not caught."""
     module = load_inline_gate()
     try:
-        return module.inline_code_problems(text)
+        return list(module.inline_code_problems(text))
     except module.UnsupportedPython as error:
         raise Refused(f"tools/check-inline-code.py {error}")
+    except Exception as error:
+        raise Refused(f"tools/check-inline-code.py could not check the page: {error!r}")
 
 
 def first_difference(a: str, b: str) -> str:

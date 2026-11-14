@@ -2811,24 +2811,38 @@ def check_stated_count(failures: list[str]) -> int:
     characters, so a count that translates line ends or counts bytes states the
     wrong number. The third removes the download's final newline, which must be
     exactly 1 LF, so a count that strips a final line end and adds 1 for it
-    states the wrong number."""
+    states the wrong number. The fourth and fifth put U+FEFF or a blank line
+    before the download's first character, which must be neither U+FEFF nor
+    whitespace, so a count that decodes as utf-8-sig or strips leading
+    whitespace states the wrong number."""
     extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
+    final = "end in exactly 1 LF"
+    first = "begin with a character other than U+FEFF and whitespace"
 
     def without_final_newline(data: bytes) -> bytes | None:
         if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
             return None
         return data[:-1]
 
-    cases = [("clean build", lambda data: data),
-             ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra),
-             ("download without its final newline", without_final_newline)]
-    for name, change in cases:
+    def leading(prefix: bytes):
+        def change(data: bytes) -> bytes | None:
+            if not data or data.startswith(b"\xef\xbb\xbf") or data[:1].isspace():
+                return None
+            return prefix + data
+        return change
+
+    cases = [("clean build", lambda data: data, ""),
+             ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra, ""),
+             ("download without its final newline", without_final_newline, final),
+             ("download beginning with U+FEFF", leading(b"\xef\xbb\xbf"), first),
+             ("download beginning with a blank line", leading(b"\n"), first)]
+    for name, change, expected in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             download = root / "site/downloads/cleanlanguage.md"
             data = change(download.read_bytes())
             if data is None:
-                failures.append(f"stated count, {name}: the download does not end in exactly 1 LF")
+                failures.append(f"stated count, {name}: the download does not {expected}")
                 continue
             download.write_bytes(data)
             out = Path(scratch) / "out"
@@ -3505,7 +3519,10 @@ def check_version_literals(failures: list[str]) -> int:
 def check_case_groups_called(failures: list[str]) -> int:
     """For every top-level check_* function of this file's own source, def or async def, main() holds a call by that
     name somewhere inside it, so a case group whose call is deleted fails here instead of only lowering the printed
-    total. It does not check that the call can run or that its count and failures are kept."""
+    total. It does not check that the call can run or that its count and failures are kept. It reads names only, so
+    it does not check that the name main() calls is bound to the case group: a later def or assignment of that name,
+    at the top level or inside main(), or a decorator can bind it to something else, and a check_* name bound by
+    assignment rather than def is not read as a case group."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
     called = {node.func.id for function in functions if function.name == "main" for node in ast.walk(function)
