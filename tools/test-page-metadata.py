@@ -20,6 +20,7 @@ import contextlib
 import datetime as dt
 import importlib.util
 import io
+import itertools
 import os
 import py_compile
 import shutil
@@ -146,6 +147,15 @@ class AuthorRequirementTest(unittest.TestCase):
             ' "author": ' + author + "}]"
             "</script>"
         )
+        self.assertEqual(self.check(block), [])
+
+    def test_member_that_is_not_an_object_is_skipped(self):
+        # A top-level array member that is a number or a string is not an
+        # entity, so it is skipped beside the Article that names the author.
+        author = '{"@type": "Person", "name": "Jeff Posluns"}'
+        block = article(author).replace('<script type="application/ld+json">',
+                                        '<script type="application/ld+json">[1, "x", ')
+        block = block.replace("</script>", "]</script>")
         self.assertEqual(self.check(block), [])
 
     def test_unparseable_block_reports_one_message(self):
@@ -324,7 +334,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
 
     def check(self, *, published: str, modified: str, changed: str, today: str) -> list[str]:
         # A fully author-compliant page whose only varying inputs are the date
-        # stamps, so the sole problem that can surface is the modified-stamp one.
+        # stamps, so each problem that can surface concerns its dates or its
+        # history, such as the modified-stamp tolerance or a future stamp.
         # published_time equals the mocked added_date and the JSON-LD
         # dateModified equals the meta article:modified_time.
         gate.added_date = lambda relative: published
@@ -398,6 +409,56 @@ class ModifiedStampToleranceTest(unittest.TestCase):
         self.assertTrue(
             any("is in the future" in p for p in problems), problems)
 
+    def test_missing_or_malformed_stamp_reports_only_that_problem(self):
+        # A page with no published or no modified stamp, or with one that is
+        # not YYYY-MM-DD, such as one with a digit too few or too many in a
+        # part, reports that problem alone: the date checks skip a stamp
+        # that is absent or malformed.
+        gate.added_date = lambda relative: "2026-01-01"
+        gate.last_change_date = lambda relative: "2026-01-02"
+        page = Path(self._tmp.name) / "index.html"
+        stamps = {"article:published_time": "2026-01-01", "article:modified_time": "2026-01-02"}
+        malformed = (None, "Jan 2", "026-01-02", "02026-01-02", "2026-1-02", "2026-001-02", "2026-01-2",
+                     "2026-01-002")
+        for label, value in itertools.product(stamps, malformed):
+            with self.subTest(label=label, value=value):
+                meta = f'<meta property="{label}" content="{stamps[label]}">\n'
+                new = "" if value is None else meta.replace(stamps[label], value)
+                html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+                page.write_text(html.replace(meta, new), encoding="utf-8")
+                expected = f"missing {label}" if value is None else f"{label} is {value!r}, expected YYYY-MM-DD"
+                self.assertEqual(gate.check_page(page, TODAY)[0], [expected])
+
+    def test_page_with_no_history_reports_only_that(self):
+        # A page for which git records no commit, so that no added date and
+        # no last change date are read, reports that problem alone.
+        gate.added_date = lambda relative: None
+        gate.last_change_date = lambda relative: None
+        page = Path(self._tmp.name) / "index.html"
+        page.write_text(PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}')),
+                        encoding="utf-8")
+        self.assertEqual(gate.check_page(page, TODAY)[0],
+                         ["git records no commit for this file, so its dates cannot be checked"])
+
+    def test_published_override_excuses_the_published_stamp(self):
+        # A page listed in PUBLISHED_OVERRIDES is not asked to match the date
+        # that git shows it was added.
+        gate.added_date = lambda relative: "2025-12-01"
+        gate.last_change_date = lambda relative: "2026-01-02"
+        page = Path(self._tmp.name) / "index.html"
+        page.write_text(PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}')),
+                        encoding="utf-8")
+        self.assertTrue([p for p in gate.check_page(page, TODAY)[0] if p.startswith("article:published_time")])
+        with mock.patch.dict(gate.PUBLISHED_OVERRIDES, {"index.html": "moved in"}):
+            self.assertEqual(gate.check_page(page, TODAY)[0], [])
+
+    def test_stamp_equal_to_today_passes(self):
+        # A modified stamp of today is not in the future.
+        problems = self.check(
+            published="2026-01-01", modified="2026-02-01",
+            changed="2026-02-01", today="2026-02-01")
+        self.assertEqual(problems, [], problems)
+
     def test_invalid_calendar_date_is_reported_not_crashed(self):
         # An ISO-shaped but invalid date (fromisoformat rejects it) must produce
         # a clean problem, not a traceback. Before the guard, the tolerance math
@@ -449,6 +510,31 @@ class UnreadablePageTest(_PatchedGateTest):
                 gate.check_page(page, TODAY)
         self.assertEqual(caught.exception.code, 3)
         self.assertIn("could not read", stderr.getvalue())
+
+
+class PageListTest(_PatchedGateTest):
+    def test_refused_sitemap_configuration_exits_3(self):
+        # A sitemap configuration that the shared engine refuses stops the
+        # check with exit 3 and the engine's message.
+        def refuse(path):
+            raise gate.engine.EngineError("synthetic refusal")
+
+        stderr = io.StringIO()
+        with mock.patch.object(gate.engine, "load_config", refuse), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.content_pages()
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("check-page-metadata: synthetic refusal", stderr.getvalue())
+
+    def test_no_content_pages_exits_3(self):
+        # main() with full history and no content page stops with exit 3.
+        stderr = io.StringIO()
+        with mock.patch.object(gate, "require_full_history", lambda: None), \
+                mock.patch.object(gate, "content_pages", lambda: []), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.main()
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("no content pages found", stderr.getvalue())
 
 
 class MetaParsingTest(_PatchedGateTest):
@@ -689,16 +775,22 @@ class CaseSpellingTest(_PatchedGateTest):
 
 
 def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, object, str]]:
-    """6 of the ways a sibling tool can fail to load, each a fault on 1 file
+    """7 of the ways a sibling tool can fail to load, each a fault on 1 file
     with the words of the refusal it gives: the file missing, its mode 000, its
     mode 000 beside a valid cached file, a syntax error, the definition of
-    attribute renamed, and a syntax error beside a cached file of the unbroken
+    attribute renamed, a syntax error beside a cached file of the unbroken
     source that the normal loader runs without comparing it with the source (an
-    unchecked hash-based file). The tool must always read the source, so that no
-    cached file stands in for it. Root reads a file whatever its mode, so under
-    root the 2 mode-000 faults skip their case instead."""
+    unchecked hash-based file), and the file a symbolic link to the unbroken
+    source. The tool must always read the source, so that no cached file stands
+    in for it. Root reads a file whatever its mode, so under root the 2
+    mode-000 faults skip their case instead."""
     def missing(path: Path) -> None:
         path.unlink()
+
+    def linked(path: Path) -> None:
+        target = path.with_name(path.name + ".target")
+        path.rename(target)
+        path.symlink_to(target.name)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
     def locked(path: Path) -> None:
@@ -731,7 +823,8 @@ def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, o
             ("with mode 000 beside a valid cached file", cached_locked, "could not be read"),
             ("with a syntax error", broken, "could not be loaded"),
             (f"with {attribute} renamed", rename, f"defines no {attribute}"),
-            ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
+            ("with a syntax error beside a stale cached file", stale, "could not be loaded"),
+            ("as a symbolic link", linked, "is not a regular file")]
 
 
 class SiblingLoadTest(unittest.TestCase):
@@ -757,7 +850,8 @@ class SiblingLoadTest(unittest.TestCase):
 
 def history_page(modified: str, body: str = "First body.", published: str = "2026-01-01") -> str:
     """An author-compliant page whose only varying inputs are its stamps and
-    body, so the sole problem that can surface is the modified-stamp one."""
+    body, so each problem that the gate can find on it concerns its dates or
+    its history, such as the modified-stamp one or the published-date one."""
     json_ld = (
         '<script type="application/ld+json">'
         '{"@context": "https://schema.org", "@type": "Article",'
@@ -781,6 +875,26 @@ def gate_git_text(*args: str) -> str:
     return gate.git(*args).decode("utf-8")
 
 
+# A git for PATH that runs the real git with its arguments and keeps its
+# stderr and exit code, and prints the given output in place of its stdout
+# when the arguments after -C and the folder start with the given prefix.
+FAKE_GIT = """\
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+result = subprocess.run([os.environ["PAGE_METADATA_REAL_GIT"], *args], capture_output=True)
+prefix = os.environ["PAGE_METADATA_FAKE_ARGS"].split("\\n")
+sys.stderr.buffer.write(result.stderr)
+if args[2:2 + len(prefix)] == prefix:
+    sys.stdout.buffer.write(bytes.fromhex(os.environ["PAGE_METADATA_FAKE_OUTPUT"]))
+else:
+    sys.stdout.buffer.write(result.stdout)
+sys.exit(result.returncode)
+"""
+
+
 class ProtectedLineHistoryTest(unittest.TestCase):
     """last_change_date() dates a page at the merge base of HEAD and
     refs/remotes/origin/main only when that base is the only one, the page's
@@ -801,10 +915,11 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     GIT_CONFIG_GLOBAL and HOME are overlapping layers: git reads ~/.gitconfig
     only when both are dropped, so no case fails when only 1 of them is, and
     test_global_configuration_in_home_is_not_read fails when both are. No case
-    plants a system attributes file, since git has no variable that moves it.
-    The class still takes inputs from the machine, such as the git binary found
-    on PATH, with its version and built-in defaults, the locale, and the folder
-    that tempfile picks."""
+    plants a system attributes file, since git has no variable that moves it,
+    and test_isolated_git_names_no_system_attributes_file fails when
+    GIT_ATTR_NOSYSTEM is not set. The class still takes inputs from the
+    machine, such as the git binary found on PATH, with its version and
+    built-in defaults, the locale, and the folder that tempfile picks."""
 
     TODAY = "2026-03-01"
     MAIN_DATE = "2026-01-01"
@@ -836,8 +951,9 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # case fails when only 1 of them is, and
         # test_global_configuration_in_home_is_not_read, which plants a
         # ~/.gitconfig, fails when both are. No case plants a system attributes
-        # file, since git has no variable that moves it. os.environ is restored
-        # when the test ends.
+        # file, since git has no variable that moves it, and
+        # test_isolated_git_names_no_system_attributes_file fails without
+        # GIT_ATTR_NOSYSTEM. os.environ is restored when the test ends.
         for key in [key for key in os.environ if key.startswith("GIT_")]:
             del os.environ[key]
         os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -1011,6 +1127,15 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.isolate_git()
         self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
         self.assert_no_signing_configuration()
+
+    def test_isolated_git_names_no_system_attributes_file(self):
+        # git var GIT_ATTR_SYSTEM names the system attributes file that git
+        # reads, and fails when git reads none, so the case fails when
+        # isolate_git() does not set GIT_ATTR_NOSYSTEM.
+        result = subprocess.run(["git", "-C", str(gate.REPO_ROOT), "var", "GIT_ATTR_SYSTEM"],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.stdout, "")
 
     def test_git_that_cannot_be_run_exits_3(self):
         # PATH names only an empty folder, so the gate's git() cannot run
@@ -1347,16 +1472,18 @@ class ProtectedLineHistoryTest(unittest.TestCase):
 
     def test_pathspec_variables_do_not_change_restored_page_result(self):
         # Each of the 4 variables through which git reads a pathspec as a
-        # glob, a literal path or with no regard to case is set to 1 before
-        # the gate runs on a page restored exactly with the protected ref.
-        # The page passes and the check does not stop.
-        for variable in ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
-                         "GIT_LITERAL_PATHSPECS"):
-            with self.subTest(variable=variable):
+        # glob, a literal path or with no regard to case is set to 1, and to
+        # bogus, a value that git refuses as not boolean, before the gate
+        # runs on a page restored exactly with the protected ref. The page
+        # passes and the check does not stop.
+        for variable, value in itertools.product(
+                ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS",
+                 "GIT_LITERAL_PATHSPECS"), ("1", "bogus")):
+            with self.subTest(variable=variable, value=value):
                 self.start_repository()
                 self.change_and_restore_on_branch()
                 stderr = io.StringIO()
-                with mock.patch.dict(os.environ, {variable: "1"}), contextlib.redirect_stderr(stderr):
+                with mock.patch.dict(os.environ, {variable: value}), contextlib.redirect_stderr(stderr):
                     try:
                         problems = self.problems()
                     except SystemExit as error:
@@ -1538,6 +1665,159 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 contextlib.redirect_stdout(line):
             gate.report("  site/\udcc3\udca9/index.html")
         self.assertEqual(line.getvalue(), "  site/\\xc3\\xa9/index.html\n")
+
+    def test_report_escapes_only_surrogates_from_udc80_to_udcff(self):
+        # report() shows each lone surrogate from \udc80 to \udcff as the
+        # escape of its byte, from \x80 to \xff, and prints \udc7f and
+        # \udd00, on each side of that range, unchanged.
+        expected = {code: f"\\x{code - 0xdc00:02x}" for code in range(0xdc80, 0xdd00)}
+        expected.update({0xdc7f: "\udc7f", 0xdd00: "\udd00"})
+        for code, shown in expected.items():
+            with self.subTest(code=hex(code)):
+                line = io.StringIO()
+                with contextlib.redirect_stdout(line):
+                    gate.report(chr(code))
+                self.assertEqual(line.getvalue(), shown + "\n")
+
+    def test_main_reads_the_class_today(self):
+        # main() runs on a page stamped 2026-01-01 with TODAY set to
+        # 2000-01-01 and then to 2000-01-02, and reports the stamp as in the
+        # future with each of those dates as today, so the case fails when
+        # main() reads the wall clock, whatever its date.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        for today in ("2000-01-01", "2000-01-02"):
+            with self.subTest(today=today):
+                self.TODAY = today
+                stdout = io.StringIO()
+                self.assertEqual(self.run_main(stdout), 1)
+                self.assertIn(f"article:modified_time 2026-01-01 is in the future (today is {today})",
+                              stdout.getvalue())
+
+    def test_git_calls_per_page(self):
+        # check_page() makes 3 git calls for a page with no protected ref,
+        # and 7 for a page restored exactly with it, 1 of them git
+        # hash-object: 1 for the added date and from 2 to 6 for the last
+        # change. main() makes 1 more, for the shallow status.
+        self.change_and_restore_on_branch(protect=False)
+        calls = self.record_gate_git()
+        self.assert_stamp_problem(self.problems(), "2026-02-02")
+        self.assertEqual(len(calls), 3, calls)
+        self.protect_main()
+        calls.clear()
+        self.assertEqual(self.problems(), [])
+        self.assertEqual(len(calls), 7, calls)
+        self.assertEqual([call[0] for call in calls].count("hash-object"), 1, calls)
+        calls.clear()
+        self.assertEqual(self.run_main(io.StringIO()), 0)
+        self.assertEqual(len(calls), 8, calls)
+        self.assertEqual(calls[0], ("rev-parse", "--is-shallow-repository"), calls)
+
+    def fake_git(self, prefix: tuple[str, ...], output: bytes) -> None:
+        # From here until os.environ is restored, each git call whose
+        # arguments after -C and the folder start with prefix prints output
+        # in place of git's stdout, through a git on PATH that runs the real
+        # git and keeps its stderr and exit code. In output, {main} stands
+        # for main's tip and {blob} for the page's blob at HEAD.
+        real = shutil.which("git")
+        self.assertIsNotNone(real)
+        output = output.replace(b"{main}", self.git("rev-parse", "main").strip().encode("ascii"))
+        output = output.replace(b"{blob}", self.git("rev-parse", "HEAD:site/index.html").strip().encode("ascii"))
+        folder = Path(tempfile.mkdtemp(dir=self.scratch))
+        (folder / "git").write_text(f"#!{sys.executable} -I\n" + FAKE_GIT, encoding="utf-8")
+        (folder / "git").chmod(0o755)
+        os.environ.update(PAGE_METADATA_REAL_GIT=real, PAGE_METADATA_FAKE_ARGS="\n".join(prefix),
+                          PAGE_METADATA_FAKE_OUTPUT=output.hex())
+        os.environ["PATH"] = str(folder) + os.pathsep + os.environ["PATH"]
+
+    def check_with_fake_git(self, prefix: tuple[str, ...], output: bytes) -> tuple[list[str] | None, str]:
+        # A new repository holds a page restored exactly with the protected
+        # ref. With fake_git() set for prefix and output, the gate checks
+        # its history and the page. The return value is the page's problems,
+        # or None when the check stops with exit 3, and the gate's stderr.
+        self.start_repository()
+        self.change_and_restore_on_branch()
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ), contextlib.redirect_stderr(stderr):
+            self.fake_git(prefix, output)
+            try:
+                gate.require_full_history()
+                return self.problems(), stderr.getvalue()
+            except SystemExit as error:
+                self.assertEqual(error.code, 3, stderr.getvalue())
+                return None, stderr.getvalue()
+
+    def test_unusable_git_output_exits_3(self):
+        # Each git reading of the gate is given output that git does not
+        # print there, and the check stops with exit 3 and names it as
+        # output that the gate cannot use.
+        entry = b"100644 blob {blob}\tsite/index.html\0"
+        cases = [(("rev-parse",), b"yes\n"),
+                 (("for-each-ref",), b"refs/remotes/origin/main HEAD\n"),
+                 (("for-each-ref",), b" {main}\n"),
+                 (("for-each-ref",), b"refs/remotes/origin/main/x zz\nrefs/remotes/origin/main {main}\n"),
+                 (("for-each-ref",), b"refs/remotes/origin/main {main}"),
+                 (("for-each-ref",), b"refs/remotes/origin/main {main}\n" * 2),
+                 (("merge-base",), b"HEAD\n"),
+                 (("merge-base",), b"{main}\nHEAD\n"),
+                 (("ls-tree",), entry.replace(b" blob ", b" blub ")),
+                 (("ls-tree",), entry.replace(b"100644", b"100648")),
+                 (("ls-tree",), entry.replace(b"100644", b"10064")),
+                 (("ls-tree",), entry.replace(b"{blob}", b"{blob}0")),
+                 (("ls-tree",), entry.replace(b"index", b"other")),
+                 (("ls-tree",), entry.replace(b"\t", b" x\t")),
+                 (("ls-tree",), entry * 2),
+                 (("ls-tree",), entry[:-1]),
+                 (("ls-tree",), entry.replace(b"100644", b"10064/")),
+                 (("ls-tree",), entry.replace(b"100644", b"1006440")),
+                 (("hash-object",), b"zz\n"),
+                 *[(("hash-object",), name + b"\n")
+                   for name in (b"0" * 39, b"0" * 41, b"0" * 63, b"0" * 65, b"/" * 40, b":" * 40, b"`" * 40,
+                                b"g" * 40, b"0" * 40 + b"/" * 24, b"0" * 40 + b":" * 24,
+                                b"0" * 40 + b"`" * 24, b"0" * 40 + b"g" * 24)],
+                 (("log", "--diff-filter=A"), b"yesterday\n"),
+                 (("log", "--diff-filter=A"), b"2026-02-30\n"),
+                 (("log", "-1"), b"yesterday\n"),
+                 (("log", "-1"), b"20260202\n"),
+                 (("log", "-1"), b"2026-02-02\n2026-02-02\n")]
+        for prefix, output in cases:
+            with self.subTest(prefix=prefix, output=output):
+                problems, stderr = self.check_with_fake_git(prefix, output)
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed output that the gate cannot use", stderr)
+
+    def test_git_output_exit_3_messages(self):
+        # A shallow clone, a merge base list with no line and a byte that is
+        # not ASCII in a date each stop the check with exit 3 and their own
+        # message.
+        cases = [(("rev-parse",), b"true\n", "the repository is a shallow clone"),
+                 (("merge-base",), b"", "printed no merge base"),
+                 (("log", "--diff-filter=A"), b"\xff2026-01-01\n", "printed a byte that is not ASCII")]
+        for prefix, output, words in cases:
+            with self.subTest(prefix=prefix, output=output):
+                problems, stderr = self.check_with_fake_git(prefix, output)
+                self.assertIsNone(problems, stderr)
+                self.assertIn(words, stderr)
+
+    def test_usable_git_output_is_read(self):
+        # Output of the form that git prints is read: a tree or a gitlink
+        # entry at the page's path is no blob, so the page is read at HEAD;
+        # an added date of 1999-09-29 is compared with the published stamp;
+        # and an object name of 64 digits, as under SHA-256, from git
+        # hash-object is compared with the blob and differs.
+        for output in (b"040000 tree {blob}\tsite/index.html\0", b"160000 commit {blob}\tsite/index.html\0"):
+            with self.subTest(output=output):
+                problems, stderr = self.check_with_fake_git(("ls-tree",), output)
+                self.assertIsNotNone(problems, stderr)
+                self.assert_stamp_problem(problems, "2026-02-02")
+        with self.subTest(output="added 1999-09-29"):
+            problems, stderr = self.check_with_fake_git(("log", "--diff-filter=A"), b"1999-09-29\n")
+            self.assertIsNotNone(problems, stderr)
+            self.assertIn("article:published_time is 2026-01-01 but git shows the file was added 1999-09-29; "
+                          "correct the stamp, or record the exception in PUBLISHED_OVERRIDES", problems)
+        with self.subTest(output="64 digits"):
+            problems, stderr = self.check_with_fake_git(("hash-object",), b"0123456789abcdef" * 4 + b"\n")
+            self.assertIsNotNone(problems, stderr)
+            self.assert_stamp_problem(problems, "2026-02-02")
 
 
 if __name__ == "__main__":

@@ -323,13 +323,15 @@ PATHSPEC_VARIABLES = ("GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_P
 def git(*args: str) -> bytes:
     """git's stdout for args, run in REPO_ROOT, as bytes that are neither
     decoded nor translated. blob_at() splits the git ls-tree -z output at
-    each NUL byte and each entry at its first tab, and protected_base()
-    splits the git for-each-ref listing at each line feed and each line at
-    its first space. The other readings split or strip the output at
-    whitespace, and a date, a merge base, an object name or a mode is
-    decoded as ASCII. An argument that holds a path is a str, which
-    subprocess encodes as os.fsencode() does. git runs with
-    GIT_LITERAL_PATHSPECS set to 1 and without the variables in
+    each NUL byte, each entry at its first tab and the part before that tab
+    at each space, and protected_base() splits the git for-each-ref listing
+    at each line feed and each line at its first space. The other readings
+    split or strip the output at whitespace, and a date, a merge base, an
+    object name or a mode is decoded as ASCII. Each reading accepts only
+    the values that it can use, and any other output means that the check
+    could not run (exit 3), as unusable() says. An argument that holds a
+    path is a str, which subprocess encodes as os.fsencode() does. git runs
+    with GIT_LITERAL_PATHSPECS set to 1 and without the variables in
     PATHSPEC_VARIABLES, so git log and git ls-tree read a page path such as
     site/[ab]/index.html as that path and not as a glob. git that cannot be
     run, such as when it is not on PATH, or a git call that fails means
@@ -358,23 +360,72 @@ def ascii_output(output: bytes, args: tuple[str, ...]) -> str:
         die(f"git {' '.join(args)} printed a byte that is not ASCII: {output!r}")
 
 
-def git_ascii(*args: str) -> str:
-    """git's stdout for args, decoded as ascii_output() decodes it."""
-    return ascii_output(git(*args), args)
+# An object name as git prints it: 40 hexadecimal digits under SHA-1 and 64
+# under SHA-256.
+OBJECT_NAME = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+# The mode of a tree entry as git ls-tree prints it: 6 octal digits.
+TREE_MODE = re.compile(r"[0-7]{6}")
+# The object types that git ls-tree prints for a tree entry.
+TREE_TYPES = frozenset({b"blob", b"tree", b"commit"})
+# A date as git log --format=%cs prints it.
+COMMIT_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def unusable(args: tuple[str, ...], output: bytes) -> None:
+    """Stop the check (exit 3) for output, which git printed for args and
+    which the gate cannot use, such as a value that git does not print
+    there."""
+    die(f"git {' '.join(args)} printed output that the gate cannot use: {output!r}")
+
+
+def object_name(text: str, args: tuple[str, ...], output: bytes) -> str:
+    """text, which git printed for args in output, when it is an object
+    name; any other text stops the check (exit 3)."""
+    if OBJECT_NAME.fullmatch(text) is None:
+        unusable(args, output)
+    return text
+
+
+def commit_dates(*args: str, most: int | None = None) -> list[str]:
+    """The dates that git log prints for args, 1 for each commit that it
+    lists, when each is a calendar date in the form YYYY-MM-DD and, when
+    most is given, there are at most that many. Any other output stops the
+    check (exit 3)."""
+    output = git(*args)
+    dates = ascii_output(output, args).split()
+    if most is not None and len(dates) > most:
+        unusable(args, output)
+    for date in dates:
+        if COMMIT_DATE.fullmatch(date) is None:
+            unusable(args, output)
+        try:
+            dt.date.fromisoformat(date)
+        except ValueError:
+            unusable(args, output)
+    return dates
 
 
 def require_full_history() -> None:
-    if git("rev-parse", "--is-shallow-repository").strip() == b"true":
+    """Stop the check (exit 3) unless git rev-parse --is-shallow-repository
+    prints false, as it does in a repository with full history: true means
+    a shallow clone, and any other output is output that the gate cannot
+    use."""
+    args = ("rev-parse", "--is-shallow-repository")
+    output = git(*args)
+    status = ascii_output(output, args).strip()
+    if status == "true":
         die(
             "the repository is a shallow clone, so file history cannot be read. "
             "Unshallow it, or set fetch-depth: 0 on actions/checkout."
         )
+    if status != "false":
+        unusable(args, output)
 
 
 def added_date(relative: str) -> str | None:
     """The date the path was added, or None if history does not record it."""
-    lines = git_ascii("log", "--diff-filter=A", "--format=%cs", "--", relative).split()
-    return lines[-1] if lines else None
+    dates = commit_dates("log", "--diff-filter=A", "--format=%cs", "--", relative)
+    return dates[-1] if dates else None
 
 
 def protected_base() -> str | None:
@@ -386,17 +437,36 @@ def protected_base() -> str | None:
     ref it does not list, such as a dangling symbolic ref, reads as absent.
     Any failed git call, such as git merge-base when the ref shares no
     history with HEAD, means that the check could not run (exit 3), as does
-    a merge base list with no line."""
+    a merge base list with no line. So does output that the gate cannot
+    use: a listing that is not empty and does not end with a line feed, a
+    line with no refname or with no object name after its first space, the
+    protected refname listed twice, or a merge base that is not an object
+    name."""
     args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
-    for line in git(*args).split(b"\n"):
-        name, _, tip = line.partition(b" ")
+    output = git(*args)
+    lines = output.split(b"\n")
+    if lines.pop() != b"":
+        unusable(args, output)
+    tip = None
+    for line in lines:
+        name, _, line_tip = line.partition(b" ")
+        if not name:
+            unusable(args, output)
+        line_tip = object_name(ascii_output(line_tip, args), args, output)
         if name == PROTECTED_REF.encode("ascii"):
-            tip = ascii_output(tip, args)
-            bases = git_ascii("merge-base", "--all", "HEAD", tip).split()
-            if not bases:
-                die(f"git merge-base --all HEAD {tip} printed no merge base")
-            return bases[0] if len(bases) == 1 else None
-    return None
+            if tip is not None:
+                unusable(args, output)
+            tip = line_tip
+    if tip is None:
+        return None
+    merge_args = ("merge-base", "--all", "HEAD", tip)
+    output = git(*merge_args)
+    bases = ascii_output(output, merge_args).split()
+    if not bases:
+        die(f"git merge-base --all HEAD {tip} printed no merge base")
+    for base in bases:
+        object_name(base, merge_args, output)
+    return bases[0] if len(bases) == 1 else None
 
 
 def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
@@ -404,13 +474,28 @@ def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
     when revision has no blob there. git ls-tree -z ends each entry with a
     NUL byte, and the entry's name is compared, as bytes, with
     os.fsencode(relative). A failed git call means that the check could not
-    run (exit 3)."""
+    run (exit 3), and so does output that the gate cannot use: output that
+    is not empty and does not end with a NUL byte, more than 1 entry, or an
+    entry that is not a mode of 6 octal digits, a space, the type blob, tree
+    or commit, a space, an object name, a tab and os.fsencode(relative)."""
     args = ("ls-tree", "-z", revision, "--", relative)
-    for entry in git(*args).split(b"\0"):
+    output = git(*args)
+    entries = output.split(b"\0")
+    if entries.pop() != b"":
+        unusable(args, output)
+    if len(entries) > 1:
+        unusable(args, output)
+    for entry in entries:
         info, _, name = entry.partition(b"\t")
-        fields = info.split()
-        if name == os.fsencode(relative) and len(fields) == 3 and fields[1] == b"blob":
-            return ascii_output(fields[0], args), ascii_output(fields[2], args)
+        fields = info.split(b" ")
+        if name != os.fsencode(relative) or len(fields) != 3 or fields[1] not in TREE_TYPES:
+            unusable(args, output)
+        mode = ascii_output(fields[0], args)
+        if TREE_MODE.fullmatch(mode) is None:
+            unusable(args, output)
+        blob = object_name(ascii_output(fields[2], args), args, output)
+        if fields[1] == b"blob":
+            return mode, blob
     return None
 
 
@@ -435,7 +520,9 @@ def last_change_date(relative: str) -> str | None:
     from what staging the file would keep, such as for a clean filter that
     maps an edit back to the blob at HEAD, or for an uncommitted mode-only
     change. Otherwise the date is read at HEAD. A failed git call means that
-    the check could not run, so the gate exits 3.
+    the check could not run, so the gate exits 3, and so does output that the
+    gate cannot use, such as a git hash-object result that is not an object
+    name or more than 1 date from git log -1.
     """
     revision = "HEAD"
     base = protected_base()
@@ -445,11 +532,13 @@ def last_change_date(relative: str) -> str | None:
         # and blob at HEAD equal those at the base, so this function makes
         # from 2 to 6 git calls for a page, at most 1 of them git
         # hash-object.
-        if (here is not None and here == blob_at(base, relative)
-                and git_ascii("hash-object", "--", relative).strip() == here[1]):
-            revision = base
-    lines = git_ascii("log", "-1", "--format=%cs", revision, "--", relative).split()
-    return lines[0] if lines else None
+        if here is not None and here == blob_at(base, relative):
+            args = ("hash-object", "--", relative)
+            output = git(*args)
+            if object_name(ascii_output(output, args).strip(), args, output) == here[1]:
+                revision = base
+    dates = commit_dates("log", "-1", "--format=%cs", revision, "--", relative, most=1)
+    return dates[0] if dates else None
 
 
 def content_pages() -> list[Path]:
