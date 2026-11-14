@@ -1255,9 +1255,9 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # refs/remotes/origin/main/x, then U+0085, U+2028 or U+2029, then the
         # protected refname, which git for-each-ref lists on 1 line. The gate
         # splits its listing only at a line feed, so it finds no ref of
-        # exactly the protected refname and dates the page at HEAD. The suite
-        # reads no git output that holds such a name, since its git() decodes
-        # strictly.
+        # exactly the protected refname and dates the page at HEAD. The case
+        # reads no ref listing through the suite's git(), which reads it
+        # without error, since a caller's str.split() splits such a name in 2.
         for separator in ("\u0085", "\u2028", "\u2029"):
             with self.subTest(separator=ascii(separator)):
                 self.start_repository()
@@ -1294,12 +1294,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
 
     def test_restored_page_in_non_utf8_folder_passes(self):
         # A page in a folder named by the byte 0xff, which is not UTF-8, by
-        # a, CR and b, by a, CR, LF and b, or by a is changed and restored
-        # exactly on a branch, with the protected ref at main. The name that
-        # git ls-tree prints for each equals the page's path in bytes, so
-        # each is dated at the merge base and passes, and none stops the
-        # check.
-        for folder in (os.fsdecode(b"\xff"), "a\rb", "a\r\nb", "a"):
+        # a, CR and b, by a, CR, LF and b, by a, by ab, by a, LF and b, or by
+        # a, TAB and b is changed and restored exactly on a branch, with the
+        # protected ref at main. The name that git ls-tree prints for each
+        # equals the page's path in bytes, so each is dated at the merge base
+        # and passes, and none stops the check. The TAB folder fails when
+        # blob_at() partitions an entry at its last tab rather than its
+        # first. A folder that cannot be made fails the case.
+        for folder in (os.fsdecode(b"\xff"), "a\rb", "a\r\nb", "a", "ab", "a\nb", "a\tb"):
             with self.subTest(folder=ascii(folder)):
                 self.start_repository()
                 self.page = gate.SITE_ROOT / folder / "index.html"
@@ -1500,6 +1502,42 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # and returns 1 without raising.
         self.commit_non_utf8_page()
         self.assertEqual(self.run_main(None), 1)
+
+    def test_report_under_ascii_file_system_encoding_prints_author(self):
+        # sys.getfilesystemencoding() is patched to give ascii, the encoding
+        # that Python uses under LC_ALL=C with UTF-8 mode off, since the suite
+        # cannot change the file system encoding of its own process. main()
+        # runs on a passing page whose author holds U+00E9, with io.StringIO
+        # and with a strict UTF-8 stdout, and returns 0 with the author line
+        # printed unchanged.
+        author = "Jos\u00e9 Posluns"
+        self.page.write_text(history_page(self.MAIN_DATE).replace("Jeff Posluns", author),
+                             encoding="utf-8")
+        self.git("add", "site/index.html")
+        self.git("commit", "-q", "-m", "Page on 2026-01-01")
+        expected = f"Author: {author}."
+        with mock.patch.object(sys, "getfilesystemencoding", lambda: "ascii"):
+            text = io.StringIO()
+            self.assertEqual(self.run_main(text), 0)
+            self.assertIn(expected, text.getvalue())
+            output = io.BytesIO()
+            stdout = io.TextIOWrapper(output, encoding="utf-8", errors="strict", newline="\n")
+            self.assertEqual(self.run_main(stdout), 0)
+            stdout.flush()
+            self.assertIn(expected.encode("utf-8"), output.getvalue())
+
+    def test_report_under_ascii_file_system_encoding_escapes_utf8_folder(self):
+        # With sys.getfilesystemencoding() patched to give ascii, as in the
+        # case above, report() prints a line that holds the lone surrogates
+        # which os.fsdecode() gives under that encoding for a folder named by
+        # the UTF-8 bytes 0xc3 0xa9, and shows them as the escapes \xc3\xa9.
+        # The suite's own os.fsdecode() decodes those bytes as UTF-8, so the
+        # line is built with the surrogates rather than from a folder.
+        line = io.StringIO()
+        with mock.patch.object(sys, "getfilesystemencoding", lambda: "ascii"), \
+                contextlib.redirect_stdout(line):
+            gate.report("  site/\udcc3\udca9/index.html")
+        self.assertEqual(line.getvalue(), "  site/\\xc3\\xa9/index.html\n")
 
 
 if __name__ == "__main__":

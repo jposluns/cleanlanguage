@@ -598,12 +598,17 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
 
 
 def report(line: str = "") -> None:
-    """Print line, with each byte that os.fsdecode() could not decode, such
-    as 0xff in a page path, shown as a backslash escape, such as the 4
-    characters \\xff. With UTF-8 as the file system encoding, a line that
-    holds no such byte is printed unchanged."""
-    encoding = sys.getfilesystemencoding()
-    print(line.encode(encoding, "surrogateescape").decode(encoding, "backslashreplace"))
+    """Print line with print(), with each lone surrogate from \\udc80 to
+    \\udcff, which os.fsdecode() gives for a byte that the file system
+    encoding could not decode, such as 0xff in a page path, shown as a
+    backslash escape, such as the 4 characters \\xff. Every other character
+    is printed unchanged, under any file system encoding. Under a file
+    system encoding that is not UTF-8, such as ascii under LC_ALL=C with
+    UTF-8 mode off, a byte of a UTF-8 path that it cannot decode is also
+    shown as an escape, such as \\xc3\\xa9 for a folder named by the UTF-8
+    bytes 0xc3 0xa9, where printing the line unchanged would write those 2
+    bytes to a stdout whose error handler is surrogateescape."""
+    print(re.sub("[\udc80-\udcff]", lambda match: f"\\x{ord(match.group()) - 0xdc00:02x}", line))
 
 
 def main() -> int:
