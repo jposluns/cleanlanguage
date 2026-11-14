@@ -13,7 +13,9 @@ cases at the edges of the exemptions and scope limits, which pass honest text in
 fail text just outside it, such as the prose after a closed fence, a dash closed up after a URL,
 each character that ends a URL, a fence closer the gate does not accept and the digit bound of a
 squash file name; a case for each kind of unreadable input, an interrupt raised by the lint among
-them, and for a usage error, each of which exits 2 with the defect count as its last line; output
+them, and for a usage error, each of which exits 2 with the defect count as its last line, where
+the deeply nested payload runs the gate under a soft stack limit of 1 MiB that the case sets, or
+the hard limit when that is lower, so the JSON reader overflows its stack on any runner; output
 prefixes and escapes, runs from other folders, a bound on the time of the inline-code scan, the
 job's time limit in the workflow, and honest texts that pass; and the mutant sweep, MutantSweep,
 the record that each guard it lists has a case that fails without it. Its docstring names the
@@ -69,6 +71,20 @@ ISE_ENDINGS = ("e", "es", "ed", "ing", "er", "ers", "able", "ation", "ations")
 # The inline-code scan must finish this many backticks within this many seconds.
 BACKTICK_RUN = 20000
 TIME_BOUND = 10
+# The deep-nesting case runs the gate with this many levels under a soft stack limit of
+# DEEP_STACK bytes, or the hard limit when that is lower, so the JSON reader overflows its
+# stack, and so reaches the RecursionError branch, whatever stack limit the runner has.
+DEEP_LEVELS = 100000
+DEEP_STACK = 1024 * 1024
+# A child that sets the soft stack limit given as its first argument, never above the hard
+# limit, then replaces itself with the gate run with the rest of its arguments.
+STACK_LAUNCH = ("import os, resource, sys\n"
+                "soft = int(sys.argv[1])\n"
+                "hard = resource.getrlimit(resource.RLIMIT_STACK)[1]\n"
+                "if hard != resource.RLIM_INFINITY:\n"
+                "    soft = min(soft, hard)\n"
+                "resource.setrlimit(resource.RLIMIT_STACK, (soft, hard))\n"
+                "os.execv(sys.executable, [sys.executable, '-I', '-B', *sys.argv[2:]])\n")
 
 
 class GateCase(unittest.TestCase):
@@ -592,7 +608,14 @@ class Exemptions(GateCase):
 
 
 class UnreadableInputs(GateCase):
-    """Each input the gate cannot read exits 2, never 0, with the defect count last."""
+    """Each input the gate cannot read exits 2, never 0, with the defect count last.
+
+    The deeply nested payload runs the gate under a soft stack limit of DEEP_STACK, 1 MiB, or
+    the hard limit when that is lower, set in a child that then replaces itself with the gate,
+    so the JSON reader overflows its stack and the gate reports it through its RecursionError
+    branch whatever stack limit the runner has. With a larger stack the reader can read the
+    whole payload and raise a ValueError instead, or parse a balanced one with no error.
+    """
 
     def assertUnreadable(self, result, fragment):
         self.assertResult(result, 2, 0)
@@ -614,11 +637,21 @@ class UnreadableInputs(GateCase):
         self.assertUnreadable(result, "not JSON")
 
     def test_deeply_nested_payload_exits_2(self):
+        # The gate runs under a stack limit this case sets, so the payload overflows on every
+        # runner; the message shows that the RecursionError branch, not the ValueError
+        # branch, reported it.
         gate = self.tree(squash=CLEAN_SQUASH)
-        for text in ("[" * 100000, '{"pull_request": ' + "[" * 100000):
+        for text in ("[" * DEEP_LEVELS, '{"pull_request": ' + "[" * DEEP_LEVELS):
             with self.subTest(start=text[:20]):
-                result = self.run_gate("--event", self.write("deep.json", text), gate=gate)
+                path = self.write("deep.json", text)
+                done = subprocess.run([sys.executable, "-I", "-B", "-c", STACK_LAUNCH,
+                                       str(DEEP_STACK), str(gate), "--event", str(path)],
+                                      cwd=str(self.cwd), capture_output=True, text=True,
+                                      encoding="utf-8", timeout=120)
+                result = done.returncode, done.stdout.splitlines()
                 self.assertUnreadable(result, "not JSON")
+                self.assertRegex(result[1][0], r"^unreadable: .*: not JSON: "
+                                 r"(?i:stack overflow|maximum recursion depth)")
 
     def test_other_event_type_exits_2(self):
         gate = self.tree(squash=CLEAN_SQUASH)

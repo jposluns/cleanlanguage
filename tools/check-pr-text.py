@@ -134,7 +134,11 @@ Residual of that promise: the label lint is trusted repository code that runs in
 process, so a lint that ends the process, such as with os._exit, writes to standard output or
 closes it can end the gate with another status, with no count line or with a line that has no
 prefix. So can a standard output that cannot be written, and an input that never ends, such as
-a FIFO given as the squash file, which the job's time limit ends.
+a FIFO given as the squash file, which the job's time limit ends. So can a payload nested so
+deeply that its parse uses up the memory of the gate process: the JSON reader recurses once for
+each level, and under a stack limit it stops with a RecursionError, reported as "not JSON", once
+the stack is full, but on a stack with no limit it can grow until memory runs out and the
+process ends by a signal.
 """
 import importlib.util
 import json

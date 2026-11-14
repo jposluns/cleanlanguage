@@ -49,7 +49,9 @@ letters in a squash message, or a bare id of 1 or 2 capital letters
 and 1 or 2 digits; a lint that ends the gate process, writes to
 standard output or closes it, since the lint is trusted repository
 code run in that process, a standard output that cannot be written,
-or an input that never ends, such as a FIFO, any of which can end the
-gate with another status, with no count line or with a line that has
-no prefix; a message typed into the merge dialog that differs from the
-committed file; and a description edited after the last run.
+or an input that never ends, such as a FIFO, or a payload nested so
+deeply that, on a stack with no limit, its parse uses up memory, any
+of which can end the gate with another status, with no count line or
+with a line that has no prefix; a message typed into the merge dialog
+that differs from the committed file; and a description edited after
+the last run.
