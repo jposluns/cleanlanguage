@@ -2797,6 +2797,35 @@ def check_family_pages(failures: list[str]) -> int:
     return 2
 
 
+STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) characters\)")
+
+
+def check_stated_count(failures: list[str]) -> int:
+    """The instructions page states the download's character count as saved:
+    its bytes decoded as UTF-8 with no newline translation and nothing
+    stripped. The second case gives the download a CR LF line end and a
+    non-ASCII character, so a count that strips a newline, translates line
+    ends or counts bytes states the wrong number."""
+    extra = "Caf\u00e9 \u00e0 la carte.\r\n"
+    cases = [("clean build", b""), ("download with a CR LF line and a non-ASCII character", extra.encode("utf-8"))]
+    for name, suffix in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            download = root / "site/downloads/cleanlanguage.md"
+            if suffix:
+                download.write_bytes(download.read_bytes() + suffix)
+            out = Path(scratch) / "out"
+            result = run(root, "--out", str(out))
+            if result.returncode != 0:
+                failures.append(f"stated count, {name}: build exit {result.returncode}: {result.stderr.strip()[:200]}")
+                continue
+            held = len(download.read_bytes().decode("utf-8"))
+            stated = STATED_COUNT.findall((out / "instructions/index.html").read_text(encoding="utf-8"))
+            if stated != [str(held)]:
+                failures.append(f"stated count, {name}: the page states {stated} characters, the download holds {held}")
+    return len(cases)
+
+
 VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
 # The seventh footer card of template specification 7.19 (baseline 1.11.0), byte for byte as the footer of the 1.11.1
 # package's reference/landing.html gives it, apart from the logo path: ../logos/ there, /assets/baseline/logos/ here.
@@ -3500,6 +3529,7 @@ def main() -> int:
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
+    ran += check_stated_count(failures)
     ran += check_footer(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
