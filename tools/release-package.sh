@@ -62,14 +62,18 @@
 # cleanlanguage-X.Y.Z.zip, or the .sha256 of either, and each staging folder
 # named .release-package. followed by 6 letters or digits. It removes
 # nothing else in dist/: a file or folder of any other name is kept, and so
-# is a folder or symbolic link that carries an output name. From the point
-# where it starts the archive, an exit trap removes the outputs again on a
-# failed exit; an exit before that point needs no second removal, since the
-# build has written nothing to dist/ by then. So a refused build leaves in
-# dist/ no zip and no .sha256 that a build wrote, unless a removal itself
-# fails: the build then still fails, and an output that it could not remove
-# stays. A folder named like an output (for example dist/cleanlanguage.zip/)
-# is kept, so the move onto it fails and the build exits 1.
+# is a symbolic link, folder, FIFO or other special file that carries an
+# output name. The move into dist/ is a rename, which would replace such an
+# object, so once the version is known the build refuses with exit 1 if any
+# of the 4 names it writes is held by anything other than a regular file.
+# That refusal comes after the removal of the earlier outputs, so it leaves
+# no stale output, and before the build writes anything to dist/, so the
+# object stays as it was. From the point where it starts the archive, an
+# exit trap removes the outputs again on a failed exit; an exit before that
+# point needs no second removal, since the build has written nothing to
+# dist/ by then. So a refused build leaves in dist/ no zip and no .sha256
+# that a build wrote, unless a removal itself fails: the build then still
+# fails, and an output that it could not remove stays.
 # It never tags, pushes, or talks to the network.
 #
 # Usage:
@@ -195,6 +199,18 @@ fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
+# The outputs reach dist/ by a rename, which replaces whatever holds the
+# name, and the exit trap then removes what it moved there. The removal above
+# leaves an object at an output name only if the packager did not write it,
+# so a symbolic link (followed or not), folder, FIFO or other special file at
+# 1 of the 4 names this build writes is refused here, before anything is
+# written to dist/, and is left as it is.
+for path in dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip" \
+  dist/cleanlanguage.zip.sha256 "dist/cleanlanguage-${version}.zip.sha256"; do
+  if [ -L "${path}" ] || { [ -e "${path}" ] && [ ! -f "${path}" ]; }; then
+    fail "${path} exists and is not a regular file that the packager wrote; move it out of dist/ and build again"
+  fi
+done
 # The Released line (item 26), read from HEAD through the one shared strict
 # extractor, tools/skill-release-date.py, run in its --json mode by
 # tools/skill-release-date-client.py (row 89). The client gives a content

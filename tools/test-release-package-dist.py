@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Check what tools/release-package.sh leaves in dist/ after each build.
 
-A build that passes every check writes dist/cleanlanguage.zip,
-dist/cleanlanguage-<version>.zip and a .sha256 beside each. A build that is
-refused at any check must leave no zip and no .sha256 in dist/, neither a new
-one nor one that an earlier build wrote, so that a reader cannot take a stale
-or unverified zip for the refused build. The packager removes only its own
-outputs and its staging folders; every other file and folder in dist/ is kept.
+The packager is meant to work as follows, and the cases below check it at
+the builds and on the planted paths that they name. A build that passes
+every check writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip
+and a .sha256 beside each. A build that is refused at any check must leave
+no zip and no .sha256 in dist/, neither a new one nor one that an earlier
+build wrote, so that a reader cannot take a stale or unverified zip for the
+refused build. The packager removes only its own outputs and its staging
+folders, and leaves every other object in dist/ as it is. A build refuses
+with exit 1 when 1 of the 4 names it writes is held by a symbolic link,
+folder, FIFO or other object that is not a regular file, since its rename
+into dist/ would replace that object; it refuses after it has removed the
+outputs of an earlier build and before it writes anything to dist/.
 
 Every build here runs in a clone that the test makes in a temporary folder
 with `git clone --no-local`, never in the checkout it runs from, so a dist/
@@ -18,49 +24,66 @@ read-only git commands and git clone only; it sets core.autocrlf for 1 build
 through the GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0
 variables of that build's environment, never by a git config command.
 Each stand-in command is a short sh script that the test writes into its
-temporary folder, and each records into a file there.
+temporary folder. The stand-in mv of case 5 and the stand-in unzip of
+case 6 each record every call into a file there. The stand-in mv of case 4
+refuses each move of a .sha256 file, and that of case 9 completes each
+such move and then fails; neither records anything.
 
-Before every good build and every refused build, the test plants in dist/ a
-set of files and folders that the packager did not write (PLANTS), some with
-names close to an output name, and a leftover staging folder
-(LEFTOVER_STAGING). After the build, every planted path must be there with
-its bytes unchanged, and the leftover staging folder must be gone.
+Before each build of cases 1 to 6, 8 and 9, except the build with no
+dist/, the test plants in dist/ a set of files and folders that the
+packager did not write (PLANTS), some with names close to an output name
+or a staging name, a symbolic link with a
+staging name to a folder outside dist/ (STAGING_LINK), and a leftover
+staging folder (LEFTOVER_STAGING). After the build, every planted path must
+be there with its bytes unchanged, the link must still point at the same
+unchanged folder, and the leftover staging folder must be gone. The
+reference build, the build with no dist/ in case 1 and case 7 plant
+nothing in dist/; case 7 makes dist itself a link or a file.
 
-Cases, all in 1 clone:
+In its set-up, before any case, the test builds the clone with the packager
+of REFERENCE_COMMIT, which gives the reference digest. The cases, all in
+that clone:
 
-1. The packager of REFERENCE_COMMIT builds the clone and gives the reference
-   digest.
-2. A good build with the checkout's packager exits 0, writes the 4 outputs,
+1. A good build with the checkout's packager exits 0, writes the 4 outputs,
    and gives the reference digest for both zips with matching .sha256 files;
-   it keeps the planted paths and removes the leftover staging folder.
-3. After a good build, a build refused before the archive is made
+   it keeps the planted paths and removes the leftover staging folder. A
+   good build with no dist/ exits 0 and writes the 4 outputs.
+2. After a good build, a build refused before the archive is made
    (--tag v0.0.0, --release-date 2020-01-01, and the unknown argument
    --bogus), with a stale version-named pair planted beside the outputs,
    leaves no zip and no .sha256 in dist/.
-4. After a good build, a build with core.autocrlf=true, refused by the check
+3. After a good build, a build with core.autocrlf=true, refused by the check
    that compares every archived file with its git blob, leaves no zip and no
    .sha256 in dist/.
-5. After a good build, a build whose move of the .sha256 files into dist/
+4. After a good build, a build whose move of the .sha256 files into dist/
    fails, through a stand-in mv first on the PATH, leaves no zip and no
    .sha256 in dist/, including the 2 zips it had already moved.
-6. In a good build, a stand-in mv first on the PATH records each move into
+5. In a good build, a stand-in mv first on the PATH records each move into
    dist/: every source lies in a staging folder inside dist/, and both zips
    are in dist/ before either .sha256 is moved there.
-7. In a good build, a stand-in unzip first on the PATH records that no
+6. In a good build, a stand-in unzip first on the PATH records that no
    output name is present in dist/ at any call, so no output reaches dist/
    before the checks that read the staged zip.
-8. A dist that is a symbolic link to a folder, or a plain file, is refused
-   with exit 1 and the packager's message, and the folder it points at, or
-   the file, is unchanged.
-9. A folder named dist/cleanlanguage.zip/ is kept; the move onto it fails,
-   so the build exits 1 and leaves no zip and no .sha256 in dist/.
+7. A dist that is a symbolic link to a folder, a dangling symbolic link, or
+   a plain file, is refused with exit 1 and the packager's message, and the
+   folder it points at, the missing target, or the file, is unchanged.
+8. A folder named dist/cleanlanguage.zip/ is refused with exit 1 and the
+   packager's message, is kept with its contents, and dist/ holds no zip
+   and no .sha256.
+9. A symbolic link at dist/cleanlanguage.zip to a file outside dist/, a
+   dangling symbolic link at the version-named .sha256, and a FIFO at the
+   version-named zip are each refused with exit 1 and the packager's
+   message, both in a build with no arguments and, after a good build, in
+   a build whose stand-in mv completes and then fails each move of a
+   .sha256 file. Each object, and the file or missing path that a link
+   points at, is unchanged, and dist/ holds no zip and no .sha256.
 
-Each case starts from an empty dist/.
+Each case starts with no dist/ in the clone.
 
 REFERENCE_COMMIT names the commit of the last packager that wrote dist/
-before its checks, and the reference comparison in case 2 holds only while
+before its checks, and the reference comparison in case 1 holds only while
 the packager gives the same bytes as that commit's packager. An intended
-change to the packager's output therefore makes case 2 fail by design.
+change to the packager's output therefore makes case 1 fail by design.
 REFERENCE_COMMIT then moves to the commit that makes the change, in the
 same pull request.
 
@@ -75,6 +98,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -87,21 +111,31 @@ KEEP = "keep.txt"
 KEEP_TEXT = b"a file the packager does not write\n"
 # Files and folders that the packager did not write, each of which a build
 # must keep byte for byte: a plain file, a folder of scripts, names close to
-# an output name, a folder that carries a version-named output name, and a
-# folder whose name is not a staging name (4 characters after the last dot,
-# not 6).
+# an output name (1 with a prefix before it), a folder that carries a
+# version-named output name, folders whose names are not staging names (4 or
+# 7 characters after the last dot, not 6, or a prefix before the name), and
+# a regular file with a staging name.
 PLANTS = {
     KEEP: KEEP_TEXT,
     "edit-scripts/keep.py": b"print('kept')\n",
     "cleanlanguage-notes.zip": b"notes\n",
     "cleanlanguage.txt": b"text\n",
-    "cleanlanguage-1.0.zip": b"two-part version\n",
+    "cleanlanguage-1.0.zip": b"2-part version\n",
     "cleanlanguage-1.0.0.zip.bak": b"backup\n",
     "cleanlanguage-1.0.0.zip.sha256.old": b"old checksum\n",
+    "xcleanlanguage.zip": b"a prefix before an output name\n",
     "cleanlanguage-1.0.0.zip/keep.txt": b"a folder with an output name\n",
     ".release-package.keep/keep.txt": b"not a staging folder\n",
+    ".release-package.AbC1234/keep.txt": b"7 characters, not a staging folder\n",
+    "keep.release-package.AbC123/keep.txt": b"a prefix before a staging name\n",
+    ".release-package.FiLe12": b"a file with a staging name\n",
 }
+# A symbolic link with a staging name, to a folder outside dist/ that holds
+# STAGING_LINK_FILE; the build must keep the link and leave the folder as it is.
+STAGING_LINK = ".release-package.LnK456"
+STAGING_LINK_FILE = "keep.txt"
 LEFTOVER_STAGING = ".release-package.AbC123"
+REFUSED_NAME = "exists and is not a regular file that the packager wrote"
 OUTPUT_NAME = re.compile(r"cleanlanguage(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip(\.sha256)?")
 STAGING_NAME = re.compile(r"\.release-package\.[A-Za-z0-9]{6}")
 BUILD_TIMEOUT = 300
@@ -116,12 +150,14 @@ def sha256(path: Path) -> str:
 
 
 def outputs(dist: Path) -> list:
-    """Every regular file in dist/ with an output name, and every staging folder."""
+    """Every regular file in dist/ with an output name, and every staging
+    folder; a symbolic link is neither."""
     if not dist.is_dir() or dist.is_symlink():
         return []
     return sorted(p.name for p in dist.iterdir()
-                  if (OUTPUT_NAME.fullmatch(p.name) and p.is_file() and not p.is_symlink())
-                  or (STAGING_NAME.fullmatch(p.name) and p.is_dir()))
+                  if not p.is_symlink()
+                  and ((OUTPUT_NAME.fullmatch(p.name) and p.is_file())
+                       or (STAGING_NAME.fullmatch(p.name) and p.is_dir())))
 
 
 def snapshot(root: Path) -> dict:
@@ -180,13 +216,26 @@ class DistTests(unittest.TestCase):
         return self.run_packager(self.clone / "tools" / "release-package.sh", *args, autocrlf=autocrlf,
                                  path_prefix=path_prefix)
 
+    def outside(self, name: str) -> Path:
+        """A new, empty folder of the temporary folder, outside the clone."""
+        folder = Path(self.tmp.name) / name
+        if folder.exists():
+            shutil.rmtree(folder)
+        folder.mkdir()
+        return folder
+
     def plant(self):
-        """Plant PLANTS and a leftover staging folder holding a file."""
+        """Plant PLANTS, STAGING_LINK and a leftover staging folder holding a file."""
         self.dist.mkdir(exist_ok=True)
         for rel, data in PLANTS.items():
             path = self.dist / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+        link = self.dist / STAGING_LINK
+        if not link.is_symlink():
+            target = self.outside("staging-link-target")
+            (target / STAGING_LINK_FILE).write_bytes(KEEP_TEXT)
+            link.symlink_to(target, target_is_directory=True)
         (self.dist / LEFTOVER_STAGING).mkdir(exist_ok=True)
         (self.dist / LEFTOVER_STAGING / "cleanlanguage.zip").write_bytes(b"left by a killed build\n")
 
@@ -195,6 +244,12 @@ class DistTests(unittest.TestCase):
             path = self.dist / rel
             self.assertTrue(path.is_file(), "the build removed %s, which it did not write" % path)
             self.assertEqual(path.read_bytes(), data, "the build changed %s, which it did not write" % path)
+        link = self.dist / STAGING_LINK
+        target = Path(self.tmp.name) / "staging-link-target"
+        self.assertTrue(link.is_symlink(), "the build removed the link %s, which it did not write" % link)
+        self.assertEqual(os.readlink(link), str(target))
+        self.assertEqual(snapshot(target), {STAGING_LINK_FILE: KEEP_TEXT},
+                         "the build changed the folder that %s points at" % STAGING_LINK)
         self.assertFalse((self.dist / LEFTOVER_STAGING).exists(),
                          "the build kept the leftover staging folder %s" % LEFTOVER_STAGING)
 
@@ -255,6 +310,11 @@ class DistTests(unittest.TestCase):
 
     def test_good_build_keeps_other_files(self):
         self.good_build()
+
+    def test_good_build_without_dist(self):
+        code, stderr = self.build()
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(outputs(self.dist), self.names)
 
     def test_good_build_matches_reference(self):
         self.good_build()
@@ -334,6 +394,19 @@ class DistTests(unittest.TestCase):
         self.assertTrue(self.dist.is_symlink())
         self.assertEqual(snapshot(target), before, "the build changed the folder that dist points at")
 
+    def test_dangling_symlinked_dist_refused(self):
+        target = Path(self.tmp.name) / "absent-dist"
+        if target.exists():
+            shutil.rmtree(target)
+        self.dist.symlink_to(target, target_is_directory=True)
+        code, stderr = self.build()
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: dist is a symbolic link; the packager writes only into a real dist/ folder",
+                      stderr)
+        self.assertTrue(self.dist.is_symlink())
+        self.assertEqual(os.readlink(self.dist), str(target))
+        self.assertFalse(os.path.lexists(target), "the build created the missing folder that dist points at")
+
     def test_file_dist_refused(self):
         self.dist.write_bytes(KEEP_TEXT)
         code, stderr = self.build()
@@ -348,10 +421,97 @@ class DistTests(unittest.TestCase):
         folder.mkdir()
         (folder / KEEP).write_bytes(KEEP_TEXT)
         code, stderr = self.build()
+        self.assertEqual(snapshot(folder), {KEEP: KEEP_TEXT}, "the build changed the folder %s" % folder)
         self.assertEqual(code, 1, stderr)
-        self.assertEqual((folder / KEEP).read_bytes(), KEEP_TEXT)
-        self.assertEqual(outputs(self.dist), [], "a failed move left output in dist/")
+        self.assertIn("release-package: dist/cleanlanguage.zip " + REFUSED_NAME, stderr)
+        self.assertEqual(outputs(self.dist), [], "a refused build left output in dist/")
         self.assert_plants_kept()
+
+    def plant_object(self, kind: str, name: str) -> tuple:
+        """Plant at dist/<name> an object of the given kind that the packager
+        did not write: "link" (to a file outside dist/), "dangling link" or
+        "fifo". Return the object's path and, for a link, its target."""
+        path = self.dist / name
+        target = None
+        if kind == "link":
+            target = self.outside("object-target") / "target.txt"
+            target.write_bytes(KEEP_TEXT)
+            path.symlink_to(target)
+        elif kind == "dangling link":
+            target = self.outside("object-target") / "absent"
+            path.symlink_to(target)
+        else:
+            os.mkfifo(path)
+        return path, target
+
+    def assert_object_unchanged(self, kind: str, path: Path, target):
+        self.assertTrue(os.path.lexists(path), "the build removed %s, which it did not write" % path)
+        if kind == "fifo":
+            self.assertTrue(stat.S_ISFIFO(path.lstat().st_mode), "the build replaced the FIFO %s" % path)
+            return
+        self.assertTrue(path.is_symlink(), "the build replaced the link %s" % path)
+        self.assertEqual(os.readlink(path), str(target))
+        if kind == "link":
+            self.assertEqual(snapshot(target.parent), {target.name: KEEP_TEXT},
+                             "the build changed the file that %s points at" % path)
+        else:
+            self.assertEqual(snapshot(target.parent), {}, "the build created what %s points at" % path)
+
+    def move_then_fail(self) -> str:
+        """Write a stand-in mv, first on the PATH, that runs the real mv and,
+        for a move of a .sha256 file, then fails, so the build fails after
+        that move is done. It records nothing. Return its folder."""
+        real_mv = shutil.which("mv")
+        self.assertIsNotNone(real_mv, "mv is not on the PATH")
+        bin_dir = Path(self.tmp.name) / "move-then-fail"
+        bin_dir.mkdir(exist_ok=True)
+        (bin_dir / "mv").write_text(
+            "#!/bin/sh\n"
+            "'%s' \"$@\" || exit\n"
+            "for a in \"$@\"; do\n"
+            "  case \"$a\" in *.sha256) echo 'mv: failed after the move, by the test' >&2; exit 1 ;; esac\n"
+            "done\n" % real_mv, encoding="ascii")
+        os.chmod(bin_dir / "mv", 0o755)
+        return str(bin_dir)
+
+    def assert_object_refused(self, kind: str, name: str, failed_move: bool):
+        path_prefix = ""
+        if failed_move:
+            path_prefix = self.move_then_fail()
+            self.good_build()
+        self.plant()
+        if failed_move:
+            (self.dist / "cleanlanguage-0.0.1.zip").write_bytes(b"stale")
+            (self.dist / "cleanlanguage-0.0.1.zip.sha256").write_bytes(b"stale\n")
+            # The object takes the place of the good build's output of that name.
+            (self.dist / name).unlink()
+        path, target = self.plant_object(kind, name)
+        code, stderr = self.build(path_prefix=path_prefix)
+        self.assert_object_unchanged(kind, path, target)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: dist/%s %s" % (name, REFUSED_NAME), stderr)
+        self.assertEqual(outputs(self.dist), [], "a refused build left output in dist/")
+        self.assert_plants_kept()
+
+    def test_link_at_zip_name_refused(self):
+        self.assert_object_refused("link", "cleanlanguage.zip", failed_move=False)
+
+    def test_link_at_zip_name_refused_with_failed_move(self):
+        self.assert_object_refused("link", "cleanlanguage.zip", failed_move=True)
+
+    def test_link_at_checksum_name_refused(self):
+        self.assert_object_refused("dangling link", "cleanlanguage-%s.zip.sha256" % self.version,
+                                   failed_move=False)
+
+    def test_link_at_checksum_name_refused_with_failed_move(self):
+        self.assert_object_refused("dangling link", "cleanlanguage-%s.zip.sha256" % self.version,
+                                   failed_move=True)
+
+    def test_fifo_at_output_name_refused(self):
+        self.assert_object_refused("fifo", "cleanlanguage-%s.zip" % self.version, failed_move=False)
+
+    def test_fifo_at_output_name_refused_with_failed_move(self):
+        self.assert_object_refused("fifo", "cleanlanguage-%s.zip" % self.version, failed_move=True)
 
 
 if __name__ == "__main__":
