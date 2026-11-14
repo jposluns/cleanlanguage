@@ -3,10 +3,10 @@
 
 The gate must fail a page whose JSON-LD carries no author object with a
 non-empty name, not merely check agreement when a name happens to be present.
-These tests pin that requirement, and the preserved disagreement checks, on
-fixture pages. They run offline with the standard library: the fixtures patch
-the module's git readers, so no history is needed. The CI workflow invokes this
-file before the gate itself runs against the real pages.
+These tests pin that requirement, and the check that the meta and JSON-LD
+authors agree, on fixture pages. They run offline with the standard library:
+the fixtures patch the module's git readers, so no history is needed. The CI
+workflow invokes this file before the gate itself runs against the real pages.
 
 They also pin the gate's meta-tag parsing, its handling of an unreadable
 (non-UTF-8) page, and its containment of image references to the site
@@ -254,7 +254,7 @@ class AuthorRequirementTest(unittest.TestCase):
 
     def test_wrong_primary_author_not_saved_by_secondary(self):
         # The primary Article has the wrong author; a secondary Comment that
-        # names the meta author must NOT rescue it, which would be a false green.
+        # names the meta author must not rescue it, which would be a false green.
         block = (
             '<script type="application/ld+json">'
             '[{"@type": "Article",'
@@ -370,16 +370,17 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 
     def test_stamp_exactly_at_tolerance_passes(self):
-        # The file last changed exactly D + 7 days, the tolerance boundary. The
-        # check is `> tolerance`, so exactly 7 passes; a `>=` mutation would fail
-        # this.
+        # modified = D (2026-01-10); the file last changed exactly D + 7 days, the
+        # last day within the 7-day tolerance. The check is `> tolerance`, so
+        # exactly 7 passes; a `>=` check would fail this test.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-17", today="2026-02-01")
         self.assertEqual(problems, [], problems)
 
     def test_stamp_one_day_past_tolerance_fails(self):
-        # The file last changed D + 8 days, 1 day past the boundary.
+        # modified = D (2026-01-10); the file last changed D + 8 days, 1 day past
+        # the 7-day tolerance.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-18", today="2026-02-01")
@@ -387,7 +388,7 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 
     def test_modified_in_future_still_rejected(self):
-        # modified is after today; the tolerance branch stays silent (changed
+        # modified is after today; the 7-day tolerance branch stays silent (changed
         # equals modified) so only the future check fires.
         problems = self.check(
             published="2026-01-01", modified="2026-02-15",
@@ -503,7 +504,7 @@ class ImageReferenceTest(_PatchedGateTest):
         self.assertTrue(any("outside the site directory" in p for p in problems))
 
     def test_traversal_to_missing_target_is_reported_outside(self):
-        # A traversal to a MISSING out-of-tree target must be reported as a
+        # A traversal to a missing out-of-tree target must be reported as a
         # containment violation, not as a plain "does not exist": the test needs
         # exactly 1 problem, whose text holds "outside the site directory", and
         # fails a gate that reports this missing target only as "does not exist".
@@ -650,7 +651,7 @@ class MalformedImageUrlTest(_PatchedGateTest):
         self.assertTrue(any("not a valid image URL" in p for p in problems))
 
     def test_url_through_a_file_is_a_content_problem_not_exit_3(self):
-        # og:image traverses THROUGH an existing file: a content problem (exit 1),
+        # og:image traverses through an existing file: a content problem (exit 1),
         # never a whole-gate exit-3 traceback.
         (gate.SITE_ROOT / "card.png").write_bytes(b"x")
         problems = self._problems("https://cleanlanguage.ai/card.png/child.png")
