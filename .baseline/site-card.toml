@@ -1,4 +1,4 @@
-# site-card.toml: the data file of .baseline/build_card.js (baseline 1.11.4) for cleanlanguage.ai, kept beside
+# site-card.toml: the data file of .baseline/build_card.js (baseline 1.13.0) for cleanlanguage.ai, kept beside
 # .baseline/pin.toml and not pinned, since it is the site's own input, not a file of the baseline.
 # Strings are in double quotes; paths are relative to this file. Change the copy, the colours and the
 # illustration only on the owner's instruction.
@@ -10,6 +10,9 @@
 # touch icon. The tag texts are unset because their defaults give the title, description and alt in
 # scripts/card/TAGS.md. That alt is the one that site/index.html serves now; the title and description differ
 # from those that it serves now.
+# favicon names the site's own SVG favicon in the copy, which the builder reads (from baseline 1.12.2) to write
+# cleanlanguage-favicon.ico, 3 frames of 16, 32 and 48 px, each rendered at its own size. The site commits that file
+# as site/favicon.ico and serves it as /favicon.ico; it is the site's own file, not a pin entry.
 site = "cleanlanguage"
 layout = "centre"
 name = "CleanLanguage"
@@ -18,5 +21,6 @@ line1 = "Precise, direct, natural AI writing."
 line2 = "A skill you install once, anywhere."
 sub = "Free writing rules, installed as a skill in any AI assistant or development environment."
 art = "card-illustration.svg"
+favicon = "../site/assets/baseline/logos/cleanlanguage-favicon.svg"
 word_colour = "#6ee7b7"
 background = "radial-gradient(900px 620px at 1040px 560px,rgba(52,211,153,.5),rgba(52,211,153,0) 60%),radial-gradient(760px 540px at 120px 60px,rgba(20,92,59,.95),rgba(20,92,59,0) 62%),#07140e"

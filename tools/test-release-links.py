@@ -13,7 +13,10 @@ the verify page's 2 states (a published checksum, or the zero placeholder with
 the not-yet-published note), each held to the download block tools/build-site.py
 renders for it (the verify page fixtures carry that block), the refusal of a page
 that mixes them, hides or moves the block, and the writer's round trip from the
-placeholder to a published checksum. They run
+placeholder to a published checksum. They pin the writer's redirects of the
+22 logo files the site no longer serves: exactly those 22, none of them a logo
+the pages load (the pin gate's LOGOS), each sent to the logo of its own project
+in LOGOS, after every line the writer wrote before them. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -1007,7 +1010,8 @@ class WriterTest(unittest.TestCase):
                      "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301",
                      f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{self.next}/cleanlanguage-{self.next}.zip 302"):
             self.assertIn(line + "\n", redirects)
-        self.assertEqual(len(redirects.splitlines()), 10)
+        # The 10 fixed and release lines, and 1 line for each of the 22 logo files the site no longer serves.
+        self.assertEqual(len(redirects.splitlines()), 10 + 22)
 
     def test_the_committed_redirects_match_the_writer(self):
         # The committed file is exactly what the writer writes for the current release, so a release keeps it.
@@ -1249,6 +1253,59 @@ class WorkflowPathsTest(unittest.TestCase):
             for relative, pattern in self.COVERING.items():
                 with self.subTest(f"{name}: {relative}"):
                     self.assertIn(f'      - "{pattern}"\n', part)
+
+
+# The pin gate, whose LOGOS names the logos the pages load and the copy holds.
+PIN_GATE_PATH = Path(__file__).resolve().parent / "check-baseline-pin.py"
+pin_gate_spec = importlib.util.spec_from_file_location("check_baseline_pin", PIN_GATE_PATH)
+pin_gate = importlib.util.module_from_spec(pin_gate_spec)
+pin_gate_spec.loader.exec_module(pin_gate)
+# The family keys whose logo files the site served at baseline 1.11.4 and stopped serving with the move to baseline
+# 1.13.0, whose copy holds only the logos the pages load: each served <key>-card.svg, -favicon.svg, -mono.svg and
+# -touch.png beside <key>.svg; cleanlanguage keeps its own favicon and touch icon.
+DROPPED_KEYS = ("aiqt", "auditthis", "grclibrary", "opfiles", "secureconfig")
+DROPPED_NAMES = ({f"{key}-{form}" for key in DROPPED_KEYS
+                  for form in ("card.svg", "favicon.svg", "mono.svg", "touch.png")}
+                 | {"cleanlanguage-card.svg", "cleanlanguage-mono.svg"})
+# The lines redirects_body() wrote before the logo redirects, for release URLs zip_url and sum_url, written out here
+# so that a change to any of them fails.
+FIXED_LINES = ("/claude/download {zip_url} 302\n"
+               "/download {zip_url} 302\n"
+               "/download/checksum {sum_url} 302\n"
+               "/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
+               "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
+               "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301\n"
+               "/privacy https://posluns.ca/privacy/ 301\n"
+               "/privacy/ https://posluns.ca/privacy/ 301\n"
+               "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301\n"
+               "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301\n")
+
+
+class DroppedLogoRedirectTest(unittest.TestCase):
+    """The writer's DROPPED_LOGOS: the 22 logo files the site no longer serves, each redirected to a logo the pages
+    load, and redirects_body() keeps the lines it wrote before them."""
+
+    def test_the_constant_holds_exactly_the_22_dropped_logos(self):
+        self.assertEqual(len(writer.DROPPED_LOGOS), 22)
+        self.assertEqual(set(writer.DROPPED_LOGOS), DROPPED_NAMES)
+
+    def test_no_dropped_logo_is_a_logo_the_pages_load(self):
+        self.assertEqual(sorted(set(writer.DROPPED_LOGOS) & set(pin_gate.LOGOS)), [])
+
+    def test_each_target_is_the_logo_of_its_own_project_that_the_pages_load(self):
+        for name, target in writer.DROPPED_LOGOS.items():
+            with self.subTest(name):
+                self.assertIn(target, pin_gate.LOGOS)
+                self.assertEqual(target, name.rsplit("-", 1)[0] + ".svg")
+
+    def test_redirects_body_keeps_every_line_and_adds_1_per_dropped_logo(self):
+        zip_url, sum_url = "https://example.org/x.zip", "https://example.org/x.zip.sha256"
+        body = writer.redirects_body(zip_url, sum_url)
+        fixed = FIXED_LINES.format(zip_url=zip_url, sum_url=sum_url)
+        self.assertTrue(body.startswith(fixed), body)
+        added = body[len(fixed):].splitlines()
+        self.assertEqual(added, [f"/assets/baseline/logos/{name} /assets/baseline/logos/{target} 301"
+                                 for name, target in writer.DROPPED_LOGOS.items()])
 
 
 def load_faults(defined: str, renamed: str) -> list[tuple[str, object, str, type]]:
