@@ -11,9 +11,16 @@ the Claude manifest, and that the name agrees with the marketplace entry (which
 carries no version). This gate requires the Agent Plugins version and requires it
 to equal the Claude manifest version, so the two manifests cannot drift.
 
+It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
+files, not symlinks, whose bytes equal the root LICENSE and NOTICE.md. The plugin
+installs the cleanlanguage/ tree and the skill zip takes these 2 files from it, so
+a copy that drifted from the root file would ship a licence text the repository
+does not state. The gate reads the working tree; tools/release-package.sh makes
+the same comparison on the git blobs at HEAD.
+
 Exit codes:
-  0  the manifest is valid and consistent
-  1  the manifest is invalid or inconsistent
+  0  the manifest is valid and consistent, and the licence copies equal the root files
+  1  the manifest is invalid or inconsistent, or a licence copy differs from its root file
   3  a required file could not be read
 """
 from __future__ import annotations
@@ -36,6 +43,8 @@ KNOWN_KEYS = {
     "homepage", "repository", "license", "keywords", "extensions",
 }
 AUTHOR_KEYS = {"name", "email", "url"}
+# The root files that cleanlanguage/ carries as byte-equal copies.
+LICENCE_FILES = ("LICENSE", "NOTICE.md")
 
 
 def die(message: str, code: int = 1) -> NoReturn:
@@ -59,6 +68,26 @@ def load(path: Path) -> dict:
     if not isinstance(data, dict):
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not a JSON object")
     return data
+
+
+def read_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}", 3)
+
+
+def check_licence_copies() -> None:
+    """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file."""
+    for name in LICENCE_FILES:
+        root = REPO_ROOT / name
+        copy = REPO_ROOT / "cleanlanguage" / name
+        if copy.is_symlink():
+            die(f"cleanlanguage/{name} is a symlink; it must be a regular file that copies the root {name}")
+        if not copy.exists():
+            die(f"cleanlanguage/{name} is missing; it must be a copy of the root {name}")
+        if read_bytes(copy) != read_bytes(root):
+            die(f"cleanlanguage/{name} differs from the root {name}; copy the root file over it")
 
 
 def main() -> int:
@@ -118,7 +147,10 @@ def main() -> int:
     if first.get("name") != name:
         die(f"name {name!r} does not match marketplace plugins[0].name {first.get('name')!r}")
 
-    print(f"check-agent-plugin-manifest: cleanlanguage/plugin.json is valid Agent Plugins {name!r} (schema 1.0.0).")
+    check_licence_copies()
+
+    print(f"check-agent-plugin-manifest: cleanlanguage/plugin.json is valid Agent Plugins {name!r} (schema 1.0.0), "
+          "and cleanlanguage/LICENSE and cleanlanguage/NOTICE.md equal the root files.")
     return 0
 
 

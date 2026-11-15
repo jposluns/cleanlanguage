@@ -29,26 +29,32 @@
 #   3. Requires every path to match the package allowlist by shape:
 #      skills/cleanlanguage/SKILL.md, the Claude manifest at
 #      .claude-plugin/plugin.json, the Agent Plugins manifest at plugin.json,
-#      agent configuration in agents/, the CL_icon files in assets/, and
-#      Markdown references in skills/cleanlanguage/references/. This checks path
-#      shape and git mode, not file content: a new flat Markdown reference under
+#      agent configuration in agents/, the CL_icon files in assets/, Markdown
+#      references in skills/cleanlanguage/references/, and the licence files
+#      LICENSE and NOTICE.md. This checks path shape and git mode, not file
+#      content: a new flat Markdown reference under
 #      skills/cleanlanguage/references/ is allowed, while a new directory, a
-#      script extension, or any other nested path fails.
+#      script extension, or any other nested path fails. Then requires
+#      cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to exist at HEAD with
+#      the same git blob as the root LICENSE and NOTICE.md, so the skill zip
+#      and the plugin, which installs the cleanlanguage/ tree, carry the root
+#      licence files unchanged.
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
 #   5. Stages the package from git archive, removes both plugin manifests, which
-#      ship through the marketplace rather than the zip, adds LICENSE and
-#      NOTICE.md, restores SKILL.md and references/ from skills/cleanlanguage/
-#      to the archive root, and zips the files at the archive ROOT (SKILL.md,
-#      agents/, assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
-#      prefix, so the zip holds exactly what git records, minus both manifests
-#      and the skills/cleanlanguage/ nesting, plus the two licence files,
-#      whatever state the checkout is in.
+#      ship through the marketplace rather than the zip, restores SKILL.md and
+#      references/ from skills/cleanlanguage/ to the archive root, and zips the
+#      files at the archive ROOT (SKILL.md, agents/, assets/, references/,
+#      LICENSE, NOTICE.md), with no cleanlanguage/ prefix, so the zip holds
+#      exactly what git records under cleanlanguage/, licence files included,
+#      minus both manifests and the skills/cleanlanguage/ nesting, whatever
+#      state the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, excluding the plugin manifest, and verifies every
-#      archived file's bytes against its git blob, so a git attribute such as
-#      export-subst cannot change the shipped bytes unnoticed.
+#      archived file's bytes against its git blob under cleanlanguage/, so a
+#      git attribute such as export-subst cannot change the shipped bytes
+#      unnoticed.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
 # .sha256 beside each. It never tags, pushes, or talks to the network.
@@ -313,12 +319,26 @@ files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 grep -Eq '^cleanlanguage/skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/skills/cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
-  '^cleanlanguage/(plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
+  '^cleanlanguage/(LICENSE|NOTICE\.md|plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"
 if [ -n "${unexpected}" ]; then
   printf 'release-package: paths outside the package allowlist:\n%s\n' "${unexpected}" >&2
   exit 1
 fi
+
+# The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and the plugin
+# installs that tree, so both install routes carry these copies. Each must be
+# present and hold the same git blob as the root file, which is the licence
+# text the repository states; a blob id is a digest of the bytes, so equal ids
+# mean equal bytes.
+for licence_file in LICENSE NOTICE.md; do
+  copy_blob="$(git rev-parse --verify --quiet "HEAD:cleanlanguage/${licence_file}")" \
+    || fail "cleanlanguage/${licence_file} is missing at HEAD; it must be a copy of the root ${licence_file}"
+  root_blob="$(git rev-parse --verify --quiet "HEAD:${licence_file}")" \
+    || fail "${licence_file} is missing at HEAD"
+  [ "${copy_blob}" = "${root_blob}" ] \
+    || fail "cleanlanguage/${licence_file} differs from the root ${licence_file} at HEAD; copy the root file over it"
+done
 
 # Any icon the ChatGPT interface config references must exist in the package,
 # so a shipped skill never points at a missing asset. The path may be quoted
@@ -390,15 +410,15 @@ mv "${staging}/cleanlanguage/skills/cleanlanguage/SKILL.md" "${staging}/cleanlan
 mv "${staging}/cleanlanguage/skills/cleanlanguage/references" "${staging}/cleanlanguage/references"
 rmdir "${staging}/cleanlanguage/skills/cleanlanguage"
 rmdir "${staging}/cleanlanguage/skills"
-git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
-git show HEAD:NOTICE.md > "${staging}/cleanlanguage/NOTICE.md"
-chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md"
+# LICENSE and NOTICE.md need no step here: git archive staged them from
+# cleanlanguage/, as the copies of the root files that the check above proved.
 
 # A byte-reproducible archive: stamp every staged path with the commit's own
 # timestamp, order the entries, and read the DOS times in UTC, so the same
 # commit always yields the same zip and therefore the same checksum, on any
-# machine and at any clock time. Without this the staged licence files would
-# carry the build clock, so a later rebuild of the same commit would not match.
+# machine and at any clock time. Without this a file staged by any step other
+# than git archive would carry the build clock, so a later rebuild of the same
+# commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
 # files carry only regular content (the mode gate above rejects anything but
@@ -430,7 +450,6 @@ expected="$(
       | grep -Fvx 'cleanlanguage/plugin.json' \
       | sed 's#^cleanlanguage/skills/cleanlanguage/#cleanlanguage/#' \
       | sed 's#^cleanlanguage/##'
-    printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
 actual="$(unzip -Z1 dist/cleanlanguage.zip | grep -v '/$' | LC_ALL=C sort)"
@@ -480,8 +499,8 @@ fi
 while IFS= read -r entry; do
   [ -n "${entry}" ] || continue
   case "${entry}" in
-    LICENSE) blob="HEAD:LICENSE" ;;
-    NOTICE.md) blob="HEAD:NOTICE.md" ;;
+    LICENSE) blob="HEAD:cleanlanguage/LICENSE" ;;
+    NOTICE.md) blob="HEAD:cleanlanguage/NOTICE.md" ;;
     SKILL.md) blob="HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md" ;;
     references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;

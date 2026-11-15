@@ -2,7 +2,9 @@
 """Tests for check-agent-plugin-manifest.py.
 
 Patch the gate's manifest paths to a temp fixture and drive the failure and
-success paths offline with the standard library.
+success paths offline with the standard library. The fixture also holds a root
+LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
+cases can make a copy differ, go missing or become a symlink.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+LICENCE_TEXTS = {"LICENSE": b"Apache License\nVersion 2.0\n", "NOTICE.md": b"# Notice\n\nScope.\n"}
 
 
 def valid_manifest():
@@ -51,6 +54,9 @@ class AgentPluginManifestTest(unittest.TestCase):
         gate.MARKETPLACE.write_text(
             json.dumps({"plugins": [{"name": "cleanlanguage"}]}), encoding="utf-8"
         )
+        for name, data in LICENCE_TEXTS.items():
+            (root / name).write_bytes(data)
+            (root / "cleanlanguage" / name).write_bytes(data)
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.MANIFEST, gate.CLAUDE_MANIFEST, gate.MARKETPLACE) = self._saved
@@ -168,6 +174,43 @@ class AgentPluginManifestTest(unittest.TestCase):
         manifest["skills"] = ["./skills/cleanlanguage"]
         self.write(manifest)
         self.expect_exit(1, "unknown top-level keys")
+
+    def test_licence_copy_differs_fails(self):
+        # A valid manifest still fails when cleanlanguage/LICENSE is not a
+        # byte-equal copy of the root LICENSE, even by 1 trailing byte.
+        self.write(valid_manifest())
+        (gate.REPO_ROOT / "cleanlanguage" / "LICENSE").write_bytes(LICENCE_TEXTS["LICENSE"] + b"\n")
+        self.expect_exit(1, "cleanlanguage/LICENSE differs from the root LICENSE")
+
+    def test_notice_copy_differs_fails(self):
+        self.write(valid_manifest())
+        (gate.REPO_ROOT / "cleanlanguage" / "NOTICE.md").write_bytes(b"# Notice\n\nOther scope.\n")
+        self.expect_exit(1, "cleanlanguage/NOTICE.md differs from the root NOTICE.md")
+
+    def test_root_licence_changed_alone_fails(self):
+        # Editing the root file without its copy is the same drift.
+        self.write(valid_manifest())
+        (gate.REPO_ROOT / "LICENSE").write_bytes(b"Another licence\n")
+        self.expect_exit(1, "cleanlanguage/LICENSE differs from the root LICENSE")
+
+    def test_licence_copy_missing_fails(self):
+        self.write(valid_manifest())
+        (gate.REPO_ROOT / "cleanlanguage" / "NOTICE.md").unlink()
+        self.expect_exit(1, "cleanlanguage/NOTICE.md is missing")
+
+    def test_licence_copy_symlink_fails(self):
+        # A symlink to the root file reads equal, but the plugin tree would
+        # then point outside itself, so only a regular file passes.
+        self.write(valid_manifest())
+        copy = gate.REPO_ROOT / "cleanlanguage" / "LICENSE"
+        copy.unlink()
+        copy.symlink_to(gate.REPO_ROOT / "LICENSE")
+        self.expect_exit(1, "cleanlanguage/LICENSE is a symlink")
+
+    def test_unreadable_root_licence_fails_closed(self):
+        self.write(valid_manifest())
+        (gate.REPO_ROOT / "LICENSE").unlink()
+        self.expect_exit(3, "LICENSE could not be read")
 
 
 if __name__ == "__main__":
