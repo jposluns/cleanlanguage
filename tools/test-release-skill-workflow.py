@@ -609,7 +609,9 @@ def api_method(args):
 # Every fake records its call, then reads it with the same functions the
 # predicates below use (subcommand, api_options and api_method), and routes
 # each answer by the subcommand after any leading options, so a call with
-# leading options gets the answer of the same call without them.
+# leading options gets the answer of the same call without them. The one
+# exception is gh api: the fake gh refuses a call with any option before api,
+# as gh does for -R, which gh api does not define (nor --repo).
 FAKE_COMMON = """
 import hashlib, json, os, sys
 STATE = os.environ["FAKE_STATE"]
@@ -641,6 +643,18 @@ FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
 STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
+LEADING = ARGS[:len(ARGS) - len(SUB)]
+# gh api defines no -R or --repo option, and gh 2.103.3 refuses a -R before
+# api with exit 1 before it sends any request. The fake refuses every option
+# before api the same way, with no write and no answer, while a release
+# subcommand still takes a leading -R or --repo.
+if SUB[:1] == ["api"] and LEADING:
+    first = LEADING[0]
+    if first.startswith("--"):
+        print("unknown flag: " + first.partition("=")[0], file=sys.stderr)
+    else:
+        print("unknown shorthand flag: '" + first[1:2] + "' in " + first, file=sys.stderr)
+    sys.exit(1)
 # Every release subcommand that changes a release, and every API call with a
 # method other than GET, is a write: it is appended to gh_writes, whatever the
 # call log holds, so a no-change assertion can read the fake's own state.
@@ -648,7 +662,6 @@ RELEASE_READS = (["view"], ["download"], ["list"])
 if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["api"] and api_method(SUB[1:]) != "GET"):
     with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
         writes.write(json.dumps(SUB) + "\\n")
-LEADING = ARGS[:len(ARGS) - len(SUB)]
 if SUB[:1] == ["api"]:
     # Row 59: every API path is answered from one shared state, so the exact
     # path each call names is logged for ApiPathTest to pin.
@@ -902,10 +915,14 @@ class WorkflowStepTest(unittest.TestCase):
         self.state_before_run = self.fake_write_state()
         script = self.state / "step.sh"
         script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
-        # The step and every process it starts inherit the write end of this
-        # pipe, so its read end reaches end of file only when all of them
-        # have exited: a change that a process left running in the background
-        # makes after the step exits is in the state a later assertion reads.
+        # The step and the processes it starts inherit the write end of this
+        # pipe, so its read end reaches end of file only when every process
+        # holding that end has exited: a change that such a process, left
+        # running in the background, makes after the step exits is in the
+        # state a later assertion reads. A process that closes the
+        # descriptors it inherited no longer holds the pipe, so this wait
+        # does not cover it, and a change it makes after the step exits is
+        # missed.
         done_read, done_write = os.pipe()
         try:
             proc = subprocess.run(
@@ -1228,7 +1245,7 @@ class HarnessTest(WorkflowStepTest):
             (["api", "-iXPOST", path], True), (["api", "-iX=POST", path], True),
             (["api", "-if", "tag_name=v1.0.15", path], True), (["api", "-iftag_name=v1.0.15", path], True),
             (["api", "-iF", "draft=false", path], True), (["api", "--method=PUT", path], True),
-            (["api", "--input", "-", path], True), (["-R", "jposluns/cleanlanguage", "api", "-iXPOST", path], True),
+            (["api", "--method", "POST", path], True), (["api", "--input", "-", path], True),
             (["api", path], False), (["api", "--include", "--silent", path], False),
             (["api", "-i", path], False), (["api", "-iX", "GET", path], False),
             (["api", "-if", "x=1", "-X", "GET", path], False), (["api", path, "--jq", "-f"], False),
@@ -1241,6 +1258,26 @@ class HarnessTest(WorkflowStepTest):
                 subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
                                capture_output=True, text=True)
                 self.assertEqual((self.state / "gh_writes").exists(), write)
+        # gh api defines no -R or --repo option, so the fake gh refuses a
+        # call with an option before api, as gh refuses -R there: exit 1,
+        # no write and no API log entry. The predicates still read such a
+        # call past its leading options, so a no-change assertion fails on it.
+        refused = (
+            (["-R", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown shorthand flag: 'R' in -R"),
+            (["--repo", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
+            (["--repo=jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
+        )
+        for args, message in refused:
+            with self.subTest(args=args):
+                self.assertTrue(is_mutation(["gh", args]))
+                for name in ("gh_writes", "api.log"):
+                    (self.state / name).unlink(missing_ok=True)
+                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                                      capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 1, proc.stderr)
+                self.assertEqual(proc.stderr, message + "\n")
+                self.assertFalse((self.state / "gh_writes").exists())
+                self.assertFalse((self.state / "api.log").exists())
         # Each form of a --jq or -q read of the immutable field, and calls
         # that name the field without reading it.
         release = path + "/tags/v1.0.15"
@@ -2068,9 +2105,11 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(writes, [["release", "create", "v1.0.15"]], calls)
 
     def test_a_tag_written_in_the_background_after_the_step_exits_is_seen(self):
-        # A step run waits for every process the step left running, so a tag
-        # that a background process writes after the step has exited is in
-        # the call log and the state that assert_no_mutation reads.
+        # A step run waits for every process that still holds the pipe it
+        # inherited from the step, so a tag that such a background process
+        # writes after the step has exited is in the call log and the state
+        # that assert_no_mutation reads. A process that closes the
+        # descriptors it inherited is not waited for (see run_step).
         self.tag_push_mismatch(True, OTHER_COMMIT)
         script = "( sleep 1; " + VCS + " tag v1.0.15 " + COMMIT + " ) >/dev/null 2>&1 &\nexit 1\n"
         code, _out, err = self.run_step(PUBLISH, script)
@@ -2080,16 +2119,21 @@ class ImmutableReleaseTest(WorkflowStepTest):
         with self.assertRaises(AssertionError):
             self.assert_no_mutation(self.calls())
 
-    def test_the_fake_gh_answers_a_call_with_a_leading_option_as_without_it(self):
-        # Each gh call of the publish step, with a leading -R option added,
-        # gets the same answers and leaves the same API log and write state:
-        # on a re-run, the status probe, the asset list, the download and the
-        # readbacks; on a first publication, the status probe, the create
-        # call and the readbacks.
+    def test_the_fake_gh_reads_a_leading_option_as_gh_does(self):
+        # Each gh release call of the publish step, with a leading -R option
+        # added, gets the same answers and leaves the same API log and write
+        # state: on a re-run, the asset list and the download; on a first
+        # publication, the create call. gh api defines no -R option, so with
+        # -R added before each gh api call the fake refuses the status probe,
+        # as gh does, and the step stops on the unknown status with no write.
+        # The pin counts every gh word of the step as well as each kind of
+        # call, so a gh call added in any form, or given an option before its
+        # subcommand, fails it.
         script = step_script(PUBLISH)
-        self.assertEqual((script.count("gh api "), script.count("gh release ")), (3, 3))
-        leading = script.replace("gh api ", "gh -R \"${GITHUB_REPOSITORY}\" api ").replace(
-            "gh release ", "gh -R \"${GITHUB_REPOSITORY}\" release ")
+        self.assertEqual((script.count("gh api "), script.count("gh release "), len(re.findall(r"\bgh\b", script))),
+                         (3, 3, 6))
+        leading = script.replace("gh release ", "gh -R \"${GITHUB_REPOSITORY}\" release ")
+        refused = script.replace("gh api ", "gh -R \"${GITHUB_REPOSITORY}\" api ")
         for status in ("200", "404"):
             with self.subTest(status=status):
                 results = []
@@ -2106,9 +2150,20 @@ class ImmutableReleaseTest(WorkflowStepTest):
                     results.append((out, err, (self.state / "api.log").read_text(encoding="utf-8"),
                                     releases, self.fake_write_state()))
                     gh_calls = [c for c in self.calls() if c[0] == "gh"]
-                    self.assertTrue(gh_calls, self.calls())
-                    self.assertEqual({c[1][:1] == ["-R"] for c in gh_calls}, {text is leading}, gh_calls)
+                    self.assertTrue([c for c in gh_calls if sub(c)[:1] == ["release"]], self.calls())
+                    self.assertEqual([c for c in gh_calls if (c[1][:1] == ["-R"]) != (
+                        text is leading and sub(c)[:1] == ["release"])], [], gh_calls)
                 self.assertEqual(results[0], results[1])
+                self.reset_calls()
+                for log in ("api.log", "release.log"):
+                    (self.state / log).unlink(missing_ok=True)
+                self.set_state(status=status, remote_tag=COMMIT, local_tag=None, gh_writes=None)
+                code, out, err = self.run_step(PUBLISH, refused)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Could not determine whether v1.0.15 is already published (HTTP none).", err)
+                self.assertFalse((self.state / "api.log").exists())
+                self.assertFalse((self.state / "release.log").exists())
+                self.assertEqual(self.fake_write_state(), self.state_before_run, self.calls())
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
