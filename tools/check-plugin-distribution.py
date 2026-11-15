@@ -13,9 +13,12 @@ the plan's numbering, which CHECKS maps to the names used here.
       cleanlanguage/plugin.json and the site_key of site-src/site.json are all
       PROJECT; the marketplace lists exactly 1 plugin; no marketplace name or
       plugin entry name in either marketplace (the repository's and the
-      vendored plugin/.claude-plugin/marketplace.json) starts with a reserved
-      prefix of RESERVED_PREFIXES; and in both marketplaces each plugin entry
-      whose source resolves has the name of the plugin manifest it reaches.
+      vendored plugin/.claude-plugin/marketplace.json) is missing, is not a
+      string or is empty, or starts with a reserved prefix of
+      RESERVED_PREFIXES in any letter case; and in both marketplaces each
+      plugin entry whose source resolves has the name of the plugin manifest
+      it reaches. Whether the Claude Code CLI reserves the prefixes in any
+      letter case is not known offline, so the gate refuses every case.
   Sources exist: in both marketplaces each plugin entry has a string source
       that starts with "./" and has no empty and no ".." component, and it
       resolves below the marketplace root, each component reached with
@@ -25,9 +28,10 @@ the plan's numbering, which CHECKS maps to the names used here.
       repository's plugin. A source that is not a string, such as a GitHub
       source object, is refused, because this gate cannot read where it leads.
   Versions agree: the versions of both plugin manifests, the Version: line of
-      the skill's SKILL.md, read by the shared extractor tools/skill-version.py,
-      and the version of any plugin entry of .claude-plugin/marketplace.json
-      that carries one, are the same text.
+      the skill's SKILL.md, read with the VERSION_LINE and SKILL_VERSION
+      patterns of the shared extractor tools/skill-version.py, and the version
+      of any plugin entry of .claude-plugin/marketplace.json that carries one,
+      are each a nonempty string and are the same text.
   Dependencies resolve: every dependency named by a plugin entry or by the
       plugin manifest its relative source reaches names a plugin entry of the
       same marketplace, as a bare name or as name@<that marketplace>. The count
@@ -36,8 +40,10 @@ the plan's numbering, which CHECKS maps to the names used here.
 The checks of the hosted catalog and of the release zips (the standard's
 sha256 and zip-content checks) belong to a later unit and are not made here.
 
-Every file is reached from REPO_ROOT with os.lstat on each path component, so
-no component may be a symlink, and opened with O_NOFOLLOW. JSON is decoded as
+Every file, the extractor tools/skill-version.py among them, is reached from
+REPO_ROOT with os.lstat on each path component, so no component may be a
+symlink, and opened with O_NOFOLLOW; the gate runs the extractor's bytes as
+read, so it never opens the extractor again by path. JSON is decoded as
 utf-8-sig, so a leading byte-order mark does not fail a conforming file, the
 non-standard constants NaN and Infinity are refused, and a key repeated in any
 JSON object is refused, as tools/check-manifest-icon.py does, since json.loads
@@ -46,12 +52,14 @@ alone keeps only the last value of a repeated key.
 Usage: python3 -I tools/check-plugin-distribution.py
 Exit status: 0 when every check passes, with a last line that starts "OK:";
 1 when a check finds an inconsistency, with 1 line "FAIL <tag>: ..." for each
-and a last line "FAIL: <n> inconsistencies". A SKILL.md whose first Version:
-line is missing or is not a bare X.Y.Z is such an inconsistency: the versions
-check fails with exit 1. 3 when an input cannot be read: a file that is
-missing, reached through a symlink, not a regular file, not UTF-8, not JSON,
-not a JSON object, or that repeats a key, or an extractor that cannot be
-loaded; the cause goes to standard error, with a last line "UNREADABLE: exit
+and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for 1).
+A SKILL.md whose first Version: line is missing or is not a bare X.Y.Z is such
+an inconsistency: the versions check fails with exit 1. 3 when an input cannot
+be read: a file that is missing, reached through a symlink, not a regular
+file, not UTF-8, not JSON, nested too deeply to decode, not a JSON object, or
+that repeats a key, or an extractor that cannot be used, because it raises
+any exception while it loads or lacks a VERSION_LINE or SKILL_VERSION pattern
+of text; the cause goes to standard error, with a last line "UNREADABLE: exit
 3". The gate fails closed: it never passes a check it could not make.
 
 Residual: the gate reads the files as they are on disk; it does not ask git
@@ -61,17 +69,16 @@ reading of the manifests the pinned Plugin manifests job checks.
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
 
 PROG = "check-plugin-distribution"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXTRACTOR = Path(__file__).resolve().parent / "skill-version.py"
 
 PROJECT = "cleanlanguage"
 RESERVED_PREFIXES = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
@@ -90,6 +97,7 @@ CLAUDE_MANIFEST = "cleanlanguage/.claude-plugin/plugin.json"
 AGENT_MANIFEST = "cleanlanguage/plugin.json"
 SITE_JSON = "site-src/site.json"
 SKILL_MD = "cleanlanguage/skills/cleanlanguage/SKILL.md"
+EXTRACTOR = "tools/skill-version.py"
 
 OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
 READ_BLOCK = 65536
@@ -179,22 +187,36 @@ def load_json(rel: str) -> dict:
     return data
 
 
+def extractor_patterns() -> tuple:
+    """VERSION_LINE and SKILL_VERSION of the shared extractor, whose bytes are reached and read like
+    every other input and run as read, never opened again by path. Any exception while it runs, or a
+    pattern that is missing or is not a compiled pattern of text, makes the extractor unusable."""
+    source = read_bytes(EXTRACTOR)
+    namespace = {"__name__": "skill_version"}
+    try:
+        exec(compile(source, EXTRACTOR, "exec", dont_inherit=True), namespace)
+    except (Exception, SystemExit) as error:
+        raise Unreadable(f"the extractor {EXTRACTOR} could not be loaded: {type(error).__name__}: {error}") from error
+    patterns = []
+    for name in ("VERSION_LINE", "SKILL_VERSION"):
+        pattern = namespace.get(name)
+        if not isinstance(pattern, re.Pattern) or not isinstance(pattern.pattern, str):
+            raise Unreadable(f"the extractor {EXTRACTOR} could not be used: it has no {name} pattern of text")
+        patterns.append(pattern)
+    return tuple(patterns)
+
+
 def skill_version() -> str | None:
     """The SKILL.md version as the shared extractor reads it, or None when its
     first Version: line is missing or is not a bare X.Y.Z."""
     data = read_bytes(SKILL_MD)
-    try:
-        spec = importlib.util.spec_from_file_location("skill_version", EXTRACTOR)
-        extractor = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(extractor)
-    except (OSError, ImportError, SyntaxError, AttributeError) as error:
-        raise Unreadable(f"the extractor {EXTRACTOR.name} could not be loaded: {error}") from error
+    version_line, skill_version_pattern = extractor_patterns()
     try:
         text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", newline=None).read()
     except UnicodeDecodeError as error:
         raise Unreadable(f"{SKILL_MD} is not UTF-8: {error}") from error
-    line = extractor.VERSION_LINE.search(text)
-    match = extractor.SKILL_VERSION.match(line.group(0)) if line else None
+    line = version_line.search(text)
+    match = skill_version_pattern.match(line.group(0)) if line else None
     return match.group(1) if match else None
 
 
@@ -238,7 +260,7 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
         for label, value in names:
             if not isinstance(value, str) or not value:
                 failures.append(f"D1: {label} is {value!r}, not a name")
-            elif value.startswith(RESERVED_PREFIXES):
+            elif value.lower().startswith(RESERVED_PREFIXES):
                 failures.append(f"D1: {label} {value!r} starts with a reserved prefix")
 
 
@@ -359,6 +381,11 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
     return count
 
 
+def counted(number: int, one: str, more: str) -> str:
+    """The number and the noun, singular for 1 and plural for any other number."""
+    return f"{number} {one if number == 1 else more}"
+
+
 def run() -> int:
     failures: list = []
     markets = {MARKETPLACE: load_json(MARKETPLACE), VENDORED_MARKETPLACE: load_json(VENDORED_MARKETPLACE)}
@@ -373,9 +400,10 @@ def run() -> int:
     count = check_dependencies(markets, folders, failures)
     for failure in failures:
         print(f"FAIL {failure}")
-    print(f"{PROG}: {len(folders)} relative sources resolved, {count} dependencies read")
+    print(f"{PROG}: {counted(len(folders), 'relative source', 'relative sources')} resolved, "
+          f"{counted(count, 'dependency', 'dependencies')} read")
     if failures:
-        print(f"FAIL: {len(failures)} inconsistencies")
+        print(f"FAIL: {counted(len(failures), 'inconsistency', 'inconsistencies')}")
         return 1
     tags = list(CHECKS)
     print(f"OK: {tags[0]} to {tags[-1]} hold ({', '.join(CHECKS.values())}); the plugin, marketplace and site "

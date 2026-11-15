@@ -4,31 +4,45 @@
 Each case builds a temporary tree that holds the files the gate reads, points
 the gate's REPO_ROOT at it, as tools/test-agent-plugin-manifest.py points that
 gate's paths at a fixture, and runs the gate's main. The conforming tree must
-pass; each case then changes 1 thing and requires the exit status and the tag
-of the failing check in the output, as the gate's CHECKS holds it: the
-marketplace named jposluns, a plugin entry name that differs from the manifest
-name, a second plugin entry and a reserved name prefix fail the names check; a
-missing source folder, a source with a ".." component and a symlinked source
-fail the sources check; a version that differs in the Claude manifest, the
-Agent Plugins manifest, the SKILL.md Version: line or a marketplace entry fails
-the versions check; a dependency that names no plugin of its marketplace fails
-the dependencies check, while one that does passes with its count printed; a
-repeated JSON key, a missing file and a file that is not a regular file
-exit 3. Further cases hold the gate's other claims: a source of the
-repository's entry that reaches another plugin or a copy of this one, an
-object source, an empty plugins list, a differing Agent Plugins manifest name
-or site key, a vendored entry named unlike the manifest it reaches, a source
-without "./", a source that is a file, a manifest that is a directory, an
-entry with no source, a version that is missing or not a string, a SKILL.md
-with no Version: line, a dependency qualified with another marketplace and
-dependencies that are not a list or not names each fail their check; NaN, a
-JSON file that is not an object, a file or a SKILL.md that is not UTF-8 and a
-symlinked input file exit 3. A last case runs the gate on the repository
-itself, so this test fails while the repository's own names, sources,
-versions or dependencies disagree.
+pass, also with a byte-order mark before a JSON file; each case then changes 1
+thing and requires the exit status, the text of the failure with the tag of
+its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
+"FAIL: " for exit 1 and "UNREADABLE: exit 3" on standard error for exit 3.
 
-The SKILL.md version is read by the real tools/skill-version.py, which the
-gate loads from beside itself.
+- The names check fails on: the marketplace named jposluns; a plugin entry
+  name that differs from the manifest name; a second plugin entry or none; a
+  Claude or Agent Plugins manifest name or a site key that differs; a vendored
+  entry named unlike the manifest it reaches; a marketplace name that is
+  missing or empty; and a marketplace name or a plugin entry name that starts
+  with each reserved prefix, in lower case or in another letter case.
+- The sources check fails on: a missing source folder; a source with a ".."
+  or an empty component; a source without "./"; a source that is a file; a
+  manifest that is a directory; a symlinked source folder, a symlinked
+  .claude-plugin folder or a symlinked manifest; an entry with no source; an
+  object source; a vendored marketplace with no plugins list or with an entry
+  that is not an object; and a source of the repository's entry that reaches
+  another plugin or a copy of this one.
+- The versions check fails on: a version that differs in the Claude
+  manifest, the Agent Plugins manifest, the SKILL.md Version: line or a
+  marketplace entry; a version that is missing, empty or not a string; and a
+  SKILL.md with no Version: line.
+- The dependencies check fails on: a dependency that names no plugin of its
+  marketplace or is qualified with another marketplace, and dependencies that
+  are not a list or not names; dependencies that resolve pass.
+- Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
+  regular file; NaN; JSON nested too deeply to decode; a JSON file that is not
+  an object; a file or a SKILL.md that is not UTF-8; a symlinked input file or
+  input folder; and an extractor that is missing, symlinked, raises an
+  exception or SystemExit while it loads, or lacks VERSION_LINE or
+  SKILL_VERSION.
+- The count lines read "1 relative source", "1 dependency" and "FAIL: 1
+  inconsistency" for 1, and the plural for 0 and for more than 1.
+
+A last case runs the gate on the repository itself, so this test fails while
+the repository's own names, sources, versions or dependencies disagree.
+
+The SKILL.md version is read by a copy of the real tools/skill-version.py in
+each tree, which the gate reaches from REPO_ROOT like every other file.
 
 Usage: python3 -I tools/test-check-plugin-distribution.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -41,11 +55,16 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-plugin-distribution.py"
+REAL_EXTRACTOR = Path(__file__).resolve().parent / "skill-version.py"
+EXTRACTOR_REL = "tools/skill-version.py"
+# Written out, not read from the gate, so a gate that drops a prefix fails.
+RESERVED_PREFIXES = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
 spec = importlib.util.spec_from_file_location("check_plugin_distribution", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
@@ -88,6 +107,8 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_json(gate.AGENT_MANIFEST, manifest())
         self.write_json(gate.SITE_JSON, {"schema": 1, "site_key": "cleanlanguage"})
         self.write_text(gate.SKILL_MD, f"---\nname: cleanlanguage\n---\n\n# Clean Language\n\nVersion: {VERSION}  \n")
+        (self.root / "tools").mkdir()
+        shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
 
     def tearDown(self):
         gate.REPO_ROOT = self._saved
@@ -110,14 +131,24 @@ class PluginDistributionTest(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = gate.main()
-        return code, out.getvalue() + err.getvalue()
+        return code, out.getvalue(), err.getvalue()
 
     def expect(self, code: int, *needles: str):
-        got, output = self.run_gate()
+        got, out, err = self.run_gate()
+        output = out + err
         self.assertEqual(got, code, output)
         for needle in needles:
             self.assertIn(needle, output)
+        stream, start = {0: (out, "OK: "), 1: (out, "FAIL: "), 3: (err, "UNREADABLE: exit 3")}[code]
+        last = (stream.splitlines() or [""])[-1]
+        self.assertTrue(last.startswith(start), f"last line {last!r} does not start {start!r}\n{output}")
         return output
+
+    def edit_extractor(self, old: str, new: str):
+        path = self.root / EXTRACTOR_REL
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def test_conforming_tree_passes(self):
         output = self.expect(0, "OK: D1 to D4 hold", "2 relative sources resolved", "0 dependencies read")
@@ -180,7 +211,7 @@ class PluginDistributionTest(unittest.TestCase):
         self.edit_json("plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",
                        lambda d: d.update(dependencies=["cleanlanguage"]))
         self.expect(1, "FAIL D4: plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json dependency "
-                       "'cleanlanguage' names no plugin", "1 dependencies read")
+                       "'cleanlanguage' names no plugin", "1 dependency read")
 
     def test_resolved_dependency_is_counted(self):
         self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"].append(
@@ -224,7 +255,7 @@ class PluginDistributionTest(unittest.TestCase):
             source={"source": "github", "repo": "someone/else"}))
         self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source {'source': 'github', 'repo': "
                        "'someone/else'} is not a string, so this gate cannot read where it leads",
-                    "1 relative sources resolved")
+                    "1 relative source resolved")
 
     def test_vendored_entry_named_unlike_its_manifest_fails_d1(self):
         self.edit_json("plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json", lambda d: d.update(name="aiqt-hooks"))
@@ -313,6 +344,141 @@ class PluginDistributionTest(unittest.TestCase):
         (self.root / gate.SITE_JSON).rename(target)
         os.symlink(target, self.root / gate.SITE_JSON)
         self.expect(3, "site-src/site.json could not be read: the component 'site.json' is a symlink")
+
+    # Cases for docstring claims that the cases above did not hold.
+
+    def test_each_reserved_prefix_fails_d1(self):
+        for prefix in RESERVED_PREFIXES:
+            with self.subTest(prefix=prefix):
+                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(name=f"{prefix}guardrails"))
+                self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json name '{prefix}guardrails' starts "
+                               "with a reserved prefix")
+
+    def test_reserved_prefix_in_entry_name_fails_d1(self):
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(name="cc-plugin-hooks"))
+        self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name 'cc-plugin-hooks' starts "
+                       "with a reserved prefix")
+
+    def test_marketplace_name_missing_or_empty_fails_d1(self):
+        for change, shown in ((lambda d: d.pop("name"), "None"), (lambda d: d.update(name=""), "''")):
+            with self.subTest(name=shown):
+                self.write_json(gate.VENDORED_MARKETPLACE, vendored())
+                self.edit_json(gate.VENDORED_MARKETPLACE, change)
+                self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json name is {shown}, not a name")
+
+    def test_symlinked_manifest_folder_fails_d2(self):
+        folder = self.root / "plugin/aiqt-guardrails-hooks/.claude-plugin"
+        folder.rename(folder.with_name("real-claude-plugin"))
+        os.symlink(folder.with_name("real-claude-plugin"), folder)
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source './aiqt-guardrails-hooks' "
+                       "does not resolve: plugin/aiqt-guardrails-hooks/.claude-plugin is a symlink")
+
+    def test_symlinked_manifest_fails_d2(self):
+        path = self.root / "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        path.rename(path.with_name("real.json"))
+        os.symlink(path.with_name("real.json"), path)
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source './aiqt-guardrails-hooks' "
+                       "does not resolve: plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json is a symlink")
+
+    def test_symlinked_input_folder_exits_3(self):
+        (self.root / "site-src").rename(self.root / "site-src.real")
+        os.symlink(self.root / "site-src.real", self.root / "site-src")
+        self.expect(3, "site-src/site.json could not be read: the component 'site-src' is a symlink")
+
+    def test_byte_order_mark_passes(self):
+        path = self.root / gate.MARKETPLACE
+        path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+        self.expect(0, "OK: D1 to D4 hold")
+
+    def test_vendored_entry_not_an_object_fails_d2(self):
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(plugins=["aiqt-guardrails-hooks"]))
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0] is not a JSON object")
+
+    def test_vendored_marketplace_without_plugins_list_fails_d2(self):
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.pop("plugins"))
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json has no plugins list")
+
+    def test_empty_version_fails_d3(self):
+        self.edit_json(gate.AGENT_MANIFEST, lambda d: d.update(version=""))
+        self.expect(1, "FAIL D3: cleanlanguage/plugin.json version is '', not a version")
+
+    def test_failure_count_line(self):
+        self.edit_json(gate.SITE_JSON, lambda d: d.update(site_key="jposluns"))
+        output = self.expect(1)
+        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+        self.edit_json(gate.AGENT_MANIFEST, lambda d: d.update(name="clean-language"))
+        output = self.expect(1)
+        self.assertEqual(output.splitlines()[-1], "FAIL: 2 inconsistencies")
+
+    def test_unreadable_last_line(self):
+        (self.root / gate.SITE_JSON).unlink()
+        got, out, err = self.run_gate()
+        self.assertEqual(got, 3, out + err)
+        self.assertEqual(err.splitlines()[-1], "UNREADABLE: exit 3")
+
+    def test_deeply_nested_json_exits_3(self):
+        self.write_text(gate.SITE_JSON, "[" * 100000 + "]" * 100000 + "\n")
+        self.expect(3, "site-src/site.json is nested too deeply to decode")
+
+    def test_source_with_empty_component_fails_d2(self):
+        for source in ("./aiqt-guardrails-hooks/", ".//aiqt-guardrails-hooks"):
+            with self.subTest(source=source):
+                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
+                self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source '{source}' has "
+                               "an empty or '..' component")
+
+    # The extractor: reached from REPO_ROOT, and exit 3 when it cannot be used.
+
+    def test_extractor_without_a_pattern_exits_3(self):
+        for name in ("VERSION_LINE", "SKILL_VERSION"):
+            with self.subTest(name=name):
+                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                self.edit_extractor(f"{name} = re.compile", f"{name}_GONE = re.compile")
+                self.expect(3, f"the extractor tools/skill-version.py could not be used: it has no {name} "
+                               "pattern of text")
+
+    def test_extractor_raising_while_it_loads_exits_3(self):
+        for statement, shown in (("raise RuntimeError('broken')", "RuntimeError: broken"),
+                                 ("raise SystemExit(0)", "SystemExit: 0")):
+            with self.subTest(statement=statement):
+                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                self.edit_extractor('PROG = "skill-version"\n', f'PROG = "skill-version"\n{statement}\n')
+                self.expect(3, f"the extractor tools/skill-version.py could not be loaded: {shown}")
+
+    def test_missing_extractor_exits_3(self):
+        (self.root / EXTRACTOR_REL).unlink()
+        self.expect(3, "tools/skill-version.py could not be read")
+
+    def test_symlinked_extractor_exits_3(self):
+        path = self.root / EXTRACTOR_REL
+        path.rename(path.with_name("real-skill-version.py"))
+        os.symlink(path.with_name("real-skill-version.py"), path)
+        self.expect(3, "tools/skill-version.py could not be read: the component 'skill-version.py' is a symlink")
+
+    # The reserved prefixes in another letter case.
+
+    def test_reserved_prefix_in_any_case_fails_d1(self):
+        for name in ("Claude-x", "ANTHROPIC-x", "Anthropics-x", "CC-Plugin-x"):
+            with self.subTest(name=name):
+                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(name=name))
+                self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json name '{name}' starts with a "
+                               "reserved prefix")
+
+    # The count lines for 1 and for more than 1.
+
+    def test_count_lines_read_for_1(self):
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(
+            source={"source": "github", "repo": "someone/else"}))
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["cleanlanguage"]))
+        output = self.expect(1)
+        self.assertIn("check-plugin-distribution: 1 relative source resolved, 1 dependency read\n", output)
+        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+
+    def test_count_lines_read_for_more_than_1(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(
+            dependencies=["cleanlanguage", "cleanlanguage@cleanlanguage"]))
+        output = self.expect(0)
+        self.assertIn("check-plugin-distribution: 2 relative sources resolved, 2 dependencies read\n", output)
 
 
 class RepositoryTreeTest(unittest.TestCase):
