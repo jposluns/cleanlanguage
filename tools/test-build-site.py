@@ -27,8 +27,9 @@ same source and fails when main() may not run a top-level check_* case
 group in a form that the source shows: main bound other than once by a
 def, a top-level check_* name bound other than once by a def or async def,
 either with a decorator, a check_* name bound by main() or in any scope
-inside it, a parameter included, or no call of a top-level check_* name in
-main(). The configured base is
+inside it, a parameter included, a global statement that names main or a
+check_* name in any scope, or no call of a top-level check_* name in main().
+The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -2838,8 +2839,13 @@ def check_stated_count(failures: list[str]) -> int:
     tab or U+00A0 before the download's first character, which must be neither
     U+FEFF nor whitespace, so a count that decodes as utf-8-sig, or strips a
     leading set of characters that holds U+FEFF, LF, the space, the tab or
-    U+00A0, states the wrong number. A tenth case holds the first-character
-    guard to PLAIN_STARTS, so a guard that reads the first byte instead fails."""
+    U+00A0, states the wrong number. The tenth to twelfth replace the
+    download's final newline, which must be exactly 1 LF, by a space, a tab or
+    U+00A0, so a count that strips a trailing set of characters that holds the
+    space, the tab or U+00A0, and adds nothing for it, states the wrong
+    number. A thirteenth case holds
+    the first-character guard to PLAIN_STARTS, so a guard that reads the first
+    byte instead fails."""
     extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
     astral = "Smile \U0001f600, cafe\u0301.\n".encode("utf-8")
     final = "end in exactly 1 LF"
@@ -2858,6 +2864,12 @@ def check_stated_count(failures: list[str]) -> int:
             return prefix + data if begins_plainly(data) else None
         return change
 
+    def trailing(suffix: bytes):
+        def change(data: bytes) -> bytes | None:
+            stripped = without_final_newline(data)
+            return None if stripped is None else stripped + suffix
+        return change
+
     cases = [("clean build", lambda data: data, ""),
              ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra, ""),
              ("download with U+1F600 and a combining accent", lambda data: data + astral, ""),
@@ -2866,7 +2878,10 @@ def check_stated_count(failures: list[str]) -> int:
              ("download beginning with a blank line", leading(b"\n"), first),
              ("download beginning with a space", leading(b" "), first),
              ("download beginning with a tab", leading(b"\t"), first),
-             ("download beginning with U+00A0", leading("\xa0".encode("utf-8")), first)]
+             ("download beginning with U+00A0", leading("\xa0".encode("utf-8")), first),
+             ("download ending in a space in place of its final newline", trailing(b" "), final),
+             ("download ending in a tab in place of its final newline", trailing(b"\t"), final),
+             ("download ending in U+00A0 in place of its final newline", trailing("\xa0".encode("utf-8")), final)]
     for name, change, expected in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -3646,8 +3661,14 @@ def case_group_problems(source: str) -> list[str]:
     main() must hold a call by the name of each top-level check_* name. So a second def of main or of a group, an
     assignment of either name, a := binding of either in a place that WALRUS_PLACES names, an import of a group, a
     decorator on either, a binding of a group by main() or inside it, and a deleted call each fail; GUARD_FORMS
-    holds 1 or more of each."""
+    holds 1 or more of each. A global statement that names main or a check_* name, in any scope of the source,
+    fails too: bindings() does not enter a class body or a function body, where such a statement lets an
+    assignment rebind the top-level name, and a class body runs when the file is loaded."""
     tree = ast.parse(source)
+    declared = sorted({name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names
+                       if name == "main" or name.startswith("check_")})
+    if declared:
+        return [f"a global statement names {', '.join(declared)}"]
     top = bindings(tree.body)
     mains = [node for name, node in top if name == "main"]
     if len(mains) != 1 or type(mains[0]) is not ast.FunctionDef or mains[0].decorator_list:
@@ -3726,6 +3747,18 @@ GUARD_FORMS += [
     ("a group bound by a comprehension target inside main()", f"    {CALL}\n",
      f"    ran += sum([{GROUP}(failures) for {GROUP} in ({SHADOW},)])\n"),
 ]
+# (form, code appended): each rebinds a top-level name through a global statement in a scope that bindings() does
+# not enter.
+GUARD_FORMS += [
+    ("a group rebound by a global statement in a top-level class body", None,
+     f"\nclass Shadow:\n    global {GROUP}\n    {GROUP} = {SHADOW}\n"),
+    ("a group rebound by a global statement in a class body inside a top-level if", None,
+     f"\nif True:\n    class Shadow:\n        global {GROUP}\n        {GROUP} = {SHADOW}\n"),
+    ("main rebound by a global statement in a top-level class body", None,
+     "\nclass Shadow:\n    global " + "main\n    main = lambda: 0\n"),
+    ("a group rebound by a global statement in a top-level def", None,
+     f"\ndef rebind():\n    global {GROUP}\n    {GROUP} = {SHADOW}\n"),
+]
 
 
 def check_case_groups_called(failures: list[str]) -> int:
@@ -3735,10 +3768,10 @@ def check_case_groups_called(failures: list[str]) -> int:
     runs (under a false condition or after an early return it does not), that its count and failures are kept, or
     that it is not removed from main() itself, since a guard that does not run cannot fail. It reads only the
     bindings that the source shows as names: a check_* function defined inside a class or another function is not
-    a case group, and a binding through globals(), setattr(), exec() or a global statement inside another function
-    is not read. At the top level, a := in the header of a def, class or lambda or in a comprehension is read, as
-    bindings() says; inside main(), every binding in every scope is read, as names_bound_within() says, parameters
-    included."""
+    a case group, and a binding through globals(), setattr() or exec() is not read. A global statement that names
+    main or a check_* name fails in any scope, a class body or a def included. At the top level, a := in the header
+    of a def, class or lambda or in a comprehension is read, as bindings() says; inside main(), every binding in
+    every scope is read, as names_bound_within() says, parameters included."""
     source = Path(__file__).read_text(encoding="utf-8")
     failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
     for form, anchor, replacement in GUARD_FORMS:

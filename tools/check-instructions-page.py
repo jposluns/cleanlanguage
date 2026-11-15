@@ -113,6 +113,9 @@ ends the gate as Python ends on Ctrl-C; code in tools/check-inline-code.py
 that ends the process itself, for example by os._exit, ends the gate with the
 code it gives; and code there that changes the gate's own functions or the
 interpreter's state, for example through sys.modules, is not guarded against.
+Such code can end the gate with exit 0 and no output on a page whose count is
+wrong: a ``described`` replaced through sys.modules by a function that calls
+sys.exit(0), beside a reader that raises ValueError, does so.
 
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
@@ -149,6 +152,9 @@ EMBEDDED = re.compile(r'<pre id="instructions-text"[^>]*>(.*?)</pre>', re.S)
 # source, so a number in another form beside the sentence is not read as the
 # stated count.
 STATED = re.compile(r"the same content the full download saves \((\d+) characters\)")
+# The form in which the embedded text and the download are compared, and so counted in the lengths reported with
+# them: read as Python reads text, which turns CR LF and CR into LF, with every LF at the end removed.
+COMPARED_FORM = "with line ends read as LF and the LFs at the end removed"
 INLINE_GATE = Path(__file__).resolve().parent / "check-inline-code.py"
 # The names read from tools/check-inline-code.py, and the value that stands for a name the file does not define.
 LOADED_NAMES = ("inline_code_problems", "UnsupportedPython")
@@ -321,7 +327,7 @@ def main() -> int:
 
     print(
         f"The instructions page embeds the portable text exactly "
-        f"({len(expected)} characters without the final newline), states the "
+        f"({len(expected)} characters {COMPARED_FORM}), states the "
         f"download's {saved} characters and carries no inline code."
     )
     return 0
@@ -354,8 +360,8 @@ def check_page(page: Path, button: str | None, expected: str, saved: int) -> tup
         if embedded != expected:
             problems.append(
                 f"{name}: the embedded text does not match "
-                f"{SOURCE.relative_to(REPO_ROOT)} ({len(embedded)} characters embedded, "
-                f"{len(expected)} in the file); {first_difference(embedded, expected)}. "
+                f"{SOURCE.relative_to(REPO_ROOT)} ({len(embedded)} characters embedded and "
+                f"{len(expected)} in the file, each {COMPARED_FORM}); {first_difference(embedded, expected)}. "
                 "Re-embed the file's contents in the page."
             )
 

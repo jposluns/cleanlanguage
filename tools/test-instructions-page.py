@@ -21,10 +21,16 @@ lies outside the Basic Multilingual Plane, and an e followed by U+0301, so a
 gate that counts UTF-16 code units or NFC-normalized text fails it. The CR LF
 case gives the download a CR LF where the block keeps LF, which the gate's
 comparison still matches, so a gate that counts newline-translated text fails
-it. The 2 final-line-end cases remove the download's final LF or make it CR
-LF, and each asserts that the download ended in exactly 1 LF before the edit:
-a gate that strips the final line end and adds 1 for it fails the first, and a
-gate that also strips a final CR fails both. The 5 leading-content cases put
+it. The 3 final-line-end cases remove the download's final LF or make it CR
+LF or 2 LF, and each asserts that the download ended in exactly 1 LF before
+the edit: a gate that strips 1 final LF and adds 1 for it fails the first, a
+gate that strips every final LF and adds 1 also fails the third, and a gate
+that also strips a final CR fails all 3. The 3
+trailing-content cases replace the download's final LF by a space, a tab or
+U+00A0 and put the same character at the end of the block, so the block still
+matches: a gate that strips a trailing set of characters that holds the
+space, the tab or U+00A0, and adds nothing for it, fails the case of that
+character. The 5 leading-content cases put
 U+FEFF, LF, a space, a tab or U+00A0 before the download's first character and
 the same character before the block's text, right after the copy button, so the
 block still matches; each asserts that the download decoded as UTF-8 and that
@@ -32,7 +38,8 @@ its first character, not its first byte, was neither U+FEFF nor whitespace
 before the edit. A gate that decodes the download as utf-8-sig fails the
 first, and a gate that strips a leading set of characters that holds U+FEFF,
 LF, the space, the tab or U+00A0 fails the case of that character. The CR
-LF, final-line-end and leading-content fixtures are written byte for byte.
+LF, final-line-end, trailing-content and leading-content fixtures are written
+byte for byte.
 
 Some cases replace or extend tools/check-inline-code.py, each on a page that
 states a wrong count: its reader raising ValueError, SystemExit(0),
@@ -64,9 +71,14 @@ in the class name of an exception whose repr raises. Each asserts exit
 -SIGINT, a last line of stderr that is KeyboardInterrupt, and nothing on
 stdout, so a gate that catches it at any of these places fails.
 
-The case of the committed tree also asserts both numbers of the gate's
-success line: the download without its final newline, read with its line
-ends translated, and the download as saved.
+The case of the committed tree also asserts the words and both numbers of the
+gate's success line: the download read with its line ends translated to LF,
+as Python reads text, without the LFs at its end, and the download as saved.
+The CR LF case, the cases of a final CR LF and of 2 final LF, and the 3
+trailing-content cases assert the same for their download, so a success line
+that states the first number as the download without its final newline fails
+them. The case of 1 character changed in the block asserts both lengths of
+the drift problem in the same form.
 
 1 case sets the mode of the download to 000, and 2 set the mode of the
 folder that holds the download or the page to 000. Each asserts exit 3 with
@@ -298,15 +310,26 @@ SAVED = len(SAVED_TEXT)
 # The other number of the gate's success line: the download read with its line ends translated to LF, as Python
 # reads text, without its final LFs.
 TRIMMED_LENGTH = len(SAVED_TEXT.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n"))
-SUCCESS_WORDS = (f"({TRIMMED_LENGTH} characters without the final newline), states the download's {SAVED} "
-                 "characters and carries no inline code.")
+# The gate's words for that form of the text.
+COMPARED_FORM = "with line ends read as LF and the LFs at the end removed"
+
+
+def success_words(trimmed: int, saved: int) -> str:
+    """The end of the gate's success line for a download of the given 2 lengths: read as Python reads text without
+    its final LFs, and as saved."""
+    return (f"({trimmed} characters {COMPARED_FORM}), states the download's {saved} characters and carries no "
+            "inline code.")
+
+
+SUCCESS_WORDS = success_words(TRIMMED_LENGTH, SAVED)
 COUNT_WORDS = f"check-instructions-page: expected exactly 1 stated count of the full download in {PAGE}, found"
 # 3 characters more than "Apply the precedence order": U+1F600, which UTF-16 writes as 2 code units, a space, and
 # U+0301 after the e, which NFC joins to it.
 ASTRAL = "Apply the \U0001f600 precedence orde\N{COMBINING ACUTE ACCENT}r"
 CASES = [
     ("the committed tree", None, (0, "", SUCCESS_WORDS)),
-    ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
+    ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"),
+        (1, "", f"({TRIMMED_LENGTH + 1} characters embedded and {TRIMMED_LENGTH} in the file, each {COMPARED_FORM})")),
     ("the copy button removed", edit(PAGE, BUTTON, ""), 1),
     ("the copy button shown", edit(PAGE, BUTTON, BUTTON.replace(" hidden", "")), 1),
     ("markup added inside the block", edit(PAGE, BUTTON, BUTTON + "<span>x</span>"), 1),
@@ -359,13 +382,29 @@ CASES = [
     ("a CR LF in the download, LF in the block, the page stating the count as saved",
         faults(edit_bytes(FILES[0], b"Apply the precedence order", b"Apply the precedence\r\norder"),
                edit_bytes(PAGE, b"Apply the precedence order", b"Apply the precedence\norder"),
-               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")),
+        (0, "", success_words(TRIMMED_LENGTH, SAVED + 1))),
     ("the download without its final newline, the page stating the count as saved",
         faults(final_line_end(FILES[0], b""),
                edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)")), 0),
     ("the download ending in CR LF, the page stating the count as saved",
         faults(final_line_end(FILES[0], b"\r\n"),
-               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")), 0),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")),
+        (0, "", success_words(TRIMMED_LENGTH, SAVED + 1))),
+    ("the download ending in 2 LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b"\n\n"),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 1} characters)")),
+        (0, "", success_words(TRIMMED_LENGTH, SAVED + 1))),
+    ("the download ending in a space in place of its final LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b" "), edit_bytes(PAGE, b"</pre>", b" </pre>")),
+        (0, "", success_words(TRIMMED_LENGTH + 1, SAVED))),
+    ("the download ending in a tab in place of its final LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], b"\t"), edit_bytes(PAGE, b"</pre>", b"\t</pre>")),
+        (0, "", success_words(TRIMMED_LENGTH + 1, SAVED))),
+    ("the download ending in U+00A0 in place of its final LF, the page stating the count as saved",
+        faults(final_line_end(FILES[0], "\xa0".encode("utf-8")),
+               edit_bytes(PAGE, b"</pre>", "\xa0".encode("utf-8") + b"</pre>")),
+        (0, "", success_words(TRIMMED_LENGTH + 1, SAVED))),
     ("the download beginning with U+FEFF, the page stating the count as saved",
         faults(leading(FILES[0], b"\xef\xbb\xbf"),
                edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\xef\xbb\xbf"),
