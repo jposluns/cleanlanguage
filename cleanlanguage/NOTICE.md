@@ -2,11 +2,13 @@
 
 ## Scope
 
-Except where otherwise noted, all material in this repository, including the Clean Language skill, the cleanlanguage.ai website content, markup, and styles, and the code, is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`), from the release after 1.0.15. The licence text is in [LICENSE](LICENSE). Adopted material is noted below, and any third-party material retains its original licence.
+Except where otherwise noted, all material in this repository, including the Clean Language skill, the cleanlanguage.ai website content, markup, and styles, and the code, is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`). The licence text is in [LICENSE](LICENSE). Adopted material is noted below, and any third-party material retains its original licence.
 
 ## Clean Language
 
-The original Clean Language material in this repository is copyright 2026 Jeff Posluns and licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`).
+Copyright 2026 Jeff Posluns
+
+The original Clean Language material in this repository is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`).
 
 Canonical licence:
 https://www.apache.org/licenses/LICENSE-2.0
@@ -16,13 +18,6 @@ Suggested attribution:
 > Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under the Apache License, Version 2.0.
 
 (Add "Changes were made." if you modified it.)
-
-## Releases up to 1.0.15
-
-Clean Language releases up to and including 1.0.15 were published under the Creative Commons Attribution-ShareAlike 4.0 International Public License (SPDX: `CC-BY-SA-4.0`) and remain under that licence. Each of those release archives carries the licence text it was published with. Releases after 1.0.15 are under the Apache License, Version 2.0.
-
-Canonical licence for releases up to 1.0.15:
-https://creativecommons.org/licenses/by-sa/4.0/
 
 ## Related work
 
