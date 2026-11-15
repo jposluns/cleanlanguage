@@ -1,40 +1,47 @@
 #!/usr/bin/env python3
 """Tests for tools/check-pr-text.py, the pull request text gate.
 
-Each case runs the gate as a separate process, as CI and a hand run do, with a temporary folder as
-its working directory, and checks its exit status and its output. The suite starts every child
-through run_child(), which sets a memory limit, a CPU limit and, where a case asks, a stack limit
-in the child before it runs the gate or the suite, and enforces a wall timeout on the child from
-the process that started it, so a gate that never ends stops at a limit. When a child of the top
-suite process hits its wall timeout, run_child() kills its whole process group, which holds every
-process the child started through run_child(); LIMIT_LAUNCH and run_child() state which process
-runs under which limit. The suite sets no limit on its own top process: in CI the job's time
-limit in the workflow bounds it, and on a local run nothing in the suite does. A case that needs
-a squash folder copies the gate and the label lint into a temporary tree, since the gate finds
-both from its own path. Every review-history label and every dash a case feeds the gate is built
-when the case runs, by joining strings or from an escape, so this file carries none of them as
-text.
+A case that runs the gate starts it as a separate process, as CI and a hand run do, and checks
+its exit status and its output; some cases, such as the static ones, run no gate. The suite
+starts every child through run_child(), which sets a memory limit, a CPU limit and, where a case
+asks, a stack limit in the child before it runs the gate or the suite, and enforces a wall
+timeout on the child from the process that started it, so a gate that never ends stops at a
+limit. When a child of the top suite process hits its wall timeout, run_child() kills its whole
+process group, which holds every process the child started through run_child(); LIMIT_LAUNCH and
+run_child() state which process runs under which limit. The suite sets no limit on its own top
+process: in CI the job's time limit in the workflow bounds it, and on a local run nothing in the
+suite does. A case that needs a squash folder copies the gate and the label lint into a
+temporary tree, since the gate finds both from its own path. Every review-history label and
+every dash a case feeds the gate is built when the case runs, by joining strings or from an
+escape, so this file carries none of them as text.
 
 The cases fall in 5 groups. DefectClasses holds a failing case for each mechanical defect class,
 which includes a code fence that is never closed and a blank text, in each text, and the digit
 bound and the subject binding. Exemptions holds the cases at the edges of the masks, the
 exemptions and the scope limits, which pass honest text inside an edge and fail text just outside
-it, and 3 cases that enumerate every code point from U+0000 to U+FFFF but the surrogates and
-compare the gate with the sets its docstring names: the characters that end a URL, the
-characters that may follow a fence closer's run, and the quote pairs that the quote mask masks.
-UnreadableInputs holds a case for each branch of the exit contract and each kind of unreadable
-input and usage error, where the deeply nested payload runs the gate under a soft stack limit of
-1 MiB that the case sets, or the hard limit when that is lower, so the JSON reader overflows its
-stack on any runner. OutputAndHonestTexts holds the output prefixes and escapes, runs from other
-folders and without -B, a bound on the time of the inline-code scan, a case that the scan ends
-on each shape of backtick run, the memory, CPU and wall limits of a child, a case that a
-grandchild ends with its timed-out parent, a static case that every child runs under its limits,
-the job's time limit in the workflow, and honest texts that pass. MutantSweep generates the
-mutation sites of the gate from its source, checks that each has a row or an argument that it is
-equivalent, and runs the cases each row names on a copy of the gate with the site applied; its
-docstring states its operators, its kill and equivalence criterion, its rule for a child that
-hits a limit and its residual. The class of counts stated with their selection rule has no case:
-it stays a judgement for reviewers, because no part of it is mechanical.
+it, and the enumeration cases, which ENUMERATION_SKIPS lists. Each of them enumerates the code
+points from U+0000 to U+FFFF but the surrogates and the code points that ENUMERATION_SKIPS names
+for it, such as U+000A, which ends a line, and compares the gate with a set that its docstring
+names: the characters that end a URL, the characters that end a parenthesis pair in a URL, the
+marks that a URL leaves off its end, the characters that may follow a fence closer's run, the
+character that keeps a run of backticks from opening a fence, the quote pairs that the quote mask
+masks, and the characters that end quoted text. UnreadableInputs holds cases of exit status 2:
+usage errors and unreadable inputs, such as a missing, undecodable or unparseable input, a folder
+given as a text file, a lint that cannot be loaded and an error whose message cannot be
+formatted, where the deeply nested payload runs the gate under a soft stack limit of 1 MiB that
+the case sets, or the hard limit when that is lower, so the JSON reader overflows its stack on
+any runner; cases of exit status 1 and 0 are mostly in the other groups, such as
+test_em_dash_fails and test_clean_event_passes. OutputAndHonestTexts holds the output prefixes
+and escapes, runs from other folders and without -B, a bound on the time of the inline-code
+scan, a case that the scan ends on each shape of backtick run, the memory, CPU and wall limits
+of a child, a case that a grandchild ends with its timed-out parent, a static case that every
+child runs under its limits, the job's time limit in the workflow, and honest texts that pass.
+MutantSweep generates the mutation sites of the gate from its source, checks that each has a row
+or an argument that it is equivalent, and runs the cases each row names on a copy of the gate
+with the site applied; its docstring states its operators, its kill and equivalence criterion,
+its rule for a child that hits a limit and its residual. The class of counts stated with their
+selection rule has no case: it stays a judgement for reviewers, because no part of it is
+mechanical.
 """
 import ast
 import collections
@@ -84,17 +91,35 @@ SHA256 = "a1" * 32
 CLEAN_SUBJECT = "Add the pull request text gate (#999)"
 CLEAN_SQUASH = CLEAN_SUBJECT + "\n\nAdd a gate that checks the texts of a pull request.\n"
 UNCLOSED = "the code fence opened on line {} is never closed"
-# Each character that ends a URL: whitespace, angle brackets, quote marks, a backtick, a
-# parenthesis outside a pair, U+2013, U+2014 and the curly quote marks.
+# A sample of the characters that end a URL, each tried by name in 2 cases: of the whitespace,
+# only the space and the tab; then the angle brackets, the straight quote marks, the backtick,
+# the parentheses, U+2013, U+2014 and the curly quote marks. The whole set is url_stopper_set(),
+# which the enumeration cases compare with the gate.
 URL_STOPPERS = (" ", "\t", "<", ">", '"', "'", "`", "(", ")", EN_DASH, EM_DASH,
                 "\u201c", "\u201d", "\u2018", "\u2019")
 ISE_ENDINGS = ("e", "es", "ed", "ing", "er", "ers", "able", "ation", "ations")
-# The sets the gate docstring names, each checked by enumerating U+0000 to U+FFFF: the marks
-# that end a URL besides whitespace as Python's \s reads it, the characters that may follow a
-# fence closer's run, and the 2 quote pairs the quote mask masks.
+# The sets the gate docstring names that the enumeration cases compare with the gate: the marks
+# that end a URL besides whitespace as Python's \s reads it, the marks a URL leaves off its end,
+# the characters that may follow a fence closer's run, the character after a backtick opener's
+# run that keeps it from opening a fence, the 2 quote pairs the quote mask masks, and for each
+# quote pair the character that ends its quoted text on a line.
 URL_STOPPER_MARKS = "<>\"'`()" + EN_DASH + EM_DASH + "\u2018\u2019\u201c\u201d"
+URL_TRAILING_MARKS = ".,;:!?"
 FENCE_CLOSER_TAIL = " \t"
+FENCE_OPENER_BREAKERS = "`"
 QUOTE_PAIRS = (('"', '"'), ("\u201c", "\u201d"))
+# The code points, besides the surrogates, that each enumeration case leaves out: U+000A, which
+# ends a line, so no line holds it; U+000D where it ends a line, since a carriage return before
+# a line feed is dropped; and the backtick where it would pair with a backtick into a code span.
+ENUMERATION_SKIPS = {
+    "test_url_ends_only_before_its_stopper_set": "\n",
+    "test_url_parenthesis_pair_ends_only_at_a_stopper": "\n",
+    "test_url_leaves_off_only_its_trailing_marks": "\n\r",
+    "test_fence_closer_takes_only_spaces_and_tabs_after_its_run": "\n\r",
+    "test_only_a_backtick_stops_a_backtick_run_opening_a_fence": "\n",
+    "test_quote_mask_masks_only_its_2_pairs": "\n`",
+    "test_quoted_text_ends_only_at_its_closer": "\n",
+}
 # The code points of the Unicode Quotation_Mark property, each pair of which the quote mask
 # enumeration checks.
 QUOTATION_MARKS = (0x22, 0x27, 0xab, 0xbb, 0x2018, 0x2019, 0x201a, 0x201b, 0x201c, 0x201d,
@@ -484,7 +509,7 @@ class DefectClasses(GateCase):
                 self.assertResult(result, 1, 1)
                 self.assertReports(result, "description: the text is empty")
 
-    def test_empty_squash_file_fails(self):
+    def test_empty_or_blank_squash_file_fails(self):
         for text in ("", "<!-- a comment -->\n\u200b\n"):
             with self.subTest(text=text):
                 result = self.squash(text)
@@ -606,15 +631,20 @@ class DefectClasses(GateCase):
         self.assertResult(result, 1, 1)
         self.assertEqual(result[1][0], "description: the text is empty", result[1])
 
-    def test_squash_name_with_a_further_suffix_is_not_bound(self):
+    def assertNameNotBound(self, name):
+        """The gate on a squash file of name in a squash folder does not bind its subject."""
         folder = self.tmp / "other" / ".github" / "squash"
         folder.mkdir(parents=True)
-        for name in ("5.txt.bak", "5xtxt"):
-            with self.subTest(name=name):
-                (folder / name).write_text("Add a thing (#4)\n\nBody.\n", encoding="utf-8")
-                result = self.run_gate("--squash", folder / name)
-                self.assertResult(result, 0, 0)
-                self.assertIn("pr-text: subject binding not checked", result[1])
+        (folder / name).write_text("Add a thing (#4)\n\nBody.\n", encoding="utf-8")
+        result = self.run_gate("--squash", folder / name)
+        self.assertResult(result, 0, 0)
+        self.assertIn("pr-text: subject binding not checked", result[1])
+
+    def test_squash_name_with_a_further_suffix_is_not_bound(self):
+        self.assertNameNotBound("5.txt.bak")
+
+    def test_squash_name_with_another_character_for_its_dot_is_not_bound(self):
+        self.assertNameNotBound("5xtxt")
 
 
 class Exemptions(GateCase):
@@ -924,11 +954,17 @@ class Exemptions(GateCase):
     def test_comment_opener_broken_by_a_zero_width_space_is_text(self):
         self.assertResult(self.description("<\u200b!-- x -->\n"), 0, 0)
 
-    def enumerate_lines(self, build, skip=("\n",)):
-        """The code points from U+0000 to U+FFFF, surrogates and skip left out, and the
-        description of 1 line per code point that build makes, with the gate's result."""
-        chars = [chr(code) for code in range(0x10000)
-                 if not 0xd800 <= code <= 0xdfff and chr(code) not in skip]
+    def enumerated(self):
+        """The code points from U+0000 to U+FFFF but the surrogates and those that
+        ENUMERATION_SKIPS names for the running case."""
+        skip = ENUMERATION_SKIPS[self._testMethodName]
+        return [chr(code) for code in range(0x10000)
+                if not 0xd800 <= code <= 0xdfff and chr(code) not in skip]
+
+    def enumerate_lines(self, build):
+        """The enumerated code points, and the description of 1 line per code point that build
+        makes, with the gate's result."""
+        chars = self.enumerated()
         lines = [build(char) for char in chars]
         code, output = self.description("\n".join(lines) + "\n")
         self.assertIn(code, (0, 1), output[-3:])
@@ -936,11 +972,11 @@ class Exemptions(GateCase):
                          output[-3:])
         return chars, output
 
-    def reported(self, output, fragment):
+    def reported(self, output, fragment, prefix="description"):
         """The line numbers of the output lines that hold fragment."""
         found = set()
         for line in output:
-            match = re.match(r"description:([0-9]+): ", line)
+            match = re.match(re.escape(prefix) + r":([0-9]+): ", line)
             if match and fragment in line:
                 found.add(int(match.group(1)))
         return found
@@ -953,14 +989,69 @@ class Exemptions(GateCase):
         ended = {chars[number - 1] for number in self.reported(output, "an -ise spelling")}
         self.assertEqual(sorted(map(ord, ended)), sorted(map(ord, url_stopper_set())))
 
+    def test_url_parenthesis_pair_ends_only_at_a_stopper(self):
+        # 1 line per code point: a URL with a parenthesis pair that holds the code point, then
+        # an -ise word right after the pair. When the code point is a stopper, the URL stops
+        # before the pair's closing parenthesis, so the word is reported; otherwise the pair is
+        # part of the URL, which runs on through the word and masks it.
+        chars, output = self.enumerate_lines(
+            lambda char: "https://e.com/(a" + char + "b)" + ISE_WORD)
+        ended = {chars[number - 1] for number in self.reported(output, "an -ise spelling")}
+        self.assertEqual(sorted(map(ord, ended)), sorted(map(ord, url_stopper_set())))
+
+    def test_url_leaves_off_only_its_trailing_marks(self):
+        # 1 squash line of 75 characters per code point: a URL that ends with the code point.
+        # The excess is exempt only when the URL reaches the end of the line, so the line is
+        # reported when the code point is a stopper or a mark the URL leaves off its end.
+        # U+000D is left out, since a carriage return before a line feed is dropped.
+        chars = self.enumerated()
+        lines = ["https://e.com/" + "x" * 60 + char for char in chars]
+        path = self.write("squash.txt", CLEAN_SUBJECT + "\n\n" + "\n".join(lines) + "\n")
+        code, output = self.run_gate("--squash", path, "--number", 999)
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertEqual(output[-1], "pr-text: {} defect(s)".format(len(output) - 1),
+                         output[-3:])
+        reported = self.reported(output, "75 characters, over 72", prefix="squash")
+        ended = {chars[number - 3] for number in reported}
+        expected = (url_stopper_set() | set(URL_TRAILING_MARKS)) - {"\r"}
+        self.assertEqual(sorted(map(ord, ended)), sorted(map(ord, expected)))
+
+    def test_only_a_backtick_stops_a_backtick_run_opening_a_fence(self):
+        # Per code point: a run of 3 backticks, a letter and the code point, which opens a
+        # fence unless the rest of its line holds a backtick; a dash line that is prose only
+        # when no fence opened; then 3 lines that leave no fence open whichever way it went: a
+        # run of 4 closes a fence of 3 or opens one of 4, a run of 3 opens a fence or is inside
+        # the fence of 4, and the last run of 4 closes either.
+        chars = self.enumerated()
+        blocks = ["```a" + char + "\nx " + EM_DASH + "\n````\n```\n````\n" for char in chars]
+        code, output = self.description("Intro.\n\n" + "".join(blocks))
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertNotIn("never closed", "\n".join(output[-3:]))
+        stopped = {chars[(number - 4) // 5] for number in self.reported(output, "an em dash")}
+        self.assertEqual(sorted(map(ord, stopped)), sorted(map(ord, FENCE_OPENER_BREAKERS)))
+
+    def test_quoted_text_ends_only_at_its_closer(self):
+        # Per code point, 2 lines: a straight pair, then a curly pair, each holding the code
+        # point and then a dash. The dash is reported only when the code point ends the quoted
+        # text before it, which only the closer of that pair does.
+        chars = self.enumerated()
+        lines = []
+        for char in chars:
+            lines.append('a "x' + char + EM_DASH + ' y" b')
+            lines.append("a " + chr(0x201c) + "x" + char + EM_DASH + " y" + chr(0x201d) + " b")
+        code, output = self.description("\n".join(lines) + "\n")
+        self.assertIn(code, (0, 1), output[-3:])
+        shown = self.reported(output, "an em dash")
+        ended = {(QUOTE_PAIRS[(number - 1) % 2], chars[(number - 1) // 2]) for number in shown}
+        self.assertEqual(ended, {(pair, pair[1]) for pair in QUOTE_PAIRS})
+
     def test_fence_closer_takes_only_spaces_and_tabs_after_its_run(self):
         # Per code point: an opener, a closer followed by the code point, a dash line that is
         # prose only when that closer closed the fence, then 2 lines that leave no fence open
         # whichever way the closer went.
         # U+000D is left out, since a carriage return before a line feed is dropped, and a
         # backtick lengthens the closer's run of backticks, which then still closes.
-        chars = [chr(code) for code in range(0x10000)
-                 if not 0xd800 <= code <= 0xdfff and chr(code) not in ("\n", "\r")]
+        chars = self.enumerated()
         blocks = ["```\n```" + char + "\nx " + EM_DASH + "\n```" + char + "\n````\n"
                   for char in chars]
         code, output = self.description("Intro.\n\n" + "".join(blocks))
@@ -974,8 +1065,7 @@ class Exemptions(GateCase):
         # and as a closer after the straight mark and after U+201C, and every ordered pair of
         # 2 quotation marks; the backtick, which opens a code span, and U+000A are left out.
         # A dash between the 2 marks is reported only when the pair is not masked.
-        chars = [chr(code) for code in range(0x10000)
-                 if not 0xd800 <= code <= 0xdfff and chr(code) not in ("\n", "`")]
+        chars = self.enumerated()
         pairs = []
         for char in chars:
             pairs.extend([(char, char), (char, '"'), (char, chr(0x201d)), ('"', char),
@@ -994,8 +1084,8 @@ class Exemptions(GateCase):
 
 
 class UnreadableInputs(GateCase):
-    """The exit contract: each kind of usage error and unreadable input exits 2, with the count
-    of the defects reported before it as the last line, and each reason line is pinned.
+    """Exit status 2 of the exit contract: a usage error or an unreadable input, as the cases
+    below build them, exits 2, with the count of the defects reported before it as the last line.
 
     The deeply nested payload runs the gate under a soft stack limit of DEEP_STACK, 1 MiB, or
     the hard limit when that is lower, set in a child that then replaces itself with the gate,
@@ -1060,7 +1150,8 @@ class UnreadableInputs(GateCase):
     def test_undecodable_text_exits_2(self):
         path = self.tmp / "description.md"
         path.write_bytes(b"A body \xff with a bad byte.\n")
-        self.assertUnreadable(self.run_gate("--description", path), "not UTF-8")
+        self.assertUnreadable(self.run_gate("--description", path),
+                              "not UTF-8: 'utf-8' codec can't decode byte 0xff")
 
     def test_undecodable_squash_file_exits_2(self):
         path = self.tmp / "squash.txt"
@@ -1162,6 +1253,20 @@ class UnreadableInputs(GateCase):
                 (gate.parent / "test-no-qa-labels.py").write_text(lint)
                 result = self.run_gate("--description", self.write("d.md", "Hi.\n"), gate=gate)
                 self.assertUnreadable(result, fragment)
+
+    def test_usage_or_unreadable_error_whose_message_exits_exits_2(self):
+        # The lint's scan raises a subclass of the gate's own Usage or Unreadable, taken from
+        # the gate's module, so the handler of that class formats an error whose message exits.
+        for kind, start in (("Usage", "pr-text: "), ("Unreadable", "unreadable: ")):
+            with self.subTest(kind=kind):
+                lint = ("import __main__\n\n\nclass E(__main__." + kind + "):\n"
+                        "    def __str__(self):\n        raise SystemExit(7)\n\n\n"
+                        "def scan(rel, text):\n    raise E()\n")
+                result = self.run_lint(lint)
+                shutil.rmtree(self.tmp / "tree")
+                self.assertResult(result, 2, 0)
+                self.assertEqual(result[1][0][:len(start)], start, result[1])
+                self.assertReports(result, "E (its message cannot be formatted)")
 
     def run_lint(self, lint):
         """The result of the gate on a clean description, with lint as the label lint."""
@@ -1431,7 +1536,7 @@ class OutputAndHonestTexts(GateCase):
             ORPHAN_BOUND))
 
     def test_every_child_runs_under_its_limits(self):
-        # The one call that starts a process is in run_child(): it starts LIMIT_LAUNCH, an
+        # The only call that starts a process is in run_child(): it starts LIMIT_LAUNCH, an
         # outermost call in a new session, waits with a timeout, and kills the child's group
         # on a timeout; run_child() takes its memory limit and timeout with no default, and
         # LIMIT_LAUNCH sets the memory and CPU limits and the mark of a nested call.
@@ -1879,9 +1984,20 @@ def string_tokens(source):
     return tokens
 
 
+def joins_a_name(node):
+    """Whether node is a string literal's join of a name, such as "|".join(ISE_STEMS)."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join" and isinstance(node.func.value, ast.Constant)
+            and isinstance(node.func.value.value, str) and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name) and not node.keywords)
+
+
 def pattern_pieces(node, smap, tokens):
-    """(pattern, offsets) of a pattern expression: each source offset, or None for a part
-    that is not a string literal, which stands as 1 placeholder character."""
+    """(pattern, offsets) of a pattern expression built from string literals, their
+    concatenation with + and a string's join of a name: the source offset of each character of
+    a literal, and None for a join of a name, which stands as 1 placeholder character and whose
+    members the generator removes 1 at a time. Any other expression raises UnknownConstruct, so
+    a pattern built in a way the generator does not read fails the adequacy test by name."""
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left = pattern_pieces(node.left, smap, tokens)
         right = pattern_pieces(node.right, smap, tokens)
@@ -1904,7 +2020,10 @@ def pattern_pieces(node, smap, tokens):
         if text != node.value:
             raise UnknownConstruct("a pattern literal the tokens do not rebuild: " + token)
         return text, offsets
-    return PLACEHOLDER, [None]
+    if joins_a_name(node):
+        return PLACEHOLDER, [None]
+    raise UnknownConstruct("a pattern expression the generator does not read: "
+                           + ast.unparse(node))
 
 
 def pattern_edits(offsets, edits):
@@ -2250,17 +2369,20 @@ SWEEP_ROWS = {
     'in read_utf8(), the statement `data = Path(path).read_bytes()` deleted, at its 1st '
     'occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in read_utf8(), the statement `raise Unreadable("{} {}: {}".format(what, path, '
-    'error.strerror or error)) from error` deleted, at its 1st occurrence':
+    'in read_utf8(), the statement `raise Unreadable("{} {}: {}".format(` deleted, at its 1st '
+    'occurrence':
         (U + 'test_folder_given_as_text_file_exits_2',),
     'in read_utf8(), the statement `try:` deleted, at its 2nd occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in read_utf8(), the statement `text = data.decode("utf-8", "strict")` deleted, at its 1st '
     'occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in read_utf8(), the statement `raise Unreadable("{} {}: not UTF-8: {}".format(what, path, '
-    'error)) from error` deleted, at its 1st occurrence':
+    'in read_utf8(), the statement `raise Unreadable("{} {}: not UTF-8: {}".format(` deleted, at '
+    'its 1st occurrence':
         (U + 'test_undecodable_squash_file_exits_2',),
+    'in read_utf8(), `False` changed to `True` in `what, path, describe(error, named=False))) '
+    'from error`, at its 1st occurrence':
+        (U + 'test_undecodable_text_exits_2',),
     'in read_utf8(), the statement `return text.replace("\\r\\n", "\\n")` deleted, at its 1st '
     'occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
@@ -2270,7 +2392,7 @@ SWEEP_ROWS = {
     'in read_utf8(), the body of `except UnicodeDecodeError as error:` replaced by `raise`, at '
     'its 1st occurrence':
         (U + 'test_undecodable_squash_file_exits_2',),
-    'in read_utf8(), `or` changed to `and` before `error`, at its 1st occurrence':
+    'in read_utf8(), `or` changed to `and` before `describe(error)`, at its 1st occurrence':
         (U + 'test_unreadable_line_names_its_input',),
     'in read_event(), the statement `text = read_utf8(path, "event payload")` deleted, at its '
     '1st occurrence':
@@ -2279,8 +2401,11 @@ SWEEP_ROWS = {
         (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), the statement `event = json.loads(text)` deleted, at its 1st occurrence':
         (D + 'test_event_squash_subject_with_wrong_number_fails',),
-    'in read_event(), the statement `raise Unreadable("event payload {}: not JSON: '
-    '{}".format(path, error)) from error` deleted, at its 1st occurrence':
+    'in read_event(), the statement `raise Unreadable("event payload {}: not JSON: {}".format(` '
+    'deleted, at its 1st occurrence':
+        (U + 'test_deeply_nested_payload_exits_2',),
+    'in read_event(), `False` changed to `True` in `path, describe(error, named=False))) from '
+    'error`, at its 1st occurrence':
         (U + 'test_deeply_nested_payload_exits_2',),
     'in read_event(), the statement `pull = event.get("pull_request") if isinstance(event, '
     'dict) else None` deleted, at its 1st occurrence':
@@ -2357,8 +2482,12 @@ SWEEP_ROWS = {
     'in describe(), the statement `return name + " (its message cannot be formatted)"` deleted, '
     'at its 1st occurrence':
         (U + 'test_error_whose_message_exits_exits_2',),
-    'in describe(), the statement `return name + ": " + text` deleted, at its 1st occurrence':
+    'in describe(), the statement `return name + ": " + text if named else text` deleted, at its '
+    '1st occurrence':
         (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
+    'in describe(), `True` changed to `False` in `def describe(error, named=True):`, at its 1st '
+    'occurrence':
+        (U + 'test_scan_that_raises_exits_2',),
     'in describe(), `BaseException` changed to `Exception` in `except BaseException:`, at its '
     '1st occurrence':
         (U + 'test_error_whose_type_name_cannot_be_formatted_exits_2',),
@@ -2745,9 +2874,9 @@ SWEEP_ROWS = {
     'at its 1st occurrence':
         (D + 'test_em_dash_in_squash_message_fails',),
     'in check_squash(), the statement `if blank(text):` deleted, at its 1st occurrence':
-        (D + 'test_empty_squash_file_fails',),
+        (D + 'test_empty_or_blank_squash_file_fails',),
     'in check_squash(), the statement `return` deleted, at its 1st occurrence':
-        (D + 'test_empty_squash_file_fails',),
+        (D + 'test_empty_or_blank_squash_file_fails',),
     'in check_squash(), the statement `if number is None:` deleted, at its 1st occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in check_squash(), the statement `report.note("pr-text:", " subject binding not checked")` '
@@ -2822,7 +2951,8 @@ SWEEP_ROWS = {
     'in number_from_name(), `fullmatch` changed to `search` in `if parts[-3:-1] == (".github", '
     '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
         (D + 'test_squash_names_with_a_leading_zero_are_not_bound',),
-    'in number_from_name(), `or` changed to `and` before `error`, at its 1st occurrence':
+    'in number_from_name(), `or` changed to `and` before `describe(error)`, at its 1st '
+    'occurrence':
         (U + 'test_removed_working_directory_exits_2',),
     'in number_from_name(), `1` changed up to `2` in `if parts[-3:-1] == (".github", "squash") '
     'and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
@@ -2994,14 +3124,20 @@ SWEEP_ROWS = {
     'in main(), the statement `status = EXIT_DEFECT if report.count else 0` deleted, at its 1st '
     'occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
-    'in main(), the statement `report.note("pr-text:", " {}; {}".format(error, USAGE))` '
-    'deleted, at its 1st occurrence':
+    'in main(), the statement `report.note("pr-text:", " {}; {}".format(describe(error, '
+    'named=False), USAGE))` deleted, at its 1st occurrence':
+        (U + 'test_bad_arguments_are_usage_errors',),
+    'in main(), `False` changed to `True` in `report.note("pr-text:", " {}; '
+    '{}".format(describe(error, named=False), USAGE))`, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
     'in main(), the statement `status = EXIT_USAGE` deleted, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
-    'in main(), the statement `report.note("unreadable:", " {}".format(error))` deleted, at its '
-    '1st occurrence':
+    'in main(), the statement `report.note("unreadable:", " {}".format(describe(error, '
+    'named=False)))` deleted, at its 1st occurrence':
         (U + 'test_body_that_is_a_number_exits_2',),
+    'in main(), `False` changed to `True` in `report.note("unreadable:", " '
+    '{}".format(describe(error, named=False)))`, at its 1st occurrence':
+        (U + 'test_unreadable_line_names_its_input',),
     'in main(), the statement `status = EXIT_UNREADABLE` deleted, at its 1st occurrence':
         (U + 'test_body_that_is_a_number_exits_2',),
     'in main(), the statement `report.note("unreadable:", " the gate stopped on an unexpected '
@@ -3301,7 +3437,7 @@ SWEEP_ROWS = {
     'in the pattern SQUASH_NAME, the quantifier `*` changed to `+`, at its 1st occurrence':
         (D + 'test_squash_names_with_a_leading_zero_are_not_bound',),
     'in the pattern SQUASH_NAME, the escape of `\\.` removed, at its 1st occurrence':
-        (D + 'test_squash_name_with_a_further_suffix_is_not_bound',),
+        (D + 'test_squash_name_with_another_character_for_its_dot_is_not_bound',),
     'in the pattern of `re.fullmatch` in parse(), the quantifier `*` changed to `+`, at its 1st '
     'occurrence':
         (D + 'test_number_option_of_1_digit_binds',),
@@ -3623,7 +3759,7 @@ HAND_ROWS = (
         'the squash check made to go on after a blank text',
         'if blank(text):\n        return',
         'if False:\n        return',
-        [D + 'test_empty_squash_file_fails']),
+        [D + 'test_empty_or_blank_squash_file_fails']),
     row(
         'the label scan replaced by an empty list of hits',
         'hits = scan(rel, "\\n".join(prose))',
@@ -3757,7 +3893,8 @@ HAND_ROWS = (
         [U + 'test_folder_given_as_text_file_exits_2']),
     row(
         'a missing file read as empty',
-        'raise Unreadable("{} {}: {}".format(what, path, error.strerror or error)) from error',
+        'raise Unreadable("{} {}: {}".format(\n            what, path, error.strerror or '
+        'describe(error))) from error',
         'return ""',
         [U + 'test_missing_squash_file_exits_2']),
     row(
@@ -3994,10 +4131,12 @@ class MutantSweep(unittest.TestCase):
     class of 2 or more members deleted, and a negated class made plain; each quantifier changed
     ({m,n} with m and n each 1 up and 1 down where valid, * to +, + to *, ? removed) and made
     lazy or greedy; each escaped metacharacter unescaped; and each inline flag and each flags
-    argument removed. regex_parse() raises UnknownConstruct on a construct it does not know, so
-    a new construct fails the adequacy test by name. Each site is named in words, from where it
-    is, the operator and the text it changes, and its occurrence, with its exact old text,
-    whole lines, its new text and the number of times its old text occurs.
+    argument removed. regex_parse() raises UnknownConstruct on a construct it does not know, and
+    pattern_pieces() on a pattern expression other than string literals, their concatenation
+    with + and a string's join of a name, so a new construct fails the adequacy test by name.
+    Each site is named in words, from where it is, the operator and the text it changes, and its
+    occurrence, with its exact old text, whole lines, its new text and the number of times its
+    old text occurs.
 
     The adequacy test runs no mutant. It fails when a generated site has neither a row in
     SWEEP_ROWS nor an entry in EQUIVALENT_SITES, when a row or an entry names a site the
@@ -4166,6 +4305,24 @@ class MutantSweep(unittest.TestCase):
         counts = collections.Counter(site.operator for site in self.sites.values())
         self.assertEqual([operator for operator in OPERATORS if not counts[operator]], [],
                          "operators with no site")
+
+    def test_pattern_built_in_an_unread_way_fails_by_name(self):
+        # A gate copy whose pattern joins an inline tuple, or picks its pattern by a condition,
+        # holds a pattern expression the generator does not read, so the generator, and with
+        # it setUp and the adequacy test, raises UnknownConstruct naming that expression.
+        source = GATE.read_text(encoding="utf-8")
+        for old, new, named in (
+                ('"|".join(ISE_STEMS)', '"|".join(("apolog", "author"))',
+                 "'|'.join(('apolog', 'author'))"),
+                ('BACKTICKS = re.compile(r"`+")',
+                 'BACKTICKS = re.compile(r"`+" if WIDTH else r"`")',
+                 "'`+' if WIDTH else '`'")):
+            with self.subTest(named=named):
+                self.assertEqual(source.count(old), 1)
+                with self.assertRaises(UnknownConstruct) as caught:
+                    generate_sites(source.replace(old, new))
+                self.assertEqual(str(caught.exception),
+                                 "a pattern expression the generator does not read: " + named)
 
     def test_named_cases_pass_unmutated(self):
         ids = sorted({case for ids in SWEEP_ROWS.values() for case in ids}

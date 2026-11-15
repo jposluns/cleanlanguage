@@ -143,13 +143,17 @@ before the gate stopped. Every output line starts with 1 of the fixed ASCII pref
 description, squash, unreadable: and pr-text:, and every character outside printable ASCII in a
 reported line is written as a backslash escape, so no author text starts a line of output.
 
-Unreadable input is a missing or unparseable payload, an event that is not a pull request or
-whose body is neither null nor text, a payload number that is not a positive integer, a missing
-or undecodable squash file or text file, a working directory that cannot be read when a
-relative squash path needs it, and a lint that cannot be loaded or that raises, exits or is
-interrupted while it loads. The gate catches every exception raised while it reads and checks,
-SystemExit and KeyboardInterrupt among them, such as from a scan of the lint, and reports it as
-unreadable with its type name.
+Unreadable input is a file that the gate cannot read, whatever the OSError that the read
+raises, such as a missing file, a folder given as a file or a file it may not read; a squash
+file or text file that is not UTF-8; a payload that is not JSON, an event that is not a pull
+request or whose body is neither null nor text, and a payload number that is not a positive
+integer; a working directory that cannot be read when a relative squash path needs it; and a
+lint that cannot be loaded or that raises, exits or is interrupted while it loads. The gate
+catches every exception raised while it reads and checks, SystemExit and KeyboardInterrupt
+among them, such as from a scan of the lint, and reports it as unreadable with its type name.
+Each handler that writes a caught error into a report line writes it through describe(), or,
+for an OSError, writes its strerror when that is set, so an error whose message cannot be
+formatted, even one whose formatting exits, still ends in the count line.
 
 The precondition of the contract: it holds when the label lint, which is trusted repository
 code run in the gate process, returns from loading and from each scan call without changing the
@@ -257,11 +261,13 @@ def read_utf8(path, what):
     try:
         data = Path(path).read_bytes()
     except OSError as error:
-        raise Unreadable("{} {}: {}".format(what, path, error.strerror or error)) from error
+        raise Unreadable("{} {}: {}".format(
+            what, path, error.strerror or describe(error))) from error
     try:
         text = data.decode("utf-8", "strict")
     except UnicodeDecodeError as error:
-        raise Unreadable("{} {}: not UTF-8: {}".format(what, path, error)) from error
+        raise Unreadable("{} {}: not UTF-8: {}".format(
+            what, path, describe(error, named=False))) from error
     return text.replace("\r\n", "\n")
 
 
@@ -271,7 +277,8 @@ def read_event(path):
     try:
         event = json.loads(text)
     except (ValueError, RecursionError) as error:
-        raise Unreadable("event payload {}: not JSON: {}".format(path, error)) from error
+        raise Unreadable("event payload {}: not JSON: {}".format(
+            path, describe(error, named=False))) from error
     pull = event.get("pull_request") if isinstance(event, dict) else None
     if not isinstance(pull, dict):
         raise Unreadable("event payload {}: not a pull request event".format(path))
@@ -286,12 +293,13 @@ def read_event(path):
     return number, body.replace("\r\n", "\n")
 
 
-def describe(error):
+def describe(error, named=True):
     """The type name and message of a caught error, as plain text that cannot raise.
 
     An error from the lint can carry a message whose formatting raises, even SystemExit or
     KeyboardInterrupt; that is caught with every other exception, and the type name, or a
-    fixed phrase, stands in for the part that cannot be formatted.
+    fixed phrase, stands in for the part that cannot be formatted. With named false, the text
+    is the message alone when it can be formatted.
     """
     try:
         name = str.__str__(str(type(error).__name__))
@@ -301,7 +309,7 @@ def describe(error):
         text = str.__str__(str(error))
     except BaseException:
         return name + " (its message cannot be formatted)"
-    return name + ": " + text
+    return name + ": " + text if named else text
 
 
 def load_scan():
@@ -467,7 +475,7 @@ def number_from_name(path):
         parts = Path(path).absolute().parts
     except OSError as error:
         raise Unreadable("squash file {}: the working directory cannot be read: {}".format(
-            path, error.strerror or error)) from error
+            path, error.strerror or describe(error))) from error
     if parts[-3:-1] == (".github", "squash") and SQUASH_NAME.fullmatch(parts[-1]):
         return bounded_number(parts[-1][:-len(".txt")])
     return None
@@ -519,10 +527,10 @@ def main(argv):
             check_squash(report, read_utf8(path, "squash file"), number, scan)
         status = EXIT_DEFECT if report.count else 0
     except Usage as error:
-        report.note("pr-text:", " {}; {}".format(error, USAGE))
+        report.note("pr-text:", " {}; {}".format(describe(error, named=False), USAGE))
         status = EXIT_USAGE
     except Unreadable as error:
-        report.note("unreadable:", " {}".format(error))
+        report.note("unreadable:", " {}".format(describe(error, named=False)))
         status = EXIT_UNREADABLE
     except BaseException as error:
         # A scan of the lint, or a hit it returns, that raises SystemExit or KeyboardInterrupt
