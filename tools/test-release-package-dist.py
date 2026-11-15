@@ -5,8 +5,9 @@ The packager is meant to work as follows, and the cases below check it at
 the builds and on the planted paths that they name. A build that passes
 every check writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip
 and a .sha256 beside each. A build that is refused at a check, or ended by
-SIGHUP, SIGINT or SIGTERM, must leave no zip and no .sha256 in dist/,
-neither a new one nor one that an earlier build wrote, so that a reader
+SIGHUP, SIGINT or SIGTERM at any point from its first removal on, must
+leave no zip and no .sha256 in dist/, neither a new one nor one that an
+earlier build wrote, so that a reader
 cannot take a stale or unverified zip for the refused build; a removal that
 fails is the exception, and then the build fails and the output it could
 not remove stays. The packager removes entries of dist/ by name and type: a
@@ -19,7 +20,8 @@ replace that object; it refuses after it has removed the outputs of an
 earlier build and before it makes its first work folder, so before it
 writes anything to dist/. A build refuses with exit 1 when dist is renamed
 or replaced by a symbolic link while it runs, and then removes nothing
-through the new dist.
+through the new dist, not even a staging folder that it made there. The
+name tests take only ASCII letters and digits, whatever the locale.
 
 Every build here runs in a clone that the test makes in a temporary folder
 with `git clone --no-local`, never in the checkout it runs from, so a dist/
@@ -54,17 +56,25 @@ names outside the set, such as a name 2 edits away, is not caught by it.
 Besides these, the test plants a plain file, a folder of scripts, a folder
 at the output name of another version, a regular file with a staging name
 (OTHER_PLANTS), a symbolic link with a staging name to a folder outside
-dist/ (STAGING_LINK), and 2 leftover staging folders (LEFTOVER_STAGING),
-each holding a file. After each build that follows a planting, each planted
+dist/ (STAGING_LINK), and 64 leftover staging folders (LEFTOVER_STAGING),
+each holding a file: 2 named ones, and 62 that between them put each of
+the 62 letters and digits of mktemp at each of the 6 places. So a
+narrowing of the staging test that drops 1 of those characters at any
+place keeps a leftover staging folder, and a case fails. After each
+build that follows a planting, each planted
 path must be there with its bytes unchanged, the link must still point at
 the same unchanged folder, and the leftover staging folders must be gone,
 except the 1 at which the stand-in rm of case 10 fails, which must still
-hold its file. Before each refused build of cases 2 to 4 and 10, and each
-build of case 9 that follows a good build, the test also plants the 2
-outputs of an earlier build for version STALE_VERSION. The reference build,
-the build with no dist/ in case 1, case 7 and the builds of case 11 that
-receive a signal while the exit trap runs plant nothing in dist/; case 7
-makes dist itself a link, a file or a FIFO.
+hold its file. Before each refused build of cases 2 to 4 and 10, each
+build of case 9 that follows a good build, and each build of case 11 that
+receives a signal during its first removal, the test also plants the 2
+outputs of an earlier build for each version of STALE_VERSIONS: 10.20.30,
+and a version each of whose parts holds the 10 digits in turn, so that a
+narrowing of the output test that drops a digit at any part, or takes
+fewer than 10 digits in a part, keeps a stale output, and a case fails.
+The reference build, the build with no dist/ in case 1, case 7 and the
+builds of case 11 that receive a signal while the exit trap runs plant
+nothing in dist/; case 7 makes dist itself a link, a file or a FIFO.
 
 In its set-up, before any case, the test builds the clone with the packager
 of REFERENCE_COMMIT, which gives the reference digest. The cases, all in
@@ -125,7 +135,11 @@ that clone:
     move of a .sha256 file with exit 7, and that receives SIGTERM, SIGHUP
     or SIGINT while a stand-in rm holds the first removal of its exit trap,
     exits 7, leaves no zip and no .sha256 in dist/, and leaves neither of
-    its 2 work folders. The test resets the 3 signals to their default
+    its 2 work folders. After a good build, a build refused by --bogus
+    that receives SIGTERM, SIGHUP or SIGINT while a stand-in rm holds the
+    first removal in dist/ exits 143, 129 or 130 before the argument
+    check, and leaves no zip and no .sha256 in dist/, neither the good
+    build's nor a stale one. The test resets the 3 signals to their default
     action in the build's process, since bash cannot trap a signal that
     was ignored when it started.
 12. With BASHOPTS=dotglob, BASHOPTS=nocasematch, SHELLOPTS=noglob,
@@ -142,7 +156,10 @@ that clone:
     a stand-in mktemp before its second call, by a stand-in mktemp after
     its second call, or by a stand-in cmp after its last call, exits 1 with
     the packager's message; the outside folder, which holds a file named
-    cleanlanguage.zip, is unchanged, and the renamed dist holds no file
+    cleanlanguage.zip, is unchanged, except that after the stand-in
+    mktemp before its second call it also holds the empty staging folder
+    that the build made through the link, which the exit trap does not
+    remove through a replaced dist; the renamed dist holds no file
     with an output name. After the first 2, it also holds no staging
     folder; after the last 2, the staging folder that the build made stays
     in it, since the build can reach it only through the name dist. A build
@@ -152,7 +169,12 @@ that clone:
     output name and no staging folder. In each of these builds the
     stand-in is not called again after the call at which it replaced dist,
     so a build whose dist was replaced after the first mktemp call makes
-    no staging folder at all.
+    no staging folder at all. A build whose stand-in zip renames dist,
+    makes in the outside folder a folder with the name of the build's
+    staging folder, holding a file, puts a symbolic link to the outside
+    folder in place of dist and exits 9, exits 9; the outside folder, with
+    that folder and file, is unchanged, and the renamed dist keeps the
+    build's staging folder.
 14. A stand-in mktemp records the 2 work folders of a build. After a good
     build, and after a build whose stand-in mv refuses each move of a
     .sha256 file with exit 7, both are gone; the failed build exits 7 and
@@ -164,6 +186,12 @@ that clone:
     removed with the earlier outputs, leaves that folder in place; the
     build still exits 0 with its 4 outputs, and the first work folder is
     gone.
+15. Under the first locale of WIDE_LOCALES in which a bash [A-Za-z] takes
+    an accented capital letter, a good build keeps the planted paths,
+    removes the leftover staging folders, and keeps 3 folders whose names
+    are a staging name with 1 letter or digit outside ASCII and 2 files
+    whose names are an output name with digits outside ASCII. The case is
+    skipped, with that reason, when no such locale is installed.
 
 Each case starts with no dist/ in the clone.
 
@@ -219,17 +247,40 @@ OTHER_PLANTS = {
     "cleanlanguage-1.0.0.zip/keep.txt": b"a folder with an output name\n",
     ".release-package.FiLe12": b"a file with a staging name\n",
 }
-# An earlier build's outputs for another version, planted before each refused
-# build; each version part has 2 or more digits, so that a version test that
-# takes only 1 digit in a part keeps them.
-STALE_VERSION = "10.20.30"
+# Earlier builds' outputs for other versions, planted before each refused
+# build. Each version part of the first has 2 digits, so that a version test
+# that takes only 1 digit in a part keeps them; each part of the second
+# holds each of the 10 digits, so that a version test that drops a digit
+# from a part, or takes fewer than 10 digits in a part, keeps them.
+STALE_VERSIONS = ("10.20.30", "0123456789.0123456789.0123456789")
+# The 62 characters that mktemp puts in a staging name.
+MKTEMP_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 # A symbolic link with a staging name, to a folder outside dist/ that holds
 # STAGING_LINK_FILE; the build must keep the link and leave the folder as it is.
 STAGING_LINK = ".release-package.LnK456"
 STAGING_LINK_FILE = "keep.txt"
-# 2 leftover staging folders, each holding a file, which a build must remove;
-# 2, so that a removal that stops at its first failure leaves the second.
-LEFTOVER_STAGING = (".release-package.AbC123", ".release-package.zZ9999")
+# Leftover staging folders, each holding a file, which a build must remove:
+# 2 named ones, so that a removal that stops at its first failure leaves the
+# second, and 62 more, the k-th of which takes, at each of its 6 places, the
+# character k places further along MKTEMP_CHARACTERS (taken round), so that
+# each of the 62 characters stands at each place in 1 of them and a staging
+# test that drops a character keeps 1 of them.
+LEFTOVER_STAGING = (".release-package.AbC123", ".release-package.zZ9999") + tuple(
+    ".release-package." + "".join(MKTEMP_CHARACTERS[(k + place) % len(MKTEMP_CHARACTERS)]
+                                  for place in range(6))
+    for k in range(len(MKTEMP_CHARACTERS)))
+# Locales in which a bash range may take characters outside ASCII; the
+# locale case uses the first of them in which [A-Za-z] takes an accented
+# capital letter, and is skipped, with that reason, when none does.
+WIDE_LOCALES = ("en_US.UTF-8", "en_GB.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8")
+# Names outside ASCII that a range test of the removal takes under such a
+# locale and that mktemp and the packager never give, each planted as a
+# folder holding KEEP (a staging-like name) or as a regular file: an
+# accented capital letter, a sharp s, an Arabic-Indic digit, and a version
+# in Arabic-Indic digits.
+NON_ASCII_FOLDERS = (".release-package.\u00c0BCDEF", ".release-package.abc\u00dfef",
+                     ".release-package.ab\u0663def")
+NON_ASCII_FILES = ("cleanlanguage-\u0661.\u0660.\u0660.zip", "cleanlanguage-1.0.\u0663.zip.sha256")
 REFUSED_NAME = "exists and is not a regular file that the packager wrote"
 REMOVAL_FAILED = ("release-package: could not remove every earlier output from dist/; "
                   "any it could not remove is still there")
@@ -461,9 +512,10 @@ class DistTests(unittest.TestCase):
         self.assert_plants_kept(staging_as_files=staging_as_files)
 
     def plant_stale(self):
-        """Plant the outputs of an earlier build for STALE_VERSION."""
-        (self.dist / ("cleanlanguage-%s.zip" % STALE_VERSION)).write_bytes(b"stale")
-        (self.dist / ("cleanlanguage-%s.zip.sha256" % STALE_VERSION)).write_bytes(b"stale\n")
+        """Plant the outputs of an earlier build for each of STALE_VERSIONS."""
+        for version in STALE_VERSIONS:
+            (self.dist / ("cleanlanguage-%s.zip" % version)).write_bytes(b"stale")
+            (self.dist / ("cleanlanguage-%s.zip.sha256" % version)).write_bytes(b"stale\n")
 
     def assert_refused_leaves_nothing(self, *args: str, autocrlf: bool = False, path_prefix: str = "",
                                       reason: str):
@@ -814,6 +866,99 @@ class DistTests(unittest.TestCase):
     def test_sigint_during_move_leaves_nothing(self):
         self.assert_signal_ends_build(signal.SIGINT, 130)
 
+    def assert_signal_during_first_removal(self, sig: int, code: int):
+        """After a good build, with the plants and the stale outputs planted
+        again, a build refused by --bogus whose stand-in rm holds the first
+        removal in dist/ until the test has sent sig to the build, then runs
+        the real rm, must exit with code and leave no zip and no .sha256 in
+        dist/, neither the good build's nor a stale one."""
+        self.good_build()
+        self.plant()
+        self.plant_stale()
+        bin_dir = self.bin_dir("holding-rm")
+        held, go = bin_dir / "held", bin_dir / "go"
+        self.write_script(bin_dir / "rm",
+                          "for a in \"$@\"; do\n"
+                          "  case \"$a\" in dist/*)\n"
+                          "    if [ ! -e '%s' ]; then\n"
+                          "      : > '%s'\n"
+                          "      n=0\n"
+                          "      while [ ! -e '%s' ] && [ \"$n\" -lt 1200 ]; do sleep 0.1; n=$((n + 1)); done\n"
+                          "    fi\n"
+                          "    break ;;\n"
+                          "  esac\n"
+                          "done\n"
+                          "exec '%s' \"$@\"\n" % (held, held, go, self.real("rm")))
+        proc = subprocess.Popen(["bash", str(self.clone / "tools" / "release-package.sh"), "--bogus"],
+                                cwd=str(self.clone), env=self.packager_env(path_prefix=str(bin_dir)),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, preexec_fn=default_signals)
+        try:
+            deadline = time.monotonic() + BUILD_TIMEOUT
+            while not held.exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(held.exists(), "the first removal never removed an entry of dist/")
+            proc.send_signal(sig)
+            time.sleep(0.2)
+        finally:
+            go.write_bytes(b"")
+            _, stderr = proc.communicate(timeout=BUILD_TIMEOUT)
+        self.assertEqual(proc.returncode, code, stderr)
+        self.assertNotIn("unknown argument --bogus", stderr)
+        self.assertEqual(outputs(self.dist), [], "a build ended during its first removal left output in dist/")
+        self.assert_plants_kept()
+
+    def test_sigterm_during_first_removal_leaves_nothing(self):
+        self.assert_signal_during_first_removal(signal.SIGTERM, 143)
+
+    def test_sighup_during_first_removal_leaves_nothing(self):
+        self.assert_signal_during_first_removal(signal.SIGHUP, 129)
+
+    def test_sigint_during_first_removal_leaves_nothing(self):
+        self.assert_signal_during_first_removal(signal.SIGINT, 130)
+
+    def wide_locale(self) -> str:
+        """The first of WIDE_LOCALES in which a bash [A-Za-z] takes an
+        accented capital letter, or an empty string."""
+        for locale in WIDE_LOCALES:
+            proc = subprocess.run(["bash", "-c", "[[ $1 =~ ^[A-Za-z]$ ]]", "probe", "\u00c0"],
+                                  env=self.packager_env(extra={"LC_ALL": locale}),
+                                  stdin=subprocess.DEVNULL, capture_output=True, timeout=BUILD_TIMEOUT)
+            if proc.returncode == 0:
+                return locale
+        return ""
+
+    def test_name_tests_ignore_locale(self):
+        """Under a locale in which a bash range takes characters outside
+        ASCII, a good build, with the plants and NON_ASCII_FOLDERS and
+        NON_ASCII_FILES planted, keeps each of the latter unchanged, keeps
+        the planted paths and removes the leftover staging folders."""
+        locale = self.wide_locale()
+        if not locale:
+            self.skipTest("no locale of %s in which a bash range takes a letter outside ASCII is installed"
+                          % ", ".join(WIDE_LOCALES))
+        self.plant()
+        for name in NON_ASCII_FOLDERS:
+            folder = os.path.join(os.fsencode(self.dist), name.encode("utf-8"))
+            os.mkdir(folder)
+            with open(os.path.join(folder, KEEP.encode("ascii")), "wb") as handle:
+                handle.write(KEEP_TEXT)
+        for name in NON_ASCII_FILES:
+            with open(os.path.join(os.fsencode(self.dist), name.encode("utf-8")), "wb") as handle:
+                handle.write(KEEP_TEXT)
+        code, stderr = self.build(extra={"LC_ALL": locale})
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(outputs(self.dist), self.names)
+        self.assert_plants_kept()
+        for name in NON_ASCII_FOLDERS:
+            path = os.path.join(os.fsencode(self.dist), name.encode("utf-8"), KEEP.encode("ascii"))
+            self.assertTrue(os.path.isfile(path), "the build under %s removed %r" % (locale, name))
+        for name in NON_ASCII_FILES:
+            path = os.path.join(os.fsencode(self.dist), name.encode("utf-8"))
+            self.assertTrue(os.path.isfile(path), "the build under %s removed %r" % (locale, name))
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), KEEP_TEXT)
+
     def assert_inherited_option(self, plant: bool = True, **extra: str):
         """A good build and then a build refused by --bogus, with nothing
         planted again, each with extra in its environment. Without plant,
@@ -858,11 +1003,14 @@ class DistTests(unittest.TestCase):
         self.assert_inherited_option(BASH_ENV=str(bash_env))
 
     def assert_replaced_dist_refused(self, command: str, call: int, after: bool, staging_kept: bool,
-                                     link: bool = True):
+                                     link: bool = True, made_in_target: bool = False):
         """A stand-in for command renames dist and puts in its place a
         symbolic link to a folder outside the clone, or with link false a new
         empty folder, at its call-th call, after or before it runs the real
-        command."""
+        command. With made_in_target, the build made its staging folder
+        through the link, in the outside folder, and the exit trap, which
+        removes nothing through a replaced dist, leaves that folder there,
+        empty; the outside folder must otherwise be unchanged."""
         target = self.outside("replaced-dist-target")
         (target / "cleanlanguage.zip").write_bytes(b"a reader's file\n")
         before = snapshot(target)
@@ -886,7 +1034,14 @@ class DistTests(unittest.TestCase):
         self.plant()
         code, stderr = self.build(path_prefix=str(bin_dir))
         self.assertTrue(self.moved_dist.is_dir(), "the stand-in %s never replaced dist" % command)
-        self.assertEqual(snapshot(target), before, "the build changed the folder that the new dist points at")
+        found = snapshot(target)
+        if made_in_target:
+            made = [n for n in found if n not in before]
+            self.assertEqual(len(made), 1, "the outside folder holds %r" % found)
+            self.assertTrue(STAGING_NAME.fullmatch(made[0]) and found[made[0]] is None,
+                            "the build made %r in the outside folder" % made)
+            del found[made[0]]
+        self.assertEqual(found, before, "the build changed the folder that the new dist points at")
         self.assertEqual(code, 1, stderr)
         self.assertIn(DIST_REPLACED, stderr)
         # A further call would come after the check that should have ended
@@ -908,7 +1063,40 @@ class DistTests(unittest.TestCase):
         self.assert_replaced_dist_refused("mktemp", 1, after=True, staging_kept=False)
 
     def test_dist_replaced_before_second_mktemp_refused(self):
-        self.assert_replaced_dist_refused("mktemp", 2, after=False, staging_kept=False)
+        self.assert_replaced_dist_refused("mktemp", 2, after=False, staging_kept=False, made_in_target=True)
+
+    def test_trap_removes_nothing_through_replaced_dist(self):
+        """A stand-in zip renames dist, makes in a folder outside the clone a
+        folder with the name of the build's staging folder, holding KEEP,
+        puts in place of dist a symbolic link to that outside folder, and
+        exits 9. The build exits 9; the outside folder, with the folder and
+        file that the stand-in made, is unchanged, and the renamed dist
+        holds no output and keeps the build's staging folder."""
+        target = self.outside("replaced-dist-target")
+        (target / "cleanlanguage.zip").write_bytes(b"a reader's file\n")
+        bin_dir = self.bin_dir("replacing-zip")
+        made = bin_dir / "made"
+        self.write_script(bin_dir / "zip",
+                          "for a in \"$@\"; do last=$a; done\n"
+                          "name=$(basename \"$(dirname \"$last\")\")\n"
+                          "'%s' '%s' '%s' || exit 1\n"
+                          "mkdir \"%s/$name\" || exit 1\n"
+                          "printf 'a file the packager does not write\\n' > \"%s/$name/%s\" || exit 1\n"
+                          "'%s' -s '%s' '%s' || exit 1\n"
+                          "printf '%%s\\n' \"$name\" > '%s'\n"
+                          "exit 9\n" % (self.real("mv"), self.dist, self.moved_dist, target, target, KEEP,
+                                        self.real("ln"), target, self.dist, made))
+        self.plant()
+        code, stderr = self.build(path_prefix=str(bin_dir))
+        self.assertEqual(code, 9, stderr)
+        self.assertTrue(made.exists(), "the stand-in zip never replaced dist")
+        name = made.read_text(encoding="ascii").strip()
+        self.assertTrue(STAGING_NAME.fullmatch(name), "the stand-in zip wrote to %r" % name)
+        self.assertEqual(snapshot(target), {"cleanlanguage.zip": b"a reader's file\n", name: None,
+                                            name + "/" + KEEP: KEEP_TEXT},
+                         "the exit trap removed, through the new dist, what the build did not write")
+        left = outputs(self.moved_dist)
+        self.assertEqual(left, [name], "the renamed dist holds %r" % left)
 
     def test_dist_replaced_after_second_mktemp_refused(self):
         self.assert_replaced_dist_refused("mktemp", 2, after=True, staging_kept=True)

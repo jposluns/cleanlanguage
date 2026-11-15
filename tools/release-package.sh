@@ -7,7 +7,7 @@
 # bits the repository never recorded), so a check that read them would pass on
 # one machine and fail on another. The git tree is identical everywhere the
 # commit exists, and the archive is stamped from the commit and ordered, so
-# the same commit rebuilt with the same zip implementation gives the same
+# the same commit rebuilt with the same zip binary gives the same
 # bytes and checksum; different zip builds can differ, so a digest is
 # comparable only between builds made with the same zip binary.
 #
@@ -61,12 +61,14 @@
 # inode of that folder, or of the one it makes later, and refuses with exit
 # 1 if dist is no longer that folder after it makes dist/, after it makes
 # its staging folder there, or just before the moves. Directly after that
-# first check, and before the argument and git tree checks, it removes the
-# outputs that an earlier build left, chosen by name and type, not by who
-# wrote them: each
-# regular file named cleanlanguage.zip, cleanlanguage-X.Y.Z.zip, or the
-# .sha256 of either, and each folder named .release-package. followed by 6
-# letters or digits, together with everything that folder holds. It keeps
+# first check it sets its exit trap, and then, before the argument and git
+# tree checks, it removes the outputs that an earlier build left, chosen by
+# name and type, not by who wrote them: each regular file named
+# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip, or the .sha256 of either,
+# where X, Y and Z are ASCII digits, and each folder named
+# .release-package. followed by 6 ASCII letters or digits, together with
+# everything that folder holds. The name tests list each of these
+# characters, so the locale does not change what they match. It keeps
 # every other entry of dist/: a file or folder of any other name, a symbolic
 # link or file that carries a staging name, and a symbolic link, folder,
 # FIFO or other special file that carries an output name. The move into
@@ -75,17 +77,20 @@
 # names it writes is held by anything other than a regular file.
 # That refusal comes after the removal of the earlier outputs, so it leaves
 # no stale output, and before the build writes anything to dist/, so the
-# object stays as it was. From the point where it starts the archive, an
-# exit trap removes the outputs again on a failed exit; an exit before that
-# point needs no second removal, since the build has written nothing to
-# dist/ by then. A SIGHUP, SIGINT or SIGTERM ends the build with exit 129,
-# 130 or 143, once the command in progress has ended, and counts as a failed
-# exit. So a refused build leaves in dist/ no zip and no .sha256 that a
-# build wrote, unless a removal itself fails, or dist was replaced while it
-# ran: the build then still fails, an output that it could not remove
-# stays, and through a replaced dist it removes nothing. A SIGKILL runs no
-# trap, so it can leave a zip without its .sha256, or a staging folder,
-# which the next build removes.
+# object stays as it was. From just before the first removal, the exit
+# trap removes the outputs again on a failed exit, so a build ended during
+# that removal does not leave the rest of an earlier build's outputs. A
+# SIGHUP, SIGINT or SIGTERM ends the build with exit 129, 130 or 143, once
+# the command in progress has ended, and counts as a failed exit; a signal
+# that arrives before the exit trap is set, when the build has removed and
+# written nothing, leaves dist/ as it was. So a
+# refused build leaves in dist/ no zip and no .sha256 that a build wrote,
+# unless a removal itself fails, or dist was replaced while it ran: the
+# build then still fails, an output that it could not remove stays, and
+# through a replaced dist it removes nothing, not even a staging folder
+# that it made through that dist. A SIGKILL runs no trap, so it can leave
+# a zip without its .sha256, a .sha256 without its zip, or a staging
+# folder, which the next build removes.
 # It never tags, pushes, or talks to the network.
 #
 # Usage:
@@ -149,8 +154,9 @@ fi
 # of the one the build makes. A dist renamed, or replaced by a symbolic link,
 # while the build runs would send the outputs and the removals elsewhere, so
 # same_dist is checked at the start of each pass of the removal, after the
-# build makes dist/ and again after it makes its staging folder there, and
-# once more before the 2 moves.
+# build makes dist/ and again after it makes its staging folder there, once
+# more before the 2 moves, and in the exit trap before it removes the
+# staging folder.
 dist_id=""
 if [ -d dist ]; then
   dist_id="$(stat -c '%d:%i' -- dist)"
@@ -163,25 +169,32 @@ DIST_REPLACED="dist was replaced while the build ran; the packager writes only i
 
 # The packager's outputs in dist/ and its staging folders there, matched by
 # exact name and type, not by who wrote them: a regular file named
-# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256 of either, and a
-# folder named .release-package. followed by the 6 letters or digits that
-# mktemp gives, which is removed with everything it holds. A symbolic link
-# is neither, so it is kept, as is an entry of any other name or type. Each
+# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256 of either, where
+# X, Y and Z are 1 or more ASCII digits, and a folder named .release-package.
+# followed by 6 ASCII letters or digits, the characters that mktemp gives,
+# which is removed with everything it holds. The name tests list each of
+# these characters, not a range such as [0-9] or [A-Z]: a range in a bash
+# =~ test follows the locale, and under LC_ALL=en_US.UTF-8 it also takes
+# letters and digits outside ASCII, such as an accented capital letter or an
+# Arabic-Indic digit. A symbolic link is neither, so it is kept, as is an
+# entry of any other name or type. Each
 # removal is tried, so a failed removal does not stop the others; the
 # return status is 1 if 1 or more failed, or if dist is no longer the folder
 # recorded above, in which case it removes nothing. With no dist recorded,
 # the build has written nothing to dist/, so there is nothing to remove.
 remove_outputs() {
   local path name rc=0
+  local output_name='^cleanlanguage(-[0123456789]+\.[0123456789]+\.[0123456789]+)?\.zip(\.sha256)?$'
+  local staging_name='^\.release-package\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]{6}$'
   [ -n "${dist_id}" ] || return 0
   same_dist || return 1
   for path in dist/*; do
     name="${path#dist/}"
-    if [[ "${name}" =~ ^cleanlanguage(-[0-9]+\.[0-9]+\.[0-9]+)?\.zip(\.sha256)?$ ]]; then
+    if [[ "${name}" =~ ${output_name} ]]; then
       if [ -f "${path}" ] && [ ! -L "${path}" ]; then
         rm -f -- "${path}" || rc=1
       fi
-    elif [[ "${name}" =~ ^\.release-package\.[A-Za-z0-9]{6}$ ]]; then
+    elif [[ "${name}" =~ ${staging_name} ]]; then
       if [ -d "${path}" ] && [ ! -L "${path}" ]; then
         rm -rf -- "${path}" || rc=1
       fi
@@ -189,11 +202,44 @@ remove_outputs() {
   done
   return "${rc}"
 }
+
+# The 2 work folders: the source folder under TMPDIR, and the staging folder
+# inside dist/. Each is empty until the build makes it.
+staging=""
+out=""
+# On each exit that runs this trap, which a SIGKILL does not, remove both
+# work folders. On a failed exit, which includes an exit through 1 of the
+# signal traps above, also remove any output in dist/, so a failure during
+# the first removal below, or during or after the move, leaves no zip and
+# no .sha256 there, unless a removal fails or dist is no longer the folder
+# recorded above. Through a dist that is no longer that folder it removes
+# nothing in dist/, not even the staging folder, since a folder that the
+# name dist reaches then may be one that the build did not make. Each
+# removal runs whatever an earlier one returned, since a failed command
+# would otherwise end the trap under set -e; an output that a failed
+# removal leaves stays in dist/. The trap ignores SIGHUP, SIGINT and
+# SIGTERM while it runs, so 1 of them cannot cut its removals short, and it
+# ends with the build's own exit code. It is set before the first removal,
+# so a signal that ends that removal half done still has the rest removed.
+cleanup() {
+  local rc=$?
+  trap '' HUP INT TERM
+  if [ "${rc}" -ne 0 ]; then
+    remove_outputs || true
+  fi
+  [ -z "${staging}" ] || rm -rf "${staging}" || true
+  if [ -n "${out}" ] && same_dist; then
+    rm -rf "${out}" || true
+  fi
+  exit "${rc}"
+}
+trap cleanup EXIT
+
 # Remove an earlier build's outputs directly after the refusal of a linked or
 # non-folder dist and before every other check, so a build refused at a
 # later check does not leave them in dist/ for a reader to take for its
-# own. A failed removal ends the build here, and what it could not remove
-# stays.
+# own. A failed removal ends the build here; the exit trap then tries each
+# removal once more, and what neither could remove stays.
 remove_outputs \
   || fail "could not remove every earlier output from dist/; any it could not remove is still there"
 
@@ -508,29 +554,6 @@ sys.exit(1 if bad else 0)
 ' || exit 1
 fi
 
-staging=""
-out=""
-# On each exit that runs this trap, which a SIGKILL does not, remove both
-# work folders. On a failed exit, which includes an exit through 1 of the
-# signal traps above, also remove any output
-# already moved into dist/, so a failure during or after the move leaves no
-# zip and no .sha256 there, unless a removal fails or dist is no longer the
-# folder recorded above. Each removal runs whatever an earlier one returned,
-# since a failed command would otherwise end the trap under set -e; an
-# output that a failed removal leaves stays in dist/. The trap ignores
-# SIGHUP, SIGINT and SIGTERM while it runs, so 1 of them cannot cut its
-# removals short, and it ends with the build's own exit code.
-cleanup() {
-  local rc=$?
-  trap '' HUP INT TERM
-  if [ "${rc}" -ne 0 ]; then
-    remove_outputs || true
-  fi
-  [ -z "${staging}" ] || rm -rf "${staging}" || true
-  [ -z "${out}" ] || rm -rf "${out}" || true
-  exit "${rc}"
-}
-trap cleanup EXIT
 staging="$(mktemp -d)"
 git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
 # Keep the downloadable skill zip free of plugin metadata: the Claude manifest
@@ -587,7 +610,7 @@ same_dist || fail "${DIST_REPLACED}"
 # change the archive bytes; -D omits directory records (whose modes and order
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
-# bytes at any clock time and umask, given the same zip implementation.
+# bytes at any clock time and umask, given the same zip binary.
 (cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
   | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${out}/cleanlanguage.zip")
 cp "${out}/cleanlanguage.zip" "${out}/cleanlanguage-${version}.zip"
@@ -666,9 +689,11 @@ ${actual}
 EOF_ENTRIES
 
 # Every check passed. Move the 2 zips into dist/, then their .sha256 files, so a
-# .sha256 that a build moved into dist/ has its zip beside it, unless the
-# exit trap removed that zip and then failed to remove the .sha256. A dist
-# replaced after this check, during the moves, is not detected.
+# .sha256 that a build moved into dist/ has its zip beside it, unless a
+# removal, at the start of a later build or in an exit trap, removed that
+# zip and then failed to remove the .sha256, or a SIGKILL ended a later
+# build during its first removal. A dist replaced after this check, during
+# the moves, is not detected.
 same_dist || fail "${DIST_REPLACED}"
 mv -f "${out}/cleanlanguage.zip" "${out}/cleanlanguage-${version}.zip" dist/
 mv -f "${out}/cleanlanguage.zip.sha256" "${out}/cleanlanguage-${version}.zip.sha256" dist/
