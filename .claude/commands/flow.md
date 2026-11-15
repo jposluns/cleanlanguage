@@ -84,11 +84,15 @@ Per item (the machine-local "Working method" section sets which of these steps a
 (a) SEED BRIEF: 1 self-contained brief embedding all needed context (problem, exact file/line facts,
     constraints, deliverable shape, acceptance criteria).
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
-    same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
-    skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed,
-    given the same facts but a different framing and run in a separate clean context, drawn from the seed
-    family that can run; queue a re-combine when the skipped family returns), never a block to seeding;
-    when neither combiner in (c) can combine, the COMBINE step is still HELD, as (c) states. If no seed
+    same brief to both in parallel; agy (gemini) is the second family. A family genuinely
+    unreachable OR at its cost cap is skip-and-note, never a block to seeding: the family that can
+    run seeds, the skipped family's seed is OWED, and no second seed from the family that ran takes
+    its place. While a seed is owed, the COMBINE step is HELD as (c) holds it, and each later FEED
+    THE PIPELINE step (cycle step 2) re-issues the owed seed only when that family can run:
+    `orch-verify --pick` for that family succeeds AND that family is not at its cost cap. A failed
+    gemini seed leg is re-issued on the terms VERIFIER DIVERSITY sets for a failed gemini leg,
+    never replaced by a claude seed. When neither combiner in (c) can combine, the COMBINE step is
+    still HELD, as (c) states. If no seed
     family can run (each is unreachable or at its cost cap), the SEED step is HELD in the same way that
     (c) holds the COMBINE step: the item is not execution-ready, the hold is recorded as a ?HOLD on
     this STEP, the run routes to the next independent item, and each later FEED THE PIPELINE step
@@ -135,13 +139,19 @@ dropped or substituted on that basis. The machine-local "Working method" section
 seat ends; after the last DISCOVERY round that section sets, a codex seat still owed after its single
 re-issue is filled by the codex leg of the next VERIFY round, the cap on VERIFY rounds that section
 sets still holds, and the obligation ends when the item parks.
-A review that hunts for ways past a security
-control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
-guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
-claude + gemini and, where the tier needs a third family, add an independent, differently-primed
-claude pass in a separate clean context, recorded as a fleet-rule substitution (a seat change that a
-fleet rule, such as this limit, requires). The orchestrator classifies each review at brief time and
-records the classification in the item QA record (the QA notes on the item's entry in
+codex may review any change, including a change to a guard, hook, sandbox, filter, or permission
+check, but only through a brief worded neutrally as a review for any issues to fix before release, for
+example "review this code for any issues that should be fixed before release": no wording that
+sets codex against the change, asks it to disprove the change, or frames the review as a security
+review (maintainer decision, 2026-11-14). The neutral wording binds the codex brief: where 1
+brief would serve several families, codex gets its own neutral brief, and the other families
+may keep the review framing. A security-control review (a review of a change that
+touches, in whole or in part, a guard, hook, sandbox, filter, or permission check) runs on
+claude + codex (neutral brief) + gemini, and its codex leg goes only to this orchestrator's
+individual codex seat, never to the multi-seat codex pool that uses API keys (a pool now being
+onboarded; infrastructure orchestrator ruling, 2026-11-14). The orchestrator classifies each
+review at brief time, checks each codex brief's wording against this limit, and records the
+classification and the check in the item QA record (the QA notes on the item's entry in
 `/opt/cleanlanguage/private/TODO.md`, carried into `DONE.md` at CLOSE).
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
@@ -163,19 +173,25 @@ de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOL
 "Working method" section in that file sets when a light item is regraded and how a regraded item
 enters the QA cycle.
 
-VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
-never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
-by gemini only where gemini does not already hold a seat (a dual-family tier); where it does, the
-CODEX ROLE LIMIT claude pass fills it. Either way, the substitute is recorded as a fleet-rule
-substitution, not as an unavailability drop. When a required family is genuinely unreachable, record
-the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
-dual-family tier); only where there is none, run an independent, differently-primed second pass in a
-separate clean context as the recorded fallback, and re-run an unreachable family once it returns,
-but only for an item that has not parked (the machine-local "Working method" section sets when an
-item parks) or that the maintainer resumes.
-Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini genuinely
-unreachable runs claude plus 2 independent, differently-primed claude passes, each in its own clean
-context: the fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat.
+VERIFIER DIVERSITY (QA, every tier): agy (gemini) is the second family in every panel, and codex,
+on the terms of the CODEX ROLE LIMIT, is the third family where a tier needs one. A second claude
+review never fills a family's seat, nor does any other second review by a family that already
+holds a seat, however it is primed (maintainer decision, 2026-11-14; project rule
+`.claude/rules/external/verifier-panel.md`). A required family is dropped only when genuinely
+UNREACHABLE, never for cost; cost never buys the reduction. When a required family is genuinely
+unreachable, record the drop and give its seat to a reachable family that holds no seat (codex,
+through a neutral brief on the CODEX ROLE LIMIT terms, for gemini on a dual-family tier); where
+there is none, the seat stays OWED, a ?HOLD on the QA STEP that needs it (a proposal, per Blocked-verification),
+on the terms the CODEX ROLE LIMIT sets for an owed codex seat, and the unreachable family's leg
+runs once the family returns, but only for an item that has not parked (the machine-local "Working
+method" section sets when an item parks) or that the maintainer resumes.
+A gemini leg that ends in any of the ways the CODEX ROLE LIMIT lists for a failed codex leg is a
+failed leg, NOT an unreachable family. It is recorded, then re-issued to gemini, after
+a wait between attempts, and only when `orch-verify --pick gemini` succeeds AND gemini is not at
+its cost cap, with a slim brief that gives the file pointers and line ranges to read rather than
+pasting whole deliveries inline (infrastructure orchestrator rulings, 2026-11-14); while
+undelivered, its seat is OWED on the same terms, and it is never waived and never replaced by a
+claude review.
 QA is dispatched read-only via `orch-verify`, except a claude seat that the maintainer directs to run
 in-session, on the terms the machine-local "Working method" section sets; judge by the result signal, not
 by grepping worker output.
