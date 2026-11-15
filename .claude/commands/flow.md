@@ -89,10 +89,13 @@ Per item (the machine-local "Working method" section sets which of these steps a
     run seeds, the skipped family's seed is OWED, and no second seed from the family that ran takes
     its place. While a seed is owed, the COMBINE step is HELD as (c) holds it, and each later FEED
     THE PIPELINE step (cycle step 2) re-issues the owed seed only when that family can run:
-    `orch-verify --pick` for that family succeeds AND that family is not at its cost cap. A failed
-    gemini seed leg is re-issued on the re-issue terms VERIFIER DIVERSITY sets for a failed gemini leg,
-    never replaced by a claude seed. When neither combiner in (c) can combine, the COMBINE step is
-    still HELD, as (c) states. If no seed
+    `orch-verify --pick` for that family succeeds AND that family is not at its cost cap. A seed leg
+    that runs on gemini and ends in any of the ways VERIFIER DIVERSITY lists for a failed gemini leg
+    (for a seed leg, a delivered seed counts as a delivered verdict) is a failed seed leg: its seed
+    is OWED in the same way, so the COMBINE step stays HELD until the owed seed arrives, and it is
+    re-issued on the re-issue terms VERIFIER DIVERSITY sets for a failed gemini leg, never replaced
+    by a claude seed. When neither combiner in (c) can combine, the COMBINE step is still HELD, as
+    (c) states. If no seed
     family can run (each is unreachable or at its cost cap), the SEED step is HELD in the same way that
     (c) holds the COMBINE step: the item is not execution-ready, the hold is recorded as a ?HOLD on
     this STEP, the run routes to the next independent item, and each later FEED THE PIPELINE step
@@ -136,9 +139,11 @@ that QA STEP (a proposal, per Blocked-verification): while it is owed, the run l
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
 dropped or substituted on that basis. The machine-local "Working method" section sets when an owed
-seat ends; after the last DISCOVERY round that section sets, a codex seat still owed after its single
-re-issue is filled by the codex leg of the next VERIFY round, the cap on VERIFY rounds that section
-sets still holds, and the obligation ends when the item parks.
+seat ends. A codex seat still owed after its single re-issue is filled by the codex leg of the next
+DISCOVERY round, from the sixth DISCOVERY round on, since the first 5 DISCOVERY rounds have no
+seat for that family (that section sets the case of a light item); after the last DISCOVERY round
+that section sets, no VERIFY round fills that seat, which stays owed until the item parks
+(maintainer decision, 2026-11-15).
 codex may review any change, including a change to a guard, hook, sandbox, filter, or permission
 check, but only through a brief worded neutrally as a review for any issues to fix before release, for
 example "review this code for any issues that should be fixed before release": no wording that
@@ -146,10 +151,14 @@ sets codex against the change, asks it to disprove the change, or frames the rev
 review (maintainer decision, 2026-11-14). The neutral wording binds the codex brief: where 1
 brief would serve several families, codex gets its own neutral brief, and the other families
 may keep the review framing. A security-control review (a review of a change that
-touches, in whole or in part, a guard, hook, sandbox, filter, or permission check) is a review
-of the substantive or sensitive tier, so VERIFIER DIVERSITY sets its panel: its 3 seats are
-claude, gemini, and codex (neutral brief) as the third family that tier needs. This rule adds no
-seat to that panel. Its codex leg goes only to this orchestrator's individual codex seat, never
+touches, in whole or in part, a guard, hook, sandbox, filter, or permission check) is of the tier
+that the machine-local "Working method" section grades the change, which governs that tier; this
+file sets no tier for it. VERIFIER DIVERSITY sets its panel as for any other review on that tier,
+so the third seat goes to codex (neutral brief) only from the sixth DISCOVERY round; in the first
+5 DISCOVERY rounds, in a VERIFY round, or in a light item's dual-family QA run, that family takes
+a seat only as the stand-in for a genuinely unreachable family (maintainer decision, 2026-11-15,
+which supersedes the 2026-11-14 decision that gave a codex seat to such a review from the first
+DISCOVERY round). This rule adds no seat to that panel. Its codex leg goes only to this orchestrator's individual codex seat, never
 to the multi-seat codex pool that uses API keys (a pool now being onboarded; infrastructure
 orchestrator ruling, 2026-11-14). The orchestrator classifies each
 review at brief time, checks each codex brief's wording against this limit, and records the
@@ -166,9 +175,9 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 The tiers (light, substantive, and sensitive) and the per-change QA cycle (DISCOVERY and VERIFY
 rounds, the round budget, the premise review, failed rounds, convergence, and parking) are defined
 ONLY in that file's "Working method" section; do not restate them here, except that the CODEX ROLE
-LIMIT above names the tier of a security-control review and where an owed codex seat is filled
-after the last DISCOVERY round, and VERIFIER DIVERSITY below names the round of each re-issue of a
-failed gemini leg and when its owed seat ends. Pool workers
+LIMIT above names which round fills an owed codex seat, and VERIFIER DIVERSITY below names the
+rounds that seat the third family, the round in which an owed gemini leg or a failed stand-in leg
+runs, and when an owed gemini or claude seat ends. Pool workers
 cannot read it, so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline
 section above).
 The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
@@ -178,23 +187,43 @@ de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOL
 enters the QA cycle.
 
 VERIFIER DIVERSITY (QA, every tier): agy (gemini) is the second family in every panel, except
-where gemini is genuinely unreachable and its seat is given to another family as set out below,
-and codex, on the terms of the CODEX ROLE LIMIT, is the third family where a tier needs one,
-which includes the tier of every security-control review, as that limit states. A second claude
+where gemini is genuinely unreachable and its seat is given to codex as set out below. codex, on
+the terms of the CODEX ROLE LIMIT, is the third family from the sixth DISCOVERY round of the QA
+cycle, a security-control review included, as that limit states; the first 5 DISCOVERY rounds,
+every VERIFY round, and a light item's dual-family QA run have no seat for that family, so their
+panel is claude and gemini (maintainer decision, 2026-11-15). A second claude
 review never fills a family's seat, nor does any other second review by a family that already
 holds a seat, however it is primed (maintainer decision, 2026-11-14; project rule
 `.claude/rules/external/verifier-panel.md`). A required family is dropped only when genuinely
 UNREACHABLE, never for cost; cost never buys the reduction. When a required family is genuinely
-unreachable, record the drop and give its seat to a reachable family that holds no seat (codex,
-through a neutral brief on the CODEX ROLE LIMIT terms, for gemini on a dual-family tier); where
-there is none, the seat stays OWED, a ?HOLD on the QA STEP that needs it (a proposal, per Blocked-verification),
-on the terms the CODEX ROLE LIMIT sets for an owed codex seat, and the unreachable family's leg
-runs once the family returns, but only for an item that has not parked (the machine-local "Working
-method" section sets when an item parks) or that the maintainer resumes.
-A gemini leg that ends in any of the ways the CODEX ROLE LIMIT lists for a failed codex leg is a
-failed leg, NOT an unreachable family; the codex-only terms (the `ORCH_MAX_FAILOVERS=1` bound,
-the single re-issue, and the VERIFY round that fills a codex seat still owed after it) do not
-apply to it. Its re-issue terms: it is recorded, then re-issued to gemini, after a wait between
+unreachable, record the drop. Where that family is gemini and the panel has no codex seat, give
+the gemini seat to codex as the stand-in, through a neutral brief on the CODEX ROLE LIMIT terms,
+only while gemini is genuinely unreachable (maintainer decision, 2026-11-15). The seat of any other
+unreachable family goes to a reachable family that holds no seat (codex, through a neutral brief on
+the same terms); where there is none, the seat stays OWED, a ?HOLD on the QA STEP that needs it
+(a proposal, per Blocked-verification), and the unreachable family's leg runs once the family
+returns, but only
+for an item that has not parked (the machine-local "Working method" section sets when an item
+parks) or that the maintainer resumes. The owed seat's terms depend on the family. For codex,
+they are the terms the CODEX ROLE LIMIT sets for an owed codex seat. For gemini, they are the
+terms set below for the seat of a failed gemini leg: the seat stays OWED until a gemini leg
+delivers a verdict, with the limits on other work that the CODEX ROLE LIMIT sets while a codex
+seat is owed, and is never dropped or substituted on that basis; once gemini returns, its leg is
+the gemini leg of the next round of the QA cycle; the obligation ends when the item converges or
+parks; and the codex-only terms named below do not apply. For claude, the seat stays OWED until
+a claude leg delivers a verdict, with those same limits on other work, and is never dropped or
+substituted on that basis; the obligation ends when the item parks. A failed stand-in leg or
+owed leg is re-issued as that family's leg in the next round (maintainer decision, 2026-11-15).
+A gemini leg is a failed leg, NOT an unreachable family, when it ends in any of these ways, which
+are the ways the CODEX ROLE LIMIT lists for a failed codex leg, read without the codex bound: it
+ends `FAILOVER_LIMIT` (exit 4), or in an empty, degenerate, or 5xx chain, at the failover bound
+of its own dispatch; it ends `EXHAUSTED` (exit 5, rate-limited or out of quota); it is stopped by
+a cost cap; or it otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or
+a delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered
+verdict, not a failed leg). The codex-only terms (the `ORCH_MAX_FAILOVERS=1` bound, the single
+re-issue, and the rule on which round fills a seat still owed after that re-issue) do not apply
+to it.
+Its re-issue terms: it is recorded, then re-issued to gemini, after a wait between
 attempts, and only when `orch-verify --pick gemini` succeeds AND gemini is not at its cost cap,
 with a slim brief that gives the file pointers and line ranges to read rather than pasting whole
 deliveries inline (infrastructure orchestrator rulings, 2026-11-14), with no count of
