@@ -266,7 +266,12 @@ What it verifies
    carriage return allowed before a line feed (``redirect_break``), since ``str.splitlines()`` would end a line at some
    of them, so that a destination after one would go unjudged, and the gate
    does not know how Cloudflare Pages reads each. A source that
-   ``reaches_install`` reads as able to match an install page fails. A source
+   ``reaches_install`` reads as able to match an install page fails, and
+   so does a source whose first segment is 1 of ``REQUESTED_FILES``
+   (``favicon.ico``) in any letter case, a file that a browser may request
+   from the site's root without a link, whatever its destination and
+   status (``/favicon.ico https://other.example/x.ico 301`` and
+   ``/FAVICON.ICO /x.ico 200`` fail). A source
    whose first segment is 1 of ``LOADED_SEGMENTS`` in any letter case passes
    only when all of these hold, and fails otherwise: it is an exact path
    (``exact_path_problem``: it starts with ``/``, so it carries no scheme or
@@ -319,7 +324,9 @@ What it verifies
    ``ENTITY_LIMIT`` characters or still expand in round ``ENTITY_ROUNDS``,
    it declares an entity more than ``ENTITY_ROUNDS`` times, or its
    character references still decode, or its entity references still
-   expand, after ``UNESCAPE_ROUNDS`` rounds of both, or an entry there is a link or
+   expand, after ``UNESCAPE_ROUNDS`` rounds of both, or those rounds hold
+   more than ``FORM_LIMIT`` forms or forms of more than
+   ``FORM_CHARACTERS`` characters in all, which bounds their work, or an entry there is a link or
    neither a file nor a folder, fails and names that input. Every other
    source passes. A rule whose destination, or a later field of its line,
    this reading reads, failing closed, as able to lead to a source that it
@@ -331,7 +338,8 @@ What it verifies
    and split into tokens as the name search splits a file; it fails when a
    token is the file name of an accepted source, so a scheme and any host,
    dot segments, a relative path, a backslash, a query and a fragment around
-   that file name do not hide it, and when it holds a ``:`` or a ``*`` after
+   that file name do not hide it, and, while this reading accepts a
+   source, when it holds a ``:`` or a ``*`` after
    any ``http://`` or ``https://`` at its start, as a placeholder or a splat
    does, a port included, since the reading does not expand a placeholder
    or a splat and so reads such a field as able to give any path. This
@@ -1324,6 +1332,16 @@ XML_ENTITY = re.compile(r"<!ENTITY\s+([^\s%\"'<>&;]+)\s+(?:\"([^\"]*)\"|'([^']*)
 XML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 ENTITY_ROUNDS = 16
 ENTITY_LIMIT = 1 << 22
+# Check 7: the most forms that the rounds of the name search hold, and the most characters that those forms hold in
+# all, so that an entity declared many times with references escaped to many depths, each round adding forms for each
+# form that the round before added, cannot make the rounds run without end; a file that needs more fails closed
+# (name_tokens()). The committed files need at most 2 forms and 267259 characters.
+FORM_LIMIT = 64
+FORM_CHARACTERS = 1 << 24
+# Check 7: the file names, each the whole first segment of a path, that a browser may request from the site's root
+# without a link, as it requests /favicon.ico for a page; a redirect source whose first segment is 1 of them, in any
+# letter case, fails (redirect_problems()).
+REQUESTED_FILES = ("favicon.ico",)
 # Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
 # file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
@@ -2160,7 +2178,8 @@ def name_tokens(text: str) -> set[str]:
     adds a form, so that a reference that a decoded reference writes, as in an escaped srcdoc value or a srcdoc inside
     a srcdoc, is decoded too, and an entity whose value or whose reference a character reference writes, such as
     <!ENTITY a "&#38;p1;&#38;p2;">, is expanded too, in at most UNESCAPE_ROUNDS rounds, a ValueError if round
-    UNESCAPE_ROUNDS + 1 still adds a form; the text of each
+    UNESCAPE_ROUNDS + 1 still adds a form, and a ValueError as soon as the rounds hold more than FORM_LIMIT forms or
+    forms of more than FORM_CHARACTERS characters in all, so that the work of the rounds is bounded; the text of each
     style or script element of each form so far without the comments, processing instructions, CDATA section markers and
     child elements inside it, by XML_MARKUP and by HTML_MARKUP (markup_forms()); each form so far with CSS escapes
     decoded and with JavaScript escapes decoded (JS_ESCAPE, and the JavaScript string escapes of JS_STRING_ESCAPE,
@@ -2178,8 +2197,20 @@ def name_tokens(text: str) -> set[str]:
     quote), a reference to an entity that a parameter entity or an external DTD declares, or a character it keeps."""
     forms = {text}
     fresh = set(forms)
+    held = len(text)
     for rounds in range(UNESCAPE_ROUNDS + 1):
-        fresh = {new for form in fresh for new in (html.unescape(form), *entities_expanded(form))} - forms
+        added: set[str] = set()
+        for form in sorted(fresh):
+            for new in (html.unescape(form), *entities_expanded(form)):
+                if new in forms or new in added:
+                    continue
+                added.add(new)
+                held += len(new)
+                if len(forms) + len(added) > FORM_LIMIT or held > FORM_CHARACTERS:
+                    raise ValueError(f"its HTML character references and XML entity references decode and expand to "
+                                     f"more than {FORM_LIMIT} forms, or to forms of more than {FORM_CHARACTERS} "
+                                     "characters in all, more than the name search reads")
+        fresh = added
         if not fresh:
             break
         if rounds == UNESCAPE_ROUNDS:
@@ -2360,13 +2391,15 @@ def redirect_problems(redirects: str) -> list[str]:
     or a later field of its line, destination_problem() reads, failing closed, as able to lead to a source that the
     reading accepts. The lines end only at a line feed, so a destination after a vertical tab, a form feed, U+2028 or
     a lone carriage return stays on its line, and that character fails. A source fails when reaches_install
-    reads it as able to match an install page. A source whose first segment is 1 of LOADED_SEGMENTS, in any letter
-    case, passes only when all of these hold, and fails otherwise: it is an exact path (exact_path_problem()); no file
-    under site/ but site/_redirects names its file name, compared in any letter case (site_names(), which reads no
-    grammar of loads; a page that loads the path by a name that a script builds, that an escape it does not decode
-    hides, or that markup its reading of tags does not model, an entity it does not expand or a character it keeps
-    splits, is a residual); nothing under site/ occupies it, compared in any letter case, and no leading part of it is
-    a file or a link (occupied()); and reaches_install does not read it as able to match an install page. A source
+    reads it as able to match an install page, and when its first segment is 1 of REQUESTED_FILES in any letter case,
+    a file that a browser may request without a link, whatever its destination and status. A source whose first
+    segment is 1 of LOADED_SEGMENTS, in any letter case, passes only when all of these hold, and fails otherwise: it
+    is an exact path (exact_path_problem()); no file under site/ but site/_redirects names its file name, compared
+    in any letter case (site_names(), which reads no grammar of loads; a page that loads the path by a name that a
+    script builds, that an escape it does not decode hides, or that markup its reading of tags does not model, an
+    entity it does not expand or a character it keeps splits, is a residual); nothing under site/ occupies it,
+    compared in any letter case, and no leading part of it is a file or a link (occupied()); and reaches_install does
+    not read it as able to match an install page. A source
     that cannot be evaluated, because a file or a folder under site/ cannot be read or listed, a file declares an
     encoding other than UTF-8 or, with 1 of TEXT_SUFFIXES, holds an escape character, a file's entity references
     expand or its character references decode too far, or an entry there is a link or neither a file nor a folder,
@@ -2403,6 +2436,13 @@ def redirect_problems(redirects: str) -> list[str]:
         head = f"site/_redirects line {number} has the source {source}, "
         if reaches_install(source):
             problems.append(head + reach)
+            continue
+        requested = fold(path_segment(source))
+        if requested in REQUESTED_FILES:
+            problems.append(head + f"which this gate reads, failing closed, as able to match /{requested}, a file "
+                            "that a browser may request from the site's root without a link for any page, the "
+                            "install pages included; a rule that matches it can send the browser elsewhere or serve "
+                            "other content there.")
             continue
         if fold(path_segment(source)) not in LOADED_SEGMENTS:
             continue
@@ -2839,10 +2879,10 @@ def main() -> int:
         "load sets or detaches any header but those of INSTALL_HEADERS, with their values, no line of "
         "site/_redirects holds a control character, a line or paragraph separator, a byte order mark or whitespace "
         "but the space and the line feed, no rule of "
-        "site/_redirects has a source that the gate reads, failing closed, as able to match an install page, "
-        "and each source under the loaded segments is an exact path whose file name no file under site/ but "
-        "site/_redirects names in a form the name search reads, that nothing under site/ occupies and that lies "
-        "beneath no file, each compared in any letter case, and no destination there names the file name of such a "
+        "site/_redirects has a source that the gate reads, failing closed, as able to match an install page or "
+        "/favicon.ico, and each source under the loaded segments is an exact path whose file name no file under "
+        "site/ but site/_redirects names in a form the name search reads, that nothing under site/ occupies and "
+        "that lies beneath no file, each compared in any letter case, and no destination there names the file name of such a "
         "source or, while such a source exists, holds a : or a * after any http:// or https:// at its start (a load "
         "by a name "
         "that no file writes in such a form, such as 1 that a script or an XSLT stylesheet builds, that an escape "

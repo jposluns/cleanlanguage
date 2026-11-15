@@ -19,7 +19,10 @@ the search reads only as UTF-8 that is not UTF-8, a page, a stylesheet, an
 SVG file or a script that declares an encoding other than UTF-8 or holds an
 escape character, a text file and a binary file under site/install/, a page
 3 folders below site/, a _redirects file below site/, a link, a folder set
-to mode 000 or a folder under site/assets/ that cannot be listed,
+to mode 000 or a folder under site/assets/ that cannot be listed, an SVG
+file whose references make the rounds of the search hold exactly the most
+forms, or characters in all, that the gate reads (FORM_LIMIT and
+FORM_CHARACTERS) or 1 more,
 or copy the whole committed site/ over the copy, or add a line to
 site/_redirects that holds a character other than the line feed at which a
 reading may end a line or a field, and assert that such a line fails, that a source of
@@ -298,8 +301,9 @@ COPILOT = "site/install/copilot/index.html"
 OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
 REDIRECTS = "site/_redirects"
-# The 3 stylesheets are copied too: the redirect reading of check 7 reads every url() of each stylesheet that a page
-# loads, and fails when 1 cannot be read.
+# The 3 stylesheets are copied too, so that the copy holds the files under site/assets/baseline/ that the pages link.
+# The gate does not read their url(), and a stylesheet that a page links and the copy lacks does not fail it; the name
+# search of check 7 reads each as it reads every file under site/.
 FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
          "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml",
          "site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
@@ -406,6 +410,14 @@ UTF8_SUFFIXES = (".css", ".htm", ".html", ".js", ".json", ".mjs", ".svg", ".webm
 DECLARES = "which could not be evaluated: the {} declares the encoding {!r}, which the name search does not decode"
 ESCAPED = "which could not be evaluated: the file {} holds an escape character (U+001B)"
 TO_ASCII = "\x1b(B"
+# A case whose input makes the forms of the name search grow without end unless the gate bounds them, and the seconds
+# in which each case named here must end, so that a gate that does not bound them fails the case and does not stop
+# this test; a case not named here has no such limit.
+FORMS_CASE = "the committed redirects beside an SVG file whose entity and character references give forms without end"
+# The gate's words for a redirect source whose first segment is favicon.ico, which a browser may request without a link.
+REQUESTED = ("which this gate reads, failing closed, as able to match /favicon.ico, a file that a browser may request "
+             "from the site's root without a link for any page")
+TIMED = {FORMS_CASE: 60}
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -1975,6 +1987,49 @@ CASES = [
         create("site/assets/lol.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1000 + '"><!ENTITY b "' + "&a;" * 100
                + '"><!ENTITY c "' + "&b;" * 50 + '">]>' + SVG_FILE.format("<text>&c;</text>")),
         (1, UNEVALUATED + "the file site/assets/lol.svg could not be read: its XML entity references expand to more")),
+    # The ENTITY_LIMIT boundary, 4194304 characters, written out here and not read from the gate, so that a changed
+    # limit fails 1 of the 2 cases: references that add exactly that many characters pass, and 1 more fails.
+    ("the committed redirects beside an SVG file whose entity references add exactly 4194304 characters",
+        create("site/assets/lim0.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1027 + '">]>'
+               + SVG_FILE.format("<text>" + "&a;" * 4096 + "</text>")), 0),
+    ("the committed redirects beside an SVG file whose entity references add 4194305 characters",
+        create("site/assets/lim1.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1027 + '"><!ENTITY b "yyyy">]>'
+               + SVG_FILE.format("<text>" + "&a;" * 4096 + "&b;</text>")),
+        (1, UNEVALUATED + "the file site/assets/lim1.svg could not be read: its XML entity references expand to more "
+            "than 4194304 further characters")),
+    # An entity declared 16 times, each with its own value, and references to it escaped 0 to 5 times: each round of
+    # the name search adds a form for each declaration of each form that the round before added, so the forms grow
+    # without end unless the search bounds them; it fails closed, and soon (TIMED).
+    (FORMS_CASE,
+        create("site/assets/forms.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(16))
+               + "]>" + SVG_FILE.format("<text>" + "".join("&" + "amp;" * depth + "e;" for depth in range(6))
+                                        + "</text>")),
+        (1, UNEVALUATED + "the file site/assets/forms.svg could not be read: its HTML character references and XML "
+            "entity references decode and expand to more than 64 forms")),
+    # The FORM_LIMIT boundary, 64 forms, written out here and not read from the gate, so that a changed limit or
+    # comparison fails 1 of the 2 cases: an entity declared 6 times with references escaped 0 and 3 times makes the
+    # rounds hold exactly 64 forms, which pass, and 1 declared 7 times with references escaped 0 and 1 times makes them
+    # hold 65 (the file, 8 more, 14 more and 42 more), which fail.
+    ("the committed redirects beside an SVG file whose references give exactly 64 forms",
+        create("site/assets/forms64.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(6))
+               + "]>" + SVG_FILE.format("<text>&e;&amp;amp;amp;e;</text>")), 0),
+    ("the committed redirects beside an SVG file whose references give 65 forms",
+        create("site/assets/forms65.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(7))
+               + "]>" + SVG_FILE.format("<text>&e;&amp;e;</text>")),
+        (1, UNEVALUATED + "the file site/assets/forms65.svg could not be read: its HTML character references and XML "
+            "entity references decode and expand to more than 64 forms, or to forms of more than 16777216 characters")),
+    # The FORM_CHARACTERS boundary, 16777216 characters, written out here and not read from the gate, so that a changed
+    # limit or comparison fails 1 of the 2 cases: a file of 6342608 characters with 4000 references to an entity of
+    # 1026 characters, which add 4092000, gives 2 forms of exactly 16777216 characters in all, which pass; 1 more
+    # reference and 514 fewer characters of padding give 16777217, which fail.
+    ("the committed redirects beside an SVG file whose 2 forms hold exactly 16777216 characters",
+        create("site/assets/chars0.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1026 + '">]>'
+               + SVG_FILE.format("<text>" + "&a;" * 4000 + "y" * 6329491 + "</text>")), 0),
+    ("the committed redirects beside an SVG file whose 2 forms hold 16777217 characters",
+        create("site/assets/chars1.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1026 + '">]>'
+               + SVG_FILE.format("<text>" + "&a;" * 4001 + "y" * 6328977 + "</text>")),
+        (1, UNEVALUATED + "the file site/assets/chars1.svg could not be read: its HTML character references and XML "
+            "entity references decode and expand to more than 64 forms, or to forms of more than 16777216 characters")),
     ("the committed redirects beside an SVG file whose internal entities name each other",
         create("site/assets/loop.svg", '<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]>'
                + SVG_FILE.format("<text>&a;</text>")),
@@ -2166,6 +2221,20 @@ CASES = [
     ("an SVG file that declares ISO-2022-JP by an XML declaration whose encoding is in mixed letter case",
         create("site/assets/mx.svg", '<?xml version="1.0" Encoding="iso-2022-jp"?>\n' + SVG_FILE.format("")),
         (1, DECLARES.format("file site/assets/mx.svg", "iso-2022-jp"))),
+    # A file whose name ends in none of TEXT_SUFFIXES is read 1 character for each byte, and a declaration of another
+    # encoding in it fails all the same; a label with spaces around it is read without them.
+    ("an XSLT file, outside the text suffixes, that declares ISO-2022-JP by its XML declaration",
+        create("site/assets/jp.xsl", '<?xml version="1.0" encoding="ISO-2022-JP"?>\n<xsl:stylesheet version="1.0" '
+               'xmlns:xsl="http://www.w3.org/1999/XSL/Transform"/>\n'),
+        (1, DECLARES.format("file site/assets/jp.xsl", "ISO-2022-JP"))),
+    ("the committed redirects beside a stylesheet that declares UTF-8 by an @charset label with spaces around it",
+        create("site/assets/sp.css", '@charset " utf-8 ";\n.x { color: red; }\n'), 0),
+    # A browser may request /favicon.ico from the site's root for any page without a link, so a redirect of that path
+    # fails, in any letter case, whatever its destination and status.
+    ("a redirect of /favicon.ico to another host", append(REDIRECTS, "/favicon.ico https://other.example/x.ico 301\n"),
+        (1, "site/_redirects line 33 has the source /favicon.ico, " + REQUESTED)),
+    ("a rewrite of /FAVICON.ICO to another file", append(REDIRECTS, "/FAVICON.ICO /x.ico 200\n"),
+        (1, "site/_redirects line 33 has the source /FAVICON.ICO, " + REQUESTED)),
     # The refusal for a file under site/install/ that names a source's file name names every such file, a text file
     # and a binary file that are not pages included.
     ("a text file and a binary file under site/install/ that name a source's file name",
@@ -3793,7 +3862,11 @@ def main() -> int:
                 probe, paths = PROBED[name]
                 command[2:2] = ["-c", probe]
                 command += [str(root / path) for path in paths]
-            result = subprocess.run(command, capture_output=True, text=True)
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=TIMED.get(name))
+            except subprocess.TimeoutExpired:
+                failures.append(f"{name}: the gate did not end within {TIMED[name]} seconds")
+                continue
             code, words = expected if isinstance(expected, tuple) else (expected, "")
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
