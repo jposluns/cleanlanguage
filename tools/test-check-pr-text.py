@@ -23,9 +23,11 @@ it, and the enumeration cases, which ENUMERATION_SKIPS lists. Each of them enume
 points from U+0000 to U+FFFF but the surrogates and the code points that ENUMERATION_SKIPS names
 for it, such as U+000A, which ends a line, and compares the gate with a set that its docstring
 names: the characters that end a URL, the characters that end a parenthesis pair in a URL, the
-marks that a URL leaves off its end, the characters that may follow a fence closer's run, the
-character that keeps a run of backticks from opening a fence, the quote pairs that the quote mask
-masks, and the characters that end quoted text. UnreadableInputs holds cases of exit status 2:
+marks that a URL leaves off its end, the characters that may indent a fence line, the characters
+whose run makes a fence, the characters that may follow a fence closer's run, the character that
+keeps a run of backticks from opening a fence, the character whose run opens and closes a code
+span, the quote pairs that the quote mask masks, and the characters that end quoted text.
+UnreadableInputs holds cases of exit status 2:
 usage errors and unreadable inputs, such as a missing, undecodable or unparseable input, a folder
 given as a text file, a lint that cannot be loaded and an error whose message cannot be
 formatted, where the deeply nested payload runs the gate under a soft stack limit of 1 MiB that
@@ -100,13 +102,18 @@ URL_STOPPERS = (" ", "\t", "<", ">", '"', "'", "`", "(", ")", EN_DASH, EM_DASH,
 ISE_ENDINGS = ("e", "es", "ed", "ing", "er", "ers", "able", "ation", "ations")
 # The sets the gate docstring names that the enumeration cases compare with the gate: the marks
 # that end a URL besides whitespace as Python's \s reads it, the marks a URL leaves off its end,
-# the characters that may follow a fence closer's run, the character after a backtick opener's
-# run that keeps it from opening a fence, the 2 quote pairs the quote mask masks, and for each
-# quote pair the character that ends its quoted text on a line.
+# the characters that may indent a fence line, the characters whose run makes a fence, the
+# characters that may follow a fence closer's run, the character after a backtick opener's run
+# that keeps it from opening a fence, the character whose run opens and closes a code span, the
+# 2 quote pairs the quote mask masks, and for each quote pair the character that ends its quoted
+# text on a line.
 URL_STOPPER_MARKS = "<>\"'`()" + EN_DASH + EM_DASH + "\u2018\u2019\u201c\u201d"
 URL_TRAILING_MARKS = ".,;:!?"
+FENCE_INDENT = " "
+FENCE_MARKS = "`~"
 FENCE_CLOSER_TAIL = " \t"
 FENCE_OPENER_BREAKERS = "`"
+CODE_SPAN_MARKS = "`"
 QUOTE_PAIRS = (('"', '"'), ("\u201c", "\u201d"))
 # The code points, besides the surrogates, that each enumeration case leaves out: U+000A, which
 # ends a line, so no line holds it; U+000D where it ends a line, since a carriage return before
@@ -115,8 +122,11 @@ ENUMERATION_SKIPS = {
     "test_url_ends_only_before_its_stopper_set": "\n",
     "test_url_parenthesis_pair_ends_only_at_a_stopper": "\n",
     "test_url_leaves_off_only_its_trailing_marks": "\n\r",
+    "test_fence_indent_takes_only_spaces": "\n",
+    "test_only_backticks_and_tildes_make_a_fence": "\n\r",
     "test_fence_closer_takes_only_spaces_and_tabs_after_its_run": "\n\r",
     "test_only_a_backtick_stops_a_backtick_run_opening_a_fence": "\n",
+    "test_only_a_backtick_run_delimits_a_code_span": "\n",
     "test_quote_mask_masks_only_its_2_pairs": "\n`",
     "test_quoted_text_ends_only_at_its_closer": "\n",
 }
@@ -649,7 +659,8 @@ class DefectClasses(GateCase):
 
 class Exemptions(GateCase):
     """Each mask, exemption and scope limit: honest text inside it passes, and text outside it
-    fails; the URL stoppers, the fence closer's tail and the quote pairs by enumeration."""
+    fails; the URL stoppers, the fence's indent, run and closer's tail, the code span's mark and
+    the quote pairs by enumeration."""
 
     def test_label_and_width_inside_fence_pass(self):
         fence = "```\n" + ROUND_LABEL + "\n" + "b" * 90 + "\n```\n"
@@ -991,9 +1002,11 @@ class Exemptions(GateCase):
 
     def test_url_parenthesis_pair_ends_only_at_a_stopper(self):
         # 1 line per code point: a URL with a parenthesis pair that holds the code point, then
-        # an -ise word right after the pair. When the code point is a stopper, the URL stops
-        # before the pair's closing parenthesis, so the word is reported; otherwise the pair is
-        # part of the URL, which runs on through the word and masks it.
+        # an -ise word right after the pair. When the code point is a stopper, the pair holds
+        # a stopper and is not part of the URL, which stops before the pair's opening
+        # parenthesis; a closing parenthesis instead closes the pair (a), and the URL then
+        # stops before the second closing parenthesis. Either way the word is reported;
+        # otherwise the pair is part of the URL, which runs on through the word and masks it.
         chars, output = self.enumerate_lines(
             lambda char: "https://e.com/(a" + char + "b)" + ISE_WORD)
         ended = {chars[number - 1] for number in self.reported(output, "an -ise spelling")}
@@ -1029,6 +1042,45 @@ class Exemptions(GateCase):
         self.assertNotIn("never closed", "\n".join(output[-3:]))
         stopped = {chars[(number - 4) // 5] for number in self.reported(output, "an em dash")}
         self.assertEqual(sorted(map(ord, stopped)), sorted(map(ord, FENCE_OPENER_BREAKERS)))
+
+    def test_fence_indent_takes_only_spaces(self):
+        # Per code point: an opener, a closer indented by the code point, a dash line that is
+        # prose only when that closer closed the fence, then 3 lines that leave no fence open
+        # whichever way it went: a run of 4 closes the fence of 3 or opens one of 4, a run of 3
+        # opens a fence or is inside the fence of 4, and the last run of 4 closes either. A
+        # backtick before the closer's run lengthens it, so it then still closes.
+        chars = self.enumerated()
+        blocks = ["```\n" + char + "```\nx " + EM_DASH + "\n````\n```\n````\n" for char in chars]
+        code, output = self.description("Intro.\n\n" + "".join(blocks))
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertNotIn("never closed", "\n".join(output[-3:]))
+        closed = {chars[(number - 5) // 6] for number in self.reported(output, "an em dash")}
+        self.assertEqual(sorted(map(ord, closed)), sorted(map(ord, FENCE_INDENT + "`")))
+
+    def test_only_backticks_and_tildes_make_a_fence(self):
+        # Per code point: a run of 3 of it, a dash line, and the same run again. The run opens
+        # a fence and the second run closes it only when the code point is a fence mark, so
+        # the dash line is masked only then. A run of 3 dashes is reported on its own lines,
+        # which the case does not read. U+000D is left out, since it ends the closing run's
+        # line, where a carriage return before a line feed is dropped.
+        chars = self.enumerated()
+        blocks = [char * 3 + "\nx " + EM_DASH + "\n" + char * 3 + "\n" for char in chars]
+        code, output = self.description("Intro.\n\n" + "".join(blocks))
+        self.assertIn(code, (0, 1), output[-3:])
+        self.assertNotIn("never closed", "\n".join(output[-3:]))
+        shown = self.reported(output, "an em dash")
+        masked = {char for index, char in enumerate(chars) if 4 + 3 * index not in shown}
+        self.assertEqual(sorted(map(ord, masked)), sorted(map(ord, FENCE_MARKS)))
+
+    def test_only_a_backtick_run_delimits_a_code_span(self):
+        # 1 line per code point: the code point, a straight quote mark, the code point again,
+        # an -ise word and a second straight quote mark. When the code point delimits a code
+        # span, the span masks the first quote mark, so no quote pair is left and the word is
+        # reported; otherwise the 2 quote marks pair and mask the word.
+        chars, output = self.enumerate_lines(
+            lambda char: char + '"' + char + " " + ISE_WORD + ' "')
+        spans = {chars[number - 1] for number in self.reported(output, "an -ise spelling")}
+        self.assertEqual(sorted(map(ord, spans)), sorted(map(ord, CODE_SPAN_MARKS)))
 
     def test_quoted_text_ends_only_at_its_closer(self):
         # Per code point, 2 lines: a straight pair, then a curly pair, each holding the code
@@ -2164,6 +2216,10 @@ def generate_sites(source):
                         [(smap.start(function), smap.end(function), other)])
                 if is_re_call(child):
                     pattern_calls.append((stack[-1] if stack else None, child))
+                elif (isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
+                      and function.value.id == "re"):
+                    raise UnknownConstruct("a re call the generator does not read: "
+                                           + smap.segment(function))
             elif isinstance(child, ast.ExceptHandler):
                 handler_sites(stack, child)
 
@@ -4131,9 +4187,12 @@ class MutantSweep(unittest.TestCase):
     class of 2 or more members deleted, and a negated class made plain; each quantifier changed
     ({m,n} with m and n each 1 up and 1 down where valid, * to +, + to *, ? removed) and made
     lazy or greedy; each escaped metacharacter unescaped; and each inline flag and each flags
-    argument removed. regex_parse() raises UnknownConstruct on a construct it does not know, and
+    argument removed. regex_parse() raises UnknownConstruct on a construct it does not know,
     pattern_pieces() on a pattern expression other than string literals, their concatenation
-    with + and a string's join of a name, so a new construct fails the adequacy test by name.
+    with + and a string's join of a name, and generate_sites() on a call written re.<name> for
+    any other function of re, such as re.findall, re.sub or re.split, so a new construct or a
+    pattern given to such a call fails the adequacy test by name. A pattern given to a function
+    of re reached by another name, such as one imported with from re import, is not seen.
     Each site is named in words, from where it is, the operator and the text it changes, and its
     occurrence, with its exact old text, whole lines, its new text and the number of times its
     old text occurs.
@@ -4323,6 +4382,25 @@ class MutantSweep(unittest.TestCase):
                     generate_sites(source.replace(old, new))
                 self.assertEqual(str(caught.exception),
                                  "a pattern expression the generator does not read: " + named)
+
+    def test_pattern_given_to_another_re_call_fails_by_name(self):
+        # A gate copy that gives a pattern to a function of re other than those of
+        # GATE_FUNCTIONS holds a pattern the generator does not read, so the generator, and
+        # with it setUp and the adequacy test, raises UnknownConstruct naming that call.
+        source = GATE.read_text(encoding="utf-8")
+        old = 're.fullmatch(r"[1-9][0-9]*", options["--number"])'
+        self.assertEqual(source.count(old), 1)
+        for name, new in (
+                ("re.findall", 're.findall(r"[1-9][0-9]*", options["--number"])'),
+                ("re.finditer", 're.finditer(r"[1-9][0-9]*", options["--number"])'),
+                ("re.split", 're.split(r"[1-9][0-9]*", options["--number"])'),
+                ("re.sub", 're.sub(r"[1-9][0-9]*", "", options["--number"])'),
+                ("re.subn", 're.subn(r"[1-9][0-9]*", "", options["--number"])')):
+            with self.subTest(name=name):
+                with self.assertRaises(UnknownConstruct) as caught:
+                    generate_sites(source.replace(old, new))
+                self.assertEqual(str(caught.exception),
+                                 "a re call the generator does not read: " + name)
 
     def test_named_cases_pass_unmutated(self):
         ids = sorted({case for ids in SWEEP_ROWS.values() for case in ids}
