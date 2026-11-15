@@ -26,8 +26,9 @@ version as BASELINE, read by the generator's load_pin(). Another reads the
 same source and fails when main() may not run a top-level check_* case
 group in a form that the source shows: main bound other than once by a
 def, a top-level check_* name bound other than once by a def or async def,
-either with a decorator, a check_* name bound inside main(), or no call of a
-top-level check_* name in main(). The configured base is
+either with a decorator, a check_* name bound by main() or in any scope
+inside it, a parameter included, or no call of a top-level check_* name in
+main(). The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -2833,12 +2834,11 @@ def check_stated_count(failures: list[str]) -> int:
     count of UTF-16 code units or of NFC-normalized text states the wrong
     number. The fourth removes the download's final newline, which must be
     exactly 1 LF, so a count that strips a final line end and adds 1 for it
-    states the wrong number. The fifth to eighth put U+FEFF, LF, a space or a
-    tab before the download's first character, which must be neither U+FEFF
-    nor whitespace, so a count that decodes as utf-8-sig, or strips a leading
-    set of characters that holds U+FEFF, LF, the space or the tab, states the
-    wrong number; these 4 cases do not catch a strip of other whitespace
-    alone, of U+00A0 for example. A ninth case holds the first-character
+    states the wrong number. The fifth to ninth put U+FEFF, LF, a space, a
+    tab or U+00A0 before the download's first character, which must be neither
+    U+FEFF nor whitespace, so a count that decodes as utf-8-sig, or strips a
+    leading set of characters that holds U+FEFF, LF, the space, the tab or
+    U+00A0, states the wrong number. A tenth case holds the first-character
     guard to PLAIN_STARTS, so a guard that reads the first byte instead fails."""
     extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
     astral = "Smile \U0001f600, cafe\u0301.\n".encode("utf-8")
@@ -2865,7 +2865,8 @@ def check_stated_count(failures: list[str]) -> int:
              ("download beginning with U+FEFF", leading(b"\xef\xbb\xbf"), first),
              ("download beginning with a blank line", leading(b"\n"), first),
              ("download beginning with a space", leading(b" "), first),
-             ("download beginning with a tab", leading(b"\t"), first)]
+             ("download beginning with a tab", leading(b"\t"), first),
+             ("download beginning with U+00A0", leading("\xa0".encode("utf-8")), first)]
     for name, change, expected in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -3611,13 +3612,41 @@ def bindings(nodes: list[ast.AST]) -> list[tuple[str, ast.AST]]:
     return found
 
 
+def names_bound_within(function: ast.AST) -> set[str]:
+    """The names that the def and everything inside it bind, in any scope: its own name and parameters, the
+    parameters of each def and lambda inside it, comprehension targets, store and del targets, := targets, imports,
+    except and match names, type parameters, and the names of global and nonlocal statements. Unlike bindings(),
+    it enters every nested scope, since a parameter or a target there shadows a top-level name for the code in that
+    scope, which may be where a group is called."""
+    found: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.arg):
+            found.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.TypeVar, ast.ParamSpec,
+                               ast.TypeVarTuple)):
+            found.add(node.name)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.add(node.rest)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            found.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            found.update(node.names)
+    return found
+
+
 def case_group_problems(source: str) -> list[str]:
     """The ways in which main() of the source may fail to run a top-level check_* case group. main must be bound
     exactly once at the top level, by a def without a decorator; each top-level check_* name must be bound exactly
-    once, by a def or async def without a decorator; main() must bind no check_* name itself; and main() must hold a
-    call by the name of each top-level check_* name. So a second def of main or of a group, an assignment of either
-    name, a := binding of either in a place that WALRUS_PLACES names, an import of a group, a decorator on either, a
-    binding of a group inside main(), and a deleted call each fail; GUARD_FORMS holds 1 or more of each."""
+    once, by a def or async def without a decorator; no check_* name may be bound by main() or inside it, in any
+    scope, as names_bound_within() reads it, its parameters and those of a def or lambda inside it included; and
+    main() must hold a call by the name of each top-level check_* name. So a second def of main or of a group, an
+    assignment of either name, a := binding of either in a place that WALRUS_PLACES names, an import of a group, a
+    decorator on either, a binding of a group by main() or inside it, and a deleted call each fail; GUARD_FORMS
+    holds 1 or more of each."""
     tree = ast.parse(source)
     top = bindings(tree.body)
     mains = [node for name, node in top if name == "main"]
@@ -3633,9 +3662,9 @@ def case_group_problems(source: str) -> list[str]:
                 or nodes[0].decorator_list):
             problems.append(f"{name} is bound {len(nodes)} time(s) at the top level, expected once, by a def or "
                             "async def without a decorator")
-    local = sorted({name for name, _ in bindings(mains[0].body) if name.startswith("check_")})
+    local = sorted(name for name in names_bound_within(mains[0]) if name.startswith("check_"))
     if local:
-        problems.append(f"main() binds {', '.join(local)} itself")
+        problems.append(f"main() or a scope inside it binds {', '.join(local)}")
     called = {node.func.id for node in ast.walk(mains[0]) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
     uncalled = [name for name in groups if name not in called]
     if uncalled:
@@ -3677,6 +3706,26 @@ WALRUS_PLACES = [
 ]
 GUARD_FORMS += [(f"{name} bound by := in {place}", None, code.replace("NAME", name))
                 for place, code in WALRUS_PLACES for name in ("main", GROUP)]
+MAIN_DEF = "\ndef " + "main() -> int:"
+# A default that shadows the group: the call by its name still occurs, and the group does not run.
+SHADOW = "lambda failures: 9"
+# (form, replacement of MAIN_DEF or of the call): each binds the group as a parameter, so each must fail on the
+# binding alone, with the call by the group's name still in main().
+GUARD_FORMS += [(f"a group bound by {form} of main()", MAIN_DEF, "\ndef " + f"main({parameters}) -> int:")
+                for form, parameters in [("a positional parameter", f"{GROUP}={SHADOW}"),
+                                         ("a positional-only parameter", f"{GROUP}={SHADOW}, /"),
+                                         ("a keyword-only parameter", f"*, {GROUP}={SHADOW}"),
+                                         ("the * parameter", f"*{GROUP}"), ("the ** parameter", f"**{GROUP}")]]
+GUARD_FORMS += [
+    ("a group bound by a lambda parameter inside main()", f"    {CALL}\n",
+     f"    ran += (lambda {GROUP}={SHADOW}: {GROUP}(failures))()\n"),
+    ("a group bound by the * parameter of a lambda inside main()", f"    {CALL}\n",
+     f"    ran += (lambda *{GROUP}: {GROUP}(failures) if {GROUP} else 9)()\n"),
+    ("a group bound by a parameter of a def inside main()", f"    {CALL}\n",
+     f"    def run({GROUP}={SHADOW}):\n        return {GROUP}(failures)\n    ran += run()\n"),
+    ("a group bound by a comprehension target inside main()", f"    {CALL}\n",
+     f"    ran += sum([{GROUP}(failures) for {GROUP} in ({SHADOW},)])\n"),
+]
 
 
 def check_case_groups_called(failures: list[str]) -> int:
@@ -3687,7 +3736,9 @@ def check_case_groups_called(failures: list[str]) -> int:
     that it is not removed from main() itself, since a guard that does not run cannot fail. It reads only the
     bindings that the source shows as names: a check_* function defined inside a class or another function is not
     a case group, and a binding through globals(), setattr(), exec() or a global statement inside another function
-    is not read. A := in the header of a def, class or lambda or in a comprehension is read, as bindings() says."""
+    is not read. At the top level, a := in the header of a def, class or lambda or in a comprehension is read, as
+    bindings() says; inside main(), every binding in every scope is read, as names_bound_within() says, parameters
+    included."""
     source = Path(__file__).read_text(encoding="utf-8")
     failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
     for form, anchor, replacement in GUARD_FORMS:

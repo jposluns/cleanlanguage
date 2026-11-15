@@ -80,7 +80,8 @@ Exit codes:
      collects these refusals: the embedded block was not found exactly once;
      the stated count was not found exactly once; tools/check-inline-code.py is
      not a regular file, could not be read, raised an exception while it
-     loaded, defines no inline_code_problems, or defines no UnsupportedPython
+     loaded or while its names were read, defines no inline_code_problems, or
+     defines no UnsupportedPython
      that is an exception class; tools/check-inline-code.py raised an
      exception while it checked the page or while its problems were read, or
      gave a problem that str() does not turn into text; or the Python version
@@ -91,8 +92,9 @@ tools/check-inline-code.py that is a symbolic link is not a regular file,
 whatever the link points to, as tools/build-site.py also refuses such a
 download.
 
-An exception from tools/check-inline-code.py, while it loads or while it
-checks the page, is a refusal whatever its class: SystemExit with any code
+An exception from tools/check-inline-code.py, while it loads, while its
+names are read or while it checks the page, is a refusal whatever its class:
+SystemExit with any code
 and any other BaseException subclass included, apart from KeyboardInterrupt,
 which is not caught, so that Ctrl-C still stops the gate. An exception whose
 repr or str raises, or gives something other than a str, is named by its
@@ -101,18 +103,21 @@ metaclass raises or gives something else, is named by fixed words. So
 describing a refusal raises nothing other than KeyboardInterrupt, and the
 refusal is collected with the problems found. The gate reads
 inline_code_problems and UnsupportedPython from the module's own namespace,
-so the gate never calls a module __getattr__.
+so the gate never calls a module __getattr__. That namespace is taken before
+the file runs, and a lookup in it, which runs the file's code when a stored
+key is a str subclass that overrides __eq__, is guarded like the load.
 
 What still ends otherwise: the page read is not guarded, so a page that
 cannot be read or decoded ends in a traceback with exit 1; a KeyboardInterrupt
-ends the gate as Python ends on Ctrl-C; and code in tools/check-inline-code.py
+ends the gate as Python ends on Ctrl-C; code in tools/check-inline-code.py
 that ends the process itself, for example by os._exit, ends the gate with the
-code it gives.
+code it gives; and code there that changes the gate's own functions or the
+interpreter's state, for example through sys.modules, is not guarded against.
 
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
 could not be evaluated is reported on stderr, prefixed "check-instructions-page: ".
-Apart from the 3 paths named in the paragraph above, the gate runs every
+Apart from the 4 paths named in the paragraph above, the gate runs every
 check it can evaluate and prints every problem it found before it exits, so a
 problem is never hidden behind a refusal collected while the checks run, and
 it exits 3 when a check could not be evaluated, whatever else it found. The 2
@@ -145,6 +150,9 @@ EMBEDDED = re.compile(r'<pre id="instructions-text"[^>]*>(.*?)</pre>', re.S)
 # stated count.
 STATED = re.compile(r"the same content the full download saves \((\d+) characters\)")
 INLINE_GATE = Path(__file__).resolve().parent / "check-inline-code.py"
+# The names read from tools/check-inline-code.py, and the value that stands for a name the file does not define.
+LOADED_NAMES = ("inline_code_problems", "UnsupportedPython")
+MISSING = object()
 INLINE_RULE = (
     "the site's own pages must not use inline code (template specification, section 5), and this "
     "check and tools/check-inline-code.py enforce that rule"
@@ -199,8 +207,9 @@ def load_inline_gate():
     UnsupportedPython. The source is always read, so no cached bytecode stands in for it. A source that is not a
     regular file, that cannot be read or compiled, or that raises any exception other than KeyboardInterrupt while it
     runs, SystemExit included, means that tools/check-inline-code.py could not be loaded (Refused, exit 3). Both
-    names are read from the module's own namespace, so this function never calls a module __getattr__; a namespace
-    without either name, or whose UnsupportedPython is not an exception class, is refused too."""
+    names are read from the module's own namespace, so this function never calls a module __getattr__; any exception
+    other than KeyboardInterrupt while they are looked up there is refused in the same way, and so is a namespace
+    without either name, or whose UnsupportedPython is not an exception class."""
     try:
         info = os.lstat(INLINE_GATE)
     except OSError as error:
@@ -213,21 +222,31 @@ def load_inline_gate():
         raise Refused(f"tools/check-inline-code.py could not be read: {error}")
     module = types.ModuleType("check_inline_code")
     module.__file__ = str(INLINE_GATE)
+    # Taken before the file runs: the file can reach its module and give it a class whose attribute reads run its
+    # code, but it cannot replace a module's __dict__.
+    namespace = module.__dict__
     try:
-        exec(compile(source, str(INLINE_GATE), "exec", dont_inherit=True), module.__dict__)
+        exec(compile(source, str(INLINE_GATE), "exec", dont_inherit=True), namespace)
     except KeyboardInterrupt:
         raise
     except BaseException as error:
         raise Refused(f"tools/check-inline-code.py could not be loaded: {described(error)}")
-    namespace = module.__dict__
-    for attribute in ("inline_code_problems", "UnsupportedPython"):
-        if attribute not in namespace:
+    # A lookup compares the name with the stored keys, and a key of a str subclass runs the file's __eq__, and the
+    # __bool__ of what it returns, so the lookups are guarded like the load.
+    try:
+        found = {attribute: namespace.get(attribute, MISSING) for attribute in LOADED_NAMES}
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:
+        raise Refused(f"tools/check-inline-code.py raised an exception while its names were read: {described(error)}")
+    for attribute, value in found.items():
+        if value is MISSING:
             raise Refused(f"tools/check-inline-code.py defines no {attribute}")
-    unsupported = namespace["UnsupportedPython"]
-    # type() and issubclass() on classes run none of the file's code, which isinstance() could through __class__.
+    unsupported = found["UnsupportedPython"]
+    # is, type() and issubclass() on classes run none of the file's code, which isinstance() could through __class__.
     if not (issubclass(type(unsupported), type) and issubclass(unsupported, BaseException)):
         raise Refused("tools/check-inline-code.py defines an UnsupportedPython that is not an exception class")
-    return namespace["inline_code_problems"], unsupported
+    return found["inline_code_problems"], unsupported
 
 
 def inline_code_problems(text: str) -> list[str]:

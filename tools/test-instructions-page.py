@@ -4,8 +4,9 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies the case's fault (none for the committed tree; for
 some cases a sequence of 2 or 3 changes), runs the gate there as a separate
-process and asserts its exit code, that the gate wrote no traceback on stderr,
-and, where the case names them, the words of the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
+process and asserts its exit code, that the gate wrote no traceback on stderr
+(apart from the KeyboardInterrupt cases below), and, where the case names
+them, the words of the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
 runs the gate under a faked Python version tuple outside the supported set of
 tools/check-inline-code.py and asserts exit 3 with the refusal in that file's
 own words, so a gate that reports the version through its general refusal for
@@ -23,15 +24,14 @@ comparison still matches, so a gate that counts newline-translated text fails
 it. The 2 final-line-end cases remove the download's final LF or make it CR
 LF, and each asserts that the download ended in exactly 1 LF before the edit:
 a gate that strips the final line end and adds 1 for it fails the first, and a
-gate that also strips a final CR fails both. The 4 leading-content cases put
-U+FEFF, LF, a space or a tab before the download's first character and the
-same character before the block's text, right after the copy button, so the
+gate that also strips a final CR fails both. The 5 leading-content cases put
+U+FEFF, LF, a space, a tab or U+00A0 before the download's first character and
+the same character before the block's text, right after the copy button, so the
 block still matches; each asserts that the download decoded as UTF-8 and that
 its first character, not its first byte, was neither U+FEFF nor whitespace
 before the edit. A gate that decodes the download as utf-8-sig fails the
 first, and a gate that strips a leading set of characters that holds U+FEFF,
-LF, the space or the tab fails the case of that character; these 4 cases do
-not catch a strip of other whitespace alone, of U+00A0 for example. The CR
+LF, the space, the tab or U+00A0 fails the case of that character. The CR
 LF, final-line-end and leading-content fixtures are written byte for byte.
 
 Some cases replace or extend tools/check-inline-code.py, each on a page that
@@ -43,13 +43,36 @@ UnsupportedPython that is not an exception class; a module __getattr__
 that raises ValueError beside a renamed inline_code_problems; and, from
 description_faults(), a step of describing an exception or naming a problem
 raising SystemExit(0) or ValueError, among them a class whose metaclass
-raises when its name is read. Each asserts exit 3, the refusal on stderr and
-the count problem on stdout.
+raises when its name is read; and inline_code_problems or UnsupportedPython
+stored under a key of a str subclass whose __eq__ raises SystemExit(0) or
+ValueError, or gives a value whose __bool__ raises SystemExit(0). Each
+asserts exit 3, the refusal on stderr and the count problem on stdout. 1
+more case, in which the file gives its own module a class whose attribute
+reads raise SystemExit(0), asserts exit 1 and the count problem, since the
+gate reads the namespace it took before the file ran. 1 more case removes
+the file's own from __future__ import annotations and has it read, while it
+loads, an annotation that names an undefined name. Compiled without the
+gate's own future import, as the file runs alone, that read raises NameError,
+so the case asserts exit 3, the refusal and the count problem; a gate whose
+compile inherits that import lets the file load and exit 1, and fails it.
 
-2 cases set the mode of the folder that holds the download or the page to
-000 and assert exit 3 with "could not be read" and the permission error, so
-a gate that reports such a lookup error as a missing file fails them. Like
-the other mode-000 cases, they are skipped under root.
+5 cases raise KeyboardInterrupt from tools/check-inline-code.py, on a page
+that states 1 character fewer, at each place where the gate catches every
+other exception: while the file loads, while a name is looked up under such
+a key, in its reader, in the repr of an exception that the reader raises, and
+in the class name of an exception whose repr raises. Each asserts exit
+-SIGINT, a last line of stderr that is KeyboardInterrupt, and nothing on
+stdout, so a gate that catches it at any of these places fails.
+
+The case of the committed tree also asserts both numbers of the gate's
+success line: the download without its final newline, read with its line
+ends translated, and the download as saved.
+
+1 case sets the mode of the download to 000, and 2 set the mode of the
+folder that holds the download or the page to 000. Each asserts exit 3 with
+"could not be read" and the permission error, so a gate that lets the
+download's read error escape, or reports such a lookup error as a missing
+file, fails them. Like the other mode-000 cases, they are skipped under root.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -72,6 +95,7 @@ import importlib.util
 import os
 import py_compile
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -259,23 +283,29 @@ def load_faults(defined: str, renamed: str, attribute: str) -> list[tuple[str, o
             ("with a syntax error beside a stale cached file", stale, "could not be loaded")]
 
 
-def saved_count() -> int:
-    """The full download's character count as saved: its bytes decoded as UTF-8, nothing stripped. Every case
-    copies the download, so a download that cannot be read or decoded stops the suite with its name and exit 1."""
+def saved_text() -> str:
+    """The full download as saved: its bytes decoded as UTF-8, nothing stripped. Every case copies the download, so
+    a download that cannot be read or decoded stops the suite with its name and exit 1."""
     try:
-        return len((REPO_ROOT / FILES[0]).read_bytes().decode("utf-8"))
+        return (REPO_ROOT / FILES[0]).read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as error:
         print(f"test-instructions-page: {FILES[0]} could not be read: {error}", file=sys.stderr)
         raise SystemExit(1)
 
 
-SAVED = saved_count()
+SAVED_TEXT = saved_text()
+SAVED = len(SAVED_TEXT)
+# The other number of the gate's success line: the download read with its line ends translated to LF, as Python
+# reads text, without its final LFs.
+TRIMMED_LENGTH = len(SAVED_TEXT.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n"))
+SUCCESS_WORDS = (f"({TRIMMED_LENGTH} characters without the final newline), states the download's {SAVED} "
+                 "characters and carries no inline code.")
 COUNT_WORDS = f"check-instructions-page: expected exactly 1 stated count of the full download in {PAGE}, found"
 # 3 characters more than "Apply the precedence order": U+1F600, which UTF-16 writes as 2 code units, a space, and
 # U+0301 after the e, which NFC joins to it.
 ASTRAL = "Apply the \U0001f600 precedence orde\N{COMBINING ACUTE ACCENT}r"
 CASES = [
-    ("the committed tree", None, 0),
+    ("the committed tree", None, (0, "", SUCCESS_WORDS)),
     ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
     ("the copy button removed", edit(PAGE, BUTTON, ""), 1),
     ("the copy button shown", edit(PAGE, BUTTON, BUTTON.replace(" hidden", "")), 1),
@@ -354,6 +384,11 @@ CASES = [
     ("the download beginning with a tab, the page stating the count as saved",
         faults(leading(FILES[0], b"\t"),
                edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\t"),
+               edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
+                          f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
+    ("the download beginning with U+00A0, the page stating the count as saved",
+        faults(leading(FILES[0], "\xa0".encode("utf-8")),
+               edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + "\xa0".encode("utf-8")),
                edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
                           f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
     ("U+1F600 and a combining accent in the download and the block, the page stating the count as saved",
@@ -492,6 +527,27 @@ def description_faults() -> list[tuple[str, object, str]]:
 
 
 INLINE_FAULTS += description_faults()
+
+
+def keyed(name: str, compare: str, prelude: str = "") -> str:
+    """Code that stores the file's name under a key of a str subclass with the same hash, whose __eq__ runs the
+    given code, so that looking the name up runs it."""
+    return (f"{prelude}class Key(str):\n    __hash__ = str.__hash__\n\n    def __eq__(self, other):\n"
+            f"        {compare}\n\n"
+            f"globals()[Key({name!r})] = globals().pop({name!r})\n")
+
+
+# A __bool__ that raises, for the value that a key's __eq__ returns.
+FALSY = "class Falsy:\n    def __bool__(self):\n        raise SystemExit(0)\n\n"
+INLINE_FAULTS += [
+    (f"with {name} under a key whose __eq__ raises {label}", appended(keyed(name, f"raise {raised}")),
+     f"raised an exception while its names were read: {raised}")
+    for name in ("inline_code_problems", "UnsupportedPython")
+    for label, raised in [("SystemExit(0)", "SystemExit(0)"), ("ValueError", "ValueError('eq')")]
+]
+INLINE_FAULTS.append(("with inline_code_problems under a key whose __eq__ gives a value whose __bool__ raises "
+                      "SystemExit(0)", appended(keyed("inline_code_problems", "return Falsy()", FALSY)),
+                      "raised an exception while its names were read: SystemExit(0)"))
 LOAD_CASES += [(f"tools/check-inline-code.py {name}, and the stated count wrong",
                 faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), fault),
                 (3, f"check-instructions-page: tools/check-inline-code.py {words}",
@@ -510,6 +566,8 @@ def unsearchable(relative: str):
 # A lookup error other than a missing file, here a folder that cannot be searched, is reported as could not be
 # read, not as not existing.
 LOAD_CASES += [
+    ("the download with mode 000", lambda root: os.chmod(root / FILES[0], 0),
+        (3, f"check-instructions-page: {FILES[0]} could not be read: [Errno 13] Permission denied")),
     ("the download in a folder with mode 000", unsearchable(FILES[0]),
         (3, f"check-instructions-page: {FILES[0]} could not be read: [Errno 13] Permission denied")),
     ("the page in a folder with mode 000", unsearchable(PAGE),
@@ -519,6 +577,46 @@ LOAD_CASES += [
 # fail to read: it is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
 CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
+# The file finds its own module and gives it a class whose attribute reads raise, so a gate that reads the module
+# after the file has run, rather than the namespace it took before, ends there.
+SWAPPED = ("import gc, types\n\nclass Swapped(types.ModuleType):\n    def __getattribute__(self, name):\n"
+           "        raise SystemExit(0)\n\nfor holder in gc.get_referrers(globals()):\n"
+           "    if type(holder) is types.ModuleType:\n        holder.__class__ = Swapped\n")
+CASES.append(("tools/check-inline-code.py giving its module a class whose attribute reads raise SystemExit(0), and "
+              "the stated count wrong",
+              faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), appended(SWAPPED)),
+              (1, "", f"the page states {SAVED - 1} characters for the full download")))
+# Without its own future import, the file evaluates the annotation when it reads it, and the name is undefined. A gate
+# whose compile inherits its own from __future__ import annotations leaves the annotation a string, and the file loads.
+UNRESOLVED = "def annotated(value: UndefinedName):\n    pass\n\n\nannotated.__annotations__\n"
+CASES.append(("tools/check-inline-code.py without its own future import, reading an annotation that names an "
+              "undefined name while it loads, and the stated count wrong",
+              faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"),
+                     edit("tools/check-inline-code.py", "\nfrom __future__ import annotations\n", "\n"),
+                     appended(UNRESOLVED)),
+              (3, "check-instructions-page: tools/check-inline-code.py could not be loaded: "
+                  "NameError(\"name 'UndefinedName' is not defined\")",
+               f"the page states {SAVED - 1} characters for the full download")))
+# (name, fault in tools/check-inline-code.py): each raises KeyboardInterrupt at 1 place where the gate catches every
+# other exception, on a page that states 1 character fewer. The gate must end as Python ends on Ctrl-C, with the
+# KeyboardInterrupt traceback, exit -SIGINT and nothing on stdout.
+INTERRUPTS = [
+    ("raising KeyboardInterrupt while it loads", appended("raise KeyboardInterrupt\n")),
+    ("with inline_code_problems under a key whose __eq__ raises KeyboardInterrupt",
+        appended(keyed("inline_code_problems", "raise KeyboardInterrupt"))),
+    ("its reader raising KeyboardInterrupt",
+        appended("def inline_code_problems(text, svg=False):\n    raise KeyboardInterrupt\n")),
+    ("its reader raising an exception whose repr raises KeyboardInterrupt",
+        appended("class Boom(Exception):\n    def __repr__(self):\n        raise KeyboardInterrupt\n\n"
+                 "def inline_code_problems(text, svg=False):\n    raise Boom()\n")),
+    ("its reader raising an exception whose repr raises and whose class name raises KeyboardInterrupt",
+        appended(unnamed("KeyboardInterrupt") + "class Boom(Exception, metaclass=Unnamed):\n"
+                 "    def __repr__(self):\n        raise ValueError('repr')\n\n"
+                 "def inline_code_problems(text, svg=False):\n    raise Boom()\n")),
+]
+INTERRUPTS = [(f"tools/check-inline-code.py {name}, and the stated count wrong",
+               faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), fault))
+              for name, fault in INTERRUPTS]
 
 
 def copy_suite(root: Path) -> None:
@@ -554,6 +652,16 @@ def main() -> int:
                                 + (f" and {out_words!r} on stdout" if out_words else "")
                                 + (" and no traceback" if traceback else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
+    for name, fault in INTERRUPTS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = build(scratch, fault, name, failures)
+            if root is None:
+                continue
+            result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
+            lines = result.stderr.splitlines()
+            if result.returncode != -signal.SIGINT or not lines or lines[-1] != "KeyboardInterrupt" or result.stdout:
+                failures.append(f"{name}: exit {result.returncode}, expected {-signal.SIGINT} with stderr ending in "
+                                f"KeyboardInterrupt and nothing on stdout: {(result.stdout + result.stderr).strip()[-300:]}")
     with tempfile.TemporaryDirectory() as scratch:
         root = build(scratch, None, "another Python version", failures)
         if root is not None:
@@ -589,7 +697,8 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-instructions-page: all {len(CASES) + 2 + (0 if inner else len(SUITE_CASES))} cases passed.")
+    total = len(CASES) + len(INTERRUPTS) + 2 + (0 if inner else len(SUITE_CASES))
+    print(f"test-instructions-page: all {total} cases passed.")
     return 0
 
 
