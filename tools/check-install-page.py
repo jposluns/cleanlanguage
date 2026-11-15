@@ -174,9 +174,12 @@ What it verifies
    site's root whose first segment is 1 of ``LOADED_SEGMENTS`` (``assets``,
    in any letter case), the first segments of every file that
    ``tools/test-install-page.py`` reads the committed pages as loading
-   (below), so check 7 refuses every header and redirect rule that it reads
-   as able to match a path under them (``src="/images/a.png"`` and
-   ``src="logo.svg"`` fail).
+   (below), so check 7 refuses each header but those of ``INSTALL_HEADERS``,
+   with their values, under a header pattern that it reads as able to match
+   a path under them, and every redirect source that it reads so but an
+   exact path whose file name no file under ``site/`` but
+   ``site/_redirects`` names and that nothing there occupies
+   (``src="/images/a.png"`` and ``src="logo.svg"`` fail).
    Every ``src``, and every ``href`` of a ``link`` other than the canonical
    link, is also 1 of the files under ``assets/baseline/`` that
    ``tools/check-baseline-pin.py`` pins in ``.baseline/pin.toml``, read with
@@ -281,9 +284,11 @@ What it verifies
    value (``<!ENTITY e "abc">``) expanded, by each declaration of an entity
    declared more than once and by the declarations that XML binds, the
    first of each outside the comments, with HTML
-   character references decoded again and again until nothing changes, at
-   most ``UNESCAPE_ROUNDS`` times, so that a ``srcdoc`` inside a ``srcdoc``
-   is read too, with the text of each ``style`` or ``script`` element read
+   character references decoded, the expansion and the decoding taking turns
+   until nothing changes, in at most ``UNESCAPE_ROUNDS`` rounds, so that a
+   ``srcdoc`` inside a ``srcdoc`` is read too, and so is an entity whose
+   value character references write (``<!ENTITY a "&#38;p1;&#38;p2;">``),
+   with the text of each ``style`` or ``script`` element read
    without the comments, processing instructions, CDATA section markers
    and child elements inside it, by 2 readings of its tags
    (``XML_MARKUP`` and ``HTML_MARKUP``), with CSS and JavaScript escapes
@@ -311,9 +316,10 @@ What it verifies
    ``http-equiv`` value or a ``charset`` attribute writes it, an
    ``@charset`` rule or the encoding of an XML declaration), whose decoder
    can drop bytes that split a file name, a file's entity references expand beyond
-   ``ENTITY_LIMIT`` or ``ENTITY_ROUNDS``, it declares an entity more than
-   ``ENTITY_ROUNDS`` times, or its character references still
-   decode after ``UNESCAPE_ROUNDS`` rounds, or an entry there is a link or
+   ``ENTITY_LIMIT`` characters or still expand in round ``ENTITY_ROUNDS``,
+   it declares an entity more than ``ENTITY_ROUNDS`` times, or its
+   character references still decode, or its entity references still
+   expand, after ``UNESCAPE_ROUNDS`` rounds of both, or an entry there is a link or
    neither a file nor a folder, fails and names that input. Every other
    source passes. A rule whose destination, or a later field of its line,
    this reading reads, failing closed, as able to lead to a source that it
@@ -1308,9 +1314,11 @@ HTML_MARKUP = re.compile(r"<!--(?:-?>|.*?(?:--!?>|\Z))|<!\[CDATA\[(?P<cdata>.*?)
 # where the entity is declared more than once a form for each declaration and a form with the declarations that XML
 # binds, the first of each outside the comments,
 # wherever the reference stands, text and attribute values included, again for an entity that a value names
-# (entities_expanded()), at most ENTITY_ROUNDS times and to at most ENTITY_LIMIT more characters, so that a name that
-# such a reference splits or holds is read whole; a file that needs more fails closed, since the search then does not
-# know which names the file holds.
+# (entities_expanded()), in fewer than ENTITY_ROUNDS rounds of replacing and to at most ENTITY_LIMIT more characters,
+# so that a name that such a reference splits or holds is read whole; a file whose references still expand in round
+# ENTITY_ROUNDS, or by more characters, fails closed, since the search then does not know which names the file holds.
+# name_tokens() expands the entities of each form that a decoding of character references gives too, so that an
+# entity whose value character references write, such as <!ENTITY a "&#38;p1;&#38;p2;">, is expanded as well.
 XML_ENTITY = re.compile(r"<!ENTITY\s+([^\s%\"'<>&;]+)\s+(?:\"([^\"]*)\"|'([^']*)')")
 # Check 7: an XML comment, which entities_expanded() removes to find the declarations that an XML parser binds.
 XML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
@@ -1833,9 +1841,9 @@ def page_attribute_problems(where: str, parser: PageParser) -> list[str]:
         src = element["values"].get("src")
         if src is not None and (not src.startswith("/") or path_segment(src).lower() not in LOADED_SEGMENTS):
             problems[f"{where}: {tag} may load {src!r}, which is not under /{'/, /'.join(LOADED_SEGMENTS)}/ "
-                     "(LOADED_SEGMENTS), where check 7 refuses every header rule and every redirect source but an "
-                     "exact path whose file name no file under site/ but site/_redirects names and that nothing "
-                     "there occupies."] = None
+                     "(LOADED_SEGMENTS), where check 7 refuses each header but those of INSTALL_HEADERS and every "
+                     "redirect source but an exact path whose file name no file under site/ but site/_redirects "
+                     "names and that nothing there occupies."] = None
     return list(problems)
 
 
@@ -2046,8 +2054,10 @@ def js_unescape(text: str) -> str:
 
 def entities_expanded(text: str) -> list[str]:
     """Check 7: text with each reference to a general entity that it declares with a literal value (XML_ENTITY)
-    replaced by that value, again for a reference that a value holds; a ValueError if that takes more than
-    ENTITY_ROUNDS rounds or adds more than ENTITY_LIMIT characters. An entity declared more than once is expanded by
+    replaced by that value, again for a reference that a value holds; a ValueError if round ENTITY_ROUNDS still
+    replaces a reference, so that references nested ENTITY_ROUNDS deep or deeper fail (a reference whose value holds a
+    reference whose value holds none is nested 2 deep and needs 2 rounds), or if it adds more than ENTITY_LIMIT
+    characters. An entity declared more than once is expanded by
     each of its declarations, the first, which XML binds, included: the form at index k takes the k-th declaration
     of each entity, or its last where it has fewer; a ValueError if an entity is declared more than ENTITY_ROUNDS
     times. A further form takes the first declaration of each entity outside the comments (XML_COMMENT), the one
@@ -2075,7 +2085,8 @@ def entities_expanded(text: str) -> list[str]:
 
 def entity_form(text: str, reference: re.Pattern, entities: dict[str, str]) -> str:
     """Check 7: text with each reference (reference) to an entity of entities replaced by its value, again for a
-    reference that a value holds (entities_expanded()), with its ValueErrors."""
+    reference that a value holds, in at most ENTITY_ROUNDS rounds of replacing (entities_expanded()), with its
+    ValueErrors: 1 when round ENTITY_ROUNDS still replaces a reference, since the rounds then may not have ended."""
     added = 0
 
     def expand(match: re.Match) -> str:
@@ -2089,7 +2100,8 @@ def entity_form(text: str, reference: re.Pattern, entities: dict[str, str]) -> s
         if expanded == text:
             return text
         text = expanded
-    raise ValueError(f"its XML entity references still expand after {ENTITY_ROUNDS} rounds")
+    raise ValueError(f"its XML entity references still expand in the last of the {ENTITY_ROUNDS} rounds that the "
+                     f"name search makes, so they nest {ENTITY_ROUNDS} deep or deeper")
 
 
 def markup_texts(text: str, markup: re.Pattern, nested: bool) -> list[str]:
@@ -2142,11 +2154,13 @@ def markup_forms(text: str) -> set[str]:
 
 
 def name_tokens(text: str) -> set[str]:
-    """Check 7: the tokens (NAME_TOKEN) of a file's text, folded, in each form that the name search reads: as written,
-    and with the references to the entities that the text declares with a literal value expanded
-    (entities_expanded()); each of those with HTML character references decoded again and again until nothing
-    changes, so that a reference that a decoded reference writes, as in an escaped srcdoc value or a srcdoc inside a
-    srcdoc, is decoded too, at most UNESCAPE_ROUNDS times, a ValueError if they still decode then; the text of each
+    """Check 7: the tokens (NAME_TOKEN) of a file's text, folded, in each form that the name search reads: as written;
+    and, in rounds, each form that the round before added with HTML character references decoded and with the
+    references to the entities that it declares with a literal value expanded (entities_expanded()), until no round
+    adds a form, so that a reference that a decoded reference writes, as in an escaped srcdoc value or a srcdoc inside
+    a srcdoc, is decoded too, and an entity whose value or whose reference a character reference writes, such as
+    <!ENTITY a "&#38;p1;&#38;p2;">, is expanded too, in at most UNESCAPE_ROUNDS rounds, a ValueError if round
+    UNESCAPE_ROUNDS + 1 still adds a form; the text of each
     style or script element of each form so far without the comments, processing instructions, CDATA section markers and
     child elements inside it, by XML_MARKUP and by HTML_MARKUP (markup_forms()); each form so far with CSS escapes
     decoded and with JavaScript escapes decoded (JS_ESCAPE, and the JavaScript string escapes of JS_STRING_ESCAPE,
@@ -2162,14 +2176,15 @@ def name_tokens(text: str) -> set[str]:
     read a name that a script or an XSLT stylesheet builds, an escape it does not decode, markup in a style or script
     element that its reading of tags does not model (such as a child tag whose unquoted attribute value holds a
     quote), a reference to an entity that a parameter entity or an external DTD declares, or a character it keeps."""
-    forms = {text, *entities_expanded(text)}
+    forms = {text}
     fresh = set(forms)
     for rounds in range(UNESCAPE_ROUNDS + 1):
-        fresh = {html.unescape(form) for form in fresh} - forms
+        fresh = {new for form in fresh for new in (html.unescape(form), *entities_expanded(form))} - forms
         if not fresh:
             break
         if rounds == UNESCAPE_ROUNDS:
-            raise ValueError(f"its HTML character references still decode after {UNESCAPE_ROUNDS} rounds")
+            raise ValueError(f"its HTML character references still decode, or its XML entity references still "
+                             f"expand, after {UNESCAPE_ROUNDS} rounds")
         forms |= fresh
     forms |= {joined for form in forms for joined in markup_forms(form)}
     forms |= {CSS_ESCAPE.sub(lambda match: code_point(match.group(1)) if match.group(1) else match.group(2), form)
@@ -2828,7 +2843,8 @@ def main() -> int:
         "and each source under the loaded segments is an exact path whose file name no file under site/ but "
         "site/_redirects names in a form the name search reads, that nothing under site/ occupies and that lies "
         "beneath no file, each compared in any letter case, and no destination there names the file name of such a "
-        "source or holds a : or a * after any http:// or https:// at its start (a load by a name "
+        "source or, while such a source exists, holds a : or a * after any http:// or https:// at its start (a load "
+        "by a name "
         "that no file writes in such a form, such as 1 that a script or an XSLT stylesheet builds, that an escape "
         "the search does not decode hides, that markup the search's reading of tags does not model, an entity it "
         "does not expand or a character it keeps splits, or that only compressed or UTF-16 text, or text that an "

@@ -755,6 +755,37 @@ def break_cases() -> list[tuple]:
              (1, BREAK.format(ord(char[0])))) for name, char in BREAKS]
 
 
+def nesting_cases() -> list[tuple]:
+    """A case for internal entity references nested 15, 16 and 17 deep in an SVG file, beside the committed redirects:
+    each entity's value is a reference to the next, and the last entity's value is a letter, so references nested n
+    deep need n rounds of replacing. The name search expands those nested 15 deep, and fails closed on a file whose
+    references still expand in the last of the 16 rounds that it makes."""
+    cases = []
+    for depth in (15, 16, 17):
+        relative = f"site/assets/nest{depth}.svg"
+        declarations = "".join(f'<!ENTITY e{level} "&e{level + 1};">' for level in range(1, depth))
+        text = f'<!DOCTYPE svg [{declarations}<!ENTITY e{depth} "z">]>' + SVG_FILE.format("<text>&e1;</text>")
+        expected = 0 if depth < 16 else (1, f"{UNEVALUATED}the file {relative} could not be read: its XML entity "
+                                            "references still expand in the last of the 16 rounds that the name "
+                                            "search makes, so they nest 16 deep or deeper")
+        cases.append((f"the committed redirects beside an SVG file whose entity references nest {depth} deep",
+                      create(relative, text), expected))
+    return cases
+
+
+# The labels that the WHATWG Encoding Standard gives UTF-8, written out here and not read from the gate, so that a
+# label dropped from the gate's UTF8_LABELS fails its case.
+UTF8_NAMES = ("unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8")
+
+
+def label_cases() -> list[tuple]:
+    """A case for each label of UTF8_NAMES, in a meta charset of a page beside the committed redirects: a file under
+    site/ may declare UTF-8 by any of them, so each passes."""
+    return [(f"the committed redirects beside a page that declares UTF-8 by the label {label}",
+             create("site/about/index.html", f'<!doctype html>\n<meta charset="{label}">\n'), 0)
+            for label in UTF8_NAMES]
+
+
 def raw(relative: str, data: bytes):
     """Write a new file of bytes, and any directory it needs, that the copy does not hold."""
     def apply(root: Path) -> None:
@@ -1616,6 +1647,13 @@ CASES = [
     ("the install page missing", remove(PAGE), 3),
     ("the headers file missing", remove(HEADERS), 3),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
+    # Under a pattern that reaches_page() does not read as able to match an install page, only the branches for
+    # X-Content-Security-Policy and for a detached policy refuse these lines.
+    ("an X-Content-Security-Policy line on the sitemap only",
+        edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  X-Content-Security-Policy: default-src 'none'\n"),
+        (1, "names X-Content-Security-Policy under /sitemap.xml; only Content-Security-Policy carries the policy")),
+    ("the policy detached on the sitemap only", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  ! Content-Security-Policy\n"),
+        (1, "detaches Content-Security-Policy under /sitemap.xml; only /draft/* may detach it")),
     ("the site-wide policy widened", edit(HEADERS, "frame-ancestors 'none'" + NEXT_RULE, "frame-ancestors 'none'; worker-src *" + NEXT_RULE), 1),
     ("the site-wide policy gaining unsafe-eval", edit(HEADERS,
         "Cross-Origin-Opener-Policy: same-origin\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'",
@@ -1941,6 +1979,19 @@ CASES = [
         create("site/assets/loop.svg", '<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]>'
                + SVG_FILE.format("<text>&a;</text>")),
         (1, UNEVALUATED + "the file site/assets/loop.svg could not be read: its XML entity references still expand")),
+    # An entity whose value, or whose reference, character references write: the name search expands the entities of
+    # each form that a decoding gives, again and again, so a name that such an entity splits is read whole.
+    ("an image of an SVG file whose href holds an entity whose value character references write",
+        both(create("site/probe/qq.svg", '<!DOCTYPE svg [<!ENTITY p1 "qq-n"><!ENTITY p2 "ew.svg">'
+                    '<!ENTITY a "&#38;p1;&#38;p2;">]>' + SVG_FILE.format('<image href="/assets/baseline/logos/&a;"/>')),
+             append(REDIRECTS, "/assets/baseline/logos/qq-new.svg /y 301\n")), naming("qq-new.svg", "site/probe/qq.svg")),
+    ("an image of an SVG file whose href holds entity references that character references write",
+        both(create("site/probe/qr.svg", '<!DOCTYPE svg [<!ENTITY p1 "qr-n"><!ENTITY p2 "ew.svg">]>'
+                    + SVG_FILE.format('<image href="/assets/baseline/logos/&#38;p1;&#38;p2;"/>')),
+             append(REDIRECTS, "/assets/baseline/logos/qr-new.svg /y 301\n")), naming("qr-new.svg", "site/probe/qr.svg")),
+    # References nested 15, 16 and 17 deep: the name search expands entities in at most 15 rounds that replace a
+    # reference, and fails closed on a file whose references still expand in the last of its 16 rounds.
+    *nesting_cases(),
     # The name search reads the text of a plain style element of a page without a comment in it too, so a name that a
     # comment marker splits there makes the source fail, whether or not the marker splits the name for the page.
     ("a plain style element of a page whose url() a comment marker splits",
@@ -2011,6 +2062,9 @@ CASES = [
         create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/gone.css">\n'), 0),
     ("a redirect of a stylesheet that a page links and the tree lacks",
         named('<link rel="stylesheet" href="/assets/gone.css">', "/assets/gone.css"), naming("gone.css")),
+    ("a redirect of a logo path with a tilde that a page loads",
+        named('<img alt="" src="/assets/baseline/logos/q~new.svg">', "/assets/baseline/logos/q~new.svg"),
+        naming("q~new.svg")),
     ("a header rule for an exact path that the redirect reading accepts",
         append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
     # No field of site/_redirects after a source may be one that the gate reads, failing closed, as able to lead to a
@@ -2042,6 +2096,10 @@ CASES = [
             "any http:// or https:// at its start, " + EXPANDS)),
     ("a redirect whose destination holds a splat", leads("/assets/baseline/:splat", "/foo/*"), (1, EXPANDS)),
     ("a redirect to another host with a port", leads("https://other.example:8443/x.svg"), (1, EXPANDS)),
+    # A : or a * in a destination fails only while the redirect reading accepts a source, so a port passes when the
+    # file holds only the 10 release lines and that rule.
+    ("a redirect to another host with a port, after the 10 release lines alone, with no accepted source",
+        write(REDIRECTS, RELEASE_LINES + "/foo https://other.example:8443/x 302\n"), 0),
     ("a chain of 2 redirects whose second leads from an accepted source to another",
         both(leads("/assets/baseline/logos/aiqt-zz.svg"),
              append(REDIRECTS, "/assets/baseline/logos/aiqt-zz.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
@@ -2060,6 +2118,10 @@ CASES = [
     # site/_redirects ends a line only at a line feed, and a line that holds another character at which a reading may
     # end a line or a field fails, so a destination after such a character cannot go unjudged.
     *break_cases(),
+    # The ends of the control range U+007F to U+009F in a comment line, where no rule is read, so that only the
+    # refusal of the character can fail the file.
+    ("a comment line of site/_redirects that holds U+0080", append(REDIRECTS, "# note\x80\n"), (1, BREAK.format(0x80))),
+    ("a comment line of site/_redirects that holds U+009F", append(REDIRECTS, "# note\x9f\n"), (1, BREAK.format(0x9F))),
     ("the committed redirects with a space and no other whitespace between fields",
         append(REDIRECTS, "/downloads/old2.md   /downloads/cleanlanguage.md   301\n"), 0),
     # A file under site/ that declares an encoding other than UTF-8, whose decoder can drop the bytes of an escape
@@ -2092,6 +2154,18 @@ CASES = [
     ("the committed redirects beside a page and an SVG file that declare UTF-8 by other labels",
         both(create("site/about/index.html", '<!doctype html>\n<meta charset="UTF8">\n'),
              create("site/assets/u8.svg", '<?xml version="1.0" encoding="Utf-8"?>\n' + SVG_FILE.format(""))), 0),
+    *label_cases(),
+    # A declaration of another encoding in capitals or in mixed letter case, with no escape sequence or other fault,
+    # so that only the declaration fails the file.
+    ("a page that declares ISO-2022-JP by a meta charset in capitals",
+        create("site/about/index.html", '<!doctype html>\n<META CHARSET="ISO-2022-JP">\n'),
+        (1, DECLARES.format("page site/about/index.html", "ISO-2022-JP"))),
+    ("a stylesheet that declares Shift_JIS by an @charset rule in mixed letter case",
+        create("site/assets/mc.css", '@CharSet "Shift_JIS";\n.x { color: red; }\n'),
+        (1, DECLARES.format("file site/assets/mc.css", "Shift_JIS"))),
+    ("an SVG file that declares ISO-2022-JP by an XML declaration whose encoding is in mixed letter case",
+        create("site/assets/mx.svg", '<?xml version="1.0" Encoding="iso-2022-jp"?>\n' + SVG_FILE.format("")),
+        (1, DECLARES.format("file site/assets/mx.svg", "iso-2022-jp"))),
     # The refusal for a file under site/install/ that names a source's file name names every such file, a text file
     # and a binary file that are not pages included.
     ("a text file and a binary file under site/install/ that name a source's file name",
@@ -2136,7 +2210,7 @@ CASES = [
     ("the committed redirects beside a page whose character reference decodes 17 times",
         create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 16 + "#46;</p>\n"),
         (1, UNEVALUATED + "the page site/about/index.html could not be read: its HTML character references still "
-            "decode after 16 rounds")),
+            "decode, or its XML entity references still expand, after 16 rounds")),
     # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
     # header and redirect rule.
     ("the rail's img loaded from another first segment",

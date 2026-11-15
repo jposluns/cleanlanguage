@@ -3462,18 +3462,19 @@ def check_staged_build(failures: list[str]) -> int:
 # with the bytes 00 00 01 00 and a count of its frames, then holds a directory entry of 16 bytes for each frame
 # (width, height, colour count, a reserved 0, planes, bits per pixel, then the frame's length and offset, each 4 bytes,
 # little-endian; a width or height of 0 means 256), and each frame is a PNG file or a BMP information header of 40
-# bytes and its pixels. The builder writes PNG frames.
+# bytes and its pixels. The builder writes PNG frames, so ico_problems() reads the ICO file as the builder writes it
+# and refuses a BMP frame, whose pixels it does not read.
 FAVICON = "favicon.ico"
 ICO_MAGIC = b"\x00\x00\x01\x00"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def ico_problems(data: bytes) -> list[str]:
-    """Why data is not a whole ICO file (none if it is 1): the header and a frame count of at least 1; a directory
-    entry for each frame inside the file, with a reserved 0; each frame of a nonzero length inside the file, after the
-    directory, overlapping no other frame; and each frame a whole PNG file of the entry's width and height
-    (png_frame_problems()), or a BMP information header of 40 bytes whose width is the entry's and whose height is
-    twice the entry's."""
+    """Why data is not an ICO file of PNG frames, as the card builder writes it (none if it is 1): the header and a
+    frame count of at least 1; a directory entry for each frame inside the file, with a reserved 0; each frame of a
+    nonzero length inside the file, after the directory, overlapping no other frame; and each frame a PNG file of the
+    entry's width and height that png_frame_problems() passes. A BMP frame fails, since the builder writes none and
+    this check does not read its pixels."""
     if data[:4] != ICO_MAGIC:
         return [f"it starts with {data[:4].hex()}, not the ICO header {ICO_MAGIC.hex()}"]
     if len(data) < 6:
@@ -3501,19 +3502,18 @@ def ico_problems(data: bytes) -> list[str]:
         frame = data[offset:offset + length]
         if frame.startswith(PNG_SIGNATURE):
             problems += [f"{where}: {problem}" for problem in png_frame_problems(frame, width, height)]
-        elif length >= 40 and struct.unpack_from("<I", frame)[0] == 40:
-            if struct.unpack_from("<ii", frame, 4) != (width, 2 * height):
-                problems.append(f"{where}: its BMP header does not give the entry's width and twice its height")
         else:
-            problems.append(f"{where}: it is neither a PNG file nor a BMP information header")
+            problems.append(f"{where}: it is not a PNG file, the only frame that the card builder writes")
     return problems
 
 
 def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
-    """Why a PNG frame of an ICO file is not whole (none if it is): its chunks, each with a matching CRC, fill it
-    exactly from the signature to an IEND chunk at its end; its first chunk is an IHDR of the entry's width and height,
-    8-bit, not interlaced, of colour type 0, 2, 3, 4 or 6; and its IDAT data inflates to exactly 1 filter byte and the
-    pixels of each row, each filter byte 0 to 4."""
+    """Why a PNG frame of an ICO file fails these checks (none if it passes): its chunks, each with a matching CRC,
+    fill it exactly from the signature to an empty IEND chunk at its end; its first chunk is an IHDR of the entry's
+    width and height, 8-bit, of compression method 0, filter method 0 and interlace method 0, of colour type 0, 2, 3,
+    4 or 6; a colour type 3 frame has exactly 1 PLTE chunk of 1 to 256 entries before its first IDAT chunk, and a
+    colour type 0 or 4 frame has none; and its IDAT data inflates to exactly 1 filter byte and the pixels of each row,
+    each filter byte 0 to 4. It reads no other chunk."""
     chunks: list[tuple[bytes, bytes]] = []
     at = len(PNG_SIGNATURE)
     while at < len(frame):
@@ -3531,14 +3531,24 @@ def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
             break
     if not chunks or chunks[-1][0] != b"IEND" or at != len(frame):
         return ["its PNG does not end with an IEND chunk at the end of the frame"]
+    if chunks[-1][1]:
+        return [f"its PNG IEND chunk is not empty ({len(chunks[-1][1])} of its bytes are data)"]
     kind, header = chunks[0]
     if kind != b"IHDR" or len(header) != 13 or struct.unpack_from(">II", header) != (width, height):
         return ["its PNG does not begin with an IHDR chunk of the entry's width and height"]
-    depth, colour, interlace = header[8], header[9], header[12]
+    depth, colour, compression, method, interlace = header[8], header[9], header[10], header[11], header[12]
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
-    if depth != 8 or channels is None or interlace != 0:
-        return [f"its PNG is not 8-bit, non-interlaced and of a known colour type (depth {depth}, colour type "
-                f"{colour}, interlace {interlace})"]
+    if depth != 8 or channels is None or compression != 0 or method != 0 or interlace != 0:
+        return [f"its PNG is not 8-bit, of compression, filter and interlace method 0 and of a known colour type "
+                f"(depth {depth}, colour type {colour}, compression method {compression}, filter method {method}, "
+                f"interlace method {interlace})"]
+    kinds = [kind for kind, _ in chunks]
+    first_data = kinds.index(b"IDAT") if b"IDAT" in kinds else len(kinds)
+    palettes = [body for kind, body in chunks[:first_data] if kind == b"PLTE"]
+    if colour == 3 and (len(palettes) != 1 or not 3 <= len(palettes[0]) <= 768 or len(palettes[0]) % 3):
+        return ["its PNG is of colour type 3 and has no single PLTE chunk of 1 to 256 entries before its image data"]
+    if colour in (0, 4) and b"PLTE" in kinds:
+        return [f"its PNG is of colour type {colour} and has a PLTE chunk"]
     try:
         pixels = zlib.decompress(b"".join(body for kind, body in chunks if kind == b"IDAT"))
     except zlib.error as error:
@@ -3551,12 +3561,36 @@ def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
     return []
 
 
+def png_chunk(kind: bytes, body: bytes) -> bytes:
+    """A PNG chunk of kind holding body, with its length and CRC."""
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+
+def made_ico(colour: int = 3, compression: int = 0, method: int = 0, palette: bool = True, end: bytes = b"") -> bytes:
+    """An ICO file of 1 frame, a 2 by 2 PNG of colour type colour with the IHDR compression and filter methods given,
+    a PLTE chunk of 1 entry if palette, and an IEND chunk holding end; with the defaults png_frame_problems() passes
+    it."""
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colour]
+    header = struct.pack(">IIBBBBB", 2, 2, 8, colour, compression, method, 0)
+    frame = (PNG_SIGNATURE + png_chunk(b"IHDR", header) + (png_chunk(b"PLTE", b"\x00\x00\x00") if palette else b"")
+             + png_chunk(b"IDAT", zlib.compress((b"\x00" + b"\x00" * 2 * channels) * 2)) + png_chunk(b"IEND", end))
+    return ICO_MAGIC + struct.pack("<H", 1) + struct.pack("<BBBBHHII", 2, 2, 0, 0, 1, 8, len(frame), 22) + frame
+
+
+# An ICO file of 62 bytes whose 1 frame is a BMP information header of 40 bytes for a 1 by 1 image, with no pixels.
+BMP_ICO = (ICO_MAGIC + struct.pack("<H", 1) + struct.pack("<BBBBHHII", 1, 1, 0, 0, 1, 32, 40, 22)
+           + struct.pack("<IiiHHIIiiII", 40, 1, 2, 1, 32, 0, 0, 0, 0, 0, 0))
+
+
 def check_favicon(failures: list[str]) -> int:
-    """site.json's static_files lists favicon.ico and site/favicon.ico is a whole ICO file (ico_problems()). --check
-    alone passes when the file and its listing are removed together, so this case is what keeps them. ico_problems()
-    must also refuse a 4-byte file that holds only the ICO header, the committed file cut short by 1 byte and cut to
-    half its length, the committed file with the signature of its first frame changed, and the committed file with a
-    byte inside the second chunk of its first frame changed, which fails that chunk's CRC."""
+    """site.json's static_files lists favicon.ico and site/favicon.ico is an ICO file of PNG frames, as the card
+    builder writes it (ico_problems()). --check alone passes when the file and its listing are removed together, so
+    this case is what keeps them. ico_problems() must also refuse a 4-byte file that holds only the ICO header, the
+    committed file cut short by 1 byte and cut to half its length, the committed file with the signature of its first
+    frame changed, the committed file with a byte inside the second chunk of its first frame changed, which fails that
+    chunk's CRC, an ICO file of 62 bytes whose frame is a BMP header with no pixels, and an ICO file whose PNG frame is
+    of colour type 3 with no PLTE chunk, of compression method 1, of filter method 1, or with an IEND chunk that holds
+    a byte; and it must pass the same file whose PNG frame has none of those faults."""
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     if FAVICON not in config.get("static_files", []):
         failures.append(f"favicon: site-src/site.json static_files does not list {FAVICON}, which the site serves at "
@@ -3566,7 +3600,12 @@ def check_favicon(failures: list[str]) -> int:
     except OSError as error:
         failures.append(f"favicon: site/{FAVICON} could not be read: {error}")
         return 1
-    failures += [f"favicon: site/{FAVICON} is not a whole ICO file: {problem}" for problem in ico_problems(data)]
+    failures += [f"favicon: site/{FAVICON} is not an ICO file of PNG frames as the card builder writes it: {problem}"
+                 for problem in ico_problems(data)]
+    sound = ico_problems(made_ico())
+    if sound:
+        failures.append(f"favicon: ico_problems() refuses an ICO file of 1 indexed-colour PNG frame with a PLTE chunk: "
+                        f"{sound}")
     first = struct.unpack_from("<I", data, 18)[0] if len(data) >= 22 else 0
     first = first if first + 44 <= len(data) else 0
     faults =(("a 4-byte file that holds only the ICO header", ICO_MAGIC),
@@ -3575,11 +3614,16 @@ def check_favicon(failures: list[str]) -> int:
               ("the committed file with its first frame's signature changed",
                data[:first] + b"\x00" + data[first + 1:]),
               ("the committed file with a byte inside its first frame's second chunk changed",
-               data[:first + 43] + bytes([data[first + 43] ^ 0xFF]) + data[first + 44:] if len(data) >= 44 else b""))
+               data[:first + 43] + bytes([data[first + 43] ^ 0xFF]) + data[first + 44:] if len(data) >= 44 else b""),
+              ("an ICO file of 62 bytes whose frame is a BMP header with no pixels", BMP_ICO),
+              ("an ICO file whose PNG frame is of colour type 3 with no PLTE chunk", made_ico(palette=False)),
+              ("an ICO file whose PNG frame is of compression method 1", made_ico(compression=1)),
+              ("an ICO file whose PNG frame is of filter method 1", made_ico(method=1)),
+              ("an ICO file whose PNG frame has an IEND chunk that holds a byte", made_ico(end=b"\x00")))
     for name, fault in faults:
         if not ico_problems(fault):
             failures.append(f"favicon: ico_problems() passes {name}")
-    return 1 + len(faults)
+    return 2 + len(faults)
 
 
 # The pin gate, whose LOGOS names the logos that tools/copy-baseline.py copies and the gate requires in the pin.
