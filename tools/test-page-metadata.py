@@ -1801,7 +1801,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # has no object name; a line that git prints with leading or
         # trailing whitespace, with a CR or with a blank line, or with no
         # line feed at its end; an object name in upper case or of 88 or
-        # 104 digits; and git hash-object output with no line.
+        # 104 digits; and shallow status or git hash-object output with no line.
         cases += [(("for-each-ref",), b"refs/remotes/origin/mainx {main}\nrefs/remotes/origin/main {main}\n"),
                   (("for-each-ref",), b"refs/heads/main {main}\n"),
                   (("for-each-ref",), b"refs/remotes/origin/main\x0b{main}\n"),
@@ -1817,7 +1817,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                                  b"100664 blob", b"000000 blob", b"100644  blob", b"100644\x0bblob",
                                  b"100644\x0cblob")],
                   (("ls-tree",), entry.replace(b" {blob}", b"")),
-                  (("rev-parse",), b"false"),
+                  (("rev-parse",), b"false"), (("rev-parse",), b""),
                   (("rev-parse",), b" false\n"),
                   (("rev-parse",), b"false\n\n"),
                   (("rev-parse",), b"false\r\n"),
@@ -1917,6 +1917,205 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         self.assertEqual(gate.git("merge-base", "--all", "HEAD", main), main.encode("ascii") + b"\n")
         self.assertEqual(gate.protected_base(), main)
         gate.require_full_history()
+
+    def test_git_that_cannot_be_executed_exits_3(self):
+        # PATH names only a folder whose file named git has no execute
+        # permission, so the gate's git() cannot run it for a reason other
+        # than a missing file, which must stop the check rather than raise.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        folder = self.scratch / "locked"
+        folder.mkdir()
+        (folder / "git").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (folder / "git").chmod(0o644)
+        os.environ["PATH"] = str(folder)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.require_full_history()
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("git could not be run", stderr.getvalue())
+
+    def test_page_added_twice_keeps_its_first_added_date(self):
+        # The page is added on 2026-01-01, removed on 2026-01-10 and added
+        # again on 2026-01-20 with its first published stamp. git log lists
+        # both additions, newest first, and the oldest is the added date, so
+        # the published stamp of 2026-01-01 matches.
+        self.commit_page(self.MAIN_DATE, self.MAIN_DATE)
+        self.git("rm", "-q", "--", "site/index.html")
+        self.git("commit", "-q", "-m", "Page removed on 2026-01-10", date="2026-01-10")
+        gate.SITE_ROOT.mkdir(exist_ok=True)
+        self.commit_page("2026-01-20", "2026-01-20")
+        self.assertEqual(gate.git("log", "--diff-filter=A", "--format=%cs", "--", "site/index.html"),
+                         b"2026-01-20\n2026-01-01\n")
+        self.assertEqual(gate.added_date("site/index.html"), "2026-01-01")
+        self.assertEqual(self.problems(), [])
+
+    def test_listing_line_below_protected_refname_is_not_checked_as_a_refname(self):
+        # A ref listing line below the protected refname is read as a ref
+        # other than the protected one whether or not its name follows the
+        # refname rules of git, such as a name with a .. component or a NUL
+        # byte, which git does not print. Beside the protected refname, the
+        # page restored exactly is dated at the merge base and passes.
+        for name in (b"refs/remotes/origin/main/a..b", b"refs/remotes/origin/main/a\0b"):
+            with self.subTest(name=name):
+                listing = name + b" {main}\nrefs/remotes/origin/main {main}\n"
+                problems, stderr = self.check_with_fake_git(("for-each-ref",), listing)
+                self.assertEqual(problems, [], stderr)
+
+    def test_tree_entry_with_empty_name_exits_3(self):
+        # A tree entry whose name after the tab is empty is not the page's
+        # path, so the check stops with exit 3 rather than reading its blob.
+        entry = b"100644 blob {blob}\t\0"
+        problems, stderr = self.check_with_fake_git(("ls-tree",), entry)
+        self.assertIsNone(problems, stderr)
+        self.assertIn("printed output that the gate cannot use", stderr)
+
+
+class EmptyValueTest(_PatchedGateTest):
+    """Empty values on a page are read as values, not as absent ones."""
+
+    def problems(self, html: str) -> list[str]:
+        page = gate.SITE_ROOT / "index.html"
+        page.write_text(html, encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_empty_meta_author_matching_empty_json_ld_name_reports_only_that(self):
+        # An empty meta author is reported as missing, and a JSON-LD Person
+        # whose name is empty matches it, so no JSON-LD problem is added.
+        html = PAGE.format(json_ld=article('{"@type": "Person", "name": ""}'))
+        html = html.replace('content="Jeff Posluns"', 'content=""')
+        self.assertEqual(self.problems(html), ['missing <meta name="author">'])
+
+    def test_property_without_content_is_missing(self):
+        # A required meta property with no content attribute is reported as
+        # missing, as when its tag is absent.
+        for prop, value in (("article:published_time", "2026-01-01"), ("article:modified_time", "2026-01-02"),
+                            ("article:author", "https://posluns.ca")):
+            with self.subTest(prop=prop):
+                html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+                html = html.replace(f'property="{prop}" content="{value}"', f'property="{prop}"')
+                self.assertEqual(self.problems(html), [f"missing {prop}"])
+
+    def test_empty_stamp_is_malformed(self):
+        for label, stamp in (("article:published_time", "2026-01-01"), ("article:modified_time", "2026-01-02")):
+            with self.subTest(label=label):
+                html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+                html = html.replace(f'property="{label}" content="{stamp}"', f'property="{label}" content=""')
+                self.assertEqual(self.problems(html), [f"{label} is '', expected YYYY-MM-DD"])
+
+    def test_falsy_co_author_entry_fails(self):
+        # An author list that holds the meta author and an entry that is
+        # empty or false but not null fails, as any other stray entry does.
+        for entry in ("{}", '""', "0", "false", "[]"):
+            with self.subTest(entry=entry):
+                author = '[{"@type": "Person", "name": "Jeff Posluns"}, ' + entry + "]"
+                self.assertEqual(self.problems(PAGE.format(json_ld=article(author))), [WRONG_PRIMARY_AUTHOR])
+
+
+class ErrorKindTest(_PatchedGateTest):
+    """Each failure that the gate catches stops the check with exit 3, or is
+    reported as a problem, for each kind of error that can raise it."""
+
+    def stop(self, call) -> str:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                call()
+        self.assertEqual(caught.exception.code, 3, stderr.getvalue())
+        return stderr.getvalue()
+
+    def load(self, folder: Path) -> None:
+        self.addCleanup(sys.modules.pop, "page_metadata_fixture", None)
+        with mock.patch.object(gate, "TOOLS_DIR", folder):
+            gate._load_sibling("page_metadata_fixture", ())
+
+    def test_sibling_under_a_file_is_refused(self):
+        # A tools folder that is a file makes os.lstat() fail with an error
+        # other than a missing file.
+        folder = gate.REPO_ROOT / "file"
+        folder.write_text("fixture\n", encoding="utf-8")
+        self.assertIn("could not be read", self.stop(lambda: self.load(folder)))
+
+    def test_sibling_read_failure_is_refused(self):
+        # A sibling whose read fails with an input and output error, which
+        # is neither a missing file nor a refused permission.
+        (gate.REPO_ROOT / "page_metadata_fixture.py").write_text("X = 1\n", encoding="utf-8")
+        failure = OSError(5, "Input/output error")
+        with mock.patch.object(gate.Path, "read_bytes", side_effect=failure):
+            self.assertIn("could not be read", self.stop(lambda: self.load(gate.REPO_ROOT)))
+
+    def test_sibling_that_exits_is_refused(self):
+        (gate.REPO_ROOT / "page_metadata_fixture.py").write_text("raise SystemExit(0)\n", encoding="utf-8")
+        self.assertIn("could not be loaded", self.stop(lambda: self.load(gate.REPO_ROOT)))
+
+    def test_deeply_nested_json_ld_is_a_problem(self):
+        page = gate.SITE_ROOT / "index.html"
+        block = '<script type="application/ld+json">' + "[" * 200000 + "</script>"
+        page.write_text(PAGE.format(json_ld=block), encoding="utf-8")
+        problems = gate.check_page(page, TODAY)[0]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("JSON-LD does not parse"), problems)
+
+    def test_page_that_is_a_folder_exits_3(self):
+        # main() stops with exit 3 when reading a page fails with an error
+        # other than a missing file or a refused permission.
+        page = gate.SITE_ROOT / "index.html"
+        page.mkdir()
+        with mock.patch.object(gate, "require_full_history", lambda: None), \
+                mock.patch.object(gate, "content_pages", lambda: [page]):
+            self.assertIn("could not read site/index.html", self.stop(gate.main))
+
+
+class PrimaryTypeTest(_PatchedGateTest):
+    """Each primary JSON-LD type carries the page's author on its own."""
+
+    def test_each_primary_type_satisfies_the_author_requirement(self):
+        page = gate.SITE_ROOT / "index.html"
+        for kind in ("Article", "NewsArticle", "TechArticle", "BlogPosting", "ScholarlyArticle", "Report",
+                     "CreativeWork", "WebPage"):
+            with self.subTest(kind=kind):
+                block = ('<script type="application/ld+json">{"@context": "https://schema.org", "@type": "'
+                         + kind + '", "author": {"@type": "Person", "name": "Jeff Posluns"}}</script>')
+                page.write_text(PAGE.format(json_ld=block), encoding="utf-8")
+                self.assertEqual(gate.check_page(page, TODAY)[0], [])
+
+
+class SiblingNeedsTest(unittest.TestCase):
+    """tools/check-page-metadata.py exits 3 and names the missing name when a
+    sibling tool does not define a name that the gate needs from it."""
+
+    def test_each_needed_name_is_required(self):
+        needs = {"web_metadata.py": ("UrlError", "parse_origin", "meta_tags", "link_tags", "contained",
+                                     "same_origin_path", "locate_on_disk"),
+                 "sitemap_engine.py": ("EngineError", "load_config", "enumerate_pages")}
+        for sibling, names in needs.items():
+            for name in names:
+                with self.subTest(sibling=sibling, name=name), tempfile.TemporaryDirectory() as scratch:
+                    tools = Path(scratch) / "tools"
+                    tools.mkdir()
+                    for file in ("check-page-metadata.py", "web_metadata.py", "sitemap_engine.py"):
+                        shutil.copyfile(Path(__file__).resolve().parent / file, tools / file)
+                    with (tools / sibling).open("a", encoding="utf-8") as handle:
+                        handle.write(f"\ndel {name}\n")
+                    result = subprocess.run([sys.executable, "-I", str(tools / "check-page-metadata.py")],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 3, result.stderr[-300:])
+                    self.assertIn(f"check-page-metadata: tools/{sibling} defines no {name}", result.stderr)
+
+
+class RequiredPropertyTest(_PatchedGateTest):
+    """A page without 1 of the required meta properties reports that
+    property as missing, and no other problem."""
+
+    def test_each_missing_required_property_is_reported(self):
+        page = gate.SITE_ROOT / "index.html"
+        html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+        for prop in ("article:published_time", "article:modified_time", "article:author"):
+            with self.subTest(prop=prop):
+                lines = [line for line in html.splitlines(keepends=True) if f'property="{prop}"' not in line]
+                self.assertEqual(len(lines), len(html.splitlines()) - 1)
+                page.write_text("".join(lines), encoding="utf-8")
+                self.assertEqual(gate.check_page(page, TODAY)[0], [f"missing {prop}"])
 
 
 if __name__ == "__main__":

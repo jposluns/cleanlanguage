@@ -328,13 +328,13 @@ def git(*args: str) -> bytes:
     at each line feed and each line at its first space. The other readings
     decode the output as ASCII and split it at each line feed, as
     output_lines() says, and a date, a merge base, an object name or a mode
-    is decoded as ASCII. Each reading accepts only output of the form that
-    git prints there, and any other output means that the check could not
-    run (exit 3), as unusable() says. An argument that holds a
-    path is a str, which subprocess encodes as os.fsencode() does. git runs
-    with GIT_LITERAL_PATHSPECS set to 1 and without the variables in
-    PATHSPEC_VARIABLES, so git log and git ls-tree read a page path such as
-    site/[ab]/index.html as that path and not as a glob. git that cannot be
+    is decoded as ASCII. Output that is not of the form that git prints
+    there means that the check could not run (exit 3), as unusable() says,
+    save a refname below PROTECTED_REF, which protected_base() does not
+    check against git's refname rules. A path argument is a str, which
+    subprocess encodes as os.fsencode() does. git runs with
+    GIT_LITERAL_PATHSPECS set to 1 and without PATHSPEC_VARIABLES, so git
+    log and git ls-tree read a page path as that path. git that cannot be
     run, such as when it is not on PATH, or a git call that fails means
     that the check could not run (exit 3); the message shows git's stderr
     decoded with os.fsdecode()."""
@@ -452,9 +452,9 @@ def protected_base() -> str | None:
     history with HEAD, means that the check could not run (exit 3), as does
     a merge base list with no line. So does output that the gate cannot
     use: a listing that is not empty and does not end with a line feed, a
-    line whose part before its first space is neither PROTECTED_REF nor a
-    refname below it, which are the only refs that git lists for that
-    pattern, a line with no object name after its first space, the
+    line whose part before its first space neither is PROTECTED_REF nor
+    starts with it and a slash, as each ref git lists for that pattern does,
+    a line with no object name after its first space, the
     protected refname listed twice, merge base output that is not empty
     and does not end with a line feed, or a merge base line that is not 1
     object name."""
