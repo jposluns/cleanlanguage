@@ -1795,8 +1795,9 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # listing line whose refname is neither the protected refname nor
         # below it, or whose refname and object name are joined by a
         # character other than a space; a merge base line that is not 1
-        # object name, or merge base output that does not end with a line
-        # feed; a tree entry whose mode and type are not a pair that git
+        # object name, the same object name on 2 merge base lines, or merge
+        # base output that does not end with a line feed; a tree entry
+        # whose mode and type are not a pair that git
         # prints, whose fields are joined by other than 1 space, or which
         # has no object name; a line that git prints with leading or
         # trailing whitespace, with a CR or with a blank line, or with no
@@ -1811,6 +1812,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("merge-base",), b"{main}"),
                   (("merge-base",), b"{main}\r\n"),
                   (("merge-base",), b"\n{main}\n"),
+                  (("merge-base",), b"{main}\n{main}\n"),
                   *[(("ls-tree",), entry.replace(b"100644 blob", pair))
                     for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
                                  b"040000 blob", b"040000 commit", b"160000 blob", b"160000 tree",
@@ -2116,6 +2118,119 @@ class RequiredPropertyTest(_PatchedGateTest):
                 self.assertEqual(len(lines), len(html.splitlines()) - 1)
                 page.write_text("".join(lines), encoding="utf-8")
                 self.assertEqual(gate.check_page(page, TODAY)[0], [f"missing {prop}"])
+
+
+class AuthorEntryTest(_PatchedGateTest):
+    """A primary entity whose author holds no entry fails, and an author
+    name matches the meta author with surrounding white space removed."""
+
+    def problems(self, author_member: str) -> list[str]:
+        page = gate.SITE_ROOT / "index.html"
+        block = ('<script type="application/ld+json">{"@context": "https://schema.org",'
+                 ' "@type": "Article"' + author_member + "}</script>")
+        page.write_text(PAGE.format(json_ld=block), encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_primary_entity_with_no_author_entry_fails(self):
+        # An author that is an empty array, null or an array that holds only
+        # null, or no author property, names no author, so the primary
+        # entity fails.
+        for member in (', "author": []', ', "author": null', ', "author": [null]', ""):
+            with self.subTest(member=member):
+                self.assertEqual(self.problems(member), [WRONG_PRIMARY_AUTHOR])
+
+    def test_padded_author_name_matches(self):
+        # A name that holds the meta author between white space, as a
+        # string or as a value object, matches it.
+        for name in ('" Jeff Posluns\\t"', '{"@value": "\\nJeff Posluns "}'):
+            with self.subTest(name=name):
+                member = ', "author": {"@type": "Person", "name": ' + name + "}"
+                self.assertEqual(self.problems(member), [])
+
+    def test_null_entry_beside_meta_author_is_skipped(self):
+        # A null entry in an author list is no author, so the meta author
+        # beside it passes on its own.
+        self.assertEqual(self.problems(', "author": [{"@type": "Person", "name": "Jeff Posluns"}, null]'), [])
+
+
+class GateGuardTest(_PatchedGateTest):
+    """The gate reads each block, type and page that its guards admit, and
+    its entry point runs main()."""
+
+    def check(self, html: str) -> list[str]:
+        page = gate.SITE_ROOT / "index.html"
+        page.write_text(html, encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_type_with_ascii_white_space_or_capitals_is_collected(self):
+        # The type attribute is read with ASCII white space removed from its
+        # ends and in lower case, so such a block is collected and checked.
+        for kind in (" \t\napplication/ld+json\r\f", "APPLICATION/LD+JSON"):
+            with self.subTest(kind=kind):
+                block = article('{"@type": "Person", "name": "Mallory"}').replace(
+                    '<script type="application/ld+json">', f'<script type="{kind}">')
+                self.assertEqual(self.check(PAGE.format(json_ld=block)), [WRONG_PRIMARY_AUTHOR])
+
+    def test_unclosed_empty_block_at_end_is_no_block(self):
+        # An ld+json script that is opened at the end of the page and holds
+        # nothing gives no block, so no parse problem is reported for it.
+        html = PAGE.format(json_ld="").replace("</head><body></body></html>\n", "")
+        self.assertEqual(self.check(html + '<script type="application/ld+json">'), [NO_AUTHOR_MESSAGE])
+
+    def test_end_tag_in_self_closed_block_does_not_end_it(self):
+        # The content of a self-closed ld+json script runs to </script>, so
+        # the end tag of another element in it does not end the block, and
+        # the content after that tag is still read.
+        block = ('<script type="application/ld+json"/>'
+                 '{"@type": "Article", "author": {"@type": "Person", "name": "Jeff Posluns"}}</p>'
+                 '{"@type": "Article", "author": {"@type": "Person", "name": "Mallory"}}</script>')
+        problems = self.check(PAGE.format(json_ld=block))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("JSON-LD does not parse"), problems)
+
+    def test_type_list_is_read_and_its_other_members_are_skipped(self):
+        # An @type that is a list is read as its strings, and a member that
+        # is not a string is skipped.
+        block = ('<script type="application/ld+json">{"@type": ["Article", {"x": 1}],'
+                 ' "author": {"@type": ["Person", ["y"]], "name": "Jeff Posluns"}}</script>')
+        self.assertEqual(self.check(PAGE.format(json_ld=block)), [])
+
+    def test_failed_git_message_is_stripped(self):
+        # The exit-3 message of a failed git call shows git's stderr with
+        # the white space at its ends removed, so it ends with 1 line feed.
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.git("--no-such-option")
+        self.assertEqual(caught.exception.code, 3)
+        message = stderr.getvalue()
+        self.assertTrue(message.startswith("check-page-metadata: git --no-such-option failed: "), message)
+        self.assertFalse(message.endswith("\n\n"), message)
+        self.assertEqual(message, message.strip() + "\n")
+
+    def test_pages_that_disagree_on_the_author_fail(self):
+        # 2 pages that each name their own author consistently fail together.
+        pages = []
+        for name, author in (("a.html", "Jeff Posluns"), ("b.html", "Someone Else")):
+            page = gate.SITE_ROOT / name
+            html = PAGE.format(json_ld=article('{"@type": "Person", "name": "' + author + '"}'))
+            page.write_text(html.replace('content="Jeff Posluns"', f'content="{author}"'), encoding="utf-8")
+            pages.append(page)
+        stdout = io.StringIO()
+        with mock.patch.object(gate, "require_full_history", lambda: None), \
+                mock.patch.object(gate, "content_pages", lambda: pages), contextlib.redirect_stdout(stdout):
+            self.assertEqual(gate.main(), 1)
+        self.assertIn("pages disagree on the author: 'Jeff Posluns' on 1 page(s); 'Someone Else' on 1 page(s)",
+                      stdout.getvalue())
+
+    def test_script_entry_point_runs_main(self):
+        # Run as a script with no git on PATH, the gate runs main() and
+        # stops with exit 3.
+        with tempfile.TemporaryDirectory() as empty:
+            result = subprocess.run([sys.executable, "-I", str(MODULE_PATH)], capture_output=True, text=True,
+                                    env={"PATH": empty})
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("git could not be run", result.stderr)
 
 
 if __name__ == "__main__":

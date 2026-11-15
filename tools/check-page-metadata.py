@@ -265,11 +265,12 @@ def _ld_types(obj: dict) -> set:
 
 
 def _author_ok(author: object, meta_author: str) -> bool:
-    """True when there is at least one author entry and EVERY entry is an
-    accepted author-type object whose ``name`` is ``meta_author``. A stray or
-    stale co-author, a non-Person author, or a bare-string author fails; a name
-    may be a string or a value object ``{"@value": "..."}``. This enforces the
-    site's single-author convention."""
+    """True when there is at least one author entry other than null and
+    EVERY entry is an accepted author-type object whose ``name``, with
+    surrounding white space removed, is ``meta_author``. A stray or stale
+    co-author, a non-Person author, or a bare-string author fails; a name may
+    be a string or a value object ``{"@value": "..."}``, trimmed alike. This
+    enforces the site's single-author convention."""
     items = [item for item in (author if isinstance(author, list) else [author])
              if item is not None]
     if not items:
@@ -456,8 +457,8 @@ def protected_base() -> str | None:
     starts with it and a slash, as each ref git lists for that pattern does,
     a line with no object name after its first space, the
     protected refname listed twice, merge base output that is not empty
-    and does not end with a line feed, or a merge base line that is not 1
-    object name."""
+    and does not end with a line feed, a merge base line that is not 1
+    object name, or an object name on more than 1 merge base line."""
     args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
     output = git(*args)
     lines = output.split(b"\n")
@@ -483,6 +484,8 @@ def protected_base() -> str | None:
         die(f"git merge-base --all HEAD {tip} printed no merge base")
     for base in bases:
         object_name(base, merge_args, output)
+    if len(set(bases)) != len(bases):
+        unusable(merge_args, output)
     return bases[0] if len(bases) == 1 else None
 
 
