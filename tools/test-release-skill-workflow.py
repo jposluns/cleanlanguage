@@ -73,6 +73,7 @@ import inspect
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -526,10 +527,18 @@ LEADING_VALUE_OPTIONS = {
     "git": ("-c", "-C", "--git-dir", "--work-tree", "--namespace"),
     "gh": ("-R", "--repo"),
 }
-# The gh api options that add parameters or a request body. A call that holds
+# The gh api options that take a value: the short ones by their long name,
+# then the long ones. Any other option is read as taking no value.
+API_SHORT_VALUE_OPTIONS = {"-X": "--method", "-F": "--field", "-f": "--raw-field", "-H": "--header",
+                           "-p": "--preview", "-q": "--jq", "-t": "--template"}
+API_LONG_VALUE_OPTIONS = ("--method", "--field", "--raw-field", "--header", "--preview", "--jq",
+                          "--template", "--input", "--cache", "--hostname")
+API_SHORT_FLAGS = {"-i": "--include"}
+# The gh api options that add parameters or a request body, by long name, so
+# -f and -F count as --raw-field and --field. A call that holds
 # any of them and gives no method is read as POST, the default the gh api
 # manual names for a call with parameters; --input is read the same way.
-API_BODY_OPTIONS = ("-f", "-F", "--field", "--raw-field", "--input")
+API_BODY_OPTIONS = ("--field", "--raw-field", "--input")
 
 
 def subcommand(name, args):
@@ -541,36 +550,66 @@ def subcommand(name, args):
     return args[index:]
 
 
-def api_method(args):
-    """The HTTP method of a gh api call, given its arguments after api: the
-    --method or -X value when one is given, otherwise POST when a body
-    option is present and GET when none is."""
-    method = None
-    body = False
+def api_options(args):
+    """The options and the operands of a gh api call, given its arguments
+    after api, read as gh reads them. Each option is a pair of its long name
+    and its value, None for an option that takes no value. A long option
+    takes its value after = or from the next argument. Short options may be
+    grouped in 1 argument, as in -iX POST: a short option that takes a value
+    ends the group, and its value is the rest of the argument, after an
+    optional =, or the next argument when nothing of the argument is left.
+    Every argument after -- is an operand."""
+    options, operands = [], []
     index = 0
     while index < len(args):
         arg = args[index]
-        if arg in ("-X", "--method"):
-            method = args[index + 1] if index + 1 < len(args) else ""
-            index += 2
-            continue
-        if arg.startswith("--method="):
-            method = arg[len("--method="):]
-        elif arg.startswith("-X"):
-            method = arg[2:]
-        elif arg in API_BODY_OPTIONS or arg.startswith(("--field=", "--raw-field=", "--input=")):
-            body = True
-        elif arg[:2] in ("-f", "-F") and len(arg) > 2:
-            body = True
         index += 1
-    if method is None:
-        return "POST" if body else "GET"
-    return method.upper()
+        if arg == "--":
+            operands.extend(args[index:])
+            break
+        if arg.startswith("--"):
+            name, equals, value = arg.partition("=")
+            if name not in API_LONG_VALUE_OPTIONS:
+                options.append((name, None))
+                continue
+            if not equals:
+                value = args[index] if index < len(args) else ""
+                index += 1
+            options.append((name, value))
+        elif arg.startswith("-") and len(arg) > 1:
+            for position in range(1, len(arg)):
+                short = "-" + arg[position]
+                if short not in API_SHORT_VALUE_OPTIONS:
+                    options.append((API_SHORT_FLAGS.get(short, short), None))
+                    continue
+                value = arg[position + 1:]
+                if value.startswith("="):
+                    value = value[1:]
+                elif not value:
+                    value = args[index] if index < len(args) else ""
+                    index += 1
+                options.append((API_SHORT_VALUE_OPTIONS[short], value))
+                break
+        else:
+            operands.append(arg)
+    return options, operands
 
 
-# Every fake records its call, then classifies it with the same 2 functions
-# the predicates below use, so a fake routes a call with leading options as
-# the real command would.
+def api_method(args):
+    """The HTTP method of a gh api call, given its arguments after api: the
+    last --method or -X value when one is given, otherwise POST when a body
+    option is present and GET when none is."""
+    options, _operands = api_options(args)
+    methods = [value for name, value in options if name == "--method"]
+    if methods:
+        return methods[-1].upper()
+    return "POST" if any(name in API_BODY_OPTIONS for name, _value in options) else "GET"
+
+
+# Every fake records its call, then reads it with the same functions the
+# predicates below use (subcommand, api_options and api_method), and routes
+# each answer by the subcommand after any leading options, so a call with
+# leading options gets the answer of the same call without them.
 FAKE_COMMON = """
 import hashlib, json, os, sys
 STATE = os.environ["FAKE_STATE"]
@@ -585,7 +624,11 @@ def read(name, default=""):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
 LEADING_VALUE_OPTIONS = """ + repr(LEADING_VALUE_OPTIONS) + """
-API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + inspect.getsource(subcommand) + inspect.getsource(api_method) + """
+API_SHORT_VALUE_OPTIONS = """ + repr(API_SHORT_VALUE_OPTIONS) + """
+API_LONG_VALUE_OPTIONS = """ + repr(API_LONG_VALUE_OPTIONS) + """
+API_SHORT_FLAGS = """ + repr(API_SHORT_FLAGS) + """
+API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + "".join(
+    inspect.getsource(function) for function in (subcommand, api_options, api_method)) + """
 SUB = subcommand(NAME, ARGS)
 """
 
@@ -593,6 +636,9 @@ SUB = subcommand(NAME, ARGS)
 # tag on origin, and every gh call that writes, which the fake gh appends to
 # gh_writes. A step that changed nothing leaves all 3 as they were.
 FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
+# The seconds a step run waits, after the step exits, for the processes it
+# left running to exit before the run fails.
+STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
 # Every release subcommand that changes a release, and every API call with a
@@ -602,24 +648,27 @@ RELEASE_READS = (["view"], ["download"], ["list"])
 if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["api"] and api_method(SUB[1:]) != "GET"):
     with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
         writes.write(json.dumps(SUB) + "\\n")
-if ARGS[:1] == ["api"]:
+LEADING = ARGS[:len(ARGS) - len(SUB)]
+if SUB[:1] == ["api"]:
     # Row 59: every API path is answered from one shared state, so the exact
     # path each call names is logged for ApiPathTest to pin.
-    paths = [arg for index, arg in enumerate(ARGS[1:]) if not arg.startswith("-") and ARGS[index] != "--jq"]
-    kind = ARGS[ARGS.index("--jq") + 1] if "--jq" in ARGS else "status"
+    OPTIONS, paths = api_options(SUB[1:])
+    JQ = [value for option, value in OPTIONS if option == "--jq"]
+    kind = JQ[-1] if JQ else "status"
     with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
         log.write(json.dumps([kind, paths]) + "\\n")
-if ARGS[:1] == ["release"]:
-    # Every release subcommand is logged with all its arguments, so the tag
-    # each release read and the create call name is pinned by ApiPathTest.
+if SUB[:1] == ["release"]:
+    # Every release subcommand is logged with all its arguments, then any
+    # leading options of gh, so the tag each release read and the create call
+    # name, and any repository a leading -R names, is pinned by ApiPathTest.
     with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
-        log.write(json.dumps([ARGS[1] if len(ARGS) > 1 else "", ARGS[2:]]) + "\\n")
-if ARGS[:1] == ["api"] and "--include" in ARGS:
+        log.write(json.dumps([SUB[1] if len(SUB) > 1 else "", SUB[2:] + LEADING]) + "\\n")
+if SUB[:1] == ["api"] and ("--include", None) in OPTIONS:
     status = read("status", "404")
     print("HTTP/2.0 " + status + " Fake")
     sys.exit(0 if status == "200" else 1)
-if ARGS[:1] == ["api"] and "--jq" in ARGS:
-    field = ARGS[ARGS.index("--jq") + 1].lstrip(".")
+if SUB[:1] == ["api"] and JQ:
+    field = JQ[-1].lstrip(".")
     value = read(field, "null")
     if value == "FAIL":
         sys.exit(1)
@@ -640,11 +689,11 @@ MISSING = read("missing").split()
 EXTRA = ["extra-asset-%04d-" % index + "x" * 180 + ".txt" for index in range(int(read("extra", "0")))]
 CORRUPT = read("corrupt").split()
 DIFFER = read("differ").split()
-if ARGS[:2] == ["release", "view"]:
+if SUB[:2] == ["release", "view"]:
     print("\\n".join([asset for asset in ASSETS if asset not in MISSING] + EXTRA))
     sys.exit(0)
-if ARGS[:2] == ["release", "download"]:
-    target = ARGS[ARGS.index("--dir") + 1]
+if SUB[:2] == ["release", "download"]:
+    target = SUB[SUB.index("--dir") + 1]
     for asset in ASSETS:
         zip_name = asset[: -len(".sha256")] if asset.endswith(".sha256") else asset
         data = b"published zip bytes" + (b" differ" if zip_name in DIFFER else b"")
@@ -853,10 +902,24 @@ class WorkflowStepTest(unittest.TestCase):
         self.state_before_run = self.fake_write_state()
         script = self.state / "step.sh"
         script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
-        proc = subprocess.run(
-            ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
-            cwd=self.work, env=env, capture_output=True, text=True,
-        )
+        # The step and every process it starts inherit the write end of this
+        # pipe, so its read end reaches end of file only when all of them
+        # have exited: a change that a process left running in the background
+        # makes after the step exits is in the state a later assertion reads.
+        done_read, done_write = os.pipe()
+        try:
+            proc = subprocess.run(
+                ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
+                cwd=self.work, env=env, capture_output=True, text=True, pass_fds=(done_write,),
+            )
+            os.close(done_write)
+            done_write = None
+            ended, _, _ = select.select([done_read], [], [], STEP_PROCESS_WAIT)
+            self.assertTrue(ended, f"step {name!r} left a process running {STEP_PROCESS_WAIT} s after it exited")
+        finally:
+            os.close(done_read)
+            if done_write is not None:
+                os.close(done_write)
         if proc.returncode == 0:
             self.carried.update(self.env_values())
         return proc.returncode, proc.stdout, proc.stderr
@@ -990,15 +1053,14 @@ def is_date(call):
 
 
 def is_field_read(field):
-    """A gh api call that reads field through --jq or -q, the option and its
-    value matched as a pair wherever they stand among the arguments."""
+    """A gh api call that reads field through --jq or -q, wherever the option
+    stands and in each form api_options reads: --jq .field, --jq=.field,
+    -q .field, -q.field, -q=.field, or -q last in a group of short options."""
     def reads(call):
         if call[0] != "gh" or sub(call)[:1] != ["api"]:
             return False
-        args = sub(call)[1:]
-        value = "." + field
-        return any((arg in ("--jq", "-q") and args[index + 1:index + 2] == [value]) or arg == "--jq=" + value
-                   for index, arg in enumerate(args))
+        options, _operands = api_options(sub(call)[1:])
+        return ("--jq", "." + field) in options
     return reads
 
 
@@ -1154,6 +1216,46 @@ class HarnessTest(WorkflowStepTest):
                               capture_output=True, text=True)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("without -u", proc.stderr)
+
+    def test_the_api_predicates_read_grouped_and_joined_short_options_as_gh_does(self):
+        # Each gh api call with whether it writes: the predicates count it as
+        # a mutation, and the fake gh appends it to gh_writes, exactly when
+        # it does.
+        path = "repos/jposluns/cleanlanguage/releases"
+        writes = (
+            (["api", "-X", "POST", path], True), (["api", "-XPOST", path], True),
+            (["api", "-X=POST", path], True), (["api", "-iX", "POST", path], True),
+            (["api", "-iXPOST", path], True), (["api", "-iX=POST", path], True),
+            (["api", "-if", "tag_name=v1.0.15", path], True), (["api", "-iftag_name=v1.0.15", path], True),
+            (["api", "-iF", "draft=false", path], True), (["api", "--method=PUT", path], True),
+            (["api", "--input", "-", path], True), (["-R", "jposluns/cleanlanguage", "api", "-iXPOST", path], True),
+            (["api", path], False), (["api", "--include", "--silent", path], False),
+            (["api", "-i", path], False), (["api", "-iX", "GET", path], False),
+            (["api", "-if", "x=1", "-X", "GET", path], False), (["api", path, "--jq", "-f"], False),
+            (["api", path, "-q-XPOST"], False), (["api", "-H", "-XPOST", path], False),
+        )
+        for args, write in writes:
+            with self.subTest(args=args):
+                self.assertEqual(is_mutation(["gh", args]), write)
+                (self.state / "gh_writes").unlink(missing_ok=True)
+                subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                               capture_output=True, text=True)
+                self.assertEqual((self.state / "gh_writes").exists(), write)
+        # Each form of a --jq or -q read of the immutable field, and calls
+        # that name the field without reading it.
+        release = path + "/tags/v1.0.15"
+        reads = (
+            (["api", release, "--jq", ".immutable"], True), (["api", release, "--jq=.immutable"], True),
+            (["api", release, "-q", ".immutable"], True), (["api", release, "-q.immutable"], True),
+            (["api", release, "-q=.immutable"], True), (["api", "-iq", ".immutable", release], True),
+            (["api", "-iq.immutable", release], True),
+            (["-R", "jposluns/cleanlanguage", "api", release, "-q.immutable"], True),
+            (["api", release, "--jq", ".published_at"], False), (["api", release, "-q.published_at"], False),
+            (["api", "-f", "q=.immutable", release], False), (["api", "-H", "-q.immutable", release], False),
+        )
+        for args, read in reads:
+            with self.subTest(args=args):
+                self.assertEqual(is_field_read("immutable")(["gh", args]), read)
 
     def test_every_variable_a_step_reads_is_declared(self):
         for name in (VALIDATE, DETERMINE, PACKAGE, PUBLISH):
@@ -1964,6 +2066,49 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(len([c for c in calls if is_create(c)]), 1, calls)
                 writes = [json.loads(line)[:3] for line in (self.fake_write_state()["gh_writes"] or "").splitlines()]
                 self.assertEqual(writes, [["release", "create", "v1.0.15"]], calls)
+
+    def test_a_tag_written_in_the_background_after_the_step_exits_is_seen(self):
+        # A step run waits for every process the step left running, so a tag
+        # that a background process writes after the step has exited is in
+        # the call log and the state that assert_no_mutation reads.
+        self.tag_push_mismatch(True, OTHER_COMMIT)
+        script = "( sleep 1; " + VCS + " tag v1.0.15 " + COMMIT + " ) >/dev/null 2>&1 &\nexit 1\n"
+        code, _out, err = self.run_step(PUBLISH, script)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
+        self.assertEqual(len([c for c in self.calls() if is_tag(c)]), 1, self.calls())
+        with self.assertRaises(AssertionError):
+            self.assert_no_mutation(self.calls())
+
+    def test_the_fake_gh_answers_a_call_with_a_leading_option_as_without_it(self):
+        # Each gh call of the publish step, with a leading -R option added,
+        # gets the same answers and leaves the same API log and write state:
+        # on a re-run, the status probe, the asset list, the download and the
+        # readbacks; on a first publication, the status probe, the create
+        # call and the readbacks.
+        script = step_script(PUBLISH)
+        self.assertEqual((script.count("gh api "), script.count("gh release ")), (3, 3))
+        leading = script.replace("gh api ", "gh -R \"${GITHUB_REPOSITORY}\" api ").replace(
+            "gh release ", "gh -R \"${GITHUB_REPOSITORY}\" release ")
+        for status in ("200", "404"):
+            with self.subTest(status=status):
+                results = []
+                for text in (script, leading):
+                    self.reset_calls()
+                    for log in ("api.log", "release.log"):
+                        (self.state / log).unlink(missing_ok=True)
+                    self.set_state(status=status, remote_tag=COMMIT, local_tag=None, gh_writes=None)
+                    code, out, err = self.run_step(PUBLISH, text)
+                    self.assertEqual(code, 0, err)
+                    releases = [release for release, _rest in
+                                (json.loads(line) for line in (self.state / "release.log").read_text(
+                                    encoding="utf-8").splitlines())]
+                    results.append((out, err, (self.state / "api.log").read_text(encoding="utf-8"),
+                                    releases, self.fake_write_state()))
+                    gh_calls = [c for c in self.calls() if c[0] == "gh"]
+                    self.assertTrue(gh_calls, self.calls())
+                    self.assertEqual({c[1][:1] == ["-R"] for c in gh_calls}, {text is leading}, gh_calls)
+                self.assertEqual(results[0], results[1])
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
