@@ -47,7 +47,11 @@ read, so it never opens the extractor again by path. JSON is decoded as
 utf-8-sig, so a leading byte-order mark does not fail a conforming file, the
 non-standard constants NaN and Infinity are refused, and a key repeated in any
 JSON object is refused, as tools/check-manifest-icon.py does, since json.loads
-alone keeps only the last value of a repeated key.
+alone keeps only the last value of a repeated key. Before decoding, the gate
+counts the nesting of arrays and objects in the text, outside strings, and
+refuses a file nested more than MAX_JSON_DEPTH (64) levels deep, so the
+refusal does not depend on the interpreter's recursion limit; a RecursionError
+raised while decoding is still refused as a second layer.
 
 Usage: python3 -I tools/check-plugin-distribution.py
 Exit status: 0 when every check passes, with a last line that starts "OK:";
@@ -56,7 +60,8 @@ and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for 1).
 A SKILL.md whose first Version: line is missing or is not a bare X.Y.Z is such
 an inconsistency: the versions check fails with exit 1. 3 when an input cannot
 be read: a file that is missing, reached through a symlink, not a regular
-file, not UTF-8, not JSON, nested too deeply to decode, not a JSON object, or
+file, not UTF-8, not JSON, nested more than MAX_JSON_DEPTH levels deep or
+too deeply for the interpreter to decode, not a JSON object, or
 that repeats a key, or an extractor that cannot be used, because it raises
 any exception while it loads or lacks a VERSION_LINE or SKILL_VERSION pattern
 of text; the cause goes to standard error, with a last line "UNREADABLE: exit
@@ -101,6 +106,10 @@ EXTRACTOR = "tools/skill-version.py"
 
 OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
 READ_BLOCK = 65536
+# The deepest nesting of arrays and objects a JSON input may have; a top-level
+# object is 1 level. Far below any default recursion limit, so every supported
+# interpreter decodes JSON at this depth, and far above the manifests' own.
+MAX_JSON_DEPTH = 64
 
 
 class Unreadable(Exception):
@@ -169,17 +178,46 @@ def read_bytes(rel: str) -> bytes:
     return b"".join(blocks)
 
 
+def exceeds_depth(text: str, limit: int) -> bool:
+    """Whether the arrays and objects of the JSON text, counted outside strings, nest more than
+    limit levels deep. Iterative, so it never depends on the recursion limit. On text that is valid
+    JSON so far, the count is the decoder's own nesting; a stray closing bracket only lowers it, and
+    the decoder refuses such text before it nests any further."""
+    depth = 0
+    in_string = escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > limit:
+                return True
+        elif char in "]}":
+            depth -= 1
+    return False
+
+
 def load_json(rel: str) -> dict:
     try:
         text = read_bytes(rel).decode("utf-8-sig")
     except UnicodeError as error:
         raise Unreadable(f"{rel} is not UTF-8: {error}") from error
+    if exceeds_depth(text, MAX_JSON_DEPTH):
+        raise Unreadable(f"{rel} is nested too deeply to decode: more than {MAX_JSON_DEPTH} levels of arrays "
+                         "and objects")
     try:
         data = json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_unique_object)
     except DuplicateKey as error:
         raise Unreadable(f"{rel} repeats the key {error.key!r} in a JSON object") from error
     except RecursionError as error:
-        raise Unreadable(f"{rel} is nested too deeply to decode") from error
+        raise Unreadable(f"{rel} is nested too deeply to decode: the decoder raised RecursionError") from error
     except ValueError as error:
         raise Unreadable(f"{rel} is not valid JSON: {error}") from error
     if not isinstance(data, dict):

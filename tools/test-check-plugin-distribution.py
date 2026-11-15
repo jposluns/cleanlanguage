@@ -30,7 +30,9 @@ its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
   marketplace or is qualified with another marketplace, and dependencies that
   are not a list or not names; dependencies that resolve pass.
 - Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
-  regular file; NaN; JSON nested too deeply to decode; a JSON file that is not
+  regular file; NaN; JSON nested 1 level deeper than the gate's bound of 64,
+  which every supported Python decodes, while JSON at the bound, with escaped
+  quotes and brackets inside a string, passes; a JSON file that is not
   an object; a file or a SKILL.md that is not UTF-8; a symlinked input file or
   input folder; and an extractor that is missing, symlinked, raises an
   exception or SystemExit while it loads, or lacks VERSION_LINE or
@@ -65,6 +67,8 @@ REAL_EXTRACTOR = Path(__file__).resolve().parent / "skill-version.py"
 EXTRACTOR_REL = "tools/skill-version.py"
 # Written out, not read from the gate, so a gate that drops a prefix fails.
 RESERVED_PREFIXES = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
+# Written out, not read from the gate, so a gate that drops or raises its bound fails.
+MAX_JSON_DEPTH = 64
 spec = importlib.util.spec_from_file_location("check_plugin_distribution", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
@@ -417,8 +421,16 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertEqual(err.splitlines()[-1], "UNREADABLE: exit 3")
 
     def test_deeply_nested_json_exits_3(self):
-        self.write_text(gate.SITE_JSON, "[" * 100000 + "]" * 100000 + "\n")
-        self.expect(3, "site-src/site.json is nested too deeply to decode")
+        # A conforming site object whose "deep" member nests arrays to the given total depth (the object
+        # is level 1). Its string holds escaped quotes and brackets, which the bound must not count.
+        def site(depth: int) -> str:
+            inner = depth - 1
+            return ('{"schema": 1, "site_key": "cleanlanguage", "note": "' + '\\"[{' * 100 + '", "deep": '
+                    + "[" * inner + "]" * inner + "}\n")
+        self.write_text(gate.SITE_JSON, site(MAX_JSON_DEPTH))
+        self.expect(0, "OK: D1 to D4 hold")
+        self.write_text(gate.SITE_JSON, site(MAX_JSON_DEPTH + 1))
+        self.expect(3, f"site-src/site.json is nested too deeply to decode: more than {MAX_JSON_DEPTH} levels")
 
     def test_source_with_empty_component_fails_d2(self):
         for source in ("./aiqt-guardrails-hooks/", ".//aiqt-guardrails-hooks"):
