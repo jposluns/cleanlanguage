@@ -13,8 +13,19 @@ fail the sources check; a version that differs in the Claude manifest, the
 Agent Plugins manifest, the SKILL.md Version: line or a marketplace entry fails
 the versions check; a dependency that names no plugin of its marketplace fails
 the dependencies check, while one that does passes with its count printed; a
-repeated JSON key, a missing file and a file that is not a regular file exit 3. A last case runs the gate on the repository itself, so this test fails
-while the repository's own names, sources, versions or dependencies disagree.
+repeated JSON key, a missing file and a file that is not a regular file
+exit 3. Further cases hold the gate's other claims: a source of the
+repository's entry that reaches another plugin or a copy of this one, an
+object source, an empty plugins list, a differing Agent Plugins manifest name
+or site key, a vendored entry named unlike the manifest it reaches, a source
+without "./", a source that is a file, a manifest that is a directory, an
+entry with no source, a version that is missing or not a string, a SKILL.md
+with no Version: line, a dependency qualified with another marketplace and
+dependencies that are not a list or not names each fail their check; NaN, a
+JSON file that is not an object, a file or a SKILL.md that is not UTF-8 and a
+symlinked input file exit 3. A last case runs the gate on the repository
+itself, so this test fails while the repository's own names, sources,
+versions or dependencies disagree.
 
 The SKILL.md version is read by the real tools/skill-version.py, which the
 gate loads from beside itself.
@@ -191,6 +202,117 @@ class PluginDistributionTest(unittest.TestCase):
     def test_missing_file_exits_3(self):
         (self.root / gate.VENDORED_MARKETPLACE).unlink()
         self.expect(3, "plugin/.claude-plugin/marketplace.json could not be read")
+
+    def test_source_reaching_another_plugin_fails_d2_and_d1(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./plugin/aiqt-guardrails-hooks"))
+        self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source './plugin/aiqt-guardrails-hooks' "
+                       "reaches plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, not "
+                       "cleanlanguage/.claude-plugin/plugin.json",
+                    "FAIL D1: .claude-plugin/marketplace.json plugins[0].name is 'cleanlanguage', but the manifest "
+                    "its source reaches, plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, is named "
+                    "'aiqt-guardrails-hooks'")
+
+    def test_source_reaching_a_copy_of_the_plugin_fails_d2(self):
+        self.write_json("copy/.claude-plugin/plugin.json", manifest())
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./copy"))
+        output = self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source './copy' reaches "
+                                "copy/.claude-plugin/plugin.json, not cleanlanguage/.claude-plugin/plugin.json")
+        self.assertNotIn("FAIL D1", output)
+
+    def test_object_source_fails_d2(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(
+            source={"source": "github", "repo": "someone/else"}))
+        self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source {'source': 'github', 'repo': "
+                       "'someone/else'} is not a string, so this gate cannot read where it leads",
+                    "1 relative sources resolved")
+
+    def test_vendored_entry_named_unlike_its_manifest_fails_d1(self):
+        self.edit_json("plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json", lambda d: d.update(name="aiqt-hooks"))
+        self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is 'aiqt-guardrails-hooks', "
+                       "but the manifest its source reaches, plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, "
+                       "is named 'aiqt-hooks'")
+
+    def test_empty_plugins_list_fails_d1(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d.update(plugins=[]))
+        self.expect(1, "FAIL D1: .claude-plugin/marketplace.json lists 0 plugins, not exactly 1")
+
+    def test_agent_manifest_name_differs_fails_d1(self):
+        self.edit_json(gate.AGENT_MANIFEST, lambda d: d.update(name="clean-language"))
+        self.expect(1, "FAIL D1: cleanlanguage/plugin.json name is 'clean-language', not 'cleanlanguage'")
+
+    def test_site_key_differs_fails_d1(self):
+        self.edit_json(gate.SITE_JSON, lambda d: d.update(site_key="jposluns"))
+        self.expect(1, "FAIL D1: site-src/site.json site_key is 'jposluns', not 'cleanlanguage'")
+
+    def test_source_without_dot_slash_fails_d2(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="cleanlanguage"))
+        self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source 'cleanlanguage' does not start "
+                       "with './'")
+
+    def test_source_that_is_a_file_fails_d2(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./cleanlanguage/plugin.json"))
+        self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source './cleanlanguage/plugin.json' "
+                       "does not resolve: cleanlanguage/plugin.json is not a directory")
+
+    def test_manifest_that_is_a_directory_fails_d2(self):
+        path = self.root / "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        path.unlink()
+        path.mkdir()
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source './aiqt-guardrails-hooks' "
+                       "does not resolve: plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json is not a regular "
+                       "file")
+
+    def test_entry_without_source_fails_d2(self):
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].pop("source"))
+        self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0] has no source")
+
+    def test_missing_manifest_version_fails_d3(self):
+        self.edit_json(gate.CLAUDE_MANIFEST, lambda d: d.pop("version"))
+        self.expect(1, "FAIL D3: cleanlanguage/.claude-plugin/plugin.json version is None, not a version")
+
+    def test_entry_version_not_a_string_fails_d3(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(version=1.0))
+        self.expect(1, "FAIL D3: .claude-plugin/marketplace.json plugins[0].version is 1.0, not a version")
+
+    def test_skill_without_version_line_fails_d3(self):
+        self.write_text(gate.SKILL_MD, "---\nname: cleanlanguage\n---\n\n# Clean Language\n")
+        self.expect(1, "FAIL D3: cleanlanguage/skills/cleanlanguage/SKILL.md Version: line is None, not a version")
+
+    def test_dependency_of_another_marketplace_fails_d4(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["cleanlanguage@jposluns"]))
+        self.expect(1, "FAIL D4: .claude-plugin/marketplace.json plugins[0] dependency 'cleanlanguage@jposluns' "
+                       "names no plugin of the marketplace 'cleanlanguage'")
+
+    def test_dependencies_not_a_list_fails_d4(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies="cleanlanguage"))
+        self.expect(1, "FAIL D4: .claude-plugin/marketplace.json plugins[0] dependencies is not a list")
+
+    def test_dependency_not_a_name_fails_d4(self):
+        self.edit_json(gate.CLAUDE_MANIFEST, lambda d: d.update(dependencies=[{"name": "x"}]))
+        self.expect(1, "FAIL D4: cleanlanguage/.claude-plugin/plugin.json names the dependency {'name': 'x'}, not "
+                       "a plugin name")
+
+    def test_nan_exits_3(self):
+        self.write_text(gate.SITE_JSON, '{"schema": NaN, "site_key": "cleanlanguage"}\n')
+        self.expect(3, "site-src/site.json is not valid JSON: non-standard JSON constant 'NaN'")
+
+    def test_json_that_is_not_an_object_exits_3(self):
+        self.write_text(gate.AGENT_MANIFEST, '["cleanlanguage"]\n')
+        self.expect(3, "cleanlanguage/plugin.json is not a JSON object")
+
+    def test_json_not_utf8_exits_3(self):
+        (self.root / gate.MARKETPLACE).write_bytes(b'{"name": "clean\xfflanguage"}\n')
+        self.expect(3, ".claude-plugin/marketplace.json is not UTF-8")
+
+    def test_skill_not_utf8_exits_3(self):
+        (self.root / gate.SKILL_MD).write_bytes(b"Version: 1.0.15\n\xff\n")
+        self.expect(3, "cleanlanguage/skills/cleanlanguage/SKILL.md is not UTF-8")
+
+    def test_symlinked_input_file_exits_3(self):
+        target = self.root / "site.json.real"
+        (self.root / gate.SITE_JSON).rename(target)
+        os.symlink(target, self.root / gate.SITE_JSON)
+        self.expect(3, "site-src/site.json could not be read: the component 'site.json' is a symlink")
 
 
 class RepositoryTreeTest(unittest.TestCase):

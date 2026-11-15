@@ -60,11 +60,18 @@ Tagged releases provide:
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-Added Clean Language in Claude Code through the `jposluns` marketplace? The marketplace is now named `cleanlanguage`, the same as the plugin. Remove the old plugin and marketplace, then install again following the Claude Code section of [INSTALL.md](INSTALL.md):
+Added Clean Language in Claude Code through the `jposluns` marketplace? From the first release after 1.0.15, the marketplace is named `cleanlanguage`, the same as the plugin. Remove the old plugin and marketplace:
 
 ```text
 /plugin uninstall cleanlanguage@jposluns
 /plugin marketplace remove jposluns
+```
+
+Then add the marketplace pinned to the tag of that release or a later one, with its version in place of `<version>`, and install the plugin again:
+
+```text
+/plugin marketplace add jposluns/cleanlanguage#v<version>
+/plugin install cleanlanguage@cleanlanguage
 ```
 
 The package contains prose instructions, metadata, reference material, PNG and SVG icons, and the licence and notice files. It contains no executable scripts, software dependencies, or instructions that require external network access.

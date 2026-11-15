@@ -5,23 +5,25 @@ The fleet plugin distribution standard asks for an offline consistency check,
 stdlib only and with no network, beside the pinned `claude plugin validate`
 runs, because that validator passes a marketplace whose relative source names
 a folder that does not exist. This gate reads the repository's manifests and
-makes 4 checks. Each failure line starts with the tag of its check, the
-plan's numbering, which CHECKS maps to the names used here.
+makes 4 checks. Each failure line is FAIL, a space and the tag of its check,
+the plan's numbering, which CHECKS maps to the names used here.
 
   Names agree: the name of .claude-plugin/marketplace.json, the name of its
       plugin entry, the names of cleanlanguage/.claude-plugin/plugin.json and
       cleanlanguage/plugin.json and the site_key of site-src/site.json are all
-      PROJECT; the marketplace lists exactly 1 plugin; and no marketplace name
-      or plugin entry name in either marketplace (the repository's and the
+      PROJECT; the marketplace lists exactly 1 plugin; no marketplace name or
+      plugin entry name in either marketplace (the repository's and the
       vendored plugin/.claude-plugin/marketplace.json) starts with a reserved
-      prefix of RESERVED_PREFIXES.
+      prefix of RESERVED_PREFIXES; and in both marketplaces each plugin entry
+      whose source resolves has the name of the plugin manifest it reaches.
   Sources exist: in both marketplaces each plugin entry has a string source
       that starts with "./" and has no empty and no ".." component, and it
       resolves below the marketplace root, each component reached with
       os.lstat and none a symlink, to a directory that holds a regular
-      .claude-plugin/plugin.json. A source that is not a string, such as a
-      GitHub source object, is not read here and is counted, so the count
-      shows when one is present.
+      .claude-plugin/plugin.json. The plugin entry of
+      .claude-plugin/marketplace.json must reach CLAUDE_MANIFEST, this
+      repository's plugin. A source that is not a string, such as a GitHub
+      source object, is refused, because this gate cannot read where it leads.
   Versions agree: the versions of both plugin manifests, the Version: line of
       the skill's SKILL.md, read by the shared extractor tools/skill-version.py,
       and the version of any plugin entry of .claude-plugin/marketplace.json
@@ -42,12 +44,15 @@ JSON object is refused, as tools/check-manifest-icon.py does, since json.loads
 alone keeps only the last value of a repeated key.
 
 Usage: python3 -I tools/check-plugin-distribution.py
-Exit status: 0 when every check passes; 1 when a check finds an
-inconsistency, each named with its check; 3 when an input cannot be read: a
-file that is missing, reached through a symlink, not a regular file, not UTF-8,
-not JSON, not a JSON object, or that repeats a key, or a SKILL.md whose
-version the extractor cannot read. The gate fails closed: it never passes a
-check it could not make.
+Exit status: 0 when every check passes, with a last line that starts "OK:";
+1 when a check finds an inconsistency, with 1 line "FAIL <tag>: ..." for each
+and a last line "FAIL: <n> inconsistencies". A SKILL.md whose first Version:
+line is missing or is not a bare X.Y.Z is such an inconsistency: the versions
+check fails with exit 1. 3 when an input cannot be read: a file that is
+missing, reached through a symlink, not a regular file, not UTF-8, not JSON,
+not a JSON object, or that repeats a key, or an extractor that cannot be
+loaded; the cause goes to standard error, with a last line "UNREADABLE: exit
+3". The gate fails closed: it never passes a check it could not make.
 
 Residual: the gate reads the files as they are on disk; it does not ask git
 which files are tracked, and it does not run the Claude Code CLI, whose own
@@ -270,9 +275,9 @@ def resolve_source(rel: str, index: int, source, failures: list):
     return "/".join([*base, *parts])
 
 
-def check_sources(markets: dict, failures: list) -> tuple:
-    """The sources check: (folders by (marketplace, entry index), count of sources not read)."""
-    folders, skipped = {}, 0
+def check_sources(markets: dict, failures: list) -> dict:
+    """The sources check: the folders by (marketplace, entry index)."""
+    folders = {}
     for rel, data in markets.items():
         for index, entry in plugin_entries(rel, data, failures, "D2"):
             if "source" not in entry:
@@ -280,12 +285,28 @@ def check_sources(markets: dict, failures: list) -> tuple:
                 continue
             source = entry["source"]
             if not isinstance(source, str):
-                skipped += 1
+                failures.append(f"D2: {rel} plugins[{index}].source {source!r} is not a string, so this gate "
+                                "cannot read where it leads")
                 continue
             folder = resolve_source(rel, index, source, failures)
             if folder is not None:
                 folders[(rel, index)] = folder
-    return folders, skipped
+    return folders
+
+
+def check_reach(markets: dict, folders: dict, failures: list) -> None:
+    """Each resolved entry has the name of the manifest it reaches (names check), and the entry of
+    MARKETPLACE reaches CLAUDE_MANIFEST (sources check)."""
+    for (rel, index), folder in folders.items():
+        entry = markets[rel]["plugins"][index]
+        manifest = f"{folder}/.claude-plugin/plugin.json"
+        if rel == MARKETPLACE and manifest != CLAUDE_MANIFEST:
+            failures.append(f"D2: {rel} plugins[{index}].source {entry['source']!r} reaches {manifest}, "
+                            f"not {CLAUDE_MANIFEST}")
+        reached = load_json(manifest).get("name")
+        if reached != entry.get("name"):
+            failures.append(f"D1: {rel} plugins[{index}].name is {entry.get('name')!r}, but the manifest its "
+                            f"source reaches, {manifest}, is named {reached!r}")
 
 
 def check_versions(markets: dict, claude: dict, agent: dict, version, failures: list) -> None:
@@ -346,13 +367,13 @@ def run() -> int:
     site = load_json(SITE_JSON)
     version = skill_version()
     check_names(markets, claude, agent, site, failures)
-    folders, skipped = check_sources(markets, failures)
+    folders = check_sources(markets, failures)
+    check_reach(markets, folders, failures)
     check_versions(markets, claude, agent, version, failures)
     count = check_dependencies(markets, folders, failures)
     for failure in failures:
         print(f"FAIL {failure}")
-    print(f"{PROG}: {len(folders)} relative sources resolved, {skipped} non-string sources not read, "
-          f"{count} dependencies read")
+    print(f"{PROG}: {len(folders)} relative sources resolved, {count} dependencies read")
     if failures:
         print(f"FAIL: {len(failures)} inconsistencies")
         return 1
