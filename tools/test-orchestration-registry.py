@@ -41,16 +41,16 @@ HOOK_PY = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "scripts" /
 # only real gate launches, not enumerator fixtures that deliberately omit "-I".
 PY = sys.executable
 # The machine-state basenames the hooks write or read inside state_dir, transcribed from the sites in
-# plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py: `guard-events.jsonl` 22303,
-# `turn-state.json` 22339, `_orch_save_turn_state` 22359, `dispatch-ledger.jsonl` 22855,
-# `attestations-validated.json` 22929, `backlog-checkpoint.json` 23315-23316,
-# `_orch_write_json_atomic` 23373, `_orch_write_json_atomic` 23389, `escape-spoof.json` 23510,
-# `forced-exit.jsonl` 23548, `pending-asks.jsonl` 23829, `dispatch-ledger.jsonl` 26743,
-# `attestations-validated.json` 32753,
-# `forced-exit-surfaced.json` 32830, `os.replace` 32879, `resume-barrier.json` 32975-32977,
-# `escape-spoof.json.surfaced` 33069, `resume-barrier.json` 33226, `lease-heartbeat.json` 33344,
-# `write-scope.json` 36290; plus the "<name>.tmp" form of each file _orch_write_json_atomic replaces
-# through a temporary sibling (22263-22284). Kept independent of the gate constant on purpose, so a name
+# plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py: `guard-events.jsonl` 22306,
+# `turn-state.json` 22342, `_orch_save_turn_state` 22362, `dispatch-ledger.jsonl` 22858,
+# `attestations-validated.json` 22932, `backlog-checkpoint.json` 23318-23319,
+# `_orch_write_json_atomic` 23376, `_orch_write_json_atomic` 23392, `escape-spoof.json` 23513,
+# `forced-exit.jsonl` 23551, `pending-asks.jsonl` 23832, `dispatch-ledger.jsonl` 27083,
+# `attestations-validated.json` 33093,
+# `forced-exit-surfaced.json` 33170, `os.replace` 33219, `resume-barrier.json` 33315-33317,
+# `escape-spoof.json.surfaced` 33409, `resume-barrier.json` 33566, `lease-heartbeat.json` 33684,
+# `write-scope.json` 36630; plus the "<name>.tmp" form of each file _orch_write_json_atomic replaces
+# through a temporary sibling (22266-22287). Kept independent of the gate constant on purpose, so a name
 # dropped from the gate list fails here; HookStateFileScan below also derives the set from the hook source
 # and requires all three to agree.
 HOOK_STATE_FILES = (
@@ -82,7 +82,7 @@ STAGE1 = {
 # The full stage-2 registry: STAGE1 plus the stage-2 arming keys, in the shape the plan proposes. Like
 # STAGE1 its paths are illustrative absolutes; the yield_tools roster is checked against the real
 # hooks.json of this checkout. `escape` is left undeclared here, so the hook uses its default sentinel
-# name (`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22701-22702); ESCAPE_DECLARED is the one declared shape the
+# name (`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22704-22705); ESCAPE_DECLARED is the one declared shape the
 # gate admits, and the planned stage-2 value declares it (test_planned_stage2_value_accepted).
 STAGE2 = {
     **STAGE1,
@@ -111,61 +111,61 @@ ESCAPE_DECLARED = {"path": "ESCAPE-ALLOW-YIELD"}
 # OptionalKeyClassProbe derives the optional set from the gate and requires it to equal this table, so a key
 # the gate newly treats as optional is a red test until it is classified here.
 # Not listed because the gate rejects it outright (LEASE_KEYS): lease.holder_is_session_id. Its absence keeps
-# the default holder model (aiqt_hooks.py:22630, 22648), an open maintainer decision.
+# the default holder model (aiqt_hooks.py:22633, 22651), an open maintainer decision.
 OPTIONAL_KEY_CLASSIFICATION = {
     "companion_stores": ("b", (), "absent, _wrtscp_companion_stores returns no store (aiqt_hooks.py:"
-                         "36592-36594), so no cross-repository exemption is granted: the stricter state"),
+                         "36932-36934), so no cross-repository exemption is granted: the stricter state"),
     "record": ("b", (), "an arming key: absent, the resume audit runs no record probe "
-               "(`_orch_record_block` at aiqt_hooks.py:32412, "
-               "`_orch_merge_pending_findings` at 32493-32496) and the barrier allowlist keeps only "
-               "state_dir and the registry files (`allow_prefixes` at aiqt_hooks.py:33240-33247)"),
+               "(`_orch_record_block` at aiqt_hooks.py:32752, "
+               "`_orch_merge_pending_findings` at 32833-32836) and the barrier allowlist keeps only "
+               "state_dir and the registry files (`allow_prefixes` at aiqt_hooks.py:33580-33587)"),
     "lease": ("b", (), "an arming key: absent, scope is live only through a mode record "
-              "(`_orch_scope_live` at aiqt_hooks.py:22608-22610, `_orch_mode` at 22651) and the "
-              "resume audit runs no lease probe (`_orch_resume_probes` at aiqt_hooks.py:32454-32455)"),
+              "(`_orch_scope_live` at aiqt_hooks.py:22611-22613, `_orch_mode` at 22654) and the "
+              "resume audit runs no lease probe (`_orch_resume_probes` at aiqt_hooks.py:32794-32795)"),
     "state_dir": ("conditional",
                   ("record", "lease", "enumerator", "yield_tools", "mode", "escape", "attestations",
                    "mistakes_register"),
-                  "absent, the hooks use the per-user XDG default (aiqt_hooks.py:22139-22143), which this gate "
+                  "absent, the hooks use the per-user XDG default (aiqt_hooks.py:22142-22146), which this gate "
                   "never sees; harmless only while no declared path or control writes or reads there"),
-    "dispatch_tools": ("b", (), "absent, the hook reads an empty list (aiqt_hooks.py:26720-26721), the one "
-                       "value the gate admits, so only a run_in_background Bash call is a dispatch (26722)"),
+    "dispatch_tools": ("b", (), "absent, the hook reads an empty list (aiqt_hooks.py:27060-27061), the one "
+                       "value the gate admits, so only a run_in_background Bash call is a dispatch (27062)"),
     "enumerator": ("b", (), "an arming key: absent, _orch_enumerate returns NO_ENUMERATOR (aiqt_hooks.py:"
-                   "22816-22820) and an in-scope Stop is denied on it "
-                   "(`enum_status` at aiqt_hooks.py:23064-23097), the stage-1 "
+                   "22819-22823) and an in-scope Stop is denied on it "
+                   "(`enum_status` at aiqt_hooks.py:23067-23100), the stage-1 "
                    "state .aiqt/config.md documents"),
     "yield_tools": ("b", (), "an arming key: absent, orch_yield_tool allows every scheduling call as out of "
-                    "roster (aiqt_hooks.py:23685-23687), as .aiqt/config.md documents"),
-    "mode": ("b", (), "an arming key: absent, _orch_mode returns None (aiqt_hooks.py:22519-22522), scope rests "
-             "on the lease alone (`_orch_mode` at 22651), and orch_ask_guard allows with a fail-open "
-             "audit event (aiqt_hooks.py:23812-23815), as .aiqt/config.md documents"),
-    "attestations": ("b", (), "absent, _orch_attestation_refs returns None (aiqt_hooks.py:22926-22928), which "
-                     "keeps the free-text blocker evidence path unchanged (aiqt_hooks.py:22964-22965); adoption "
+                    "roster (aiqt_hooks.py:23688-23690), as .aiqt/config.md documents"),
+    "mode": ("b", (), "an arming key: absent, _orch_mode returns None (aiqt_hooks.py:22522-22525), scope rests "
+             "on the lease alone (`_orch_mode` at 22654), and orch_ask_guard allows with a fail-open "
+             "audit event (aiqt_hooks.py:23815-23818), as .aiqt/config.md documents"),
+    "attestations": ("b", (), "absent, _orch_attestation_refs returns None (aiqt_hooks.py:22929-22931), which "
+                     "keeps the free-text blocker evidence path unchanged (aiqt_hooks.py:22967-22968); adoption "
                      "is an open maintainer decision (.aiqt/config.md)"),
     "mistakes_register": ("b", (), "absent, the resume audit runs no mistakes-register chain check "
-                          "(aiqt_hooks.py:32792-32793); adoption is an open maintainer decision "
+                          "(aiqt_hooks.py:33132-33133); adoption is an open maintainer decision "
                           "(.aiqt/config.md)"),
     "staleness": ("conditional", ("enumerator", "attestations"),
                   "absent, the hook applies 24 hours to both horizons "
-                  "(`_schema_staleness` at aiqt_hooks.py:23242-23246); harmless only while neither "
+                  "(`_schema_staleness` at aiqt_hooks.py:23245-23249); harmless only while neither "
                   "reader is declared: the enumerated-backlog classification "
-                  "(`classify_backlog` at aiqt_hooks.py:23415-23434) and the attestation derivation "
-                  "(`_orch_attestation_derive` at aiqt_hooks.py:32709, "
-                  "`_orch_validate_attestations` at 32771)"),
+                  "(`classify_backlog` at aiqt_hooks.py:23418-23437) and the attestation derivation "
+                  "(`_orch_attestation_derive` at aiqt_hooks.py:33049, "
+                  "`_orch_validate_attestations` at 33111)"),
     "escape": ("b", (), "absent, the hook uses its default sentinel name in the state_dir anchor "
-               "(`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22701-22702, "
-               "the name `ESCAPE-ALLOW-YIELD` at 21686)"),
+               "(`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22704-22705, "
+               "the name `ESCAPE-ALLOW-YIELD` at 21689)"),
     "record.findings": ("b", (), "an arming key for its probes: absent, the resume audit skips the findings "
                         "readability probe and the in-hook merge_pending drift probe "
-                        "(`_orch_record_surface_read` at aiqt_hooks.py:32447-32453, "
-                        "`_orch_merge_pending_findings` at 32493-32496); tools/check_record_drift.py "
-                        "stays the authoritative drift gate (32487-32488)"),
+                        "(`_orch_record_surface_read` at aiqt_hooks.py:32787-32793, "
+                        "`_orch_merge_pending_findings` at 32833-32836); tools/check_record_drift.py "
+                        "stays the authoritative drift gate (32827-32828)"),
     "record.pending_decisions": ("b", (), "absent, _orch_pending_haystack returns None (aiqt_hooks.py:"
-                                 "22898-22901) and a human-decision item is held as cannot-evaluate "
-                                 "(`pending_haystack` at aiqt_hooks.py:22997), which denies a stop: "
+                                 "22901-22904) and a human-decision item is held as cannot-evaluate "
+                                 "(`pending_haystack` at aiqt_hooks.py:23000), which denies a stop: "
                                  "fail-closed and visible, not a silent default"),
     "record.handoff": ("b", (), "an arming key for its probes: absent, the resume audit skips the handoff "
-                       "branch and gate-marker probes (`handoff_path` at aiqt_hooks.py:32418-32446) and the "
-                       "barrier allowlist omits it (`allow_prefixes` at aiqt_hooks.py:33242-33245), the "
+                       "branch and gate-marker probes (`handoff_path` at aiqt_hooks.py:32758-32786) and the "
+                       "barrier allowlist omits it (`allow_prefixes` at aiqt_hooks.py:33582-33585), the "
                        "stricter "
                        "direction"),
 }
@@ -353,13 +353,13 @@ class Accepts(unittest.TestCase):
 
     def test_escape_undeclared_accepted(self):
         # An escape-undeclared registry: no `escape` key, so the hook uses its default name
-        # (`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22701-22702).
+        # (`_ORCH_ESCAPE_NAME` at aiqt_hooks.py:22704-22705).
         self.assertNotIn("escape", STAGE2)
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state"})), 0)
 
     def test_escape_bare_names_accepted(self):
-        # A bare file name joins directly onto the anchor (`os.path.join` at aiqt_hooks.py:22700), so it is
+        # A bare file name joins directly onto the anchor (`os.path.join` at aiqt_hooks.py:22703), so it is
         # admitted, the default name included, on its own and in the full stage-2 fixture.
         for name in ("ESCAPE-ALLOW-YIELD", "operator-release", ".escape", "e" * 64):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as d:
@@ -500,7 +500,7 @@ class Rejects(unittest.TestCase):
 
     def test_record_nul_in_path(self):
         # A NUL in a declared record path is the load-bearing case: it would raise inside the hook's
-        # orch_resume_barrier realpath walk (aiqt_hooks.py:33248) on a PreToolUse event, and that
+        # orch_resume_barrier realpath walk (aiqt_hooks.py:33588) on a PreToolUse event, and that
         # dispatcher fails closed exit 2 on a handler crash. The gate rejects it here.
         self._reject({"version": 1, "record": {"findings": "/opt/x/find" + chr(0) + "ings.md"}})
 
@@ -547,27 +547,27 @@ class Rejects(unittest.TestCase):
 
     def test_dispatch_tools_bash_rejected(self):
         # "Bash" is inside the matcher, but listing it makes the hook treat every Bash call,
-        # foreground included, as a dispatch and record it (`is_dispatch` at aiqt_hooks.py:26722-26723).
+        # foreground included, as a dispatch and record it (`is_dispatch` at aiqt_hooks.py:27062-27063).
         # The rejection names that hook line, so this cannot pass on some other rule.
         with tempfile.TemporaryDirectory() as d:
             r = _run_full(_write(d, {"version": 1, "dispatch_tools": ["Bash"]}))
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("aiqt_hooks.py:26722-26723", r.stderr)
+        self.assertIn("aiqt_hooks.py:27062-27063", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
 
     def test_dispatch_tools_taskoutput_rejected(self):
         # "TaskOutput" is inside the matcher, but the hook routes it to its completion branch
-        # (aiqt_hooks.py:26707) before it reads the list (aiqt_hooks.py:26720), so the entry is inert.
+        # (aiqt_hooks.py:27047) before it reads the list (aiqt_hooks.py:27060), so the entry is inert.
         with tempfile.TemporaryDirectory() as d:
             r = _run_full(_write(d, {"version": 1, "dispatch_tools": ["TaskOutput"]}))
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("aiqt_hooks.py:26707", r.stderr)
+        self.assertIn("aiqt_hooks.py:27047", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
 
     # --- record/lease path colliding with state_dir -------------------------------------------------
     # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
     # write there: orch_resume_audit opens <state_dir>/resume-barrier.json with mode "w" unconditionally
-    # (aiqt_hooks.py:32975, 32984-32985), so such a path would be clobbered by that hook write. The gate
+    # (aiqt_hooks.py:33315, 33324-33325), so such a path would be clobbered by that hook write. The gate
     # rejects the dangerous config. These are RED without the cross-field collision check (the per-key
     # validation accepts each path in isolation).
     def test_record_path_inside_state_dir_rejected(self):
@@ -584,7 +584,7 @@ class Rejects(unittest.TestCase):
 
     def test_record_without_state_dir_rejected(self):
         # A declared `record` with NO `state_dir` must be rejected. Without state_dir
-        # the hooks fall back to the XDG-default orch state dir (aiqt_hooks.py:22130-22143) that this gate never
+        # the hooks fall back to the XDG-default orch state dir (aiqt_hooks.py:22133-22146) that this gate never
         # sees, and orch_resume_audit clobbers a record path landing inside it. RED before the co-requirement
         # (the gate exited 0 accepting record-without-state_dir).
         self._reject({"version": 1, "record": {
@@ -744,8 +744,8 @@ class Rejects(unittest.TestCase):
     # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
     # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be
     # UTF-8 encoded, so when the hook resolves such a declared path (os.path.realpath in
-    # orch_resume_barrier, aiqt_hooks.py:33248-33250, a PreToolUse event) the encode raises
-    # UnicodeEncodeError and the PreToolUse dispatcher fails closed exit 2 (aiqt_hooks.py:37698-37770) --
+    # orch_resume_barrier, aiqt_hooks.py:33588-33590, a PreToolUse event) the encode raises
+    # UnicodeEncodeError and the PreToolUse dispatcher fails closed exit 2 (aiqt_hooks.py:38262-38334) --
     # the very route the control-char rejection claims to close. The gate must reject surrogates in every
     # declared-path surface.
     def test_record_surrogate_path(self):
@@ -814,7 +814,7 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "-I", "", "tools/x.py"])})
 
     def test_enumerator_argv0_relative(self):
-        # The hook runs argv with no shell (`subprocess.run` at aiqt_hooks.py:22830); a bare interpreter
+        # The hook runs argv with no shell (`subprocess.run` at aiqt_hooks.py:22833); a bare interpreter
         # name resolves through the session PATH, an ambient binding the registry cannot pin.
         self._reject_stage2({"enumerator": self._enum(argv=["python3", "-I", "tools/x.py"])})
 
@@ -951,7 +951,7 @@ class Rejects(unittest.TestCase):
 
     def test_enumerator_windows_shaped_operands(self):
         # The hook runs argv verbatim on POSIX with cwd at the repository root
-        # (`subprocess.run` at aiqt_hooks.py:22830), so a Windows-shaped operand is a relative POSIX name,
+        # (`subprocess.run` at aiqt_hooks.py:22833), so a Windows-shaped operand is a relative POSIX name,
         # not the path it spells. A drive-relative "C:TODO.md" and a backslash relative path are not
         # absolute, so only the Windows-shape rule can reject them. (A drive-absolute operand such as
         # "C:/backlog/TODO.md" was already rejected: it joins the state_dir collision list, where mixing it
@@ -1047,7 +1047,7 @@ class Rejects(unittest.TestCase):
 
     def test_attestations_anchor_on_state_dir(self):
         # The register itself sits outside state_dir, but its <path>.anchor authority
-        # (`_orch_register_authority` at aiqt_hooks.py:32622) lands exactly on it; only the anchor entry in
+        # (`_orch_register_authority` at aiqt_hooks.py:32962) lands exactly on it; only the anchor entry in
         # the collision list can reject this.
         self._reject_stage2({"state_dir": "/opt/x/private/at.anchor",
                              "attestations": "/opt/x/private/at"})
@@ -1108,7 +1108,7 @@ class Rejects(unittest.TestCase):
 
     def test_staleness_partial_or_empty_rejected(self):
         # The hook silently substitutes 24 hours for a missing field
-        # (`_schema_staleness` at aiqt_hooks.py:23242-23246),
+        # (`_schema_staleness` at aiqt_hooks.py:23245-23249),
         # so a declared staleness object must carry both horizons; {} and either field alone are rejected
         # by the both-fields rule, named in the diagnostic.
         for value in ({}, {"task_hours": 24}, {"external_hours": 72}):
@@ -1133,7 +1133,7 @@ class Rejects(unittest.TestCase):
 
     def test_escape_empty_string(self):
         # The hook disables the release with no record on an empty path
-        # (`(False, None)` at aiqt_hooks.py:22697-22698).
+        # (`(False, None)` at aiqt_hooks.py:22700-22701).
         self._reject_stage2({"escape": {"path": ""}})
 
     def test_escape_non_string(self):
@@ -1151,7 +1151,7 @@ class Rejects(unittest.TestCase):
     def test_escape_multi_component_rejected(self):
         # The gate pins the sentinel to a bare file name directly in the anchor, so an
         # absolute or multi-component path is rejected by the bare-name rule, whether or not the hook would
-        # contain it (`_orch_escape_active` at aiqt_hooks.py:22700-22718). The first three were accepted by
+        # contain it (`_orch_escape_active` at aiqt_hooks.py:22703-22721). The first three were accepted by
         # an earlier gate.
         for path in ("operator/ESCAPE-ALLOW-YIELD", "/opt/x/private/orch-state/ESCAPE-ALLOW-YIELD",
                      "sub/../ESCAPE-ALLOW-YIELD", "../ESCAPE-ALLOW-YIELD", "/opt/x/private/ESCAPE-ALLOW-YIELD",
@@ -1171,7 +1171,7 @@ class Rejects(unittest.TestCase):
 
     def test_escape_windows_shaped(self):
         # The hook joins the escape path onto the anchor with POSIX semantics
-        # (`os.path.join` at aiqt_hooks.py:22699-22700). "C:ESCAPE" joined there is a valid POSIX path under
+        # (`os.path.join` at aiqt_hooks.py:22702-22703). "C:ESCAPE" joined there is a valid POSIX path under
         # the anchor, so only the Windows-shape rule rejects it.
         for path in ("operator\\ESCAPE-ALLOW-YIELD", "C:ESCAPE-ALLOW-YIELD"):
             with self.subTest(path=path):
@@ -1188,7 +1188,7 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"truth": {"changelog": "changelog.toml", "merged_pr_history": True}})
 
     def test_windows_shaped_declared_paths(self):
-        # The hook resolves a declared path with POSIX os.path.isabs (aiqt_hooks.py:22123-22127),
+        # The hook resolves a declared path with POSIX os.path.isabs (aiqt_hooks.py:22126-22130),
         # so a Windows spelling on a POSIX host is joined onto the repository root and a backslash is an
         # ordinary filename character. Each STAGE2 fixture replaces one declared path with a value that is
         # absolute to the gate predicate ("C:\\x" and "C:/x" through its Windows branch, a backslash POSIX
@@ -1283,7 +1283,7 @@ class Rejects(unittest.TestCase):
                 widened += 1
         self.assertEqual(widened, 1, "expected exactly one orch_dispatch_ledger entry in hooks.json")
         cases = ((["Workflow"], 0, None), (["Workflow", "Workflow"], 1, "duplicate"),
-                 (["Workflow", "Bash"], 1, "aiqt_hooks.py:26722-26723"))
+                 (["Workflow", "Bash"], 1, "aiqt_hooks.py:27062-27063"))
         for tools, code, needle in cases:
             with self.subTest(tools=tools), tempfile.TemporaryDirectory() as d:
                 r = self._run_gate_copy(d, {"version": 1, "dispatch_tools": tools}, json.dumps(hooks))
@@ -1403,7 +1403,7 @@ def _load_gate_module():
 class EnumeratorOperandShape(unittest.TestCase):
     # The gate no longer joins a relative enumerator operand onto a root it guesses from the
     # registry location, because the hook joins it onto the HOST session root
-    # (`subprocess.run` at aiqt_hooks.py:22830, with _orch_root at 21720-21725), so a gate verdict that
+    # (`subprocess.run` at aiqt_hooks.py:22833, with _orch_root at 21723-21728), so a gate verdict that
     # depended on where the checkout sits let CI and the host disagree. The script (argv[2]) is pinned to
     # a canonical relative path, inspected only in the checkout content, and every later operand must be
     # absolute.
@@ -1650,7 +1650,7 @@ class RequiredParameterKeys(unittest.TestCase):
 
     def test_lease_without_max_age_rejected(self):
         # The hook treats a present, non-empty lease with no max_age_hours as fresh forever
-        # (aiqt_hooks.py:22615-22627), and the resume audit never reports it stale (aiqt_hooks.py:32457-32469).
+        # (aiqt_hooks.py:22618-22630), and the resume audit never reports it stale (aiqt_hooks.py:32797-32809).
         # RED before the rule: the gate accepted this registry.
         r = self._gate({"version": 1, "state_dir": "/opt/x/orch-state", "lease": {"path": "/opt/x/lease"}})
         self.assertEqual(r.returncode, 1, r.stdout)
@@ -1663,7 +1663,7 @@ class RequiredParameterKeys(unittest.TestCase):
 
     def test_staleness_required_with_each_reader(self):
         # Without staleness the hook applies 24 hour horizons nobody declared
-        # (`_schema_staleness` at aiqt_hooks.py:23242-23246) to the enumerated-backlog classification and
+        # (`_schema_staleness` at aiqt_hooks.py:23245-23249) to the enumerated-backlog classification and
         # the attestation derivation. RED before the rule: both registries without staleness were accepted.
         for key in ("enumerator", "attestations"):
             base = {"version": 1, "state_dir": "/opt/x/orch-state", key: copy.deepcopy(STAGE2[key])}
@@ -1805,8 +1805,8 @@ class OptionalKeyClassProbe(unittest.TestCase):
 
 class ConfigDisclosure(unittest.TestCase):
     # The adoption config states every exit of the stop decision, including the loop bound
-    # (`_ORCH_LOOP_BOUND` at aiqt_hooks.py:23060-23063) and the fail-open on an unsaved denial counter
-    # (`_orch_record_denial` at aiqt_hooks.py:23587-23593).
+    # (`_ORCH_LOOP_BOUND` at aiqt_hooks.py:23063-23066) and the fail-open on an unsaved denial counter
+    # (`_orch_record_denial` at aiqt_hooks.py:23590-23596).
     def test_stop_decision_exits_are_disclosed(self):
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         for phrase in ("the loop bound", "denial counter cannot be saved", "guard fails open instead"):
@@ -1815,7 +1815,7 @@ class ConfigDisclosure(unittest.TestCase):
 
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and
-        # fresh (aiqt_hooks.py:22629, st.st_size > 0).
+        # fresh (aiqt_hooks.py:22632, st.st_size > 0).
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         self.assertIn("while the lease file is present, non-empty, and fresh", text)
 

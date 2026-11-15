@@ -6,7 +6,7 @@ New shape:  | # | Opened | State | Granted | Blocker | Evidence | Item | Closure
 
 Each old data row becomes a new row with state "open", granted "yes", blocker "-" and evidence "-".
 granted "yes" is the conservative default: "no" would route the row to the proposed bucket
-(`out["proposed"].append` at aiqt_hooks.py:22976-22978), which never blocks a Stop, so a row is demoted
+(`out["proposed"].append` at aiqt_hooks.py:22979-22981), which never blocks a Stop, so a row is demoted
 only by a recorded decision. The id, opened, item and closure cell segments are copied byte for
 byte, including their surrounding blanks and any "\\|" escape, and so are the blanks and carriage
 return after the closing bar, which is the only text allowed there. The header and the separator

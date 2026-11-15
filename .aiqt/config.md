@@ -38,11 +38,15 @@ Basis: an expensive codex applicability assessment and a fable value ranking, bo
 ## Hooks
 
 The AIQT Guardrails hooks plugin is enabled for dev-time sessions through
-`.claude/settings.json` and the local marketplace at `plugin/`. The plugin registers 31
-hooks: 12 orchestrator hooks and 19 others. The refresh to pack commit 730c039b added 7 of
+`.claude/settings.json` and the local marketplace at `plugin/`. The plugin registers 33
+hooks: 12 orchestrator hooks and 21 others. The refresh to pack commit 9d249b47 added 9 of
 them: 2 orchestrator hooks (`orch_lease_heartbeat_post` and `orch_lease_heartbeat_stop`) and
-5 others (`git_stash_ref`, `inline_errexit`, `pgrep_self_match`, `review_dispatch_pin` and
-`review_workdir_hold`). `gensrc_guard` was armed by authoring `.aiqt/gensrc.json` (PR #156),
+7 others (`clock_inject_failure`, `clock_inject_post`, `git_stash_ref`, `inline_errexit`,
+`pgrep_self_match`, `review_dispatch_pin` and `review_workdir_hold`). The 2 clock hooks refuse
+nothing: by the hook source, `clock_inject_post` (PostToolUse) and `clock_inject_failure`
+(PostToolUseFailure) each add 1 context line holding the host clock read at that hook event,
+after a tool call that ran; a call refused before it runs gets no reading, and the reading goes
+stale as time passes. `gensrc_guard` was armed by authoring `.aiqt/gensrc.json` (PR #156),
 which lists this repository's generated artefacts (the sitemap and the portable text), and
 since that refresh it also watches Bash commands as well as Write and Edit calls.
 `write_scope_guard` remains partly armed: without its per-slice `write-scope.json`
@@ -71,79 +75,72 @@ alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
 `orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
-read or whose working directory it cannot walk. They carry 2 disclosed residuals that touch
-a common idiom, both in how the detach scan reads here-document bodies. What follows comes
-from hook runs of single foreground commands, each passed to every Bash handler; forms not
-named here were not tried.
+read or whose working directory it cannot walk. How the detach scan reads here-document
+bodies and quotes comes from a recorded decision-table run for pull request 275, which passed
+256 named forms, in 314 rows of a form and a working directory (a branch, and for each git form
+a detached HEAD as well), to every Bash handler of the hook before the refresh and of the
+refreshed hook; forms not named here were not tried. Through `orch_truncation_guard` the
+refreshed hook denies:
 
-First, the scan reads some bodies as shell text. A here-document under an unquoted delimiter
-(`<<EOF`) whose body holds a bare `&` outside quotes is denied as a detach whatever command
-reads it: the runs denied it for `cat > file`, `python3 -I -` and `bash`. A body with an
-apostrophe that leaves a quote open, read as shell, is denied as an open quote when the
-command also holds an `&`, unless the whole command is a plain `cat > file` or `cat >> file`
-write under a quoted delimiter (`<<'EOF'` or `<<"EOF"`): a plain `cat > file` write under an
-unquoted delimiter with an apostrophe and an `&`, a `2>&1` or an `&&` in its body is denied,
-and so are `cat <<'EOF' | tee file` with an apostrophe and an `&` in its body and a
-quoted-delimiter `cat > file` write with an apostrophe followed by `ls 2>&1`. In a command
-with no `&`, the runs denied an apostrophe as an open quote only where the command also held
-a word that can start a background job without an `&` (the runs tried `coproc`, `eval`,
-`setsid`, `disown` and `source`, which counted anywhere in the command, body included) and
-the scan read the body as shell text: `cat > file <<EOF` with "The source isn't ready." in
-its body is denied, and so is a quoted-delimiter `cat > file` write with an apostrophe
-followed by `setsid true`, while the same words in the body of a plain quoted-delimiter write
-are not denied. The hook's source lists further such forms (`.` as a command, `<<<`, `<(` and
-`>(`) that the runs did not try.
+- a here-document body that a shell runs and that holds a bare `&`: `bash`, `sh`, `bash -s` or
+  `sh -s`, directly or piped from `cat`, under a quoted, partly quoted, backslashed or `<<-`
+  delimiter, such as `bash <<'EOF'` with `sleep 100 &` in its body, the same through
+  `cat <<'EOF' | bash`, and `sh <<'EOF'` with `sleep 100 &` and `wait`;
+- a file written by `cat` from a quoted-delimiter body holding `sleep 100 &` and then run with
+  `bash` or `source`;
+- a bare `&` in a quoted-delimiter body that `tee`, `python3 -I -`, `ruby`, `wc -c`,
+  `sed -n 1p` or a bare `> file` redirect reads, and a quoted-delimiter `cat > file` write of
+  such a body followed by `ls 2>&1`;
+- a bare `&` outside quotes in a body under an unquoted delimiter (`<<EOF`), whatever command
+  reads it (the run tried `cat > file`, `python3 -I -` and `bash`);
+- an apostrophe that leaves a quote open in a command that also holds an `&` (a bare `&`, a
+  `2>&1` or an `&&`), unless the whole command is a plain `cat > file` or `cat >> file` write
+  under `<<'EOF'` or `<<"EOF"`: the run denied such a write under `<<EOF` or `<<\EOF`,
+  `cat <<'EOF' | tee file` and `tee file <<"EOF"` with `it's a & b` in the body, a
+  quoted-delimiter write of `it's` followed by `ls 2>&1`, and `echo it's # a & b`;
+- an apostrophe in a command that also holds, outside the here-document body, a word that can
+  start a background job without an `&`: a quoted-delimiter write of `it's` followed by
+  `setsid true`, or by `.` running the written file.
 
-Second, the scan lifts a bare `&` in a body under a quoted delimiter (`<<'EOF'` or
-`<<"EOF"`) read at the top level of the command, and in the `"$(cat <<'EOF' ... EOF)"` form,
-whatever command reads the body, unless the body also leaves a quote open as above. Such an
-`&` is not denied even when a shell runs the body and starts a background job: `bash <<'EOF'`
-with `sleep 100 &` in its body, the same through `cat <<'EOF' | bash`, and `sh <<'EOF'` with
-`sleep 100 &` and `wait` each get no decision from any Bash handler, where the hook before
-the refresh denied each. An apostrophe or an unterminated double quote in a command with no
-`&` and none of those words is not denied either, in a here-document or not: `echo it's` and
-`echo "unfinished` get no decision. A `python3 -I -`
-here-document with an `&` inside a Python string, or with an apostrophe inside a
-double-quoted Python string, is not denied under either delimiter, with or without a `2>&1`
-on its line or after it.
+The refreshed hook does not deny the following forms, which the hook before the refresh denied
+through `orch_truncation_guard` (65 rows, 43 distinct commands; the pull request 275
+description lists every form id by class):
 
-The maintainer authorized 4 of the forms that the refresh stops denying, all `cat > file`
-writes (maintainer decisions Entry 59 and Entry 62). A recorded decision-table run for pull
-request 275 passed 302 forms, with stable ids, to every Bash handler of both hooks: the forms of
-its 2 reviews, of 1 reproduction runner, and of all 50 ids of the here-document payload log,
-46 of them rebuilt from the table of the run that wrote the log. It found 74 distinct forms
-that the hook before the refresh denied through `orch_truncation_guard` and the refreshed hook
-does not decide. 4 of them are the 4 authorized forms. 11 are variants of authorized kinds,
-not ruled on: each differs from 1 of the 4 only in its body text. Whether maintainer decisions
-Entry 59 and Entry 62 cover them is the maintainer's call; that question goes to the maintainer
-with the re-pin authorization that maintainer decision Entry 66 sets, not now, and until then
-they are not authorized. The other 59 are of other kinds and are not authorized, by class:
-
-- 15 here-document bodies that a shell runs (`bash`, `sh`, `bash -s` or `sh -s`, directly or
-  piped from `cat`, under a quoted, partly quoted, backslashed or `<<-` delimiter); each body
-  holds `sleep 100 &`, so each starts a background job;
-- 2 write-then-run forms, where a shell runs (`bash` or `source`) a file written from a
-  quoted-delimiter body holding `sleep 100 &`; each starts a background job;
-- 16 `cat` writes outside the authorized forms: `cat >>`, a double-quoted or backslashed
-  delimiter, 2 writes in 1 command, or a write followed by `ls 2>&1` or `echo done`;
-- 8 `tee` forms, piped from `cat` or reading the here-document itself;
-- 3 `cat` here-documents to standard output;
-- 3 `python3 -I -` bodies under a quoted delimiter: `x = 1 & 2`, `print('it\'s')` and
-  `x = 1 & 2  # it's`;
-- 5 other readers: a bare `> file` redirect under either delimiter, `wc -c`, `sed -n 1p` and
-  `ruby`;
-- 3 here-document bodies that leave a double quote open;
-- 4 commands with an open quote and no here-document: `echo it's`, `echo "unfinished`,
+- a here-document of data written by `cat` (to a file, appended or to standard output), by
+  `tee` or by a bare `> file` redirect, whose body holds an apostrophe (for a `cat` write, also
+  an unterminated double quote), including an apostrophe beside a word that can start a
+  background job (`coproc`, `disown`, `eval`, `setsid`, `source`, `.`, `<<<` or `<(`), and
+  such a `cat` write followed by `echo done`;
+- a `cat` write or a `cat` to standard output whose body, under `<<'EOF'` or `<<"EOF"`, holds an
+  ampersand in data (`a & b`), with or without an apostrophe, including 2 such writes in 1
+  command;
+- `python3 -I -` with `print('it\'s')` in a quoted-delimiter body;
+- `bash <<'EOF'` with `echo "unfinished` in its body, which leaves a double quote open and holds
+  no `&`;
+- a command with an open quote and no here-document: `echo it's`, `echo "unfinished`,
   `echo 'unfinished` and `echo "it`.
 
-None of these 59 is authorized: no maintainer decision covers them, and a decision on them
-stays with the maintainer, due at the re-pin that maintainer decision Entry 66 sets. Entry 66
-holds pull request 275 unmerged until a guardrails pack commit that fixes the regression for the
-shell-run bodies (guardrails PR #1177) can be pinned; the refresh is then re-pinned to that
-commit, the probes are re-run and the change is re-validated. It is not known whether guardrails
-PR #1177 covers the write-then-run route or any class other than the shell-run bodies.
-Write multi-line content through the Write or Edit tool (which these Bash guards never see) or
-through `printf` when the body carries such characters.
+None of these 65 rows starts a command in the background. Neither hook denies these forms of
+the run, each of which starts a background job: `bash -c "$(cat <<'EOF' ... EOF)"` and
+`out="$(bash <<'EOF' ... EOF)"` with `sleep 100 &` in the body, `bash <<< 'sleep 100 &'`, a
+script written by `printf 'sleep 100 &\n'` and then run with `bash`, and a body run by `bash`
+that holds `coproc true` and no `&`. Neither denies a body run by `sh` that holds
+`setsid true`, a `python3 -I -` here-document with an `&` or an apostrophe inside a
+double-quoted Python string, under either delimiter, with or without a `2>&1` on its line or
+after it, or a `perl` body with an `&` inside a Perl string.
+
+Maintainer decision Entry 99 accepted the pack's decisions verbatim and named the list, by
+class, of every form of this run that the refreshed hook no longer denies, in the pull request
+275 description, as the recorded authorization for those forms; maintainer decisions Entry 59
+and Entry 62 had already authorized 4 of them, all `cat > file` writes. Any form the maintainer
+later objects to goes to guardrails as a seed. Against the earlier pin of this change,
+730c039b, the same run moved 13 rows from deny to no decision, all data here-documents written
+by `cat` whose body holds an apostrophe beside a word that can start a background job, and 40
+rows from no decision to deny: the bodies that a shell runs, the write-then-run detach forms,
+and the `tee`, `python3 -I -`, other-reader and `cat` write with `ls 2>&1` forms with a bare
+`&` in a quoted-delimiter body. No form that starts a command in the background moved from
+deny to no decision. Write multi-line content through the Write or Edit tool (which these Bash
+guards never see) or through `printf` when the body carries such characters.
 
 `gate_weakening` (gatdis) denies the 5 write-then-run commit probes that
 `tools/test-gate-weakening-probes.py` holds: a script written by a here-document or by

@@ -32,7 +32,7 @@ that the shape check rejects 3 such moved forms, and that it rejects a form that
 written path) while it accepts the same form with that condition met. Each payload file is also
 pinned by its sha256, so any edit to a payload fails a named case until the pin is updated with it.
 
-The hooks before the refresh to pack commit 730c039b allowed all 5 probes, so this test is red on
+The hooks before the refresh to pack commit 9d249b47 allowed all 5 probes, so this test is red on
 them; --hook PATH runs the same cases against another copy of the hook to show that. The test pins
 these 5 forms only. It does not show that every write-then-run commit that skips hooks is denied:
 a written script that sets core.hooksPath, or a script decoded from base64, gets no decision from

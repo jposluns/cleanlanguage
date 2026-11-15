@@ -2,8 +2,8 @@
 """Enumerate the project backlog as one AEI v1 JSON object for the orchestration hooks.
 
 The AIQT orchestration hooks run the registry `enumerator` argv on every Stop, TeammateIdle and
-in-roster scheduling call (`_orch_enumerate` at aiqt_hooks.py:22812-22845, cwd = the repo root,
-never through a shell) and validate its stdout with `validate_enumeration` (aiqt_hooks.py:22751-22809).
+in-roster scheduling call (`_orch_enumerate` at aiqt_hooks.py:22815-22848, cwd = the repo root,
+never through a shell) and validate its stdout with `validate_enumeration` (aiqt_hooks.py:22754-22812).
 A non-zero exit, a non-JSON stdout, or an invalid enumeration is ENUMERATOR_ERROR, which denies the
 Stop and the scheduling call.
 This script therefore fails CLOSED: every unreadable input and every malformed row exits 1 naming its
@@ -69,14 +69,14 @@ Backlog grammar (a markdown table, parsed strictly):
 - state: open, closed or proposed. granted: yes or no.
 - blocker: "-" or "<kind>:<ref>", split at the FIRST colon (a not-before ref contains colons). kind
   is one of tracked-task, human-decision, external, foreign-lease, not-before; ref is non-blank by
-  the str.strip() test the hook applies, `blocker.get("ref").strip()` (aiqt_hooks.py:22799), so a
+  the str.strip() test the hook applies, `blocker.get("ref").strip()` (aiqt_hooks.py:22802), so a
   ref of only Unicode whitespace such as U+00A0 or U+2003 is rejected here, naming the line, rather
   than by the hook as ENUMERATOR_ERROR. A not-before ref must parse as an ISO-8601 time with an
   explicit UTC offset or "Z".
 - evidence: "-" or "<ISO-8601 observed time with offset or Z>; <non-blank free text>". It is required
   for an external or foreign-lease blocker and must be "-" for every other row, since the hook reads
-  evidence only for those 2 kinds (`blocker.get("evidence")` at aiqt_hooks.py:23009-23024). The free
-  text is non-blank by the str.strip() test the hook applies to it, `.strip()` (aiqt_hooks.py:23023),
+  evidence only for those 2 kinds (`blocker.get("evidence")` at aiqt_hooks.py:23012-23027). The free
+  text is non-blank by the str.strip() test the hook applies to it, `.strip()` (aiqt_hooks.py:23026),
   so a description of only Unicode whitespace such as U+00A0 is rejected here, naming the line,
   rather than enumerated as evidence the hook then treats as absent.
 - Every other strip in this script with an explicit character set (" \\t", " \\t\\r" or "\\r")
@@ -147,7 +147,7 @@ SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 # ASCII punctuation characters, then an ISO date.
 PIPE_FREE_ROW_RE = re.compile(r"[^!-=?-~]*[0-9]+(?:\.[0-9]+)*(?:\s|[!-/:-@\[-`{-~])+"
                               r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-# Mirrors _ORCH_STATES and _ORCH_BLOCKER_KINDS (aiqt_hooks.py:21650-21652).
+# Mirrors _ORCH_STATES and _ORCH_BLOCKER_KINDS (aiqt_hooks.py:21653-21655).
 STATES = ("open", "closed", "proposed")
 GRANTED = {"yes": True, "no": False}
 BLOCKER_KINDS = ("tracked-task", "human-decision", "external", "foreign-lease", "not-before")
@@ -252,7 +252,7 @@ def _split_cells(line, lineno):
 
 def _parse_utc(text):
     """An aware datetime for an ISO-8601 time that carries an explicit offset or Z, else None.
-    The hook parser treats a naive time as UTC (aiqt_hooks.py:21701-21712); this is stricter, so the
+    The hook parser treats a naive time as UTC (aiqt_hooks.py:21704-21715); this is stricter, so the
     written time always states its zone."""
     try:
         value = datetime.fromisoformat(text.replace("Z", "+00:00"))
@@ -274,7 +274,7 @@ def _parse_blocker(cell, lineno):
         raise _line_error(lineno, "unknown blocker kind {!r}".format(kind))
     if not ref.strip():
         # The same str.strip() test the hook applies, `blocker.get("ref").strip()`
-        # (aiqt_hooks.py:22799), so a ref of only Unicode whitespace (U+00A0, U+2003 and the like)
+        # (aiqt_hooks.py:22802), so a ref of only Unicode whitespace (U+00A0, U+2003 and the like)
         # fails here, naming the line, never in the hook.
         raise _line_error(lineno, "blocker {} has a blank ref (empty or only whitespace)"
                           .format(kind))
@@ -300,7 +300,7 @@ def _parse_evidence(cell, blocker, lineno):
                           "an offset, then \";\"".format(cell))
     if not text.strip():
         # The same str.strip() test the hook applies to the evidence, `.strip()`
-        # (aiqt_hooks.py:23023), so a description of only Unicode whitespace (U+00A0, U+2003 and the
+        # (aiqt_hooks.py:23026), so a description of only Unicode whitespace (U+00A0, U+2003 and the
         # like) fails here, naming the line, never reaching the hook as evidence it treats as absent.
         raise _line_error(lineno, "evidence has a blank description after the observed time")
     blocker["evidence"] = text

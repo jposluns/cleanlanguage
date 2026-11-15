@@ -83,7 +83,7 @@ mutation of each kind.
 The DoctorCheckpointWrites cases prove that the doctor previews the hook writes inside the context
 build whose failure changes the verdict, without making them: with an empty backlog, a live lease
 and no init marker, a failed marker write makes the real hook deny the Stop and the scheduling call
-(aiqt_hooks.py:23384-23394), and the doctor reports the same DENY (the failure is injected
+(aiqt_hooks.py:23387-23397), and the doctor reports the same DENY (the failure is injected
 identically into both, since the hook writer leaves no file arrangement in which the checkpoint
 rewrite succeeds and the marker write fails); an entry of any type at a legacy fixed temporary
 path (<name>.tmp) is ignored by the hook writer, which creates a randomly named file of its own,
@@ -126,7 +126,7 @@ DOCTOR = HERE / "orch_doctor.py"
 ZERO64 = "0" * 64
 
 # The fixture enumerator: argv[1] is a JSON file holding the items list. It prints one AEI v1 envelope
-# that validate_enumeration accepts (aiqt_hooks.py:22751-22809) and exits 0.
+# that validate_enumeration accepts (aiqt_hooks.py:22754-22812) and exits 0.
 ENUM_FIXTURE = """import json
 import sys
 from datetime import datetime, timezone
@@ -200,7 +200,7 @@ def item(iid, state="open", granted=True, blocker=None, title=None):
 
 
 def chain_lines(rows):
-    """Serialize rows as a chained register (`_orch_chained_rows` at aiqt_hooks.py:32527-32555): seq is
+    """Serialize rows as a chained register (`_orch_chained_rows` at aiqt_hooks.py:32867-32895): seq is
     the line number and prev is the sha256 of the prior raw line, 64 zeros for the first."""
     lines, prev = [], None
     for n, row in enumerate(rows, 1):
@@ -246,7 +246,7 @@ class Stage2Harness(unittest.TestCase):
         _git(self.repo, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
              "commit", "--allow-empty", "-m", "init")
         # A repo-relative file that a register pointer can resolve to
-        # (`_orch_pointer_resolves` at aiqt_hooks.py:32669-32692).
+        # (`_orch_pointer_resolves` at aiqt_hooks.py:33009-33032).
         (self.repo / "docs").mkdir()
         (self.repo / "docs" / "evidence.md").write_text("evidence\n", encoding="utf-8")
         self.enum_script = self._tmp / "enum_fixture.py"
@@ -380,7 +380,7 @@ class Stage2Harness(unittest.TestCase):
         })
 
     def human_prompt(self):
-        """A genuine human prompt zeroes the stop and schedule denial counters (aiqt_hooks.py:32190-32199)."""
+        """A genuine human prompt zeroes the stop and schedule denial counters (aiqt_hooks.py:32530-32539)."""
         r = self.run_hook("orch_prompt_stamp", {"prompt": "please continue"})
         self.assertEqual(r.returncode, 0, r.stderr)
 
@@ -417,13 +417,13 @@ class Stage2Harness(unittest.TestCase):
         return [str(p) for p in self._tmp.rglob(name)]
 
     def assert_no_enumerator_deny(self, r):
-        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22816-22820, `enum_status` 23092-23097).
+        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22823, `enum_status` 23095-23100).
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("NO_ENUMERATOR", r.stderr)
 
 
 # =====================================================================================================
-# T1. Stop with one open granted unblocked item denies, naming the id (aiqt_hooks.py:23176-23207)
+# T1. Stop with one open granted unblocked item denies, naming the id (aiqt_hooks.py:23179-23210)
 # =====================================================================================================
 class T01StopActionable(Stage2Harness):
     def test_stage2_denies_naming_the_item(self):
@@ -446,7 +446,7 @@ class T01StopActionable(Stage2Harness):
 
 
 # =====================================================================================================
-# T2. Nothing actionable: Stop allows (`classify_backlog` :22974-22978, `decide_yield` :23164-23165)
+# T2. Nothing actionable: Stop allows (`classify_backlog` :22977-22981, `decide_yield` :23167-23168)
 # =====================================================================================================
 class T02StopNothingActionable(Stage2Harness):
     ITEMS = [item("1", state="closed"), item("2", state="proposed"), item("3", granted=False)]
@@ -469,7 +469,7 @@ class T02StopNothingActionable(Stage2Harness):
 
 
 # =====================================================================================================
-# T3. `human-decision` (aiqt_hooks.py:22996-23008) blockers against the pending-decisions record
+# T3. `human-decision` (aiqt_hooks.py:22999-23011) blockers against the pending-decisions record
 # =====================================================================================================
 class T03HumanDecision(Stage2Harness):
     def _run(self, ref, pending, registry=None):
@@ -489,7 +489,7 @@ class T03HumanDecision(Stage2Harness):
 
     def test_row_absent_is_actionable(self):
         # A free-text mention is not a row-id position
-        # (`re.search` at aiqt_hooks.py:23003-23008).
+        # (`re.search` at aiqt_hooks.py:23006-23011).
         r = self._run("PD-7", "| PD-8 | Another decision |\nWe discussed PD-7 in passing.\n")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ref PD-7 is not at a pending-decision row-id position", r.stderr)
@@ -501,8 +501,8 @@ class T03HumanDecision(Stage2Harness):
 
     def test_unreadable_pending_surface_holds(self):
         # An unreadable declared surface is cannot-evaluate (`pending_haystack` at
-        # aiqt_hooks.py:22997-22999), which denies the Stop (`cannot_evaluate` at
-        # aiqt_hooks.py:23151-23163).
+        # aiqt_hooks.py:23000-23002), which denies the Stop (`cannot_evaluate` at
+        # aiqt_hooks.py:23154-23166).
         self.write_registry(self.stage2())
         self.arm_lease()
         os.remove(self._p("pending-decisions.md"))
@@ -517,7 +517,7 @@ class T03HumanDecision(Stage2Harness):
 
 
 # =====================================================================================================
-# T4. `not-before` (aiqt_hooks.py:23028-23034) blockers
+# T4. `not-before` (aiqt_hooks.py:23031-23037) blockers
 # =====================================================================================================
 class T04NotBefore(Stage2Harness):
     def _run(self, when, registry=None):
@@ -539,28 +539,28 @@ class T04NotBefore(Stage2Harness):
 
 
 # =====================================================================================================
-# T5. Anti-shrinkage checkpoint `_orch_checkpoint_union` (aiqt_hooks.py:23286-23406)
+# T5. Anti-shrinkage checkpoint `_orch_checkpoint_union` (aiqt_hooks.py:23289-23409)
 # =====================================================================================================
 class T05Checkpoint(Stage2Harness):
     def test_vanished_id_is_held_until_closed(self):
         self.write_registry(self.stage2())
         self.arm_lease()
         # Window 1: item 9 open and actionable; the checkpoint and its init marker are written
-        # (aiqt_hooks.py:23369-23393).
+        # (aiqt_hooks.py:23372-23396).
         self.set_items([item("9")])
         r = self.stop()
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertEqual(self.state_json("backlog-checkpoint.json")["ids"], {"9": "eligible"})
         self.assertIsNotNone(self.read_json("checkpoint-init.marker"))
         # Window 2: item 9 deleted with no closed receipt is held as vanished
-        # (`vanished from the enumeration` at aiqt_hooks.py:23349-23351).
+        # (`vanished from the enumeration` at aiqt_hooks.py:23352-23354).
         self.human_prompt()
         self.set_items([])
         r = self.stop()
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("cannot-evaluate", r.stderr)
         self.assertEqual(self.state_json("backlog-checkpoint.json")["ids"], {"9": "eligible"},
-                         "the union keeps a vanished id (aiqt_hooks.py:23357-23358)")
+                         "the union keeps a vanished id (aiqt_hooks.py:23360-23361)")
         # Window 3: item 9 present as closed is the receipt; the Stop allows and the id leaves.
         self.human_prompt()
         self.set_items([item("9", state="closed")])
@@ -576,7 +576,7 @@ class T05Checkpoint(Stage2Harness):
         os.remove(self.state_dir() / "backlog-checkpoint.json")
         self.human_prompt()
         r = self.stop()
-        self.assertEqual(r.returncode, 2, r.stderr)  # aiqt_hooks.py:23332-23336
+        self.assertEqual(r.returncode, 2, r.stderr)  # aiqt_hooks.py:23335-23339
         self.assertIn("cannot-evaluate", r.stderr)
 
     def test_deleted_checkpoint_and_marker_is_a_first_window(self):
@@ -601,7 +601,7 @@ class T05Checkpoint(Stage2Harness):
 
 # =====================================================================================================
 # T6. attestations (OPTIONAL KEY, open point P5)
-# T6: `_orch_attestation_refs` and `cannot-evaluate` (aiqt_hooks:22908-22956, 23013-23022, 32739-32775)
+# T6: `_orch_attestation_refs` and `cannot-evaluate` (aiqt_hooks:22911-22959, 23016-23025, 33079-33115)
 # =====================================================================================================
 class T06Attestations(Stage2Harness):
     def _register(self, rows, anchor=True):
@@ -611,7 +611,7 @@ class T06Attestations(Stage2Harness):
         if anchor:
             # An untracked register is verified against its anchor, an object whose seq is the
             # number of rows (an int of at least 1) and whose digest is the sha256 of the last row
-            # (`_orch_register_tip` aiqt_hooks.py:32558-32564 and `a.get("seq")` at :32651-32665).
+            # (`_orch_register_tip` aiqt_hooks.py:32898-32904 and `a.get("seq")` at :32991-33005).
             # An empty register has no anchor of that shape, so it keeps the zero form, which the
             # hook holds (see the empty-register case).
             tip = ({"seq": len(lines), "digest": hashlib.sha256(lines[-1].encode("utf-8")).hexdigest()}
@@ -638,7 +638,7 @@ class T06Attestations(Stage2Harness):
 
     def test_empty_register_zero_anchor_holds(self):
         # A seq of 0 is not a valid anchor (the seq must be an int of at least 1,
-        # `isinstance(n, int)` at aiqt_hooks.py:32651-32665), so the surface is held
+        # `isinstance(n, int)` at aiqt_hooks.py:32991-33005), so the surface is held
         # fail-closed: the snapshot reads unreadable with no refs, never ok.
         self._arm([])
         snap = self.state_json("attestations-validated.json")
@@ -662,7 +662,7 @@ class T06Attestations(Stage2Harness):
 
     def test_without_row_is_actionable(self):
         # A validated register whose only row covers another ref: the item's ref is uncovered
-        # (`is covered by no fresh validated` at aiqt_hooks.py:23021-23022).
+        # (`is covered by no fresh validated` at aiqt_hooks.py:23024-23025).
         self._arm([dict(self._row(), ref="vendor-y")])
         r = self.stop()
         self.assertEqual(r.returncode, 2, r.stderr)
@@ -673,13 +673,13 @@ class T06Attestations(Stage2Harness):
         os.remove(self._p("attestations.jsonl.anchor"))
         r = self.stop()
         # No anchor: the register authority holds (`no readable anchor authority` at
-        # aiqt_hooks.py:32630-32633), so the item is `cannot-evaluate` at 23013-23018.
+        # aiqt_hooks.py:32970-32973), so the item is `cannot-evaluate` at 23016-23021.
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("cannot-evaluate", r.stderr)
 
     def test_undeclared_contrast_free_text_evidence_blocks(self):
         # Without the key, fresh free-text evidence blocks (`blocker.get("evidence")` at
-        # aiqt_hooks.py:23023-23024) and no snapshot is written, so
+        # aiqt_hooks.py:23026-23027) and no snapshot is written, so
         # test_without_row_is_actionable is red without the key.
         self._arm([], declare=False)
         self.assertIsNone(self.read_json("attestations-validated.json"))
@@ -688,7 +688,7 @@ class T06Attestations(Stage2Harness):
 
 
 # =====================================================================================================
-# T7. staleness horizons `task_hours` and `ext_hours` (aiqt_hooks.py:22878, 23010-23012, 23239-23246)
+# T7. staleness horizons `task_hours` and `ext_hours` (aiqt_hooks.py:22881, 23013-23015, 23242-23249)
 # =====================================================================================================
 class T07Staleness(Stage2Harness):
     def _tracked(self, staleness, age_hours=30, drop=()):
@@ -725,7 +725,7 @@ class T07Staleness(Stage2Harness):
 
     def test_undeclared_contrast_uses_the_24h_defaults(self):
         # Without the key both horizons are 24 h (`task_hours` and `external_hours` at
-        # aiqt_hooks.py:23245-23246), so the two allows above flip.
+        # aiqt_hooks.py:23248-23249), so the two allows above flip.
         self.assertEqual(self._tracked(None, drop=("staleness",)).returncode, 2)
         self.assertEqual(self._external(None, drop=("staleness",)).returncode, 2)
 
@@ -737,7 +737,7 @@ class T07Staleness(Stage2Harness):
 
 
 # =====================================================================================================
-# T8. orch_yield_tool over the scheduling tools (aiqt_hooks.py:23663-23777)
+# T8. orch_yield_tool over the scheduling tools (aiqt_hooks.py:23666-23780)
 # =====================================================================================================
 class T08YieldTool(Stage2Harness):
     def _arm(self, registry=None):
@@ -750,7 +750,7 @@ class T08YieldTool(Stage2Harness):
         r = self.schedule()
         self.assertEqual(r.returncode, 0, r.stderr)
         out = self.verdict_json(r)
-        # The scheduling deny (`_deny` at aiqt_hooks.py:23721-23744).
+        # The scheduling deny (`_deny` at aiqt_hooks.py:23724-23747).
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertIn("42 (Ship the widget", out["hookSpecificOutput"]["permissionDecisionReason"])
 
@@ -772,7 +772,7 @@ class T08YieldTool(Stage2Harness):
         self.assertEqual(r.stdout.strip(), "")
 
     def test_stop_true_follows_the_stop_kind(self):
-        # tool_input stop true is judged as kind "stop" (aiqt_hooks.py:23689): with the stop counter at the
+        # tool_input stop true is judged as kind "stop" (aiqt_hooks.py:23692): with the stop counter at the
         # loop bound it yields with findings, where the schedule kind (next test) denies.
         self._arm()
         self.seed_state("turn-state.json", {"stop_denials": 2})
@@ -788,8 +788,8 @@ class T08YieldTool(Stage2Harness):
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_three_denials_on_an_unchanged_basis_release_with_findings(self):
-        # The cap (`_ORCH_SCHEDULE_CAP` at aiqt_hooks.py:23171-23175) and the
-        # forced-exit record (`_orch_record_forced_exit` at aiqt_hooks.py:23749-23762).
+        # The cap (`_ORCH_SCHEDULE_CAP` at aiqt_hooks.py:23174-23178) and the
+        # forced-exit record (`_orch_record_forced_exit` at aiqt_hooks.py:23752-23765).
         self._arm()
         for n in range(1, 4):
             out = self.verdict_json(self.schedule())
@@ -805,7 +805,7 @@ class T08YieldTool(Stage2Harness):
 
 
 # =====================================================================================================
-# T9. orch_ask_guard against the declared mode record (aiqt_hooks.py:23780-23852)
+# T9. orch_ask_guard against the declared mode record (aiqt_hooks.py:23783-23855)
 # =====================================================================================================
 class T09AskGuard(Stage2Harness):
     def _ask(self):
@@ -845,9 +845,9 @@ class T09AskGuard(Stage2Harness):
     def test_json_mode_record_reads_as_unattended(self):
         # The host operating-mode file is one JSON line. The vendored reader accepts a structured
         # operating-mode record whose mode key names the mode (`_orch_mode_object_ok` at
-        # aiqt_hooks.py:22392 and `_orch_mode_detail` at :22500), so a JSON record that says
+        # aiqt_hooks.py:22395 and `_orch_mode_detail` at :22503), so a JSON record that says
         # unattended denies the question and records it as pending, as the text line does
-        # (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23837-23842).
+        # (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23840-23845).
         self.write_registry(self.stage2())
         Path(self._p("operating-mode.md")).write_text(
             '{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
@@ -862,7 +862,7 @@ class T09AskGuard(Stage2Harness):
 
 
 # =====================================================================================================
-# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22593-22651)
+# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22654)
 # =====================================================================================================
 class T10ScopeByMode(Stage2Harness):
     def _arm(self, registry):
@@ -889,7 +889,7 @@ class T10ScopeByMode(Stage2Harness):
 
 
 # =====================================================================================================
-# T11. escape: `_orch_escape_active` and `escape-spoof` (aiqt_hooks.py:22677-22737, 23497-23516)
+# T11. escape: `_orch_escape_active` and `escape-spoof` (aiqt_hooks.py:22680-22740, 23500-23519)
 # =====================================================================================================
 class T11Escape(Stage2Harness):
     def _arm(self, registry):
@@ -923,7 +923,7 @@ class T11Escape(Stage2Harness):
                 self.human_prompt()
                 self.assertEqual(self.stop().returncode, 2)
                 # An empty or non-string path is refused (`isinstance(declared, str)` at
-                # aiqt_hooks.py:22697-22698).
+                # aiqt_hooks.py:22700-22701).
                 self.assertFalse(spoof.exists(), "no release and no spoof record")
 
     def test_undeclared_contrast_consults_the_default_name(self):
@@ -936,11 +936,11 @@ class T11Escape(Stage2Harness):
         self._arm(self.stage2(escape={"path": self._p("elsewhere", "SENTINEL")}))
         self.assertEqual(self.stop().returncode, 2)
         spoof = self.state_json("escape-spoof.json")
-        self.assertIn("outside the operator-trusted anchor", spoof["detail"])  # aiqt_hooks.py:22706-22707
+        self.assertIn("outside the operator-trusted anchor", spoof["detail"])  # aiqt_hooks.py:22709-22710
 
 
 # =====================================================================================================
-# T12. mistakes_register (OPTIONAL KEY, open point P6; aiqt_hooks.py:32792-32808)
+# T12. mistakes_register (OPTIONAL KEY, open point P6; aiqt_hooks.py:33132-33148)
 # =====================================================================================================
 class T12MistakesRegister(Stage2Harness):
     def _audit(self, lines, declare=True):
@@ -993,7 +993,7 @@ class T12MistakesRegister(Stage2Harness):
 
 
 # =====================================================================================================
-# T13. TeammateIdle mirrors the Stop decision (aiqt_hooks.py:23632-23635)
+# T13. TeammateIdle mirrors the Stop decision (aiqt_hooks.py:23635-23638)
 # =====================================================================================================
 class T13TeammateIdle(Stage2Harness):
     def test_actionable_denies(self):
@@ -1025,13 +1025,13 @@ class T14PosturePins(Stage2Harness):
         self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 5}))
         self.arm_lease()
         r = self.stop()
-        self.assertEqual(r.returncode, 2, r.stderr)  # `spec.get("argv")` at aiqt_hooks.py:22823-22826
+        self.assertEqual(r.returncode, 2, r.stderr)  # `spec.get("argv")` at aiqt_hooks.py:22826-22829
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("not a list of non-empty strings", r.stderr)
 
     def test_enumerator_timeout_malformed_still_runs(self):
         # A malformed timeout silently becomes 60 (`timeout <= 600 else 60` at
-        # aiqt_hooks.py:22828); the enumerator still runs.
+        # aiqt_hooks.py:22831); the enumerator still runs.
         self.write_registry(self.stage2(enumerator={
             "argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)], "timeout": "fast"}))
         self.arm_lease()
@@ -1046,7 +1046,7 @@ class T14PosturePins(Stage2Harness):
         self.set_items([item("42")])
         r = self.schedule()
         self.assertEqual(r.returncode, 0, r.stderr)
-        # A non-list roster is out of scope (`isinstance(declared, list)` at aiqt_hooks.py:23686-23687).
+        # A non-list roster is out of scope (`isinstance(declared, list)` at aiqt_hooks.py:23689-23690).
         self.assertEqual(r.stdout.strip(), "", "a non-list roster is out of scope")
 
     def test_staleness_malformed_uses_24h(self):
@@ -1079,7 +1079,7 @@ class T14PosturePins(Stage2Harness):
 
 
 # =====================================================================================================
-# T15. Enumerator timeout yields ENUMERATOR_ERROR, never a hang (aiqt_hooks.py:22828-22832)
+# T15. Enumerator timeout yields ENUMERATOR_ERROR, never a hang (aiqt_hooks.py:22831-22835)
 # =====================================================================================================
 class T15EnumeratorTimeout(Stage2Harness):
     def test_sleeping_enumerator_times_out_and_denies(self):
@@ -1204,7 +1204,7 @@ class Doctor(Stage2Harness):
 
     def test_preflight_special_mode_path_is_cannot_evaluate(self):
         # No lease, so scope falls through to the mode read (`_orch_mode` at
-        # aiqt_hooks.py:22651, then `os.open` at 22442); the doctor refuses each
+        # aiqt_hooks.py:22654, then `os.open` at 22445); the doctor refuses each
         # special file there as cannot-evaluate.
         for kind in ("fifo", "directory", "symlink-to-fifo"):
             with self.subTest(kind=kind):
@@ -1215,7 +1215,7 @@ class Doctor(Stage2Harness):
 
     def test_preflight_special_lease_path_is_cannot_evaluate(self):
         # The hook opens the lease only for holder scoping, on a lease that os.stat reaches, that is
-        # non-empty and fresh, and with a session id given (aiqt_hooks.py:22614-22638). A FIFO has size 0
+        # non-empty and fresh, and with a session id given (aiqt_hooks.py:22617-22641). A FIFO has size 0
         # and so is never opened (see DoctorPrecheckSites); the special file the hook does
         # open here is a non-empty directory.
         reg, marker = self._arm_writing_enumerator()
@@ -1244,23 +1244,23 @@ class Doctor(Stage2Harness):
 
     def test_resume_audit_special_handoff_is_cannot_evaluate(self):
         # The resume probes read the declared handoff
-        # (`_orch_record_surface_read` at aiqt_hooks.py:32418-32420); the doctor
+        # (`_orch_record_surface_read` at aiqt_hooks.py:32758-32760); the doctor
         # refuses a FIFO there as cannot-evaluate.
         self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
                                      "--resume-audit")
 
     # --- the fixed hook state files are checked too, per command -----------------------
     # The state files _orch_build_ctx opens with a plain blocking open (turn-state.json at
-    # aiqt_hooks.py:22343, dispatch-ledger.jsonl at 22854-22855 and `_orch_read_jsonl` at 22170,
-    # backlog-checkpoint.json at 23321, and with attestations declared attestations-validated.json at
-    # 22931 and guard-events.jsonl at 32680).
+    # aiqt_hooks.py:22346, dispatch-ledger.jsonl at 22857-22858 and `_orch_read_jsonl` at 22173,
+    # backlog-checkpoint.json at 23324, and with attestations declared attestations-validated.json at
+    # 22934 and guard-events.jsonl at 33020).
     PREFLIGHT_STATE_FILES = ("turn-state.json", "dispatch-ledger.jsonl", "backlog-checkpoint.json",
                              "attestations-validated.json", "guard-events.jsonl")
-    # The state files orch_resume_audit opens with a plain blocking open (guard-events.jsonl at 32680 and
-    # `_orch_append_jsonl` at 22159, escape-spoof.json at 32872, forced-exit.jsonl at 32820 and
-    # `_orch_read_jsonl` at 22170, forced-exit-surfaced.json at 32832, and the temporary files
-    # _orch_write_json_atomic opens for writing at 22264, via 32851 and, with attestations declared, via
-    # 32784).
+    # The state files orch_resume_audit opens with a plain blocking open (guard-events.jsonl at 33020 and
+    # `_orch_append_jsonl` at 22162, escape-spoof.json at 33212, forced-exit.jsonl at 33160 and
+    # `_orch_read_jsonl` at 22173, forced-exit-surfaced.json at 33172, and the temporary files
+    # _orch_write_json_atomic opens for writing at 22267, via 33191 and, with attestations declared, via
+    # 33124).
     AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
                          "forced-exit-surfaced.json", "forced-exit-surfaced.json.tmp",
                          "attestations-validated.json.tmp")
@@ -1268,8 +1268,8 @@ class Doctor(Stage2Harness):
     def _with_attestations(self, reg):
         # A declared attestations register, absent on disk (an open the hook raises on, never blocks
         # on): the condition the hook tests before it opens the attestation state files
-        # (`reg.get("attestations")` at aiqt_hooks.py:22926-22928 for the preview,
-        # `at_path` at 32752-32754 for the audit).
+        # (`reg.get("attestations")` at aiqt_hooks.py:22929-22931 for the preview,
+        # `at_path` at 33092-33094 for the audit).
         reg["attestations"] = self._p("attestations.jsonl")
         return reg
 
@@ -1282,9 +1282,9 @@ class Doctor(Stage2Harness):
     def _seed_reach(self, name, command):
         # Seed the state the hook needs to reach the open of name. The preview reads
         # guard-events.jsonl only past a snapshot open (`_orch_attestation_refs` at
-        # aiqt_hooks.py:22931-22934) and a register open (`_orch_register_authority` at 32581-32584);
+        # aiqt_hooks.py:22934-22937) and a register open (`_orch_register_authority` at 32921-32924);
         # the audit opens the surfaced set and its temporary file only for a forced-exit log that
-        # holds rows (`_orch_forced_exit_findings` at 32820-32829).
+        # holds rows (`_orch_forced_exit_findings` at 33160-33169).
         if command == "preflight" and name == "guard-events.jsonl":
             self.seed_state("attestations-validated.json", {})
             Path(self._p("attestations.jsonl")).write_text("", encoding="utf-8")
@@ -1331,8 +1331,8 @@ class Doctor(Stage2Harness):
 
     def test_resume_audit_on_an_unreadable_registry_checks_its_state_files(self):
         # On an unreadable registry the hook appends to resume-barrier.json.unused beside the barrier
-        # (`_orch_append_jsonl` at aiqt_hooks.py:32977, `open(path, "a"` at 22159) under the default
-        # state directory (`_orch_state_dir_for_root` at 32975).
+        # (`_orch_append_jsonl` at aiqt_hooks.py:33317, `open(path, "a"` at 22162) under the default
+        # state directory (`_orch_state_dir_for_root` at 33315).
         (self.repo / ".aiqt").mkdir(exist_ok=True)
         (self.repo / ".aiqt" / "orchestration.json").write_text("{", encoding="utf-8")
         self.assertEqual(self.run_hook("orch_resume_audit", {}).returncode, 0)
@@ -1348,9 +1348,9 @@ class Doctor(Stage2Harness):
 
     # --- each command checks only what its own hook call path opens --------------------
     def test_fifo_backlog_operand_refuses_preflight_but_not_the_resume_audit(self):
-        # The resume probes run no enumerator (`_orch_resume_probes` at aiqt_hooks.py:32398-32482), so
+        # The resume probes run no enumerator (`_orch_resume_probes` at aiqt_hooks.py:32738-32822), so
         # the hook audits with a FIFO backlog operand, and so must the doctor; the preview runs the
-        # enumerator (`subprocess.run` at 22830), so it still refuses.
+        # enumerator (`subprocess.run` at 22833), so it still refuses.
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(reg)
         self.backlog.unlink()
@@ -1369,7 +1369,7 @@ class Doctor(Stage2Harness):
         self.assertFalse(marker.exists(), "the refused preview ran the enumerator")
 
     def test_resume_audit_runs_past_paths_only_the_preview_opens(self):
-        # The audit stats the lease only (`os.stat` at aiqt_hooks.py:32460) and never opens the mode
+        # The audit stats the lease only (`os.stat` at aiqt_hooks.py:32800) and never opens the mode
         # record or the preview state files, so a FIFO at any of them leaves the audit to run and
         # rewrite the barrier.
         cases = [("mode.path", lambda: Path(self._p("operating-mode.md"))),
@@ -1420,7 +1420,7 @@ class Doctor(Stage2Harness):
 
     def test_out_of_scope_preflight_runs_past_a_fifo_turn_state(self):
         # Out of scope the hook returns before _orch_build_ctx (`_orch_scope_live` at
-        # aiqt_hooks.py:23574-23576 and 23681-23683), so it never opens turn-state.json, and the
+        # aiqt_hooks.py:23577-23579 and 23684-23686), so it never opens turn-state.json, and the
         # preview reports the same ALLOW.
         reg, marker = self._arm_writing_enumerator()
         reg.pop("mode")
@@ -1437,8 +1437,8 @@ class Doctor(Stage2Harness):
                 self.assertFalse(marker.exists())
 
     def test_special_registry_file_is_cannot_evaluate(self):
-        # The hook reads the registry with a plain blocking open (aiqt_hooks.py:22081-22112), the
-        # machine-local file first (`_ORCH_REGISTRY_FILES` at aiqt_hooks.py:21649).
+        # The hook reads the registry with a plain blocking open (aiqt_hooks.py:22084-22115), the
+        # machine-local file first (`_ORCH_REGISTRY_FILES` at aiqt_hooks.py:21652).
         self.write_registry(self.stage2())
         local = self.repo / ".aiqt" / "orchestration.local.json"
         os.mkfifo(local)
@@ -1492,8 +1492,8 @@ class Doctor(Stage2Harness):
 
     def test_preflight_out_of_scope_runs_no_enumerator(self):
         # The Stop hook returns before it enumerates when scope is not live (`_orch_scope_live` at
-        # aiqt_hooks.py:23574-23576), and so does the scheduling hook (`_orch_scope_live` at
-        # aiqt_hooks.py:23681-23683); a preview that ran the enumerator there could change what a later
+        # aiqt_hooks.py:23577-23579), and so does the scheduling hook (`_orch_scope_live` at
+        # aiqt_hooks.py:23684-23686); a preview that ran the enumerator there could change what a later
         # Stop decides.
         reg, marker = self._arm_writing_enumerator()
         reg.pop("mode")
@@ -1515,7 +1515,7 @@ class Doctor(Stage2Harness):
 
     def test_preflight_idle_out_of_the_roster_runs_no_enumerator(self):
         # The scheduling hook returns before it enumerates for a tool outside the roster
-        # (`reg.get("yield_tools")` at aiqt_hooks.py:23684-23687).
+        # (`reg.get("yield_tools")` at aiqt_hooks.py:23687-23690).
         reg, marker = self._arm_writing_enumerator(yield_tools=["CronCreate"])
         self.write_registry(reg)
         self.arm_lease()
@@ -1704,7 +1704,7 @@ class Doctor(Stage2Harness):
         self.assertIn("effective verdict: ALLOW_WITH_FINDINGS (the fail-open allow", r.stdout)
         self.assertNotIn("effective verdict: DENY", r.stdout)
         # The real hook on the same state: exit 0 with the fail-open warning, not the exit 2 deny
-        # (`_orch_record_denial` at aiqt_hooks.py:23587-23594).
+        # (`_orch_record_denial` at aiqt_hooks.py:23590-23597).
         h = self.stop()
         self.assertEqual(h.returncode, 0, h.stderr)
         self.assertIn("the denial counter could not be persisted",
@@ -1721,8 +1721,8 @@ class Doctor(Stage2Harness):
 
     def test_preflight_stop_with_a_read_only_turn_state_reports_the_deny_as_the_hook_does(self):
         # The hook saves turn-state.json through its atomic writer, which replaces the file from a
-        # temporary file in the state directory and never opens the target (aiqt_hooks.py:22359,
-        # `os.replace` at :22263-22284), so a mode-0444 turn-state.json in a writable state
+        # temporary file in the state directory and never opens the target (aiqt_hooks.py:22362,
+        # `os.replace` at :22266-22287), so a mode-0444 turn-state.json in a writable state
         # directory does not stop the save: the hook denies, and the doctor must predict the saved
         # counter and the DENY on the same state. The fail-open leg of the same check, a state
         # directory the hook cannot write, is the case above; together they hold the doctor's
@@ -1766,7 +1766,7 @@ class Doctor(Stage2Harness):
     # --- the resume audit requires that the hook rewrote the barrier during this run ---------
     def _read_only_stale_barrier(self, active):
         # The hook replaces the barrier from a temporary file in the state directory
-        # (aiqt_hooks.py:32889-32920), so a read-only barrier file no longer stops the rewrite; a
+        # (aiqt_hooks.py:33229-33260), so a read-only barrier file no longer stops the rewrite; a
         # state directory the hook cannot write does. The doctor's check is unchanged: a barrier
         # this audit did not rewrite is reported as unverified, never as the stale state it holds.
         self.seed_state("resume-barrier.json", {"active": active,
@@ -1870,106 +1870,106 @@ PRECHECK_SITES = {
         "the machine-local file always; the committed file only when the lstat of the local file "
         "raised FileNotFoundError (a present local file returns whatever its content, an lstat "
         "fault returns bad)",
-        "_orch_registry 22081-22118: lstat 22084, next file 22085-22086, "
-        "fault `cannot stat registry path` 22087-22092, os.open 22095, return via json.loads 22096-22118; "
-        "order _ORCH_REGISTRY_FILES 21649"),
+        "_orch_registry 22084-22121: lstat 22087, next file 22088-22089, "
+        "fault `cannot stat registry path` 22090-22095, os.open 22098, return via json.loads 22099-22121; "
+        "order _ORCH_REGISTRY_FILES 21652"),
     "scope.lease": (
         "preflight", True,
         "os.stat succeeds, the lease is non-empty and fresh, holder_is_session_id is set and a "
         "session id is given",
-        "_orch_scope_live 22608-22641: stat 22614, size and freshness 22615-22629, holder 22630, "
-        "session_id 22634-22635, open 22637"),
+        "_orch_scope_live 22611-22644: stat 22617, size and freshness 22618-22632, holder 22633, "
+        "session_id 22637-22638, open 22640"),
     "scope.mode": (
         "preflight", True,
-        "no earlier return: not a live lease (st.st_size 22629-22641) and not an unstattable holder lease "
-        "(22646-22649)",
-        "_orch_scope_live 22651, _orch_mode_read os.open 22442"),
+        "no earlier return: not a live lease (st.st_size 22632-22644) and not an unstattable holder lease "
+        "(22649-22652)",
+        "_orch_scope_live 22654, _orch_mode_read os.open 22445"),
     "ctx.turn_state": (
         "preflight", True,
         "scope live (and for idle the tool in the roster); then always",
-        "orch_stop_guard 23574-23576, orch_yield_tool 23681-23687; _orch_turn_state 22341-22343 via 23417"),
+        "orch_stop_guard 23577-23579, orch_yield_tool 23684-23690; _orch_turn_state 22344-22346 via 23420"),
     "ctx.enumerator_operand": (
         "preflight", True,
         "the enumerator runs: an object with a non-empty argv of non-empty strings",
-        "_orch_enumerate 22817-22826, subprocess 22830 via 23428"),
+        "_orch_enumerate 22820-22829, subprocess 22833 via 23431"),
     "ctx.ledger": (
         "preflight", True,
         "the enumerator runs (its success is not modelled)",
-        "_orch_build_ctx 23430-23431, _orch_live_ledger_ids 22854, open 22170"),
+        "_orch_build_ctx 23433-23434, _orch_live_ledger_ids 22857, open 22173"),
     "ctx.pending_decisions": (
         "preflight", True,
         "the enumerator runs and record.pending_decisions is declared",
-        "_orch_build_ctx 23430-23433, _orch_pending_haystack 22899-22905"),
+        "_orch_build_ctx 23433-23436, _orch_pending_haystack 22902-22908"),
     "ctx.attestation_snapshot": (
         "preflight", True,
         "the enumerator runs and attestations is declared",
-        "_orch_attestation_refs 22926-22932 via 23434"),
+        "_orch_attestation_refs 22929-22935 via 23437"),
     "ctx.attestations": (
         "preflight", True,
         "as the snapshot, and os.stat succeeds on the snapshot (its content is not modelled)",
-        "_orch_attestation_refs 22931-22934 return on a failed snapshot open; "
-        "_orch_register_authority 32581 via 22944, _orch_chained_rows 32536 via 22951"),
+        "_orch_attestation_refs 22934-22937 return on a failed snapshot open; "
+        "_orch_register_authority 32921 via 22947, _orch_chained_rows 32876 via 22954"),
     "ctx.attestations_anchor": (
         "preflight", True,
         "as the register, and os.stat succeeds on the register (git tracking is not modelled)",
-        "_orch_register_authority 32581-32584 hold on a failed register open, returned by "
-        "_orch_attestation_refs at 22945-22947; anchor os.open 32622-32628"),
+        "_orch_register_authority 32921-32924 hold on a failed register open, returned by "
+        "_orch_attestation_refs at 22948-22950; anchor os.open 32962-32968"),
     "ctx.guard_events": (
         "preflight", True,
         "as the anchor (the guard-events pointer in a register row is not modelled)",
-        "_orch_attestation_refs 22944-22953, _orch_attestation_derive via 22954, "
-        "_orch_pointer_resolves 32678-32680, open 22170"),
+        "_orch_attestation_refs 22947-22956, _orch_attestation_derive via 22957, "
+        "_orch_pointer_resolves 33018-33020, open 22173"),
     "ctx.checkpoint": (
         "preflight", True,
         "the enumerator runs",
-        "_orch_build_ctx 23430 and 23439, _orch_checkpoint_union 23318-23321"),
+        "_orch_build_ctx 23433 and 23442, _orch_checkpoint_union 23321-23324"),
     "audit.handoff": (
-        "--resume-audit", False, "record.handoff is declared", "_orch_resume_probes 32418-32428"),
+        "--resume-audit", False, "record.handoff is declared", "_orch_resume_probes 32758-32768"),
     "audit.findings": (
         "--resume-audit", False, "record.findings is declared",
-        "_orch_resume_probes 32448-32450, and _orch_merge_pending_findings 32493-32502 via 32479"),
+        "_orch_resume_probes 32788-32790, and _orch_merge_pending_findings 32833-32842 via 32819"),
     "audit.pending_decisions": (
-        "--resume-audit", False, "record.pending_decisions is declared", "32448-32450"),
+        "--resume-audit", False, "record.pending_decisions is declared", "32788-32790"),
     "audit.attestations": (
         "--resume-audit", False, "attestations is declared",
-        "_orch_validate_attestations 32754, _orch_chained_rows 32536 via 32756, "
-        "_orch_register_authority 32581 via 32757"),
+        "_orch_validate_attestations 33094, _orch_chained_rows 32876 via 33096, "
+        "_orch_register_authority 32921 via 33097"),
     "audit.attestations_anchor": (
         "--resume-audit", True,
         "attestations is declared and os.stat succeeds on the register (git tracking is not "
         "modelled)",
-        "_orch_register_authority 32581-32584 hold on a failed register open; "
-        "anchor os.open 32622-32628 via _orch_validate_attestations 32757"),
+        "_orch_register_authority 32921-32924 hold on a failed register open; "
+        "anchor os.open 32962-32968 via _orch_validate_attestations 33097"),
     "audit.snapshot_tmp": (
         "--resume-audit", True, "attestations is declared",
-        "_orch_validate_attestations 32754, _orch_write_json_atomic 22263-22264 via 32784"),
+        "_orch_validate_attestations 33094, _orch_write_json_atomic 22266-22267 via 33124"),
     "audit.mistakes_register": (
-        "--resume-audit", False, "mistakes_register is declared", "32792-32794, open 32536"),
+        "--resume-audit", False, "mistakes_register is declared", "33132-33134, open 32876"),
     "audit.guard_events": (
         "--resume-audit", False,
         "always checked: both opens depend on file content (a guard-events pointer, findings to "
         "record)",
-        "_orch_pointer_resolves 32680 via 32771 and 32804; _orch_guard_event 22159 via 32993-32994"),
+        "_orch_pointer_resolves 33020 via 33111 and 33144; _orch_guard_event 22162 via 33333-33334"),
     "audit.escape_spoof": (
         "--resume-audit", False, "always (lexists, then open)",
-        "_orch_pending_artefact_findings 32871-32872"),
+        "_orch_pending_artefact_findings 33211-33212"),
     "audit.forced_exit": (
-        "--resume-audit", False, "always", "_orch_forced_exit_findings 32819-32820, open 22170"),
+        "--resume-audit", False, "always", "_orch_forced_exit_findings 33159-33160, open 22173"),
     "audit.forced_exit_surfaced": (
         "--resume-audit", True,
         "os.stat succeeds on forced-exit.jsonl and it is not empty (its rows are not modelled)",
-        "_orch_read_jsonl 22170-22175, no rows return _orch_forced_exit_findings 32828-32829, open 32832"),
+        "_orch_read_jsonl 22173-22178, no rows return _orch_forced_exit_findings 33168-33169, open 33172"),
     "audit.forced_exit_surfaced_tmp": (
         "--resume-audit", True,
         "as the surfaced set, and its os.stat raises nothing other than FileNotFoundError (fresh "
         "rows are not modelled)",
-        "32834-32839, _orch_write_json_atomic 22263-22264 via 32851"),
+        "33174-33179, _orch_write_json_atomic 22266-22267 via 33191"),
     "audit_bad.unused": (
         "--resume-audit", False, "an unreadable registry; then always",
-        "orch_resume_audit 32976-32977, open 22159"),
+        "orch_resume_audit 33316-33317, open 22162"),
     "audit_bad.guard_events": (
         "--resume-audit", False, "an unreadable registry; then always (the registry is a finding)",
-        "_orch_resume_audit_findings 32981, _orch_guard_event 22159 via 32994"),
+        "_orch_resume_audit_findings 33321, _orch_guard_event 22162 via 33334"),
 }
 
 # (site, expectation, case method of DoctorPrecheckSites). "reach": the hook opens the path, so the
@@ -2028,8 +2028,8 @@ PRECHECK_CASES = [
 
 
 # Runs in a separate python3 -I process: the hook call path the preflight runs, and nothing else (the
-# registry, the scope test, then _orch_build_ctx in the preview posture, aiqt_hooks.py:23409 and
-# 23300-23302), so a skip case can show that path completes with the FIFO in place. The Stop hook itself
+# registry, the scope test, then _orch_build_ctx in the preview posture, aiqt_hooks.py:23412 and
+# 23303-23305), so a skip case can show that path completes with the FIFO in place. The Stop hook itself
 # also writes a guard event, the denial counter and the checkpoint, which the preview never does.
 PREVIEW_PATH_PROG = """
 import importlib.util, sys
@@ -2070,7 +2070,7 @@ class DoctorPrecheckSites(Stage2Harness):
         return reg
 
     def _argv_cannot_run(self):
-        # A non-string element: _orch_enumerate returns ENUMERATOR_ERROR unrun (aiqt_hooks.py:22824-22826).
+        # A non-string element: _orch_enumerate returns ENUMERATOR_ERROR unrun (aiqt_hooks.py:22827-22829).
         return {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog), 5],
                 "timeout": 5}
 
@@ -2118,15 +2118,15 @@ class DoctorPrecheckSites(Stage2Harness):
         return lease, "directory", self.STOP + ("--session-id", "sess-1"), {"session_id": "sess-1"}
 
     def case_lease_holder_fifo_is_empty(self):
-        # A FIFO has size 0, so the lease is not live (`st.st_size` at 22629) and the hook reads
+        # A FIFO has size 0, so the lease is not live (`st.st_size` at 22632) and the hook reads
         # the mode record.
         self._holder()
         return (Path(self._p("session-state.md")), None, self.STOP + ("--session-id", "sess-1"),
                 {"session_id": "sess-1"})
 
     def case_lease_holder_without_session_id(self):
-        # No session id (`session_id` at 22634-22635): the hook returns False before
-        # the open at 22637.
+        # No session id (`session_id` at 22637-22638): the hook returns False before
+        # the open at 22640.
         self._holder()
         lease = Path(self._p("session-state.md"))
         lease.mkdir()
@@ -2140,7 +2140,7 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
 
     def case_mode_behind_live_lease(self):
-        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22629-22641),
+        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22632-22644),
         # before _orch_mode.
         self._reg()
         self.arm_lease()
@@ -2148,7 +2148,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def case_mode_behind_unstattable_holder_lease(self):
         # Holder mode with no lease on disk: the hook returns False
-        # (`holder_is_session_id` at 22648-22649), before _orch_mode.
+        # (`holder_is_session_id` at 22651-22652), before _orch_mode.
         self._holder()
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
 
@@ -2211,8 +2211,8 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._at()), None, self.STOP, {}
 
     def case_ctx_register_without_snapshot(self):
-        # No snapshot: the open at 22931 fails, and the reader then returns
-        # (`return "unreadable"` at 22933-22934).
+        # No snapshot: the open at 22934 fails, and the reader then returns
+        # (`return "unreadable"` at 22936-22937).
         self._reg(attestations=self._at())
         return Path(self._at()), None, self.STOP, {}
 
@@ -2223,8 +2223,8 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._at() + ".anchor"), None, self.STOP, {}
 
     def case_ctx_anchor_without_register(self):
-        # No register: the open at 32581 fails, so the authority holds
-        # (`register unreadable` at 32584) before the anchor.
+        # No register: the open at 32921 fails, so the authority holds
+        # (`register unreadable` at 32924) before the anchor.
         self._reg(attestations=self._at())
         self.seed_state("attestations-validated.json", {})
         return Path(self._at() + ".anchor"), None, self.STOP, {}
@@ -2315,8 +2315,8 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def case_audit_surfaced_tmp_behind_unopenable_set(self):
         # A surfaced set that loops on itself: its open raises ELOOP, not FileNotFoundError, so the
-        # hook returns (`surfaced-set is unreadable` at 32836-32839) before the rewrite
-        # (`_orch_write_json_atomic` at 32851).
+        # hook returns (`surfaced-set is unreadable` at 33176-33179) before the rewrite
+        # (`_orch_write_json_atomic` at 33191).
         self._reg()
         self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
         surfaced = self._sd("forced-exit-surfaced.json")
@@ -2392,10 +2392,10 @@ class DoctorPrecheckSites(Stage2Harness):
 
 class DoctorScopeMargin(Stage2Harness):
     """The hook judges a lease fresh when -_ORCH_CLOCK_SKEW <= age <= max_age_hours *
-    3600 (aiqt_hooks.py:22615-22627), and the doctor treats a lease within SCOPE_MARGIN seconds of
+    3600 (aiqt_hooks.py:22618-22630), and the doctor treats a lease within SCOPE_MARGIN seconds of
     either bound as possibly on either side (orch_doctor.py _lease_fresh_states), so it checks both
-    the holder lease open (scope.lease, `_orch_scope_live` at 22637) and the mode record open
-    (scope.mode, `_orch_mode` at 22651). Each case sets the lease mtime NEAR seconds from a bound,
+    the holder lease open (scope.lease, `_orch_scope_live` at 22640) and the mode record open
+    (scope.mode, `_orch_mode` at 22654). Each case sets the lease mtime NEAR seconds from a bound,
     on the side where the doctor sample at the clock now gives one answer and the sample
     SCOPE_MARGIN seconds later gives the other: just
     inside max_age_hours at the upper bound, and just beyond the skew tolerance into the future at
@@ -2487,16 +2487,16 @@ class DoctorScopeMargin(Stage2Harness):
 # reads it; an unpreviewed field gives the reason no input is needed. The probe below requires the
 # lines to equal those its scan finds, so the citations are checked, not narrated.
 EVENT_FIELDS = {
-    ("data", "cwd"): ("modelled", "--root", (21722,)),  # _orch_root, via 23563 and 23667
-    ("data", "session_id"): ("modelled", "--session-id", (23574, 23681)),
-    ("data", "stop_hook_active"): ("modelled", "--stop-hook-active", (23465,)),  # via 23577, 23691
-    ("data", "tool_name"): ("modelled", "--tool", (23684,)),
-    ("data", "tool_input"): ("modelled", "--tool-stop and --wake-text", (23688,)),
-    ("tool_input", "stop"): ("modelled", "--tool-stop", (23689,)),
-    ("tool_input", "values()"): ("modelled", "--wake-text", (23690,)),
+    ("data", "cwd"): ("modelled", "--root", (21725,)),  # _orch_root, via 23566 and 23670
+    ("data", "session_id"): ("modelled", "--session-id", (23577, 23684)),
+    ("data", "stop_hook_active"): ("modelled", "--stop-hook-active", (23468,)),  # via 23580, 23694
+    ("data", "tool_name"): ("modelled", "--tool", (23687,)),
+    ("data", "tool_input"): ("modelled", "--tool-stop and --wake-text", (23691,)),
+    ("tool_input", "stop"): ("modelled", "--tool-stop", (23692,)),
+    ("tool_input", "values()"): ("modelled", "--wake-text", (23693,)),
     ("tool_input", "prompt"): ("unpreviewed", "read only after an allowed schedule verdict, for the "
-                               "wake-digest write (_orch_register_wake, aiqt_hooks.py:23638-23660); "
-                               "it never changes the verdict", (23748,)),
+                               "wake-digest write (_orch_register_wake, aiqt_hooks.py:23641-23663); "
+                               "it never changes the verdict", (23751,)),
 }
 # The handlers the doctor previews: preflight stop (Stop) and preflight idle (a scheduling call).
 PREVIEWED_HANDLERS = ("orch_stop_guard", "orch_yield_tool")
@@ -2733,9 +2733,9 @@ class DoctorEventFields(Stage2Harness):
                     self.assertIn("loop signal: set", stdout)
 
     def test_a_stop_kind_scheduling_deny_stands_with_an_unsaved_counter(self):
-        # `counter_warn` at aiqt_hooks.py:23721-23744: the scheduling path ignores a failed counter
+        # `counter_warn` at aiqt_hooks.py:23724-23747: the scheduling path ignores a failed counter
         # save, so its DENY stands on the stop kind too, unlike the Stop event
-        # (`_orch_record_denial` at aiqt_hooks.py:23587-23594).
+        # (`_orch_record_denial` at aiqt_hooks.py:23590-23597).
         if os.geteuid() == 0:
             self.skipTest("root writes a mode-0444 file, so the save cannot fail here")
         self._arm()
@@ -2759,9 +2759,9 @@ class DoctorEventFields(Stage2Harness):
 
 class DoctorCheckpointWrites(Stage2Harness):
     """The checkpoint union writes the checkpoint (`_orch_write_json_atomic` at
-    aiqt_hooks.py:23373) and, when that succeeds and no init marker exists (`os.path.lexists` at
-    23384), the marker (`_orch_write_json_atomic` at 23389), whose failure injects a
-    cannot-evaluate row (`injected.append` at 23394). The doctor predicts each outcome without
+    aiqt_hooks.py:23376) and, when that succeeds and no init marker exists (`os.path.lexists` at
+    23387), the marker (`_orch_write_json_atomic` at 23392), whose failure injects a
+    cannot-evaluate row (`injected.append` at 23397). The doctor predicts each outcome without
     writing, so its verdict equals that of the real hook on the same state. Each case arranges a
     fresh tree per kind, runs the doctor first (it writes nothing) and then the hook."""
 
@@ -2848,7 +2848,7 @@ class DoctorCheckpointWrites(Stage2Harness):
 
     def test_a_failed_marker_write_denies_as_the_hook_does(self):
         # The hook rewrites the checkpoint, finds no marker, and its marker write fails, so it
-        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23384-23394). The pack writer
+        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23387-23397). The pack writer
         # creates its temporary file under a random name and the two writes share one directory,
         # so no arrangement of files makes the checkpoint rewrite succeed and the marker write
         # fail; the failure is therefore injected, identically, into the doctor's prediction for
@@ -2861,7 +2861,7 @@ class DoctorCheckpointWrites(Stage2Harness):
                 out = self._faulted(kind)
                 self.assertEqual(out["doctor_rc"], 1, out["doctor_out"])
                 self.assertIn("effective verdict: DENY", out["doctor_out"])
-                self.assertIn("init-marker write (aiqt_hooks.py:23389): would FAIL (",
+                self.assertIn("init-marker write (aiqt_hooks.py:23392): would FAIL (",
                               out["doctor_out"])
                 self.assertIn("checkpoint-init marker unwritable", out["doctor_out"])
                 self.assertEqual(out["hook_verdict"], "DENY", out)
@@ -2877,7 +2877,7 @@ class DoctorCheckpointWrites(Stage2Harness):
     def _assert_legacy_entries_harmless(self, makers):
         # The hook writer never opens a fixed temporary path: it creates a fresh randomly named
         # file with O_CREAT|O_EXCL|O_NOFOLLOW and replaces the target with it
-        # (aiqt_hooks.py:22263-22284). An entry at the old fixed sibling <name>.tmp is therefore
+        # (aiqt_hooks.py:22266-22287). An entry at the old fixed sibling <name>.tmp is therefore
         # ignored: the hook writes the checkpoint and the marker and allows, and the doctor must
         # predict both writes and the same ALLOW, on the same state. The hook runs under a timeout
         # here, so a write that did block would fail the case rather than hang it.
@@ -2885,8 +2885,8 @@ class DoctorCheckpointWrites(Stage2Harness):
             for name in ("checkpoint-init.marker.tmp", "backlog-checkpoint.json.tmp"):
                 with self.subTest(entry=what, path=name):
                     self._assert_agrees(lambda: make(name), "ALLOW",  # both via _orch_write_json_atomic
-                                        "checkpoint rewrite (aiqt_hooks.py:23373): would succeed",
-                                        "init-marker write (aiqt_hooks.py:23389): would succeed")
+                                        "checkpoint rewrite (aiqt_hooks.py:23376): would succeed",
+                                        "init-marker write (aiqt_hooks.py:23392): would succeed")
                     self.assertEqual(self._marker_events(), [], "no failed marker write")
                     self.assertTrue((self.state_dir() / "checkpoint-init.marker").is_file(),
                                     "the hook wrote the marker")
@@ -2931,9 +2931,9 @@ class DoctorCheckpointWrites(Stage2Harness):
 
     def test_a_failed_checkpoint_rewrite_skips_the_marker_write_as_the_hook_does(self):
         # Contrast: the state directory cannot be written, so the checkpoint rewrite fails first
-        # and the hook never reaches the marker write (aiqt_hooks.py:23373-23384), though the
+        # and the hook never reaches the marker write (aiqt_hooks.py:23376-23387), though the
         # marker write would fail too; the hook allows and reports the failed rewrite with the
-        # allow (`_stop_warn` at :23618-23621, `_allow_note` at :23772-23776), and the doctor must
+        # allow (`_stop_warn` at :23621-23624, `_allow_note` at :23775-23779), and the doctor must
         # report the same.
         if os.geteuid() == 0:
             self.skipTest("root writes into a mode-0555 directory, so the rewrite cannot fail here")
@@ -2941,16 +2941,16 @@ class DoctorCheckpointWrites(Stage2Harness):
         def arrange():
             os.chmod(self.state_dir(), 0o555)
         self._assert_agrees(arrange, "ALLOW_WITH_FINDINGS",  # the rewrite: _orch_write_json_atomic
-                            "checkpoint rewrite (aiqt_hooks.py:23373): would FAIL",
-                            "init-marker write (aiqt_hooks.py:23389): not reached")
+                            "checkpoint rewrite (aiqt_hooks.py:23376): would FAIL",
+                            "init-marker write (aiqt_hooks.py:23392): not reached")
 
     def test_a_present_marker_is_not_rewritten_as_the_hook_does(self):
         # Contrast: with a checkpoint and a marker present, the hook skips the marker write
-        # (`os.path.lexists` at 23384).
+        # (`os.path.lexists` at 23387).
         def arrange():
             self.seed_state("backlog-checkpoint.json", {"version": 1, "ts": _iso(), "ids": {}})
             self.seed_state("checkpoint-init.marker", {"version": 1, "ts": _iso()})
-        self._assert_agrees(arrange, "ALLOW", "init-marker write (aiqt_hooks.py:23389): not reached")
+        self._assert_agrees(arrange, "ALLOW", "init-marker write (aiqt_hooks.py:23392): not reached")
 
     def test_a_write_the_preview_does_not_model_is_not_previewed(self):
         # The doctor models exactly the two writes the WRITE_SITES table marks modelled. A hook
@@ -3145,14 +3145,14 @@ class DoctorStandInRestore(Stage2Harness):
 # whose outcome the doctor predicts (_atomic_write_outcome through _build_ctx_previewed); "no
 # verdict effect" is a write whose result no caller on the path reads, with the reason.
 WRITE_SITES = {
-    ("_orch_checkpoint_union", "_orch_write_json_atomic", 23373): (
+    ("_orch_checkpoint_union", "_orch_write_json_atomic", 23376): (
         "modelled", "the checkpoint rewrite; a failure skips the init-marker write "
-        "(os.path.lexists 23384) and adds a recording-failure warning"),
-    ("_orch_checkpoint_union", "_orch_write_json_atomic", 23389): (
-        "modelled", "the init-marker write; a failure injects a cannot-evaluate row (injected.append 23394)"),
-    ("_orch_event_warn", "_orch_guard_event", 22313): (
+        "(os.path.lexists 23387) and adds a recording-failure warning"),
+    ("_orch_checkpoint_union", "_orch_write_json_atomic", 23392): (
+        "modelled", "the init-marker write; a failure injects a cannot-evaluate row (injected.append 23397)"),
+    ("_orch_event_warn", "_orch_guard_event", 22316): (
         "no verdict effect", "the guard-events row of each checkpoint event; a failed append "
-        "adds a warning to the output and never changes the decision (22308-22316)"),
+        "adds a warning to the output and never changes the decision (22311-22319)"),
 }
 # The hook helpers that write, each a leaf of the scan (its own body is the write).
 WRITE_PRIMITIVES = ("_orch_write_json_atomic", "_orch_write_json", "_orch_append_jsonl",

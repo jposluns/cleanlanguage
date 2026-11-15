@@ -258,8 +258,8 @@ import sys
 # hooks.json registers. That denies each PreToolUse call a registered matcher selects; blocks every
 # UserPromptSubmit prompt, which FAIL_OPEN_EVENTS below says an error must never do; blocks every Stop, with
 # no cap as above, and every TeammateIdle, the two FAIL_OPEN_EVENTS this file names exit 2 as the block for;
-# on PostToolUse its tool has already run but the recorder records nothing; and SessionStart cannot block at
-# all.
+# on PostToolUse and PostToolUseFailure its tool has already run but no recorder records and no clock
+# reading is added; and SessionStart cannot block at all.
 # The guard's stderr refusal and its stdout warning are best-effort writes, each wrapped and flushed
 # so a stream failure cannot change the exit: with stderr unavailable (a closed descriptor 2 leaves
 # sys.stderr None) the deny path still exits 2 and a fail-open mode still exits 0, rather than
@@ -268,9 +268,9 @@ import sys
 # streams: with a sys.stderr whose write works but whose flush fails, `raise SystemExit` here ended
 # as the interpreter's own exit 120 instead of the refusal exit. Nothing runs before this guard, so
 # os._exit discards no other buffered output; the warning itself is flushed before the exit.
-FLOOR_FAIL_OPEN_MODES = ("diff_wall_stop", "inline_errexit", "orch_dispatch_ledger",
-                         "orch_lease_heartbeat_post", "orch_lease_heartbeat_stop", "orch_prompt_stamp",
-                         "orch_resume_audit", "orch_stop_guard", "orch_teammate_idle")
+FLOOR_FAIL_OPEN_MODES = ("clock_inject_failure", "clock_inject_post", "diff_wall_stop", "inline_errexit",
+                         "orch_dispatch_ledger", "orch_lease_heartbeat_post", "orch_lease_heartbeat_stop",
+                         "orch_prompt_stamp", "orch_resume_audit", "orch_stop_guard", "orch_teammate_idle")
 
 if tuple(sys.version_info[:2]) < (3, 14):
     import os
@@ -326,7 +326,10 @@ STOP_EVENTS = ("Stop", "SubagentStop")
 # return 2 where the platform documents exit 2 as the block: Stop and TeammateIdle). SessionStart
 # cannot block at all; an errored UserPromptSubmit stamp must never block a human prompt; a
 # PostToolUse recorder error must surface as a warning, not a tool failure. Doc-confirmed 2026-08-29.
-FAIL_OPEN_EVENTS = STOP_EVENTS + ("SessionStart", "TeammateIdle", "UserPromptSubmit", "PostToolUse")
+# PostToolUseFailure (its tool has already run and failed) follows PostToolUse by this pack's choice, so
+# an error in its context-only clock reading warns; that line is not doc-confirmed.
+FAIL_OPEN_EVENTS = STOP_EVENTS + ("SessionStart", "TeammateIdle", "UserPromptSubmit", "PostToolUse",
+                                  "PostToolUseFailure")
 # PreToolUse modes that never block a call: every result is an allow or an allow with a note, and only a
 # miswired event hard-blocks. main() gives each one the fail-open posture of a FAIL_OPEN_EVENTS mode on every
 # error path, and keeps its PreToolUse deadline, which then warns on exit 0 instead of failing closed.
@@ -24041,9 +24044,10 @@ def _orch_heredoc_data_command(command):
     _orch_heredoc_data_line accepts, then its body, then a line that is exactly its delimiter, the writes
     separated only by newlines. No other command word may appear anywhere: a later '.', source, bash or
     ./path can run a written file, and an earlier hash, alias, function, enable, builtin, command, exec,
-    eval or PATH or other assignment can make `cat` run something else, so any such line makes every body
-    code. Only then does cat copy each body into its file with nothing in the command running it, and only
-    then are the bodies data. The word cat is trusted as written: a function, alias or builtin named cat
+    eval or PATH or other assignment can make `cat` run something else, so any such line keeps every body
+    from this skip (_orch_foreground_scan then reads each on its own or as code). Only then does cat copy
+    each body into its file with nothing in the command running it, and only then are the bodies skipped
+    unread as data. The word cat is trusted as written: a function, alias or builtin named cat
     the shell already holds, or an inherited PATH or other environment that resolves cat to a shell or
     another program, is not seen (disclosed in the manifest). An empty command is not such a command."""
     lines = command.split("\n")
@@ -24065,7 +24069,7 @@ def _orch_heredoc_data_command(command):
     return writes > 0
 
 
-def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True):
+def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True, body=False):
     """One quote- and escape-tracking pass over a foreground command: "detach" when it meets an executable,
     unquoted, unescaped bare `&` control operator, "unbalanced" when it ends still inside a single or double
     quote or meets a `#` whose comment reading depends on context, None otherwise. amps, when given, is a
@@ -24087,11 +24091,34 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
     a double-quoted delimiter), each with its body and delimiter line, separated only by newlines, with no
     other command word anywhere (_orch_heredoc_data_command); each body, whose delimiter this pass also
     parses (_orch_heredoc_spec) with nothing open on the nesting stack, then resumes the pass past its
-    delimiter line unread. In every other command, one where a write is followed or preceded by any other
-    command (a '.', source, bash or ./path that can run the written file, a hash, alias, function, PATH or
-    other assignment that can rename cat) included, every body is read as shell text, as it is when
-    skip_bodies is False."""
+    delimiter line unread. In every other command (one where a write is followed or preceded by any other
+    command, a '.', source, bash or ./path that can run the written file, a hash, alias, function, PATH or
+    other assignment that can rename cat included) a body can be a shell's input, so its bare `&` is still
+    read; but bash never reads a quote, comment or operator in a body as part of the command, quoted
+    delimiter or not, so a body opened at the top level with nothing open, under a delimiter this pass
+    parses and ended at its exact delimiter line, is read ON ITS OWN (_orch_heredoc_body_spans): a pass
+    over the body text alone (body set) reads its `&`, `#` and quotes as a shell reading that text would for
+    its bare `&` (it does NOT model an unquoted delimiter's expansions and backslash removal, nor a
+    here-document nested inside the body, so a detach reached only through those stays a disclosed miss),
+    and the command's pass resumes past the delimiter line in the state the line before the body left, so
+    a body quote no longer opens or closes the command's quote state. That body pass returns "unbalanced"
+    for an uncertain `#`, and for a quote still open at the body's end where the body text that quote hides
+    holds an `&` (body); a quote it closes nowhere hides nothing after the body, but a shell reading that
+    body with other text (a later body appended to one file, or the file run) can pair it, so once a body
+    leaves one open (body_open) every bare `&` this pass reads in the command is "unbalanced", never a
+    detach the lexer could lift as a quoted body's `&` nor no detach. A body read on its own, unless the
+    WHOLE command is proved a safe data-writing shape (_orch_heredoc_data_shape), is read as its consumer's
+    COMMANDS: a quote it leaves open returns
+    "unbalanced", as a quote left open in the command's own text does, and a bare `&` in it returns
+    "detach" even when amps is given, so no lift reads it as a quoted body's `&`. A body this pass
+    does not read on its own is read as shell text, as every body is when skip_bodies is False: one opened
+    after a '(', backquote or '$[' anywhere before it or with something open, under a delimiter this pass
+    does not parse, after a body read as text, one whose delimiter line never comes, and an unquoted
+    delimiter's body holding a command substitution, a '${' that holds more than a name, or a
+    backslash-newline (_orch_heredoc_body_runs), since bash runs that substitution in the command's own
+    shell and this pass has no reader that ends it wherever bash does."""
     in_single = in_double = escaped = False
+    quote_at = 0  # the index of the quote that opened the current single- or double-quoted span
     prev_dup = False  # the previous char was an unquoted, unescaped >, <, or | (a dup/pipe operator lead)
     prev = "break"  # the comment rule's class of the previous character (_hash_comment_reading)
     after_dollar = False  # the previous char was an unquoted, unescaped `$` (a following `{` opens ${...})
@@ -24103,12 +24130,18 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
     # Set once a here-document body is read as code: a line in it may be a nested shell's input or data
     # bash ends elsewhere, so no later here-document is skipped.
     code_body = False
+    # Set once a body read on its own ends with a quote open over no '&' ("open"): every bare `&` read in
+    # the command then reads as "unbalanced", never as a detach the lexer could lift or as no detach.
+    body_open = False
     # The first '(', backquote or '$[' anywhere in the command: a here-document opened after one may sit in
     # a substitution or an arithmetic expansion, whose body bash can end elsewhere, so it is never skipped.
     grouped = min((at for at in (command.find("("), command.find("`"), command.find("$[")) if at != -1),
                   default=len(command))
     # Whether the whole command is nothing but plain cat writes, the one case whose bodies are data.
     data_command = skip_bodies and _orch_heredoc_data_command(command)
+    # Whether the WHOLE command is a safe data-writing shape, proved once over the outer text: when it is,
+    # every here-document body is data; when it is not, every body is read as its consumer's commands.
+    data_shape = skip_bodies and _orch_heredoc_data_shape(command)
     i, n = 0, len(command)
     while i < n:
         ch = command[i]
@@ -24173,13 +24206,41 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
             # is nothing but plain cat writes to files (_orch_heredoc_data_command) does nothing in it run a
             # body, so only there is a quoted body literal data the scan resumes past, its quotes shifting
             # nothing. In any other command (a write followed by '. ./s.sh' or 'bash s.sh', or preceded by
-            # 'hash -p /usr/bin/bash cat', included) the body is read as shell text, as before.
+            # 'hash -p /usr/bin/bash cat', included) a body can be a shell's input, so its '&' is still read.
             specs, heredocs = heredocs, []
             literal = (data_command and not nest and not code_body
                        and all(spec and spec[1] for spec in specs))
             end, closed = (_orch_heredoc_bodies_end(command, i + 1, n, [(spec[0], spec[2]) for spec in specs])
                            if literal else (i, False))
             if closed:
+                prev_dup, prev, after_dollar = False, "break", False
+                i = end
+                continue
+            # Any other body opened at the top level with nothing open, under a delimiter this pass parses,
+            # is read on its own (_orch_heredoc_body_spans), its '&' read as a shell reading the body would:
+            # bash never reads a quote in a body as a quote of the command, so a body quote no longer opens
+            # or closes the command's quote state, and the text after the delimiter line is read from where
+            # the line before the body left it. Every other body is read as shell text, as before.
+            spans, end = ((None, i) if literal or nest or code_body or not all(specs)
+                          else _orch_heredoc_body_spans(command, i + 1, n, specs))
+            if spans is not None:
+                for start, stop in spans:
+                    # Unless the WHOLE command is a safe data-writing shape (_orch_heredoc_data_shape, proved
+                    # once as data_shape), every body is read as its consumer's COMMANDS: a quote it leaves
+                    # open is the "unbalanced" a quote left open in the command's own text gives, and a bare
+                    # '&' in it is a detach no lift reads as quoted body text, so the pass returns it even
+                    # when amps is given.
+                    runs = not data_shape
+                    found = [] if amps is not None else None
+                    kind = _orch_foreground_scan(command[start:stop], bash_word_starts, found, False, True)
+                    if kind == "open" and not runs:
+                        body_open = True
+                    elif kind is not None:
+                        return "unbalanced" if body_open or kind == "open" else kind
+                    if found and runs:
+                        return "unbalanced" if body_open else "detach"
+                    if found:
+                        amps.extend(start + at for at in found)
                 prev_dup, prev, after_dollar = False, "break", False
                 i = end
                 continue
@@ -24194,11 +24255,11 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
             i += 1
             continue
         if ch == "'":
-            in_single, prev_dup, prev, after_dollar = True, False, "word", False
+            in_single, prev_dup, prev, after_dollar, quote_at = True, False, "word", False, i
             i += 1
             continue
         if ch == '"':
-            in_double, prev_dup, prev, after_dollar = True, False, "word", False
+            in_double, prev_dup, prev, after_dollar, quote_at = True, False, "word", False, i
             i += 1
             continue
         if ch == "&":
@@ -24218,7 +24279,9 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
                 i += 1
                 continue
             if amps is None:
-                return "detach"  # an executable bare `&` control operator: a foreground detach
+                # An executable bare `&` control operator: a foreground detach, unless a body read on its own
+                # left a quote open that a shell reading that body with later text can pair (body_open).
+                return "unbalanced" if body_open else "detach"
             amps.append(i)
             i += 1
             continue
@@ -24238,8 +24301,244 @@ def _orch_foreground_scan(command, bash_word_starts, amps=None, skip_bodies=True
         after_dollar = ch == "$"
         i += 1
     # A scan that ended still inside an unbalanced quote could not prove a later `&` was quoted; it fails
-    # toward the DENY (with its own reason) rather than silently allowing a possibly-real detach.
-    return "unbalanced" if in_single or in_double else None
+    # toward the DENY (with its own reason) rather than silently allowing a possibly-real detach. A body
+    # read on its own (body) hides no text of the command after it, which the caller reads past the
+    # delimiter line: its open quote is "unbalanced" where the body text it hides holds an '&', and else
+    # "open", which the caller records (body_open).
+    if in_single or in_double:
+        return ("open" if body and "&" not in command[quote_at:] else "unbalanced")
+    # A body read on its own left a quote open: a shell reading that body with other text (a later body
+    # appended to the same file, or a file the command runs) can pair it with a later quote, so a bare `&`
+    # this pass read anywhere in the command (amps) is not shown to be a detach or quoted text either way.
+    return "unbalanced" if body_open and amps else None
+
+
+# One escape or expansion opener in an unquoted here-document body (_orch_heredoc_body_runs): a backslash
+# with the character it escapes there ('$', backquote, backslash or newline), a backquote, '$(' or '${'; and
+# a '${' that holds nothing but a name, which runs no command.
+_ORCH_BODY_EXPANSION_RE = re.compile(r"\\[$`\\\n]|`|\$[({]")
+_ORCH_BODY_PLAIN_BRACE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def _orch_heredoc_body_runs(command, start, stop):
+    """True when the unquoted here-document body command[start:stop] holds what bash expands by running or
+    joining text: a command substitution ('$(' or a backquote, an arithmetic '$((' included), a '${' that
+    holds more than a name, or a backslash-newline, which bash removes before it reads the body. A backslash
+    before '$', a backquote or a backslash escapes it, so the escaped character opens nothing."""
+    for match in _ORCH_BODY_EXPANSION_RE.finditer(command, start, stop):
+        text = match.group()
+        if text == "\\\n":
+            return True
+        if text[0] == "\\":
+            continue
+        if text == "${" and _ORCH_BODY_PLAIN_BRACE_RE.match(command, match.start(), stop):
+            continue
+        return True
+    return False
+
+
+def _orch_heredoc_body_spans(command, i, n, specs):
+    """The bodies of the here-documents opened on one line, each spec a _orch_heredoc_spec (delimiter,
+    quoted, strip_tabs), read from index i (just past that line's newline) in the order their `<<` operators
+    appeared, as ([(start, stop), ...], end): each body runs from its first line to the line that is EXACTLY
+    its delimiter (leading tabs stripped for the <<- form, from that line only), and end is the index just
+    past the last delimiter line. (None, i) when any delimiter line never comes (bash reads the rest of the
+    command as that body), or an unquoted delimiter's body holds a command substitution, a '${' that holds
+    more than a name or a backslash-newline (_orch_heredoc_body_runs): bash runs such a substitution in the
+    command's own shell, and this pass has no reader that ends one wherever bash does, so the caller reads
+    those bodies as shell text, as it reads every body it does not read on its own. Every other body holds
+    text bash never reads for quotes, comments or operators, quoted delimiter or not, so the caller reads
+    each alone, apart from the command's quote state."""
+    spans = []
+    for delimiter, quoted, strip_tabs in specs:
+        start, stop = i, None
+        while i < n:
+            nl = command.find("\n", i)
+            line = command[i:(nl if nl != -1 else n)]
+            at, i = i, (n if nl == -1 else nl + 1)
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                stop = at
+                break
+        if stop is None or (not quoted and _orch_heredoc_body_runs(command, start, stop)):
+            return None, i
+        spans.append((start, stop))
+    return spans, i
+
+
+# A short allowlist of command words a safe data-writing command may hold besides the cat that writes a
+# here-document body (_orch_heredoc_data_shape): each reads, lists, hashes, makes a directory or tests, and
+# runs or renames no file it names. cat writes the bodies. An interpreter (python3 and the like), git, cp,
+# mv, ln, eval, exec, source, a lone '.', read and printf are NOT here: each can run or rename a file.
+_ORCH_DATA_SHAPE_ALLOWED = frozenset((
+    "cat", "echo", "mkdir", "sha256sum", "sha1sum", "sha224sum", "sha384sum", "sha512sum", "md5sum",
+    "b2sum", "cksum", "wc", "ls", "stat", "cmp", "diff", "test", "true"))
+# A plain word of a data-writing command: no quote, backslash, '$', backquote, parenthesis, brace, glob,
+# pipe, '&' or redirection character (a cat write target and a here-document delimiter use these bytes).
+_ORCH_DATA_SHAPE_WORD_RE = re.compile(r"[A-Za-z0-9_./+,:@%=-]+")
+# An assignment at a command word's start (NAME= or NAME+=), anchored to the word so the scan stays linear.
+_ORCH_DATA_SHAPE_ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+# One here-document delimiter word: plain characters and single-, double- or backslash-quoted runs of them
+# (EOF, 'EOF', "EOF", \EOF, EO'F'); the value is the delimiter with its quoting removed.
+_ORCH_DATA_SHAPE_DELIM_RE = re.compile(
+    r"[A-Za-z0-9_.+-]+|'[A-Za-z0-9_.+-]*'|\"[A-Za-z0-9_.+-]*\"|\\[A-Za-z0-9_.+-]")
+# Cost ceilings of the proof, each failing TOWARD reading the bodies as commands (the safe side): a command
+# longer than this many characters, or holding more here-documents than this, is not proved a data shape.
+# The proof is one left-to-right pass, so its work is linear in the command length within these ceilings.
+_ORCH_DATA_SHAPE_TEXT_LIMIT = 65536
+_ORCH_DATA_BODY_LIMIT = 64
+
+
+def _orch_data_shape_delim(command, i, n):
+    """Parse a here-document delimiter word at command[i:n] (just past '<<' or '<<-' and any blanks) as
+    (delimiter with quoting removed, index past it), or (None, i) when no delimiter word begins there."""
+    parts, start = [], i
+    while i < n:
+        match = _ORCH_DATA_SHAPE_DELIM_RE.match(command, i)
+        if match is None:
+            break
+        token = match.group()
+        if token[0] in "'\"":
+            parts.append(token[1:-1])
+        elif token[0] == "\\":
+            parts.append(token[1:])
+        else:
+            parts.append(token)
+        i = match.end()
+    if i == start:
+        return None, i
+    return "".join(parts), i
+
+
+def _orch_heredoc_data_shape(command):
+    """True when the WHOLE command is a safe data-writing shape in which every here-document body is DATA (the
+    scan then reads each body on its own for its bare `&` alone, apart from the command's quote state), proved
+    by ONE left-to-right pass over the command with each body skipped unread. The proof is positive and narrow
+    and fails toward reading the bodies as commands (the safe, over-refusing side) on anything it does not
+    recognise: every simple command outside the bodies is made only of plain words (no quote, backslash, '$',
+    backquote, parenthesis, brace, glob, pipe, bare '&' or redirection other than a cat write target), none is
+    an assignment, and the only separators are ';', '&&', '||' and newline, so none sits in a group, compound
+    command, pipeline or substitution; the command holding each body is a plain cat (its only words `cat`, its
+    only redirections '>'/'>>' to plain targets, writing to those files or, with none, to standard output),
+    and no write target is reached through a '..', is an ABSOLUTE path under /dev or /proc other than exactly
+    /dev/null or a path under /dev/shm/, or has a last path component that is an allowlisted word (or `cat`),
+    so a cat write cannot place a body where a later word runs it (a RELATIVE dev/ or proc/ target is an
+    ordinary project path); and
+    every other simple command's first word is in _ORCH_DATA_SHAPE_ALLOWED, a short list of readers and the
+    like that run or rename no file they name. A python3 -c or any interpreter, git, cp, mv, ln, eval, exec,
+    source, a dot, read or printf -v fails the proof, as does any first word (echo and printf among them, and
+    cat with a file redirect but no here-document body: `cat a > b`) that redirects to a file without holding
+    a body, so such a command's body is read as commands. The work is linear in the command length within two
+    cost ceilings, each failing toward commands: a command longer than _ORCH_DATA_SHAPE_TEXT_LIMIT characters,
+    or holding more than _ORCH_DATA_BODY_LIMIT here-documents."""
+    n = len(command)
+    if n > _ORCH_DATA_SHAPE_TEXT_LIMIT:
+        return False
+    i, bodies = 0, 0
+    first_word, is_cat, has_heredoc, has_redirect, extra_word = None, False, False, False, False
+    pending = []  # (delimiter, strip_tabs) for the here-documents opened on the current line
+
+    def segment_ok():
+        if first_word is None:
+            return not has_heredoc and not has_redirect
+        if has_heredoc:
+            return is_cat and not extra_word
+        if has_redirect:
+            return False
+        return first_word in _ORCH_DATA_SHAPE_ALLOWED
+
+    while i < n:
+        ch = command[i]
+        if ch in " \t":
+            i += 1
+            continue
+        if ch == "\n":
+            i += 1
+            if pending:
+                for delimiter, strip_tabs in pending:
+                    found = False
+                    while i < n:
+                        nl = command.find("\n", i)
+                        line = command[i:(n if nl == -1 else nl)]
+                        i = n if nl == -1 else nl + 1
+                        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                            found = True
+                            break
+                    if not found:
+                        return False  # a body whose delimiter line never comes is not a clean data shape
+                pending = []
+            if not segment_ok():
+                return False
+            first_word, is_cat, has_heredoc, has_redirect, extra_word = None, False, False, False, False
+            continue
+        if ch in ";&|":
+            if ch == ";" and command.startswith(";;", i):
+                return False
+            if ch in "&|" and not command.startswith(ch * 2, i):
+                return False
+            i += 2 if ch in "&|" else 1
+            if not segment_ok():
+                return False
+            first_word, is_cat, has_heredoc, has_redirect, extra_word = None, False, False, False, False
+            continue
+        if ch == ">":
+            i += 2 if command.startswith(">>", i) else 1
+            has_redirect = True
+            while i < n and command[i] in " \t":
+                i += 1
+            match = _ORCH_DATA_SHAPE_WORD_RE.match(command, i)
+            if match is None:
+                return False
+            target = match.group()
+            parts = [part for part in target.split("/") if part not in ("", ".")]
+            # A write target the proof cannot read as an ordinary file is not a data shape, and each case
+            # below fails the proof toward reading the bodies as commands. First, a target reached through a
+            # '..' can traverse to a place the plain word does not name (/abs/../dev/stdout).
+            if not parts or ".." in parts:
+                return False
+            # Second, an ABSOLUTE target under /dev or /proc can be the shell's own stream, not a file
+            # (/dev/stdout, /dev/stderr, /dev/fd/N, /dev/tty, any /proc path), except exactly /dev/null and a
+            # path under /dev/shm/, a regular tmpfs file. A RELATIVE dev/ or proc/ target is an ordinary
+            # project path here, read as any other relative file.
+            if (target.startswith("/") and parts[0] in ("dev", "proc")
+                    and parts != ["dev", "null"] and not (len(parts) > 2 and parts[:2] == ["dev", "shm"])):
+                return False
+            # Third, a last path component that is an allowlisted word (or cat) names the very program a
+            # reader segment resolves, so the write could REPLACE a program the same command then runs.
+            if parts[-1] in _ORCH_DATA_SHAPE_ALLOWED:
+                return False
+            i = match.end()
+            continue
+        if ch == "<":
+            if command.startswith("<<<", i) or not command.startswith("<<", i):
+                return False
+            strip_tabs = command.startswith("<<-", i)
+            i += 3 if strip_tabs else 2
+            while i < n and command[i] in " \t":
+                i += 1
+            delimiter, i = _orch_data_shape_delim(command, i, n)
+            if delimiter is None:
+                return False
+            has_heredoc = True
+            bodies += 1
+            if bodies > _ORCH_DATA_BODY_LIMIT:
+                return False
+            pending.append((delimiter, strip_tabs))
+            continue
+        match = _ORCH_DATA_SHAPE_WORD_RE.match(command, i)
+        if match is None:
+            return False  # a forbidden character: a quote, '$', backquote, '(', '{', a glob and the like
+        word = match.group()
+        i = match.end()
+        if first_word is None:
+            if _ORCH_DATA_SHAPE_ASSIGN_RE.match(word):
+                return False
+            first_word, is_cat = word, word == "cat"
+        else:
+            extra_word = True
+        continue
+    if pending:
+        return False  # a here-document opened on the last line with no body and delimiter line after it
+    return segment_ok()
 
 
 def _orch_foreground_detach_kind(command, skip_bodies=True):
@@ -24391,14 +24690,16 @@ def _orch_foreground_detach_lexed(command, lifts=None):
     the delimiter and holds the closer anywhere after it, or at a backquote inside backquotes, running
     what this lex would read as body, so such a body records as "body" and is never
     lifted, fail closed), or the commit message form's body in "$(cat <<'EOF' ... EOF)", whose exact
-    close the lex itself resolves; (2)
+    close the lex itself resolves; a body in a command not proved a safe data-writing shape
+    (_orch_heredoc_data_shape) is never lifted, since the scan reads it as commands and gives its `&` as a
+    detach even when listing each bare `&` (_orch_foreground_scan); (2)
     a single- or double-quoted string; or (3) a '#' comment. Every other case where the lexer and the scan
     disagree still denies: an `&` the lexer places in a substitution or expansion that a double-quoted string
     holds (one in a quoted string or comment nested there included, since the lexer skips it whole), in an
     ANSI-C $'...' quote or behind an escape; a scan that ends inside a quote or meets an uncertain '#'
-    ("unbalanced", an apostrophe in a here-document body the scan reads as shell text included: an
-    unquoted delimiter's, or a quoted one's the scan does not skip); and a command the lexer reads
-    in more than one way. The lexer's quoting model is a best-effort reading of bash, not a guarantee, so
+    ("unbalanced", an apostrophe in a here-document body the scan reads as shell text included: one it
+    does not read on its own, _orch_foreground_scan, or a body quote left open over an '&'); and a command
+    the lexer reads in more than one way. The lexer's quoting model is a best-effort reading of bash, not a guarantee, so
     where it places an `&` inside one of the three shapes but bash reads that `&` as an operator, the detach
     is allowed (the disclosed lexer-path false-allow residual). lifts, when given, is a list the call
     appends True to where that narrowing reads the scan's "detach" as None, or where the scan reads None
@@ -24491,28 +24792,56 @@ def _orch_foreground_detach(command):
     is a disclosed residual; where such a construct still leaves an unquoted bare `&`, or leaves the scan
     inside an unbalanced quote at the end, it errs toward the DENY, but a detacher that carries no bare `&`
     (setsid worker, a nested `bash -c '... &'`) is NOT caught here and is a silent-allow residual disclosed
-    in the manifest. It judges only the `&` the top-level shell reads: a here-document body fed to a shell
-    is read as code, but the guard's lexer narrowing still lifts an `&` such a body holds under a quoted
-    delimiter where the scan reads the rest of the command to its end (`bash <<'EOF'` then `job &`), a
-    silent allow disclosed in the manifest.
+    in the manifest. A here-document body it reads on its own, in a command not proved a safe data-writing
+    shape (_orch_heredoc_data_shape: `bash <<'EOF'` then `job &`, `cat <<'EOF' | bash`, `cat > s.sh <<'EOF'`
+    then `bash s.sh`), is read as its consumer's commands, so the guard's lexer narrowing never lifts its
+    `&`. A cat write in a command the proof accepts whose file is run later without the command naming it
+    (a hook, a configuration a later program reads, or a later call, such as a body written into a shell
+    snapshot file a later shell sources) is read as data, a silent allow disclosed in the manifest's HONEST
+    RESIDUAL.
 
-    OVER-REFUSAL RESIDUAL (disclosed): this scan skips a here-document body as data only when the WHOLE
-    command is nothing but one or more plain cat writes (_orch_heredoc_data_command): each a line holding
-    only cat, one output redirect to a plain file and one quoted here-document operator (<<'EOF' or
-    <<"EOF") it parses, opened with no '(', backquote or '$[' anywhere before it and nothing open, then its
-    body and a line that is, whole, its delimiter, the writes separated only by newlines, with no other
-    command word anywhere. Only in such a command does a quote, `&` or substitution in a body (`cat > f
-    <<'EOF'` then `the user's file`) read as no detach. Every other body it reads as CODE: a quoted
-    delimiter's in a cat write followed or preceded by any other command (the same write followed by a
-    line `true` included), an unquoted delimiter's, one fed to a shell or any consumer it cannot show only
-    writes the body to a file (cat to standard output and tee included), the commit-message form's in
-    "$(cat <<'EOF' ... EOF)", one in a subshell or after any '(' or backquote, one after a body read as
-    code, and one with no delimiter line.
+    OVER-REFUSAL RESIDUAL (disclosed): this scan reads a here-document body as data (its bare `&` alone, the
+    body's quotes shifting nothing in the command) only when the WHOLE command is proved a safe data-writing
+    shape, by ONE positive proof over the outer text
+    (_orch_heredoc_data_shape): every simple command outside the bodies made only of plain words (no quote,
+    backslash, '$', backquote, parenthesis, brace, glob, pipe, bare '&' or redirection other than a cat
+    write target), none an assignment, none in a group, compound command, pipeline or substitution; the
+    command holding each body a plain cat writing to plain targets (none reached through a '..', none an
+    ABSOLUTE path under /dev or /proc other than exactly /dev/null or a path under /dev/shm/, and none whose
+    last path component is an allowlisted word or cat) or to standard output; and every
+    other simple command's first word in a short allowlist of readers that run or rename no file they name
+    (cat, mkdir, the checksum tools, wc, ls, stat, cmp, diff, test, true, echo). Only in such a command does a
+    quote, `&` or substitution in a body (`cat > f <<'EOF'` then `the user's file`, or a cat to standard
+    output alone, itself a data shape) read as no detach. Every command reads a body opened at the top level
+    with nothing open, under a delimiter the scan parses and ended at its delimiter line, ON ITS OWN, as a
+    shell reading that text would for its bare `&`, apart from the command's quote state (_orch_foreground_scan,
+    which does not model an unquoted delimiter's expansions or a nested here-document), so a body apostrophe no
+    longer leaves the command's quote open; the detach then stands only where the command is not a data shape.
+    A body opened at the top level (not in the commit-message form below) fed to a shell (bash, sh, dash,
+    zsh, source /dev/stdin, a cat piped onward), under a consumer the proof does not accept (a python3 -c or
+    any interpreter, git, echo or printf writing to a file, cp, mv, ln, eval, exec, source, a dot, read or
+    printf -v), or written to a file the same command then runs (bash FILE, sh FILE, source FILE, ./FILE,
+    python3 FILE) is read as those COMMANDS: a quote it leaves open denies beside an `&` or a runtime start
+    form, as one in the command's own text does, with or without an apostrophe elsewhere, and its bare `&` is
+    never lifted. The commit-message form "$(cat <<'EOF' ... EOF)" is not read that way under any consumer:
+    under eval, sh -c or python3 -c its body `&` sits inside the double-quoted substitution, so the scan
+    reads no bare `&` and the command allows on the scan alone although the consumer runs the body and can
+    start a background job, a disclosed false allow (the manifest's KNOWN FALSE-ALLOW RESIDUAL (1) and (2)
+    and the nested shell string of its HONEST RESIDUAL). That
+    over-refuses a body `&` under a consumer that does not run it (`git commit -F -`, the no-op `:`) and a
+    written file a reader not on the allowlist names without running it. Every other body it reads as CODE at
+    the outer quoting level: the commit-message form's in "$(cat <<'EOF' ... EOF)", one in a subshell or
+    after any '(' or backquote, one after a body read as code, one with no delimiter line, and an unquoted
+    delimiter's holding a command substitution, a '${' that holds more than a name or a backslash-newline
+    (_orch_heredoc_body_runs).
     The guard's lexer reading lifts that for an `&` only: a body `&` under a quoted delimiter (`say "a &
     b"` in the commit-message form) is allowed where the scan reads the rest of the command to its end. A
-    body the scan reads as code at the outer quoting level with an unbalanced apostrophe (`cat <<'EOF'`
-    to standard output, or one with no delimiter line), or one whose quote leaves the scan open at the end,
-    is still DENIED although nothing detaches where the command holds an `&` or a runtime start form
+    body the scan reads as code at the outer quoting level with an unbalanced apostrophe (one with no
+    delimiter line, or an unquoted delimiter's holding a command substitution), a body quote that leaves
+    the scan open at the end, a body read on its own whose quote stays open over an `&`, and any body
+    quote left open in a command holding a bare `&` (a body fed to a shell, `bash <<'EOF'` then `job &`
+    and `echo it's`, included), are still
+    DENIED although nothing detaches where the command holds an `&` or a runtime start form
     (_ORCH_RUNTIME_START_RE), and so is a body `&` under an unquoted delimiter, which the lexer refuses; the
     guard allows such a body in a command that holds neither (_orch_foreground_detach_lexed), where the
     open quote has no `&` to hide. The commit-message form's body is NOT denied for an unbalanced
@@ -24535,14 +24864,18 @@ def _orch_foreground_detach(command):
     (e'v'al 'job &', {eval,} 'job &', \\eval 'job &'); (3) after an ANSI-C $'...' quote with an escaped
     quote that leaves the scan balanced but misaligned; (4) inside an arithmetic subscript that runs a
     substitution; (5) QUOTE SHIFT: after a quote character that bash reads as data but the scan reads as a
-    quote, above all an apostrophe or double quote in a here-document body the scan reads as code (an
-    unquoted delimiter's, a quoted one's it does not skip, the double-quoted commit-message form's), which
-    flips the scan's quote state so that a LATER real bare `&` (between two here-documents, or before a
-    second stray quote that rebalances the scan)
-    reads as quoted text and is allowed; and (6) COMMENT SHIFT: after a `#` that bash reads as quoted text
-    but the scan reads as a comment, where a double-quoted string nested inside a double-quoted "$(...)"
-    ends the scan's double quote early, so a `#` inside the nested string reads as a word-start comment
-    and a real bare `&` later on that line is skipped (echo "$(echo "a" "b # ")" & job # ")."""
+    quote, above all an apostrophe or double quote in a here-document body the scan reads as code at the
+    outer quoting level (one it does not read on its own, as listed above, the double-quoted commit-message
+    form's included), which flips the scan's quote state so that a LATER real bare `&` (between two
+    here-documents, or before a second stray quote that rebalances the scan) reads as quoted text and is
+    allowed; a body the scan reads on its own shifts nothing, and a quote opened in one such body and
+    closed in a later one is no longer read across them: where the command runs the file both bodies are
+    written to, each reads as commands and the first one's open quote denies, so an `&` that pairing
+    leaves bare is missed only where the consumer reading misses that run; and (6) COMMENT SHIFT: after a
+    `#` that bash reads as quoted text but the scan reads as a comment, where a double-quoted string nested
+    inside a double-quoted "$(...)" ends the scan's double quote early, so a `#` inside the nested string
+    reads as a word-start comment and a real bare `&` later on that line is skipped
+    (echo "$(echo "a" "b # ")" & job # ")."""
     return _orch_foreground_detach_kind(command) is not None
 
 
@@ -26199,12 +26532,17 @@ def orch_truncation_guard(data):
                 "prove that a later '&' is quoted or commented text rather than a bare detach; it is denied "
                 "rather than allowed unread (check-fails-closed-on-unreadable). The open quote may be a "
                 "real unbalanced quote, or one the scan misreads: an apostrophe or double quote in a "
-                "here-document body this scan reads as code (an unquoted delimiter's, or a quoted one's it "
-                "cannot end at a whole delimiter line or whose command may run it: only a command of "
-                "nothing but plain cat > file writes is read as writing data, so write such text with "
-                "cat in a call of its own) or an ANSI-C $'...' "
-                "quote. Balance the quoting, put a blank before such a '#' outside any grouping or "
-                "substitution, or write the text to a file and pass the file.",
+                "here-document body this scan reads as code (one it cannot end at a whole delimiter line, "
+                "one opened after a '(' or backquote, an unquoted delimiter's holding a command "
+                "substitution, so quote the delimiter (<<'EOF') where the body needs no expansion, or one "
+                "whose quote stays open over an '&') or an ANSI-C $'...' "
+                "quote; a here-document body in any command this guard does not prove a safe data-writing shape "
+                "(one fed to a shell, held by a consumer other than a plain cat write to a plain file or to "
+                "standard output, written to a file the same command then runs, or beside any other command "
+                "such as a cd) is read as commands, so a "
+                "quote it leaves open counts as one. Balance the quoting, put a blank before such a '#' outside "
+                "any grouping or substitution, or write the text with cat in a call of its own and run any "
+                "other command in a separate call.",
                 "AIQT guardrail: denied a foreground command whose quoting or comments this guard could not "
                 "read to the end (rule trkasy, fail-closed).")
         # COST: the classifier below lexes the command again, so it runs ONCE per detach deny, and
@@ -26252,10 +26590,12 @@ def orch_truncation_guard(data):
                 "(run_in_background) and collect its completion, or keep the command in the foreground and "
                 "wait for it. If the detached result and completion are genuinely not needed, drop the '&' "
                 "and run it foreground. If this '&' is not a detach at all (for example a bitwise AND in an "
-                "arithmetic expansion, an '&' in the body of a here-document whose delimiter is unquoted, "
+                "arithmetic expansion, an '&' in the body of a here-document whose delimiter is unquoted or "
+                "whose command this guard does not accept as a safe data-writing shape (git commit -F -), "
                 "or one inside a substitution in a double-quoted string), quote the here-document "
-                "delimiter (<<'EOF') where its body needs no expansion, or write the text to a file and "
-                "pass the file instead; the background-dispatch advice applies only to a real detach.",
+                "delimiter (<<'EOF') where its body needs no expansion, or write the text with cat in a call "
+                "of its own and run any other command separately; the background-dispatch advice applies "
+                "only to a real detach.",
                 "AIQT guardrail: denied a foreground bare-& detach (untracked asynchronous work, rule "
                 "trkasy); use the tracked background dispatch or run it in the foreground.")
         return _allow()  # foreground without a bare-& detach operator is out of scope by design
@@ -37020,6 +37360,226 @@ def write_scope_guard(data):
                         .format(tool_name, slice_name))                                      # row 21
 
 
+# --- host clock reading (tstamp) ----------------------------------------------------------------------
+# Two context-only bindings, one per post-tool event: clock_inject_post on PostToolUse (after a tool call
+# that ran and succeeded) and clock_inject_failure on PostToolUseFailure (after one that started and
+# failed). Each adds one additionalContext line holding the host clock read at that hook event, so the
+# freshest time value in the assistant's context is a reading, not a figure it recalled. Neither refuses
+# anything: both events are in FAIL_OPEN_EVENTS, so an unreadable payload or a crash takes main()'s
+# warning on exit 0, and a payload that names another event gets a note and no reading. Residual: a
+# message written with no tool call gets no fresh reading, and neither does a call refused before it
+# runs (neither event fires for it); the value is the host clock at the hook event and goes stale as time
+# passes; it is context, not enforcement; and a host clock error carries through.
+# The shape of a POSIX TZ rule: a standard name (three or more letters, or three or more of letters,
+# digits, + and - in angle brackets) and offset, then optionally a daylight name, its offset and a
+# transition rule of two dates (Jn, n or Mm.w.d), each with an optional /time. The shape alone does not
+# make a rule: _clock_posix_rule also checks every number's range.
+_CLOCK_TZ_NAME = r"([A-Za-z]{3,}|<[A-Za-z0-9+-]{3,}>)"
+_CLOCK_TZ_OFFSET = r"([+-]?[0-9]{1,2}(?::[0-9]{1,2}){0,2})"
+_CLOCK_TZ_DATE = r"(J[0-9]{1,3}|[0-9]{1,3}|M[0-9]{1,2}\.[0-9]\.[0-9])(?:/([0-9]{1,2}(?::[0-9]{1,2}){0,2}))?"
+_CLOCK_POSIX_TZ_RE = re.compile(r"{0}{1}(?:{0}{1}?(?:,{2},{2})?)?\Z".format(
+    _CLOCK_TZ_NAME, _CLOCK_TZ_OFFSET, _CLOCK_TZ_DATE), re.ASCII)
+# Four legacy names that parse as a daylight rule with no transitions, each mapped to the zone that
+# current zone database releases make it a link to. A database without the name (some distributions
+# ship these names separately) is asked for the linked zone instead, and the conversion is checked
+# against that zone's offset and abbreviation like any other zone database name.
+_CLOCK_LEGACY_US_ZONES = {"EST5EDT": "America/New_York", "CST6CDT": "America/Chicago",
+                          "MST7MDT": "America/Denver", "PST8PDT": "America/Los_Angeles"}
+
+
+def _clock_hms(text, hours_max):
+    """Seconds for an '[+-]hh[:mm[:ss]]' text whose hours are at most hours_max and whose minutes and
+    seconds are at most 59, or None."""
+    sign = -1 if text.startswith("-") else 1
+    parts = [int(part) for part in text.lstrip("+-").split(":")] + [0, 0]
+    if parts[0] > hours_max or parts[1] > 59 or parts[2] > 59:
+        return None
+    return sign * (parts[0] * 3600 + parts[1] * 60 + parts[2])
+
+
+def _clock_posix_date_ok(text):
+    """True for a POSIX TZ rule date in range: Jn with n from 1 to 365, n from 0 to 365, or Mm.w.d with
+    m from 1 to 12, w from 1 to 5 and d from 0 to 6."""
+    if text.startswith("J"):
+        return 1 <= int(text[1:]) <= 365
+    if text.startswith("M"):
+        month, week, day = (int(part) for part in text[1:].split("."))
+        return 1 <= month <= 12 and 1 <= week <= 5 and 0 <= day <= 6
+    return 0 <= int(text) <= 365
+
+
+def _clock_posix_rule(tz):
+    """The (abbreviation, UTC offset) pairs a TZ value sets when it is a complete POSIX TZ rule, as a set
+    of (str, timedelta), or None when it is not one. Complete means every number is in range (each offset
+    and each transition time has hours at most 24 and minutes and seconds at most 59, so 24:59:59 is
+    accepted and 25:00 is not, and each transition date is valid) and a daylight name comes with its
+    transition rule: with no rule, which transitions apply is left to the implementation (glibc falls back
+    to a default or to a posixrules file), so such a value is not taken as a rule here. A rule time with a
+    sign or hours over 24 (an extension of the rule) is not accepted either."""
+    match = _CLOCK_POSIX_TZ_RE.match(tz)
+    if match is None:
+        return None
+    std, std_off, dst, dst_off, start, start_time, end, end_time = match.groups()
+    std_seconds = _clock_hms(std_off, 24)
+    if std_seconds is None or (dst is not None and start is None):
+        return None
+    pairs = {(std.strip("<>"), datetime.timedelta(seconds=-std_seconds))}
+    if dst is None:
+        return pairs
+    dst_seconds = std_seconds - 3600 if dst_off is None else _clock_hms(dst_off, 24)
+    if (dst_seconds is None or not (_clock_posix_date_ok(start) and _clock_posix_date_ok(end))
+            or any(text is not None and _clock_hms(text, 24) is None for text in (start_time, end_time))):
+        return None
+    return pairs | {(dst.strip("<>"), datetime.timedelta(seconds=-dst_seconds))}
+
+
+def _clock_regular_readable(path):
+    """True when path (followed through symlinks) is a regular file this process may read; False when it
+    is absent, is a directory, a FIFO or another non-regular file, is unreadable, or cannot be checked.
+    It reads no byte of the file."""
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode) and os.access(path, os.R_OK)
+    except (OSError, ValueError):
+        return False
+
+
+def _clock_now():
+    """The host clock, read once, as an aware UTC datetime (tstamp). The self-test replaces it to fix
+    the reading."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _clock_local(now_utc, env=None, readable=None, convert=None):
+    """(local, None) with `local` the aware local time of now_utc, or (None, reason) when the checks below
+    do not establish the local zone, so the caller reports it as unknown instead of showing what the C
+    library fell back to. env defaults to os.environ, readable to _clock_regular_readable and convert to
+    datetime.astimezone() (the process zone, as the C library reads it); the self-test passes its own. The
+    zone is unknown when TZ is set but empty (an implementation-defined zone); when TZ is unset on a POSIX
+    host and /etc/localtime is not a readable regular file (absent, a directory, unreadable: what the C
+    library then shows is its fallback, not a configured zone); when TZ names an absolute file that is not
+    a regular file; when TZ is neither a complete POSIX TZ rule (_clock_posix_rule) nor a zone the zone
+    database holds (a legacy name such as EST5EDT that the database lacks is looked up under the zone it
+    is a link to, _CLOCK_LEGACY_US_ZONES), or zoneinfo cannot be imported to check the name; when the
+    conversion fails or gives no offset or no abbreviation (the C library gives an empty abbreviation for
+    a zone file it cannot read); when the abbreviation is -00, which the zone database uses for a zone
+    whose local time is unspecified (Factory); when TZ is a rule and the conversion's abbreviation and
+    offset are not one of the pairs the rule names; and when TZ is a zone database name and the zone
+    database's offset or abbreviation for it differs from the conversion's (glibc reads a name it cannot
+    load, such as Foo/Bar, as UTC under the abbreviation Foo). Residual: a regular file named by an
+    absolute TZ, or a readable /etc/localtime, that is not a valid zone file is checked only through the
+    empty abbreviation and -00; the zone database Python reads may differ from the C library's, and an
+    older or newer copy can give a different offset or abbreviation for a name, which reads unknown; and a
+    host that configures its zone somewhere other than TZ and /etc/localtime is read as libc reads it."""
+    env = os.environ if env is None else env
+    readable = _clock_regular_readable if readable is None else readable
+    tz = env.get("TZ")
+    zone = pairs = None
+    if tz is not None:
+        name = tz[1:] if tz.startswith(":") else tz
+        if not name:
+            return None, "TZ is set but empty, which leaves the zone to the implementation"
+        if name.startswith("/"):
+            if not os.path.isfile(name):
+                return None, "TZ names {!r}, which is not a regular file".format(name)
+        else:
+            pairs = _clock_posix_rule(tz)
+            if pairs is None:
+                try:
+                    import zoneinfo
+                except ImportError:
+                    return None, "TZ is {!r} and zoneinfo cannot be imported to check it".format(tz)
+                keys = (name, _CLOCK_LEGACY_US_ZONES[name]) if name in _CLOCK_LEGACY_US_ZONES else (name,)
+                for key in keys:
+                    try:
+                        zone = zoneinfo.ZoneInfo(key)
+                        break
+                    except Exception:
+                        pass
+                if zone is None:
+                    return None, ("TZ is {!r}, which is neither a complete POSIX TZ rule nor a zone the zone "
+                                  "database holds".format(tz))
+    elif os.name == "posix" and not readable("/etc/localtime"):
+        return None, ("TZ is unset and /etc/localtime is not a readable regular file, so UTC would be a "
+                      "default, not a setting")
+    try:
+        local = (now_utc.astimezone() if convert is None else convert(now_utc))
+        offset = local.utcoffset()
+        abbreviation = local.tzname()
+    except (OSError, OverflowError, ValueError) as exc:
+        return None, "the local conversion failed ({})".format(type(exc).__name__)
+    if offset is None or not abbreviation:
+        return None, "the C library gave no UTC offset or no zone abbreviation"
+    if abbreviation == "-00":
+        return None, "the zone abbreviation is -00, which marks local time as unspecified"
+    if pairs is not None and (abbreviation, offset) not in pairs:
+        return None, ("the C library's abbreviation and UTC offset are not the ones the POSIX TZ rule {!r} "
+                      "names".format(tz))
+    if zone is not None:
+        database = now_utc.astimezone(zone)
+        if (database.utcoffset(), database.tzname()) != (offset, abbreviation):
+            return None, ("the zone database's UTC offset or abbreviation for TZ {!r} differs from the C "
+                          "library's".format(tz))
+    return local, None
+
+
+def _clock_offset_text(offset):
+    """'UTC+HH:MM' for a UTC offset, with ':SS' added only when the offset has whole seconds; a part
+    below one second is dropped toward zero, and a zero offset is always written UTC+00:00."""
+    negative = offset < datetime.timedelta(0)
+    size = -offset if negative else offset
+    total = size.days * 86400 + size.seconds
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    text = "UTC{}{:02d}:{:02d}".format("-" if negative and total else "+", hours, minutes)
+    return text + (":{:02d}".format(seconds) if seconds else "")
+
+
+def _clock_context(event):
+    """The context line for `event`: the host clock read now, as UTC, beside the local time with its
+    numeric UTC offset and zone abbreviation, or with the local zone named unknown (and no local time)
+    when _clock_local cannot establish it."""
+    now = _clock_now().astimezone(datetime.timezone.utc)
+    local, reason = _clock_local(now)
+    if local is None:
+        where = "local time zone unknown ({}), so no local time is given; use the UTC value".format(reason)
+    else:
+        where = "local time {} {} ({})".format(local.strftime("%Y-%m-%d %H:%M:%S"),
+                                               _clock_offset_text(local.utcoffset()), local.tzname())
+    return ("[aiqt-clock] Host clock reading at this {} hook event: UTC {}; {}. It is the host clock at "
+            "that moment: it goes stale as time passes and carries any host clock error, and it is context "
+            "for a timestamp, not a check of one.".format(event, now.strftime("%Y-%m-%dT%H:%M:%SZ"), where))
+
+
+def _clock_wrong_event(handler_name, bound, event):
+    """The note for a clock binding whose payload names an event other than the one it is bound to."""
+    return ("AIQT guardrail: the {} clock reading is bound to {} but its payload names the event {!r}, so "
+            "no clock reading was added (a non-blocking note).".format(handler_name, bound, event))
+
+
+def clock_inject_post(data):
+    """tstamp, PostToolUse (context only, never blocks): after a tool call that ran and succeeded, add
+    the host clock at this hook event as additionalContext (_clock_context). A payload naming another
+    event gets a note and no reading."""
+    event = data.get("hook_event_name")
+    if event != "PostToolUse":
+        return _allow_note(_clock_wrong_event("clock_inject_post", "PostToolUse", event))
+    return (0, {"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": _clock_context("PostToolUse")}}, None)
+
+
+def clock_inject_failure(data):
+    """tstamp, PostToolUseFailure (context only, never blocks): after a tool call that started and
+    failed, add the host clock at this hook event as additionalContext (_clock_context). A payload
+    naming another event gets a note and no reading."""
+    event = data.get("hook_event_name")
+    if event != "PostToolUseFailure":
+        return _allow_note(_clock_wrong_event("clock_inject_failure", "PostToolUseFailure", event))
+    return (0, {"hookSpecificOutput": {
+        "hookEventName": "PostToolUseFailure",
+        "additionalContext": _clock_context("PostToolUseFailure")}}, None)
+
+
 # --- dispatcher ---------------------------------------------------------------------------------------
 HANDLERS = {
     "diff_wall_stop": diff_wall_stop,
@@ -37053,6 +37613,8 @@ HANDLERS = {
     "orch_resume_barrier": orch_resume_barrier,
     "orch_lease_heartbeat_post": orch_lease_heartbeat_post,
     "orch_lease_heartbeat_stop": orch_lease_heartbeat_stop,
+    "clock_inject_post": clock_inject_post,
+    "clock_inject_failure": clock_inject_failure,
 }
 
 # Handler -> event class, so the dispatcher can decide its ERROR posture from the argv MODE alone,
@@ -37096,6 +37658,8 @@ HANDLER_EVENT = {
     "orch_resume_barrier": PRETOOL,
     "orch_lease_heartbeat_post": "PostToolUse",
     "orch_lease_heartbeat_stop": "Stop",
+    "clock_inject_post": "PostToolUse",
+    "clock_inject_failure": "PostToolUseFailure",
 }
 
 
@@ -37522,9 +38086,9 @@ def _pending_alarm_message(handler_name, seconds):
 
 def _dispatcher_fail_open_warn(handler_name, detail):
     """A fail-open dispatcher-level error for a Stop/SubagentStop/SessionStart/TeammateIdle/
-    UserPromptSubmit/PostToolUse handler or a NOTE_ONLY_PRETOOL_MODES handler: a non-blocking
-    systemMessage on exit 0, so no error on these paths can wedge a session, trap a teammate, block a
-    human prompt, or turn a note-only check into a block. It prints and flushes
+    UserPromptSubmit/PostToolUse/PostToolUseFailure handler or a NOTE_ONLY_PRETOOL_MODES handler: a
+    non-blocking systemMessage on exit 0, so no error on these paths can wedge a session, trap a
+    teammate, block a human prompt, or turn a note-only check into a block. It prints and flushes
     the note and returns the exit code 0, so main returns it directly (a note constructor's call is
     only ever the direct value of a return). The flush keeps the note out of the buffer os._exit at the
     entry line would discard. A print or flush failure RAISES out of this leaf (the note-shape scan
