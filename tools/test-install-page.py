@@ -14,9 +14,15 @@ Pipfile or Gemfile. The copy holds the 3 stylesheets too, which the name
 search of check 7 reads with every other file under site/. For that search,
 cases add a page outside the install pages, a stylesheet, a manifest, an SVG
 document, a binary file, a file under site/assets/, a page or a folder named
-as a source, an unreadable page or stylesheet, a link, a folder set to mode
-000 or a folder under site/assets/ that cannot be listed,
-or copy the whole committed site/ over the copy, and assert that a source of
+as a source, an unreadable page or stylesheet, a file of each suffix that
+the search reads only as UTF-8 that is not UTF-8, a page, a stylesheet, an
+SVG file or a script that declares an encoding other than UTF-8 or holds an
+escape character, a text file and a binary file under site/install/, a page
+3 folders below site/, a _redirects file below site/, a link, a folder set
+to mode 000 or a folder under site/assets/ that cannot be listed,
+or copy the whole committed site/ over the copy, or add a line to
+site/_redirects that holds a character other than the line feed at which a
+reading may end a line or a field, and assert that such a line fails, that a source of
 site/_redirects under /assets/ passes only as an exact path whose file name
 no file under site/ but site/_redirects names and that no file occupies or
 lies above, in any letter case, that a rule whose destination the gate
@@ -368,8 +374,8 @@ REDIRECT = ("which this gate reads, failing closed, as able to match an install 
 # install page names, whose file name another file under site/ names, that a file of the tree occupies or lies
 # beneath, and that cannot be evaluated; and the 10 release lines of the committed file, before its logo redirects.
 NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
-NAMED_THERE = (REDIRECT + " from the page or serve other content. An install page names its file name in some letter "
-               "case: site/install/")
+NAMED_THERE = (REDIRECT + " from the page or serve other content. A file under site/install/, where the install pages "
+               "are, names its file name in some letter case: site/install/")
 NAMED = "a file under site/ names in some letter case ("
 OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
 UNEVALUATED = "which could not be evaluated: "
@@ -381,6 +387,25 @@ LEADS = ("which names the file name of a source that the redirect reading accept
          "any letter case: line 11 (/assets/baseline/logos/aiqt-card.svg)")
 EXPANDS = ("as a placeholder or a splat does; the reading does not expand either, so it reads the destination as able "
            "to give the path of every source that it accepts")
+# The gate's words for a line of site/_redirects that holds a character other than the line feed at which a reading
+# may end a line or a field, and each such character, named: str.splitlines() ends a line at each of the first 10, and
+# str.split() a field at each but the last 3, which are other control characters and a byte order mark.
+BREAK = ("site/_redirects line 33 holds the character U+{:04X}; a line of site/_redirects may hold no control "
+         "character, line or paragraph separator, byte order mark or whitespace but the space")
+BREAKS = (
+    ("a lone carriage return", "\r"), ("a carriage return before a line feed", "\r\n"), ("a vertical tab", "\x0b"),
+    ("a form feed", "\x0c"), ("U+001C", "\x1c"), ("U+001D", "\x1d"), ("U+001E", "\x1e"), ("U+0085", "\x85"),
+    ("U+2028", chr(0x2028)), ("U+2029", chr(0x2029)), ("a tab", "\t"), ("U+001F", "\x1f"), ("a no-break space", "\xa0"),
+    ("an ideographic space", chr(0x3000)), ("U+0000", "\x00"), ("U+007F", "\x7f"), ("a byte order mark", chr(0xFEFF)),
+)
+# The suffixes of the files that the name search reads only as UTF-8, written out here and not read from the gate, so
+# that a suffix dropped from the gate's TEXT_SUFFIXES fails its case.
+UTF8_SUFFIXES = (".css", ".htm", ".html", ".js", ".json", ".mjs", ".svg", ".webmanifest", ".xhtml", ".xml")
+# The gate's words for a file that declares an encoding other than UTF-8, and for a text file that holds an escape
+# character; and an ISO-2022-JP escape sequence (ESC ( B, a switch to ASCII), which a decoder of that encoding drops.
+DECLARES = "which could not be evaluated: the {} declares the encoding {!r}, which the name search does not decode"
+ESCAPED = "which could not be evaluated: the file {} holds an escape character (U+001B)"
+TO_ASCII = "\x1b(B"
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -718,6 +743,36 @@ def markup_cases() -> list[tuple]:
                 cases.append((f"a {tag} element of {place} whose file name {split} splits",
                               both(create(where, text), append(REDIRECTS, f"/assets/{left}{right}.svg /y 301\n")),
                               naming(f"{left}{right}.svg", where)))
+    return cases
+
+
+def break_cases() -> list[tuple]:
+    """A case for each character of BREAKS between a source and a destination that names the accepted source of the
+    committed line 11: the gate reads the lines of site/_redirects only at a line feed and refuses the character, so
+    a destination after it cannot go unjudged."""
+    return [(f"a redirect whose source and destination {name} separates",
+             append(REDIRECTS, f"/foo{char}/assets/baseline/logos/aiqt-card.svg 301\n"),
+             (1, BREAK.format(ord(char[0])))) for name, char in BREAKS]
+
+
+def raw(relative: str, data: bytes):
+    """Write a new file of bytes, and any directory it needs, that the copy does not hold."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return apply
+
+
+def utf8_cases() -> list[tuple]:
+    """A case for each suffix of UTF8_SUFFIXES, and for 2 of them in capitals: a file with that suffix that is not
+    UTF-8 cannot be read, so every source under a loaded segment fails and names it."""
+    cases = []
+    for suffix in UTF8_SUFFIXES + (".CSS", ".HTML"):
+        relative = f"site/u8{suffix.strip('.')}{suffix}"
+        kind = "page" if suffix.lower() in (".html", ".htm") else "file"
+        cases.append((f"the committed redirects beside a {suffix} file that is not UTF-8",
+                      raw(relative, b"x \xff\n"), (1, f"{UNEVALUATED}the {kind} {relative} could not be read")))
     return cases
 
 
@@ -1246,7 +1301,7 @@ CASES = [
     ("a family page heading with the class skip", edit(GEMINI, "<h1>", '<h1 class="skip">'), 1),
     ("a family page heading whose classes only contain only-dark or skip", edit(CHATGPT, "<h1>", '<h1 class="only-darker skip-link">'),
         (1, PINNED)),
-    ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>​</h1>"), 1),
+    ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>\u200b</h1>"), 1),
     ("a family page heading naming another family", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Gemini</h1>"), 1),
     ("a family page heading naming its family only in a vh span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Setup<span class="vh"> ChatGPT</span></h1>'), 1),
@@ -1993,6 +2048,95 @@ CASES = [
         (1, "site/_redirects line 34 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
     ("a redirect to a longer file name that holds an accepted one",
         leads("/assets/baseline/logos/old-aiqt-card.svg"), 0),
+    ("a redirect whose field after the destination names an accepted logo source",
+        append(REDIRECTS, "/alias /other 301 /assets/baseline/logos/aiqt-card.svg\n"),
+        (1, "site/_redirects line 33 has after its destination the field /assets/baseline/logos/aiqt-card.svg, "
+            + LEADS)),
+    ("a redirect whose destination holds a * and no :", leads("/assets/baseline/logos/*"),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/*, which holds a : or a * after any "
+            "http:// or https:// at its start, " + EXPANDS)),
+    ("a redirect to another host whose scheme is in capitals", leads("HTTPS://other.example/x.svg"), 0),
+    ("a redirect to another host whose scheme is in mixed letter case", leads("hTtP://other.example/x.svg"), 0),
+    # site/_redirects ends a line only at a line feed, and a line that holds another character at which a reading may
+    # end a line or a field fails, so a destination after such a character cannot go unjudged.
+    *break_cases(),
+    ("the committed redirects with a space and no other whitespace between fields",
+        append(REDIRECTS, "/downloads/old2.md   /downloads/cleanlanguage.md   301\n"), 0),
+    # A file under site/ that declares an encoding other than UTF-8, whose decoder can drop the bytes of an escape
+    # sequence that split a file name, and a text file that holds an escape character, cannot be read, so every source
+    # under a loaded segment fails and names it.
+    ("a page in ISO-2022-JP, by its meta charset, whose escape sequence splits an accepted logo's file name",
+        create("site/about/index.html", '<!doctype html>\n<meta charset="iso-2022-jp">\n<img alt="" '
+               f'src="/assets/baseline/logos/aiqt-{TO_ASCII}card.svg">\n'),
+        (1, DECLARES.format("page site/about/index.html", "iso-2022-jp"))),
+    ("a page in ISO-2022-JP, by an http-equiv, whose escape sequence splits an accepted logo's file name",
+        create("site/about/index.html", '<!doctype html>\n<meta http-equiv="Content-Type" '
+               f'content="text/html; charset=ISO-2022-JP">\n<img alt="" src="/assets/baseline/logos/aiqt-{TO_ASCII}'
+               'card.svg">\n'),
+        (1, DECLARES.format("page site/about/index.html", "ISO-2022-JP"))),
+    ("a stylesheet in ISO-2022-JP, by its @charset, whose escape sequence splits an accepted logo's file name",
+        create("site/assets/jp.css", '@charset "ISO-2022-JP";\n.x { background: url(/assets/baseline/logos/aiqt-'
+               f'{TO_ASCII}mono.svg); }}\n'),
+        (1, DECLARES.format("file site/assets/jp.css", "ISO-2022-JP"))),
+    ("an SVG file in ISO-2022-JP, by its XML declaration, whose escape sequence splits an accepted logo's file name",
+        create("site/assets/jp.svg", '<?xml version="1.0" encoding="ISO-2022-JP"?>\n'
+               + SVG_FILE.format(f'<image href="/assets/baseline/logos/aiqt-{TO_ASCII}card.svg"/>')),
+        (1, DECLARES.format("file site/assets/jp.svg", "ISO-2022-JP"))),
+    ("a page whose script tag declares ISO-2022-JP for the script it loads",
+        create("site/about/index.html", '<!doctype html>\n<script src="/assets/jp.js" charset="iso-2022-jp">'
+               '</script>\n'),
+        (1, DECLARES.format("page site/about/index.html", "iso-2022-jp"))),
+    ("a script that declares no encoding and whose ISO-2022-JP escape sequence splits an accepted logo's file name",
+        create("site/assets/jp.js", f'fetch("/assets/baseline/logos/aiqt-{TO_ASCII}card.svg");\n'),
+        (1, ESCAPED.format("site/assets/jp.js"))),
+    ("the committed redirects beside a page and an SVG file that declare UTF-8 by other labels",
+        both(create("site/about/index.html", '<!doctype html>\n<meta charset="UTF8">\n'),
+             create("site/assets/u8.svg", '<?xml version="1.0" encoding="Utf-8"?>\n' + SVG_FILE.format(""))), 0),
+    # The refusal for a file under site/install/ that names a source's file name names every such file, a text file
+    # and a binary file that are not pages included.
+    ("a text file and a binary file under site/install/ that name a source's file name",
+        both(create("site/install/notes.txt", "see /assets/zi1.svg\n"),
+             raw("site/install/blob.bin", b"\x00\xff/assets/zi1.svg\x00"),
+             append(REDIRECTS, "/assets/zi1.svg /y 301\n")),
+        (1, "site/_redirects line 33 has the source /assets/zi1.svg, " + NAMED_THERE
+            + "blob.bin, site/install/notes.txt.")),
+    # The name search walks every folder under site/, at any depth, and leaves out only the root site/_redirects.
+    ("a page 3 folders below site/ that loads a source",
+        named('<img alt="" src="/assets/dp4.svg">', "/assets/dp4.svg", "site/d1/d2/d3/deep.html"),
+        naming("dp4.svg", "site/d1/d2/d3/deep.html")),
+    ("a _redirects file below site/ that names a source",
+        both(create("site/assets/old/_redirects", "/assets/nr1.svg /x 301\n"),
+             append(REDIRECTS, "/assets/nr1.svg /y 301\n")),
+        naming("nr1.svg", "site/assets/old/_redirects")),
+    # Invalid UTF-8 in a file of each suffix that the name search reads only as UTF-8, in any letter case.
+    *utf8_cases(),
+    # An internal entity declared twice: XML binds the first declaration outside the comments, and the name search
+    # reads a form for each declaration and a form with the declarations that XML binds.
+    ("an image of an SVG file whose href holds an entity that is declared twice, by its first declaration",
+        both(create("site/assets/kdu.svg", '<!DOCTYPE svg [<!ENTITY e "n"><!ENTITY e "x">]>'
+                    + SVG_FILE.format('<image href="/assets/kd&e;q.png"/>')),
+             append(REDIRECTS, "/assets/kdnq.png /y 301\n")), naming("kdnq.png", "site/assets/kdu.svg")),
+    ("an image of an SVG file whose href holds an entity that is declared twice, by its last declaration",
+        both(create("site/assets/kdv.svg", '<!DOCTYPE svg [<!ENTITY e "n"><!ENTITY e "x">]>'
+                    + SVG_FILE.format('<image href="/assets/kv&e;q.png"/>')),
+             append(REDIRECTS, "/assets/kvxq.png /y 301\n")), naming("kvxq.png", "site/assets/kdv.svg")),
+    ("an image of an SVG file whose href holds 2 entities, each also declared in a comment, in opposite orders",
+        both(create("site/assets/kdc.svg", '<!DOCTYPE svg [<!ENTITY a "n"><!-- <!ENTITY a "x"> --><!-- <!ENTITY b "y">'
+                    ' --><!ENTITY b "e">]>' + SVG_FILE.format('<image href="/assets/k&a;&b;q.png"/>')),
+             append(REDIRECTS, "/assets/kneq.png /y 301\n")), naming("kneq.png", "site/assets/kdc.svg")),
+    ("the committed redirects beside an SVG file that declares an entity 17 times",
+        create("site/assets/many.svg", "<!DOCTYPE svg [" + '<!ENTITY e "x">' * 17 + "]>"
+               + SVG_FILE.format("<text>&e;</text>")),
+        (1, UNEVALUATED + "the file site/assets/many.svg could not be read: it declares an XML entity more than 16")),
+    # A character reference encoded 3 times, as a srcdoc inside a srcdoc writes it: the name search decodes character
+    # references until nothing changes, at most 16 times, and fails closed on a file that needs more.
+    ("an img of an iframe srcdoc inside an iframe srcdoc whose name is escaped 3 times",
+        named('<iframe srcdoc="&lt;iframe srcdoc=&quot;&amp;lt;img src=&amp;quot;/assets/s3&amp;amp;#46;svg'
+              '&amp;quot;&amp;gt;&quot;&gt;&lt;/iframe&gt;"></iframe>', "/assets/s3.svg"), naming("s3.svg")),
+    ("the committed redirects beside a page whose character reference decodes 17 times",
+        create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 16 + "#46;</p>\n"),
+        (1, UNEVALUATED + "the page site/about/index.html could not be read: its HTML character references still "
+            "decode after 16 rounds")),
     # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
     # header and redirect rule.
     ("the rail's img loaded from another first segment",
