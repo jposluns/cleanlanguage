@@ -7,24 +7,41 @@ some cases a sequence of 2 or 3 changes), runs the gate there as a separate
 process and asserts its exit code, that the gate wrote no traceback on stderr,
 and, where the case names them, the words of the gate's refusal. Exit 0 when every case passes; 1 otherwise. 1 further case
 runs the gate under a faked Python version tuple outside the supported set of
-tools/check-inline-code.py and asserts exit 3 with the gate's own message.
+tools/check-inline-code.py and asserts exit 3 with the refusal in that file's
+own words, so a gate that reports the version through its general refusal for
+an exception fails it. 1 more case holds the first-character guard of the
+leading-content fixtures to PLAIN_STARTS.
 
 Some cases change the download so that only the stated count decides the
 result; in each, the embedded text still matches as the gate compares it. The
 2 non-ASCII cases give the download and the block the same 2 characters, so a
-gate that counts bytes fails them. The CR LF case gives the download a CR LF
-where the block keeps LF, which the gate's comparison still matches, so a gate
-that counts newline-translated text fails it. The 2 final-line-end cases remove
-the download's final LF or make it CR LF, and each asserts that the download
-ended in exactly 1 LF before the edit: a gate that strips the final line end
-and adds 1 for it fails the first, and a gate that also strips a final CR
-fails both. The 2 leading-content cases put U+FEFF or a blank line before the
-download's first character and the same character before the block's text,
-right after the copy button, so the block still matches; each asserts that the
-download began with a character that is neither U+FEFF nor whitespace before
-the edit. A gate that decodes the download as utf-8-sig fails the first, and a
-gate that strips leading whitespace fails the second. The CR LF, final-line-end
-and leading-content fixtures are written byte for byte.
+gate that counts bytes fails them. The astral case gives both U+1F600, which
+lies outside the Basic Multilingual Plane, and an e followed by U+0301, so a
+gate that counts UTF-16 code units or NFC-normalized text fails it. The CR LF
+case gives the download a CR LF where the block keeps LF, which the gate's
+comparison still matches, so a gate that counts newline-translated text fails
+it. The 2 final-line-end cases remove the download's final LF or make it CR
+LF, and each asserts that the download ended in exactly 1 LF before the edit:
+a gate that strips the final line end and adds 1 for it fails the first, and a
+gate that also strips a final CR fails both. The 4 leading-content cases put
+U+FEFF, LF, a space or a tab before the download's first character and the
+same character before the block's text, right after the copy button, so the
+block still matches; each asserts that the download decoded as UTF-8 and that
+its first character, not its first byte, was neither U+FEFF nor whitespace
+before the edit. A gate that decodes the download as utf-8-sig fails the
+first, and a gate that strips a leading set of characters that holds U+FEFF,
+LF, the space or the tab fails the case of that character; these 4 cases do
+not catch a strip of other whitespace alone, of U+00A0 for example. The CR
+LF, final-line-end and leading-content fixtures are written byte for byte.
+
+Some cases replace or extend tools/check-inline-code.py, each on a page that
+states a wrong count: its reader raising ValueError, SystemExit(0),
+SystemExit(5) or a BaseException subclass, returning None, raising an
+exception whose repr raises, or giving a problem whose str raises; the file
+raising SystemExit(0) or a BaseException subclass while it loads; an
+UnsupportedPython that is not an exception class; and a module __getattr__
+that raises ValueError beside a renamed inline_code_problems. Each asserts
+exit 3, the refusal on stderr and the count problem on stdout.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -67,6 +84,8 @@ VERSION_PROBE = (
     "sys.version_info = (3, 13, 9, 'final', 0); "
     "runpy.run_path(sys.argv[1], run_name='__main__')"
 )
+# The start of the gate's refusal under that version, in the words of tools/check-inline-code.py.
+VERSION_WORDS = "check-instructions-page: tools/check-inline-code.py runs only on Python "
 
 
 def make_root(scratch: Path) -> Path:
@@ -111,23 +130,46 @@ def final_line_end(relative: str, new: bytes):
     return apply
 
 
+def begins_plainly(data: bytes) -> bool:
+    """Whether the data decodes as UTF-8 and its first character, not its first byte, is neither U+FEFF nor
+    whitespace as str.isspace() reads it, so that U+00A0, U+3000 and U+001C count as whitespace."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and text[0] != "\N{ZERO WIDTH NO-BREAK SPACE}" and not text[0].isspace()
+
+
+# (data, whether begins_plainly accepts it): the first-character guard's own cases.
+PLAIN_STARTS = [(b"x", True), ("\xe9".encode("utf-8"), True), (b"", False), (b"\xff", False),
+                (b"\xef\xbb\xbfx", False), (b" x", False), (b"\tx", False), (b"\nx", False),
+                ("\xa0x".encode("utf-8"), False), ("\N{IDEOGRAPHIC SPACE}x".encode("utf-8"), False),
+                (b"\x1cx", False)]
+
+
 def leading(relative: str, new: bytes):
-    """Put the new bytes before the file's first byte, with no newline translation; the file must begin with a
-    character that is neither U+FEFF nor whitespace."""
+    """Put the new bytes before the file's first byte, with no newline translation; the file must decode as UTF-8
+    and begin with a character that is neither U+FEFF nor whitespace (begins_plainly)."""
     def apply(root: Path) -> None:
         path = root / relative
         data = path.read_bytes()
-        if not data or data.startswith(b"\xef\xbb\xbf") or data[:1].isspace():
+        if not begins_plainly(data):
             raise AssertionError(f"{relative} does not begin with a character other than U+FEFF and whitespace: "
-                                 f"{data[:3]!r}")
+                                 f"{data[:4]!r}")
         path.write_bytes(new + data)
     return apply
 
 
-def raising(path: Path) -> None:
-    """Define, after every other definition of the file, an inline_code_problems that raises ValueError."""
-    path.write_bytes(path.read_bytes() + b'\n\ndef inline_code_problems(text, svg=False):\n'
-                     b'    raise ValueError("inline check failed")\n')
+def appended(code: str):
+    """Add the code to tools/check-inline-code.py after every other definition of the file, so that a name it
+    defines replaces the file's own."""
+    def apply(root: Path) -> None:
+        path = root / "tools/check-inline-code.py"
+        path.write_bytes(path.read_bytes() + b"\n\n" + code.encode("utf-8"))
+    return apply
+
+
+raising = appended('def inline_code_problems(text, svg=False):\n    raise ValueError("inline check failed")\n')
 
 
 def symlinked(relative: str):
@@ -221,6 +263,9 @@ def saved_count() -> int:
 
 SAVED = saved_count()
 COUNT_WORDS = f"check-instructions-page: expected exactly 1 stated count of the full download in {PAGE}, found"
+# 3 characters more than "Apply the precedence order": U+1F600, which UTF-16 writes as 2 code units, a space, and
+# U+0301 after the e, which NFC joins to it.
+ASTRAL = "Apply the \U0001f600 precedence orde\N{COMBINING ACUTE ACCENT}r"
 CASES = [
     ("the committed tree", None, 0),
     ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
@@ -293,6 +338,24 @@ CASES = [
                edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\n"),
                edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
                           f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
+    ("the download beginning with a space, the page stating the count as saved",
+        faults(leading(FILES[0], b" "),
+               edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b" "),
+               edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
+                          f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
+    ("the download beginning with a tab, the page stating the count as saved",
+        faults(leading(FILES[0], b"\t"),
+               edit_bytes(PAGE, BUTTON.encode("utf-8"), BUTTON.encode("utf-8") + b"\t"),
+               edit_bytes(PAGE, f"saves ({SAVED} characters)".encode("utf-8"),
+                          f"saves ({SAVED + 1} characters)".encode("utf-8"))), 0),
+    ("U+1F600 and a combining accent in the download and the block, the page stating the count as saved",
+        faults(edit(FILES[0], "Apply the precedence order", ASTRAL),
+               edit(PAGE, "Apply the precedence order", ASTRAL),
+               edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED + 3} characters)")), 0),
+    ("a stated count of 5000 digits", edit(PAGE, f"saves ({SAVED} characters)", f"saves ({'9' * 5000} characters)"),
+        (1, "", f"the page states {'9' * 20}... (5000 digits) characters for the full download")),
+    ("the stated count with a leading zero", edit(PAGE, f"saves ({SAVED} characters)", f"saves (0{SAVED} characters)"),
+        (1, "", f"the page states 0{SAVED} characters for the full download")),
     ("the download undecodable",
         lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
     ("the text drifted and the stated count removed",
@@ -314,12 +377,49 @@ LOAD_CASES += [
     ("tools/check-inline-code.py a symbolic link to a regular copy", symlinked("tools/check-inline-code.py"),
         (3, "check-instructions-page: tools/check-inline-code.py is not a regular file")),
     ("tools/check-inline-code.py raising ValueError while it checks the page, and the stated count wrong",
-        faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"),
-               lambda root: raising(root / "tools/check-inline-code.py")),
+        faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), raising),
         (3, "check-instructions-page: tools/check-inline-code.py could not check the page: "
             "ValueError('inline check failed')",
          f"the page states {SAVED - 1} characters for the full download")),
 ]
+STOP = "class Stop(BaseException):\n    pass\n\n"
+# (name, fault in tools/check-inline-code.py, the words of the refusal after "tools/check-inline-code.py "); each
+# runs on a page that states 1 character fewer, so the case also asserts that the count problem is printed.
+INLINE_FAULTS = [
+    ("its reader raising SystemExit(0)",
+        appended("def inline_code_problems(text, svg=False):\n    raise SystemExit(0)\n"),
+        "could not check the page: SystemExit(0)"),
+    ("its reader raising SystemExit(5)",
+        appended("def inline_code_problems(text, svg=False):\n    raise SystemExit(5)\n"),
+        "could not check the page: SystemExit(5)"),
+    ("its reader raising a BaseException subclass",
+        appended(STOP + "def inline_code_problems(text, svg=False):\n    raise Stop('stop')\n"),
+        "could not check the page: Stop('stop')"),
+    ("its reader returning None", appended("def inline_code_problems(text, svg=False):\n    return None\n"),
+        "could not check the page: TypeError(\"'NoneType' object is not iterable\")"),
+    ("its reader raising an exception whose repr raises",
+        appended("class BadRepr(Exception):\n    def __repr__(self):\n        raise ValueError('repr')\n\n"
+                 "def inline_code_problems(text, svg=False):\n    raise BadRepr()\n"),
+        "could not check the page: BadRepr (its repr raised ValueError)"),
+    ("its reader giving a problem whose str raises",
+        appended("class BadText:\n    def __str__(self):\n        raise ValueError('text')\n\n"
+                 "def inline_code_problems(text, svg=False):\n    return [BadText()]\n"),
+        "could not check the page: ValueError('text')"),
+    ("raising SystemExit(0) while it loads", appended("raise SystemExit(0)\n"), "could not be loaded: SystemExit(0)"),
+    ("raising a BaseException subclass while it loads", appended(STOP + "raise Stop('at load')\n"),
+        "could not be loaded: Stop('at load')"),
+    ("with an UnsupportedPython that is not an exception class", appended("UnsupportedPython = 5\n"),
+        "defines an UnsupportedPython that is not an exception class"),
+    ("with a module __getattr__ that raises ValueError and inline_code_problems renamed",
+        faults(edit("tools/check-inline-code.py", "def inline_code_problems(", "def inline_code_problems_unused("),
+               appended("def __getattr__(name):\n    raise ValueError('getattr')\n")),
+        "defines no inline_code_problems"),
+]
+LOAD_CASES += [(f"tools/check-inline-code.py {name}, and the stated count wrong",
+                faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), fault),
+                (3, f"check-instructions-page: tools/check-inline-code.py {words}",
+                 f"the page states {SAVED - 1} characters for the full download"))
+               for name, fault, words in INLINE_FAULTS]
 # Root reads a file whatever its mode, so under root a mode-000 case cannot
 # fail to read: it is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
@@ -364,10 +464,13 @@ def main() -> int:
         if root is not None:
             result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
                                     capture_output=True, text=True)
-            if result.returncode != 3 or not result.stderr.startswith("check-instructions-page: "):
+            if result.returncode != 3 or not result.stderr.startswith(VERSION_WORDS) or "Traceback" in result.stderr:
                 failures.append(f"another Python version: exit {result.returncode}, "
-                                "expected 3 from check-instructions-page: "
+                                f"expected 3 and stderr starting {VERSION_WORDS!r} with no traceback: "
                                 f"{(result.stdout + result.stderr).strip()[:300]}")
+    wrong = [data for data, accepted in PLAIN_STARTS if begins_plainly(data) != accepted]
+    if wrong:
+        failures.append(f"the first-character guard: wrong for {wrong!r}")
     for name, fault, words in [] if inner else SUITE_CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = build(scratch, fault, name, failures)
@@ -391,7 +494,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-instructions-page: all {len(CASES) + 1 + (0 if inner else len(SUITE_CASES))} cases passed.")
+    print(f"test-instructions-page: all {len(CASES) + 2 + (0 if inner else len(SUITE_CASES))} cases passed.")
     return 0
 
 

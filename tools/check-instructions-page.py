@@ -43,7 +43,11 @@ template:
    as saved, its bytes decoded as UTF-8 with no newline translation and nothing
    stripped, parsed from the sentence's fixed words (``the same content the
    full download saves (N characters)``), which must occur exactly once in the
-   page source, and counted independently of ``tools/build-site.py``.
+   page source, and counted independently of ``tools/build-site.py``. The
+   stated digits are compared as text with the count written in decimal, as
+   the generator writes it, so a count with a leading zero is a problem, and
+   so is a count of more than 4300 digits, which int() would refuse with a
+   traceback.
 
 The template puts the page's copy button inside the block (template
 specification 7.11). Exactly that button, ``<button class="copy" type="button"
@@ -73,32 +77,41 @@ Exit codes:
      or the download could not be read or decoded. While the checks run, it
      collects these refusals: the embedded block was not found exactly once;
      the stated count was not found exactly once; tools/check-inline-code.py is
-     not a regular file, could not be read or loaded, defines no
-     inline_code_problems or no UnsupportedPython, or raised an exception while
-     it checked the page; or the Python version is 3.7 or later and not one that
-     tools/check-inline-code.py supports
+     not a regular file, could not be read, raised an exception while it
+     loaded, defines no inline_code_problems, or defines no UnsupportedPython
+     that is an exception class; tools/check-inline-code.py raised an
+     exception while it checked the page or while its problems were read, or
+     gave a problem that str() does not turn into text; or the Python version
+     is 3.7 or later and not one that tools/check-inline-code.py supports
 
 A symbolic link is not followed: a download, a page or
 tools/check-inline-code.py that is a symbolic link is not a regular file,
 whatever the link points to, as tools/build-site.py also refuses such a
 download.
 
-The page read is not guarded: a page that cannot be read or decoded ends in a
-traceback with exit 1. Nor is the gate's own use of what
-tools/check-inline-code.py defines: an UnsupportedPython that is not an
-exception class, a module __getattr__ that raises an exception other than
-AttributeError, an exception whose repr raises, or a problem that cannot be
-formatted as text ends in a traceback with exit 1. A SystemExit or
-KeyboardInterrupt raised by that file is not caught.
+An exception from tools/check-inline-code.py, while it loads or while it
+checks the page, is a refusal whatever its class: SystemExit with any code
+and any other BaseException subclass included, apart from KeyboardInterrupt,
+which is not caught, so that Ctrl-C still stops the gate. An exception whose
+repr or str raises is named by its class instead. The gate reads
+inline_code_problems and UnsupportedPython from the module's own namespace,
+so the gate never calls a module __getattr__.
+
+What still ends otherwise: the page read is not guarded, so a page that
+cannot be read or decoded ends in a traceback with exit 1; a KeyboardInterrupt
+ends the gate as Python ends on Ctrl-C; and code in tools/check-inline-code.py
+that ends the process itself, for example by os._exit, ends the gate with the
+code it gives.
 
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
 could not be evaluated is reported on stderr, prefixed "check-instructions-page: ".
-The gate runs every check it can evaluate and prints every problem it found
-before it exits, so a problem is never hidden behind a refusal collected while
-the checks run; it exits 3 whenever a check could not be evaluated, whatever
-else it found, apart from the tracebacks named above. The 2 conditions that stop the gate before any check runs are
-reported on stderr in the same way, and no check runs after them.
+Apart from the 3 paths named in the paragraph above, the gate runs every
+check it can evaluate and prints every problem it found before it exits, so a
+problem is never hidden behind a refusal collected while the checks run, and
+it exits 3 when a check could not be evaluated, whatever else it found. The 2
+conditions that stop the gate before any check runs are reported on stderr in
+the same way, and no check runs after them.
 """
 
 from __future__ import annotations
@@ -142,11 +155,25 @@ class Refused(Exception):
     with the other checks; main() reports it on stderr and exits 3."""
 
 
+def described(error: BaseException, form=repr) -> str:
+    """The error as text, by repr or by str. An exception whose repr or str raises, or gives something other than
+    text, is named by its class instead, so that describing a refusal never ends in a traceback."""
+    try:
+        text = form(error)
+    except KeyboardInterrupt:
+        raise
+    except BaseException as inner:
+        return f"{type(error).__name__} (its {form.__name__} raised {type(inner).__name__})"
+    return text if type(text) is str else type(error).__name__
+
+
 def load_inline_gate():
-    """tools/check-inline-code.py, read, compiled and run as a fresh module. The source is always read, so no cached
-    bytecode stands in for it; a source that is not a regular file, or that cannot be read, compiled or run, or that
-    defines no inline_code_problems or no UnsupportedPython, means that tools/check-inline-code.py could not be loaded
-    (Refused, exit 3)."""
+    """tools/check-inline-code.py, read, compiled and run as a fresh module; returns its inline_code_problems and its
+    UnsupportedPython. The source is always read, so no cached bytecode stands in for it. A source that is not a
+    regular file, that cannot be read or compiled, or that raises any exception other than KeyboardInterrupt while it
+    runs, SystemExit included, means that tools/check-inline-code.py could not be loaded (Refused, exit 3). Both
+    names are read from the module's own namespace, so this function never calls a module __getattr__; a namespace
+    without either name, or whose UnsupportedPython is not an exception class, is refused too."""
     try:
         info = os.lstat(INLINE_GATE)
     except OSError as error:
@@ -161,25 +188,42 @@ def load_inline_gate():
     module.__file__ = str(INLINE_GATE)
     try:
         exec(compile(source, str(INLINE_GATE), "exec", dont_inherit=True), module.__dict__)
-    except (Exception, SystemExit) as error:
-        raise Refused(f"tools/check-inline-code.py could not be loaded: {error!r}")
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:
+        raise Refused(f"tools/check-inline-code.py could not be loaded: {described(error)}")
+    namespace = module.__dict__
     for attribute in ("inline_code_problems", "UnsupportedPython"):
-        if not hasattr(module, attribute):
+        if attribute not in namespace:
             raise Refused(f"tools/check-inline-code.py defines no {attribute}")
-    return module
+    unsupported = namespace["UnsupportedPython"]
+    # type() and issubclass() on classes run none of the file's code, which isinstance() could through __class__.
+    if not (issubclass(type(unsupported), type) and issubclass(unsupported, BaseException)):
+        raise Refused("tools/check-inline-code.py defines an UnsupportedPython that is not an exception class")
+    return namespace["inline_code_problems"], unsupported
 
 
 def inline_code_problems(text: str) -> list[str]:
-    """Check 2: each piece of inline code, read with tools/check-inline-code.py. Its UnsupportedPython, or any other
-    exception (Exception) raised while it checks the page or while its problems are read, means that check 2 could
-    not be evaluated (Refused, exit 3); SystemExit and KeyboardInterrupt are not caught."""
-    module = load_inline_gate()
+    """Check 2: each piece of inline code, read with tools/check-inline-code.py. Its UnsupportedPython is a refusal in
+    that file's own words. Any other exception raised while it checks the page or while its problems are read and
+    turned into text by str(), SystemExit and other BaseException subclasses included, and a problem that str() does
+    not turn into text, means that check 2 could not be evaluated (Refused, exit 3), so a wrong count found by check 3
+    is still printed. KeyboardInterrupt is not caught, so that Ctrl-C still stops the gate."""
+    reader, unsupported = load_inline_gate()
     try:
-        return list(module.inline_code_problems(text))
-    except module.UnsupportedPython as error:
-        raise Refused(f"tools/check-inline-code.py {error}")
-    except Exception as error:
-        raise Refused(f"tools/check-inline-code.py could not check the page: {error!r}")
+        problems = []
+        for problem in reader(text):
+            problem = str(problem)
+            if type(problem) is not str:
+                raise TypeError(f"a problem is {type(problem).__name__}, not str")
+            problems.append(problem)
+        return problems
+    except KeyboardInterrupt:
+        raise
+    except unsupported as error:
+        raise Refused(f"tools/check-inline-code.py {described(error, str)}")
+    except BaseException as error:
+        raise Refused(f"tools/check-inline-code.py could not check the page: {described(error)}")
 
 
 def first_difference(a: str, b: str) -> str:
@@ -269,9 +313,11 @@ def check_page(page: Path, button: str | None, expected: str, saved: int) -> tup
     stated = STATED.findall(page_text)
     if len(stated) != 1:
         refusals.append(f"expected exactly 1 stated count of the full download in {name}, found {len(stated)}")
-    elif int(stated[0]) != saved:
+    # Compared as text, not by int(), which refuses more than 4300 digits by raising ValueError.
+    elif stated[0] != str(saved):
+        shown = stated[0] if len(stated[0]) <= 40 else f"{stated[0][:20]}... ({len(stated[0])} digits)"
         problems.append(
-            f"{name}: the page states {stated[0]} characters for the full download, but "
+            f"{name}: the page states {shown} characters for the full download, but "
             f"{SOURCE.relative_to(REPO_ROOT)} holds {saved}. Rebuild the page with tools/build-site.py."
         )
 

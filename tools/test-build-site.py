@@ -23,8 +23,11 @@ The first case runs ``--check`` on this repository. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
 version as BASELINE, read by the generator's load_pin(). Another reads the
-same source and fails when main() does not call a top-level check_*
-function. The configured base is
+same source and fails when main() may not run a top-level check_* case
+group in a form that the source shows: main bound other than once by a
+def, a top-level check_* name bound other than once by a def or async def,
+either with a decorator, a check_* name bound inside main(), or no call of a
+top-level check_* name in main(). The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -2803,21 +2806,47 @@ def check_family_pages(failures: list[str]) -> int:
 STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) characters\)")
 
 
+def begins_plainly(data: bytes) -> bool:
+    """Whether the data decodes as UTF-8 and its first character, not its first byte, is neither U+FEFF nor
+    whitespace as str.isspace() reads it, so that U+00A0, U+3000 and U+001C count as whitespace."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and text[0] != "\ufeff" and not text[0].isspace()
+
+
+# (data, whether begins_plainly accepts it): the first-character guard's own cases.
+PLAIN_STARTS = [(b"x", True), ("\u00e9".encode("utf-8"), True), (b"", False), (b"\xff", False),
+                (b"\xef\xbb\xbfx", False), (b" x", False), (b"\tx", False), (b"\nx", False),
+                ("\u00a0x".encode("utf-8"), False), ("\u3000x".encode("utf-8"), False), (b"\x1cx", False)]
+
+
 def check_stated_count(failures: list[str]) -> int:
     """The instructions page states the download's character count as saved:
     its bytes decoded as UTF-8 with no newline translation and nothing
     stripped. The first case builds from the committed download. The second
     gives the download an extra line with a CR LF line end and 2 non-ASCII
     characters, so a count that translates line ends or counts bytes states the
-    wrong number. The third removes the download's final newline, which must be
+    wrong number. The third gives it an extra line with U+1F600, which lies
+    outside the Basic Multilingual Plane, and an e followed by U+0301, so a
+    count of UTF-16 code units or of NFC-normalized text states the wrong
+    number. The fourth removes the download's final newline, which must be
     exactly 1 LF, so a count that strips a final line end and adds 1 for it
-    states the wrong number. The fourth and fifth put U+FEFF or a blank line
-    before the download's first character, which must be neither U+FEFF nor
-    whitespace, so a count that decodes as utf-8-sig or strips leading
-    whitespace states the wrong number."""
+    states the wrong number. The fifth to eighth put U+FEFF, LF, a space or a
+    tab before the download's first character, which must be neither U+FEFF
+    nor whitespace, so a count that decodes as utf-8-sig, or strips a leading
+    set of characters that holds U+FEFF, LF, the space or the tab, states the
+    wrong number; these 4 cases do not catch a strip of other whitespace
+    alone, of U+00A0 for example. A ninth case holds the first-character
+    guard to PLAIN_STARTS, so a guard that reads the first byte instead fails."""
     extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
+    astral = "Smile \U0001f600, cafe\u0301.\n".encode("utf-8")
     final = "end in exactly 1 LF"
     first = "begin with a character other than U+FEFF and whitespace"
+    wrong = [(data, accepted) for data, accepted in PLAIN_STARTS if begins_plainly(data) != accepted]
+    if wrong:
+        failures.append(f"stated count, the first-character guard: wrong for {[data for data, _ in wrong]!r}")
 
     def without_final_newline(data: bytes) -> bytes | None:
         if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
@@ -2826,16 +2855,17 @@ def check_stated_count(failures: list[str]) -> int:
 
     def leading(prefix: bytes):
         def change(data: bytes) -> bytes | None:
-            if not data or data.startswith(b"\xef\xbb\xbf") or data[:1].isspace():
-                return None
-            return prefix + data
+            return prefix + data if begins_plainly(data) else None
         return change
 
     cases = [("clean build", lambda data: data, ""),
              ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra, ""),
+             ("download with U+1F600 and a combining accent", lambda data: data + astral, ""),
              ("download without its final newline", without_final_newline, final),
              ("download beginning with U+FEFF", leading(b"\xef\xbb\xbf"), first),
-             ("download beginning with a blank line", leading(b"\n"), first)]
+             ("download beginning with a blank line", leading(b"\n"), first),
+             ("download beginning with a space", leading(b" "), first),
+             ("download beginning with a tab", leading(b"\t"), first)]
     for name, change, expected in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -2854,7 +2884,7 @@ def check_stated_count(failures: list[str]) -> int:
             stated = STATED_COUNT.findall((out / "instructions/index.html").read_text(encoding="utf-8"))
             if stated != [str(held)]:
                 failures.append(f"stated count, {name}: the page states {stated} characters, the download holds {held}")
-    return len(cases)
+    return len(cases) + 1
 
 
 VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
@@ -3516,22 +3546,115 @@ def check_version_literals(failures: list[str]) -> int:
     return 1
 
 
-def check_case_groups_called(failures: list[str]) -> int:
-    """For every top-level check_* function of this file's own source, def or async def, main() holds a call by that
-    name somewhere inside it, so a case group whose call is deleted fails here instead of only lowering the printed
-    total. It does not check that the call can run or that its count and failures are kept. It reads names only, so
-    it does not check that the name main() calls is bound to the case group: a later def or assignment of that name,
-    at the top level or inside main(), or a decorator can bind it to something else, and a check_* name bound by
-    assignment rather than def is not read as a case group."""
-    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    called = {node.func.id for function in functions if function.name == "main" for node in ast.walk(function)
-              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-    uncalled = [function.name for function in functions
-                if function.name.startswith("check_") and function.name not in called]
+# The scopes that bindings() does not enter, since a name bound inside one of them, other than by :=, is bound in
+# that scope and not in the scope being read.
+NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda, ast.ListComp, ast.SetComp,
+                 ast.DictComp, ast.GeneratorExp)
+
+
+def bindings(nodes: list[ast.AST]) -> list[tuple[str, ast.AST]]:
+    """The names that the statements bind in their own scope in the forms read here, with the node that binds each: a
+    def, async def or class by its name, an import by the name it binds, and an except, match or store target such
+    as an assignment, for or with target. A nested scope is not entered, apart from the decorators of a def or class,
+    which run in this scope; so a := inside a comprehension or lambda, which binds in this scope, is not read, nor is
+    a global statement in another scope."""
+    found: list[tuple[str, ast.AST]] = []
+    stack = list(nodes)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.append((node.name, node))
+            stack.extend(node.decorator_list)
+            continue
+        if isinstance(node, NESTED_SCOPES):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            found += [((alias.asname or alias.name).split(".")[0], node) for alias in node.names]
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            found.append((node.id, node))
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.append((node.name, node))
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.append((node.rest, node))
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def case_group_problems(source: str) -> list[str]:
+    """The ways in which main() of the source may fail to run a top-level check_* case group. main must be bound
+    exactly once at the top level, by a def without a decorator; each top-level check_* name must be bound exactly
+    once, by a def or async def without a decorator; main() must bind no check_* name itself; and main() must hold a
+    call by the name of each top-level check_* name. So a second def of main or of a group, an assignment of either
+    name, an import of a group, a decorator on either, a binding of a group inside main(), and a deleted call each
+    fail; GUARD_FORMS holds 1 or more of each."""
+    tree = ast.parse(source)
+    top = bindings(tree.body)
+    mains = [node for name, node in top if name == "main"]
+    if len(mains) != 1 or type(mains[0]) is not ast.FunctionDef or mains[0].decorator_list:
+        return [f"main is bound {len(mains)} time(s) at the top level, expected once, by a def without a decorator"]
+    problems = []
+    groups: dict[str, list[ast.AST]] = {}
+    for name, node in top:
+        if name.startswith("check_"):
+            groups.setdefault(name, []).append(node)
+    for name, nodes in sorted(groups.items()):
+        if (len(nodes) != 1 or not isinstance(nodes[0], (ast.FunctionDef, ast.AsyncFunctionDef))
+                or nodes[0].decorator_list):
+            problems.append(f"{name} is bound {len(nodes)} time(s) at the top level, expected once, by a def or "
+                            "async def without a decorator")
+    local = sorted({name for name, _ in bindings(mains[0].body) if name.startswith("check_")})
+    if local:
+        problems.append(f"main() binds {', '.join(local)} itself")
+    called = {node.func.id for node in ast.walk(mains[0]) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    uncalled = [name for name in groups if name not in called]
     if uncalled:
-        failures.append(f"case groups: main() does not call {', '.join(uncalled)}")
-    return 1
+        problems.append(f"main() does not call {', '.join(uncalled)}")
+    return problems
+
+
+# The name of a case group, written in 2 parts so that no fixture text below occurs in this source as it stands.
+GROUP = "check_" + "stated_count"
+CALL = f"ran += {GROUP}(failures)"
+# (form, anchor or None to append, replacement): each changed source must give case_group_problems a problem.
+GUARD_FORMS = [
+    ("the call of a group deleted", f"    {CALL}\n", ""),
+    ("an uncalled def check_extra", None, "\ndef check_" + "extra(failures):\n    return 1\n"),
+    ("an uncalled async def check_extra", None, "\nasync def check_" + "extra(failures):\n    return 1\n"),
+    ("a second top-level def main", None, "\ndef " + "main() -> int:\n    return 0\n"),
+    ("main rebound by assignment", None, "\nmain " + "= lambda: 0\n"),
+    ("main decorated", "\ndef " + "main() -> int:", "\n@staticmethod\ndef " + "main() -> int:"),
+    ("a group bound by import", None, f"\nfrom os import getpid as {GROUP}\n"),
+    ("a second top-level def of a group", None, f"\ndef {GROUP}(failures):\n    return 3\n"),
+    ("a group rebound by assignment", None, f"\n{GROUP} = lambda failures: 3\n"),
+    ("a check_* name bound by assignment", None, "\ncheck_" + "assigned = lambda failures: 1\n"),
+    ("a group decorated", f"\ndef {GROUP}(", f"\n@staticmethod\ndef {GROUP}("),
+    ("a group rebound inside main()", f"    {CALL}\n", f"    {GROUP} = len\n    {CALL}\n"),
+    ("a group defined again inside main()", f"    {CALL}\n", f"    def {GROUP}(failures):\n        return 3\n    {CALL}\n"),
+]
+
+
+def check_case_groups_called(failures: list[str]) -> int:
+    """This file's own source gives case_group_problems no problem, so a case group whose call is deleted, or whose
+    name main() calls is bound to something else in a form the guard reads, fails here instead of only lowering the
+    printed total; and each of GUARD_FORMS, applied to that source, gives a problem. It does not check that a call
+    runs (under a false condition or after an early return it does not), that its count and failures are kept, or
+    that it is not removed from main() itself, since a guard that does not run cannot fail. It reads only the
+    bindings that the source shows as names: a check_* function defined inside a class or another function is not
+    a case group, and a binding through globals(), setattr(), exec(), a global statement inside another function or
+    := inside a comprehension or lambda is not read."""
+    source = Path(__file__).read_text(encoding="utf-8")
+    failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
+    for form, anchor, replacement in GUARD_FORMS:
+        if anchor is None:
+            changed = source + replacement
+        elif source.count(anchor) == 1:
+            changed = source.replace(anchor, replacement)
+        else:
+            failures.append(f"case groups, {form}: the anchor occurs {source.count(anchor)} times, expected 1")
+            continue
+        if not case_group_problems(changed):
+            failures.append(f"case groups, {form}: the guard found no problem")
+    return 1 + len(GUARD_FORMS)
 
 
 def main() -> int:
