@@ -58,14 +58,16 @@
 # .sha256 beside each, only after every check passes. It refuses a dist that
 # is a symbolic link, or that exists and is not a folder, before it removes
 # or writes anything. Before its first check it removes the outputs that an
-# earlier build left: each regular file named cleanlanguage.zip,
-# cleanlanguage-X.Y.Z.zip, or the .sha256 of either, and each staging folder
-# named .release-package. followed by 6 letters or digits. It removes
-# nothing else in dist/: a file or folder of any other name is kept, and so
-# is a symbolic link, folder, FIFO or other special file that carries an
-# output name. The move into dist/ is a rename, which would replace such an
-# object, so once the version is known the build refuses with exit 1 if any
-# of the 4 names it writes is held by anything other than a regular file.
+# earlier build left, chosen by name and type, not by who wrote them: each
+# regular file named cleanlanguage.zip, cleanlanguage-X.Y.Z.zip, or the
+# .sha256 of either, and each folder named .release-package. followed by 6
+# letters or digits, together with everything that folder holds. It keeps
+# every other entry of dist/: a file or folder of any other name, a symbolic
+# link or file that carries a staging name, and a symbolic link, folder,
+# FIFO or other special file that carries an output name. The move into
+# dist/ is a rename, which would replace an object of the last kind, so
+# once the version is known the build refuses with exit 1 if 1 of the 4
+# names it writes is held by anything other than a regular file.
 # That refusal comes after the removal of the earlier outputs, so it leaves
 # no stale output, and before the build writes anything to dist/, so the
 # object stays as it was. From the point where it starts the archive, an
@@ -107,13 +109,14 @@ elif [ -e dist ] && [ ! -d dist ]; then
   fail "dist exists and is not a folder"
 fi
 
-# The packager's own outputs in dist/ and its staging folders there, matched
-# by exact name and type, so a file it did not write is never removed: a
-# regular file named cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256
-# of either, and a folder named .release-package. followed by the 6 letters
-# or digits that mktemp gives. A symbolic link is neither, so it is kept.
-# Every removal is tried, so a failed removal does not stop the others; the
-# return status is 1 if any failed.
+# The packager's outputs in dist/ and its staging folders there, matched by
+# exact name and type, not by who wrote them: a regular file named
+# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256 of either, and a
+# folder named .release-package. followed by the 6 letters or digits that
+# mktemp gives, which is removed with everything it holds. A symbolic link
+# is neither, so it is kept, as is an entry of any other name or type. Each
+# removal is tried, so a failed removal does not stop the others; the
+# return status is 1 if 1 or more failed.
 remove_outputs() {
   local path name rc=0
   [ -d dist ] || return 0
@@ -132,7 +135,9 @@ remove_outputs() {
   return "${rc}"
 }
 # Remove an earlier build's outputs before the first check, so a build refused
-# at any check never leaves them in dist/ for a reader to take for its own.
+# at a later check does not leave them in dist/ for a reader to take for its
+# own. A failed removal ends the build here, and what it could not remove
+# stays.
 remove_outputs \
   || fail "could not remove every earlier output from dist/; any it could not remove is still there"
 
@@ -201,10 +206,12 @@ if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
 fi
 # The outputs reach dist/ by a rename, which replaces whatever holds the
 # name, and the exit trap then removes what it moved there. The removal above
-# leaves an object at an output name only if the packager did not write it,
-# so a symbolic link (followed or not), folder, FIFO or other special file at
-# 1 of the 4 names this build writes is refused here, before anything is
-# written to dist/, and is left as it is.
+# has removed every regular file at an output name, or the build has exited,
+# so an object still at an output name is one that the packager does not
+# write: a symbolic link (followed or not), folder, FIFO or other special
+# file at 1 of the 4 names this build writes is refused here, before the
+# build makes its first work folder or writes anything to dist/, and is left
+# as it is.
 for path in dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip" \
   dist/cleanlanguage.zip.sha256 "dist/cleanlanguage-${version}.zip.sha256"; do
   if [ -L "${path}" ] || { [ -e "${path}" ] && [ ! -f "${path}" ]; }; then
