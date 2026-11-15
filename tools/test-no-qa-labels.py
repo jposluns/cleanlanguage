@@ -262,6 +262,7 @@ SCANNED = (
     ".github/workflows/plugin-drift.yml",
     ".github/workflows/plugin-validate.yml",
     ".github/workflows/portable-text-sync.yml",
+    ".github/workflows/pr-text.yml",
     ".github/workflows/release-checksum-live.yml",
     ".github/workflows/release-dry-run.yml",
     ".github/workflows/release-skill.yml",
