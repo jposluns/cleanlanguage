@@ -1801,8 +1801,10 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # listing line whose refname is neither the protected refname nor
         # below it, or whose refname and object name are joined by a
         # character other than a space; a merge base line that is not 1
-        # object name, the same object name on 2 merge base lines, or merge
-        # base output that does not end with a line feed; a tree entry
+        # object name, the same object name on 2 merge base lines, next to
+        # each other or not, merge base lines whose object names differ in
+        # length, or merge base output that does not end with a line feed;
+        # a tree entry
         # whose mode and type are not a pair that git
         # prints, whose fields are joined by other than 1 space, or which
         # has no object name; a line that git prints with leading or
@@ -1819,6 +1821,11 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("merge-base",), b"{main}\r\n"),
                   (("merge-base",), b"\n{main}\n"),
                   (("merge-base",), b"{main}\n{main}\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n{main}\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n" + b"2" * 40 + b"\n" + b"1" * 40 + b"\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n"),
+                  (("merge-base",), b"{main}\n{main}" + b"0" * 24 + b"\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n" + b"2" * 40 + b"\n"),
                   *[(("ls-tree",), entry.replace(b"100644 blob", pair))
                     for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
                                  b"040000 blob", b"040000 commit", b"160000 blob", b"160000 tree",
@@ -2128,7 +2135,8 @@ class RequiredPropertyTest(_PatchedGateTest):
 
 class AuthorEntryTest(_PatchedGateTest):
     """A primary entity whose author holds no entry fails, and an author
-    name matches the meta author with surrounding white space removed."""
+    name matches the meta author with each character at its ends for
+    which str.isspace() is true removed, and no other."""
 
     def problems(self, author_member: str) -> list[str]:
         page = gate.SITE_ROOT / "index.html"
@@ -2152,6 +2160,22 @@ class AuthorEntryTest(_PatchedGateTest):
             with self.subTest(name=name):
                 member = ', "author": {"@type": "Person", "name": ' + name + "}"
                 self.assertEqual(self.problems(member), [])
+
+    def test_name_is_trimmed_of_each_isspace_character_and_no_other(self):
+        # Each character for which str.isspace() is true, such as U+0085,
+        # U+00A0, U+3000 and U+001C to U+001F, is removed from the ends of
+        # a name, as a string or as a value object; a character for which
+        # it is false, such as U+200B or U+FEFF, is kept.
+        spaces = [chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()]
+        for char in ("\x85", "\xa0", chr(0x3000), "\x1c", "\x1d", "\x1e", "\x1f"):
+            self.assertIn(char, spaces)
+        for char in [*spaces, chr(0x200B), chr(0xFEFF), chr(0x180E), "x"]:
+            for name in (char + "Jeff Posluns" + char, {"@value": char + "Jeff Posluns" + char}):
+                with self.subTest(char=f"U+{ord(char):04X}", name=name):
+                    entry = {"@type": "Person", "name": name}
+                    self.assertEqual(gate._author_ok(entry, "Jeff Posluns"), char in spaces)
+        member = ', "author": {"@type": "Person", "name": "\\u3000Jeff Posluns\\u00a0"}'
+        self.assertEqual(self.problems(member), [])
 
     def test_null_entry_beside_meta_author_is_skipped(self):
         # A null entry in an author list is no author, so the meta author
@@ -2214,6 +2238,31 @@ class GateGuardTest(_PatchedGateTest):
         self.assertFalse(message.endswith("\n\n"), message)
         self.assertEqual(message, message.strip() + "\n")
 
+    def test_failed_git_message_trims_each_isspace_character_and_no_other(self):
+        # git's stderr is trimmed as str.strip() trims it: each character
+        # at its ends for which str.isspace() is true, such as U+3000,
+        # U+001C and U+0085, is removed, and U+200B is kept.
+        failed = subprocess.CompletedProcess(
+            ["git"], 1, stdout=b"",
+            stderr=(chr(0x3000) + "\x1cfatal: bad" + chr(0x200B) + "\x85\n").encode("utf-8"))
+        stderr = io.StringIO()
+        with mock.patch.object(gate.subprocess, "run", lambda *args, **kwargs: failed), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+            gate.git("status")
+        self.assertEqual(caught.exception.code, 3)
+        self.assertEqual(stderr.getvalue(),
+                         "check-page-metadata: git status failed: fatal: bad" + chr(0x200B) + "\n")
+
+    def test_element_other_than_script_with_ld_json_type_is_not_collected(self):
+        # Only a script element is collected: another element with the
+        # ld+json type, here in the body after the page's own block, is not
+        # read as JSON-LD.
+        div = ('<div type="application/ld+json">{"@type": "Article", '
+               '"author": {"@type": "Person", "name": "Mallory"}}</div>')
+        html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+        self.assertIn("<body></body>", html)
+        self.assertEqual(self.check(html.replace("<body></body>", "<body>" + div + "</body>")), [])
+
     def test_pages_that_disagree_on_the_author_fail(self):
         # 2 pages that each name their own author consistently fail together.
         pages = []
@@ -2228,6 +2277,30 @@ class GateGuardTest(_PatchedGateTest):
             self.assertEqual(gate.main(), 1)
         self.assertIn("pages disagree on the author: 'Jeff Posluns' on 1 page(s); 'Someone Else' on 1 page(s)",
                       stdout.getvalue())
+
+    def test_page_with_no_meta_author_beside_agreeing_pages_names_no_author(self):
+        # A page whose meta author is absent or empty names no author, so
+        # beside 2 pages that agree it gives its own problems and no
+        # disagreement across pages.
+        for meta in ("", '<meta name="author" content="">'):
+            with self.subTest(meta=meta):
+                pages = []
+                for name in ("a.html", "b.html", "c.html"):
+                    page = gate.SITE_ROOT / name
+                    html = PAGE.format(json_ld=article('{"@type": "Person", "name": "Jeff Posluns"}'))
+                    if name == "c.html":
+                        html = html.replace('<meta name="author" content="Jeff Posluns">', meta)
+                        self.assertNotIn('content="Jeff Posluns"', html)
+                    page.write_text(html, encoding="utf-8")
+                    pages.append(page)
+                stdout = io.StringIO()
+                with mock.patch.object(gate, "require_full_history", lambda: None), \
+                        mock.patch.object(gate, "content_pages", lambda: pages), contextlib.redirect_stdout(stdout):
+                    self.assertEqual(gate.main(), 1)
+                report = stdout.getvalue()
+                self.assertIn('missing <meta name="author">', report)
+                self.assertNotIn("pages disagree on the author", report)
+                self.assertIn("2 problem(s) across 1 page(s).", report)
 
     def test_script_entry_point_runs_main(self):
         # Run as a script with no git on PATH, the gate runs main() and

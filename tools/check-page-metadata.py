@@ -266,11 +266,14 @@ def _ld_types(obj: dict) -> set:
 
 def _author_ok(author: object, meta_author: str) -> bool:
     """True when there is at least one author entry other than null and
-    EVERY entry is an accepted author-type object whose ``name``, with
-    surrounding white space removed, is ``meta_author``. A stray or stale
-    co-author, a non-Person author, or a bare-string author fails; a name may
-    be a string or a value object ``{"@value": "..."}``, trimmed alike. This
-    enforces the site's single-author convention."""
+    every entry other than null, since a null entry is skipped, is an
+    accepted author-type object whose ``name``, with str.strip() applied, is
+    ``meta_author``. str.strip() removes each character at the ends for
+    which str.isspace() is true, such as ASCII white space, U+0085, U+00A0,
+    U+3000 and U+001C to U+001F, and no other, such as U+200B. A stray or
+    stale co-author, a non-Person author, or a bare-string author fails; a
+    name may be a string or a value object ``{"@value": "..."}``, trimmed
+    alike. This enforces the site's single-author convention."""
     items = [item for item in (author if isinstance(author, list) else [author])
              if item is not None]
     if not items:
@@ -458,7 +461,9 @@ def protected_base() -> str | None:
     a line with no object name after its first space, the
     protected refname listed twice, merge base output that is not empty
     and does not end with a line feed, a merge base line that is not 1
-    object name, or an object name on more than 1 merge base line."""
+    object name, an object name on more than 1 merge base line, or merge
+    base lines whose object names differ in length, since git prints the
+    object names of a repository at 1 length."""
     args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
     output = git(*args)
     lines = output.split(b"\n")
@@ -485,6 +490,8 @@ def protected_base() -> str | None:
     for base in bases:
         object_name(base, merge_args, output)
     if len(set(bases)) != len(bases):
+        unusable(merge_args, output)
+    if len({len(base) for base in bases}) != 1:
         unusable(merge_args, output)
     return bases[0] if len(bases) == 1 else None
 
