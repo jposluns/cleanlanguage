@@ -21,10 +21,14 @@ through permissionDecision on exit 0. A missing hook or payload fails the case r
 skipping it, so an absent file cannot read as a green run.
 
 The probes must stay write-then-run forms, since the hook before the refresh already denied the
-direct form: each probe command must write a script file and then, on a later line, run that same
-file with bash, sh or python3, and the text written between the two must hold a git commit with
---no-verify or -n. Each payload file is also pinned by its sha256, so any edit to a payload fails a
-named case until the pin is updated with it.
+direct form: each probe command must write a script file, by a here-document (`cat > FILE <<'EOF'`)
+or by a single-quoted printf (`printf '...' > FILE`), and then, on a later line after the written
+text ends, run that same file with bash, sh or python3; and 1 line of the text the command writes
+into that file must hold a git commit with --no-verify or -n. A commit placed anywhere else, such as
+a direct commit between the end of the here-document and the run line, does not count, so a probe
+moved to the direct form with its script holding no commit fails the case. The test also checks
+that the shape check rejects 3 such moved forms. Each payload file is also pinned by its sha256, so
+any edit to a payload fails a named case until the pin is updated with it.
 
 The hooks before the refresh to pack commit 730c039b allowed all 5 probes, so this test is red on
 them; --hook PATH runs the same cases against another copy of the hook to show that. The test pins
@@ -68,20 +72,66 @@ SCRIPT_RUN = re.compile(r"^(?:bash|sh|python3)\s+([^\s;&|'\"]+)", re.MULTILINE)
 # A git commit with a hook-skipping flag, as shell words or as a Python argument list.
 COMMIT_WORDS = re.compile(r"\bgit\b[^\n]*\bcommit\b|\"git\",\s*\"commit\"")
 SKIP_FLAG = re.compile(r"--no-verify|(?:^|[\s\"])-n(?:[\s\"]|$)", re.MULTILINE)
+# The here-document operator after the written path: <<, <<-, and a delimiter bare or in quotes.
+HEREDOC_OPEN = re.compile(r"\s*<<(-?)\s*(?:'([A-Za-z0-9_.+-]+)'|\"([A-Za-z0-9_.+-]+)\"|([A-Za-z0-9_.+-]+))\s*$")
+# A single-quoted printf whose output is redirected to the written path, alone on its line.
+PRINTF_WRITE = re.compile(r"\s*printf\s+'([^']*)'\s*$")
+# 3 moved forms that the shape check must reject: each script holds no commit, and a direct commit
+# with a hook-skipping flag stands between the written text and the run line.
+MOVED_COMMIT_FORMS = (
+    "cat > /tmp/probe-m1.sh <<'EOF'\necho probe\nEOF\ngit commit --no-verify -m probe\nbash /tmp/probe-m1.sh",
+    "cat > /tmp/probe-m2.py <<'EOF'\nprint('probe')\nEOF\ngit commit -n -m probe\npython3 /tmp/probe-m2.py",
+    "printf 'echo probe\\n' > /tmp/probe-m3.sh\ngit commit --no-verify -m probe\nsh /tmp/probe-m3.sh",
+)
+
+
+def written_script(command, write):
+    """(text written into the file, offset where the writing ends) for the script write that the
+    SCRIPT_WRITE match write starts, or None when that line is not one of the 2 write forms this test
+    reads: a here-document opened on the writing line and closed by its delimiter line, or a single-quoted
+    printf whose only escape sequence read is \\n."""
+    line_start = command.rfind("\n", 0, write.start()) + 1
+    line_end = command.find("\n", write.end())
+    if line_end < 0:
+        line_end = len(command)
+    before = command[line_start:write.start()]
+    after = command[write.end():line_end]
+    opener = HEREDOC_OPEN.fullmatch(after)
+    if opener and re.fullmatch(r"\s*cat\s*", before):
+        strip_tabs = opener.group(1) == "-"
+        delimiter = opener.group(2) or opener.group(3) or opener.group(4)
+        body = []
+        pos = line_end + 1
+        while pos <= len(command):
+            nxt = command.find("\n", pos)
+            if nxt < 0:
+                nxt = len(command)
+            line = command[pos:nxt]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                return "\n".join(body), nxt
+            body.append(line)
+            pos = nxt + 1
+        return None
+    printf = PRINTF_WRITE.fullmatch(before)
+    if printf and not after.strip():
+        return printf.group(1).replace("\\n", "\n"), line_end
+    return None
 
 
 def write_then_run(command):
-    """The script path when command writes a script, runs it on a later line with bash, sh or python3,
-    and the text from the start of the writing line to the run holds a git commit with a hook-skipping
-    flag; else None."""
+    """The script path when command writes a script whose written text holds, on 1 line, a git commit
+    with a hook-skipping flag, and then, on a line after the written text ends, runs that file with bash,
+    sh or python3; else None. A commit outside the written text does not count."""
     for write in SCRIPT_WRITE.finditer(command):
         path = write.group(1)
-        line_start = command.rfind("\n", 0, write.start()) + 1
-        for run in SCRIPT_RUN.finditer(command, write.end()):
-            if run.group(1) != path:
-                continue
-            between = command[line_start:run.start()]
-            if "\n" in between and COMMIT_WORDS.search(between) and SKIP_FLAG.search(between):
+        written = written_script(command, write)
+        if written is None:
+            continue
+        body, end = written
+        if not any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in body.split("\n")):
+            continue
+        for run in SCRIPT_RUN.finditer(command, end):
+            if run.group(1) == path:
                 return path
     return None
 
@@ -133,6 +183,13 @@ class GateWeakeningProbes(unittest.TestCase):
                 self.assertIsNotNone(write_then_run(command),
                                      "probe {} is not a write-then-run commit form: {!r}"
                                      .format(name, command[:200]))
+
+    def test_shape_check_rejects_a_commit_outside_the_script(self):
+        for index, command in enumerate(MOVED_COMMIT_FORMS, 1):
+            with self.subTest(moved_form=index):
+                self.assertIsNone(write_then_run(command),
+                                  "a commit outside the written script passed the shape check: {!r}"
+                                  .format(command))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:

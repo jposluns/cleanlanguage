@@ -71,20 +71,50 @@ alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
 `orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
-read or whose working directory it cannot walk. They carry 1 disclosed residual that touches
-a common idiom: the detach scan reads some here-document bodies as shell text. In hook runs
-of single foreground commands, every here-document form it denied was a `cat` form. A
-`cat > file` write under an unquoted delimiter (`<<EOF`) whose body holds an `&` is denied as
-a detach. A `cat` here-document whose body holds an odd number of apostrophes is denied as an
-open quote when the command also holds an `&`, unless the whole command is a plain
-`cat > file` write: `cat <<'EOF' | tee file` with an `&` in the body is denied, and so is a
-`cat > file` write followed by `ls 2>&1`. The same runs did not deny a plain `cat > file`
-write for an `&` or an apostrophe in its body under a quoted delimiter (`<<'EOF'`), or for an
-apostrophe under an unquoted delimiter; a `python3 -I -` here-document for an `&` or an
-apostrophe in its body under either delimiter, with or without a `2>&1` on its line or after
-it; or the `"$(cat <<'EOF' ... EOF)"` form with an `&` in its body. Forms not named here were
-not tried. Write multi-line content through the Write or Edit tool (which these Bash guards
-never see) or through `printf` when the body carries such characters.
+read or whose working directory it cannot walk. They carry 2 disclosed residuals that touch
+a common idiom, both in how the detach scan reads here-document bodies. What follows comes
+from hook runs of single foreground commands, each passed to every Bash handler; forms not
+named here were not tried.
+
+First, the scan reads some bodies as shell text. A here-document under an unquoted delimiter
+(`<<EOF`) whose body holds a bare `&` outside quotes is denied as a detach whatever command
+reads it: the runs denied it for `cat > file`, `python3 -I -` and `bash`. A body with an
+apostrophe that leaves a quote open, read as shell, is denied as an open quote when the
+command also holds an `&`, unless the whole command is a plain `cat > file` or `cat >> file`
+write under a quoted delimiter (`<<'EOF'` or `<<"EOF"`): a plain `cat > file` write under an
+unquoted delimiter with an apostrophe and an `&`, a `2>&1` or an `&&` in its body is denied,
+and so are `cat <<'EOF' | tee file` with an apostrophe and an `&` in its body and a
+quoted-delimiter `cat > file` write with an apostrophe followed by `ls 2>&1`. In a command
+with no `&`, the runs denied an apostrophe as an open quote only where the command also held
+a word that can start a background job without an `&` (the runs tried `coproc`, `eval`,
+`setsid`, `disown` and `source`, which counted anywhere in the command, body included) and
+the scan read the body as shell text: `cat > file <<EOF` with "The source isn't ready." in
+its body is denied, and so is a quoted-delimiter `cat > file` write with an apostrophe
+followed by `setsid true`, while the same words in the body of a plain quoted-delimiter write
+are not denied. The hook's source lists further such forms (`.` as a command, `<<<`, `<(` and
+`>(`) that the runs did not try.
+
+Second, the scan lifts a bare `&` in a body under a quoted delimiter (`<<'EOF'` or
+`<<"EOF"`) read at the top level of the command, and in the `"$(cat <<'EOF' ... EOF)"` form,
+whatever command reads the body, unless the body also leaves a quote open as above. Such an
+`&` is not denied even when a shell runs the body and starts a background job: `bash <<'EOF'`
+with `sleep 100 &` in its body, the same through `cat <<'EOF' | bash`, and `sh <<'EOF'` with
+`sleep 100 &` and `wait` each get no decision from any Bash handler, where the hook before
+the refresh denied each. An apostrophe in a command with no `&` and none of those words is not
+denied either, in a here-document or not: `echo it's` gets no decision. A `python3 -I -`
+here-document with an `&` inside a Python string, or with an apostrophe inside a
+double-quoted Python string, is not denied under either delimiter, with or without a `2>&1`
+on its line or after it.
+
+The maintainer authorized 4 of the forms that the refresh stops denying, all `cat > file`
+writes (maintainer decisions Entry 59 and Entry 62). The runs found 16 further forms that
+the hook before the refresh denied and the refreshed hook does not decide, the shell-run
+bodies above among them; they are found and not authorized. Maintainer decision Entry 66
+holds pull request 275 unmerged until a guardrails pack commit that fixes the regression for
+those shell-run bodies (guardrails PR #1177) can be pinned; the refresh is then re-pinned to
+that commit, the probes are re-run and the change is re-validated. Write multi-line content
+through the Write or Edit tool (which these Bash guards never see) or through `printf` when
+the body carries such characters.
 
 `gate_weakening` (gatdis) denies the 5 write-then-run commit probes that
 `tools/test-gate-weakening-probes.py` holds: a script written by a here-document or by
