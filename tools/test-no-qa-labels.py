@@ -259,6 +259,7 @@ SCANNED = (
     ".github/workflows/orchestration-registry.yml",
     ".github/workflows/page-metadata.yml",
     ".github/workflows/pages-build.yml",
+    ".github/workflows/plugin-distribution.yml",
     ".github/workflows/plugin-drift.yml",
     ".github/workflows/plugin-validate.yml",
     ".github/workflows/portable-text-sync.yml",
