@@ -52,8 +52,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # Full history: the dry run runs check-page-metadata.py, which reads
-          # when each page was added and last changed.
+          # Full history, for 2 steps: the dry run runs check-page-metadata.py,
+          # which reads when each page was added and last changed, and
+          # test-release-package-dist.py reads the packager at an earlier
+          # commit for its reference build.
           fetch-depth: 0
           # The dry run needs no credentials after checkout, so none are kept.
           persist-credentials: false
