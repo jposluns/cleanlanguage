@@ -1845,7 +1845,10 @@ class HookCountDisclosure(unittest.TestCase):
     must equal the number of names listed, no name may be listed twice, each name must be a registered
     handler, and a name counted as an orchestrator hook must begin with orch_. That the refresh added
     the hooks .aiqt/config.md lists is not checked here, since the hooks before the refresh are not in
-    the tree."""
+    the tree.
+
+    The clock hooks are the registered handlers whose names begin with clock_. The sentence of
+    .aiqt/config.md that states their count must state that count, and must name each of them once."""
 
     # (document, anchored pattern, the derived count each group must equal)
     SENTENCES = (
@@ -1854,6 +1857,7 @@ class HookCountDisclosure(unittest.TestCase):
         (CONFIG_MD, r"\d+ of the (\d+) orchestrator hooks deny on the presence of the registry alone",
          ("orch",)),
         (CONFIG_MD, r"got no decision from any of the (\d+) Bash handlers", ("bash",)),
+        (CONFIG_MD, r"The (\d+) clock hooks refuse nothing", ("clock",)),
         (CLAUDE_MD, r"The plugin registers (\d+) hooks, (\d+) orchestrator hooks and (\d+) others \(",
          ("total", "orch", "other")),
         (CLAUDE_MD, r"what each of the (\d+) orchestrator hooks does under it today", ("orch",)),
@@ -1861,6 +1865,7 @@ class HookCountDisclosure(unittest.TestCase):
     ADDED = (r"The refresh to pack commit [0-9a-f]+ added (\d+) of them: (\d+) orchestrator hooks "
              r"\(([^)]*)\) and (\d+) others \(([^)]*)\)\.")
     REGISTRY_ALONE = r"(\d+) of the \d+ orchestrator hooks deny on the presence of the registry alone: ([^.]*)\."
+    CLOCK = r"The (\d+) clock hooks refuse nothing: by the hook source, ([^;]*);"
 
     def _registered(self):
         """The handler name of every registration in the vendored hooks.json, in file order."""
@@ -1887,7 +1892,9 @@ class HookCountDisclosure(unittest.TestCase):
         data = json.loads(REAL_HOOKS_JSON.read_text(encoding="utf-8"))
         bash = sum(len(group["hooks"]) for group in data["hooks"].get("PreToolUse", [])
                    if "Bash" in group.get("matcher", "").split("|"))
-        return {"total": len(names), "orch": orch, "other": len(names) - orch, "bash": bash}
+        clock = sum(1 for name in names if name.startswith("clock_"))
+        return {"total": len(names), "orch": orch, "other": len(names) - orch, "bash": bash,
+                "clock": clock}
 
     def _config_text(self):
         return " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
@@ -1945,6 +1952,39 @@ class HookCountDisclosure(unittest.TestCase):
         twice = text[:match.start(2)] + "`orch_truncation_guard` and `orch_truncation_guard`" + text[match.end(2):]
         self.assertIn("a hook is listed more than once: ['orch_truncation_guard', 'orch_truncation_guard']",
                       self._registry_alone_problems(twice))
+
+    def _clock_problems(self, text):
+        """Each way the clock-hook sentence of text fails to state and name the registered clock hooks;
+        empty when it states their count and names each once."""
+        found = re.findall(self.CLOCK, text)
+        if len(found) != 1:
+            return ["the anchored sentence must appear exactly once, found {}".format(len(found))]
+        count, listed = found[0]
+        names = [name for name in self._listed(listed) if name.startswith("clock_")]
+        clocks = sorted(name for name in self._registered() if name.startswith("clock_"))
+        problems = []
+        if int(count) != len(clocks):
+            problems.append("count {} but {} clock hooks registered".format(count, len(clocks)))
+        if int(count) != len(names):
+            problems.append("count {} but {} names listed".format(count, len(names)))
+        if sorted(names) != clocks:
+            problems.append("names {} but registered {}".format(sorted(names), clocks))
+        return problems
+
+    def test_clock_sentence_counts_and_names_the_clock_hooks(self):
+        self.assertEqual(self._clock_problems(self._config_text()), [])
+
+    def test_clock_check_refuses_a_changed_count(self):
+        # "The 2 clock hooks" changed to 3 must be refused, as must a count of 1.
+        text = self._config_text()
+        match = re.search(self.CLOCK, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        registered = self._counts()["clock"]
+        for wrong in (registered + 1, registered - 1):
+            with self.subTest(count=wrong):
+                changed = text[:match.start(1)] + str(wrong) + text[match.end(1):]
+                self.assertIn("count {} but {} clock hooks registered".format(wrong, registered),
+                              self._clock_problems(changed))
 
     def test_each_registration_names_a_distinct_handler(self):
         names = self._registered()

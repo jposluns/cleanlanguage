@@ -52,7 +52,7 @@ since that refresh it also watches Bash commands as well as Write and Edit calls
 `write_scope_guard` remains partly armed: without its per-slice `write-scope.json`
 declaration, and with no committed `.aiqt/frozen.json` floor, its slice confinement and
 frozen-floor denial are un-armed, but its structural cross-repository and nested-repository
-write denial stays active. That denial now exempts one declared companion store: the
+write denial stays active. That denial now exempts 1 declared companion store: the
 orchestration registry below names `/opt/cleanlanguage/private`, the durable record store,
 so a guarded-tool write into that store is permitted and audited rather than denied, while a
 guarded-tool write to any other outside repository is still denied.
@@ -77,9 +77,10 @@ background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
 `orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
 read or whose working directory it cannot walk. How the detach scan reads here-document
 bodies and quotes comes from a recorded decision-table run for pull request 275, which passed
-256 named forms, in 314 rows of a form and a working directory (a branch, and for each git form
-a detached HEAD as well), to every Bash handler of the hook before the refresh and of the
-refreshed hook; forms not named here were not tried. Through `orch_truncation_guard` the
+328 named forms, in 407 rows of a form and a working directory (326 on a branch, 79 on a
+detached HEAD, for each git form, and 2 in a missing directory, for the 2 forms run there), to
+every Bash handler of the hook before the refresh and of the refreshed hook; forms not named
+here were not tried. Through `orch_truncation_guard` the
 refreshed hook denies:
 
 - a here-document body that a shell runs and that holds a bare `&`: `bash`, `sh`, `bash -s` or
@@ -103,28 +104,34 @@ refreshed hook denies:
   `setsid true`, or by `.` running the written file.
 
 The refreshed hook does not deny the following forms, which the hook before the refresh denied
-through `orch_truncation_guard` (65 rows, 43 distinct commands; the pull request 275
+through `orch_truncation_guard` (80 rows, 57 distinct commands; the pull request 275
 description lists every form id by class):
 
 - a here-document of data written by `cat` (to a file, appended or to standard output), by
-  `tee` or by a bare `> file` redirect, whose body holds an apostrophe (for a `cat` write, also
+  `tee` or by a bare `> file` redirect, or read by a `while read` loop, whose body holds an
+  apostrophe (for a `cat` write, also
   an unterminated double quote), including an apostrophe beside a word that can start a
   background job (`coproc`, `disown`, `eval`, `setsid`, `source`, `.`, `<<<` or `<(`), and
   such a `cat` write followed by `echo done`;
-- a `cat` write or a `cat` to standard output whose body, under `<<'EOF'` or `<<"EOF"`, holds an
-  ampersand in data (`a & b`), with or without an apostrophe, including 2 such writes in 1
-  command;
+- a `cat` write whose body, under `<<'EOF'` or `<<"EOF"`, holds an ampersand in data
+  (`a & b`), with or without an apostrophe, including 2 such writes in 1 command, and, with no
+  apostrophe, the same under `<<\EOF`;
+- a `cat` to standard output whose body under `<<'EOF'` holds an ampersand in data (`a & b`)
+  and no apostrophe; with an apostrophe as well, under `<<'EOF'` or `<<"EOF"`, the run shows
+  it denied (above);
 - `python3 -I -` with `print('it\'s')` in a quoted-delimiter body;
-- `bash <<'EOF'` with `echo "unfinished` in its body, which leaves a double quote open and holds
-  no `&`;
+- a body run by `bash` or `sh` that leaves a quote open and holds no `&`: `bash <<'EOF'` with
+  `echo "unfinished` or `echo 'unfinished`, `bash <<'EOF'` or `bash <<EOF` with `echo it's`,
+  and `sh <<'EOF'` with `echo it's`;
 - a command with an open quote and no here-document: `echo it's`, `echo "unfinished`,
   `echo 'unfinished` and `echo "it`.
 
-None of these 65 rows starts a command in the background. Neither hook denies these forms of
+None of these 80 rows starts a command in the background. Neither hook denies these forms of
 the run, each of which starts a background job: `bash -c "$(cat <<'EOF' ... EOF)"` and
-`out="$(bash <<'EOF' ... EOF)"` with `sleep 100 &` in the body, `bash <<< 'sleep 100 &'`, a
-script written by `printf 'sleep 100 &\n'` and then run with `bash`, and a body run by `bash`
-that holds `coproc true` and no `&`. Neither denies a body run by `sh` that holds
+`out="$(bash <<'EOF' ... EOF)"` with `sleep 100 &` in the body, `bash <<< 'sleep 100 &'`,
+`bash -c 'sleep 100 &'`, a script written by `printf 'sleep 100 &\n'` and then run with `bash`
+or `sh`, a `python3 -` here-document whose body runs `os.system('sleep 100 &')`, and a body run
+by `bash` that holds `coproc true` or `setsid sleep 100` and no `&`. Neither denies a body run by `sh` that holds
 `setsid true`, a `python3 -I -` here-document with an `&` or an apostrophe inside a
 double-quoted Python string, under either delimiter, with or without a `2>&1` on its line or
 after it, or a `perl` body with an `&` inside a Perl string.
@@ -134,7 +141,7 @@ class, of every form of this run that the refreshed hook no longer denies, in th
 275 description, as the recorded authorization for those forms; maintainer decisions Entry 59
 and Entry 62 had already authorized 4 of them, all `cat > file` writes. Any form the maintainer
 later objects to goes to guardrails as a seed. Against the earlier pin of this change,
-730c039b, the same run moved 13 rows from deny to no decision, all data here-documents written
+730c039b, the run of the first 256 forms moved 13 rows from deny to no decision, all data here-documents written
 by `cat` whose body holds an apostrophe beside a word that can start a background job, and 40
 rows from no decision to deny: the bodies that a shell runs, the write-then-run detach forms,
 and the `tee`, `python3 -I -`, other-reader and `cat` write with `ls 2>&1` forms with a bare
@@ -149,14 +156,14 @@ python3. Other handlers deny some of them as well. In a recorded run of the prob
 process could read every path that they name, the refreshed hook denied probe 1 through
 `gate_weakening` and `git_discard`, probes 2, 3 and 5 through `gate_weakening` alone, and
 probe 4 through `gate_weakening` and `protected_line`; probes 4 and 5 ran on a branch only.
-`review_workdir_hold` also denies a probe when the hook cannot read a path that the probe
-names (below). In the decision-table run, `gate_weakening` also denied 4 further
+`review_workdir_hold` can also deny a probe when it cannot probe the git identity of a
+directory that the probe names (below). In the decision-table run, `gate_weakening` also denied 4 further
 write-then-run commit forms that the hook before the refresh did not decide: a script written
 by `tee` from a here-document and
 run with bash, a script written by `echo` and run with bash, a here-document script run with
 `source`, and a here-document script made executable with `chmod +x` and run by its path. It
 does not deny every write-then-run commit that skips hooks. In hook runs, a
-written script that runs `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a
+script written under a quoted delimiter that runs `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a
 script decoded from base64 and then run with bash, got no decision from any of the 19 Bash
 handlers. The direct `git -c core.hooksPath=/dev/null commit` and
 `echo --no-verify | xargs git commit` forms get no decision from `gate_weakening`, as before
@@ -167,8 +174,8 @@ Since the refresh, `protected_line` (artbr1) denies a Bash `git commit` on a det
 with the reason "Git or filesystem probe did not succeed cleanly", where the hook before the
 refresh gave no decision: its probe of the branch that HEAD names fails when HEAD names none.
 
-The decision-table run found 39 distinct forms that the hook before the refresh did not decide
-and the refreshed hook denies. 4 are the detached-HEAD commits above (`git commit -m`,
+Over its first 256 forms, the decision-table run found 39 distinct forms that the hook before
+the refresh did not decide and the refreshed hook denies. 4 are the detached-HEAD commits above (`git commit -m`,
 `git commit --allow-empty` and `git commit -F` with 2 paths); the other 35:
 
 - `protected_line` (artbr1), on a branch and on a detached HEAD, denies 14 commit forms: the
@@ -188,14 +195,22 @@ and the refreshed hook denies. 4 are the detached-HEAD commits above (`git commi
 - `gate_weakening` denies the 5 probes and the 4 further write-then-run forms above;
   `git_discard` also denies probe 1, and `protected_line` also denies probe 4 (probes 4 and
   5 ran on a branch only);
-  `review_workdir_hold` also denies a probe when the hook cannot read a path that the
-  probe names, as when the hook runs as another user, since it fails closed when it cannot
-  probe the git identity of a directory that an absolute path in the command names, so
-  whether it is among the handlers that deny a probe depends on who runs the hook;
+  `review_workdir_hold` fails closed when it cannot probe the git identity of a directory
+  that an absolute path in the command names, so it can also deny a probe: in the extended
+  run of 328 forms it denied probe 1 that way, and in the run of the first 256 forms it did
+  not;
 - `orch_truncation_guard` denies a Bash call whose working directory does not exist.
 
-In 10 further forms both hooks deny and the denying handlers differ, most often because
-`protected_line` joins them.
+The 72 forms that the third review ran add 15 such rows: `protected_line` denies
+`git -c core.hooksPath=/dev/null commit -m x`, a commit message holding an apostrophe on a
+detached HEAD, and a script written under an unquoted delimiter that runs
+`git -c core.hooksPath=/var/empty commit` with `sh`; `gate_weakening` denies 4 more
+write-then-run commits with `--no-verify` or `-n`; and `git_discard` denies
+`git reset --hard && git clean -fd`.
+
+In 10 further forms of the first 256 both hooks deny and the denying handlers differ, most
+often because `protected_line` joins them; the forms of the third review add 3 such rows, where
+`protected_line` joins `gate_weakening` on a detached HEAD.
 
 The declared `lease` makes scope live: while the lease file is present, non-empty, and
 fresh, every session whose working directory resolves to this checkout and which can
@@ -207,7 +222,7 @@ one decision core. With no AEI enumerator declared, a turn-end Stop in scope is 
 `NO_ENUMERATOR` unless the operator escape sentinel `ESCAPE-ALLOW-YIELD` in `state_dir`
 releases it; on the maintainer host that sentinel is a root-owned file (observed 2026-10-29),
 and each release is logged as an operator escape event. The denial has two further exits.
-It is bounded: after two denials since the last human prompt (the loop bound), or when the
+It is bounded: after 2 denials since the last human prompt (the loop bound), or when the
 Stop event reports that a stop hook is already active, the Stop is allowed with the
 unresolved items reported as findings, and the forced exit is recorded for the next resume
 audit while open work remains or the backlog is not enumerable. An unreadable denial counter
@@ -300,7 +315,7 @@ malformed registry blocks scheduling immediately, even with no `lease` or `mode`
 corrupt registry from reaching a session, `tools/check-orchestration-registry.py` (run by the
 Orchestration registry workflow) rejects a structurally invalid `.aiqt/orchestration.json`
 before it lands. Stage 2 of item 28.2, which arms the rest of the suite, is deferred and
-relies on that gate. It is planned as two pull requests. The first extends the gate to
+relies on that gate. It is planned as 2 pull requests. The first extends the gate to
 validate the stage-2 keys (`enumerator`, `yield_tools`, `mode`, `staleness`, `escape`,
 `attestations`, and `mistakes_register`) and adds the AEI backlog enumerator, the backlog
 migration tool, the orchestration doctor, and their tests, with no registry change. The second
@@ -308,5 +323,5 @@ declares those keys, `attestations` and
 `mistakes_register` only if the maintainer adopts them, while the escape sentinel stays in
 place, so the enumerator first runs in shadow; the sentinel is removed only after that shadow
 period and an acknowledged notice to lab_infra. `truth` has no reader in the vendored hook and
-stays rejected. A value review flagged three past incidents that `orch_dispatch_ledger`,
+stays rejected. A value review flagged 3 past incidents that `orch_dispatch_ledger`,
 `orch_truncation_guard`, and `orch_resume_audit` would mechanically prevent.

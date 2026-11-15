@@ -84,8 +84,8 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # tools/test-gate-weakening-probes.py, which the 2eb6812c hooks allowed; other write-then-run
 # forms, such as a script that sets core.hooksPath or a base64-decoded script, still get no
 # decision. The refreshed orch_truncation_guard denies a here-document body that a shell runs
-# with a bare & in it, as the 2eb6812c hooks did, and no longer denies 65 here-document and
-# open-quote forms of a recorded decision-table run that the 2eb6812c hooks denied; the
+# with a bare & in it, as the 2eb6812c hooks did, and no longer denies 80 here-document and
+# open-quote rows of a recorded decision-table run that the 2eb6812c hooks denied; the
 # refresh adds 2 context-only clock hooks (see .aiqt/config.md for both).
 # Still a SCOPED hooks-only advance; the rule corpus is unchanged.
 # The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
@@ -111,7 +111,7 @@ verified = "each file byte-equal to its [[sources]] entry in the manifest of com
 # missing. This mirrors the [hooks-update] scoped advance: the rest of the corpus stays at
 # v1.0.0, the [integrity] tree-sha256 above (9dbbe17c) still describes the v1.0.0 baseline and
 # does NOT match the working tree, and the per-file hashes in .aiqt/manifest.toml (updated with
-# the two new rule files below, matching upstream's manifest entries) are authoritative for
+# the 2 new rule files below, matching upstream's manifest entries) are authoritative for
 # what is installed. [active-rules] active rises from 106 to 107; the full vendored corpus
 # rises from 125 to 126. Vendored byte-identical to upstream main at HEAD 7c6478c.
 advanced = "2026-09-13"
