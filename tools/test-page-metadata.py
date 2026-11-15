@@ -388,8 +388,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 
     def test_modified_in_future_still_rejected(self):
-        # modified is after today; the 7-day tolerance branch stays silent (changed
-        # equals modified) so only the future check fires.
+        # modified is after today and equals changed, a 0-day gap within the 7-day
+        # tolerance; the test needs a problem stating that the stamp is in the future.
         problems = self.check(
             published="2026-01-01", modified="2026-02-15",
             changed="2026-02-15", today="2026-02-01")
@@ -651,8 +651,8 @@ class MalformedImageUrlTest(_PatchedGateTest):
         self.assertTrue(any("not a valid image URL" in p for p in problems))
 
     def test_url_through_a_file_is_a_content_problem_not_exit_3(self):
-        # og:image traverses through an existing file: a content problem (exit 1),
-        # never a whole-gate exit-3 traceback.
+        # og:image traverses through an existing file. The test needs a problem
+        # holding "does not exist" and errors if check_page() raises instead.
         (gate.SITE_ROOT / "card.png").write_bytes(b"x")
         problems = self._problems("https://cleanlanguage.ai/card.png/child.png")
         self.assertTrue(any("does not exist" in p for p in problems))
