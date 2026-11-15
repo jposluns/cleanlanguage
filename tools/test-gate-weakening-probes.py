@@ -27,8 +27,10 @@ text ends, run that same file with bash, sh or python3; and 1 line of the text t
 into that file must hold a git commit with --no-verify or -n. A commit placed anywhere else, such as
 a direct commit between the end of the here-document and the run line, does not count, so a probe
 moved to the direct form with its script holding no commit fails the case. The test also checks
-that the shape check rejects 3 such moved forms. Each payload file is also pinned by its sha256, so
-any edit to a payload fails a named case until the pin is updated with it.
+that the shape check rejects 3 such moved forms, and that it rejects a form that fails only 1 of its
+4 conditions (the hook-skipping flag, the commit word, a run after the written text, a run of the
+written path) while it accepts the same form with that condition met. Each payload file is also
+pinned by its sha256, so any edit to a payload fails a named case until the pin is updated with it.
 
 The hooks before the refresh to pack commit 730c039b allowed all 5 probes, so this test is red on
 them; --hook PATH runs the same cases against another copy of the hook to show that. The test pins
@@ -82,6 +84,23 @@ MOVED_COMMIT_FORMS = (
     "cat > /tmp/probe-m1.sh <<'EOF'\necho probe\nEOF\ngit commit --no-verify -m probe\nbash /tmp/probe-m1.sh",
     "cat > /tmp/probe-m2.py <<'EOF'\nprint('probe')\nEOF\ngit commit -n -m probe\npython3 /tmp/probe-m2.py",
     "printf 'echo probe\\n' > /tmp/probe-m3.sh\ngit commit --no-verify -m probe\nsh /tmp/probe-m3.sh",
+)
+# 1 pair per shape condition: (condition, a form that fails only that condition, the same form with the
+# condition met). The shape check must reject the first and accept the second, so removing any 1 of the
+# 4 conditions makes its rejected form pass and fails the case.
+SHAPE_CONDITION_FORMS = (
+    ("hook-skipping flag",
+     "cat > /tmp/probe-s1.sh <<'EOF'\ngit commit -m probe\nEOF\nbash /tmp/probe-s1.sh",
+     "cat > /tmp/probe-s1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s1.sh"),
+    ("commit word",
+     "cat > /tmp/probe-s2.sh <<'EOF'\necho --no-verify\nEOF\nbash /tmp/probe-s2.sh",
+     "cat > /tmp/probe-s2.sh <<'EOF'\ngit commit --no-verify\nEOF\nbash /tmp/probe-s2.sh"),
+    ("run after the written text",
+     "bash /tmp/probe-s3.sh\ncat > /tmp/probe-s3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF",
+     "cat > /tmp/probe-s3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s3.sh"),
+    ("run of the written path",
+     "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-other.sh",
+     "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s4.sh"),
 )
 
 
@@ -190,6 +209,16 @@ class GateWeakeningProbes(unittest.TestCase):
                 self.assertIsNone(write_then_run(command),
                                   "a commit outside the written script passed the shape check: {!r}"
                                   .format(command))
+
+    def test_shape_check_requires_each_condition(self):
+        for condition, rejected, accepted in SHAPE_CONDITION_FORMS:
+            with self.subTest(condition=condition):
+                self.assertIsNotNone(write_then_run(accepted),
+                                     "the form that meets every condition failed the shape check: {!r}"
+                                     .format(accepted))
+                self.assertIsNone(write_then_run(rejected),
+                                  "a form without the {} passed the shape check: {!r}"
+                                  .format(condition, rejected))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:

@@ -1842,9 +1842,10 @@ class HookCountDisclosure(unittest.TestCase):
     PreToolUse registrations whose matcher names Bash.
 
     A sentence that states a count of hooks it lists by name is checked against its own list: each count
-    must equal the number of names listed, each name must be a registered handler, and a name counted as
-    an orchestrator hook must begin with orch_. That the refresh added the hooks .aiqt/config.md lists
-    is not checked here, since the hooks before the refresh are not in the tree."""
+    must equal the number of names listed, no name may be listed twice, each name must be a registered
+    handler, and a name counted as an orchestrator hook must begin with orch_. That the refresh added
+    the hooks .aiqt/config.md lists is not checked here, since the hooks before the refresh are not in
+    the tree."""
 
     # (document, anchored pattern, the derived count each group must equal)
     SENTENCES = (
@@ -1912,17 +1913,38 @@ class HookCountDisclosure(unittest.TestCase):
                 self.assertIn(name, handlers)
                 self.assertEqual(name.startswith("orch_"), name in orch_names)
 
-    def test_registry_alone_sentence_counts_the_hooks_it_lists(self):
-        found = re.findall(self.REGISTRY_ALONE, self._config_text())
-        self.assertEqual(len(found), 1, "the anchored sentence must appear exactly once")
+    def _registry_alone_problems(self, text):
+        """Each way the registry-alone sentence of text fails to count the distinct registered
+        orchestrator hooks it lists; empty when it counts them."""
+        found = re.findall(self.REGISTRY_ALONE, text)
+        if len(found) != 1:
+            return ["the anchored sentence must appear exactly once, found {}".format(len(found))]
         count, listed = found[0]
         names = self._listed(listed)
-        self.assertEqual(int(count), len(names))
+        problems = []
+        if int(count) != len(names):
+            problems.append("count {} but {} names listed".format(count, len(names)))
+        if len(set(names)) != len(names):
+            problems.append("a hook is listed more than once: {}".format(names))
         registered = set(self._registered())
         for name in names:
-            with self.subTest(hook=name):
-                self.assertIn(name, registered)
-                self.assertTrue(name.startswith("orch_"))
+            if name not in registered:
+                problems.append("{} is not a registered handler".format(name))
+            if not name.startswith("orch_"):
+                problems.append("{} is not an orchestrator hook".format(name))
+        return problems
+
+    def test_registry_alone_sentence_counts_the_hooks_it_lists(self):
+        self.assertEqual(self._registry_alone_problems(self._config_text()), [])
+
+    def test_registry_alone_check_refuses_a_hook_listed_twice(self):
+        # 1 hook listed twice must not count as 2 hooks.
+        text = self._config_text()
+        match = re.search(self.REGISTRY_ALONE, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        twice = text[:match.start(2)] + "`orch_truncation_guard` and `orch_truncation_guard`" + text[match.end(2):]
+        self.assertIn("a hook is listed more than once: ['orch_truncation_guard', 'orch_truncation_guard']",
+                      self._registry_alone_problems(twice))
 
     def test_each_registration_names_a_distinct_handler(self):
         names = self._registered()

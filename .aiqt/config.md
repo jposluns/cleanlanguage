@@ -100,26 +100,65 @@ whatever command reads the body, unless the body also leaves a quote open as abo
 `&` is not denied even when a shell runs the body and starts a background job: `bash <<'EOF'`
 with `sleep 100 &` in its body, the same through `cat <<'EOF' | bash`, and `sh <<'EOF'` with
 `sleep 100 &` and `wait` each get no decision from any Bash handler, where the hook before
-the refresh denied each. An apostrophe in a command with no `&` and none of those words is not
-denied either, in a here-document or not: `echo it's` gets no decision. A `python3 -I -`
+the refresh denied each. An apostrophe or an unterminated double quote in a command with no
+`&` and none of those words is not denied either, in a here-document or not: `echo it's` and
+`echo "unfinished` get no decision. A `python3 -I -`
 here-document with an `&` inside a Python string, or with an apostrophe inside a
 double-quoted Python string, is not denied under either delimiter, with or without a `2>&1`
 on its line or after it.
 
 The maintainer authorized 4 of the forms that the refresh stops denying, all `cat > file`
-writes (maintainer decisions Entry 59 and Entry 62). The runs found 16 further forms that
-the hook before the refresh denied and the refreshed hook does not decide, the shell-run
-bodies above among them; they are found and not authorized. Maintainer decision Entry 66
-holds pull request 275 unmerged until a guardrails pack commit that fixes the regression for
-those shell-run bodies (guardrails PR #1177) can be pinned; the refresh is then re-pinned to
-that commit, the probes are re-run and the change is re-validated. Write multi-line content
-through the Write or Edit tool (which these Bash guards never see) or through `printf` when
-the body carries such characters.
+writes (maintainer decisions Entry 59 and Entry 62). A recorded decision-table run for pull
+request 275 passed 302 forms, with stable ids, to every Bash handler of both hooks: the forms of
+its 2 reviews, of 1 reproduction runner, and of all 50 ids of the here-document payload log,
+46 of them rebuilt from the table of the run that wrote the log. It found 74 distinct forms
+that the hook before the refresh denied through `orch_truncation_guard` and the refreshed hook
+does not decide. 4 of them are the 4 authorized forms. 11 are variants of authorized kinds,
+not ruled on: each differs from 1 of the 4 only in its body text. Whether maintainer decisions
+Entry 59 and Entry 62 cover them is the maintainer's call; that question goes to the maintainer
+with the re-pin authorization that maintainer decision Entry 66 sets, not now, and until then
+they are not authorized. The other 59 are of other kinds and are not authorized, by class:
+
+- 15 here-document bodies that a shell runs (`bash`, `sh`, `bash -s` or `sh -s`, directly or
+  piped from `cat`, under a quoted, partly quoted, backslashed or `<<-` delimiter); each body
+  holds `sleep 100 &`, so each starts a background job;
+- 2 write-then-run forms, where a shell runs (`bash` or `source`) a file written from a
+  quoted-delimiter body holding `sleep 100 &`; each starts a background job;
+- 16 `cat` writes outside the authorized forms: `cat >>`, a double-quoted or backslashed
+  delimiter, 2 writes in 1 command, or a write followed by `ls 2>&1` or `echo done`;
+- 8 `tee` forms, piped from `cat` or reading the here-document itself;
+- 3 `cat` here-documents to standard output;
+- 3 `python3 -I -` bodies under a quoted delimiter: `x = 1 & 2`, `print('it\'s')` and
+  `x = 1 & 2  # it's`;
+- 5 other readers: a bare `> file` redirect under either delimiter, `wc -c`, `sed -n 1p` and
+  `ruby`;
+- 3 here-document bodies that leave a double quote open;
+- 4 commands with an open quote and no here-document: `echo it's`, `echo "unfinished`,
+  `echo 'unfinished` and `echo "it`.
+
+None of these 59 is authorized: no maintainer decision covers them, and a decision on them
+stays with the maintainer, due at the re-pin that maintainer decision Entry 66 sets. Entry 66
+holds pull request 275 unmerged until a guardrails pack commit that fixes the regression for the
+shell-run bodies (guardrails PR #1177) can be pinned; the refresh is then re-pinned to that
+commit, the probes are re-run and the change is re-validated. It is not known whether guardrails
+PR #1177 covers the write-then-run route or any class other than the shell-run bodies.
+Write multi-line content through the Write or Edit tool (which these Bash guards never see) or
+through `printf` when the body carries such characters.
 
 `gate_weakening` (gatdis) denies the 5 write-then-run commit probes that
 `tools/test-gate-weakening-probes.py` holds: a script written by a here-document or by
 `printf` that runs `git commit --no-verify` or `git commit -n`, then run with bash, sh or
-python3. It does not deny every write-then-run commit that skips hooks. In hook runs, a
+python3. Other handlers deny some of them as well. In a recorded run of the probes whose hook
+process could read every path that they name, the refreshed hook denied probe 1 through
+`gate_weakening` and `git_discard`, probes 2, 3 and 5 through `gate_weakening` alone, and
+probe 4 through `gate_weakening` and `protected_line`; probes 4 and 5 ran on a branch only.
+`review_workdir_hold` also denies a probe when the hook cannot read a path that the probe
+names (below). In the decision-table run, `gate_weakening` also denied 4 further
+write-then-run commit forms that the hook before the refresh did not decide: a script written
+by `tee` from a here-document and
+run with bash, a script written by `echo` and run with bash, a here-document script run with
+`source`, and a here-document script made executable with `chmod +x` and run by its path. It
+does not deny every write-then-run commit that skips hooks. In hook runs, a
 written script that runs `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a
 script decoded from base64 and then run with bash, got no decision from any of the 19 Bash
 handlers. The direct `git -c core.hooksPath=/dev/null commit` and
@@ -130,6 +169,36 @@ both as a segment outside its commit grammar, which the hook before the refresh 
 Since the refresh, `protected_line` (artbr1) denies a Bash `git commit` on a detached HEAD,
 with the reason "Git or filesystem probe did not succeed cleanly", where the hook before the
 refresh gave no decision: its probe of the branch that HEAD names fails when HEAD names none.
+
+The decision-table run found 39 distinct forms that the hook before the refresh did not decide
+and the refreshed hook denies. 4 are the detached-HEAD commits above (`git commit -m`,
+`git commit --allow-empty` and `git commit -F` with 2 paths); the other 35:
+
+- `protected_line` (artbr1), on a branch and on a detached HEAD, denies 14 commit forms: the
+  2 direct core.hooksPath forms and the xargs form above, `command git commit`,
+  `env git commit`, `git -c commit.gpgsign=false commit`, `git --literal-pathspecs commit`,
+  `git -C . commit`, `git status && git commit`, `echo ready && git commit`,
+  `git commit -m probe && echo done` and a commit with its output redirected to a file, as a
+  segment outside its commit grammar; `git commit -m probe; true`, as not an uninterrupted
+  `&&` chain; and `git commit -m $'probe'`, for its ANSI-C quoting. `gate_weakening` also
+  denies the redirected and the `$'probe'` forms. On a detached HEAD only, it also denies
+  `git commit --amend --no-edit`, `git commit -am probe` and `true && git commit -m probe`;
+- `protected_line` denies ANSI-C or locale quoting in a command with no git word:
+  `printf '%s\n' $'hello'`, `printf $'a\nb'`, `echo $'hello'` and `echo $"hello"`;
+- `branch_root`, `gate_weakening`, `git_discard` and `protected_line` each deny a git alias
+  defined on the command line (`git -c alias.c='commit --no-verify' c` and
+  `git -c alias.s=status s`) and `git -C $D log`; `gate_weakening` denies `git -C "$D" log`;
+- `gate_weakening` denies the 5 probes and the 4 further write-then-run forms above;
+  `git_discard` also denies probe 1, and `protected_line` also denies probe 4 (probes 4 and
+  5 ran on a branch only);
+  `review_workdir_hold` also denies a probe when the hook cannot read a path that the
+  probe names, as when the hook runs as another user, since it fails closed when it cannot
+  probe the git identity of a directory that an absolute path in the command names, so
+  whether it is among the handlers that deny a probe depends on who runs the hook;
+- `orch_truncation_guard` denies a Bash call whose working directory does not exist.
+
+In 10 further forms both hooks deny and the denying handlers differ, most often because
+`protected_line` joins them.
 
 The declared `lease` makes scope live: while the lease file is present, non-empty, and
 fresh, every session whose working directory resolves to this checkout and which can
