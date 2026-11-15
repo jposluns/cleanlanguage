@@ -609,7 +609,7 @@ def api_method(args):
 # Every fake records its call, then reads it with the same functions the
 # predicates below use (subcommand, api_options and api_method), and routes
 # each answer by the subcommand after any leading options, so a call with
-# leading options gets the answer of the same call without them. The one
+# leading options gets the answer of the same call without them. The
 # exception is gh api: the fake gh refuses a call with any option before api,
 # as gh does for -R, which gh api does not define (nor --repo).
 FAKE_COMMON = """
@@ -638,8 +638,11 @@ SUB = subcommand(NAME, ARGS)
 # tag on origin, and every gh call that writes, which the fake gh appends to
 # gh_writes. A step that changed nothing leaves all 3 as they were.
 FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
-# The seconds a step run waits, after the step exits, for the processes it
-# left running to exit before the run fails.
+# The seconds a step run waits, after the step exits, for the processes that
+# still hold the pipe the step inherited to exit before the run fails. A
+# process that closes the descriptors it inherited no longer holds the pipe,
+# so it is not waited for, and a change it makes after the step exits is
+# missed (see run_step).
 STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
@@ -733,9 +736,11 @@ elif SUB[:1] == ["tag"]:
     # The local tag points at the commit named last.
     with open(os.path.join(STATE, "local_tag"), "w", encoding="utf-8") as handle:
         handle.write(ARGS[-1])
-elif SUB[:1] == ["push"] and ARGS[-1] == "refs/tags/" + os.environ["RELEASE_TAG"]:
-    # A tag push moves the remote tag to the local one, so a later run reads
-    # the tag where an earlier run left it.
+elif SUB[:1] == ["push"] and "refs/tags/" + os.environ["RELEASE_TAG"] in SUB[1:]:
+    # A push that names the tag ref as a whole argument, wherever it stands,
+    # moves the remote tag to the local one, so a later run reads the tag
+    # where an earlier run left it. A push that names the tag in another
+    # form, such as the bare tag name or a refspec with a colon, does not.
     with open(os.path.join(STATE, "remote_tag"), "w", encoding="utf-8") as handle:
         handle.write(read("local_tag"))
 sys.exit(0)
@@ -2126,9 +2131,12 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # publication, the create call. gh api defines no -R option, so with
         # -R added before each gh api call the fake refuses the status probe,
         # as gh does, and the step stops on the unknown status with no write.
-        # The pin counts every gh word of the step as well as each kind of
-        # call, so a gh call added in any form, or given an option before its
-        # subcommand, fails it.
+        # The pin counts the text gh api, the text gh release and the word gh,
+        # so a gh call added in those forms, or given an option before its
+        # subcommand, fails it. A call that bash runs as gh but that is
+        # written otherwise, such as g\h or "g"h, escapes the pin; the runs
+        # of the renamed step at the end of this case catch it on the paths
+        # they take.
         script = step_script(PUBLISH)
         self.assertEqual((script.count("gh api "), script.count("gh release "), len(re.findall(r"\bgh\b", script))),
                          (3, 3, 6))
@@ -2164,6 +2172,28 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertFalse((self.state / "api.log").exists())
                 self.assertFalse((self.state / "release.log").exists())
                 self.assertEqual(self.fake_write_state(), self.state_before_run, self.calls())
+        # Every gh word of the step renamed gh-text, a copy of the fake gh, so
+        # each call written as the word gh reaches the fake by that name, and
+        # a call that bash still runs as gh, though written otherwise, reaches
+        # it as gh and fails here. This holds on the 3 paths these runs take
+        # (a re-run, a first publication, and the refusal of a tag push at
+        # another commit), not on a path none of them reaches.
+        self.write_exec(self.bin / "gh-text", FAKE_GH)
+        renamed = re.sub(r"\bgh\b", "gh-text", script)
+        for path in ("200", "404", "push"):
+            with self.subTest(renamed=path):
+                if path == "push":
+                    self.tag_push_mismatch(True, OTHER_COMMIT)
+                else:
+                    self.reset_calls()
+                    self.set_state(status=path, remote_tag=COMMIT, local_tag=None, gh_writes=None)
+                code, _out, err = self.run_step(PUBLISH, renamed)
+                self.assertEqual(code, 1 if path == "push" else 0, err)
+                if path == "push":
+                    self.assertIn("refusing to publish mismatched bytes", err)
+                names = [call[0] for call in self.calls()]
+                self.assertIn("gh-text", names, self.calls())
+                self.assertNotIn("gh", names, self.calls())
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
@@ -3039,7 +3069,7 @@ class ApiPathTest(WorkflowStepTest):
             with self.subTest(subcommand=sub):
                 self.assertEqual(rest[:1], [PINNED_TAG], calls)
                 self.assertEqual([arg for arg in rest if TAG_LIKE.fullmatch(arg)], [PINNED_TAG], calls)
-                self.assertEqual([arg for arg in rest if arg == "-R" or arg.startswith("--repo")], [], calls)
+                self.assertEqual([arg for arg in rest if arg.startswith(("-R", "--repo"))], [], calls)
 
     def test_determine_probe_and_published_at_read_name_the_release_tag(self):
         self.set_state(status="200")
