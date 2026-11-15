@@ -84,7 +84,8 @@ Exit codes:
      no history with HEAD, or git hash-object when it fails for the
      working-tree page, such as when a required filter fails; a merge base
      list with no line; git output that the gate cannot use, such as a
-     byte that is not ASCII in a date or an object name; a page could not
+     byte that is not ASCII in a date or an object name, or object names
+     of different lengths in the readings for a page; a page could not
      be read; tools/sitemap-config.json could not be read or used to list
      the pages; no content pages were found; or tools/web_metadata.py or
      tools/sitemap_engine.py could not be loaded
@@ -163,6 +164,7 @@ SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 # that was deleted and re-added, or moved in from elsewhere, belongs here rather
 # than being handled by weakening the check.
 PUBLISHED_OVERRIDES: dict[str, str] = {}
+
 
 # Match the ld+json script tag tolerant of attribute order and quote style, and
 # strip HTML comments before scanning so a commented-out block cannot satisfy
@@ -287,6 +289,8 @@ def _author_ok(author: object, meta_author: str) -> bool:
         if not (isinstance(name, str) and name.strip() == meta_author):
             return False
     return True
+
+
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # A page's modified stamp may sit a little before the file's last commit date:
@@ -335,7 +339,10 @@ def git(*args: str) -> bytes:
     is decoded as ASCII. Output that is not of the form that git prints
     there means that the check could not run (exit 3), as unusable() says,
     save a refname below PROTECTED_REF, which protected_base() does not
-    check against git's refname rules. A path argument is a str, which
+    check against git's refname rules. So do object names of different
+    lengths among those that last_change_date() reads for a page: the tip
+    of PROTECTED_REF, each merge base, each object name in a git ls-tree
+    entry and the git hash-object result. A path argument is a str, which
     subprocess encodes as os.fsencode() does. git runs with
     GIT_LITERAL_PATHSPECS set to 1 and without PATHSPEC_VARIABLES, so git
     log and git ls-tree read a page path as that path. git that cannot be
@@ -384,10 +391,12 @@ def unusable(args: tuple[str, ...], output: bytes) -> None:
     die(f"git {' '.join(args)} printed output that the gate cannot use: {output!r}")
 
 
-def object_name(text: str, args: tuple[str, ...], output: bytes) -> str:
+def object_name(text: str, args: tuple[str, ...], output: bytes, length: int | None = None) -> str:
     """text, which git printed for args in output, when it is an object
-    name; any other text stops the check (exit 3)."""
-    if OBJECT_NAME.fullmatch(text) is None:
+    name and, when length is given, has that length; any other text stops
+    the check (exit 3), since git prints the object names of a repository
+    at 1 length."""
+    if OBJECT_NAME.fullmatch(text) is None or (length is not None and len(text) != length):
         unusable(args, output)
     return text
 
@@ -461,9 +470,10 @@ def protected_base() -> str | None:
     a line with no object name after its first space, the
     protected refname listed twice, merge base output that is not empty
     and does not end with a line feed, a merge base line that is not 1
-    object name, an object name on more than 1 merge base line, or merge
-    base lines whose object names differ in length, since git prints the
-    object names of a repository at 1 length."""
+    object name, an object name on more than 1 merge base line, or a merge
+    base line whose object name differs in length from the tip of
+    PROTECTED_REF, since git prints the object names of a repository at 1
+    length."""
     args = ("for-each-ref", "--format=%(refname) %(objectname)", PROTECTED_REF)
     output = git(*args)
     lines = output.split(b"\n")
@@ -488,15 +498,13 @@ def protected_base() -> str | None:
     if not bases:
         die(f"git merge-base --all HEAD {tip} printed no merge base")
     for base in bases:
-        object_name(base, merge_args, output)
+        object_name(base, merge_args, output, len(tip))
     if len(set(bases)) != len(bases):
-        unusable(merge_args, output)
-    if len({len(base) for base in bases}) != 1:
         unusable(merge_args, output)
     return bases[0] if len(bases) == 1 else None
 
 
-def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
+def blob_at(revision: str, relative: str, length: int | None = None) -> tuple[str, str] | None:
     """The mode and object name of the file at relative in revision, or None
     when revision has no blob there. git ls-tree -z ends each entry with a
     NUL byte, and the entry's name is compared, as bytes, with
@@ -504,8 +512,9 @@ def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
     run (exit 3), and so does output that the gate cannot use: output that
     is not empty and does not end with a NUL byte, more than 1 entry, or an
     entry that is not a mode and type pair in TREE_ENTRIES, joined by 1
-    space, then a space, an object name, a tab and os.fsencode(relative).
-    The part before the tab is split at each single space."""
+    space, then a space, an object name, of length digits when length is
+    given, a tab and os.fsencode(relative). The part before the tab is
+    split at each single space."""
     args = ("ls-tree", "-z", revision, "--", relative)
     output = git(*args)
     entries = output.split(b"\0")
@@ -518,7 +527,7 @@ def blob_at(revision: str, relative: str) -> tuple[str, str] | None:
         fields = info.split(b" ")
         if name != os.fsencode(relative) or len(fields) != 3 or (fields[0], fields[1]) not in TREE_ENTRIES:
             unusable(args, output)
-        blob = object_name(ascii_output(fields[2], args), args, output)
+        blob = object_name(ascii_output(fields[2], args), args, output, length)
         if fields[1] == b"blob":
             return fields[0].decode("ascii"), blob
     return None
@@ -547,23 +556,25 @@ def last_change_date(relative: str) -> str | None:
     change. Otherwise the date is read at HEAD. A failed git call means that
     the check could not run, so the gate exits 3, and so does output that the
     gate cannot use, such as a git hash-object result that is not 1 line
-    holding an object name or more than 1 date from git log -1.
+    holding an object name, an object name in a git ls-tree entry or a git
+    hash-object result whose length differs from the merge base's, or more
+    than 1 date from git log -1.
     """
     revision = "HEAD"
     base = protected_base()
     if base is not None:
-        here = blob_at("HEAD", relative)
+        here = blob_at("HEAD", relative, len(base))
         # git hash-object of the working-tree path runs only when the mode
         # and blob at HEAD equal those at the base, so this function makes
         # from 2 to 6 git calls for a page, at most 1 of them git
         # hash-object.
-        if here is not None and here == blob_at(base, relative):
+        if here is not None and here == blob_at(base, relative, len(base)):
             args = ("hash-object", "--", relative)
             output = git(*args)
             lines = output_lines(output, args)
             if len(lines) != 1:
                 unusable(args, output)
-            if object_name(lines[0], args, output) == here[1]:
+            if object_name(lines[0], args, output, len(base)) == here[1]:
                 revision = base
     dates = commit_dates("log", "-1", "--format=%cs", revision, "--", relative, most=1)
     return dates[0] if dates else None

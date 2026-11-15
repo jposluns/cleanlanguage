@@ -981,13 +981,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         os.environ["HOME"] = home
         os.environ["XDG_CONFIG_HOME"] = home
 
-    def start_repository(self) -> None:
+    def start_repository(self, *options: str) -> None:
         root = Path(tempfile.mkdtemp(dir=self.scratch)).resolve()
         gate.REPO_ROOT = root
         gate.SITE_ROOT = root / "site"
         gate.SITE_ROOT.mkdir()
         self.page = gate.SITE_ROOT / "index.html"
-        self.git("init", "-q", "--template=", "-b", "main")
+        self.git("init", "-q", "--template=", "-b", "main", *options)
 
     @staticmethod
     def _restore_roots(saved):
@@ -1734,11 +1734,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # From here until os.environ is restored, each git call whose
         # arguments after -C and the folder start with prefix prints output
         # in place of git's stdout, through a git on PATH that runs the real
-        # git and keeps its stderr and exit code. In output, {main} stands
-        # for main's tip and {blob} for the page's blob at HEAD.
+        # git and keeps its stderr and exit code. In prefix and output,
+        # {main} stands for main's tip, and in output {blob} stands for the
+        # page's blob at HEAD.
         real = shutil.which("git")
         self.assertIsNotNone(real)
-        output = output.replace(b"{main}", self.git("rev-parse", "main").strip().encode("ascii"))
+        main = self.git("rev-parse", "main").strip()
+        prefix = tuple(arg.replace("{main}", main) for arg in prefix)
+        output = output.replace(b"{main}", main.encode("ascii"))
         output = output.replace(b"{blob}", self.git("rev-parse", "HEAD:site/index.html").strip().encode("ascii"))
         folder = Path(tempfile.mkdtemp(dir=self.scratch))
         (folder / "git").write_text(f"#!{sys.executable} -I\n" + FAKE_GIT, encoding="utf-8")
@@ -1747,12 +1750,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                           PAGE_METADATA_FAKE_OUTPUT=output.hex())
         os.environ["PATH"] = str(folder) + os.pathsep + os.environ["PATH"]
 
-    def check_with_fake_git(self, prefix: tuple[str, ...], output: bytes) -> tuple[list[str] | None, str]:
-        # A new repository holds a page restored exactly with the protected
-        # ref. With fake_git() set for prefix and output, the gate checks
-        # its history and the page. The return value is the page's problems,
-        # or None when the check stops with exit 3, and the gate's stderr.
-        self.start_repository()
+    def check_with_fake_git(self, prefix: tuple[str, ...], output: bytes,
+                            *options: str) -> tuple[list[str] | None, str]:
+        # A new repository, made with git init and options, holds a page
+        # restored exactly with the protected ref. With fake_git() set for
+        # prefix and output, the gate checks its history and the page. The
+        # return value is the page's problems, or None when the check stops
+        # with exit 3, and the gate's stderr.
+        self.start_repository(*options)
         self.change_and_restore_on_branch()
         stderr = io.StringIO()
         with mock.patch.dict(os.environ), contextlib.redirect_stderr(stderr):
@@ -1802,9 +1807,12 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # below it, or whose refname and object name are joined by a
         # character other than a space; a merge base line that is not 1
         # object name, the same object name on 2 merge base lines, next to
-        # each other or not, merge base lines whose object names differ in
-        # length, or merge base output that does not end with a line feed;
-        # a tree entry
+        # each other or not, the first or the last of them, a merge base
+        # line whose object name differs in length from main's tip, first,
+        # in the middle or last, or merge base output that does not end
+        # with a line feed; an object name of 64 digits beside main's tip
+        # of 40 in the tree entry at HEAD or at the merge base, or from git
+        # hash-object; a tree entry
         # whose mode and type are not a pair that git
         # prints, whose fields are joined by other than 1 space, or which
         # has no object name; a line that git prints with leading or
@@ -1826,6 +1834,15 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n"),
                   (("merge-base",), b"{main}\n{main}" + b"0" * 24 + b"\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n" + b"2" * 40 + b"\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n" + b"2" * 64 + b"\n"),
+                  (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n" + b"2" * 64 + b"\n"),
+                  (("merge-base",), b"1" * 64 + b"\n{main}\n" + b"2" * 40 + b"\n"),
+                  (("merge-base",), b"{main}\n{main}\n" + b"1" * 40 + b"\n"),
+                  (("merge-base",), b"1" * 64 + b"\n"),
+                  (("merge-base",), b"1" * 64 + b"\n" + b"2" * 64 + b"\n"),
+                  (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"0123456789abcdef" * 4)),
+                  (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", b"0123456789abcdef" * 4)),
+                  (("hash-object",), b"0123456789abcdef" * 4 + b"\n"),
                   *[(("ls-tree",), entry.replace(b"100644 blob", pair))
                     for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
                                  b"040000 blob", b"040000 commit", b"160000 blob", b"160000 tree",
@@ -1848,6 +1865,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("log", "--diff-filter=A"), b"2026-01-01 \n"),
                   (("log", "--diff-filter=A"), b"\n2026-01-01\n"),
                   (("log", "--diff-filter=A"), b"2026-01-01\r\n"),
+                  (("log", "--diff-filter=A"), b"2026-01-01\nyesterday\n"),
                   (("log", "-1"), b"2026-02-02"),
                   (("log", "-1"), b"\n")]
         for prefix, output in cases:
@@ -1873,8 +1891,8 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # Output of the form that git prints is read: a tree or a gitlink
         # entry at the page's path is no blob, so the page is read at HEAD;
         # an added date of 1999-09-29 is compared with the published stamp;
-        # and an object name of 64 digits, as under SHA-256, from git
-        # hash-object is compared with the blob and differs.
+        # and an object name of 40 digits from git hash-object, the length
+        # of the blob's, is compared with the blob and differs.
         for output in (b"040000 tree {blob}\tsite/index.html\0", b"160000 commit {blob}\tsite/index.html\0"):
             with self.subTest(output=output):
                 problems, stderr = self.check_with_fake_git(("ls-tree",), output)
@@ -1885,10 +1903,36 @@ class ProtectedLineHistoryTest(unittest.TestCase):
             self.assertIsNotNone(problems, stderr)
             self.assertIn("article:published_time is 2026-01-01 but git shows the file was added 1999-09-29; "
                           "correct the stamp, or record the exception in PUBLISHED_OVERRIDES", problems)
-        with self.subTest(output="64 digits"):
-            problems, stderr = self.check_with_fake_git(("hash-object",), b"0123456789abcdef" * 4 + b"\n")
+        with self.subTest(output="40 digits"):
+            problems, stderr = self.check_with_fake_git(("hash-object",), b"0123456789abcdef" * 2 + b"01234567\n")
             self.assertIsNotNone(problems, stderr)
             self.assert_stamp_problem(problems, "2026-02-02")
+
+    def test_shorter_object_name_in_sha256_repository_exits_3(self):
+        # In a repository whose object names have 64 digits, an object name
+        # of 40 digits as the merge base, in the tree entry at HEAD or at
+        # the merge base, or from git hash-object stops the check with exit
+        # 3, as a longer one does beside a tip of 40 digits.
+        name = b"0123456789abcdef" * 2 + b"01234567"
+        entry = b"100644 blob {blob}\tsite/index.html\0"
+        for prefix, output in ((("merge-base",), name + b"\n"),
+                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", name)),
+                               (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", name)),
+                               (("hash-object",), name + b"\n")):
+            with self.subTest(prefix=prefix, output=output):
+                problems, stderr = self.check_with_fake_git(prefix, output, "--object-format=sha256")
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed output that the gate cannot use", stderr)
+
+    def test_restored_page_in_sha256_repository_passes(self):
+        # In a repository whose object names have 64 digits, as under
+        # SHA-256, the tip, the merge base, the blobs and the git
+        # hash-object result each have 64, so a page restored exactly with
+        # the protected ref passes.
+        self.start_repository("--object-format=sha256")
+        self.change_and_restore_on_branch()
+        self.assertEqual(len(self.git("rev-parse", "main").strip()), 64)
+        self.assertEqual(self.problems(), [])
 
     def test_real_git_output_is_read(self):
         # Real git prints, through the gate's git(), a tree entry of mode
@@ -2164,16 +2208,21 @@ class AuthorEntryTest(_PatchedGateTest):
     def test_name_is_trimmed_of_each_isspace_character_and_no_other(self):
         # Each character for which str.isspace() is true, such as U+0085,
         # U+00A0, U+3000 and U+001C to U+001F, is removed from the ends of
-        # a name, as a string or as a value object; a character for which
-        # it is false, such as U+200B or U+FEFF, is kept.
+        # a name, as a string or as a value object; each other character,
+        # such as U+200B, U+2060 or U+FEFF, is kept, so the name with it
+        # at its ends does not match. Every code point is checked.
         spaces = [chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()]
         for char in ("\x85", "\xa0", chr(0x3000), "\x1c", "\x1d", "\x1e", "\x1f"):
             self.assertIn(char, spaces)
-        for char in [*spaces, chr(0x200B), chr(0xFEFF), chr(0x180E), "x"]:
+        for char in (chr(0x200B), chr(0x2060), chr(0xFEFF), chr(0x180E), "x"):
+            self.assertNotIn(char, spaces)
+        wrong = []
+        for code in range(sys.maxunicode + 1):
+            char = chr(code)
             for name in (char + "Jeff Posluns" + char, {"@value": char + "Jeff Posluns" + char}):
-                with self.subTest(char=f"U+{ord(char):04X}", name=name):
-                    entry = {"@type": "Person", "name": name}
-                    self.assertEqual(gate._author_ok(entry, "Jeff Posluns"), char in spaces)
+                if gate._author_ok({"@type": "Person", "name": name}, "Jeff Posluns") != char.isspace():
+                    wrong.append((f"U+{code:04X}", name))
+        self.assertEqual(wrong, [])
         member = ', "author": {"@type": "Person", "name": "\\u3000Jeff Posluns\\u00a0"}'
         self.assertEqual(self.problems(member), [])
 
@@ -2200,6 +2249,19 @@ class GateGuardTest(_PatchedGateTest):
                 block = article('{"@type": "Person", "name": "Mallory"}').replace(
                     '<script type="application/ld+json">', f'<script type="{kind}">')
                 self.assertEqual(self.check(PAGE.format(json_ld=block)), [WRONG_PRIMARY_AUTHOR])
+
+    def test_type_with_other_white_space_is_not_collected(self):
+        # Only ASCII white space, space, TAB, LF, FF and CR, is removed from
+        # the ends of the type attribute, so a type with another character
+        # at its ends, such as VT, U+00A0 or U+2060, is no ld+json type and
+        # the block is not collected.
+        others = [chr(code) for code in range(sys.maxunicode + 1)
+                  if chr(code).isspace() and chr(code) not in " \t\n\f\r"]
+        for char in [*others, chr(0x200B), chr(0x2060)]:
+            with self.subTest(char=f"U+{ord(char):04X}"):
+                block = article('{"@type": "Person", "name": "Mallory"}').replace(
+                    '<script type="application/ld+json">', f'<script type="{char}application/ld+json{char}">')
+                self.assertEqual(self.check(PAGE.format(json_ld=block)), [NO_AUTHOR_MESSAGE])
 
     def test_unclosed_empty_block_at_end_is_no_block(self):
         # An ld+json script that is opened at the end of the page and holds
@@ -2241,17 +2303,36 @@ class GateGuardTest(_PatchedGateTest):
     def test_failed_git_message_trims_each_isspace_character_and_no_other(self):
         # git's stderr is trimmed as str.strip() trims it: each character
         # at its ends for which str.isspace() is true, such as U+3000,
-        # U+001C and U+0085, is removed, and U+200B is kept.
-        failed = subprocess.CompletedProcess(
-            ["git"], 1, stdout=b"",
-            stderr=(chr(0x3000) + "\x1cfatal: bad" + chr(0x200B) + "\x85\n").encode("utf-8"))
+        # U+001C and U+0085, is removed at the start and at the end, and
+        # each other character, such as U+200B, is kept. Every code point
+        # other than a surrogate, which UTF-8 does not encode, is checked.
+        spaces = [chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()]
+        for char in ("\x85", chr(0x3000), "\x1c", "\n"):
+            self.assertIn(char, spaces)
+        self.assertNotIn(chr(0x200B), spaces)
+        printed = [b""]
         stderr = io.StringIO()
-        with mock.patch.object(gate.subprocess, "run", lambda *args, **kwargs: failed), \
-                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
-            gate.git("status")
-        self.assertEqual(caught.exception.code, 3)
-        self.assertEqual(stderr.getvalue(),
-                         "check-page-metadata: git status failed: fatal: bad" + chr(0x200B) + "\n")
+        wrong = []
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(gate.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(
+                    ["git"], 1, stdout=b"", stderr=printed[0])), \
+                contextlib.redirect_stderr(stderr):
+            for code in itertools.chain(range(0xD800), range(0xE000, sys.maxunicode + 1)):
+                char = chr(code)
+                printed[0] = (char + "fatal: bad" + char).encode("utf-8")
+                stderr.seek(0)
+                stderr.truncate()
+                try:
+                    gate.git("status")
+                except SystemExit as error:
+                    exit_code = error.code
+                else:
+                    exit_code = None
+                kept = "" if char in spaces else char
+                if (exit_code != 3 or stderr.getvalue()
+                        != f"check-page-metadata: git status failed: {kept}fatal: bad{kept}\n"):
+                    wrong.append(f"U+{code:04X}")
+        self.assertEqual(wrong, [])
 
     def test_element_other_than_script_with_ld_json_type_is_not_collected(self):
         # Only a script element is collected: another element with the
