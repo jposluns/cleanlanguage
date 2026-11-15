@@ -19,7 +19,9 @@ permissions, keeps no credentials after checkout and stops the job
 after 10 minutes. tools/ci-status.py does not insist on the new check.
 tools/run_all_checks.sh runs the gate's suite, and
 tools/test-run-all-checks.py lists the workflow's event step as an
-exception, with the suite in its place.
+exception, with the suite in its place. The label lint,
+tools/test-no-qa-labels.py, names the workflow in SCANNED, the files
+it scans for review-history labels.
 
 Residuals include, for example: a defect in a form the patterns miss,
 such as an upper-case revision id or an -ise stem the denylist lacks;

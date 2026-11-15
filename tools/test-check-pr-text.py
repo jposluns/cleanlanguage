@@ -39,9 +39,10 @@ scan, a case that the scan ends on each shape of backtick run, the memory, CPU a
 of a child, a case that a grandchild ends with its timed-out parent, a static case that every
 child runs under its limits, the job's time limit in the workflow, and honest texts that pass.
 MutantSweep generates the mutation sites of the gate from its source, checks that each has a row
-or an argument that it is equivalent, and runs the cases each row names on a copy of the gate
-with the site applied; its docstring states its operators, its kill and equivalence criterion,
-its rule for a child that hits a limit and its residual. The class of counts stated with their
+or an argument that it is equivalent or that its mutated gate does not load, and runs the
+cases each row names on a copy of the gate with the site applied; its docstring states its
+operators, its kill, equivalence and load criteria, its rule for a child that hits a limit and
+its residual. The class of counts stated with their
 selection rule has no case: it stays a judgement for reviewers, because no part of it is
 mechanical.
 """
@@ -289,9 +290,12 @@ def run_child(args, *, memory, timeout, cwd, stack=None, cpu=GATE_CPU, **options
     session, the gate child would be in a group of its own, which the kill of the sweep child's
     group would not reach. A nested call that times out kills its own child by its PID alone,
     since a kill of the group would kill its caller too; a process that child started stays in
-    the outermost group, which only the outermost call's timeout or exception kills. A gate child
-    starts no process. A child in a new session also leaves the group of the process that starts
-    it, so a signal sent to that group, such as SIGINT from a terminal, does not reach it.
+    the outermost group, which only the outermost call's timeout or exception kills, unless it
+    leaves that group, as a process that starts its own session does: the kill of the outermost
+    group does not reach such a process, which can outlive it. A gate child starts no process,
+    and the guarantee that a child ends with its group does not cover a process that starts its
+    own session. A child in a new session also leaves the group of the process that starts it,
+    so a signal sent to that group, such as SIGINT from a terminal, does not reach it.
 
     A child stopped by its wall timeout raises subprocess.TimeoutExpired. A child whose output
     names MemoryError, as the gate's report does when it stops on its memory limit, and a child
@@ -599,6 +603,21 @@ class DefectClasses(GateCase):
 
     def test_number_name_outside_a_squash_folder_is_not_bound(self):
         result = self.run_gate("--squash", self.write("998.txt", CLEAN_SQUASH))
+        self.assertResult(result, 0, 0)
+        self.assertIn("pr-text: subject binding not checked", result[1])
+
+    def test_squash_subject_with_its_number_before_its_end_fails(self):
+        # The subject must end with the number; holding it elsewhere is not enough.
+        result = self.squash("Add a thing (#999) again\n\nBody.\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, 'squash:1: the subject does not end with " (#999)"')
+
+    def test_squash_folder_outside_a_github_folder_is_not_bound(self):
+        # The name binds only in a folder squash inside a folder .github.
+        folder = self.tmp / "other" / "squash"
+        folder.mkdir(parents=True)
+        (folder / "999.txt").write_text("Add a thing (#5)\n\nBody.\n", encoding="utf-8")
+        result = self.run_gate("--squash", folder / "999.txt")
         self.assertResult(result, 0, 0)
         self.assertIn("pr-text: subject binding not checked", result[1])
 
@@ -1325,6 +1344,19 @@ class UnreadableInputs(GateCase):
         gate = self.tree(squash=CLEAN_SQUASH, lint=False)
         (gate.parent / "test-no-qa-labels.py").write_text(lint)
         return self.run_gate("--description", self.write("d.md", "Hi.\n"), gate=gate)
+
+    def test_hit_that_cannot_be_printed_is_not_counted(self):
+        # A lint whose scan returns a bytes hit, alone or after a text hit: the gate stops on
+        # the hit it cannot print, and its count line counts the defect lines it printed.
+        for hits, printed in (("[rel.encode() + b':1: x']", 0),
+                              ("[rel + ':1: x', rel.encode() + b':1: y']", 1)):
+            with self.subTest(hits=hits):
+                result = self.run_lint("def scan(rel, text):\n    return " + hits + "\n")
+                shutil.rmtree(self.tmp / "tree")
+                defects = [line for line in result[1] if line.startswith("description")]
+                self.assertEqual(len(defects), printed, result[1])
+                self.assertResult(result, 2, printed)
+                self.assertReports(result, "unexpected error: TypeError")
 
     def test_lint_interrupted_while_it_loads_exits_2(self):
         self.assertUnreadable(self.run_lint("raise KeyboardInterrupt\n"),
@@ -3317,8 +3349,6 @@ SWEEP_ROWS = {
     '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]` made plain, at its 1st '
     'occurrence':
         (E + 'test_ise_word_inside_url_passes',),
-    'in the pattern URL, the escape of `\\(` removed, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in the pattern URL, the member `\\s` deleted from the class '
     '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]`, at its 2nd occurrence':
         (E + 'test_each_url_stopper_ends_a_parenthesis_pair',),
@@ -3367,8 +3397,6 @@ SWEEP_ROWS = {
         (E + 'test_long_url_with_a_parenthesis_pair_passes',),
     'in the pattern URL, the quantifier `*` changed to `+`, at its 1st occurrence':
         (E + 'test_empty_parenthesis_pair_is_part_of_a_url',),
-    'in the pattern URL, the escape of `\\)` removed, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in the pattern URL, the alternative '
     '`[^\\s<>\\"\'`()\\u2013\\u2014\\u201c\\u201d\\u2018\\u2019]` deleted, at its 1st occurrence':
         (E + 'test_ise_word_inside_url_passes',),
@@ -3673,6 +3701,39 @@ EQUIVALENT_SITES = {
         'the pattern is matched with fullmatch, which must reach the end of the text either '
         'way, so a lazy run matches the same texts.',
 }
+
+# The generated sites whose mutated gate does not load: a pattern that the site changes no
+# longer compiles, so re.compile raises re.error when the gate's module runs, before any check.
+# Each entry carries the argument; test_uncompilable_sites_are_those_whose_gate_does_not_load
+# checks that these, and no other sites, raise re.error when their mutated gate loads.
+UNCOMPILABLE_SITES = {
+    'in the pattern URL, the escape of `\\(` removed, at its 1st occurrence':
+        'the ( opens a group, which takes the ) that closed the group of the 2 alternatives, so '
+        'that group is never closed and re.compile raises re.error, missing ), when the gate '
+        'loads.',
+    'in the pattern URL, the escape of `\\)` removed, at its 1st occurrence':
+        'the ) closes the group of the 2 alternatives, so the ) that closed it has no group to '
+        'close and re.compile raises re.error, unbalanced parenthesis, when the gate loads.',
+}
+# The child of that case: it loads this suite by path, applies each site that generate_sites()
+# yields from the gate source, runs the module level of each mutated gate, with a name other
+# than __main__, so its patterns compile and main() does not run, and prints a JSON object of
+# the sites whose module level raises, each with re.error or the type name of its error.
+LOAD_CHECK = (
+    "import importlib.util, json, re, sys\n"
+    "spec = importlib.util.spec_from_file_location('suite', sys.argv[1])\n"
+    "suite = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(suite)\n"
+    "source = open(sys.argv[2], encoding='utf-8').read()\n"
+    "failed = {}\n"
+    "for site in suite.generate_sites(source):\n"
+    "    try:\n"
+    "        code = compile(suite.apply_site(source, site), sys.argv[2], 'exec')\n"
+    "        exec(code, {'__name__': 'mutant', '__file__': sys.argv[2]})\n"
+    "    except Exception as error:\n"
+    "        failed[site.words] = 're.error' if isinstance(error, re.error) else (\n"
+    "            type(error).__name__)\n"
+    "print(json.dumps(failed))\n")
 
 
 def row(words, old, new, ids, count=1, target="gate"):
@@ -4122,6 +4183,21 @@ HAND_ROWS = (
         'print(prefix + detail)',
         [O + 'test_carriage_return_and_del_are_escaped']),
     row(
+        'a defect counted before its line is printed',
+        '        emit(prefix, detail)\n        self.count += 1\n',
+        '        self.count += 1\n        emit(prefix, detail)\n',
+        [U + 'test_hit_that_cannot_be_printed_is_not_counted']),
+    row(
+        'the subject binding met by a subject that holds its suffix anywhere',
+        'if not subject.endswith(suffix):',
+        'if suffix not in subject:',
+        [D + 'test_squash_subject_with_its_number_before_its_end_fails']),
+    row(
+        'the squash folder of the name binding taken without its .github folder',
+        'parts[-3:-1] == (".github", "squash")',
+        'parts[-2] == "squash"',
+        [D + 'test_squash_folder_outside_a_github_folder_is_not_bound']),
+    row(
         "the job's time limit removed from the workflow",
         '    timeout-minutes: 10\n',
         '',
@@ -4198,10 +4274,11 @@ class MutantSweep(unittest.TestCase):
     old text occurs.
 
     The adequacy test runs no mutant. It fails when a generated site has neither a row in
-    SWEEP_ROWS nor an entry in EQUIVALENT_SITES, when a row or an entry names a site the
-    generator does not yield, and when an operator of OPERATORS yields no site, since each of
-    them has a site in the gate as it stands, so a broken generator cannot pass by yielding
-    nothing. HAND_ROWS holds rows the generator does not make, which it leaves alone.
+    SWEEP_ROWS nor an entry in EQUIVALENT_SITES or UNCOMPILABLE_SITES, when a row or an entry
+    names a site the generator does not yield, and when an operator of OPERATORS yields no
+    site, since each of them has a site in the gate as it stands, so a broken generator cannot
+    pass by yielding nothing. HAND_ROWS holds rows the generator does not make, which it leaves
+    alone.
 
     The kill criterion: a row is killed when its named cases, run on a copy of the tree with
     the site or the hand row applied, exit 1 with FAILED, under the limit-hit rule. Each sweep
@@ -4224,7 +4301,14 @@ class MutantSweep(unittest.TestCase):
     timeout. A site is equivalent only when the
     mutated gate gives the same exit status and the same output, byte for byte, as the gate on
     every input; each entry of EQUIVALENT_SITES carries the argument. A site that changes only
-    the reason in a line is not equivalent: it has a row whose case pins that reason. For each
+    the reason in a line is not equivalent: it has a row whose case pins that reason. A site is
+    uncompilable when its mutated gate does not load, as when a pattern it changes no longer
+    compiles: every case that runs that gate fails because the gate does not load, not for the
+    reason the site changes, so no case can kill it as a row asks, and UNCOMPILABLE_SITES lists
+    it with the argument instead of a row. The case
+    test_uncompilable_sites_are_those_whose_gate_does_not_load runs the module level of the
+    mutated gate of every generated site in 1 child under run_child() and fails unless the sites
+    that raise are exactly those listed, each with re.error. For each
     row the sweep copies the gate, this suite, the label lint and the workflow into a fresh
     temporary tree, checks that the old text occurs the recorded number of times, applies the
     change and runs the named cases there in a separate process. The named cases also pass on
@@ -4334,6 +4418,8 @@ class MutantSweep(unittest.TestCase):
         names = [sweep_row[0] for sweep_row in HAND_ROWS]
         self.assertEqual(len(names), len(set(names)), "each hand row needs its own name")
         self.assertFalse(set(SWEEP_ROWS) & set(EQUIVALENT_SITES))
+        self.assertFalse(set(SWEEP_ROWS) & set(UNCOMPILABLE_SITES))
+        self.assertFalse(set(EQUIVALENT_SITES) & set(UNCOMPILABLE_SITES))
         for words, target, old, new, count, ids in HAND_ROWS:
             with self.subTest(row=words):
                 self.assertIn(target, SWEEP_TARGETS)
@@ -4346,7 +4432,7 @@ class MutantSweep(unittest.TestCase):
                     class_name, _, method = case.partition(".")
                     self.assertNotEqual(class_name, type(self).__name__, "the sweep would recurse")
                     self.assertTrue(hasattr(globals().get(class_name), method), case)
-        for words, argument in EQUIVALENT_SITES.items():
+        for words, argument in list(EQUIVALENT_SITES.items()) + list(UNCOMPILABLE_SITES.items()):
             with self.subTest(site=words):
                 self.assertTrue(argument.strip())
         rows = set(SWEEP_ROWS) | set(names)
@@ -4358,12 +4444,19 @@ class MutantSweep(unittest.TestCase):
 
     def test_generated_sites_are_adequate(self):
         generated = set(self.sites)
-        listed = set(SWEEP_ROWS) | set(EQUIVALENT_SITES)
+        listed = set(SWEEP_ROWS) | set(EQUIVALENT_SITES) | set(UNCOMPILABLE_SITES)
         self.assertEqual(sorted(generated - listed), [], "generated sites with no row")
         self.assertEqual(sorted(listed - generated), [], "rows of sites not generated")
         counts = collections.Counter(site.operator for site in self.sites.values())
         self.assertEqual([operator for operator in OPERATORS if not counts[operator]], [],
                          "operators with no site")
+
+    def test_uncompilable_sites_are_those_whose_gate_does_not_load(self):
+        done = run_child(["-I", "-B", "-c", LOAD_CHECK, SUITE, GATE], memory=GATE_MEMORY,
+                         timeout=GATE_TIMEOUT, cwd=HERE, text=True, encoding="utf-8")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout),
+                         {words: "re.error" for words in UNCOMPILABLE_SITES})
 
     def test_pattern_built_in_an_unread_way_fails_by_name(self):
         # A gate copy whose pattern joins an inline tuple, or picks its pattern by a condition,

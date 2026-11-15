@@ -139,9 +139,13 @@ The exit contract. The gate decides its exit status in this order:
 4. Otherwise, it exits 0.
 
 In each case the last line is "pr-text: <n> defect(s)", where <n> counts the defects reported
-before the gate stopped. Every output line starts with 1 of the fixed ASCII prefixes
-description, squash, unreadable: and pr-text:, and every character outside printable ASCII in a
-reported line is written as a backslash escape, so no author text starts a line of output.
+before the gate stopped. A defect is counted only once its line is printed, so <n> is the number
+of defect lines in the output: a hit of the lint that cannot be printed, such as one that is not
+text, is not counted, and the gate stops on it as on any other exception it catches, exits 2
+and reports it with a line that starts "unreadable: ". Every output line starts with 1 of the
+fixed ASCII prefixes description, squash, unreadable: and pr-text:, and every character outside
+printable ASCII in a reported line is written as a backslash escape, so no author text starts a
+line of output.
 
 Unreadable input is a file that the gate cannot read, whatever the OSError that the read
 raises, such as a missing file, a folder given as a file or a file it may not read; a squash
@@ -150,7 +154,8 @@ request or whose body is neither null nor text, and a payload number that is not
 integer; a working directory that cannot be read when a relative squash path needs it; and a
 lint that cannot be loaded or that raises, exits or is interrupted while it loads. The gate
 catches every exception raised while it reads and checks, SystemExit and KeyboardInterrupt
-among them, such as from a scan of the lint, and reports it as unreadable with its type name.
+among them, such as from a scan of the lint or from a hit it returns that cannot be printed,
+and reports it as unreadable with its type name.
 Each handler that writes a caught error into a report line writes it through describe(), or,
 for an OSError, writes its strerror when that is set, so an error whose message cannot be
 formatted, even one whose formatting exits, still ends in the count line.
@@ -249,8 +254,9 @@ class Report:
         self.count = 0
 
     def defect(self, prefix, detail):
-        self.count += 1
+        """Print 1 defect line, then count it: a line that cannot be printed is not counted."""
         emit(prefix, detail)
+        self.count += 1
 
     def note(self, prefix, detail):
         emit(prefix, detail)
