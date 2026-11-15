@@ -3546,29 +3546,60 @@ def check_version_literals(failures: list[str]) -> int:
     return 1
 
 
-# The scopes that bindings() does not enter, since a name bound inside one of them, other than by :=, is bound in
-# that scope and not in the scope being read.
-NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda, ast.ListComp, ast.SetComp,
-                 ast.DictComp, ast.GeneratorExp)
+# The comprehensions, each a scope of its own in which a := still binds in the scope around it.
+COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def header(node: ast.AST) -> list[ast.AST]:
+    """The expressions of a def, async def, class or lambda that run in the scope around it: the decorators of a def
+    or class, the defaults and keyword-only defaults of a def or lambda, the annotations and return annotation of a
+    def, and the bases and keyword values of a class. A := in an annotation is read too, although the compiler
+    refuses it on Python 3.14 and under `from __future__ import annotations` an annotation is never run."""
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(keyword.value for keyword in node.keywords)]
+    arguments = node.args
+    found = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    if isinstance(node, ast.Lambda):
+        return found
+    every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+             *(extra for extra in (arguments.vararg, arguments.kwarg) if extra is not None)]
+    return [*node.decorator_list, *found, *(argument.annotation for argument in every if argument.annotation),
+            *([node.returns] if node.returns else [])]
 
 
 def bindings(nodes: list[ast.AST]) -> list[tuple[str, ast.AST]]:
     """The names that the statements bind in their own scope in the forms read here, with the node that binds each: a
-    def, async def or class by its name, an import by the name it binds, and an except, match or store target such
-    as an assignment, for or with target. A nested scope is not entered, apart from the decorators of a def or class,
-    which run in this scope; so a := inside a comprehension or lambda, which binds in this scope, is not read, nor is
-    a global statement in another scope."""
+    def, async def or class by its name, an import by the name it binds, an except, match or store target such as
+    an assignment, for or with target, and a := target. A nested scope is not entered, apart from what runs in this
+    scope or binds in it: the header() of a def, async def, class or lambda, the first iterable of a comprehension,
+    and a := anywhere in a comprehension, which binds in the scope around it. So a := in the body of a lambda, a
+    def or a class, which binds in that scope, is not read, nor is a global statement in another scope."""
     found: list[tuple[str, ast.AST]] = []
-    stack = list(nodes)
+    # (node, whether only := targets bind here): the parts of a comprehension other than its first iterable run in
+    # its own scope, where only a := binds a name in the scope being read.
+    stack = [(node, False) for node in nodes]
     while stack:
-        node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        node, named_only = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and not named_only:
             found.append((node.name, node))
-            stack.extend(node.decorator_list)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack += [(part, named_only) for part in header(node)]
             continue
-        if isinstance(node, NESTED_SCOPES):
+        if isinstance(node, COMPREHENSIONS):
+            first, *rest = node.generators
+            stack.append((first.iter, named_only))
+            inner = [first.target, *first.ifs, *rest]
+            inner += [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            stack += [(part, True) for part in inner]
             continue
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.NamedExpr):
+            # Its target is read here and not again as a store name.
+            found.append((node.target.id, node))
+            stack.append((node.value, named_only))
+            continue
+        if named_only:
+            pass
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
             found += [((alias.asname or alias.name).split(".")[0], node) for alias in node.names]
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             found.append((node.id, node))
@@ -3576,7 +3607,7 @@ def bindings(nodes: list[ast.AST]) -> list[tuple[str, ast.AST]]:
             found.append((node.name, node))
         elif isinstance(node, ast.MatchMapping) and node.rest:
             found.append((node.rest, node))
-        stack.extend(ast.iter_child_nodes(node))
+        stack += [(child, named_only) for child in ast.iter_child_nodes(node)]
     return found
 
 
@@ -3585,8 +3616,8 @@ def case_group_problems(source: str) -> list[str]:
     exactly once at the top level, by a def without a decorator; each top-level check_* name must be bound exactly
     once, by a def or async def without a decorator; main() must bind no check_* name itself; and main() must hold a
     call by the name of each top-level check_* name. So a second def of main or of a group, an assignment of either
-    name, an import of a group, a decorator on either, a binding of a group inside main(), and a deleted call each
-    fail; GUARD_FORMS holds 1 or more of each."""
+    name, a := binding of either in a place that WALRUS_PLACES names, an import of a group, a decorator on either, a
+    binding of a group inside main(), and a deleted call each fail; GUARD_FORMS holds 1 or more of each."""
     tree = ast.parse(source)
     top = bindings(tree.body)
     mains = [node for name, node in top if name == "main"]
@@ -3631,6 +3662,21 @@ GUARD_FORMS = [
     ("a group rebound inside main()", f"    {CALL}\n", f"    {GROUP} = len\n    {CALL}\n"),
     ("a group defined again inside main()", f"    {CALL}\n", f"    def {GROUP}(failures):\n        return 3\n    {CALL}\n"),
 ]
+# (place, code that binds NAME by := there): each place where a := outside a plain statement binds in the top-level
+# scope, as bindings() reads it.
+WALRUS_PLACES = [
+    ("a decorator", "\n@(NAME := staticmethod)\ndef bound_here():\n    return 0\n"),
+    ("a default", "\ndef bound_here(value=(NAME := len)):\n    return 0\n"),
+    ("a keyword-only default", "\ndef bound_here(*, value=(NAME := len)):\n    return 0\n"),
+    ("a parameter annotation", "\ndef bound_here(value: (NAME := len)):\n    return 0\n"),
+    ("a return annotation", "\ndef bound_here() -> (NAME := len):\n    return 0\n"),
+    ("a class base", "\nclass BoundHere((NAME := object)):\n    pass\n"),
+    ("a class keyword", "\nclass BoundHere(metaclass=(NAME := type)):\n    pass\n"),
+    ("a lambda default", "\nbound_here = lambda value=(NAME := len): 0\n"),
+    ("a comprehension", "\nbound_here = [(NAME := value) for value in (len,)]\n"),
+]
+GUARD_FORMS += [(f"{name} bound by := in {place}", None, code.replace("NAME", name))
+                for place, code in WALRUS_PLACES for name in ("main", GROUP)]
 
 
 def check_case_groups_called(failures: list[str]) -> int:
@@ -3640,8 +3686,8 @@ def check_case_groups_called(failures: list[str]) -> int:
     runs (under a false condition or after an early return it does not), that its count and failures are kept, or
     that it is not removed from main() itself, since a guard that does not run cannot fail. It reads only the
     bindings that the source shows as names: a check_* function defined inside a class or another function is not
-    a case group, and a binding through globals(), setattr(), exec(), a global statement inside another function or
-    := inside a comprehension or lambda is not read."""
+    a case group, and a binding through globals(), setattr(), exec() or a global statement inside another function
+    is not read. A := in the header of a def, class or lambda or in a comprehension is read, as bindings() says."""
     source = Path(__file__).read_text(encoding="utf-8")
     failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
     for form, anchor, replacement in GUARD_FORMS:

@@ -73,8 +73,10 @@ Exit codes:
      is missing or not first in the block, the stated count is wrong, or inline
      code was reintroduced
   3  a check could not be evaluated. Before any check runs, the gate stops on
-     2 conditions: the download or the page is missing or not a regular file,
-     or the download could not be read or decoded. While the checks run, it
+     2 conditions: the download or the page is missing, could not be read
+     or is not a regular file, or the download could not be read or decoded.
+     A missing file is reported as not existing, and any other error of the
+     lookup as could not be read, with the error. While the checks run, it
      collects these refusals: the embedded block was not found exactly once;
      the stated count was not found exactly once; tools/check-inline-code.py is
      not a regular file, could not be read, raised an exception while it
@@ -93,7 +95,11 @@ An exception from tools/check-inline-code.py, while it loads or while it
 checks the page, is a refusal whatever its class: SystemExit with any code
 and any other BaseException subclass included, apart from KeyboardInterrupt,
 which is not caught, so that Ctrl-C still stops the gate. An exception whose
-repr or str raises is named by its class instead. The gate reads
+repr or str raises, or gives something other than a str, is named by its
+class instead, and a class whose name cannot be read as a str, because its
+metaclass raises or gives something else, is named by fixed words. So
+describing a refusal raises nothing other than KeyboardInterrupt, and the
+refusal is collected with the problems found. The gate reads
 inline_code_problems and UnsupportedPython from the module's own namespace,
 so the gate never calls a module __getattr__.
 
@@ -155,16 +161,37 @@ class Refused(Exception):
     with the other checks; main() reports it on stderr and exits 3."""
 
 
+# The words that stand for a class whose name cannot be read as text.
+UNNAMED = "an object of a class whose name could not be read"
+
+
+def class_name(value: object) -> str:
+    """The name of the value's class, or UNNAMED when reading it raises any exception other than KeyboardInterrupt or
+    gives something other than a str. A metaclass can run code when __name__ is read, so the read is guarded."""
+    try:
+        name = type(value).__name__
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        return UNNAMED
+    return name if type(name) is str else UNNAMED
+
+
 def described(error: BaseException, form=repr) -> str:
-    """The error as text, by repr or by str. An exception whose repr or str raises, or gives something other than
-    text, is named by its class instead, so that describing a refusal never ends in a traceback."""
+    """The error as text, by repr or by str. An exception whose repr or str raises any exception other than
+    KeyboardInterrupt, or gives something other than a str, is named by its class instead, by class_name(), which
+    gives fixed words when the class name cannot be read either. So describing a refusal raises nothing other than
+    KeyboardInterrupt, and the refusal is collected."""
+    how = "str" if form is str else "repr"
     try:
         text = form(error)
     except KeyboardInterrupt:
         raise
     except BaseException as inner:
-        return f"{type(error).__name__} (its {form.__name__} raised {type(inner).__name__})"
-    return text if type(text) is str else type(error).__name__
+        return f"{class_name(error)} (its {how} raised {class_name(inner)})"
+    if type(text) is str:
+        return text
+    return f"{class_name(error)} (its {how} gave {class_name(text)}, not str)"
 
 
 def load_inline_gate():
@@ -215,7 +242,7 @@ def inline_code_problems(text: str) -> list[str]:
         for problem in reader(text):
             problem = str(problem)
             if type(problem) is not str:
-                raise TypeError(f"a problem is {type(problem).__name__}, not str")
+                raise TypeError(f"a problem is {class_name(problem)}, not str")
             problems.append(problem)
         return problems
     except KeyboardInterrupt:
@@ -242,8 +269,11 @@ def main() -> int:
     for path in (SOURCE, *(page for page, _ in PAGES)):
         try:
             info = os.lstat(path)
-        except OSError:
+        except FileNotFoundError:
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
+        except OSError as error:
+            # A folder that cannot be searched, for example, is not a missing file.
+            die(f"{path.relative_to(REPO_ROOT)} could not be read: {error}")
         if not stat.S_ISREG(info.st_mode):
             die(f"{path.relative_to(REPO_ROOT)} is not a regular file")
 

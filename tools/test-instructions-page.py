@@ -39,9 +39,17 @@ states a wrong count: its reader raising ValueError, SystemExit(0),
 SystemExit(5) or a BaseException subclass, returning None, raising an
 exception whose repr raises, or giving a problem whose str raises; the file
 raising SystemExit(0) or a BaseException subclass while it loads; an
-UnsupportedPython that is not an exception class; and a module __getattr__
-that raises ValueError beside a renamed inline_code_problems. Each asserts
-exit 3, the refusal on stderr and the count problem on stdout.
+UnsupportedPython that is not an exception class; a module __getattr__
+that raises ValueError beside a renamed inline_code_problems; and, from
+description_faults(), a step of describing an exception or naming a problem
+raising SystemExit(0) or ValueError, among them a class whose metaclass
+raises when its name is read. Each asserts exit 3, the refusal on stderr and
+the count problem on stdout.
+
+2 cases set the mode of the folder that holds the download or the page to
+000 and assert exit 3 with "could not be read" and the permission error, so
+a gate that reports such a lookup error as a missing file fails them. Like
+the other mode-000 cases, they are skipped under root.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -415,11 +423,98 @@ INLINE_FAULTS = [
                appended("def __getattr__(name):\n    raise ValueError('getattr')\n")),
         "defines no inline_code_problems"),
 ]
+# The gate's words for a class whose name cannot be read.
+UNNAMED = "an object of a class whose name could not be read"
+# (its name in a case name, its class name in the refusal, the code that raises it): each is raised at 1 step of a
+# description.
+RAISED = [("SystemExit(0)", "SystemExit", "SystemExit(0)"), ("ValueError", "ValueError", "ValueError('raised')")]
+
+
+def unnamed(raised: str) -> str:
+    """A metaclass whose classes raise the given exception when their __name__ is read."""
+    return f"class Unnamed(type):\n    @property\n    def __name__(cls):\n        raise {raised}\n\n"
+
+
+# (where the description is made, the base class of the raised exception, the code that raises it, the method the
+# gate calls to describe it, the words of the refusal before the description).
+DESCRIBED_AT = [
+    ("while it loads", "Exception", "raise Boom()\n", "__repr__", "could not be loaded: "),
+    ("in its reader", "Exception", "def inline_code_problems(text, svg=False):\n    raise Boom()\n", "__repr__",
+     "could not check the page: "),
+    ("as an UnsupportedPython in its reader", "UnsupportedPython",
+     "def inline_code_problems(text, svg=False):\n    raise Boom()\n", "__str__", ""),
+]
+
+
+def description_faults() -> list[tuple[str, object, str]]:
+    """For each place where the gate describes an exception, and for SystemExit(0) and ValueError, 1 fault at each
+    step of the description: the exception's repr or str raising, its class name raising after that, the class name
+    of the exception that its repr or str raised raising, its repr or str giving a str subclass while its class name
+    raises, and its repr or str giving a str subclass whose own class name raises. The existing case of the reader's
+    repr raising ValueError is not repeated."""
+    found = []
+    for where, base, raiser, method, before in DESCRIBED_AT:
+        how = method.strip("_")
+        for label, words, raised in RAISED:
+            steps = [
+                (f"its {how} raising {label}", f"class Boom({base}):\n    def {method}(self):\n        raise {raised}\n\n",
+                 f"Boom (its {how} raised {words})"),
+                (f"its class name raising {label}",
+                 unnamed(raised) + f"class Boom({base}, metaclass=Unnamed):\n    def {method}(self):\n"
+                 "        raise ValueError('text')\n\n", f"{UNNAMED} (its {how} raised ValueError)"),
+                (f"the class name of what its {how} raised raising {label}",
+                 unnamed(raised) + "class Inner(Exception, metaclass=Unnamed):\n    pass\n\n"
+                 f"class Boom({base}):\n    def {method}(self):\n        raise Inner()\n\n",
+                 f"Boom (its {how} raised {UNNAMED})"),
+                (f"its {how} giving a str subclass and its class name raising {label}",
+                 unnamed(raised) + "class Text(str):\n    pass\n\n"
+                 f"class Boom({base}, metaclass=Unnamed):\n    def {method}(self):\n        return Text('text')\n\n",
+                 f"{UNNAMED} (its {how} gave Text, not str)"),
+                (f"its {how} giving a str subclass whose class name raises {label}",
+                 unnamed(raised) + "class Text(str, metaclass=Unnamed):\n    pass\n\n"
+                 f"class Boom({base}):\n    def {method}(self):\n        return Text('text')\n\n",
+                 f"Boom (its {how} gave {UNNAMED}, not str)"),
+            ]
+            found += [(f"raising an exception {where}, {step}", appended(code + raiser), before + description)
+                      for step, code, description in steps
+                      if (where, step) != ("in its reader", "its repr raising ValueError")]
+    for label, words, raised in RAISED:
+        found.append((f"its reader giving a problem whose class name raises {label}",
+                      appended(unnamed(raised) + "class Text(str, metaclass=Unnamed):\n    def __str__(self):\n"
+                               "        return self\n\n"
+                               "def inline_code_problems(text, svg=False):\n    return [Text('text')]\n"),
+                      f"could not check the page: TypeError('a problem is {UNNAMED}, not str')"))
+    found.append(("its reader giving a problem whose str raises SystemExit(0)",
+                  appended("class BadText:\n    def __str__(self):\n        raise SystemExit(0)\n\n"
+                           "def inline_code_problems(text, svg=False):\n    return [BadText()]\n"),
+                  "could not check the page: SystemExit(0)"))
+    return found
+
+
+INLINE_FAULTS += description_faults()
 LOAD_CASES += [(f"tools/check-inline-code.py {name}, and the stated count wrong",
                 faults(edit(PAGE, f"saves ({SAVED} characters)", f"saves ({SAVED - 1} characters)"), fault),
                 (3, f"check-instructions-page: tools/check-inline-code.py {words}",
                  f"the page states {SAVED - 1} characters for the full download"))
                for name, fault, words in INLINE_FAULTS]
+
+
+def unsearchable(relative: str):
+    """Set the mode of the folder that holds the file to 000, so that looking the file up fails with a permission
+    error and not because the file is missing."""
+    def apply(root: Path) -> None:
+        os.chmod((root / relative).parent, 0)
+    return apply
+
+
+# A lookup error other than a missing file, here a folder that cannot be searched, is reported as could not be
+# read, not as not existing.
+LOAD_CASES += [
+    ("the download in a folder with mode 000", unsearchable(FILES[0]),
+        (3, f"check-instructions-page: {FILES[0]} could not be read: [Errno 13] Permission denied")),
+    ("the page in a folder with mode 000", unsearchable(PAGE),
+        (3, f"check-instructions-page: {PAGE} could not be read: [Errno 13] Permission denied")),
+]
 # Root reads a file whatever its mode, so under root a mode-000 case cannot
 # fail to read: it is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
