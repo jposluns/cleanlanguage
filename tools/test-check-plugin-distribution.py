@@ -23,14 +23,17 @@ inconsistencies, and "UNREADABLE: exit 3".
   and, with the FAIL lines and the count line and no traceback, a plugin
   entry name that is an array or an object, a marketplace name that is an
   array where a qualified dependency reads it, and a manifest name that is
-  an array where its entry and its own dependencies read it; and a plugin
+  an array where its entry and its own dependencies read it; a plugin
   name listed twice in the repository's marketplace and in the vendored
-  one, there also in another letter case.
+  one, there also in another letter case; and, in the vendored one, a
+  marketplace name with a reserved prefix and a plugin name listed twice
+  that are equal only under Unicode case folding (a long s).
 - The sources check fails on: a missing source folder; a source with a "..",
-  a "." or an empty component, the "." in each marketplace; a source with a
-  NUL character or with a character the file system encoding cannot hold;
-  a source with a component too long for the file system, in each
-  marketplace; a source in each marketplace, or a .claude-plugin folder,
+  a "." or an empty component, the "." and the empty component in each
+  marketplace; a source with a NUL character or with a character the file
+  system encoding cannot hold, in each marketplace; a source with a
+  component too long for the file system, in each marketplace; a source in
+  each marketplace, a .claude-plugin folder or a manifest file name,
   spelled in another letter case on a file system that folds letter case,
   which the case imitates by giving the gate an os.lstat, an os.open and
   an os.listdir that fold letter case; a source without "./"; a
@@ -41,32 +44,37 @@ inconsistencies, and "UNREADABLE: exit 3".
   repository's entry that reaches another plugin or a copy of this one.
 - The versions check fails on: a version that differs in the Claude
   manifest, the Agent Plugins manifest, the SKILL.md Version: line or a
-  marketplace entry; a version that is missing, empty or not a string; and a
-  SKILL.md with no Version: line.
+  marketplace entry; a version that is missing, empty or not a string; a
+  SKILL.md with no Version: line; and a SKILL.md whose first Version: line
+  is not a bare X.Y.Z, alone or before a valid one.
 - The dependencies check fails on: a dependency that names no plugin of its
   marketplace, is qualified with another marketplace or with an empty one
-  (a name and "@" alone), or names the plugin itself, from a marketplace
-  entry, as a bare or a qualified name, or from a plugin manifest; on a
-  plugin that 1 list names twice, as the same bare name, as a bare and a
-  qualified name, or in a plugin manifest; and on dependencies that are not
+  (a name and "@" alone), or names the plugin itself, from an entry and from
+  a plugin manifest of each marketplace, from the repository's entry as a
+  bare and as a qualified name; on a plugin that 1 list names twice, from
+  an entry and from a plugin manifest of each marketplace, as the same
+  bare name, as a bare and a qualified name, or as a qualified and a bare
+  name; and on dependencies that are not
   a list, a JSON null in a marketplace entry and in a plugin manifest of
   each marketplace among them, or not names, an empty string among them.
   Dependencies that
   resolve pass, among them 2 that a plugin entry holds on 2 other plugins of
   its marketplace, and 3 lists that each name the same plugin once.
 - Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
-  regular file; an input file and a source folder that deny permission;
-  NaN; JSON nested 1 level deeper than the gate's bound of 64, which every
+  regular file; an input file and a source folder that deny permission; an
+  input folder and a source folder that can be searched but not listed
+  (mode 0111); NaN; JSON nested 1 level deeper than the gate's bound of 64, which every
   supported Python decodes, in arrays and in objects, while JSON at the
   bound passes, in arrays with escaped quotes and brackets inside a string
   and in objects, and so does JSON nested 3 levels deep that holds more
   than 64 arrays, or more than 64 objects, in all; a JSON file that is not
   an object; a file or a SKILL.md that is not UTF-8; a symlinked input file
-  or input folder; an input folder spelled in another letter case on a file
-  system that folds letter case, imitated as above; and an extractor that
-  is missing, symlinked, raises an exception
-  or SystemExit while it loads, lacks VERSION_LINE or SKILL_VERSION, or
-  holds either as a pattern of bytes.
+  or input folder; an input folder and an input file name spelled in
+  another letter case on a file system that folds letter case, imitated as
+  above; and an extractor that is missing, symlinked, raises an exception
+  or SystemExit while it loads, lacks VERSION_LINE or SKILL_VERSION, holds
+  either as a pattern of bytes, has a SKILL_VERSION with no group 1, or has
+  one whose group 1 takes no part in its match.
 - Run as a command, the gate exits 0, 1 and 3 with the same last lines.
 - The count lines read "1 relative source", "1 dependency" and "FAIL: 1
   inconsistency" for 1, and the plural for 0 and for more than 1.
@@ -75,7 +83,8 @@ A last case runs the gate on the repository itself and requires exit 0 and a
 last line "OK:", so this test fails while the repository's own names,
 sources, versions or dependencies disagree.
 
-The permission cases need a user whose permissions the file system enforces,
+The permission cases, the 2 of mode 0111 among them, need a user whose
+permissions the file system enforces,
 so they are skipped when the test runs as root.
 
 The SKILL.md version is read by a copy of the real tools/skill-version.py in
@@ -507,11 +516,17 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(3, f"site-src/site.json is nested too deeply to decode: more than {MAX_JSON_DEPTH} levels")
 
     def test_source_with_empty_component_fails_d2(self):
-        for source in ("./aiqt-guardrails-hooks/", ".//aiqt-guardrails-hooks"):
-            with self.subTest(source=source):
-                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
-                self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source '{source}' has "
-                               "an empty, '.' or '..' component")
+        for rel, folder in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
+            for source in (f"./{folder}/", f".//{folder}"):
+                with self.subTest(rel=rel, source=source):
+                    saved = (self.root / rel).read_bytes()
+                    self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
+                    try:
+                        output = self.expect(1, f"FAIL D2: {rel} plugins[0].source '{source}' has an empty, '.' or "
+                                                "'..' component", "1 relative source resolved")
+                        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                    finally:
+                        (self.root / rel).write_bytes(saved)
 
     # The extractor: reached from REPO_ROOT, and exit 3 when it cannot be used.
 
@@ -649,6 +664,8 @@ class PluginDistributionTest(unittest.TestCase):
                  ".claude-plugin/marketplace.json plugins[0]", "cleanlanguage@cleanlanguage"),
                 (gate.CLAUDE_MANIFEST, lambda d: d.update(dependencies=["cleanlanguage"]),
                  "cleanlanguage/.claude-plugin/plugin.json", "cleanlanguage"),
+                (gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["aiqt-guardrails-hooks"]),
+                 "plugin/.claude-plugin/marketplace.json plugins[0]", "aiqt-guardrails-hooks"),
                 (hooks, lambda d: d.update(dependencies=["aiqt-guardrails-hooks@aiqt-guardrails"]),
                  hooks, "aiqt-guardrails-hooks@aiqt-guardrails")):
             with self.subTest(label=label, dep=dep):
@@ -682,11 +699,17 @@ class PluginDistributionTest(unittest.TestCase):
                     (self.root / rel).write_bytes(saved)
 
     def test_source_that_is_no_path_fails_d2(self):
-        for source, shown in (("./a\x00b", "'./a\\x00b'"), ("./\ud800", "'./\\ud800'")):
-            with self.subTest(source=shown):
-                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
-                self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source {shown} is not a "
-                               "path the operating system accepts")
+        for rel in (gate.MARKETPLACE, gate.VENDORED_MARKETPLACE):
+            for source, shown in (("./a\x00b", "'./a\\x00b'"), ("./\ud800", "'./\\ud800'")):
+                with self.subTest(rel=rel, source=shown):
+                    saved = (self.root / rel).read_bytes()
+                    self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
+                    try:
+                        output = self.expect(1, f"FAIL D2: {rel} plugins[0].source {shown} is not a path the "
+                                                "operating system accepts", "1 relative source resolved")
+                        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                    finally:
+                        (self.root / rel).write_bytes(saved)
 
     # Cases for a "." component, an unusable source, a null dependency list, the depth count, the scope
     # of the repeated-dependency check, denied permissions and the command-line entry point.
@@ -792,17 +815,20 @@ class PluginDistributionTest(unittest.TestCase):
 
     def test_source_in_another_letter_case_fails_d2(self):
         # Each spelling reaches its folder through a folding os.lstat, but is not how the folder lists it.
+        # A stored name is renamed for the last 2: the .claude-plugin folder and the manifest's final file name.
         folder = self.root / "plugin/aiqt-guardrails-hooks/.claude-plugin"
         for rel, source, rename, shown in (
-                (gate.MARKETPLACE, "./CleanLanguage", False, "CleanLanguage"),
-                (gate.VENDORED_MARKETPLACE, "./AIQT-Guardrails-Hooks", False, "plugin/AIQT-Guardrails-Hooks"),
-                (gate.VENDORED_MARKETPLACE, "./aiqt-guardrails-hooks", True,
-                 "plugin/aiqt-guardrails-hooks/.claude-plugin")):
-            with self.subTest(source=source, rename=rename):
+                (gate.MARKETPLACE, "./CleanLanguage", None, "CleanLanguage"),
+                (gate.VENDORED_MARKETPLACE, "./AIQT-Guardrails-Hooks", None, "plugin/AIQT-Guardrails-Hooks"),
+                (gate.VENDORED_MARKETPLACE, "./aiqt-guardrails-hooks", (folder, ".Claude-Plugin"),
+                 "plugin/aiqt-guardrails-hooks/.claude-plugin"),
+                (gate.VENDORED_MARKETPLACE, "./aiqt-guardrails-hooks", (folder / "plugin.json", "Plugin.json"),
+                 "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json")):
+            with self.subTest(source=source, rename=rename and rename[1]):
                 saved = (self.root / rel).read_bytes()
                 self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
                 if rename:
-                    folder.rename(folder.with_name(".Claude-Plugin"))
+                    rename[0].rename(rename[0].with_name(rename[1]))
                 try:
                     with mock.patch.object(gate, "os", FoldingOs(self.root)):
                         output = self.expect(1, f"FAIL D2: {rel} plugins[0].source '{source}' does not resolve: {shown} "
@@ -812,7 +838,7 @@ class PluginDistributionTest(unittest.TestCase):
                 finally:
                     (self.root / rel).write_bytes(saved)
                     if rename:
-                        folder.with_name(".Claude-Plugin").rename(folder)
+                        rename[0].with_name(rename[1]).rename(rename[0])
 
     def test_input_folder_in_another_letter_case_exits_3(self):
         (self.root / "site-src").rename(self.root / "Site-Src")
@@ -832,13 +858,13 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertNotIn("FAIL", output)
 
     @contextlib.contextmanager
-    def denied(self, rel: str):
-        """rel with every permission taken away, given back before the tree is removed."""
+    def denied(self, rel: str, kept: int = 0):
+        """rel with every permission but those of kept taken away, given back before the tree is removed."""
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("root is not refused by file permissions")
         path = self.root / rel
         mode = path.stat().st_mode
-        path.chmod(0)
+        path.chmod(kept)
         try:
             yield
         finally:
@@ -851,6 +877,85 @@ class PluginDistributionTest(unittest.TestCase):
     def test_source_folder_denying_permission_exits_3(self):
         with self.denied("plugin/aiqt-guardrails-hooks"):
             self.expect(3, "plugin/aiqt-guardrails-hooks/.claude-plugin could not be read: Permission denied")
+
+    # Cases for a folder that can be searched but not listed, a malformed first Version: line, a final
+    # file name in another letter case, names equal only under case folding, a dependency listed twice
+    # in the repository's marketplace and an extractor pattern with no usable group 1.
+
+    def test_source_folder_that_cannot_be_listed_exits_3(self):
+        # Mode 0111: os.lstat reaches the .claude-plugin folder inside, but os.listdir of the folder fails.
+        with self.denied("plugin/aiqt-guardrails-hooks", 0o111):
+            self.expect(3, "plugin/aiqt-guardrails-hooks could not be listed: Permission denied")
+
+    def test_input_folder_that_cannot_be_listed_exits_3(self):
+        # Mode 0111: os.lstat reaches site.json, but os.listdir of site-src fails.
+        with self.denied("site-src", 0o111):
+            self.expect(3, "site-src/site.json could not be read: Permission denied")
+
+    def test_malformed_first_version_line_fails_d3(self):
+        # The first Version: line is not a bare X.Y.Z, alone and before a valid one, which is never read.
+        for lines in (f"Version: {VERSION} beta\n", f"Version: {VERSION} beta\n\nVersion: {VERSION}\n"):
+            with self.subTest(lines=lines):
+                self.write_text(gate.SKILL_MD, "---\nname: cleanlanguage\n---\n\n# Clean Language\n\n" + lines)
+                output = self.expect(1, "FAIL D3: cleanlanguage/skills/cleanlanguage/SKILL.md Version: line is None, "
+                                        "not a version")
+                self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+
+    def test_input_file_name_in_another_letter_case_exits_3(self):
+        (self.root / gate.SITE_JSON).rename(self.root / "site-src/Site.json")
+        with mock.patch.object(gate, "os", FoldingOs(self.root)):
+            self.expect(3, "site-src/site.json could not be read: the component 'site.json' is not spelled as its "
+                           "folder lists it")
+
+    def test_names_equal_under_case_folding_fail_d1(self):
+        # The long s (U+017F) folds to "s", while str.lower keeps it.
+        name = "anthropic\u017f-hooks"
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(name=name))
+        self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json name {name!r} starts with a reserved prefix")
+        self.write_json(gate.VENDORED_MARKETPLACE, vendored())
+        name = "aiqt-\u017fkill"
+        self.add_vendored("aiqt-skill")
+        self.write_json("plugin/aiqt-skill-copy/.claude-plugin/plugin.json", manifest(name, "0.4.0"))
+        self.edit_json(gate.VENDORED_MARKETPLACE,
+                       lambda d: d["plugins"].append({"name": name, "source": "./aiqt-skill-copy"}))
+        output = self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json plugins[2].name {name!r} lists the "
+                                "plugin of plugins[1] a second time, which this gate refuses",
+                             "4 relative sources resolved")
+        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+
+    def test_repeated_dependency_in_the_repository_marketplace_fails_d4(self):
+        # A second plugin there, so that its entry and manifest can name a plugin other than their own; the
+        # second entry and the source it reaches are the 2 other failures.
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"].append({"name": "helper", "source": "./helper"}))
+        self.write_json("helper/.claude-plugin/plugin.json", manifest("helper"))
+        for rel, change, label, dep in (
+                (gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["helper", "helper@cleanlanguage"]),
+                 ".claude-plugin/marketplace.json plugins[0]", "helper@cleanlanguage"),
+                (gate.CLAUDE_MANIFEST, lambda d: d.update(dependencies=["helper@cleanlanguage", "helper"]),
+                 "cleanlanguage/.claude-plugin/plugin.json", "helper")):
+            with self.subTest(label=label):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, change)
+                try:
+                    output = self.expect(1, f"FAIL D4: {label} dependency {dep!r} names the plugin 'helper' a second "
+                                            "time, which this gate refuses",
+                                         "FAIL D1: .claude-plugin/marketplace.json lists 2 plugins, not exactly 1",
+                                         "FAIL D2: .claude-plugin/marketplace.json plugins[1].source './helper' reaches "
+                                         "helper/.claude-plugin/plugin.json, not cleanlanguage/.claude-plugin/plugin.json",
+                                         "3 relative sources resolved, 2 dependencies read")
+                    self.assertEqual(output.splitlines()[-1], "FAIL: 3 inconsistencies")
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
+    def test_extractor_pattern_without_group_1_exits_3(self):
+        for old, new, shown in (
+                (r"([0-9]+\.[0-9]+\.[0-9]+)", r"(?:[0-9]+\.[0-9]+\.[0-9]+)", "its SKILL_VERSION pattern has no group 1"),
+                ('SKILL_VERSION = re.compile(r"^Version:', 'SKILL_VERSION = re.compile(r"^(unused)?Version:',
+                 f"its SKILL_VERSION pattern matched 'Version: {VERSION}  ' with no text in group 1")):
+            with self.subTest(new=new):
+                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                self.edit_extractor(old, new)
+                self.expect(3, f"the extractor tools/skill-version.py could not be used: {shown}")
 
     def test_gate_runs_as_a_command(self):
         # A copy of the gate in the tree, so its REPO_ROOT is the tree, run as CI runs it.

@@ -15,12 +15,16 @@ the plan's numbering, which CHECKS maps to the names used here.
       plugin entry name in either marketplace (the repository's and the
       vendored plugin/.claude-plugin/marketplace.json) is missing, is not a
       string or is empty, or starts with a reserved prefix of
-      RESERVED_PREFIXES in any letter case; no marketplace lists 2 plugin
-      entries whose names are the same in any letter case; and in both
-      marketplaces each plugin entry whose source resolves has the name of
-      the plugin manifest it reaches. Whether the Claude Code CLI reserves
-      the prefixes in any letter case, or refuses a plugin name listed twice,
-      is not known offline, so the gate refuses both, in every letter case.
+      RESERVED_PREFIXES after Unicode case folding (str.casefold); no
+      marketplace lists 2 plugin entries whose names are the same after
+      case folding; and in both marketplaces each plugin entry whose source
+      resolves has the name of the plugin manifest it reaches. Whether the
+      Claude Code CLI reserves the prefixes in any letter case, or refuses a
+      plugin name listed twice, is not known offline, so the gate refuses
+      both under case folding, which takes in every letter case and such
+      forms as the long s. A name that matches only under another mapping,
+      such as a capital I with a dot above (U+0130), which case folding
+      turns into 2 characters, is not refused.
   Sources exist: in both marketplaces each plugin entry has a string source
       that starts with "./", has no empty, no "." and no ".." component and
       is a path the operating system accepts (a NUL character, or a
@@ -96,7 +100,9 @@ will not let the gate reach, or a folder on its way that it will not let the
 gate list, for a cause other than a missing or too long name, such as a
 denied permission; or an
 extractor that cannot be used, because it raises any exception while it
-loads or lacks a VERSION_LINE or SKILL_VERSION pattern of text. The cause
+loads, lacks a VERSION_LINE or SKILL_VERSION pattern of text, has a
+SKILL_VERSION pattern with no group 1, or has one whose group 1 takes no
+part in its match of the first Version: line. The cause
 goes to standard error, with a last line "UNREADABLE: exit 3". The gate
 fails closed: it never passes a check it could not make.
 
@@ -269,8 +275,9 @@ def load_json(rel: str) -> dict:
 
 def extractor_patterns() -> tuple:
     """VERSION_LINE and SKILL_VERSION of the shared extractor, whose bytes are reached and read like
-    every other input and run as read, never opened again by path. Any exception while it runs, or a
-    pattern that is missing or is not a compiled pattern of text, makes the extractor unusable."""
+    every other input and run as read, never opened again by path. Any exception while it runs, a
+    pattern that is missing or is not a compiled pattern of text, or a SKILL_VERSION pattern with no
+    group 1 to hold the version, makes the extractor unusable."""
     source = read_bytes(EXTRACTOR)
     namespace = {"__name__": "skill_version"}
     try:
@@ -283,6 +290,8 @@ def extractor_patterns() -> tuple:
         if not isinstance(pattern, re.Pattern) or not isinstance(pattern.pattern, str):
             raise Unreadable(f"the extractor {EXTRACTOR} could not be used: it has no {name} pattern of text")
         patterns.append(pattern)
+    if patterns[1].groups < 1:
+        raise Unreadable(f"the extractor {EXTRACTOR} could not be used: its SKILL_VERSION pattern has no group 1")
     return tuple(patterns)
 
 
@@ -297,7 +306,13 @@ def skill_version() -> str | None:
         raise Unreadable(f"{SKILL_MD} is not UTF-8: {error}") from error
     line = version_line.search(text)
     match = skill_version_pattern.match(line.group(0)) if line else None
-    return match.group(1) if match else None
+    if not match:
+        return None
+    value = match.group(1)
+    if not isinstance(value, str):
+        raise Unreadable(f"the extractor {EXTRACTOR} could not be used: its SKILL_VERSION pattern matched "
+                         f"{line.group(0)!r} with no text in group 1")
+    return value
 
 
 def plugin_entries(rel: str, data: dict, failures: list, check: str) -> list:
@@ -334,7 +349,7 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
             failures.append(f"D1: {label} is {value!r}, not {PROJECT!r}")
     for rel, data in markets.items():
         names = [(f"{rel} name", data.get("name"))]
-        # The index of the first entry with each plugin name in lower case, so that a second is refused.
+        # The index of the first entry with each plugin name after case folding, so that a second is refused.
         listed: dict = {}
         repeats = []
         for index, entry in enumerate(data.get("plugins") if isinstance(data.get("plugins"), list) else []):
@@ -342,7 +357,7 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
                 name = entry.get("name")
                 names.append((f"{rel} plugins[{index}].name", name))
                 if isinstance(name, str) and name:
-                    key = name.lower()
+                    key = name.casefold()
                     if key in listed:
                         repeats.append(f"D1: {rel} plugins[{index}].name {name!r} lists the plugin of "
                                        f"plugins[{listed[key]}] a second time, which this gate refuses")
@@ -351,7 +366,7 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
         for label, value in names:
             if not isinstance(value, str) or not value:
                 failures.append(f"D1: {label} is {value!r}, not a name")
-            elif value.lower().startswith(RESERVED_PREFIXES):
+            elif value.casefold().startswith(RESERVED_PREFIXES):
                 failures.append(f"D1: {label} {value!r} starts with a reserved prefix")
         failures.extend(repeats)
 
