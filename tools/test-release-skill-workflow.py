@@ -25,8 +25,9 @@ The fakes of ``git`` and ``gh`` answer only the calls listed in
 with its kind (a read, or the change it makes). The fakes and the call
 predicates find the row of a call through the same function, ``row_of``.
 A call that matches no row is recorded by the fake that refused it, and the
-run that made it fails unless the case opts out and gives its reason, so an
-unknown call is never counted as harmless.
+run that made it fails, whatever the exit code of the step, unless the case
+opts out and gives its reason as a text that is not empty or white space, so
+an unknown call is never counted as harmless.
 The table lists call shapes; it does not model how ``git`` or ``gh`` read
 their options.
 
@@ -546,7 +547,8 @@ def script_reads(script: str) -> set[str]:
 # predicates below read a recorded call by the same row, so the routing is
 # written once, here. A call that matches no row is off the table: the fake
 # records it in the state file "unmodelled", gives no answer and exits 97,
-# and run_step fails the run that made it unless the case opts out. The
+# and run_step fails the run that made it, whatever the exit code of the
+# step, unless the case opts out with a reason. The
 # table states the call shapes of the workflow only; it does not model how
 # git or gh read their options.
 CALL_FORMS = (
@@ -919,7 +921,11 @@ class WorkflowStepTest(unittest.TestCase):
         code, output and error output. A run in which the fake git or gh
         records a call off CALL_FORMS fails its test, whatever the step's exit
         code, unless the case opts out by giving off_table, the reason it
-        makes such a call on purpose."""
+        makes such a call on purpose. An off_table that is not a text with a
+        character other than white space raises ValueError before the step
+        runs, so an empty reason cannot opt out."""
+        if off_table is not None and (not isinstance(off_table, str) or not off_table.strip()):
+            raise ValueError(f"run_step: off_table must be a reason with text, not {off_table!r}")
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
         # The fake state as the run found it, for a later no-change assertion.
@@ -1106,6 +1112,62 @@ def is_tag_operation(call):
     return is_tag(call) or is_push(call)
 
 
+# Each predicate that reads a call through the table, by name, and the rows
+# whose calls it reads as true. The rows are written out here, not taken
+# from the kinds of CALL_FORMS, so a predicate that reads a row it should
+# not, or misses one, fails test_each_predicate_reads_only_the_calls_of_its_rows.
+PREDICATE_ROWS = (
+    ("is_tag", is_tag, {"tag", "tag-force"}),
+    ("is_push", is_push, {"push", "push-force"}),
+    ("is_create", is_create, {"create"}),
+    ("is_lookup", is_lookup, {"lookup"}),
+    ("is_field_read published_at", is_field_read("published_at"), {"published_at"}),
+    ("is_field_read immutable", is_field_read("immutable"), {"immutable"}),
+    ("is_tag_operation", is_tag_operation, {"tag", "tag-force", "push", "push-force"}),
+    ("is_mutation", is_mutation, {"tag", "tag-force", "push", "push-force", "create"}),
+)
+# A value for each slot of SLOTS, from which the call of each row is built.
+SLOT_SAMPLES = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
+                "<REPO>": "jposluns/cleanlanguage", "<DIR>": "/d"}
+
+
+def row_call(template):
+    """The arguments of the call built from template, each slot replaced by
+    its value in SLOT_SAMPLES."""
+    return [re.sub(r"<[A-Z]+>", lambda slot: SLOT_SAMPLES[slot.group(0)], piece) for piece in template]
+
+
+def near_misses(program, template):
+    """The calls that differ from the call of a row by 1 change each, as a
+    label and the call: 1 argument added after the others, 1 option added
+    before them, the last argument dropped, the arguments given to the other
+    program of the table, each character of the template outside its slots
+    replaced by X (or Y in place of an X) and each letter there by its other
+    case, and the option -x in place of each slot. None of them matches a
+    row."""
+    args = row_call(template)
+    other = [name for name in TABLE_PROGRAMS if name != program][0]
+    calls = [("an argument added", [program, [*args, "x"]]),
+             ("an option before the arguments", [program, ["--x", *args]]),
+             ("the last argument dropped", [program, args[:-1]]),
+             ("the arguments given to " + other, [other, args])]
+    for index, piece in enumerate(template):
+        parts = re.split(r"(<[A-Z]+>)", piece)
+        for part_index, part in enumerate(parts):
+            if part in SLOTS:
+                changed = row_call(["".join(parts[:part_index] + ["-x"] + parts[part_index + 1:])])[0]
+                calls.append((f"-x in place of {part} in argument {index}",
+                              [program, [*args[:index], changed, *args[index + 1:]]]))
+                continue
+            for char_index, char in enumerate(part):
+                for other_char in sorted({"Y" if char == "X" else "X", char.swapcase()} - {char}):
+                    changed_part = part[:char_index] + other_char + part[char_index + 1:]
+                    changed = row_call(["".join(parts[:part_index] + [changed_part] + parts[part_index + 1:])])[0]
+                    calls.append((f"character {char_index} of {part!r} in argument {index} replaced by {other_char!r}",
+                                  [program, [*args[:index], changed, *args[index + 1:]]]))
+    return calls
+
+
 # Extractors that cannot run at all: the interpreter fails before main, on a
 # SyntaxError or on an import that raises ModuleNotFoundError.
 BROKEN_EXTRACTORS = (
@@ -1282,6 +1344,28 @@ class HarnessTest(WorkflowStepTest):
                 self.assertEqual(after != before, kind != "read", (before, after))
                 self.assertEqual(is_mutation([program, args]), kind != "read")
 
+    def test_each_predicate_reads_only_the_calls_of_its_rows(self):
+        # Each predicate of PREDICATE_ROWS is true on the call of each row in
+        # its set and false on the call of every other row. Each near miss of
+        # each row (near_misses) matches no row and has no kind; every
+        # predicate reads it as false except is_mutation, which counts it as
+        # a change. So a predicate that reads a call by its first or last
+        # words, or a character of a template that matches more than itself,
+        # fails here.
+        self.assertEqual(set(SLOT_SAMPLES), set(SLOTS))
+        for name, program, template, _kind in CALL_FORMS:
+            call = [program, row_call(template)]
+            with self.subTest(row=name):
+                self.assertEqual(row_of_call(call), name)
+                self.assertEqual({label for label, predicate, _rows in PREDICATE_ROWS if predicate(call)},
+                                 {label for label, _predicate, rows in PREDICATE_ROWS if name in rows})
+            for change, miss in near_misses(program, template):
+                with self.subTest(row=name, near_miss=change):
+                    self.assertIsNone(row_of_call(miss), miss)
+                    self.assertIsNone(kind_of(miss), miss)
+                    self.assertEqual({label for label, predicate, _rows in PREDICATE_ROWS if predicate(miss)},
+                                     {"is_mutation"}, miss)
+
     def test_every_row_of_the_table_is_a_call_the_workflow_makes(self):
         # The runs below take the paths on which the workflow makes its git
         # and gh calls: the validate step, the determine step on a published
@@ -1348,6 +1432,25 @@ class HarnessTest(WorkflowStepTest):
             self.run_step(PUBLISH, script)
         self.assertLess(time.monotonic() - start, 2.5)
         self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
+
+    def test_an_opt_out_without_a_reason_is_refused(self):
+        # off_table opts a run out of the off-table check only with a reason.
+        # An empty text, a text of white space only, or a value that is not a
+        # text raises ValueError before the step runs, so the step makes no
+        # call, here a release deletion, and the state of the fakes is
+        # unchanged.
+        for reason in ("", " ", "\t\n", True, b"on purpose"):
+            with self.subTest(reason=reason):
+                self.reset_calls()
+                self.set_state(status="404", remote_tag=OTHER_COMMIT, local_tag=None, gh_writes=None,
+                               unmodelled=None)
+                before = self.fake_write_state()
+                with self.assertRaises(ValueError) as raised:
+                    self.run_step(PUBLISH, "gh release delete v1.0.15 --yes\n", off_table=reason)
+                self.assertEqual(str(raised.exception),
+                                 f"run_step: off_table must be a reason with text, not {reason!r}")
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.fake_write_state(), before)
 
     def test_every_variable_a_step_reads_is_declared(self):
         for name in (VALIDATE, DETERMINE, PACKAGE, PUBLISH):
@@ -2251,31 +2354,49 @@ class ImmutableReleaseTest(WorkflowStepTest):
             self.assert_no_mutation(self.calls())
         self.assertEqual((self.state / "pipe_writes").read_text(encoding="utf-8"), "1")
 
+    # The ends of the step scripts of test_a_call_off_the_table_fails_the_run,
+    # each after the call: exit 0, exit 1 as the refusals of the workflow do,
+    # or no further command, so that bash -e exits with the exit code of the
+    # call itself.
+    OFF_TABLE_STEP_ENDS = (
+        ("exit 0", " || true\nexit 0\n"),
+        ("exit 1", " || true\nexit 1\n"),
+        ("the exit code of the call", "\n"),
+    )
+
     def test_a_call_off_the_table_fails_the_run(self):
         # Each call of OFF_TABLE_CALLS matches no row of CALL_FORMS. A step
-        # that makes it, and goes on to exit 0, fails its run. Run again with
-        # the opt-out, the step exits 0, and the fake has refused the call
-        # (exit 97, with its message), recorded it in unmodelled and changed
-        # nothing else; the predicates read it as no row and as a change, and
+        # that makes it fails its run, whatever the step's exit code: 0 or 1
+        # after the call, or the exit code of the call itself. Run again with
+        # the opt-out, a step that ends with the exit code of the call exits
+        # 97 with no output and only the message of the fake on its error
+        # output, so the fake refused the call with exit 97 and gave no
+        # answer; it recorded the call in unmodelled and changed nothing
+        # else; the predicates read the call as no row and as a change; and
         # assert_no_mutation fails on the state of the fakes alone, given an
         # empty call log.
         for label, program, args in OFF_TABLE_CALLS:
-            with self.subTest(label):
+            call = shlex.join([program, *args])
+            recorded = json.dumps([program, args]) + "\n"
+            for ends, end in self.OFF_TABLE_STEP_ENDS:
+                with self.subTest(label, step_ends_with=ends):
+                    self.tag_push_mismatch(True, OTHER_COMMIT)
+                    self.set_state(local_tag=COMMIT)
+                    with self.assertRaises(self.failureException) as raised:
+                        self.run_step(PUBLISH, call + end)
+                    self.assertEqual(str(raised.exception),
+                                     f"step {PUBLISH!r} made a call off the table CALL_FORMS: {recorded}")
+            with self.subTest(label, step_ends_with="the exit code of the call, opted out"):
                 self.tag_push_mismatch(True, OTHER_COMMIT)
                 self.set_state(local_tag=COMMIT)
-                script = shlex.join([program, *args]) + " || true\nexit 0\n"
-                with self.assertRaises(self.failureException) as raised:
-                    self.run_step(PUBLISH, script)
-                self.assertIn("made a call off the table CALL_FORMS", str(raised.exception))
-                self.set_state(unmodelled=None)
-                code, _out, err = self.run_step(
-                    PUBLISH, script,
+                result = self.run_step(
+                    PUBLISH, call + "\n",
                     off_table="the case makes this call on purpose, to show that the fake refuses and records it")
-                self.assertEqual(code, 0, err)
-                self.assertIn("fake " + program + ": call off the table CALL_FORMS", err)
+                refusal = "fake " + program + ": call off the table CALL_FORMS: " + json.dumps(args) + "\n"
+                self.assertEqual(result, (97, "", refusal))
                 self.assertEqual(self.fake_write_state(),
                                  {"local_tag": COMMIT, "remote_tag": OTHER_COMMIT, "gh_writes": None,
-                                  "unmodelled": json.dumps([program, args]) + "\n"})
+                                  "unmodelled": recorded})
                 self.assertEqual((row_of_call([program, args]), is_mutation([program, args])), (None, True))
                 with self.assertRaises(AssertionError):
                     self.assert_no_mutation([])
