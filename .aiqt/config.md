@@ -172,10 +172,14 @@ write-then-run commit forms that the hook before the refresh did not decide: a s
 by `tee` from a here-document and
 run with bash, a script written by `echo` and run with bash, a here-document script run with
 `source`, and a here-document script made executable with `chmod +x` and run by its path. It
-does not deny every write-then-run commit that skips hooks. In hook runs, a
-script written under a quoted delimiter that runs `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a
-script decoded from base64 and then run with bash, got no decision from any of the 19 Bash
-handlers. The direct `git -c core.hooksPath=/dev/null commit` and
+does not deny every write-then-run commit that skips hooks. In hook runs on a branch and on a
+detached HEAD, a script written under a quoted delimiter that runs
+`git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a script decoded from base64
+and then run with bash, got no decision from any of the 19 Bash handlers when git could probe
+the git identity of the directory that the script's path names. When it could not, for a
+directory that git cannot enter, `review_workdir_hold` (rvwpin) failed closed and denied the
+core.hooksPath script, the only handler that did, and none decided the base64 script, whose
+command text holds no git word. The direct `git -c core.hooksPath=/dev/null commit` and
 `echo --no-verify | xargs git commit` forms get no decision from `gate_weakening`, as before
 the refresh; in runs on a branch and on a detached HEAD, `protected_line` (artbr1) denied
 both as a segment outside its commit grammar, which the hook before the refresh did not.

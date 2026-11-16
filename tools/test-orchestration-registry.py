@@ -1953,6 +1953,32 @@ class HookCountDisclosure(unittest.TestCase):
         self.assertIn("a hook is listed more than once: ['orch_truncation_guard', 'orch_truncation_guard']",
                       self._registry_alone_problems(twice))
 
+    def test_registry_alone_check_refuses_a_wrong_count(self):
+        # A count 1 higher than the number of hooks listed must be refused.
+        text = self._config_text()
+        match = re.search(self.REGISTRY_ALONE, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        listed = len(self._listed(match.group(2)))
+        wrong = text[:match.start(1)] + str(listed + 1) + text[match.end(1):]
+        self.assertIn("count {} but {} names listed".format(listed + 1, listed),
+                      self._registry_alone_problems(wrong))
+
+    def test_registry_alone_check_refuses_clock_hooks_as_orchestrator_hooks(self):
+        # The registered clock hooks listed in place of the orchestrator hooks must be refused, although
+        # each is a registered handler and the count equals the number of names listed.
+        text = self._config_text()
+        match = re.search(self.REGISTRY_ALONE, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        clocks = sorted(name for name in self._registered() if name.startswith("clock_"))
+        self.assertGreaterEqual(len(clocks), 2, "listing the clock hooks needs 2 registered")
+        listed = " and ".join("`{}`".format(name) for name in clocks)
+        changed = (text[:match.start(1)] + str(len(clocks)) + text[match.end(1):match.start(2)] + listed
+                   + text[match.end(2):])
+        problems = self._registry_alone_problems(changed)
+        for name in clocks:
+            with self.subTest(hook=name):
+                self.assertIn("{} is not an orchestrator hook".format(name), problems)
+
     def _clock_problems(self, text):
         """Each way the clock-hook sentence of text fails to state and name the registered clock hooks;
         empty when it states their count and names each once."""

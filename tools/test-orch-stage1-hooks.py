@@ -561,7 +561,7 @@ class CorruptedRegistry(HookHarness):
     def test_yield_tool_fails_closed_deny(self):
         # PIN of the PRE-EXISTING fail-closed class (unchanged by stage 1): a bad registry denies a
         # scheduling call. A PreToolUse deny is exit 0 with permissionDecision "deny"
-        # (`status != "ok"` at aiqt_hooks.py:23676-23683, `_deny` at :396-400).
+        # (`status != "ok"` at aiqt_hooks.py:23676-23683, `_deny` at :396-403).
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_yield_tool", {
             "tool_name": "ScheduleWakeup", "tool_input": {},

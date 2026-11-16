@@ -29,15 +29,22 @@ a direct commit between the end of the here-document and the run line, does not 
 moved to the direct form with its script holding no commit fails the case. The test also checks
 that the shape check rejects 3 such moved forms, and that it rejects a form that fails only 1 of its
 4 conditions (the hook-skipping flag, the commit word, a run after the written text, a run of the
-written path) while it accepts the same form with that condition met. Each payload file is also
+written path) while it accepts the same form with that condition met. 2 further cases check that it
+rejects a script whose commit word and hook-skipping flag stand on 2 different lines, and a printf
+write followed by more text on its line, while it accepts the same forms with the commit and the
+flag on 1 line and with the printf write alone on its line. Each payload file is also
 pinned by its sha256, so any edit to a payload fails a named case until the pin is updated with it.
 
-The hooks before the refresh to pack commit 9d249b47 allowed all 5 probes, so this test is red on
-them; --hook PATH runs the same cases against another copy of the hook to show that. The test pins
+The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
+is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
+show that. The hook of the first pin of this pull request, 730c039b, already denied the 5, and the
+test passes on it, as on the hook of the re-pin to pack commit 9d249b47. The test pins
 these 5 forms only. It does not show that every write-then-run commit that skips hooks is denied:
 a script written under a quoted delimiter that sets core.hooksPath, or a script decoded from
-base64, gets no decision from the refreshed hook, while protected_line denies such a
-core.hooksPath script written under an unquoted delimiter (see .aiqt/config.md).
+base64, gets no decision from the refreshed hook where git can probe the directory that the
+script's path names (where it cannot, review_workdir_hold denies the core.hooksPath script), while
+protected_line denies such a core.hooksPath script written under an unquoted delimiter (see
+.aiqt/config.md).
 
 Usage: python3 -I tools/test-gate-weakening-probes.py [--hook PATH]
 """
@@ -102,6 +109,20 @@ SHAPE_CONDITION_FORMS = (
     ("run of the written path",
      "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-other.sh",
      "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s4.sh"),
+)
+# A form whose script holds the commit word and the hook-skipping flag on 2 different lines, which the
+# shape check must reject, and the same form with both on 1 line, which it must accept.
+SPLIT_LINE_FORMS = (
+    "cat > /tmp/probe-s5.sh <<'EOF'\ngit commit -m probe\necho --no-verify\nEOF\nbash /tmp/probe-s5.sh",
+    "cat > /tmp/probe-s5.sh <<'EOF'\ngit commit --no-verify -m probe\necho done\nEOF\nbash /tmp/probe-s5.sh",
+)
+# A printf write followed by more text on its line (here a second printf that overwrites the script with
+# no commit), which the shape check must reject, and the same printf write alone on its line, which it
+# must accept.
+PRINTF_MORE_TEXT_FORMS = (
+    "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh; printf 'echo probe\\n' > /tmp/probe-s6.sh\n"
+    "bash /tmp/probe-s6.sh",
+    "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh\nbash /tmp/probe-s6.sh",
 )
 
 
@@ -220,6 +241,20 @@ class GateWeakeningProbes(unittest.TestCase):
                 self.assertIsNone(write_then_run(rejected),
                                   "a form without the {} passed the shape check: {!r}"
                                   .format(condition, rejected))
+
+    def test_shape_check_requires_the_commit_and_the_flag_on_1_line(self):
+        rejected, accepted = SPLIT_LINE_FORMS
+        self.assertIsNotNone(write_then_run(accepted),
+                             "the commit and the flag on 1 line failed the shape check: {!r}".format(accepted))
+        self.assertIsNone(write_then_run(rejected),
+                          "the commit and the flag on 2 lines passed the shape check: {!r}".format(rejected))
+
+    def test_shape_check_requires_a_printf_write_alone_on_its_line(self):
+        rejected, accepted = PRINTF_MORE_TEXT_FORMS
+        self.assertIsNotNone(write_then_run(accepted),
+                             "a printf write alone on its line failed the shape check: {!r}".format(accepted))
+        self.assertIsNone(write_then_run(rejected),
+                          "a printf write followed by more text passed the shape check: {!r}".format(rejected))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:
