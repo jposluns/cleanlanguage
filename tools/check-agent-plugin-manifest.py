@@ -12,15 +12,18 @@ carries no version). This gate requires the Agent Plugins version and requires i
 to equal the Claude manifest version, so the two manifests cannot drift.
 
 It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
-files, not symlinks, whose bytes equal the root LICENSE and NOTICE.md. The plugin
-installs the cleanlanguage/ tree and the skill zip takes these 2 files from it, so
-a copy that drifted from the root file would ship a licence text the repository
-does not state. The gate reads the working tree; tools/release-package.sh makes
-the same comparison on the git blobs at HEAD.
+files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
+a FIFO, a folder or any other file that is not regular fails before it is read,
+so the gate neither reads a copy through a link nor waits on a copy that is a
+FIFO. The plugin installs the cleanlanguage/ tree and the skill zip takes these
+2 files from it, so a copy that drifted from the root file would ship a licence
+text the repository does not state. The gate reads the working tree;
+tools/release-package.sh makes the same comparison on the git blobs at HEAD.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
-  1  the manifest is invalid or inconsistent, or a licence copy differs from its root file
+  1  the manifest is invalid or inconsistent, or a licence copy is missing, is not a
+     regular file or differs from its root file
   3  a required file could not be read
 """
 from __future__ import annotations
@@ -78,7 +81,11 @@ def read_bytes(path: Path) -> bytes:
 
 
 def check_licence_copies() -> None:
-    """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file."""
+    """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file.
+
+    A copy that is a symlink, is missing, or is a FIFO, a folder or any other
+    file that is not regular fails with exit 1 before that copy is read.
+    """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name
         copy = REPO_ROOT / "cleanlanguage" / name
@@ -86,6 +93,8 @@ def check_licence_copies() -> None:
             die(f"cleanlanguage/{name} is a symlink; it must be a regular file that copies the root {name}")
         if not copy.exists():
             die(f"cleanlanguage/{name} is missing; it must be a copy of the root {name}")
+        if not copy.is_file():
+            die(f"cleanlanguage/{name} is not a regular file; it must be a regular file that copies the root {name}")
         if read_bytes(copy) != read_bytes(root):
             die(f"cleanlanguage/{name} differs from the root {name}; copy the root file over it")
 

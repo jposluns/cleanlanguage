@@ -13,6 +13,8 @@ tools/skill-release-date-client.py (row 89), and each tells input the client
 could not read (client exit 14) apart from an extractor that failed inside or
 broke its contract (client exit 16), which is never read as malformed content;
 the dry run read is exercised from the block extracted from its real script.
+The packager is also built with cleanlanguage/LICENSE or cleanlanguage/NOTICE.md
+missing or differing from its root file at HEAD, and must refuse each.
 """
 
 from __future__ import annotations
@@ -489,14 +491,17 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     return proc.returncode, stdout, stderr
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = ()):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = (), tree_edit=None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
     tools/skill-release-date-client.py (so the code under test, not HEAD's
     copy, is exercised), passing ``--release-date`` when ``release_date`` is
-    given and then ``extra_args``. ``extractor`` replaces the extractor and
-    ``client`` the client: ``"missing"`` deletes it, any other text is written
-    in its place. ``path_prefix`` is put first on the PATH of the packager,
+    given and then ``extra_args``. ``tree_edit``, when given, is called with
+    the worktree's path before the fixture commit, so the change it makes to
+    a tracked file, a deletion included, is at HEAD when the packager runs.
+    ``extractor`` replaces the extractor and ``client`` the client:
+    ``"missing"`` deletes it, any other text is written in its place.
+    ``path_prefix`` is put first on the PATH of the packager,
     and ``bash_options`` are passed to the bash that runs it. The packager
     runs through ``run_bounded`` with its default timeout, so the wait for the
     run is bounded by ``SCRIPT_TIMEOUT`` and the run's process group is killed
@@ -519,6 +524,8 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             data = json.loads(pj.read_text(encoding="utf-8"))
             data["version"] = plugin_version
             pj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            if tree_edit is not None:
+                tree_edit(wt)
             subprocess.run(
                 ["git", "-C", str(wt), "-c", "user.name=t", "-c", "user.email=t@t",
                  "commit", "-qam", "fixture"],
@@ -595,6 +602,52 @@ class PackagerContractTest(unittest.TestCase):
         code, stderr = run_packager("", "1.0.14")
         self.assertEqual(code, 1, stderr)
         self.assertIn("no Version: line found", stderr)
+
+
+class PackagerLicenceCopyTest(unittest.TestCase):
+    """The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and its
+    entry list and byte check read them there too, so in the packager only its
+    licence-copy check ties each copy to its root file. Each case changes 1
+    copy at HEAD of a throwaway worktree and requires the build to refuse it.
+    Without that check the build ends 0 and every case fails; with the check
+    narrowed to 1 file, the cases for the other file fail; and with the blob
+    comparison dropped, the cases for a differing copy fail."""
+
+    def build_with_copy(self, name: str, change: str):
+        def edit(wt: Path) -> None:
+            copy = wt / "cleanlanguage" / name
+            if change == "missing":
+                copy.unlink()
+            else:
+                # 1 byte past the first 64 changed, the length kept.
+                data = copy.read_bytes()
+                index = len(data) // 2
+                self.assertGreaterEqual(index, 64)
+                changed = b"x" if data[index:index + 1] != b"x" else b"y"
+                copy.write_bytes(data[:index] + changed + data[index + 1:])
+        return run_packager(None, HEAD_VERSION, tree_edit=edit)
+
+    def test_missing_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "missing")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE is missing at HEAD; it must be a copy of the root "
+                      "LICENSE", stderr)
+
+    def test_missing_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "missing")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md is missing at HEAD; it must be a copy of the root "
+                      "NOTICE.md", stderr)
+
+    def test_differing_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "differs")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE differs from the root LICENSE at HEAD", stderr)
+
+    def test_differing_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "differs")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
 
 
 class PackagerReleaseDateTest(unittest.TestCase):

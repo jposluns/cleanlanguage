@@ -4,7 +4,11 @@
 Patch the gate's manifest paths to a temp fixture and drive the failure and
 success paths offline with the standard library. The fixture also holds a root
 LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
-cases can make a copy differ, go missing or become a symlink.
+cases can make a copy differ, go missing, or become a symlink, a FIFO or a
+folder. Each fixture text is longer than 64 bytes, and the cases for a missing
+copy, a symlink, a FIFO, a folder, a same-length difference and a difference
+past the first 64 bytes each cover both files, so a gate that checks 1 file
+only, compares lengths or compares only a prefix fails a case.
 """
 from __future__ import annotations
 
@@ -12,7 +16,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -22,7 +28,28 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-LICENCE_TEXTS = {"LICENSE": b"Apache License\nVersion 2.0\n", "NOTICE.md": b"# Notice\n\nScope.\n"}
+# Each text is longer than 64 bytes, so a difference can lie past a 64-byte prefix.
+LICENCE_TEXTS = {
+    "LICENSE": b"Apache License\nVersion 2.0, January 2004\nhttp://www.apache.org/licenses/\n\nTERMS AND CONDITIONS\n",
+    "NOTICE.md": b"# Notice\n\n## Scope\n\nThe licence text is in [LICENSE](LICENSE).\n\n## Clean Language\n\nCopyright line.\n",
+}
+
+
+def with_byte_changed(data: bytes, index: int) -> bytes:
+    """``data`` with the byte at ``index`` replaced by another, so the length stays the same."""
+    changed = b"x" if data[index:index + 1] != b"x" else b"y"
+    return data[:index] + changed + data[index + 1:]
+
+
+def feed_fifo(path: Path, data: bytes) -> None:
+    """Write ``data`` into the FIFO at ``path`` once a reader opens it. A gate
+    that reads the FIFO then gets the root file's bytes and finds them equal,
+    so the case passes only for a gate that refuses the FIFO before reading it."""
+    try:
+        with open(path, "wb") as fifo:
+            fifo.write(data)
+    except OSError:
+        pass
 
 
 def valid_manifest():
@@ -54,9 +81,19 @@ class AgentPluginManifestTest(unittest.TestCase):
         gate.MARKETPLACE.write_text(
             json.dumps({"plugins": [{"name": "cleanlanguage"}]}), encoding="utf-8"
         )
+        self.restore_licence_files()
+
+    def restore_licence_files(self):
+        """Write each root licence file and a regular, equal copy, replacing
+        whatever a case left at the copy's path."""
         for name, data in LICENCE_TEXTS.items():
-            (root / name).write_bytes(data)
-            (root / "cleanlanguage" / name).write_bytes(data)
+            (gate.REPO_ROOT / name).write_bytes(data)
+            copy = gate.REPO_ROOT / "cleanlanguage" / name
+            if copy.is_dir() and not copy.is_symlink():
+                copy.rmdir()
+            elif copy.is_symlink() or copy.exists():
+                copy.unlink()
+            copy.write_bytes(data)
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.MANIFEST, gate.CLAUDE_MANIFEST, gate.MARKETPLACE) = self._saved
@@ -195,17 +232,87 @@ class AgentPluginManifestTest(unittest.TestCase):
 
     def test_licence_copy_missing_fails(self):
         self.write(valid_manifest())
-        (gate.REPO_ROOT / "cleanlanguage" / "NOTICE.md").unlink()
-        self.expect_exit(1, "cleanlanguage/NOTICE.md is missing")
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                (gate.REPO_ROOT / "cleanlanguage" / name).unlink()
+                self.expect_exit(1, f"cleanlanguage/{name} is missing")
 
     def test_licence_copy_symlink_fails(self):
         # A symlink to the root file reads equal, but the plugin tree would
         # then point outside itself, so only a regular file passes.
         self.write(valid_manifest())
-        copy = gate.REPO_ROOT / "cleanlanguage" / "LICENSE"
-        copy.unlink()
-        copy.symlink_to(gate.REPO_ROOT / "LICENSE")
-        self.expect_exit(1, "cleanlanguage/LICENSE is a symlink")
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                copy.symlink_to(gate.REPO_ROOT / name)
+                self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
+
+    def test_licence_copy_same_length_difference_fails(self):
+        # 1 changed byte keeps the length, so a gate that compares only
+        # lengths passes this copy.
+        self.write(valid_manifest())
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.write_bytes(with_byte_changed(LICENCE_TEXTS[name], 0))
+                self.assertEqual(len(copy.read_bytes()), len(LICENCE_TEXTS[name]))
+                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
+
+    def test_licence_copy_late_difference_fails(self):
+        # The changed byte lies past the first 64 bytes and keeps the length,
+        # so a gate that compares a 64-byte prefix or the lengths passes this
+        # copy.
+        self.write(valid_manifest())
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                index = len(LICENCE_TEXTS[name]) - 2
+                self.assertGreaterEqual(index, 64)
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.write_bytes(with_byte_changed(LICENCE_TEXTS[name], index))
+                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
+
+    def test_licence_copy_fifo_fails(self):
+        # A FIFO is neither a symlink nor missing. A writer feeds it the root
+        # file's bytes, so a gate that reads it finds them equal and passes;
+        # the gate must refuse it as not a regular file before reading it.
+        self.write(valid_manifest())
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                os.mkfifo(copy)
+                writer = threading.Thread(target=feed_fifo, args=(copy, LICENCE_TEXTS[name]), daemon=True)
+                writer.start()
+                try:
+                    self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
+                finally:
+                    # Release a writer still waiting for a reader: open the
+                    # FIFO for reading without blocking until the writer ends.
+                    for _ in range(100):
+                        if not writer.is_alive():
+                            break
+                        reader = os.open(copy, os.O_RDONLY | os.O_NONBLOCK)
+                        try:
+                            writer.join(0.05)
+                        finally:
+                            os.close(reader)
+                    self.assertFalse(writer.is_alive(), "the FIFO writer did not end")
+
+    def test_licence_copy_folder_fails(self):
+        self.write(valid_manifest())
+        for name in gate.LICENCE_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                copy.mkdir()
+                self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_unreadable_root_licence_fails_closed(self):
         self.write(valid_manifest())

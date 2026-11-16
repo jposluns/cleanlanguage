@@ -4,6 +4,8 @@
 
 Except where otherwise noted, all material in this repository, including the Clean Language skill, the cleanlanguage.ai website content, markup, and styles, and the code, is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`). The licence text is in [LICENSE](LICENSE). Adopted material is noted below, and any third-party material retains its original licence.
 
+This notice also ships in the skill zip and in the plugin, which hold only part of the repository. "This repository" means the source repository, https://github.com/jposluns/cleanlanguage. Apart from the baseline's own `tools/card-fonts/`, each path in this notice is a path in that repository, and the paths in the Site template section are under its `site/` folder.
+
 ## Clean Language
 
 Copyright 2026 Jeff Posluns
