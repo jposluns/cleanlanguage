@@ -340,8 +340,9 @@ def git(*args: str) -> bytes:
     there means that the check could not run (exit 3), as unusable() says,
     save a refname below PROTECTED_REF, which protected_base() does not
     check against git's refname rules. So do object names of different
-    lengths among those that last_change_date() reads for a page: the tip
-    of PROTECTED_REF, each merge base, each object name in a git ls-tree
+    lengths among those that last_change_date() reads for a page: each
+    object name in the git for-each-ref listing, which holds the tip of
+    PROTECTED_REF, each merge base, each object name in a git ls-tree
     entry and the git hash-object result. A path argument is a str, which
     subprocess encodes as os.fsencode() does. git runs with
     GIT_LITERAL_PATHSPECS set to 1 and without PATHSPEC_VARIABLES, so git
@@ -467,7 +468,8 @@ def protected_base() -> str | None:
     use: a listing that is not empty and does not end with a line feed, a
     line whose part before its first space neither is PROTECTED_REF nor
     starts with it and a slash, as each ref git lists for that pattern does,
-    a line with no object name after its first space, the
+    a line with no object name after its first space, a line whose object
+    name differs in length from that of the listing's first line, the
     protected refname listed twice, merge base output that is not empty
     and does not end with a line feed, a merge base line that is not 1
     object name, an object name on more than 1 merge base line, or a merge
@@ -481,11 +483,13 @@ def protected_base() -> str | None:
         unusable(args, output)
     protected = PROTECTED_REF.encode("ascii")
     tip = None
+    length = None
     for line in lines:
         name, _, line_tip = line.partition(b" ")
         if name != protected and not name.startswith(protected + b"/"):
             unusable(args, output)
-        line_tip = object_name(ascii_output(line_tip, args), args, output)
+        line_tip = object_name(ascii_output(line_tip, args), args, output, length)
+        length = len(line_tip)
         if name == protected:
             if tip is not None:
                 unusable(args, output)

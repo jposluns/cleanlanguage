@@ -226,7 +226,6 @@ class AuthorRequirementTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("does not parse", problems[0])
 
-
     def test_author_as_array_is_accepted(self):
         author = '[{"@type": "Person", "name": "Jeff Posluns"}]'
         self.assertEqual(self.check(article(author)), [])
@@ -265,7 +264,6 @@ class AuthorRequirementTest(unittest.TestCase):
         )
         self.assertEqual(self.check(block), [WRONG_PRIMARY_AUTHOR])
 
-
     def test_wrong_primary_author_not_saved_by_secondary(self):
         # The primary Article has the wrong author; a secondary Comment that
         # names the meta author must not rescue it, which would be a false green.
@@ -291,7 +289,6 @@ class AuthorRequirementTest(unittest.TestCase):
             "</script>"
         )
         self.assertEqual(self.check(block), [])
-
 
     def test_stray_coauthor_fails(self):
         # Single-author site: a stray or stale co-author on the primary entity
@@ -623,7 +620,6 @@ class ImageReferenceTest(_PatchedGateTest):
         self.assertTrue(any("does not exist" in p for p in problems))
 
 
-
 def _img_meta(url):
     return f'<meta property="og:image" content="{url}">'
 
@@ -931,7 +927,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     attributes file and a user ignore file at both default paths, and
     test_repository_has_no_template_files checks for template files.
     GIT_CONFIG_GLOBAL and HOME are overlapping layers: git reads ~/.gitconfig
-    only when both are dropped, so no case fails when only 1 of them is, and
+    only when both are dropped, so no case checks dropping either alone, and
     test_global_configuration_in_home_is_not_read fails when both are. No case
     plants a system attributes file, since git has no variable that moves it,
     and test_isolated_git_names_no_system_attributes_file fails when
@@ -966,7 +962,7 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # loop, GIT_CONFIG_NOSYSTEM and XDG_CONFIG_HOME each have a case that
         # plants their input and fails without them. GIT_CONFIG_GLOBAL and HOME
         # overlap: git reads ~/.gitconfig only when both are dropped, so no
-        # case fails when only 1 of them is, and
+        # case checks dropping either alone, and
         # test_global_configuration_in_home_is_not_read, which plants a
         # ~/.gitconfig, fails when both are. No case plants a system attributes
         # file, since git has no variable that moves it, and
@@ -1780,6 +1776,8 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                  (("for-each-ref",), b"refs/remotes/origin/main/x zz\nrefs/remotes/origin/main {main}\n"),
                  (("for-each-ref",), b"refs/remotes/origin/main {main}"),
                  (("for-each-ref",), b"refs/remotes/origin/main {main}\n" * 2),
+                 *[(("for-each-ref",), b"refs/remotes/origin/main/x " + name + b"\n")
+                   for name in (b"0" * 39, b"0" * 41, b"0" * 63, b"0" * 65)],
                  (("merge-base",), b"HEAD\n"),
                  (("merge-base",), b"{main}\nHEAD\n"),
                  (("ls-tree",), entry.replace(b" blob ", b" blub ")),
@@ -2020,6 +2018,50 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 listing = name + b" {main}\nrefs/remotes/origin/main {main}\n"
                 problems, stderr = self.check_with_fake_git(("for-each-ref",), listing)
                 self.assertEqual(problems, [], stderr)
+
+    def test_listing_line_of_other_length_exits_3(self):
+        # A ref listing line below the protected refname whose object name
+        # differs in length from that of the listing's first line, before
+        # or after the protected refname, or with no protected refname
+        # listed, stops the check with exit 3: an object name of 64 digits
+        # beside main's tip of 40, and one of 40 beside a tip of 64.
+        other = b"0123456789abcdef" * 4
+        protected = b"refs/remotes/origin/main {main}\n"
+        below = b"refs/remotes/origin/main/x "
+        for listing, options in ((below + other + b"\n" + protected, ()),
+                                 (protected + below + other + b"\n", ()),
+                                 (below + b"{main}\nrefs/remotes/origin/main/y " + other + b"\n", ()),
+                                 (protected + below + other[:40] + b"\n", ("--object-format=sha256",))):
+            with self.subTest(listing=listing, options=options):
+                problems, stderr = self.check_with_fake_git(("for-each-ref",), listing, *options)
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed output that the gate cannot use", stderr)
+
+    def test_tree_entry_of_other_length_exits_3(self):
+        # A tree entry, which is no blob, at the page's path at HEAD whose
+        # object name differs in length from the merge base's stops the
+        # check with exit 3 rather than reading the page at HEAD: 64 digits
+        # beside a merge base of 40, and 40 beside one of 64.
+        for name, options in ((b"0123456789abcdef" * 4, ()),
+                              (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
+            with self.subTest(name=name, options=options):
+                entry = b"040000 tree " + name + b"\tsite/index.html\0"
+                problems, stderr = self.check_with_fake_git(("ls-tree", "-z", "HEAD"), entry, *options)
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed output that the gate cannot use", stderr)
+
+    def test_gitlink_entry_of_other_length_exits_3(self):
+        # A gitlink entry, which is no blob, at the page's path at HEAD
+        # whose object name differs in length from the merge base's stops
+        # the check with exit 3 rather than reading the page at HEAD: 64
+        # digits beside a merge base of 40, and 40 beside one of 64.
+        for name, options in ((b"0123456789abcdef" * 4, ()),
+                              (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
+            with self.subTest(name=name, options=options):
+                entry = b"160000 commit " + name + b"\tsite/index.html\0"
+                problems, stderr = self.check_with_fake_git(("ls-tree", "-z", "HEAD"), entry, *options)
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_tree_entry_with_empty_name_exits_3(self):
         # A tree entry whose name after the tab is empty is not the page's
