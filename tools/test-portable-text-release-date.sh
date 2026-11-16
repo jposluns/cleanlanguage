@@ -14,10 +14,15 @@
 # malformed line or a rejected version.
 #
 # Each case runs the CHECKOUT copy of the gate in a throwaway copy of the files
-# it reads, so nothing in the repository is changed. Every fixture is built so
-# that the generated files are current (regenerated) and the Version agrees
-# everywhere, so a failing case can fail only on the Released check it targets;
-# each failure is also pinned by its message. The passing cases record the
+# it reads, so nothing in the repository is changed. Every fixture regenerates
+# the generated files and sets 1 Version in the skill and every rendering. A
+# case that expects the gate to fail (expect_fail, expect_fail_without or
+# expect_fail_line) runs no record on its copy, and passes only when the gate
+# exits non-zero and its output holds the text that the case pins from the
+# message of the check it targets. The gate compares the source hash last,
+# after build-portable-text.py --check and check_common, so a source hash that
+# differs from the recorded one cannot stop the gate before the targeted
+# check. The cases that expect the gate to pass record the
 # source hash with --update --force inside the copy, which also regenerates the
 # site pages with tools/build-site.py, so the copy carries the generator's
 # inputs and a site-src/release.json that names the fixture's version. Every
@@ -522,9 +527,9 @@ expect_fail "a dated rendering beside an undated skill fails" "Released disagree
 #     hold at most 29000 characters by wc -m. pad_full TARGET appends a line of
 #     "a" after a blank line at the end of the fixture skill, which adds its
 #     length plus 2 to the full file, regenerates, and fails the case unless
-#     the full file then holds exactly TARGET characters. The source then
-#     differs from the recorded hash, so a full file within its label fails on
-#     the hash, never on the label, and one over it fails on the label first.
+#     the full file then holds exactly TARGET characters. At 29000 the case
+#     expects record to succeed and the gate to pass; at 29001 it expects the
+#     gate to fail and print the label line exactly.
 full="site/downloads/cleanlanguage.md"
 pad_full() { # target
   local before after
@@ -546,9 +551,8 @@ PYPAD
 }
 undated_fixture 1.0.14
 if pad_full 29000; then
-  expect_fail_without "a full file of 29000 characters is within its label" \
-    "The skill source changed but the condensed portable files were not reconciled." \
-    "over its 29000 label"
+  if record; then pass "a full file of 29000 characters records"; else fail "a full file of 29000 characters records"; fi
+  expect_pass "a full file of 29000 characters is within its label"
 fi
 undated_fixture 1.0.14
 if pad_full 29001; then
