@@ -20,6 +20,16 @@ all, though its readback still requires the release to be immutable (item
 57). The fake ``date`` refuses any call without ``-u``, so a clock read in
 local time goes red.
 
+The fakes of ``git`` and ``gh`` answer only the calls listed in
+``CALL_FORMS``, a table of the exact call shapes the workflow makes, each
+with its kind (a read, or the change it makes). The fakes and the call
+predicates find the row of a call through the same function, ``row_of``.
+A call that matches no row is recorded by the fake that refused it, and the
+run that made it fails unless the case opts out and gives its reason, so an
+unknown call is never counted as harmless.
+The table lists call shapes; it does not model how ``git`` or ``gh`` read
+their options.
+
 The workflow is parsed with ``yaml.safe_load`` (PyYAML, the same dependency
 the release packager already relies on in the same CI job), so the step names,
 the keys of each step and every ``env:`` mapping are read as the runner reads
@@ -74,6 +84,7 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -521,133 +532,82 @@ def script_reads(script: str) -> set[str]:
     return read - assigned
 
 
-# The options git and gh accept before their subcommand that take the next
-# argument as their value. takes_separate_value also reads a gh api option
-# that takes a value there with its separate value, as in gh -X POST api.
-# Any other leading argument that starts with - is read as an option with no
-# separate value.
-LEADING_VALUE_OPTIONS = {
-    "git": ("-c", "-C", "--git-dir", "--work-tree", "--namespace"),
-    "gh": ("-R", "--repo"),
+# CALL_FORMS: every git and gh call the release workflow makes, by its
+# exact shape, as 1 row each: the row name, the program, the arguments after
+# the program, and the kind of the call. The kind is "read" for a call that
+# changes neither a tag nor a release, and otherwise names the change: "tag"
+# for a local tag, "push" for a push of the tag to origin, "create" for a
+# release creation. Each argument is a template: its text matches only
+# itself, and each slot of SLOTS in it matches the slot's pattern. A call
+# matches a row only when it names the row's program and has exactly as many
+# arguments as the row, each matching its template in full, so a call that
+# adds an argument to a row, drops one or joins 2 does not match that row.
+# The fakes of git and gh answer a call by the row it matches, and the call
+# predicates below read a recorded call by the same row, so the routing is
+# written once, here. A call that matches no row is off the table: the fake
+# records it in the state file "unmodelled", gives no answer and exits 97,
+# and run_step fails the run that made it unless the case opts out. The
+# table states the call shapes of the workflow only; it does not model how
+# git or gh read their options.
+CALL_FORMS = (
+    ("fetch", "git", ("fetch", "--quiet", "origin", "main"), "read"),
+    ("show", "git", ("show", "FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md"), "read"),
+    ("status", "gh", ("api", "--include", "--silent", "repos/<REPO>/releases/tags/<TAG>"), "read"),
+    ("published_at", "gh", ("api", "repos/<REPO>/releases/tags/<TAG>", "--jq", ".published_at"), "read"),
+    ("lookup", "git", ("ls-remote", "origin", "refs/tags/<TAG>^{}", "refs/tags/<TAG>"), "read"),
+    ("immutable", "gh", ("api", "repos/<REPO>/releases/tags/<TAG>", "--jq", ".immutable"), "read"),
+    ("rev-parse", "git", ("rev-parse", "<COMMIT>^{commit}"), "read"),
+    ("view", "gh", ("release", "view", "<TAG>", "--json", "assets", "--jq", ".assets[].name"), "read"),
+    ("download", "gh", ("release", "download", "<TAG>", "--dir", "<DIR>", "--clobber",
+                        "--pattern", "cleanlanguage.zip", "--pattern", "cleanlanguage.zip.sha256",
+                        "--pattern", "cleanlanguage-<VERSION>.zip", "--pattern", "cleanlanguage-<VERSION>.zip.sha256"),
+     "read"),
+    ("tag", "git", ("tag", "<TAG>", "<COMMIT>"), "tag"),
+    ("push", "git", ("push", "origin", "refs/tags/<TAG>"), "push"),
+    ("tag-force", "git", ("tag", "-f", "<TAG>", "<COMMIT>"), "tag"),
+    ("push-force", "git", ("push", "--force", "origin", "refs/tags/<TAG>"), "push"),
+    ("create", "gh", ("release", "create", "<TAG>", "--verify-tag", "dist/cleanlanguage.zip",
+                      "dist/cleanlanguage.zip.sha256", "dist/cleanlanguage-<VERSION>.zip",
+                      "dist/cleanlanguage-<VERSION>.zip.sha256", "--title", "Clean Language <TAG>",
+                      "--generate-notes"), "create"),
+)
+# The slots of the templates. No slot pattern matches a text that starts
+# with -, so no slot takes an option.
+SLOTS = {
+    "<TAG>": r"v[0-9]+\.[0-9]+\.[0-9]+",
+    "<VERSION>": r"[0-9]+\.[0-9]+\.[0-9]+",
+    "<COMMIT>": r"[0-9a-f]{40}",
+    "<REPO>": r"[A-Za-z0-9_.]+/[A-Za-z0-9_.]+",
+    "<DIR>": r"/[^\n]*",
 }
-# The gh api options that take a value: the short ones by their long name,
-# then the long ones. Any other option is read as taking no value.
-API_SHORT_VALUE_OPTIONS = {"-X": "--method", "-F": "--field", "-f": "--raw-field", "-H": "--header",
-                           "-p": "--preview", "-q": "--jq", "-t": "--template"}
-API_LONG_VALUE_OPTIONS = ("--method", "--field", "--raw-field", "--header", "--preview", "--jq",
-                          "--template", "--input", "--cache", "--hostname")
-API_SHORT_FLAGS = {"-i": "--include"}
-# The values that this file takes the flag parser of gh to read as true for
-# an option that takes no value but is given one after =, as in -i=t or
-# --include=true. Like the option lists, they were not checked against gh.
-FLAG_TRUE_VALUES = ("1", "t", "T", "TRUE", "true", "True")
-# The gh api options that add parameters or a request body, by long name, so
-# -f and -F count as --raw-field and --field. A call that holds
-# any of them and gives no method is read as POST, the default the gh api
-# manual names for a call with parameters; --input is read the same way.
-API_BODY_OPTIONS = ("--field", "--raw-field", "--input")
+# The kind of each row, and the programs whose calls the table covers.
+ROW_KINDS = {name: kind for name, _program, _template, kind in CALL_FORMS}
+TABLE_PROGRAMS = ("git", "gh")
 
 
-def takes_separate_value(name, arg):
-    """Whether the leading option arg of git or gh takes the next argument
-    as its value: an option of LEADING_VALUE_OPTIONS given alone, or, for
-    gh, a gh api option that takes a value and has none in arg, as in
-    -X POST, -iX POST, --method POST or -f NAME=VALUE. For gh, arg takes the
-    next argument exactly when api_options, given arg and 1 more argument,
-    takes that argument as a value, so both read arg alike: -i=X holds its
-    value. A -R joined to its value, as in -RREPO, holds its value."""
-    if arg in LEADING_VALUE_OPTIONS.get(name, ()):
-        return True
-    if name != "gh" or arg[:2] in LEADING_VALUE_OPTIONS["gh"]:
-        return False
-    return not api_options([arg, ""])[1]
+def token_matches(template, arg):
+    """Whether arg matches the argument template in full: each slot by its
+    pattern in SLOTS, and every other character as itself."""
+    pattern = "".join(SLOTS.get(piece, re.escape(piece)) for piece in re.split(r"(<[A-Z]+>)", template))
+    return re.fullmatch(pattern, arg) is not None
 
 
-def subcommand(name, args):
-    """args from the subcommand on, past any leading options of git or gh."""
-    index = 0
-    while index < len(args) and args[index].startswith("-"):
-        index += 2 if takes_separate_value(name, args[index]) else 1
-    return args[index:]
+def row_of(program, args):
+    """The name of the row of CALL_FORMS that the call of program with args
+    matches, or None when it matches no row."""
+    for name, row_program, template, _kind in CALL_FORMS:
+        if row_program != program:
+            continue
+        if len(template) != len(args):
+            continue
+        if all(token_matches(piece, arg) for piece, arg in zip(template, args)):
+            return name
+    return None
 
 
-def api_options(args):
-    """The options and the operands of a gh api call, given its arguments
-    after api, read by the rules this file models for the flag parser of
-    gh, from the option lists above. Each option is a pair of its long name and its value, None
-    for an option that takes no value and is given none. A long option takes
-    its value after = or, when it takes a value, from the next argument; a
-    long option that takes no value keeps a value given after =, as in
-    --include=false. Short options may be grouped in 1 argument, as in
-    -iX POST. A short option followed by = and at least 1 more character
-    takes the rest of the argument after the = as its value and ends the
-    group, whether or not it takes a value, so -i=false is --include with
-    the value false, not -i, -= and -f. Otherwise a short option that takes
-    a value ends the group, and its value is the rest of the argument, or
-    the next argument when nothing of the argument is left. Every argument
-    after -- is an operand."""
-    options, operands = [], []
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        index += 1
-        if arg == "--":
-            operands.extend(args[index:])
-            break
-        if arg.startswith("--"):
-            name, equals, value = arg.partition("=")
-            if name not in API_LONG_VALUE_OPTIONS:
-                options.append((name, value if equals else None))
-                continue
-            if not equals:
-                value = args[index] if index < len(args) else ""
-                index += 1
-            options.append((name, value))
-        elif arg.startswith("-") and len(arg) > 1:
-            for position in range(1, len(arg)):
-                short = "-" + arg[position]
-                name = API_SHORT_VALUE_OPTIONS.get(short) or API_SHORT_FLAGS.get(short, short)
-                value = arg[position + 1:]
-                if len(value) > 1 and value.startswith("="):
-                    options.append((name, value[1:]))
-                    break
-                if short not in API_SHORT_VALUE_OPTIONS:
-                    options.append((name, None))
-                    continue
-                if not value:
-                    value = args[index] if index < len(args) else ""
-                    index += 1
-                options.append((name, value))
-                break
-        else:
-            operands.append(arg)
-    return options, operands
-
-
-def api_method(args, leading=()):
-    """The HTTP method of a gh api call, given its arguments after api and
-    any options before api, each read by api_options: the last --method or
-    -X value when one is given, otherwise POST when a body option is present
-    and GET when none is."""
-    options = api_options(list(leading))[0] + api_options(args)[0]
-    methods = [value for name, value in options if name == "--method"]
-    if methods:
-        return methods[-1].upper()
-    return "POST" if any(name in API_BODY_OPTIONS for name, _value in options) else "GET"
-
-
-# Every fake records its call. The fakes of git and gh then read it with the
-# same functions the predicates below use (takes_separate_value, subcommand,
-# api_options and api_method), and route each answer by the subcommand after
-# any leading options, so a git call, or a gh call other than gh api, with
-# leading options gets the answer of the same call without them. The fake gh
-# refuses a gh api call with an option before api, as gh does for -R, which
-# gh api does not define (nor --repo); it reads a gh api option that takes a
-# value there with its separate value, as in -X POST, so it does not take
-# that value for the subcommand. The fake date has no subcommand: it answers
-# only a call that holds -u, wherever -u stands, and refuses any other.
+# Every fake records its call in calls.log and reads its state files.
 FAKE_COMMON = """
-import hashlib, json, os, sys
+import hashlib, json, os, re, sys
 STATE = os.environ["FAKE_STATE"]
 NAME = os.path.basename(sys.argv[0])
 ARGS = sys.argv[1:]
@@ -659,20 +619,30 @@ def read(name, default=""):
         return default
     with open(path, encoding="utf-8") as handle:
         return handle.read()
-LEADING_VALUE_OPTIONS = """ + repr(LEADING_VALUE_OPTIONS) + """
-API_SHORT_VALUE_OPTIONS = """ + repr(API_SHORT_VALUE_OPTIONS) + """
-API_LONG_VALUE_OPTIONS = """ + repr(API_LONG_VALUE_OPTIONS) + """
-API_SHORT_FLAGS = """ + repr(API_SHORT_FLAGS) + """
-FLAG_TRUE_VALUES = """ + repr(FLAG_TRUE_VALUES) + """
-API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + "".join(
-    inspect.getsource(function) for function in (takes_separate_value, subcommand, api_options, api_method)) + """
-SUB = subcommand(NAME, ARGS)
+"""
+
+# The fakes of git and gh then find the row of their call with the same
+# CALL_FORMS, SLOTS and functions the predicates use. Each fake matches by
+# the program it stands for, not by its file name, so a copy of the fake gh
+# under another name answers as gh. A call that matches no row is recorded in
+# "unmodelled" and refused with exit 97, with no answer and no other change.
+FAKE_TABLE = """
+CALL_FORMS = """ + repr(CALL_FORMS) + """
+SLOTS = """ + repr(SLOTS) + "\n" + "".join(inspect.getsource(function) for function in (token_matches, row_of)) + """
+ROW = row_of(PROGRAM, ARGS)
+if ROW is None:
+    with open(os.path.join(STATE, "unmodelled"), "a", encoding="utf-8") as handle:
+        handle.write(json.dumps([NAME, ARGS]) + "\\n")
+    print("fake " + PROGRAM + ": call off the table CALL_FORMS: " + json.dumps(ARGS), file=sys.stderr)
+    sys.exit(97)
 """
 
 # The state files through which the fakes model a change: the local tag, the
-# tag on origin, and every gh call that writes, which the fake gh appends to
-# gh_writes. A step that changed nothing leaves all 3 as they were.
-FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
+# tag on origin, every release creation, which the fake gh appends to
+# gh_writes, and every call off CALL_FORMS, which the fakes of git and gh
+# append to unmodelled. A step that changed nothing and made no call off the
+# table leaves all 4 as they were.
+FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes", "unmodelled")
 # The seconds a step run allows the step, and every process that still holds
 # the output of the step, to exit before the run fails its test, so a step
 # that hangs, or that leaves a process holding its output, cannot hang the
@@ -687,60 +657,28 @@ STEP_RUN_LIMIT = 60
 # step_process_wait.
 STEP_PROCESS_WAIT = 60
 
-FAKE_GH = FAKE_COMMON + """
-LEADING = ARGS[:len(ARGS) - len(SUB)]
-# gh api defines no -R or --repo option, and gh 2.103.3 refuses a -R before
-# api with exit 1 before it sends any request. The fake refuses an option
-# before api the same way, with no write and no answer, while a release
-# subcommand still takes a leading -R or --repo. A gh api option that takes
-# a value, such as -X POST, --method POST or -f NAME=VALUE, is read there with
-# its separate value, so the call is refused rather than read as a call of
-# the subcommand POST or NAME=VALUE. A leading option that takes a separate
-# value and is missing from the option lists is still misread: its value is
-# taken for the subcommand.
-if SUB[:1] == ["api"] and LEADING:
-    first = LEADING[0]
-    if first.startswith("--"):
-        print("unknown flag: " + first.partition("=")[0], file=sys.stderr)
-    else:
-        print("unknown shorthand flag: '" + first[1:2] + "' in " + first, file=sys.stderr)
-    sys.exit(1)
-# Every release subcommand that changes a release, and every API call with a
-# method other than GET, is a write: it is appended to gh_writes, whatever the
-# call log holds, so a no-change assertion can read the fake's own state.
-RELEASE_READS = (["view"], ["download"], ["list"])
-if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["api"] and api_method(SUB[1:]) != "GET"):
-    with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
-        writes.write(json.dumps(SUB) + "\\n")
-if SUB[:1] == ["api"]:
-    # Every API path is answered from the same state, so the exact path each
-    # call names is logged for ApiPathTest to pin. A repeated option counts
-    # by its last value, as api_options models gh, so the field read is the
-    # last --jq and the call includes its status line when its last
-    # --include, or -i, has no value or a value in FLAG_TRUE_VALUES.
-    OPTIONS, paths = api_options(SUB[1:])
-    JQ = [value for option, value in OPTIONS if option == "--jq"]
-    INCLUDE = [value for option, value in OPTIONS if option == "--include"]
-    kind = JQ[-1] if JQ else "status"
+FAKE_GH = FAKE_COMMON + "PROGRAM = \"gh\"\n" + FAKE_TABLE + """
+# Each API row is answered from the same state, so the exact path each call
+# names is logged for ApiPathTest to pin: the status probe prints its status
+# line, and a field read prints the value of its field.
+if ROW == "status":
     with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
-        log.write(json.dumps([kind, paths]) + "\\n")
-if SUB[:1] == ["release"]:
-    # Every release subcommand is logged with all its arguments, then any
-    # leading options of gh, so the tag each release read and the create call
-    # name, and any repository a leading -R names, is pinned by ApiPathTest.
-    with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
-        log.write(json.dumps([SUB[1] if len(SUB) > 1 else "", SUB[2:] + LEADING]) + "\\n")
-if SUB[:1] == ["api"] and INCLUDE and INCLUDE[-1] in (None,) + FLAG_TRUE_VALUES:
+        log.write(json.dumps(["status", [ARGS[-1]]]) + "\\n")
     status = read("status", "404")
     print("HTTP/2.0 " + status + " Fake")
     sys.exit(0 if status == "200" else 1)
-if SUB[:1] == ["api"] and JQ:
-    field = JQ[-1].lstrip(".")
-    value = read(field, "null")
+if ROW in ("published_at", "immutable"):
+    with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
+        log.write(json.dumps(["." + ROW, [ARGS[1]]]) + "\\n")
+    value = read(ROW, "null")
     if value == "FAIL":
         sys.exit(1)
     print(value)
     sys.exit(0)
+# Every release row is logged with its arguments after the subcommand, so the
+# tag each release read and the create call name is pinned by ApiPathTest.
+with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
+    log.write(json.dumps([ARGS[1], ARGS[2:]]) + "\\n")
 VERSION = os.environ.get("VERSION", "")
 ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
           "cleanlanguage-" + VERSION + ".zip", "cleanlanguage-" + VERSION + ".zip.sha256"]
@@ -756,11 +694,11 @@ MISSING = read("missing").split()
 EXTRA = ["extra-asset-%04d-" % index + "x" * 180 + ".txt" for index in range(int(read("extra", "0")))]
 CORRUPT = read("corrupt").split()
 DIFFER = read("differ").split()
-if SUB[:2] == ["release", "view"]:
+if ROW == "view":
     print("\\n".join([asset for asset in ASSETS if asset not in MISSING] + EXTRA))
     sys.exit(0)
-if SUB[:2] == ["release", "download"]:
-    target = SUB[SUB.index("--dir") + 1]
+if ROW == "download":
+    target = ARGS[ARGS.index("--dir") + 1]
     for asset in ASSETS:
         zip_name = asset[: -len(".sha256")] if asset.endswith(".sha256") else asset
         data = b"published zip bytes" + (b" differ" if zip_name in DIFFER else b"")
@@ -770,28 +708,35 @@ if SUB[:2] == ["release", "download"]:
             else:
                 handle.write(data + (b" altered" if asset in CORRUPT else b""))
     sys.exit(0)
+if ROW == "create":
+    # The release creation is appended to gh_writes, whatever the call log
+    # holds, so a no-change assertion can read the fake's own state.
+    with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
+        writes.write(json.dumps(ARGS) + "\\n")
 sys.exit(0)
 """
 
-FAKE_VCS = FAKE_COMMON + """
-if SUB[:1] == ["rev-parse"]:
-    print(read("commit"))
-elif SUB[:1] == ["ls-remote"]:
+FAKE_VCS = FAKE_COMMON + "PROGRAM = \"git\"\n" + FAKE_TABLE + """
+# The fetch row has no answer and no effect.
+if ROW == "show":
+    # The state file "main_skill" is the SKILL.md of main.
+    print(read("main_skill"), end="")
+elif ROW == "lookup":
     # The state file "ls_remote" set to FAIL makes the lookup itself fail.
     if read("ls_remote") == "FAIL":
         sys.exit(128)
     tag = read("remote_tag")
     if tag:
-        print(tag + "\\trefs/tags/" + os.environ["RELEASE_TAG"])
-elif SUB[:1] == ["tag"]:
+        print(tag + "\\t" + ARGS[-1])
+elif ROW == "rev-parse":
+    print(read("commit"))
+elif ROW in ("tag", "tag-force"):
     # The local tag points at the commit named last.
     with open(os.path.join(STATE, "local_tag"), "w", encoding="utf-8") as handle:
         handle.write(ARGS[-1])
-elif SUB[:1] == ["push"] and "refs/tags/" + os.environ["RELEASE_TAG"] in SUB[1:]:
-    # A push that names the tag ref as a whole argument, wherever it stands,
-    # moves the remote tag to the local one, so a later run reads the tag
-    # where an earlier run left it. A push that names the tag in another
-    # form, such as the bare tag name or a refspec with a colon, does not.
+elif ROW in ("push", "push-force"):
+    # The push moves the tag on origin to the local tag, so a later run reads
+    # the tag where an earlier run left it.
     with open(os.path.join(STATE, "remote_tag"), "w", encoding="utf-8") as handle:
         handle.write(read("local_tag"))
 sys.exit(0)
@@ -963,11 +908,18 @@ class WorkflowStepTest(unittest.TestCase):
         return env
 
     def fake_write_state(self):
-        """The fakes' tag and write state, each file's text or None."""
+        """The fakes' tag, write and off-table state (FAKE_WRITE_STATE), each
+        file's text or None."""
         return {name: (self.state / name).read_text(encoding="utf-8") if (self.state / name).exists() else None
                 for name in FAKE_WRITE_STATE}
 
-    def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = ()):
+    def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = (),
+                 off_table: str | None = None):
+        """Run the step name, or script_text in its place, and return its exit
+        code, output and error output. A run in which the fake git or gh
+        records a call off CALL_FORMS fails its test, whatever the step's exit
+        code, unless the case opts out by giving off_table, the reason it
+        makes such a call on purpose."""
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
         # The fake state as the run found it, for a later no-change assertion.
@@ -1012,6 +964,11 @@ class WorkflowStepTest(unittest.TestCase):
             os.close(done_read)
             if done_write is not None:
                 os.close(done_write)
+        # An unknown call is never harmless: a call off the table, recorded by
+        # the fake that refused it, fails the run unless the case opted out.
+        unmodelled = self.fake_write_state()["unmodelled"]
+        if unmodelled != self.state_before_run["unmodelled"] and off_table is None:
+            raise self.failureException(f"step {name!r} made a call off the table CALL_FORMS: {unmodelled}")
         if proc.returncode == 0:
             self.carried.update(self.env_values())
         return proc.returncode, proc.stdout, proc.stderr
@@ -1099,54 +1056,39 @@ def ignore_lookup_failure(script: str) -> str:
     return script.replace(lookup[0], lookup[0] + " || true", 1)
 
 
-# Each predicate of a git or gh call reads a recorded call by its
-# subcommand, past any leading options of git or gh, so git -c NAME=VALUE tag
-# and gh -R REPO release create are classified as tag and create calls, and
-# is_api_write reads the method of a gh api call from its options before api
-# as well as after it, so gh -X POST api is a write. is_date reads only the
-# command name, since date takes no subcommand.
-def sub(call):
-    return subcommand(call[0], call[1])
+# Each predicate of a git or gh call reads a recorded call by the row of
+# CALL_FORMS it matches, through row_of, the function the fakes use, so a
+# call off the table is no tag, push, create, lookup or field read. is_date
+# reads only the command name, since the table does not cover date.
+def row_of_call(call):
+    return row_of(call[0], call[1])
 
 
-def leading_options(call):
-    """The leading options of a recorded git or gh call, before its subcommand."""
-    return call[1][:len(call[1]) - len(sub(call))]
+def kind_of(call):
+    """The kind of the row of a recorded call, or None for a call off the table."""
+    return ROW_KINDS.get(row_of_call(call))
 
 
 def is_push(call):
-    return call[0] == VCS and sub(call)[:1] == ["push"]
+    return kind_of(call) == "push"
 
 
 def is_create(call):
-    return call[0] == "gh" and sub(call)[:2] == ["release", "create"]
-
-
-def is_upload(call):
-    return call[0] == "gh" and sub(call)[:2] == ["release", "upload"]
+    return kind_of(call) == "create"
 
 
 def is_tag(call):
-    return call[0] == VCS and sub(call)[:1] == ["tag"]
+    return kind_of(call) == "tag"
 
 
 def is_lookup(call):
-    return call[0] == VCS and sub(call)[:1] == ["ls-remote"]
-
-
-def is_release_change(call):
-    """A gh release subcommand other than the reads view, download and list."""
-    return call[0] == "gh" and sub(call)[:1] == ["release"] and sub(call)[1:2] not in (["view"], ["download"], ["list"])
-
-
-def is_api_write(call):
-    """A gh api call whose method is not GET, given or implied by a body
-    option before or after api."""
-    return call[0] == "gh" and sub(call)[:1] == ["api"] and api_method(sub(call)[1:], leading_options(call)) != "GET"
+    return row_of_call(call) == "lookup"
 
 
 def is_mutation(call):
-    return is_push(call) or is_tag(call) or is_release_change(call) or is_api_write(call)
+    """A git or gh call that is not a read of the table: a change, or a call
+    off the table, which is never counted as harmless."""
+    return call[0] in TABLE_PROGRAMS and kind_of(call) != "read"
 
 
 def is_date(call):
@@ -1154,16 +1096,9 @@ def is_date(call):
 
 
 def is_field_read(field):
-    """A gh api call that reads field through --jq or -q, wherever the option
-    stands and in each form api_options reads: --jq .field, --jq=.field,
-    -q .field, -q.field, -q=.field, or -q last in a group of short options.
-    When the call repeats the option, only its last value counts, as this
-    file models gh and as the fake gh answers it."""
+    """A gh api call of the row that reads field (published_at or immutable)."""
     def reads(call):
-        if call[0] != "gh" or sub(call)[:1] != ["api"]:
-            return False
-        options, _operands = api_options(sub(call)[1:])
-        return [value for name, value in options if name == "--jq"][-1:] == ["." + field]
+        return row_of_call(call) == field
     return reads
 
 
@@ -1320,213 +1255,59 @@ class HarnessTest(WorkflowStepTest):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("without -u", proc.stderr)
 
-    def test_the_api_predicates_read_grouped_and_joined_short_options_as_gh_does(self):
-        # Each gh api call with whether it writes: the predicates count it as
-        # a mutation, and the fake gh appends it to gh_writes, exactly when
-        # it does.
-        path = "repos/jposluns/cleanlanguage/releases"
-        writes = (
-            (["api", "-X", "POST", path], True), (["api", "-XPOST", path], True),
-            (["api", "-X=POST", path], True), (["api", "-iX", "POST", path], True),
-            (["api", "-iXPOST", path], True), (["api", "-iX=POST", path], True),
-            (["api", "-if", "tag_name=v1.0.15", path], True), (["api", "-iftag_name=v1.0.15", path], True),
-            (["api", "-iF", "draft=false", path], True), (["api", "--method=PUT", path], True),
-            (["api", "--method=POST", path], True), (["api", "--method", "POST", path], True),
-            (["api", "--input", "-", path], True), (["api", "-i=t", "-XPOST", path], True),
-            (["api", path], False), (["api", "-i=false", path], False),
-            (["api", "--include", "--silent", path], False),
-            (["api", "-i", path], False), (["api", "-iX", "GET", path], False),
-            (["api", "-if", "x=1", "-X", "GET", path], False), (["api", path, "--jq", "-f"], False),
-            (["api", path, "-q-XPOST"], False), (["api", "-H", "-XPOST", path], False),
-            # A repeated method counts by its last value, in both orders.
-            (["api", "-X", "GET", "-X", "POST", path], True), (["api", "-X", "POST", "-X", "GET", path], False),
-            (["api", "--method=GET", "-XPOST", path], True), (["api", "--method", "POST", "--method=GET", path], False),
-        )
-        for args, write in writes:
-            with self.subTest(args=args):
-                self.assertEqual(is_mutation(["gh", args]), write)
-                (self.state / "gh_writes").unlink(missing_ok=True)
-                subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+    def test_each_row_changes_the_fake_state_exactly_when_its_kind_is_a_change(self):
+        # The fakes answer a call by its row, and the predicates count it by
+        # the kind of that row. For each row, a call built from its template
+        # matches that row, and the fake changes the tag or write state for
+        # it exactly when the kind of the row is not read, as is_mutation
+        # counts it, so a change labelled as a read, or a read labelled as a
+        # change, fails here. No call of this case is off the table.
+        target = self.root / "download"
+        target.mkdir()
+        sample = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
+                  "<REPO>": "jposluns/cleanlanguage", "<DIR>": str(target)}
+        self.assertEqual(set(sample), set(SLOTS))
+        for name, program, template, kind in CALL_FORMS:
+            with self.subTest(row=name):
+                args = [re.sub(r"<[A-Z]+>", lambda slot: sample[slot.group(0)], piece) for piece in template]
+                self.assertEqual(row_of(program, args), name)
+                self.set_state(local_tag=None, remote_tag=OTHER_COMMIT, gh_writes=None, unmodelled=None,
+                               status="200")
+                before = self.fake_write_state()
+                subprocess.run([str(self.bin / program), *args],
+                               env={"FAKE_STATE": str(self.state), "VERSION": "1.0.15"},
                                capture_output=True, text=True)
-                self.assertEqual((self.state / "gh_writes").exists(), write)
-        # Each form of --include or -i, with whether the fake gh prints the
-        # status line for it: exactly when the last --include or -i has no
-        # value or a value in FLAG_TRUE_VALUES. Each of the 6 values is given
-        # after -i= and after --include=, and 2 values that differ from 1 of
-        # them only in case print no line. -i= with nothing after the = is -i
-        # followed by the short option -=, as api_options reads it, so it
-        # prints the line. The status state reads 404, so a call that prints
-        # the line exits 1, and a call that does not prints nothing and exits 0.
-        self.set_state(status="404")
-        includes = (
-            (["api", path], False), (["api", "-i", path], True), (["api", "--include", path], True),
-            (["api", "-i=t", path], True), (["api", "-i=1", path], True), (["api", "--include=true", path], True),
-            (["api", "-i=T", path], True), (["api", "-i=TRUE", path], True), (["api", "-i=true", path], True),
-            (["api", "-i=True", path], True), (["api", "--include=1", path], True),
-            (["api", "--include=t", path], True), (["api", "--include=T", path], True),
-            (["api", "--include=TRUE", path], True), (["api", "--include=True", path], True),
-            (["api", "-i=tRUE", path], False), (["api", "--include=TRue", path], False),
-            (["api", "-i=", path], True),
-            (["api", "-i=false", path], False), (["api", "--include=false", path], False),
-            (["api", "-i=x", path], False), (["api", "-i", "-i=false", path], False),
-            (["api", "--include", "--include=false", path], False), (["api", "-i=false", "-i", path], True),
-            (["api", "--include=false", "--include", path], True), (["api", "-iX", "GET", path], True),
-            (["api", "--include", "--silent", path], True),
-        )
-        for args, status in includes:
-            with self.subTest(include=args):
-                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
-                                      capture_output=True, text=True)
-                self.assertEqual((proc.returncode, proc.stdout), (1, "HTTP/2.0 404 Fake\n") if status else (0, ""),
-                                 proc.stderr)
-        # A short option followed by = takes the rest of the argument as its
-        # value only when at least 1 more character follows the =; a lone =
-        # is read as the short option -=, or, after an option that takes a
-        # value, as that value.
-        equals = (
-            (["-i=", path], ([("--include", None), ("-=", None)], [path])),
-            (["-i=x", path], ([("--include", "x")], [path])),
-            (["-q=", path], ([("--jq", "=")], [path])),
-            (["-q=.immutable", path], ([("--jq", ".immutable")], [path])),
-        )
-        for args, parsed in equals:
-            with self.subTest(equals=args):
-                self.assertEqual(api_options(args), parsed)
-        # Every argument after -- is an operand, so an option written after
-        # it is neither a method nor a query: the call is no change and no
-        # field read, the fake gh records no write, logs the call as a status
-        # read of all its operands and prints nothing, and an --include after
-        # -- prints no status line.
-        terminated = (
-            ["api", path, "--", "-XPOST", "-q.immutable"],
-            ["api", "--", path, "--method=POST", "--jq", ".immutable", "-i"],
-        )
-        for args in terminated:
-            with self.subTest(terminated=args):
-                operands = [arg for arg in args[1:] if arg != "--"]
-                self.assertEqual(api_options(args[1:]), ([], operands))
-                self.assertFalse(is_mutation(["gh", args]))
-                self.assertFalse(is_field_read("immutable")(["gh", args]))
-                for name in ("gh_writes", "api.log"):
-                    (self.state / name).unlink(missing_ok=True)
-                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
-                                      capture_output=True, text=True)
-                self.assertEqual((proc.returncode, proc.stdout), (0, ""), proc.stderr)
-                self.assertFalse((self.state / "gh_writes").exists())
-                self.assertEqual(json.loads((self.state / "api.log").read_text(encoding="utf-8")),
-                                 ["status", operands])
-        # Each gh call with a leading option, with the arguments from its
-        # subcommand on as subcommand reads them through takes_separate_value:
-        # an option that takes a value and has none in its argument, alone
-        # or last in a group, takes the next argument, and an option whose
-        # argument holds a value, joined or after =, takes none, whether or
-        # not the option takes a value, as api_options reads it.
-        leading = (
-            (["-i=t", "api", "-XPOST", path], ["api", "-XPOST", path]), (["-i=X", "api", path], ["api", path]),
-            (["-i", "api", path], ["api", path]), (["-X", "POST", "api", path], ["api", path]),
-            (["-XPOST", "api", path], ["api", path]), (["-X=POST", "api", path], ["api", path]),
-            (["-iX", "POST", "api", path], ["api", path]), (["--method", "POST", "api", path], ["api", path]),
-            (["--method=POST", "api", path], ["api", path]), (["--include=false", "api", path], ["api", path]),
-            (["-R", "jposluns/cleanlanguage", "api", path], ["api", path]),
-            (["-Rjposluns/cleanlanguage", "api", path], ["api", path]),
-            (["--repo=jposluns/cleanlanguage", "api", path], ["api", path]),
-        )
-        for args, rest in leading:
-            with self.subTest(leading=args):
-                self.assertEqual(subcommand("gh", args), rest)
-        # gh api defines no -R or --repo option, so the fake gh refuses a
-        # call with an option before api, as gh refuses -R there: exit 1,
-        # no write and no API log entry. A gh api option that takes a value
-        # is read there with its separate value, so -X POST, --method POST
-        # and -f NAME=VALUE before api are refused too, not read as the
-        # subcommand POST or NAME=VALUE. The predicates read the method of
-        # such a call from its options before api as well as after it, so a
-        # no-change assertion fails on each of these writes.
-        refused = (
-            (["-R", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown shorthand flag: 'R' in -R"),
-            (["--repo", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
-            (["--repo=jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
-            (["-X", "POST", "api", path], "unknown shorthand flag: 'X' in -X"),
-            (["--method", "POST", "api", path], "unknown flag: --method"),
-            (["-f", "tag_name=v1.0.15", "api", path], "unknown shorthand flag: 'f' in -f"),
-            (["-i=t", "-XPOST", "api", path], "unknown shorthand flag: 'i' in -i=t"),
-            (["-i=t", "api", "-XPOST", path], "unknown shorthand flag: 'i' in -i=t"),
-        )
-        for args, message in refused:
-            with self.subTest(args=args):
-                self.assertTrue(is_mutation(["gh", args]))
-                for name in ("gh_writes", "api.log"):
-                    (self.state / name).unlink(missing_ok=True)
-                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
-                                      capture_output=True, text=True)
-                self.assertEqual(proc.returncode, 1, proc.stderr)
-                self.assertEqual(proc.stderr, message + "\n")
-                self.assertFalse((self.state / "gh_writes").exists())
-                self.assertFalse((self.state / "api.log").exists())
-        # Each form of a --jq or -q read of the immutable field, and calls
-        # that name the field without reading it. A repeated query option
-        # reads only its last value, so is_field_read agrees with the field
-        # the fake gh logs, in either order, and the fake prints the value of
-        # the field it logs: true for the immutable field, the publication
-        # time for the published_at field, and nothing for a call with no
-        # query option. A call that groups -q after -i includes the status
-        # line, so the fake prints that line, which reads 404, and no field.
-        self.set_state(immutable="true", published_at="2026-11-15T12:00:03Z")
-        answers = {".immutable": "true\n", ".published_at": "2026-11-15T12:00:03Z\n", "status": ""}
-        release = path + "/tags/v1.0.15"
-        reads = (
-            (["api", release, "--jq", ".immutable", "--jq", ".published_at"], False),
-            (["api", release, "--jq", ".published_at", "-q.immutable"], True),
-            (["api", release, "--jq", ".immutable"], True), (["api", release, "--jq=.immutable"], True),
-            (["api", release, "-q", ".immutable"], True), (["api", release, "-q.immutable"], True),
-            (["api", release, "-q=.immutable"], True), (["api", "-iq", ".immutable", release], True),
-            (["api", "-iq.immutable", release], True),
-            (["-R", "jposluns/cleanlanguage", "api", release, "-q.immutable"], True),
-            (["api", release, "--jq", ".published_at"], False), (["api", release, "-q.published_at"], False),
-            (["api", "-f", "q=.immutable", release], False), (["api", "-H", "-q.immutable", release], False),
-        )
-        for args, read in reads:
-            with self.subTest(args=args):
-                self.assertEqual(is_field_read("immutable")(["gh", args]), read)
-                if args[0] == "api":
-                    (self.state / "api.log").unlink(missing_ok=True)
-                    proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
-                                          capture_output=True, text=True)
-                    kind = json.loads((self.state / "api.log").read_text(encoding="utf-8"))[0]
-                    self.assertEqual(kind == ".immutable", read, kind)
-                    self.assertEqual(proc.stdout, "HTTP/2.0 404 Fake\n" if args[1].startswith("-i") else answers[kind],
-                                     kind)
+                after = self.fake_write_state()
+                self.assertIsNone(after["unmodelled"], after)
+                self.assertEqual(after != before, kind != "read", (before, after))
+                self.assertEqual(is_mutation([program, args]), kind != "read")
 
-    def test_the_predicates_and_the_fake_git_read_each_leading_git_option(self):
-        # Each git option of LEADING_VALUE_OPTIONS, given before the
-        # subcommand with its value as the next argument, as in git -C DIR tag
-        # or git -c NAME=VALUE tag, and 3 of them with the value joined after
-        # =, which takes no separate value. For each, subcommand reads the
-        # call from the subcommand on, the predicates count the tag call as a
-        # tag call and a change and the lookup as a lookup and no change, and
-        # the fake git answers each call by its subcommand: the tag call moves
-        # the local tag, and rev-parse prints the commit.
-        options = (
-            ["-c", "advice.detachedHead=false"], ["-C", str(self.work)], ["--git-dir", ".git"],
-            ["--work-tree", "."], ["--namespace", "other"],
-            ["--git-dir=.git"], ["--work-tree=."], ["--namespace=other"],
+    def test_every_row_of_the_table_is_a_call_the_workflow_makes(self):
+        # The runs below take the paths on which the workflow makes its git
+        # and gh calls: the validate step, the determine step on a published
+        # release, and the publish step on a first publication by dispatch,
+        # on a forced move of the tag of an unpublished release and on a
+        # re-run. Each run fails if a call it makes is off the table, and the
+        # rows its calls match, together, are exactly the rows of CALL_FORMS,
+        # so a row that no run reaches fails here.
+        shutil.copy2(REPO / "tools" / "skill-version.py", self.work / "tools" / "skill-version.py")
+        self.set_state(main_skill="Version: 1.0.15  \n")
+        runs = (
+            (VALIDATE, {}, "false"),
+            (DETERMINE, {"status": "200"}, "false"),
+            (PUBLISH, {"status": "404", "remote_tag": None}, "false"),
+            (PUBLISH, {"status": "404", "remote_tag": OTHER_COMMIT}, "true"),
+            (PUBLISH, {"status": "200", "remote_tag": COMMIT}, "false"),
         )
-        for leading in options:
-            with self.subTest(leading=leading):
-                tag = [*leading, "tag", "v1.0.15", COMMIT]
-                lookup = [*leading, "ls-remote", "--tags", "origin", "refs/tags/v1.0.15"]
-                self.assertEqual(subcommand(VCS, tag), ["tag", "v1.0.15", COMMIT])
-                self.assertEqual(subcommand(VCS, lookup), ["ls-remote", "--tags", "origin", "refs/tags/v1.0.15"])
-                self.assertEqual((is_tag([VCS, tag]), is_mutation([VCS, tag])), (True, True))
-                self.assertEqual((is_lookup([VCS, lookup]), is_mutation([VCS, lookup])), (True, False))
-                self.set_state(local_tag=None)
-                proc = subprocess.run([str(self.bin / VCS), *tag], env={"FAKE_STATE": str(self.state)},
-                                      capture_output=True, text=True)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
-                proc = subprocess.run([str(self.bin / VCS), *leading, "rev-parse", "HEAD"],
-                                      env={"FAKE_STATE": str(self.state)}, capture_output=True, text=True)
-                self.assertEqual((proc.returncode, proc.stdout), (0, COMMIT + "\n"), proc.stderr)
+        rows = set()
+        for name, state, force in runs:
+            self.reset_calls()
+            self.set_state(**state)
+            self.inputs["force"] = force
+            code, _out, err = self.run_step(name)
+            self.assertEqual(code, 0, err)
+            rows |= {row_of_call(call) for call in self.calls() if call[0] in TABLE_PROGRAMS}
+        self.assertEqual(rows, set(ROW_KINDS))
 
     def test_a_step_still_running_at_the_limit_fails_its_test(self):
         # With the limit lowered to 1 s, a step that runs for 5 s fails its
@@ -1923,7 +1704,7 @@ class RerunTest(WorkflowStepTest):
                 code, out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 0, err)
                 calls = self.calls()
-                self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                self.assertFalse(any(is_mutation(c) for c in calls), calls)
                 assert_readback_ran(self, calls, out)
                 self.assertIn("kept its assets", out)
 
@@ -1958,7 +1739,7 @@ class RerunTest(WorkflowStepTest):
                     self.assertNotIn("not a usable UTC instant", err)
                     self.assertNotIn("kept its assets", out)
                     calls = self.calls()
-                    self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                    self.assertFalse(any(is_mutation(c) for c in calls), calls)
                     self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
     def test_undated_rerun_reads_back_immutability_only(self):
@@ -1995,6 +1776,44 @@ TAG_PUSH_CHECK = (
     "fi",
 )
 
+# Calls that match no row of CALL_FORMS, each as a label, its program and its
+# arguments: an option before the subcommand, a method or body option that
+# the table does not hold, a release deletion or upload, a ref update, a row
+# with 1 argument more or fewer, a push with an option after the ref or of
+# the bare tag, the arguments of a git row given to gh, an option in each
+# slot, and a slot with text after its pattern.
+RELEASES_PATH = "repos/jposluns/cleanlanguage/releases"
+DOWNLOAD_PATTERNS = ["--pattern", "cleanlanguage.zip", "--pattern", "cleanlanguage.zip.sha256",
+                     "--pattern", "cleanlanguage-1.0.15.zip", "--pattern", "cleanlanguage-1.0.15.zip.sha256"]
+OFF_TABLE_CALLS = (
+    ("a git option before tag", VCS, ["-c", "user.name=x", "tag", "v1.0.15", COMMIT]),
+    ("git --attr-source before tag", VCS, ["--attr-source", "HEAD", "tag", "v1.0.15", COMMIT]),
+    ("gh -R before release create", "gh", ["-R", "jposluns/cleanlanguage", "release", "create", "v1.0.15"]),
+    ("a method before api", "gh", ["-X", "POST", "api", RELEASES_PATH]),
+    ("a joined method", "gh", ["api", "-XPOST", RELEASES_PATH]),
+    ("a method after =", "gh", ["api", "--method=POST", RELEASES_PATH]),
+    ("a long body option", "gh", ["api", "--field", "tag_name=v1.0.15", RELEASES_PATH]),
+    ("an include with nothing after =", "gh",
+     ["api", "--include=", "--silent", RELEASES_PATH + "/tags/v1.0.15"]),
+    ("a release deletion", "gh", ["release", "delete", "v1.0.15", "--yes"]),
+    ("a release upload", "gh", ["release", "upload", "v1.0.15", "dist/cleanlanguage.zip", "--clobber"]),
+    ("a ref update", VCS, ["update-ref", "refs/tags/v1.0.15", COMMIT]),
+    ("a row with 1 more argument", VCS, ["tag", "v1.0.15", COMMIT, "HEAD"]),
+    ("a row with 1 argument fewer", VCS, ["tag", "v1.0.15"]),
+    ("a push with an option after the ref", VCS, ["push", "origin", "refs/tags/v1.0.15", "--force"]),
+    ("a push of the bare tag", VCS, ["push", "origin", "v1.0.15"]),
+    ("a git row given to gh", "gh", ["tag", "v1.0.15", COMMIT]),
+    ("an option in the tag slot", VCS, ["tag", "-x", COMMIT]),
+    ("an option in the commit slot", VCS, ["tag", "v1.0.15", "-x"]),
+    ("an option in the repository slot", "gh", ["api", "repos/-x/y/releases/tags/v1.0.15", "--jq", ".immutable"]),
+    ("an option in the directory slot", "gh",
+     ["release", "download", "v1.0.15", "--dir", "-x", "--clobber", *DOWNLOAD_PATTERNS]),
+    ("an option in the version slot", "gh",
+     ["release", "download", "v1.0.15", "--dir", "/d", "--clobber", *DOWNLOAD_PATTERNS[:5],
+      "cleanlanguage--x.zip", *DOWNLOAD_PATTERNS[6:]]),
+    ("text after the tag slot", VCS, ["tag", "v1.0.15-x", COMMIT]),
+)
+
 
 class ImmutableReleaseTest(WorkflowStepTest):
     """Item 57: this workflow never republishes a published release. The force
@@ -2009,9 +1828,11 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.set_state(status="200", remote_tag=remote_tag)
 
     def assert_no_mutation(self, calls):
+        # No git or gh call in the log is a change or off the table.
         self.assertFalse([c for c in calls if is_mutation(c)], calls)
-        # The fakes' own state as well as the call log, so a write whose call
-        # the log does not show still fails this assertion.
+        # The fakes' own state as well as the call log, so a change or an
+        # off-table call that the log does not show still fails this
+        # assertion.
         self.assertEqual(self.fake_write_state(), self.state_before_run, calls)
 
     def test_force_against_a_published_release_is_refused(self):
@@ -2285,7 +2106,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertLess(move, push)
         self.assertLess(push, create)
         self.assertLess(create, self.index_of(calls, is_field_read("immutable")))
-        self.assertFalse(any(is_upload(c) for c in calls), calls)
+        self.assertEqual([row_of_call(c) for c in calls if is_mutation(c)], ["tag-force", "push-force", "create"], calls)
         self.assertIn("First-publication readback", out)
 
     def test_moved_tag_of_an_unpublished_release_needs_the_force_input(self):
@@ -2303,7 +2124,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(code, 0, err)
         calls = self.calls()
         self.assertTrue(any(is_create(c) for c in calls), calls)
-        self.assertFalse(any(is_upload(c) or is_push(c) for c in calls), calls)
+        self.assertEqual([row_of_call(c) for c in calls if is_mutation(c)], ["create"], calls)
         self.assertIn("First-publication readback", out)
 
     # The tag-push runs of an unpublished release whose tag on origin is not
@@ -2317,7 +2138,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.runner["GITHUB_EVENT_NAME"] = "push"
         self.carried["RELEASE_DATED"] = "1" if dated else "0"
         self.carried["RELEASE_DATE"] = "2026-11-15" if dated else ""
-        self.set_state(status="404", remote_tag=remote_tag, local_tag=None, gh_writes=None)
+        self.set_state(status="404", remote_tag=remote_tag, local_tag=None, gh_writes=None, unmodelled=None)
 
     def test_tag_push_of_an_unpublished_release_refuses_mismatched_bytes(self):
         # A tag-triggered run publishes only the commit that its tag names on
@@ -2348,7 +2169,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 # drops 1 of its files, which the comparison of 2 readings by
                 # the same function cannot see.
                 self.assertEqual(self.fake_write_state(),
-                                 {"local_tag": None, "remote_tag": remote_tag, "gh_writes": None}, calls)
+                                 {"local_tag": None, "remote_tag": remote_tag, "gh_writes": None, "unmodelled": None},
+                                 calls)
                 self.assert_no_mutation(calls)
                 self.assertEqual(len([c for c in calls if is_lookup(c)]), 1, calls)
                 # Only the early window check reads the clock; the binding
@@ -2429,80 +2251,50 @@ class ImmutableReleaseTest(WorkflowStepTest):
             self.assert_no_mutation(self.calls())
         self.assertEqual((self.state / "pipe_writes").read_text(encoding="utf-8"), "1")
 
-    def test_a_push_of_the_tag_ref_followed_by_an_option_moves_the_tag(self):
-        # The fake git moves the tag on origin for a push that names the full
-        # tag ref as a whole argument, wherever it stands, so a push that
-        # names the ref and then an option, as in git push origin
-        # refs/tags/v1.0.15 --force, moves it to the local tag too. A step
-        # that makes such a push fails assert_no_mutation on the state of the
-        # fakes alone, given an empty call log.
-        for option in ("--force", "-f"):
-            with self.subTest(option=option):
+    def test_a_call_off_the_table_fails_the_run(self):
+        # Each call of OFF_TABLE_CALLS matches no row of CALL_FORMS. A step
+        # that makes it, and goes on to exit 0, fails its run. Run again with
+        # the opt-out, the step exits 0, and the fake has refused the call
+        # (exit 97, with its message), recorded it in unmodelled and changed
+        # nothing else; the predicates read it as no row and as a change, and
+        # assert_no_mutation fails on the state of the fakes alone, given an
+        # empty call log.
+        for label, program, args in OFF_TABLE_CALLS:
+            with self.subTest(label):
                 self.tag_push_mismatch(True, OTHER_COMMIT)
                 self.set_state(local_tag=COMMIT)
-                script = VCS + " push origin refs/tags/v1.0.15 " + option + "\nexit 1\n"
-                code, _out, err = self.run_step(PUBLISH, script)
-                self.assertEqual(code, 1, err)
-                self.assertEqual(self.state_before_run["remote_tag"], OTHER_COMMIT)
-                self.assertEqual(self.fake_write_state()["remote_tag"], COMMIT)
-                self.assertEqual(len([c for c in self.calls() if is_push(c)]), 1, self.calls())
+                script = shlex.join([program, *args]) + " || true\nexit 0\n"
+                with self.assertRaises(self.failureException) as raised:
+                    self.run_step(PUBLISH, script)
+                self.assertIn("made a call off the table CALL_FORMS", str(raised.exception))
+                self.set_state(unmodelled=None)
+                code, _out, err = self.run_step(
+                    PUBLISH, script,
+                    off_table="the case makes this call on purpose, to show that the fake refuses and records it")
+                self.assertEqual(code, 0, err)
+                self.assertIn("fake " + program + ": call off the table CALL_FORMS", err)
+                self.assertEqual(self.fake_write_state(),
+                                 {"local_tag": COMMIT, "remote_tag": OTHER_COMMIT, "gh_writes": None,
+                                  "unmodelled": json.dumps([program, args]) + "\n"})
+                self.assertEqual((row_of_call([program, args]), is_mutation([program, args])), (None, True))
                 with self.assertRaises(AssertionError):
                     self.assert_no_mutation([])
 
-    def test_the_fake_gh_reads_a_leading_option_as_gh_does(self):
-        # Each gh release call of the publish step, with a leading -R option
-        # added, gets the same answers and leaves the same API log and write
-        # state: on a re-run, the asset list and the download; on a first
-        # publication, the create call. gh api defines no -R option, so with
-        # -R added before each gh api call the fake refuses the status probe,
-        # as gh does, and the step stops on the unknown status with no write.
-        # The pin counts the text gh api, the text gh release and the word gh,
-        # so a gh call added in those forms, or given an option before its
-        # subcommand, fails it. A call that bash runs as gh but that is
-        # written otherwise, such as g\h or "g"h, escapes the pin; the runs
-        # of the renamed step at the end of this case catch it on the paths
-        # they take.
+    def test_every_gh_call_of_the_publish_step_reaches_the_fake_gh(self):
+        # The pin counts the text gh api, the text gh release and the word gh
+        # in the publish step, so a gh call added in those forms fails it. A
+        # call that bash runs as gh but that is written otherwise, such as g\h
+        # or "g"h, escapes the pin; the runs below catch it on the paths they
+        # take. Each renames every gh word of the step gh-text, a copy of the
+        # fake gh, which matches its calls as gh, so each call written as the
+        # word gh reaches the fake by that name, and a call that bash still
+        # runs as gh reaches it as gh and fails here. This holds on the 3
+        # paths these runs take (a re-run, a first publication, and the
+        # refusal of a tag push at another commit), not on a path none of
+        # them reaches.
         script = step_script(PUBLISH)
         self.assertEqual((script.count("gh api "), script.count("gh release "), len(re.findall(r"\bgh\b", script))),
                          (3, 3, 6))
-        leading = script.replace("gh release ", "gh -R \"${GITHUB_REPOSITORY}\" release ")
-        refused = script.replace("gh api ", "gh -R \"${GITHUB_REPOSITORY}\" api ")
-        for status in ("200", "404"):
-            with self.subTest(status=status):
-                results = []
-                for text in (script, leading):
-                    self.reset_calls()
-                    for log in ("api.log", "release.log"):
-                        (self.state / log).unlink(missing_ok=True)
-                    self.set_state(status=status, remote_tag=COMMIT, local_tag=None, gh_writes=None)
-                    code, out, err = self.run_step(PUBLISH, text)
-                    self.assertEqual(code, 0, err)
-                    releases = [release for release, _rest in
-                                (json.loads(line) for line in (self.state / "release.log").read_text(
-                                    encoding="utf-8").splitlines())]
-                    results.append((out, err, (self.state / "api.log").read_text(encoding="utf-8"),
-                                    releases, self.fake_write_state()))
-                    gh_calls = [c for c in self.calls() if c[0] == "gh"]
-                    self.assertTrue([c for c in gh_calls if sub(c)[:1] == ["release"]], self.calls())
-                    self.assertEqual([c for c in gh_calls if (c[1][:1] == ["-R"]) != (
-                        text is leading and sub(c)[:1] == ["release"])], [], gh_calls)
-                self.assertEqual(results[0], results[1])
-                self.reset_calls()
-                for log in ("api.log", "release.log"):
-                    (self.state / log).unlink(missing_ok=True)
-                self.set_state(status=status, remote_tag=COMMIT, local_tag=None, gh_writes=None)
-                code, out, err = self.run_step(PUBLISH, refused)
-                self.assertEqual(code, 1, err)
-                self.assertIn("Could not determine whether v1.0.15 is already published (HTTP none).", err)
-                self.assertFalse((self.state / "api.log").exists())
-                self.assertFalse((self.state / "release.log").exists())
-                self.assertEqual(self.fake_write_state(), self.state_before_run, self.calls())
-        # Every gh word of the step renamed gh-text, a copy of the fake gh, so
-        # each call written as the word gh reaches the fake by that name, and
-        # a call that bash still runs as gh, though written otherwise, reaches
-        # it as gh and fails here. This holds on the 3 paths these runs take
-        # (a re-run, a first publication, and the refusal of a tag push at
-        # another commit), not on a path none of them reaches.
         self.write_exec(self.bin / "gh-text", FAKE_GH)
         renamed = re.sub(r"\bgh\b", "gh-text", script)
         for path in ("200", "404", "push"):
@@ -2804,6 +2596,16 @@ class ValidateStepTest(WorkflowStepTest):
                       " See the description of the force input of this workflow.", err)
         self.assert_superseded_advice(err, 0)
         self.assertFalse(any(c[0] == "gh" for c in self.calls()), self.calls())
+
+    def test_a_release_ahead_of_main_is_refused(self):
+        # The step reads the version on main through the fetch and show rows
+        # of CALL_FORMS, and refuses a release whose version main lacks.
+        shutil.copy2(REPO / "tools" / "skill-version.py", self.work / "tools" / "skill-version.py")
+        self.set_state(main_skill="Version: 1.0.14  \n")
+        code, _out, err = self.run_step(VALIDATE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("main names version 1.0.14, older than the release 1.0.15.", err)
+        self.assertEqual([row_of_call(c) for c in self.calls() if c[0] == VCS], ["fetch", "show"], self.calls())
 
 
 class DetermineStepTest(WorkflowStepTest):
