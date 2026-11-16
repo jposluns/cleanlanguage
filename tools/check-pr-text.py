@@ -14,8 +14,16 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
   both of its pattern sets apply;
 - an em dash (U+2014) or an en dash (U+2013), in either text, including an en dash in a numeric
   range, which the writing standard replaces with a hyphen or the word "to";
-- an -ise spelling of a word whose -ize form the writing standard asks for, in either text, from
-  a denylist of stems such as organis- and standardis-;
+- an -ise spelling of a word whose -ize form the writing standard asks for, in either text: a
+  word with a word boundary on each side, in any letter case as Python's re module folds it
+  under (?i), which also takes U+017F, the long s, for s, made of 1 of the 40 stems of
+  the denylist ISE_STEMS (apolog, author, capital, categor, central, character, critic, custom,
+  emphas, final, formal, general, harmon, initial, legal, local, maxim, memor, minim, mobil,
+  modern, neutral, normal, optim, organ, parameter, priorit, random, real, recogn, sanit, serial,
+  special, stabil, standard, summar, synchron, token, util and visual), then "is", then exactly
+  1 of the 9 endings e, es, ed, ing, er, ers, able, ation and ations. So the stem organ, then
+  "is", then ers or able is reported; with no ending, or with any other ending, such as ings,
+  ably, ability or ational, the word is outside the rule and passes;
 - an empty or blank text, in either text, which includes a description whose body is null: a
   text is blank when nothing is left of it once whitespace, U+200B, U+FEFF and HTML comments are
   removed, and a comment opened with "<!--" and never closed runs to the end of the text;

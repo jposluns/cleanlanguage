@@ -39,10 +39,10 @@ scan, a case that the scan ends on each shape of backtick run, the memory, CPU a
 of a child, a case that a grandchild ends with its timed-out parent, a static case that every
 child runs under its limits, the job's time limit in the workflow, and honest texts that pass.
 MutantSweep generates the mutation sites of the gate from its source, checks that each has a row
-or an argument that it is equivalent or that its mutated gate does not load, and runs the
-cases each row names on a copy of the gate with the site applied; its docstring states its
-operators, its kill, equivalence and load criteria, its rule for a child that hits a limit and
-its residual. The class of counts stated with their
+or an argument that it is equivalent, that its mutated gate does not load or that its mutated
+gate stops, and runs the cases each row names on a copy of the gate with the site applied; its
+docstring states its operators, its kill, equivalence, load and stop criteria, its rule for a
+child that hits a limit and its residual. The class of counts stated with their
 selection rule has no case: it stays a judgement for reviewers, because no part of it is
 mechanical.
 """
@@ -101,6 +101,9 @@ UNCLOSED = "the code fence opened on line {} is never closed"
 URL_STOPPERS = (" ", "\t", "<", ">", '"', "'", "`", "(", ")", EN_DASH, EM_DASH,
                 "\u201c", "\u201d", "\u2018", "\u2019")
 ISE_ENDINGS = ("e", "es", "ed", "ing", "er", "ers", "able", "ation", "ations")
+# Endings just outside that set, each a letter run that extends or neighbours an ending of it,
+# which test_ise_word_with_an_ending_outside_the_set_passes passes.
+ISE_OUTSIDE_ENDINGS = ("", "ings", "eds", "ably", "ability", "ational", "ationally")
 # The sets the gate docstring names that the enumeration cases compare with the gate: the marks
 # that end a URL besides whitespace as Python's \s reads it, the marks a URL leaves off its end,
 # the characters that may indent a fence line, the characters whose run makes a fence, the
@@ -222,6 +225,17 @@ GATE_CPU = 60
 SWEEP_MEMORY = 192 * 1024 * 1024
 # Each line that run_child() writes to standard error when a child hits a limit starts so.
 LIMIT_HIT = "limit hit: "
+# A stop of the gate: a traceback, the line of an unexpected error, or the type name of an error
+# that a slip in the gate's own code raises, such as a name that is never bound. In a sweep
+# child, the sweep writes the unmutated gate to UNMUTATED, beside the tools folder of its tree;
+# a gate run there whose output or standard error shows a stop sign that the unmutated gate,
+# run with the same arguments, does not show writes 1 line to standard error that holds
+# STOP_MARK and names those signs, which the sweep reads. Elsewhere UNMUTATED does not exist.
+STOP_SIGNS = ("Traceback", "the gate stopped on an unexpected error", "NameError",
+              "UnboundLocalError", "AttributeError", "TypeError", "IndexError", "KeyError")
+STOP_MARK = "gate stop: "
+UNMUTATED_NAME = "unmutated-check-pr-text.py"
+UNMUTATED = HERE.parent / UNMUTATED_NAME
 # The case that a grandchild ends with its timed-out parent runs this parent, which imports the
 # suite and starts ORPHAN_SPIN through run_child(), as a sweep child starts a gate child, under
 # a wall timeout of ORPHAN_TIMEOUT s; each writes its PID to a file in the case's temporary
@@ -350,7 +364,36 @@ class GateCase(unittest.TestCase):
         """(exit status, output lines) of the gate run with args, under memory and timeout."""
         done = run_child(["-I", "-B", gate, *args], memory=memory, timeout=timeout,
                          cwd=cwd or self.cwd, text=True, encoding="utf-8")
+        if UNMUTATED.exists():
+            self.note_stop(done, args, gate, cwd or self.cwd, timeout, memory)
         return done.returncode, done.stdout.splitlines()
+
+    def note_stop(self, done, args, gate, cwd, timeout, memory):
+        """In a sweep child, name each stop sign of done that the unmutated gate does not show.
+
+        The unmutated gate runs from a copy beside gate, so it finds the same lint and squash
+        folder, with the same arguments, and only when done shows a stop sign. A stop is named
+        only on a run that the unmutated gate reads and checks to its end, with exit status 0
+        or 1: where it refuses the input, with exit status 2, a row that removes or narrows
+        that refusal can show only as an error that escapes it, and the case's assertion on
+        the refusal line gives that reason.
+        """
+        signs = {sign for sign in STOP_SIGNS if sign in done.stdout + done.stderr}
+        if not signs:
+            return
+        unmutated = Path(gate).with_name(UNMUTATED_NAME)
+        shutil.copyfile(UNMUTATED, unmutated)
+        try:
+            base = run_child(["-I", "-B", unmutated, *args], memory=memory, timeout=timeout,
+                             cwd=cwd, text=True, encoding="utf-8")
+        finally:
+            unmutated.unlink()
+        if base.returncode not in (0, 1):
+            return
+        new = sorted(signs - {sign for sign in STOP_SIGNS if sign in base.stdout + base.stderr})
+        if new:
+            print("{}{} in {}".format(STOP_MARK, ", ".join(new), self.id()), file=sys.stderr,
+                  flush=True)
 
     def tree(self, squash=None, number=999, lint=True):
         """A copy of the gate in a temporary tree, with the lint and a squash file if given."""
@@ -447,6 +490,13 @@ class DefectClasses(GateCase):
         self.assertResult(result, 1, 1)
         self.assertReports(result, "description:1: an em dash, U+2014")
 
+    def test_one_defect_gives_its_line_its_count_and_exit_1(self):
+        # The whole output: the defect line, its printable characters as they are and the dash
+        # escaped, then the count line, which counts it, and exit status 1.
+        self.assertEqual(self.description("The gate " + EM_DASH + " a new check.\n"),
+                         (1, ["description:1: an em dash, U+2014: The gate \\u2014 a new check.",
+                              "pr-text: 1 defect(s)"]))
+
     def test_em_dash_in_squash_message_fails(self):
         self.assertResult(self.squash(CLEAN_SQUASH + "\nA gate " + EM_DASH + " new.\n"), 1, 1)
 
@@ -503,6 +553,14 @@ class DefectClasses(GateCase):
                 result = self.description("We see " + word + " here.\n")
                 self.assertResult(result, 1, 1)
                 self.assertReports(result, "description:1: an -ise spelling: " + word)
+
+    def test_ise_word_with_an_ending_outside_the_set_passes(self):
+        # The ending set is closed: a listed stem, then "is", then a letter run that is not 1 of
+        # ISE_ENDINGS before the word boundary, is not matched, as the gate docstring states.
+        for ending in ISE_OUTSIDE_ENDINGS:
+            word = "organ" + "is" + ending
+            with self.subTest(word=word):
+                self.assertResult(self.description("We see " + word + " here.\n"), 0, 0)
 
     def test_ise_spelling_with_a_capital_fails(self):
         word = "Organ" + "ise"
@@ -692,6 +750,18 @@ class Exemptions(GateCase):
                           0, 0)
         self.assertResult(self.squash(CLEAN_SQUASH + "\n" + fence + "\nClean prose after it.\n"),
                           0, 0)
+
+    def test_prose_with_no_fence_line_is_not_fenced(self):
+        # With no fence line in the text, no line is inside a fence, so the dash is reported.
+        result = self.description("Intro.\n\nThe gate " + EM_DASH + " a new check.\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:3: an em dash, U+2014")
+
+    def test_fence_line_of_another_character_after_its_opener_leaves_it_open(self):
+        # A tilde run right after a backtick opener closes nothing, so the fence stays open.
+        result = self.description("Intro.\n\n```\n~~~~\n")
+        self.assertResult(result, 1, 1)
+        self.assertReports(result, "description:3: " + UNCLOSED.format(3))
 
     def test_dash_after_closed_fence_fails(self):
         fence = "```\ncode\n```\n"
@@ -1397,6 +1467,19 @@ class UnreadableInputs(GateCase):
         result = self.run_gate()
         self.assertResult(result, 2, 0)
         self.assertTrue(result[1][0].startswith("pr-text: no mode given; usage: "), result[1])
+
+    def test_each_mode_on_valid_arguments_passes_a_clean_text(self):
+        # Each mode with valid arguments on a clean text: no usage line, exit 0, 0 defects.
+        gate = self.tree(squash=CLEAN_SQUASH)
+        squash = gate.parent.parent / ".github" / "squash" / "999.txt"
+        for args in (("--description", self.write("d.md", "Hi.\n")),
+                     ("--squash", squash), ("--squash", squash, "--number", "999"),
+                     ("--number", "999", "--squash", squash),
+                     ("--event", self.event("A clean body."))):
+            with self.subTest(args=args):
+                result = self.run_gate(*args, gate=gate)
+                self.assertFalse([line for line in result[1] if "usage:" in line], result[1])
+                self.assertResult(result, 0, 0)
 
     def test_bad_arguments_are_usage_errors(self):
         path = self.write("d.md", "Hi.\n")
@@ -2360,10 +2443,10 @@ SWEEP_ROWS = {
         (D + 'test_squash_name_of_18_digits_binds_the_subject',),
     'in the constant EXIT_DEFECT, `1` changed up to `2` in `EXIT_DEFECT = 1`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in the constant EXIT_DEFECT, `1` changed down to `0` in `EXIT_DEFECT = 1`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in the constant EXIT_UNREADABLE, `2` changed up to `3` in `EXIT_UNREADABLE = 2`, at its '
     '1st occurrence':
         (U + 'test_body_that_is_a_number_exits_2',),
@@ -2376,16 +2459,12 @@ SWEEP_ROWS = {
     'in the constant EXIT_USAGE, `2` changed down to `1` in `EXIT_USAGE = 2`, at its 1st '
     'occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
-    'in ascii_text(), the statement `out = []` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in ascii_text(), the statement `for char in text:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in ascii_text(), the statement `code = ord(char)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in ascii_text(), the statement `if 0x20 <= code < 0x7f:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in ascii_text(), the statement `out.append(char)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in ascii_text(), the statement `elif code < 0x100:` deleted, at its 1st occurrence':
         (O + 'test_carriage_return_and_del_are_escaped',),
     'in ascii_text(), the statement `out.append("\\\\x{:02x}".format(code))` deleted, at its '
@@ -2399,15 +2478,13 @@ SWEEP_ROWS = {
     'in ascii_text(), the statement `out.append("\\\\U{:08x}".format(code))` deleted, at its '
     '1st occurrence':
         (O + 'test_reported_line_escapes_each_range_edge',),
-    'in ascii_text(), the statement `return "".join(out)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in ascii_text(), `<=` changed to `<` in `0x20 <= code < 0x7f`, at its 1st occurrence':
         (O + 'test_reported_line_escapes_each_range_edge',),
     'in ascii_text(), `<` changed to `<=` in `0x20 <= code < 0x7f`, at its 1st occurrence':
         (O + 'test_carriage_return_and_del_are_escaped',),
     'in ascii_text(), `0x20` changed up to `0x21` in `if 0x20 <= code < 0x7f:`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (O + 'test_reported_line_escapes_each_range_edge',),
     'in ascii_text(), `0x20` changed down to `0x1f` in `if 0x20 <= code < 0x7f:`, at its 1st '
     'occurrence':
         (O + 'test_reported_line_escapes_each_range_edge',),
@@ -2435,45 +2512,30 @@ SWEEP_ROWS = {
         (O + 'test_reported_line_escapes_each_range_edge',),
     'in emit(), the statement `print(prefix + ascii_text(detail))` deleted, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in Report.__init__(), the statement `self.count = 0` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.__init__(), `0` changed up to `1` in `self.count = 0`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.__init__(), `0` changed down to `-1` in `self.count = 0`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.defect(), the statement `self.count += 1` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.defect(), the statement `emit(prefix, detail)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.defect(), `1` changed up to `2` in `self.count += 1`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.defect(), `1` changed down to `0` in `self.count += 1`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in Report.note(), the statement `emit(prefix, detail)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in read_utf8(), the statement `try:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in read_utf8(), the statement `data = Path(path).read_bytes()` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in read_utf8(), the statement `raise Unreadable("{} {}: {}".format(` deleted, at its 1st '
     'occurrence':
         (U + 'test_folder_given_as_text_file_exits_2',),
-    'in read_utf8(), the statement `try:` deleted, at its 2nd occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in read_utf8(), the statement `text = data.decode("utf-8", "strict")` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in read_utf8(), the statement `raise Unreadable("{} {}: not UTF-8: {}".format(` deleted, at '
     'its 1st occurrence':
         (U + 'test_undecodable_squash_file_exits_2',),
     'in read_utf8(), `False` changed to `True` in `what, path, describe(error, named=False))) '
     'from error`, at its 1st occurrence':
         (U + 'test_undecodable_text_exits_2',),
-    'in read_utf8(), the statement `return text.replace("\\r\\n", "\\n")` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in read_utf8(), the body of `except OSError as error:` replaced by `raise`, at its 1st '
     'occurrence':
         (U + 'test_folder_given_as_text_file_exits_2',),
@@ -2482,38 +2544,24 @@ SWEEP_ROWS = {
         (U + 'test_undecodable_squash_file_exits_2',),
     'in read_utf8(), `or` changed to `and` before `describe(error)`, at its 1st occurrence':
         (U + 'test_unreadable_line_names_its_input',),
-    'in read_event(), the statement `text = read_utf8(path, "event payload")` deleted, at its '
-    '1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
-    'in read_event(), the statement `try:` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
-    'in read_event(), the statement `event = json.loads(text)` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), the statement `raise Unreadable("event payload {}: not JSON: {}".format(` '
     'deleted, at its 1st occurrence':
         (U + 'test_deeply_nested_payload_exits_2',),
     'in read_event(), `False` changed to `True` in `path, describe(error, named=False))) from '
     'error`, at its 1st occurrence':
         (U + 'test_deeply_nested_payload_exits_2',),
-    'in read_event(), the statement `pull = event.get("pull_request") if isinstance(event, '
-    'dict) else None` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), the statement `if not isinstance(pull, dict):` deleted, at its 1st '
     'occurrence':
         (U + 'test_other_event_type_exits_2',),
     'in read_event(), the statement `raise Unreadable("event payload {}: not a pull request '
     'event".format(path))` deleted, at its 1st occurrence':
         (U + 'test_other_event_type_exits_2',),
-    'in read_event(), the statement `number = pull.get("number")` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), the statement `if type(number) is not int or number < 1:` deleted, at its '
     '1st occurrence':
         (U + 'test_payload_number_below_1_exits_2',),
     'in read_event(), the statement `raise Unreadable("event payload {}: no positive integer '
     'pull request number".format(path))` deleted, at its 1st occurrence':
         (U + 'test_payload_number_below_1_exits_2',),
-    'in read_event(), the statement `body = pull.get("body")` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), the statement `if body is None:` deleted, at its 1st occurrence':
         (D + 'test_null_body_fails',),
     'in read_event(), the statement `body = ""` deleted, at its 1st occurrence':
@@ -2524,9 +2572,6 @@ SWEEP_ROWS = {
     'in read_event(), the statement `raise Unreadable("event payload {}: the pull request body '
     'is not text".format(path))` deleted, at its 1st occurrence':
         (U + 'test_body_that_is_a_number_exits_2',),
-    'in read_event(), the statement `return number, body.replace("\\r\\n", "\\n")` deleted, at '
-    'its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in read_event(), `ValueError` removed from `except (ValueError, RecursionError) as '
     'error:`, at its 1st occurrence':
         (U + 'test_unparseable_payload_exits_2',),
@@ -2537,16 +2582,16 @@ SWEEP_ROWS = {
     '`raise`, at its 1st occurrence':
         (U + 'test_deeply_nested_payload_exits_2',),
     'in read_event(), `not` removed from `not isinstance(pull, dict)`, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+        (O + 'test_clean_event_passes',),
     'in read_event(), `or` changed to `and` before `number < 1`, at its 1st occurrence':
         (U + 'test_payload_number_below_1_exits_2',),
     'in read_event(), `is` changed to `is not` in `body is None`, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+        (O + 'test_clean_event_passes',),
     'in read_event(), `not` removed from `not isinstance(body, str)`, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+        (O + 'test_clean_event_passes',),
     'in read_event(), `is not` changed to `is` in `type(number) is not int`, at its 1st '
     'occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+        (O + 'test_clean_event_passes',),
     'in read_event(), `<` changed to `<=` in `number < 1`, at its 1st occurrence':
         (D + 'test_payload_number_1_is_read',),
     'in read_event(), `1` changed up to `2` in `if type(number) is not int or number < 1:`, at '
@@ -2591,25 +2636,9 @@ SWEEP_ROWS = {
     'in load_scan(), the statement `sys.dont_write_bytecode = True` deleted, at its 1st '
     'occurrence':
         (O + 'test_gate_run_without_dash_b_writes_no_bytecode',),
-    'in load_scan(), the statement `try:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in load_scan(), the statement `spec = '
-    'importlib.util.spec_from_file_location("pr_text_label_lint", LINT)` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in load_scan(), the statement `module = importlib.util.module_from_spec(spec)` deleted, at '
-    'its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in load_scan(), the statement `spec.loader.exec_module(module)` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in load_scan(), the statement `scan = module.scan` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in load_scan(), the statement `raise Unreadable(LINT_FAILURE.format(LINT, '
     'describe(error))) from error` deleted, at its 1st occurrence':
         (U + 'test_error_whose_message_exits_exits_2',),
-    'in load_scan(), the statement `return scan` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in load_scan(), `True` changed to `False` in `sys.dont_write_bytecode = True`, at its 1st '
     'occurrence':
         (O + 'test_gate_run_without_dash_b_writes_no_bytecode',),
@@ -2624,28 +2653,22 @@ SWEEP_ROWS = {
         (D + 'test_blank_description_fails',),
     'in blank(), `not` removed from `not INVISIBLE.sub("", COMMENT.sub("", text))`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in fenced(), the statement `inside = set()` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in fenced(), the statement `opener = None` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_empty_description_fails',),
     'in fenced(), the statement `for index, line in enumerate(lines):` deleted, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in fenced(), the statement `match = FENCE.match(line)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `if opener is None:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_prose_with_no_fence_line_is_not_fenced',),
     'in fenced(), the statement `if match:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `opener = match.group(1)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `start = index` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `inside.add(index)` deleted, at its 1st occurrence':
         (E + 'test_dash_on_closed_fence_opener_line_passes',),
     'in fenced(), the statement `continue` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `inside.add(index)` deleted, at its 2nd occurrence':
         (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), the statement `if (match and match.group(1)[0] == opener[0] and '
@@ -2653,9 +2676,6 @@ SWEEP_ROWS = {
         (E + 'test_closed_fence_then_clean_prose_passes',),
     'in fenced(), the statement `opener = None` deleted, at its 2nd occurrence':
         (E + 'test_closed_fence_then_clean_prose_passes',),
-    'in fenced(), the statement `return inside, (start if opener is not None else None)` '
-    'deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in fenced(), `match` changed to `fullmatch` in `match = FENCE.match(line)`, at its 1st '
     'occurrence':
         (E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence',),
@@ -2663,16 +2683,16 @@ SWEEP_ROWS = {
     'occurrence':
         (E + 'test_backtick_run_inside_a_line_is_not_a_fence',),
     'in fenced(), `is` changed to `is not` in `opener is None`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_prose_with_no_fence_line_is_not_fenced',),
     'in fenced(), `and` changed to `or` before `match.group(1)[0] == opener[0]`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_fence_line_of_another_character_after_its_opener_leaves_it_open',),
     'in fenced(), `and` changed to `or` before `len(match.group(1)) >= len(opener)`, at its 1st '
     'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_fence_line_of_another_character_after_its_opener_leaves_it_open',),
     'in fenced(), `and` changed to `or` before `not line[match.end():].strip(" \\t")`, at its '
     '1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_fence_line_of_another_character_after_its_opener_leaves_it_open',),
     'in fenced(), `==` changed to `!=` in `match.group(1)[0] == opener[0]`, at its 1st '
     'occurrence':
         (E + 'test_closed_fence_then_clean_prose_passes',),
@@ -2683,45 +2703,23 @@ SWEEP_ROWS = {
     'occurrence':
         (E + 'test_closed_fence_then_clean_prose_passes',),
     'in fenced(), `is not` changed to `is` in `opener is not None`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in fenced(), `1` changed up to `2` in `opener = match.group(1)`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in fenced(), `1` changed down to `0` in `opener = match.group(1)`, at its 1st occurrence':
         (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
-    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
-    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
-        (E + 'test_closed_fence_then_clean_prose_passes',),
     'in fenced(), `1` changed down to `0` in `if (match and match.group(1)[0] == opener[0] and '
     'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
         (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
-    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
-    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
-        (E + 'test_closed_fence_then_clean_prose_passes',),
     'in fenced(), `1` changed down to `0` in `if (match and match.group(1)[0] == opener[0] and '
     'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
         (E + 'test_indented_shorter_closer_leaves_fence_open',),
-    'in code_spans(), the statement `runs = [match.span() for match in '
-    'BACKTICKS.finditer(line)]` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), the statement `closer = [None] * len(runs)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), the statement `later = {}` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), the statement `for index in range(len(runs) - 1, -1, -1):` deleted, at '
     'its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
-    'in code_spans(), the statement `width = runs[index][1] - runs[index][0]` deleted, at its '
-    '1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), the statement `closer[index] = later.get(width)` deleted, at its 1st '
     'occurrence':
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), the statement `later[width] = index` deleted, at its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
-    'in code_spans(), the statement `spans = []` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), the statement `index = 0` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), the statement `while index < len(runs):` deleted, at its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), the statement `if closer[index] is None:` deleted, at its 1st occurrence':
@@ -2733,41 +2731,21 @@ SWEEP_ROWS = {
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), the statement `index = closer[index] + 1` deleted, at its 1st occurrence':
         (O + 'test_code_span_scan_ends_on_each_run_shape',),
-    'in code_spans(), the statement `return spans` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `0` changed up to `1` in `index = 0`, at its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
-    'in code_spans(), `0` changed down to `-1` in `index = 0`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), `<` changed to `<=` in `index < len(runs)`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), `is` changed to `is not` in `closer[index] is None`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
     'its 1st occurrence':
         (E + 'test_label_in_backticks_passes',),
-    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
-    'at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
-    'its 2nd occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
     'at its 2nd occurrence':
         (E + 'test_label_in_backticks_passes',),
     'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
     'its 3rd occurrence':
         (E + 'test_label_in_backticks_passes',),
-    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
-    'at its 3rd occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `1` changed up to `2` in `index += 1`, at its 1st occurrence':
         (E + 'test_span_after_a_lone_backtick_is_masked',),
     'in code_spans(), `1` changed down to `0` in `index += 1`, at its 1st occurrence':
         (O + 'test_code_span_scan_ends_on_each_run_shape',),
-    'in code_spans(), `1` changed up to `2` in `width = runs[index][1] - runs[index][0]`, at '
-    'its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in code_spans(), `1` changed down to `0` in `width = runs[index][1] - runs[index][0]`, at '
     'its 1st occurrence':
         (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
@@ -2789,21 +2767,14 @@ SWEEP_ROWS = {
     'in code_spans(), `0` changed down to `-1` in `spans.append((runs[index][0], '
     'runs[closer[index]][1]))`, at its 1st occurrence':
         (E + 'test_masked_span_reads_as_spaces',),
-    'in code_spans(), `1` changed up to `2` in `spans.append((runs[index][0], '
-    'runs[closer[index]][1]))`, at its 1st occurrence':
-        (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
     'in code_spans(), `1` changed down to `0` in `spans.append((runs[index][0], '
     'runs[closer[index]][1]))`, at its 1st occurrence':
         (E + 'test_masked_span_reads_as_spaces',),
-    'in masked(), the statement `chars = list(line)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in masked(), the statement `for start, end in spans:` deleted, at its 1st occurrence':
         (E + 'test_dash_inside_curly_quotes_passes',),
     'in masked(), the statement `chars[start:end] = MASK_CHAR * (end - start)` deleted, at its '
     '1st occurrence':
         (E + 'test_dash_inside_curly_quotes_passes',),
-    'in masked(), the statement `return "".join(chars)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in mask(), the statement `line = masked(line, code_spans(line))` deleted, at its 1st '
     'occurrence':
         (E + 'test_label_in_backticks_passes',),
@@ -2812,8 +2783,6 @@ SWEEP_ROWS = {
     'in mask(), the statement `line = masked(line, [match.span() for match in '
     'pattern.finditer(line)])` deleted, at its 1st occurrence':
         (E + 'test_dash_inside_curly_quotes_passes',),
-    'in mask(), the statement `return line` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in excess_is_url(), the statement `return any(match.start() <= WIDTH and match.end() >= '
     'len(line)` deleted, at its 1st occurrence':
         (E + 'test_long_url_line_passes',),
@@ -2834,24 +2803,11 @@ SWEEP_ROWS = {
         (D + 'test_blank_description_fails',),
     'in check_text(), the statement `return` deleted, at its 1st occurrence':
         (D + 'test_blank_text_reports_only_that_it_is_empty',),
-    'in check_text(), the statement `lines = text.split("\\n")` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), the statement `fence, unclosed = fenced(lines)` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in check_text(), the statement `if unclosed is not None:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in check_text(), the statement `report.defect(prefix, ":{0}: the code fence opened on line '
     '{0} is never closed".format(` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), the statement `prose = ["" if index in fence else mask(line) for index, '
-    'line in enumerate(lines)]` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), the statement `rel = prefix + ".md"` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), the statement `hits = scan(rel, "\\n".join(prose))` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in check_text(), the statement `for hit in hits:` deleted, at its 1st occurrence':
         (D + 'test_fix_label_in_description_fails',),
     'in check_text(), the statement `report.defect(prefix, hit[len(rel):])` deleted, at its 1st '
@@ -2859,31 +2815,24 @@ SWEEP_ROWS = {
         (D + 'test_fix_label_in_description_fails',),
     'in check_text(), the statement `for number, line in enumerate(prose, 1):` deleted, at its '
     '1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), the statement `for name, dash in DASHES:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), the statement `if dash in line:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), the statement `report.defect(prefix, ":{}: {}: {}".format(number, name, '
     'line.strip()))` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), the statement `for match in ISE.finditer(line):` deleted, at its 1st '
     'occurrence':
         (D + 'test_each_ise_ending_fails',),
     'in check_text(), the statement `report.defect(prefix, ":{}: an -ise spelling: '
     '{}".format(number, match.group(0)))` deleted, at its 1st occurrence':
         (D + 'test_each_ise_ending_fails',),
-    'in check_text(), the statement `width_applies = squash` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), the statement `revision_applies = squash` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in check_text(), the statement `if width_applies:` deleted, at its 1st occurrence':
         (D + 'test_squash_line_over_72_characters_fails',),
     'in check_text(), the statement `for number, line in enumerate(lines, 1):` deleted, at its '
     '1st occurrence':
-        (D + 'test_squash_line_over_72_characters_fails',),
-    'in check_text(), the statement `exempt = number - 1 in fence or excess_is_url(line)` '
-    'deleted, at its 1st occurrence':
         (D + 'test_squash_line_over_72_characters_fails',),
     'in check_text(), the statement `if len(line) > WIDTH and not exempt:` deleted, at its 1st '
     'occurrence':
@@ -2903,17 +2852,17 @@ SWEEP_ROWS = {
     '{}".format(number, match.group(0)))` deleted, at its 1st occurrence':
         (D + 'test_full_revision_id_in_squash_message_fails',),
     'in check_text(), `is not` changed to `is` in `unclosed is not None`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in check_text(), `1` changed up to `2` in `for number, line in enumerate(prose, 1):`, at '
     'its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), `1` changed down to `0` in `for number, line in enumerate(prose, 1):`, at '
     'its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), `in` changed to `not in` in `index in fence`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_dash_after_closed_fence_fails',),
     'in check_text(), `in` changed to `not in` in `dash in line`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in check_text(), `1` changed up to `2` in `for number, line in enumerate(lines, 1):`, at '
     'its 1st occurrence':
         (D + 'test_squash_line_over_72_characters_fails',),
@@ -2923,7 +2872,7 @@ SWEEP_ROWS = {
     'in check_text(), `or` changed to `and` before `excess_is_url(line)`, at its 1st occurrence':
         (E + 'test_label_and_width_inside_fence_pass',),
     'in check_text(), `and` changed to `or` before `not exempt`, at its 1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+        (D + 'test_squash_line_of_72_characters_passes',),
     'in check_text(), `1` changed up to `2` in `for number, raw in enumerate(lines, 1):`, at '
     'its 1st occurrence':
         (D + 'test_revision_id_in_squash_message_fails',),
@@ -2937,27 +2886,15 @@ SWEEP_ROWS = {
     'in check_text(), `not` removed from `not exempt`, at its 1st occurrence':
         (D + 'test_squash_line_over_72_characters_fails',),
     'in check_text(), `1` changed up to `2` in `unclosed + 1))`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in check_text(), `1` changed down to `0` in `unclosed + 1))`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: an -ise spelling: '
-    '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        (D + 'test_each_ise_ending_fails',),
-    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: an -ise '
-    'spelling: {}".format(number, match.group(0)))`, at its 1st occurrence':
-        (D + 'test_each_ise_ending_fails',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in check_text(), `1` changed up to `2` in `exempt = number - 1 in fence or '
     'excess_is_url(line)`, at its 1st occurrence':
         (E + 'test_long_line_next_to_a_fence_fails',),
     'in check_text(), `1` changed down to `0` in `exempt = number - 1 in fence or '
     'excess_is_url(line)`, at its 1st occurrence':
         (E + 'test_long_line_next_to_a_fence_fails',),
-    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: a revision id: '
-    '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        (D + 'test_full_revision_id_in_squash_message_fails',),
-    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: a revision id: '
-    '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        (D + 'test_full_revision_id_in_squash_message_fails',),
     'in check_squash(), the statement `check_text(report, "squash", text, True, scan)` deleted, '
     'at its 1st occurrence':
         (D + 'test_em_dash_in_squash_message_fails',),
@@ -2972,12 +2909,6 @@ SWEEP_ROWS = {
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in check_squash(), the statement `return` deleted, at its 2nd occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
-    'in check_squash(), the statement `subject = text.split("\\n", 1)[0]` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
-    'in check_squash(), the statement `suffix = " (#{})".format(number)` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
     'in check_squash(), the statement `if not subject.endswith(suffix):` deleted, at its 1st '
     'occurrence':
         (D + 'test_event_squash_subject_with_wrong_number_fails',),
@@ -2987,34 +2918,29 @@ SWEEP_ROWS = {
     'in check_squash(), `is` changed to `is not` in `number is None`, at its 1st occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in check_squash(), `not` removed from `not subject.endswith(suffix)`, at its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_squash_subject_without_its_number_fails',),
     'in check_squash(), `True` changed to `False` in `check_text(report, "squash", text, True, '
     'scan)`, at its 1st occurrence':
         (D + 'test_full_revision_id_in_squash_message_fails',),
     'in check_squash(), `0` changed up to `1` in `subject = text.split("\\n", 1)[0]`, at its '
     '1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in check_squash(), `0` changed down to `-1` in `subject = text.split("\\n", 1)[0]`, at its '
     '1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in check_squash(), `1` changed down to `0` in `subject = text.split("\\n", 1)[0]`, at its '
     '1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in bounded_number(), the statement `if len(digits) > MAX_DIGITS:` deleted, at its 1st '
     'occurrence':
         (D + 'test_squash_name_of_19_digits_is_not_bound',),
     'in bounded_number(), the statement `return None` deleted, at its 1st occurrence':
         (D + 'test_squash_name_of_19_digits_is_not_bound',),
     'in bounded_number(), the statement `return int(digits)` deleted, at its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in bounded_number(), `>` changed to `>=` in `len(digits) > MAX_DIGITS`, at its 1st '
     'occurrence':
         (D + 'test_squash_name_of_18_digits_binds_the_subject',),
-    'in number_from_name(), the statement `try:` deleted, at its 1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
-    'in number_from_name(), the statement `parts = Path(path).absolute().parts` deleted, at its '
-    '1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in number_from_name(), the statement `raise Unreadable("squash file {}: the working '
     'directory cannot be read: {}".format(` deleted, at its 1st occurrence':
         (U + 'test_removed_working_directory_exits_2',),
@@ -3033,9 +2959,6 @@ SWEEP_ROWS = {
     'in number_from_name(), `==` changed to `!=` in `parts[-3:-1] == (".github", "squash")`, at '
     'its 1st occurrence':
         (D + 'test_number_comes_from_squash_file_name',),
-    'in number_from_name(), `fullmatch` changed to `match` in `if parts[-3:-1] == (".github", '
-    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
-        (D + 'test_squash_name_with_a_further_suffix_is_not_bound',),
     'in number_from_name(), `fullmatch` changed to `search` in `if parts[-3:-1] == (".github", '
     '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
         (D + 'test_squash_names_with_a_leading_zero_are_not_bound',),
@@ -3060,24 +2983,12 @@ SWEEP_ROWS = {
     'in number_from_name(), `1` changed down to `0` in `if parts[-3:-1] == (".github", '
     '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 2nd occurrence':
         (D + 'test_number_comes_from_squash_file_name',),
-    'in number_from_name(), `1` changed up to `2` in `return '
-    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
-        (D + 'test_number_comes_from_squash_file_name',),
-    'in number_from_name(), `1` changed down to `0` in `return '
-    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
-        (D + 'test_number_comes_from_squash_file_name',),
     'in parse(), the statement `if not argv:` deleted, at its 1st occurrence':
         (U + 'test_no_arguments_is_a_usage_error',),
     'in parse(), the statement `raise Usage("no mode given")` deleted, at its 1st occurrence':
         (U + 'test_no_arguments_is_a_usage_error',),
-    'in parse(), the statement `options = {}` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in parse(), the statement `rest = list(argv)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in parse(), the statement `while rest:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in parse(), the statement `flag = rest.pop(0)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), the statement `if flag not in ("--event", "--description", "--squash", '
     '"--number"):` deleted, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
@@ -3090,17 +3001,12 @@ SWEEP_ROWS = {
     'deleted, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
     'in parse(), the statement `options[flag] = rest.pop(0)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in parse(), the statement `modes = [flag for flag in ("--event", "--description", '
-    '"--squash") if flag in options]` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), the statement `if len(modes) != 1:` deleted, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
     'in parse(), the statement `raise Usage("give exactly 1 of --event, --description and '
     '--squash")` deleted, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
-    'in parse(), the statement `number = None` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in parse(), the statement `if "--number" in options:` deleted, at its 1st occurrence':
         (D + 'test_number_option_binding_passes',),
     'in parse(), the statement `if modes[0] != "--squash":` deleted, at its 1st occurrence':
@@ -3116,101 +3022,70 @@ SWEEP_ROWS = {
         (U + 'test_bad_arguments_are_usage_errors',),
     'in parse(), the statement `number = bounded_number(options["--number"])` deleted, at its '
     '1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), the statement `if number is None:` deleted, at its 1st occurrence':
         (U + 'test_number_option_of_18_digits_binds_and_19_is_a_usage_error',),
     'in parse(), the statement `raise Usage("--number takes at most {} '
     'digits".format(MAX_DIGITS))` deleted, at its 1st occurrence':
         (U + 'test_number_option_of_18_digits_binds_and_19_is_a_usage_error',),
-    'in parse(), the statement `return modes[0], options[modes[0]], number` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in parse(), `not` removed from `not argv`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `!=` changed to `==` in `len(modes) != 1`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `in` changed to `not in` in `"--number" in options`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_squash_subject_with_wrong_number_under_number_option_fails',),
     'in parse(), `not in` changed to `in` in `flag not in ("--event", "--description", '
     '"--squash", "--number")`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `or` changed to `and` before `not rest`, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
     'in parse(), `1` changed up to `2` in `if len(modes) != 1:`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `1` changed down to `0` in `if len(modes) != 1:`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `!=` changed to `==` in `modes[0] != "--squash"`, at its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), `not` removed from `not re.fullmatch(r"[1-9][0-9]*", options["--number"])`, at '
     'its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), `is` changed to `is not` in `number is None`, at its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), `0` changed up to `1` in `flag = rest.pop(0)`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `0` changed down to `-1` in `flag = rest.pop(0)`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `in` changed to `not in` in `flag in options`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `not` removed from `not rest`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `0` changed up to `1` in `options[flag] = rest.pop(0)`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), `0` changed down to `-1` in `options[flag] = rest.pop(0)`, at its 1st '
     'occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
+        (D + 'test_number_option_binding_passes',),
     'in parse(), `in` changed to `not in` in `flag in options`, at its 2nd occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in parse(), `fullmatch` changed to `match` in `if not re.fullmatch(r"[1-9][0-9]*", '
     'options["--number"]):`, at its 1st occurrence':
         (U + 'test_number_option_with_trailing_text_is_a_usage_error',),
     'in parse(), `fullmatch` changed to `search` in `if not re.fullmatch(r"[1-9][0-9]*", '
     'options["--number"]):`, at its 1st occurrence':
         (U + 'test_number_option_with_a_leading_zero_is_a_usage_error',),
-    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
-    '1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in parse(), `0` changed up to `1` in `if modes[0] != "--squash":`, at its 1st occurrence':
-        (D + 'test_em_dash_in_squash_message_fails',),
-    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
-    '2nd occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `report = Report()` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `try:` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `mode, path, given_number = parse(argv)` deleted, at its 1st '
-    'occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `scan = load_scan()` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in main(), the statement `if mode == "--event":` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `number, body = read_event(path)` deleted, at its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
+        (D + 'test_em_dash_fails',),
     'in main(), the statement `check_text(report, "description", body, False, scan)` deleted, '
     'at its 1st occurrence':
         (D + 'test_null_body_fails',),
-    'in main(), the statement `squash_path = SQUASH_DIR / "{}.txt".format(number)` deleted, at '
-    'its 1st occurrence':
-        (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in main(), the statement `check_squash(report, read_utf8(squash_path, "squash file"), '
     'number, scan)` deleted, at its 1st occurrence':
         (D + 'test_event_squash_subject_with_wrong_number_fails',),
     'in main(), the statement `elif mode == "--description":` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_em_dash_fails',),
     'in main(), the statement `check_text(report, "description", read_utf8(path, "description '
     'file"), False, scan)` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
-    'in main(), the statement `number = given_number if given_number is not None else '
-    'number_from_name(path)` deleted, at its 1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+        (D + 'test_em_dash_fails',),
     'in main(), the statement `check_squash(report, read_utf8(path, "squash file"), number, '
     'scan)` deleted, at its 1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
-    'in main(), the statement `status = EXIT_DEFECT if report.count else 0` deleted, at its 1st '
-    'occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in main(), the statement `report.note("pr-text:", " {}; {}".format(describe(error, '
     'named=False), USAGE))` deleted, at its 1st occurrence':
@@ -3235,9 +3110,9 @@ SWEEP_ROWS = {
         (U + 'test_error_whose_message_exits_exits_2',),
     'in main(), the statement `report.note("pr-text:", " {} defect(s)".format(report.count))` '
     'deleted, at its 1st occurrence':
-        (D + 'test_em_dash_fails',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in main(), the statement `return status` deleted, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_one_defect_gives_its_line_its_count_and_exit_1',),
     'in main(), the body of `except Usage as error:` replaced by `raise`, at its 1st occurrence':
         (U + 'test_bad_arguments_are_usage_errors',),
     'in main(), the body of `except Unreadable as error:` replaced by `raise`, at its 1st '
@@ -3250,15 +3125,15 @@ SWEEP_ROWS = {
     'occurrence':
         (U + 'test_error_whose_message_exits_exits_2',),
     'in main(), `==` changed to `!=` in `mode == "--event"`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (U + 'test_each_mode_on_valid_arguments_passes_a_clean_text',),
     'in main(), `==` changed to `!=` in `mode == "--description"`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_long_description_paragraph_passes',),
     'in main(), `0` changed up to `1` in `status = EXIT_DEFECT if report.count else 0`, at its '
     '1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+        (O + 'test_clean_event_passes',),
     'in main(), `0` changed down to `-1` in `status = EXIT_DEFECT if report.count else 0`, at '
     'its 1st occurrence':
-        (D + 'test_binding_not_checked_line_is_not_a_defect',),
+        (O + 'test_clean_event_passes',),
     'in main(), `False` changed to `True` in `check_text(report, "description", body, False, '
     'scan)`, at its 1st occurrence':
         (O + 'test_event_description_has_no_width_or_revision_check',),
@@ -3268,7 +3143,7 @@ SWEEP_ROWS = {
     'in main(), `is not` changed to `is` in `given_number is not None`, at its 1st occurrence':
         (D + 'test_number_comes_from_squash_file_name',),
     'in the pattern FENCE, the quantifier `{0,3}` changed to `{1,3}`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in the pattern FENCE, the quantifier `{0,3}` changed to `{0,2}`, at its 1st occurrence':
         (E + 'test_fence_indented_1_to_3_spaces_masks_its_lines',),
     'in the pattern FENCE, the quantifier `{0,3}` changed to `{0,4}`, at its 1st occurrence':
@@ -3280,7 +3155,7 @@ SWEEP_ROWS = {
     'in the pattern FENCE, the negated class `[^`]` made plain, at its 1st occurrence':
         (E + 'test_closer_followed_by_a_tab_or_a_space_closes_fence',),
     'in the pattern FENCE, the quantifier `*` changed to `+`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (D + 'test_unclosed_fence_in_description_fails',),
     'in the pattern FENCE, the anchor `$` deleted, at its 1st occurrence':
         (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
     'in the pattern FENCE, the lookahead `(?=[^`]*$)` deleted, at its 1st occurrence':
@@ -3296,7 +3171,7 @@ SWEEP_ROWS = {
     'in the pattern FENCE, the alternative `~{3,}` deleted, at its 1st occurrence':
         (E + 'test_tilde_fence_masks_its_lines',),
     'in the pattern BACKTICKS, the quantifier `+` changed to `*`, at its 1st occurrence':
-        (D + 'test_backtick_in_fence_info_string_is_not_a_fence',),
+        (E + 'test_only_a_backtick_run_delimits_a_code_span',),
     'in the pattern BACKTICKS, the quantifier `+` made lazy, at its 1st occurrence':
         (D + 'test_dash_after_lone_backtick_and_double_span_fails',),
     'in the pattern URL, the anchor `\\b` deleted, at its 1st occurrence':
@@ -3715,6 +3590,329 @@ UNCOMPILABLE_SITES = {
         'the ) closes the group of the 2 alternatives, so the ) that closed it has no group to '
         'close and re.compile raises re.error, unbalanced parenthesis, when the gate loads.',
 }
+# The generated sites whose mutated gate stops: on every run on which the changed code acts
+# otherwise than the gate's, it raises an error that the gate does not raise, such as a
+# NameError for a name the site leaves unbound, so it stops with a traceback or with the line of
+# an unexpected error, or reports the label lint as unreadable. Every case on which the site has
+# an effect fails because the gate stops, not for the reason the site changes, so no case can
+# kill it as a row asks, and the table lists it with the argument instead of a row.
+# test_stopping_sites_stop_the_gate checks that each listed site stops on 1 or more of the runs
+# of STOP_PROBES with a stop sign that the gate does not show.
+STOPPING_SITES = {
+    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
+        'FENCE has no group 2, so match.group raises IndexError on every fence line inside an '
+        'open fence, and every run with one stops on it.',
+    'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
+    'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
+        'FENCE has no group 2, so match.group raises IndexError on every fence line of the '
+        "opener's character inside an open fence, and every run with one stops on it.",
+    'in code_spans(), `1` changed up to `2` in `spans.append((runs[index][0], '
+    'runs[closer[index]][1]))`, at its 1st occurrence':
+        'each run is a pair (start, end), so runs[closer[index]][2] raises IndexError on every '
+        'code span, and every run with a code span stops on it.',
+    'in check_text(), the statement `exempt = number - 1 in fence or excess_is_url(line)` '
+    'deleted, at its 1st occurrence':
+        'the site deletes the only binding of exempt before it is read, and the width check '
+        'reads it on each squash line over 72 characters, so every squash run with such a line '
+        'stops on an UnboundLocalError.',
+    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: an -ise spelling: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        'ISE has no group 1, so match.group raises IndexError on every -ise hit, and every run '
+        'with one stops on it.',
+    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: an -ise '
+    'spelling: {}".format(number, match.group(0)))`, at its 1st occurrence':
+        'ISE has no group -1, so match.group raises IndexError on every -ise hit, and every run '
+        'with one stops on it.',
+    'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: a revision id: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        'REVISION has no group 1, so match.group raises IndexError on every revision id, and '
+        'every run with one stops on it.',
+    'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: a revision id: '
+    '{}".format(number, match.group(0)))`, at its 1st occurrence':
+        'REVISION has no group -1, so match.group raises IndexError on every revision id, and '
+        'every run with one stops on it.',
+    'in number_from_name(), `fullmatch` changed to `match` in `if parts[-3:-1] == (".github", '
+    '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
+        'match then also takes a name that has more text after .txt, and every such name, cut '
+        'by 4 characters at its end, keeps a character other than a digit, so int() raises '
+        'ValueError on it and every run on such a squash name stops.',
+    'in ascii_text(), the statement `out = []` deleted, at its 1st occurrence':
+        'the site deletes the only binding of out before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in ascii_text(), the statement `code = ord(char)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of code before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in ascii_text(), the statement `return "".join(out)` deleted, at its 1st occurrence':
+        'ascii_text() then returns None, which emit() adds to a prefix, so every line printed '
+        'stops the gate on a TypeError, and the handler that reports it stops on it again.',
+    'in Report.__init__(), the statement `self.count = 0` deleted, at its 1st occurrence':
+        'Report then has no count, so every run stops on an AttributeError when the count line '
+        'reads it, after any defect line.',
+    'in read_utf8(), the statement `try:` deleted, at its 1st occurrence':
+        'the site deletes the only binding of data before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_utf8(), the statement `data = Path(path).read_bytes()` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of data before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_utf8(), the statement `try:` deleted, at its 2nd occurrence':
+        'the site deletes the only binding of text before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_utf8(), the statement `text = data.decode("utf-8", "strict")` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of text before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_utf8(), the statement `return text.replace("\\r\\n", "\\n")` deleted, at its 1st '
+    'occurrence':
+        'the function then returns None, and its caller uses the value at once, so every run '
+        'that reaches the call stops on a TypeError.',
+    'in read_event(), the statement `text = read_utf8(path, "event payload")` deleted, at its '
+    '1st occurrence':
+        'the site deletes the only binding of text before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `try:` deleted, at its 1st occurrence':
+        'the site deletes the only binding of event before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `event = json.loads(text)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of event before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `pull = event.get("pull_request") if isinstance(event, '
+    'dict) else None` deleted, at its 1st occurrence':
+        'the site deletes the only binding of pull before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `number = pull.get("number")` deleted, at its 1st occurrence':
+        'the site deletes the only binding of number before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `body = pull.get("body")` deleted, at its 1st occurrence':
+        'the site deletes the only binding of body before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in read_event(), the statement `return number, body.replace("\\r\\n", "\\n")` deleted, at '
+    'its 1st occurrence':
+        'read_event() then returns None, which main() unpacks at once, so every event run stops '
+        'on a TypeError.',
+    'in load_scan(), the statement `try:` deleted, at its 1st occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in load_scan(), the statement `spec = '
+    'importlib.util.spec_from_file_location("pr_text_label_lint", LINT)` deleted, at its 1st '
+    'occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in load_scan(), the statement `module = importlib.util.module_from_spec(spec)` deleted, at '
+    'its 1st occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in load_scan(), the statement `spec.loader.exec_module(module)` deleted, at its 1st '
+    'occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in load_scan(), the statement `scan = module.scan` deleted, at its 1st occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in load_scan(), the statement `return scan` deleted, at its 1st occurrence':
+        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
+        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
+        'TypeError, on every run.',
+    'in fenced(), the statement `inside = set()` deleted, at its 1st occurrence':
+        'the site deletes the only binding of inside before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in fenced(), the statement `opener = None` deleted, at its 1st occurrence':
+        'the site deletes the only binding of opener before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in fenced(), the statement `match = FENCE.match(line)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of match before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in fenced(), the statement `return inside, (start if opener is not None else None)` '
+    'deleted, at its 1st occurrence':
+        'the function then returns None, and its caller uses the value at once, so every run '
+        'that reaches the call stops on a TypeError.',
+    'in fenced(), `1` changed up to `2` in `opener = match.group(1)`, at its 1st occurrence':
+        'FENCE has 1 group, so match.group(2) raises IndexError on every fence line, and every '
+        'run with a fence stops on it.',
+    'in code_spans(), the statement `runs = [match.span() for match in '
+    'BACKTICKS.finditer(line)]` deleted, at its 1st occurrence':
+        'the site deletes the only binding of runs before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in code_spans(), the statement `closer = [None] * len(runs)` deleted, at its 1st occurrence':
+        'on a line with a backtick run the scan then reads a list it never built or an index '
+        'past its end, so every run with a code span stops on a NameError, IndexError or '
+        'TypeError.',
+    'in code_spans(), the statement `later = {}` deleted, at its 1st occurrence':
+        'on a line with a backtick run the scan then reads a list it never built or an index '
+        'past its end, so every run with a code span stops on a NameError, IndexError or '
+        'TypeError.',
+    'in code_spans(), the statement `width = runs[index][1] - runs[index][0]` deleted, at its '
+    '1st occurrence':
+        'on a line with a backtick run the scan then reads a list it never built or an index '
+        'past its end, so every run with a code span stops on a NameError, IndexError or '
+        'TypeError.',
+    'in code_spans(), the statement `spans = []` deleted, at its 1st occurrence':
+        'the site deletes the only binding of spans before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in code_spans(), the statement `index = 0` deleted, at its 1st occurrence':
+        'the site deletes the only binding of index before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in code_spans(), the statement `return spans` deleted, at its 1st occurrence':
+        'the function then returns None, and its caller uses the value at once, so every run '
+        'that reaches the call stops on a TypeError.',
+    'in code_spans(), `0` changed down to `-1` in `index = 0`, at its 1st occurrence':
+        'the scan then reads an index past the end of a list on every line, so every run stops '
+        'on an IndexError, or on a ValueError for a range step of 0.',
+    'in code_spans(), `<` changed to `<=` in `index < len(runs)`, at its 1st occurrence':
+        'the scan then reads an index past the end of a list on every line, so every run stops '
+        'on an IndexError, or on a ValueError for a range step of 0.',
+    'in code_spans(), `is` changed to `is not` in `closer[index] is None`, at its 1st occurrence':
+        'on a line with a backtick run the scan then reads a list it never built or an index '
+        'past its end, so every run with a code span stops on a NameError, IndexError or '
+        'TypeError.',
+    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
+    'at its 1st occurrence':
+        'the scan then reads an index past the end of a list on every line, so every run stops '
+        'on an IndexError, or on a ValueError for a range step of 0.',
+    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
+    'its 2nd occurrence':
+        'the scan then reads an index past the end of a list on every line, so every run stops '
+        'on an IndexError, or on a ValueError for a range step of 0.',
+    'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
+    'at its 3rd occurrence':
+        'the scan then reads an index past the end of a list on every line, so every run stops '
+        'on an IndexError, or on a ValueError for a range step of 0.',
+    'in code_spans(), `1` changed up to `2` in `width = runs[index][1] - runs[index][0]`, at '
+    'its 1st occurrence':
+        'on a line with a backtick run the scan then reads a list it never built or an index '
+        'past its end, so every run with a code span stops on a NameError, IndexError or '
+        'TypeError.',
+    'in masked(), the statement `chars = list(line)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of chars before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in masked(), the statement `return "".join(chars)` deleted, at its 1st occurrence':
+        'the function then returns None, and its caller uses the value at once, so every run '
+        'that reaches the call stops on a TypeError.',
+    'in mask(), the statement `return line` deleted, at its 1st occurrence':
+        'mask() then returns None for every line outside a fence, and the scan joins those '
+        'values as text, so every run with such a line stops on a TypeError.',
+    'in check_text(), the statement `lines = text.split("\\n")` deleted, at its 1st occurrence':
+        'the site deletes the only binding of lines before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `fence, unclosed = fenced(lines)` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of fence before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `prose = ["" if index in fence else mask(line) for index, '
+    'line in enumerate(lines)]` deleted, at its 1st occurrence':
+        'the site deletes the only binding of prose before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `rel = prefix + ".md"` deleted, at its 1st occurrence':
+        'the site deletes the only binding of rel before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `hits = scan(rel, "\\n".join(prose))` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of hits before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `width_applies = squash` deleted, at its 1st occurrence':
+        'the site deletes the only binding of width_applies before it is read, so every run '
+        'that reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_text(), the statement `revision_applies = squash` deleted, at its 1st occurrence':
+        'the site deletes the only binding of revision_applies before it is read, so every run '
+        'that reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_squash(), the statement `subject = text.split("\\n", 1)[0]` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of subject before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in check_squash(), the statement `suffix = " (#{})".format(number)` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of suffix before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in number_from_name(), the statement `try:` deleted, at its 1st occurrence':
+        'the site deletes the only binding of parts before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in number_from_name(), the statement `parts = Path(path).absolute().parts` deleted, at its '
+    '1st occurrence':
+        'the site deletes the only binding of parts before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in number_from_name(), `1` changed up to `2` in `return '
+    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
+        'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
+        'raises ValueError on every squash file the name binds, and every such run stops on it.',
+    'in number_from_name(), `1` changed down to `0` in `return '
+    'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
+        'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
+        'raises ValueError on every squash file the name binds, and every such run stops on it.',
+    'in parse(), the statement `options = {}` deleted, at its 1st occurrence':
+        'the site deletes the only binding of options before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in parse(), the statement `rest = list(argv)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of rest before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in parse(), the statement `flag = rest.pop(0)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of flag before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in parse(), the statement `modes = [flag for flag in ("--event", "--description", '
+    '"--squash") if flag in options]` deleted, at its 1st occurrence':
+        'the site deletes the only binding of modes before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in parse(), the statement `number = None` deleted, at its 1st occurrence':
+        'number is then bound only when --number is given, so every run without it stops on an '
+        'UnboundLocalError, and a run with it is unchanged.',
+    'in parse(), the statement `return modes[0], options[modes[0]], number` deleted, at its 1st '
+    'occurrence':
+        'parse() then returns None, which main() unpacks at once, so every run stops on a '
+        'TypeError.',
+    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
+    '1st occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+        'raises IndexError on every run that gets past that test.',
+    'in parse(), `0` changed up to `1` in `if modes[0] != "--squash":`, at its 1st occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+        'raises IndexError on every run that gives --number.',
+    'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
+    '2nd occurrence':
+        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+        'raises IndexError on every run that gets past that test.',
+    'in main(), the statement `report = Report()` deleted, at its 1st occurrence':
+        'the site deletes the only binding of report before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `try:` deleted, at its 1st occurrence':
+        'the site deletes the only binding of status before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `mode, path, given_number = parse(argv)` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of mode before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `scan = load_scan()` deleted, at its 1st occurrence':
+        'the site deletes the only binding of scan before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `number, body = read_event(path)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of body before it is read, so every run that reaches '
+        'the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `squash_path = SQUASH_DIR / "{}.txt".format(number)` deleted, at '
+    'its 1st occurrence':
+        'the site deletes the only binding of squash_path before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `number = given_number if given_number is not None else '
+    'number_from_name(path)` deleted, at its 1st occurrence':
+        'the site deletes the only binding of number before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+    'in main(), the statement `status = EXIT_DEFECT if report.count else 0` deleted, at its 1st '
+    'occurrence':
+        'the site deletes the only binding of status before it is read, so every run that '
+        'reaches the read stops on a NameError or an UnboundLocalError.',
+}
+# The runs of that case, each on a tree with a clean squash file of number 999: a clean
+# description, a description with a code span, an -ise spelling and a closed fence, the squash
+# file with --number, the squash file bound by its name, a squash file with a revision id and a
+# line over 72 characters, a squash file whose name has a further suffix, and an event.
+STOP_PROBES = (("--description", "clean.md"), ("--description", "spans.md"),
+               ("--squash", ".github/squash/999.txt", "--number", "999"),
+               ("--squash", ".github/squash/999.txt"),
+               ("--squash", "revision.txt", "--number", "999"),
+               ("--squash", ".github/squash/999.txtx"), ("--event", "event.json"))
 # The child of that case: it loads this suite by path, applies each site that generate_sites()
 # yields from the gate source, runs the module level of each mutated gate, with a name other
 # than __main__, so its patterns compile and main() does not run, and prints a JSON object of
@@ -4197,6 +4395,10 @@ HAND_ROWS = (
         'parts[-3:-1] == (".github", "squash")',
         'parts[-2] == "squash"',
         [D + 'test_squash_folder_outside_a_github_folder_is_not_bound']),
+    *(row('the ending set of ISE widened by the ending ' + ending,
+          '|able|ation|ations)', '|able|ation|ations|' + ending + ')',
+          [D + 'test_ise_word_with_an_ending_outside_the_set_passes'])
+      for ending in ("ings", "ably", "ability", "ational")),
     row(
         "the job's time limit removed from the workflow",
         '    timeout-minutes: 10\n',
@@ -4274,14 +4476,25 @@ class MutantSweep(unittest.TestCase):
     old text occurs.
 
     The adequacy test runs no mutant. It fails when a generated site has neither a row in
-    SWEEP_ROWS nor an entry in EQUIVALENT_SITES or UNCOMPILABLE_SITES, when a row or an entry
-    names a site the generator does not yield, and when an operator of OPERATORS yields no
-    site, since each of them has a site in the gate as it stands, so a broken generator cannot
-    pass by yielding nothing. HAND_ROWS holds rows the generator does not make, which it leaves
-    alone.
+    SWEEP_ROWS nor an entry in EQUIVALENT_SITES, UNCOMPILABLE_SITES or STOPPING_SITES, when a
+    row or an entry names a site the generator does not yield, and when an operator of
+    OPERATORS yields no site, since each of them has a site in the gate as it stands, so a
+    broken generator cannot pass by yielding nothing. HAND_ROWS holds rows the generator does
+    not make, which it leaves alone.
 
     The kill criterion: a row is killed when its named cases, run on a copy of the tree with
-    the site or the hand row applied, exit 1 with FAILED, under the limit-hit rule. Each sweep
+    the site or the hand row applied, exit 1 with FAILED and failures alone, no error, under
+    the limit-hit rule and the stop rule. Each named case is one whose name gives the reason
+    the row changes, and the stop rule holds the sweep to that reason where a gate stop would
+    hide it: a row whose named cases see a stop of the mutated gate, a stop sign of STOP_SIGNS
+    in a gate run that the unmutated gate, run with the same arguments, does not show, is not
+    killed, since its cases fail because the gate stops, not for the reason the row changes.
+    A stop counts only on a run that the unmutated gate reads and checks to its end, with exit
+    status 0 or 1: where the unmutated gate refuses its input with exit status 2, a row that
+    removes or narrows that refusal can show only as an error that escapes it.
+    The rule reads the gate runs that GateCase.run_gate() makes; a case that starts the gate
+    through run_child() itself, as the deep-nesting case and the bytecode case do, is not
+    read by it. Each sweep
     child runs in a new session under SWEEP_MEMORY and SWEEP_CPU, and under SWEEP_TIMEOUT,
     which the top suite process enforces; each gate child it starts runs in its process group
     under the lower of GATE_MEMORY and SWEEP_MEMORY, under GATE_CPU and under its case's wall
@@ -4308,7 +4521,14 @@ class MutantSweep(unittest.TestCase):
     it with the argument instead of a row. The case
     test_uncompilable_sites_are_those_whose_gate_does_not_load runs the module level of the
     mutated gate of every generated site in 1 child under run_child() and fails unless the sites
-    that raise are exactly those listed, each with re.error. For each
+    that raise are exactly those listed, each with re.error. A site is stopping when its
+    mutated gate, on every run on which the changed code acts otherwise than the gate's,
+    raises an error that the gate does not raise, such as a NameError for a name the site
+    leaves unbound: every case on which the site has an effect fails because the gate stops,
+    not for the reason the site changes, so STOPPING_SITES
+    lists it with the argument instead of a row, and test_stopping_sites_stop_the_gate fails
+    unless each listed site shows a stop sign that the gate does not on 1 or more runs of
+    STOP_PROBES. For each
     row the sweep copies the gate, this suite, the label lint and the workflow into a fresh
     temporary tree, checks that the old text occurs the recorded number of times, applies the
     change and runs the named cases there in a separate process. The named cases also pass on
@@ -4322,25 +4542,28 @@ class MutantSweep(unittest.TestCase):
     """
 
     def copy_tree(self, root):
-        """Copy the gate, this suite, the lint and the workflow into root."""
+        """Copy the gate, this suite, the lint and the workflow into root, and the gate again
+        to UNMUTATED_NAME beside the tools folder, where a sweep child finds the unmutated gate."""
         for source, target in ((GATE, SWEEP_TARGETS["gate"]), (SUITE, Path("tools") / SUITE.name),
                                (LINT, Path("tools") / LINT.name),
-                               (WORKFLOW, SWEEP_TARGETS["workflow"])):
+                               (WORKFLOW, SWEEP_TARGETS["workflow"]),
+                               (GATE, Path(UNMUTATED_NAME))):
             (root / target).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, root / target)
 
     def run_cases(self, root, ids):
-        """(exit status, last line of the report, limits hit) of the named cases run in root.
+        """(exit status, last line of the report, limits hit, stops) of the named cases in root.
 
         The limits hit are the LIMIT_HIT lines of the child, and a MemoryError of the child
         itself, its own CPU limit as cpu_hit() reads it, or its own timeout, each named once.
+        The stops are the STOP_MARK lines of the child, each from the mark on.
         """
         try:
             done = run_child(["-I", "-B", root / "tools" / SUITE.name, *ids],
                              memory=SWEEP_MEMORY, timeout=SWEEP_TIMEOUT, cwd=root, text=True,
                              encoding="utf-8", cpu=SWEEP_CPU)
         except subprocess.TimeoutExpired:
-            return None, "timed out", ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)]
+            return None, "timed out", ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)], []
         lines = done.stderr.strip().splitlines()
         hits = sorted({line[len(LIMIT_HIT):] for line in lines if line.startswith(LIMIT_HIT)})
         if "MemoryError" in done.stderr and not hits:
@@ -4348,7 +4571,8 @@ class MutantSweep(unittest.TestCase):
         own = cpu_hit(done.returncode, SWEEP_CPU)
         if own and own not in hits:
             hits.append(own)
-        return done.returncode, lines[-1] if lines else "", hits
+        stops = [line[line.index(STOP_MARK):] for line in lines if STOP_MARK in line]
+        return done.returncode, lines[-1] if lines else "", hits, stops
 
     def missing_cases(self, ids):
         return [case for case in ids
@@ -4358,18 +4582,27 @@ class MutantSweep(unittest.TestCase):
         """None when the named cases fail on the mutated file, or the reason they do not.
 
         A row hits a limit, and that kills it, only when RUNAWAY_SITES lists it with that
-        limit; a row that hits any other limit is not killed.
+        limit; a row that hits any other limit is not killed. A row whose cases fail with an
+        error rather than an assertion, or on a stop of the gate that the unmutated gate does
+        not make, is not killed either: its cases fail for a reason other than the one the row
+        changes.
         """
         path.write_text(mutated, encoding="utf-8")
-        code, last, hits = self.run_cases(root, ids)
+        code, last, hits, stops = self.run_cases(root, ids)
         limit = RUNAWAY_SITES.get(words, (None,))[0]
         if limit is None and hits:
             return "hit a limit but is not a runaway site: " + "; ".join(hits)
         if limit is not None and not any(limit in hit for hit in hits):
             return "a runaway site whose cases did not fail by its {}: exit {}, {}".format(
                 limit, code, last)
-        if code == 1 and last.startswith("FAILED"):
+        if limit is None and stops:
+            return "its cases fail on a stop of the gate: " + "; ".join(stops)
+        if code == 1 and limit is not None and last.startswith("FAILED"):
             return None
+        if code == 1 and re.fullmatch(r"FAILED \(failures=\d+\)", last):
+            return None
+        if code == 1 and last.startswith("FAILED"):
+            return "its cases fail with an error, not an assertion: " + last
         return "survived: exit {}, {}".format(code, last)
 
     def mutate_site(self, item):
@@ -4420,6 +4653,8 @@ class MutantSweep(unittest.TestCase):
         self.assertFalse(set(SWEEP_ROWS) & set(EQUIVALENT_SITES))
         self.assertFalse(set(SWEEP_ROWS) & set(UNCOMPILABLE_SITES))
         self.assertFalse(set(EQUIVALENT_SITES) & set(UNCOMPILABLE_SITES))
+        for table in (SWEEP_ROWS, EQUIVALENT_SITES, UNCOMPILABLE_SITES):
+            self.assertFalse(set(table) & set(STOPPING_SITES))
         for words, target, old, new, count, ids in HAND_ROWS:
             with self.subTest(row=words):
                 self.assertIn(target, SWEEP_TARGETS)
@@ -4432,7 +4667,8 @@ class MutantSweep(unittest.TestCase):
                     class_name, _, method = case.partition(".")
                     self.assertNotEqual(class_name, type(self).__name__, "the sweep would recurse")
                     self.assertTrue(hasattr(globals().get(class_name), method), case)
-        for words, argument in list(EQUIVALENT_SITES.items()) + list(UNCOMPILABLE_SITES.items()):
+        for words, argument in (list(EQUIVALENT_SITES.items()) + list(UNCOMPILABLE_SITES.items())
+                                + list(STOPPING_SITES.items())):
             with self.subTest(site=words):
                 self.assertTrue(argument.strip())
         rows = set(SWEEP_ROWS) | set(names)
@@ -4442,9 +4678,63 @@ class MutantSweep(unittest.TestCase):
                 self.assertIn(limit, ("memory limit", "wall timeout"))
                 self.assertTrue(argument.strip())
 
+    def probe_tree(self, root, source):
+        """A tree in root with source as its gate, the lint and the inputs of STOP_PROBES."""
+        (root / "tools").mkdir(parents=True)
+        (root / ".github" / "squash").mkdir(parents=True)
+        (root / "tools" / GATE.name).write_text(source, encoding="utf-8")
+        shutil.copyfile(LINT, root / "tools" / LINT.name)
+        (root / ".github" / "squash" / "999.txt").write_text(CLEAN_SQUASH, encoding="utf-8")
+        (root / "clean.md").write_text("Add a feature.\n", encoding="utf-8")
+        (root / "spans.md").write_text("Run `x` now and " + ISE_WORD + " it.\n\n```\ncode\n```\n",
+                                       encoding="utf-8")
+        (root / "revision.txt").write_text(CLEAN_SQUASH + "\nBuilt on e233a7f.\n" + "a" * 73
+                                           + "\n", encoding="utf-8")
+        (root / ".github" / "squash" / "999.txtx").write_text(CLEAN_SQUASH, encoding="utf-8")
+        (root / "event.json").write_text(json.dumps(
+            {"pull_request": {"number": 999, "body": "A clean body.\n"}}), encoding="utf-8")
+        return root
+
+    def probe_signs(self, root):
+        """For each run of STOP_PROBES, the stop signs the gate in root shows."""
+        signs = []
+        for args in STOP_PROBES:
+            done = run_child(["-I", "-B", root / "tools" / GATE.name, *args],
+                             memory=GATE_MEMORY, timeout=GATE_TIMEOUT, cwd=root, text=True,
+                             encoding="utf-8")
+            signs.append({sign for sign in STOP_SIGNS if sign in done.stdout + done.stderr})
+        return signs
+
+    def site_stops(self, item):
+        """None when the mutated gate of a listed site stops on a probe run, or why not."""
+        words, base = item
+        site = self.sites.get(words)
+        if site is None:
+            return "names a site the generator does not yield"
+        root = Path(tempfile.mkdtemp())
+        try:
+            mutated = apply_site(GATE.read_text(encoding="utf-8"), site)
+            signs = self.probe_signs(self.probe_tree(root / "tree", mutated))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        if any(found - known for found, known in zip(signs, base)):
+            return None
+        return "does not stop on any run of STOP_PROBES"
+
+    def test_stopping_sites_stop_the_gate(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        base = self.probe_signs(self.probe_tree(root / "tree", GATE.read_text(encoding="utf-8")))
+        with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
+            results = list(pool.map(self.site_stops, [(words, base) for words in STOPPING_SITES]))
+        for words, reason in zip(STOPPING_SITES, results):
+            with self.subTest(site=words):
+                self.assertIsNone(reason, words)
+
     def test_generated_sites_are_adequate(self):
         generated = set(self.sites)
-        listed = set(SWEEP_ROWS) | set(EQUIVALENT_SITES) | set(UNCOMPILABLE_SITES)
+        listed = (set(SWEEP_ROWS) | set(EQUIVALENT_SITES) | set(UNCOMPILABLE_SITES)
+                  | set(STOPPING_SITES))
         self.assertEqual(sorted(generated - listed), [], "generated sites with no row")
         self.assertEqual(sorted(listed - generated), [], "rows of sites not generated")
         counts = collections.Counter(site.operator for site in self.sites.values())
@@ -4501,7 +4791,7 @@ class MutantSweep(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
         self.copy_tree(root)
-        self.assertEqual(self.run_cases(root, ids), (0, "OK", []))
+        self.assertEqual(self.run_cases(root, ids), (0, "OK", [], []))
 
     def test_each_row_is_killed(self):
         with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
