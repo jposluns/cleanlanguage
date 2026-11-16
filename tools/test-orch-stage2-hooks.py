@@ -1053,8 +1053,9 @@ class T15EnumeratorTimeout(Stage2Harness):
         # call leaves room for a loaded host, where a 15 s bound failed once at 16.05 s, and stays
         # below the hook's 60 s fallback, so a hook that uses the fallback fails. A hook that
         # applies no timeout lets the sleep run past the bound, and the test errors when the
-        # harness's 120 s limit on the hook call fires. Untested residual: a hook that uses a fixed
-        # timeout below about 44 s instead of the declared 1 s passes.
+        # harness's 120 s limit on the hook call fires. Untested residual: any hook whose effective
+        # timeout for the declared 1 s stays below about 44 s passes, whether that timeout is fixed
+        # (such as 20 s), floored (such as max(timeout, 30)) or multiplied (such as timeout * 3).
         self.write_registry(self.stage2(enumerator={
             "argv": [sys.executable, "-I", "-c", "import time; time.sleep(120)"], "timeout": 1}))
         self.arm_lease()
