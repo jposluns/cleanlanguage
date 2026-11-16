@@ -15,7 +15,10 @@ broke its contract (client exit 16), which is never read as malformed content;
 the dry run read is exercised from the block extracted from its real script.
 The packager is also built with cleanlanguage/LICENSE or cleanlanguage/NOTICE.md
 missing, differing from its root file, or differing from it only in CR LF line
-endings at HEAD, and must refuse each.
+endings, in case or by a trailing space at HEAD, and must refuse each; it must
+refuse such a copy at HEAD even when the worktree's file equals the root file,
+and build when the copy at HEAD is equal even though the worktree's file
+differs or is missing.
 """
 
 from __future__ import annotations
@@ -492,7 +495,7 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     return proc.returncode, stdout, stderr
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = (), tree_edit=None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = (), tree_edit=None, checkout_edit=None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
     tools/skill-release-date-client.py (so the code under test, not HEAD's
@@ -500,6 +503,9 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
     given and then ``extra_args``. ``tree_edit``, when given, is called with
     the worktree's path before the fixture commit, so the change it makes to
     a tracked file, a deletion included, is at HEAD when the packager runs.
+    ``checkout_edit``, when given, is called with the worktree's path after
+    the fixture commit, so the change it makes is in the worktree's files
+    only and HEAD does not carry it.
     ``extractor`` replaces the extractor and ``client`` the client:
     ``"missing"`` deletes it, any other text is written in its place.
     ``path_prefix`` is put first on the PATH of the packager,
@@ -534,6 +540,8 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
                  "-c", "core.autocrlf=false", "commit", "-qam", "fixture"],
                 capture_output=True, check=True,
             )
+            if checkout_edit is not None:
+                checkout_edit(wt)
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
             shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
@@ -610,33 +618,75 @@ class PackagerContractTest(unittest.TestCase):
 class PackagerLicenceCopyTest(unittest.TestCase):
     """The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and its
     entry list and byte check read them there too, so in the packager only its
-    licence-copy check ties each copy to its root file. Each case changes 1
-    copy at HEAD of a throwaway worktree and requires the build to refuse it.
-    Without that check the build ends 0 and every case fails; with the check
-    narrowed to 1 file, the cases for the other file fail; with the blob
-    comparison dropped, the cases for a differing copy fail; and with the
-    comparison made blind to line endings, the cases for a copy that differs
-    only in CR LF line endings fail."""
+    licence-copy check ties each copy to its root file. Most cases change 1
+    copy at HEAD of a throwaway worktree and require the build to refuse it.
+    Without that check the build ends 0 and every such case fails; with the
+    check narrowed to 1 file, the cases for the other file fail; with the
+    blob comparison dropped, the cases for a differing copy fail; and with the
+    comparison made blind to line endings, case or trailing spaces, the cases
+    for a copy that differs only in CR LF line endings, only in case or only
+    by a trailing space fail.
 
-    def build_with_copy(self, name: str, change: str):
+    The other cases make HEAD and the worktree's files disagree, both ways,
+    for both files. A copy that differs from its root file or is missing at
+    HEAD, while the worktree's file equals the root file, must be refused;
+    a copy that equals its root file at HEAD must build, while the
+    worktree's file differs or is missing. So a check that compares or tests
+    the worktree's files in place of the git tree at HEAD fails a case."""
+
+    COPIED_FILES = ("LICENSE", "NOTICE.md")
+
+    def change_copy(self, copy: Path, change: str) -> None:
+        """Change the licence copy at ``copy`` in the way ``change`` names."""
+        if change == "missing":
+            copy.unlink()
+            return
+        if change == "restored":
+            # The root file's bytes, which the copy must hold.
+            copy.write_bytes((copy.parent.parent / copy.name).read_bytes())
+            return
+        data = copy.read_bytes()
+        if change == "crlf":
+            # Every LF becomes CR LF, so only the line endings differ.
+            self.assertIn(b"\n", data)
+            self.assertNotIn(b"\r", data)
+            changed = data.replace(b"\n", b"\r\n")
+        elif change == "case":
+            # Every letter changes case, so only the case differs.
+            changed = data.swapcase()
+            self.assertEqual(changed.lower(), data.lower())
+        elif change == "line-end space":
+            # 1 space before the first line ending.
+            end = data.index(b"\n")
+            changed = data[:end] + b" " + data[end:]
+        elif change == "text-end space":
+            # 1 space after the last line ending.
+            self.assertTrue(data.endswith(b"\n"))
+            changed = data + b" "
+        elif change == "differs":
+            # 1 byte past the first 64 changed, the length kept.
+            index = len(data) // 2
+            self.assertGreaterEqual(index, 64)
+            replacement = b"x" if data[index:index + 1] != b"x" else b"y"
+            changed = data[:index] + replacement + data[index + 1:]
+        else:
+            raise ValueError(f"unknown change {change!r}")
+        self.assertNotEqual(changed, data)
+        copy.write_bytes(changed)
+
+    def build_with_copy(self, name: str, change: str | None, checkout_change: str | None = None):
+        """Build with ``change`` made to cleanlanguage/<name> at HEAD and then,
+        when given, ``checkout_change`` made to that copy in the worktree's
+        files only."""
         def edit(wt: Path) -> None:
-            copy = wt / "cleanlanguage" / name
-            if change == "missing":
-                copy.unlink()
-            elif change == "crlf":
-                # Every LF becomes CR LF, so only the line endings differ.
-                data = copy.read_bytes()
-                self.assertIn(b"\n", data)
-                self.assertNotIn(b"\r", data)
-                copy.write_bytes(data.replace(b"\n", b"\r\n"))
-            else:
-                # 1 byte past the first 64 changed, the length kept.
-                data = copy.read_bytes()
-                index = len(data) // 2
-                self.assertGreaterEqual(index, 64)
-                changed = b"x" if data[index:index + 1] != b"x" else b"y"
-                copy.write_bytes(data[:index] + changed + data[index + 1:])
-        return run_packager(None, HEAD_VERSION, tree_edit=edit)
+            self.change_copy(wt / "cleanlanguage" / name, change)
+
+        def checkout_edit(wt: Path) -> None:
+            self.change_copy(wt / "cleanlanguage" / name, checkout_change)
+
+        return run_packager(None, HEAD_VERSION,
+                            tree_edit=edit if change is not None else None,
+                            checkout_edit=checkout_edit if checkout_change is not None else None)
 
     def test_missing_licence_copy_fails(self):
         code, stderr = self.build_with_copy("LICENSE", "missing")
@@ -669,6 +719,44 @@ class PackagerLicenceCopyTest(unittest.TestCase):
         code, stderr = self.build_with_copy("NOTICE.md", "crlf")
         self.assertEqual(code, 1, stderr)
         self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
+
+    def test_copy_differing_only_in_case_or_trailing_spaces_fails(self):
+        # A comparison that lowercases both texts, or strips trailing spaces
+        # from each line or from the end of the text, passes 1 of these.
+        for name in self.COPIED_FILES:
+            for change in ("case", "line-end space", "text-end space"):
+                with self.subTest(name, change=change):
+                    code, stderr = self.build_with_copy(name, change)
+                    self.assertEqual(code, 1, stderr)
+                    self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD",
+                                  stderr)
+
+    def test_copy_differing_at_head_fails_when_the_worktree_file_is_equal(self):
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                code, stderr = self.build_with_copy(name, "differs", checkout_change="restored")
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD", stderr)
+
+    def test_copy_missing_at_head_fails_when_the_worktree_file_is_present(self):
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                code, stderr = self.build_with_copy(name, "missing", checkout_change="restored")
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(f"release-package: cleanlanguage/{name} is missing at HEAD; it must be a copy of the "
+                              f"root {name}", stderr)
+
+    def test_copy_equal_at_head_builds_when_the_worktree_file_differs(self):
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                code, stderr = self.build_with_copy(name, None, checkout_change="differs")
+                self.assertEqual(code, 0, stderr)
+
+    def test_copy_equal_at_head_builds_when_the_worktree_file_is_missing(self):
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                code, stderr = self.build_with_copy(name, None, checkout_change="missing")
+                self.assertEqual(code, 0, stderr)
 
 
 class PackagerReleaseDateTest(unittest.TestCase):
