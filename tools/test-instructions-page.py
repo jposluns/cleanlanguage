@@ -80,11 +80,14 @@ that states the first number as the download without its final newline fails
 them. The case of 1 character changed in the block asserts both lengths of
 the drift problem in the same form.
 
-1 case sets the mode of the download to 000, and 2 set the mode of the
-folder that holds the download or the page to 000. Each asserts exit 3 with
-"could not be read" and the permission error, so a gate that lets the
-download's read error escape, or reports such a lookup error as a missing
-file, fails them. Like the other mode-000 cases, they are skipped under root.
+2 cases set the mode of the download or of the page to 000, and 2 set the
+mode of the folder that holds the download or the page to 000. Each asserts
+exit 3 with "could not be read" and the permission error, so a gate that lets
+the read error of the download or the page escape, or reports such a lookup
+error as a missing file, fails them. Like the other mode-000 cases, these 4
+are skipped under root. 1 more case makes the page undecodable and asserts
+exit 3 with "could not be read" and the decoding error, as for an
+undecodable download.
 
 A case may also name words that the gate must print on stdout, so a case with
 2 faults shows that a check the gate could not evaluate hides no problem it
@@ -440,6 +443,8 @@ CASES = [
         (1, "", f"the page states 0{SAVED} characters for the full download")),
     ("the download undecodable",
         lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
+    ("the page undecodable", lambda root: (root / PAGE).write_bytes(b"\xff"),
+        (3, f"check-instructions-page: {PAGE} could not be read: 'utf-8' codec can't decode")),
     ("the text drifted and the stated count removed",
         faults(edit(PAGE, "Apply the precedence order", "Apply the precedence orders"),
                edit(PAGE, f" ({SAVED} characters)", "")),
@@ -607,6 +612,8 @@ def unsearchable(relative: str):
 LOAD_CASES += [
     ("the download with mode 000", lambda root: os.chmod(root / FILES[0], 0),
         (3, f"check-instructions-page: {FILES[0]} could not be read: [Errno 13] Permission denied")),
+    ("the page with mode 000", lambda root: os.chmod(root / PAGE, 0),
+        (3, f"check-instructions-page: {PAGE} could not be read: [Errno 13] Permission denied")),
     ("the download in a folder with mode 000", unsearchable(FILES[0]),
         (3, f"check-instructions-page: {FILES[0]} could not be read: [Errno 13] Permission denied")),
     ("the page in a folder with mode 000", unsearchable(PAGE),

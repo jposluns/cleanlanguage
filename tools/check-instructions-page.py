@@ -74,7 +74,8 @@ Exit codes:
      code was reintroduced
   3  a check could not be evaluated. Before any check runs, the gate stops on
      2 conditions: the download or the page is missing, could not be read
-     or is not a regular file, or the download could not be read or decoded.
+     or is not a regular file, or the download or the page could not be read
+     or decoded.
      A missing file is reported as not existing, and any other error of the
      lookup as could not be read, with the error. While the checks run, it
      collects these refusals: the embedded block was not found exactly once;
@@ -107,12 +108,11 @@ so the gate never calls a module __getattr__. That namespace is taken before
 the file runs, and a lookup in it, which runs the file's code when a stored
 key is a str subclass that overrides __eq__, is guarded like the load.
 
-What still ends otherwise: the page read is not guarded, so a page that
-cannot be read or decoded ends in a traceback with exit 1; a KeyboardInterrupt
-ends the gate as Python ends on Ctrl-C; code in tools/check-inline-code.py
-that ends the process itself, for example by os._exit, ends the gate with the
-code it gives; and code there that changes the gate's own functions or the
-interpreter's state, for example through sys.modules, is not guarded against.
+What still ends otherwise: a KeyboardInterrupt ends the gate as Python ends
+on Ctrl-C; code in tools/check-inline-code.py that ends the process itself,
+for example by os._exit, ends the gate with the code it gives; and code there
+that changes the gate's own functions or the interpreter's state, for example
+through sys.modules, is not guarded against.
 Such code can end the gate with exit 0 and no output on a page whose count is
 wrong: a ``described`` replaced through sys.modules by a function that calls
 sys.exit(0), beside a reader that raises ValueError, does so.
@@ -120,7 +120,7 @@ sys.exit(0), beside a reader that raises ValueError, does so.
 Where each report goes: a problem found by a check that was evaluated is
 printed on stdout under "Instructions page problems found:", and a check that
 could not be evaluated is reported on stderr, prefixed "check-instructions-page: ".
-Apart from the 4 paths named in the paragraph above, the gate runs every
+Apart from the 3 paths named in the paragraph above, the gate runs every
 check it can evaluate and prints every problem it found before it exits, so a
 problem is never hidden behind a refusal collected while the checks run, and
 it exits 3 when a check could not be evaluated, whatever else it found. The 2
@@ -307,10 +307,18 @@ def main() -> int:
         expected = SOURCE.read_text(encoding="utf-8").rstrip("\n")
     except (OSError, UnicodeError) as error:
         die(f"{SOURCE.relative_to(REPO_ROOT)} could not be read: {error}")
+    # Each page is read before any check runs, so a page that cannot be read or decoded stops the gate as an
+    # unreadable download does, and not by a traceback.
+    page_texts: list[str] = []
+    for page, _ in PAGES:
+        try:
+            page_texts.append(page.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError) as error:
+            die(f"{page.relative_to(REPO_ROOT)} could not be read: {error}")
     problems: list[str] = []
     refusals: list[str] = []
-    for page, button in PAGES:
-        page_problems, page_refusals = check_page(page, button, expected, saved)
+    for (page, button), page_text in zip(PAGES, page_texts):
+        page_problems, page_refusals = check_page(page, button, page_text, expected, saved)
         problems += page_problems
         refusals += page_refusals
 
@@ -333,12 +341,12 @@ def main() -> int:
     return 0
 
 
-def check_page(page: Path, button: str | None, expected: str, saved: int) -> tuple[list[str], list[str]]:
-    """The problems found on the page, and the refusals: the checks that could
-    not be evaluated. A refusal never stops the checks that can still be
-    evaluated."""
+def check_page(page: Path, button: str | None, page_text: str, expected: str,
+               saved: int) -> tuple[list[str], list[str]]:
+    """The problems found on the page, whose text main() has read, and the
+    refusals: the checks that could not be evaluated. A refusal never stops the
+    checks that can still be evaluated."""
     name = page.relative_to(REPO_ROOT)
-    page_text = page.read_text(encoding="utf-8")
     problems: list[str] = []
     refusals: list[str] = []
 

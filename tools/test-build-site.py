@@ -25,12 +25,15 @@ apart from those KEPT_TOKENS names, since a case writes the current baseline
 version as BASELINE, read by the generator's load_pin(). Another reads the
 same source and fails when main() may not run a top-level check_* case
 group in a form that the source shows: main bound other than once by a
-def, a top-level check_* name bound other than once by a def or async def,
-either with a decorator, a check_* name bound by main() or in any scope
-inside it, a parameter included, a global statement that names main or a
-check_* name in any scope, or no call of a top-level check_* name in main().
-The configured base is
-``/``; the staged cases first set the base to ``/draft/`` and exclude the
+def, a top-level check_* name bound other than once by a def, either with
+a decorator, so an async def group fails, main or a group holding a yield,
+a check_* name bound by main() or in any scope inside it, a parameter
+included, a global statement that names main or a check_* name in any
+scope, no call of a top-level check_* name in main(), or a last top-level
+statement other than if __name__ == "__main__": sys.exit(main()). That
+case runs inside this file, so a changed block that does not run main(),
+or drops its result, is not carried by the exit status. The configured
+base is ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
 when every case passes; 1 otherwise, naming each failing case.
@@ -3653,17 +3656,58 @@ def names_bound_within(function: ast.AST) -> set[str]:
     return found
 
 
+def is_generator(function: ast.AST) -> bool:
+    """Whether the def holds a yield or yield from in its own scope, which makes a call of it return a generator
+    without running its body. A nested def, class or lambda is not entered apart from its header(), which runs in
+    the def's own scope."""
+    stack = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
+            return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack += header(node)
+            continue
+        stack += ast.iter_child_nodes(node)
+    return False
+
+
+def runs_main(node: ast.AST) -> bool:
+    """Whether the statement is exactly `if __name__ == "__main__":` holding only `sys.exit(main())`, with no else."""
+    if not isinstance(node, ast.If) or node.orelse or len(node.body) != 1:
+        return False
+    test, (statement,) = node.test, node.body
+    if not (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+            and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == "__main__"):
+        return False
+    if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)):
+        return False
+    call = statement.value
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "exit" and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "sys" and len(call.args) == 1 and not call.keywords):
+        return False
+    inner = call.args[0]
+    return (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "main"
+            and not inner.args and not inner.keywords)
+
+
 def case_group_problems(source: str) -> list[str]:
-    """The ways in which main() of the source may fail to run a top-level check_* case group. main must be bound
-    exactly once at the top level, by a def without a decorator; each top-level check_* name must be bound exactly
-    once, by a def or async def without a decorator; no check_* name may be bound by main() or inside it, in any
-    scope, as names_bound_within() reads it, its parameters and those of a def or lambda inside it included; and
-    main() must hold a call by the name of each top-level check_* name. So a second def of main or of a group, an
-    assignment of either name, a := binding of either in a place that WALRUS_PLACES names, an import of a group, a
-    decorator on either, a binding of a group by main() or inside it, and a deleted call each fail; GUARD_FORMS
-    holds 1 or more of each. A global statement that names main or a check_* name, in any scope of the source,
-    fails too: bindings() does not enter a class body or a function body, where such a statement lets an
-    assignment rebind the top-level name, and a class body runs when the file is loaded."""
+    """The ways in which main() of the source may fail to run a top-level check_* case group, or its result may not
+    reach the exit status. main must be bound exactly once at the top level, by a def without a decorator; each
+    top-level check_* name must be bound exactly once, by a def without a decorator, so that calling it runs its
+    body, which an async def does not; neither main nor a group may hold a yield in its own scope, which makes it a
+    generator whose body a call does not run; no check_* name may be bound by main() or inside it, in any scope, as
+    names_bound_within() reads it, its parameters and those of a def or lambda inside it included; main() must hold
+    a call by the name of each top-level check_* name; and the last top-level statement must be exactly
+    `if __name__ == "__main__": sys.exit(main())`, as runs_main() reads it, with sys bound at the top level only by
+    `import sys` and __name__ not bound there. So a second def of main or of a group, an assignment of either name,
+    a := binding of either in a place that WALRUS_PLACES names, an import of a group, a decorator on either, an
+    async def group, a generator group, a binding of a group by main() or inside it, a deleted call, main() called
+    without sys.exit(), and a __main__ test in any other form each fail; GUARD_FORMS holds 1 or more of each. A
+    global statement that names main or a check_* name, in any scope of the source, fails too: bindings() does not
+    enter a class body or a function body, where such a statement lets an assignment rebind the top-level name, and
+    a class body runs when the file is loaded."""
     tree = ast.parse(source)
     declared = sorted({name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names
                        if name == "main" or name.startswith("check_")})
@@ -3674,15 +3718,26 @@ def case_group_problems(source: str) -> list[str]:
     if len(mains) != 1 or type(mains[0]) is not ast.FunctionDef or mains[0].decorator_list:
         return [f"main is bound {len(mains)} time(s) at the top level, expected once, by a def without a decorator"]
     problems = []
+    if is_generator(mains[0]):
+        problems.append("main holds a yield, so calling it does not run its body")
+    if not tree.body or not runs_main(tree.body[-1]):
+        problems.append('the last top-level statement is not exactly if __name__ == "__main__": sys.exit(main())')
+    plain_import = [("sys", None)]
+    if any(not (isinstance(node, ast.Import) and [(alias.name, alias.asname) for alias in node.names] == plain_import)
+           for name, node in top if name == "sys"):
+        problems.append("sys is bound at the top level other than by import sys")
+    if any(name == "__name__" for name, _ in top):
+        problems.append("__name__ is bound at the top level")
     groups: dict[str, list[ast.AST]] = {}
     for name, node in top:
         if name.startswith("check_"):
             groups.setdefault(name, []).append(node)
     for name, nodes in sorted(groups.items()):
-        if (len(nodes) != 1 or not isinstance(nodes[0], (ast.FunctionDef, ast.AsyncFunctionDef))
-                or nodes[0].decorator_list):
-            problems.append(f"{name} is bound {len(nodes)} time(s) at the top level, expected once, by a def or "
-                            "async def without a decorator")
+        if len(nodes) != 1 or type(nodes[0]) is not ast.FunctionDef or nodes[0].decorator_list:
+            problems.append(f"{name} is bound {len(nodes)} time(s) at the top level, expected once, by a def "
+                            "without a decorator")
+        elif is_generator(nodes[0]):
+            problems.append(f"{name} holds a yield, so calling it does not run its body")
     local = sorted(name for name in names_bound_within(mains[0]) if name.startswith("check_"))
     if local:
         problems.append(f"main() or a scope inside it binds {', '.join(local)}")
@@ -3696,7 +3751,8 @@ def case_group_problems(source: str) -> list[str]:
 # The name of a case group, written in 2 parts so that no fixture text below occurs in this source as it stands.
 GROUP = "check_" + "stated_count"
 CALL = f"ran += {GROUP}(failures)"
-# (form, anchor or None to append, replacement): each changed source must give case_group_problems a problem.
+# (form, anchor or None to insert before the block that runs main(), replacement): each changed source must give
+# case_group_problems a problem.
 GUARD_FORMS = [
     ("the call of a group deleted", f"    {CALL}\n", ""),
     ("an uncalled def check_extra", None, "\ndef check_" + "extra(failures):\n    return 1\n"),
@@ -3759,24 +3815,60 @@ GUARD_FORMS += [
     ("a group rebound by a global statement in a top-level def", None,
      f"\ndef rebind():\n    global {GROUP}\n    {GROUP} = {SHADOW}\n"),
 ]
+# A group's def line, and the block that runs main(): with MAIN_DEF, the anchors of the forms below. Each form keeps
+# every call by a group's name in main(), and each changes a group, main() or that block from the form that
+# case_group_problems requires.
+GROUP_DEF = f"\ndef {GROUP}(failures: list[str]) -> int:\n"
+MAIN_BLOCK = '\nif __name__ == "__main__":\n    sys.exit(main())\n'
+GUARD_FORMS += [
+    ("a group made an async def", f"\ndef {GROUP}(", f"\nasync def {GROUP}("),
+    ("a group made a generator by yield", GROUP_DEF, GROUP_DEF + "    if False:\n        yield\n"),
+    ("a group made a generator by yield from", GROUP_DEF, GROUP_DEF + "    if False:\n        yield from ()\n"),
+    ("a group made a generator by a yield in the default of a def inside it", GROUP_DEF,
+     GROUP_DEF + "    def inner(value=(yield)):\n        return value\n"),
+    ("main made a generator", MAIN_DEF + "\n", MAIN_DEF + "\n    if False:\n        yield\n"),
+    ("main() called without sys.exit()", MAIN_BLOCK, '\nif __name__ == "__main__":\n    main()\n'),
+    ("main() passed to sys.exit() inside another call", MAIN_BLOCK,
+     '\nif __name__ == "__main__":\n    sys.exit(bool(main()) and 0)\n'),
+    ("the __main__ test comparing another string", MAIN_BLOCK, MAIN_BLOCK.replace('"__main__"', '"__mian__"')),
+    ("the __main__ test negated", MAIN_BLOCK, MAIN_BLOCK.replace("==", "!=")),
+    ("the __main__ test made false by and False", MAIN_BLOCK,
+     MAIN_BLOCK.replace("if __name__", "if False and __name__")),
+    ("the __main__ block given an else", MAIN_BLOCK, MAIN_BLOCK + "else:\n    pass\n"),
+    ("the __main__ block removed", MAIN_BLOCK, "\n"),
+    ("the __main__ block followed by a statement", MAIN_BLOCK, MAIN_BLOCK + "pass\n"),
+    ("sys rebound before the __main__ block", MAIN_BLOCK,
+     "\nclass sys:\n    exit = staticmethod(lambda code: None)\n" + MAIN_BLOCK),
+    ("__name__ rebound before the __main__ block", MAIN_BLOCK, '\n__name__ = "other"\n' + MAIN_BLOCK),
+]
 
 
 def check_case_groups_called(failures: list[str]) -> int:
     """This file's own source gives case_group_problems no problem, so a case group whose call is deleted, or whose
     name main() calls is bound to something else in a form the guard reads, fails here instead of only lowering the
     printed total; and each of GUARD_FORMS, applied to that source, gives a problem. It does not check that a call
-    runs (under a false condition or after an early return it does not), that its count and failures are kept, or
-    that it is not removed from main() itself, since a guard that does not run cannot fail. It reads only the
-    bindings that the source shows as names: a check_* function defined inside a class or another function is not
-    a case group, and a binding through globals(), setattr() or exec() is not read. A global statement that names
-    main or a check_* name fails in any scope, a class body or a def included. At the top level, a := in the header
-    of a def, class or lambda or in a comprehension is read, as bindings() says; inside main(), every binding in
-    every scope is read, as names_bound_within() says, parameters included."""
+    runs (under a false condition or after an early return it does not), that its count and failures are kept, that
+    a group's own body does more than return at once, or that it is not removed from main() itself, since a guard
+    that does not run cannot fail. For the same reason, a block that does not run main(), or drops its result, is a
+    problem when the guard reads it but not in the exit status of the changed file: with main() in place of
+    sys.exit(main()) the problem is printed and the file exits 0, and with a __main__ test that is never true
+    nothing runs. It does not check what runs before the block that runs main(): a top-level statement that ends
+    the process, such as sys.exit(0), or that changes an attribute, such as an assignment to sys.exit, is not read.
+    It reads only the bindings that the source shows as names: a check_* function defined inside a class or another
+    function is not a case group, and a binding through globals(), setattr() or exec() is not read. A global
+    statement that names main or a check_* name fails in any scope, a class body or a def included. At the top
+    level, a := in the header of a def, class or lambda or in a comprehension is read, as bindings() says; inside
+    main(), every binding in every scope is read, as names_bound_within() says, parameters included."""
     source = Path(__file__).read_text(encoding="utf-8")
     failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
     for form, anchor, replacement in GUARD_FORMS:
+        if anchor is None and not source.endswith(MAIN_BLOCK):
+            failures.append(f"case groups, {form}: the source does not end with the block that runs main()")
+            continue
         if anchor is None:
-            changed = source + replacement
+            # Put before that block, so that the form is judged by the check it is written for, and not by the
+            # check of the last top-level statement.
+            changed = source[:-len(MAIN_BLOCK)] + replacement + MAIN_BLOCK
         elif source.count(anchor) == 1:
             changed = source.replace(anchor, replacement)
         else:
