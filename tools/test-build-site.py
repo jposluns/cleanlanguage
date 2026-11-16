@@ -839,7 +839,7 @@ REFUSALS = [
         inject('<p><a href="{{base}}install/#inert-anchor">x</a></p>')(root),
     )),
     ("an allowlisted root link to a missing file", lambda root: (
-        edit(root, "site-src/site.json", '"/downloads/cleanlanguage-8k.md"', '"/downloads/cleanlanguage-8k.md", "/downloads/gone.md"'),
+        edit(root, "site-src/site.json", '"/downloads/cleanlanguage-instructions-8k.md"', '"/downloads/cleanlanguage-instructions-8k.md", "/downloads/gone.md"'),
         inject('<p><a href="/downloads/gone.md">x</a></p>')(root),
     )),
     ("release.json disagrees with SKILL.md", lambda root: set_release(root, version="1.0.99", tag="v1.0.99")),
@@ -2758,10 +2758,10 @@ def check_clean_build(failures: list[str]) -> int:
             if rendered not in examples:
                 failures.append(f"clean build: example text missing: {paragraph[:60]!r}")
         instructions = (out / "instructions/index.html").read_text(encoding="utf-8")
-        source = (root / "site/downloads/cleanlanguage.md").read_text(encoding="utf-8").rstrip("\n")
+        source = (root / "site/downloads/cleanlanguage-instructions.md").read_text(encoding="utf-8").rstrip("\n")
         match = re.search(r'<pre id="instructions-text" class="hascopy prompt-flow"><button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>(.*?)</pre>', instructions, re.S)
         if match is None or html.unescape(match.group(1)) != source:
-            failures.append("clean build: the instructions page does not embed cleanlanguage.md exactly")
+            failures.append("clean build: the instructions page does not embed cleanlanguage-instructions.md exactly")
     return 1
 
 
@@ -2888,7 +2888,7 @@ def check_stated_count(failures: list[str]) -> int:
     for name, change, expected in cases:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
-            download = root / "site/downloads/cleanlanguage.md"
+            download = root / "site/downloads/cleanlanguage-instructions.md"
             data = change(download.read_bytes())
             if data is None:
                 failures.append(f"stated count, {name}: the download does not {expected}")

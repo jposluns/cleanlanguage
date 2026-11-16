@@ -13,7 +13,8 @@ the verify page's 2 states (a published checksum, or the zero placeholder with
 the not-yet-published note), each held to the download block tools/build-site.py
 renders for it (the verify page fixtures carry that block), the refusal of a page
 that mixes them, hides or moves the block, and the writer's round trip from the
-placeholder to a published checksum. They run
+placeholder to a published checksum. They also pin that every rule of the
+committed ``site/_redirects`` reaches a file the site serves in 1 hop. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -1004,10 +1005,14 @@ class WriterTest(unittest.TestCase):
         for line in ("/privacy https://posluns.ca/privacy/ 301", "/privacy/ https://posluns.ca/privacy/ 301",
                      "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301",
                      "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301",
-                     "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301",
+                     "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301",
+                     "/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302",
+                     "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302",
+                     "/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302",
+                     "/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302",
                      f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{self.next}/cleanlanguage-{self.next}.zip 302"):
             self.assertIn(line + "\n", redirects)
-        self.assertEqual(len(redirects.splitlines()), 10)
+        self.assertEqual(len(redirects.splitlines()), 14)
 
     def test_the_committed_redirects_match_the_writer(self):
         # The committed file is exactly what the writer writes for the current release, so a release keeps it.
@@ -1021,6 +1026,58 @@ class WriterTest(unittest.TestCase):
         release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
         planned = writer.rewrite(release["version"], release["tag"], release["checksum"], "2026-11-04")
         self.assertNotIn(self.root / "site-src/site.json", planned)
+
+
+class RedirectHopTest(unittest.TestCase):
+    """Every rule of the committed site/_redirects reaches a file the site serves in 1 hop.
+
+    A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
+    with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
+    committed tree is the tree the site serves. A destination that is the source of another rule, or that a splat
+    source (ending in *) matches, would send the reader through a second hop and fails, as does a destination with
+    no file. A destination on another host passes only when it is 1 of the targets the writer documents: the release
+    zip and its checksum for the version in site-src/release.json, and the privacy page.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def off_site_targets(self) -> set[str]:
+        release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
+        zip_url = (f"https://github.com/jposluns/cleanlanguage/releases/download/{release['tag']}"
+                   f"/cleanlanguage-{release['version']}.zip")
+        return {zip_url, zip_url + ".sha256", "https://posluns.ca/privacy/"}
+
+    def test_every_redirect_reaches_a_served_file_in_1_hop(self):
+        site = self.REPO / "site"
+        rules = []
+        for number, line in enumerate((site / "_redirects").read_text(encoding="utf-8").splitlines(), 1):
+            fields = line.split()
+            if not fields or fields[0].startswith("#"):
+                continue
+            self.assertEqual(len(fields), 3, f"site/_redirects line {number} is not 'source destination status'")
+            rules.append((number, fields[0], fields[1]))
+        self.assertTrue(rules, "site/_redirects holds no rule")
+        sources = {source for _, source, _ in rules}
+        splats = [source[:-1] for source in sources if source.endswith("*")]
+        off_site = self.off_site_targets()
+        for number, source, destination in rules:
+            with self.subTest(line=number, source=source):
+                where = f"site/_redirects line {number}: {source} redirects to {destination}"
+                if "://" in destination:
+                    self.assertIn(destination, off_site, f"{where}, a host other than this site's that is not a "
+                                  "documented target")
+                    continue
+                self.assertTrue(destination.startswith("/"), f"{where}, which is not a path on this site")
+                self.assertFalse(destination in sources, f"{where}, the source of another rule: 2 hops")
+                for prefix in splats:
+                    self.assertFalse(destination.startswith(prefix),
+                                     f"{where}, which the splat source {prefix}* matches: 2 hops")
+                parts = destination.strip("/").split("/")
+                self.assertNotIn("..", parts, f"{where}, which leaves site/")
+                target = site.joinpath(*parts)
+                if destination.endswith("/"):
+                    target = target / "index.html"
+                self.assertTrue(target.is_file(), f"{where}, which is not a file under site/")
 
 
 class WholePageTest(unittest.TestCase):

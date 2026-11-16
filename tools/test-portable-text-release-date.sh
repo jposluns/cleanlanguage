@@ -40,8 +40,8 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 work="${scratch}/work"
 skill="cleanlanguage/skills/cleanlanguage/SKILL.md"
-eleven="site/downloads/cleanlanguage-11k.md"
-eight="site/downloads/cleanlanguage-8k.md"
+eleven="site/downloads/cleanlanguage-instructions-11k.md"
+eight="site/downloads/cleanlanguage-instructions-8k.md"
 
 fresh() {
   rm -rf "${work}"
