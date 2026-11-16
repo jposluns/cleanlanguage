@@ -6,8 +6,9 @@ its exit status and its output; some cases, such as the static ones, run no gate
 starts every child through run_child(), which sets a memory limit, a CPU limit and, where a case
 asks, a stack limit in the child before it runs the gate or the suite, and enforces a wall
 timeout on the child from the process that started it, so a gate that never ends stops at a
-limit. When a child of the top suite process hits its wall timeout, run_child() kills its whole
-process group, which holds every process the child started through run_child(); LIMIT_LAUNCH and
+limit. When run_child() leaves its wait on a child of the top suite process, on its wall
+timeout, on any other exception or on a normal return, it kills the child's whole process
+group, which holds every process the child started through run_child(); LIMIT_LAUNCH and
 run_child() state which process runs under which limit. The suite sets no limit on its own top
 process: in CI the job's time limit in the workflow bounds it, and on a local run nothing in the
 suite does. A case that needs a squash folder copies the gate and the label lint into a
@@ -36,7 +37,8 @@ any runner; cases of exit status 1 and 0 are mostly in the other groups, such as
 test_em_dash_fails and test_clean_event_passes. OutputAndHonestTexts holds the output prefixes
 and escapes, runs from other folders and without -B, a bound on the time of the inline-code
 scan, a case that the scan ends on each shape of backtick run, the memory, CPU and wall limits
-of a child, a case that a grandchild ends with its timed-out parent, a static case that every
+of a child, cases that a grandchild ends with its timed-out parent and with a parent whose
+output cannot be decoded, a static case that every
 child runs under its limits, the job's time limit in the workflow, and honest texts that pass.
 MutantSweep generates the mutation sites of the gate from its source, checks that each has a row
 or an argument that it is equivalent, that its mutated gate does not load or that its mutated
@@ -81,6 +83,9 @@ FIX_LABEL = "a fix" + " round"
 BARE_ID = "R" + "3"
 OTHER_BARE_ID = "F" + "1"
 ISE_WORD = "standard" + "ise"
+# 1 line with no final line feed, so its every line holds a backtick run: a code span, an -ise
+# spelling, then a lone backtick run, which closes no span, so the spelling is not masked.
+LONE_LAST_RUN = "Run `x` now, then " + ISE_WORD + " a lone ` here."
 # The -ise stems of the gate's denylist, each checked by test_every_ise_stem_fails.
 ISE_STEMS = (
     "apolog", "author", "capital", "categor", "central", "character", "critic", "custom",
@@ -221,7 +226,9 @@ GATE_CPU = 60
 # of every named case on an unmutated copy, with the gate children it started, reached a
 # maxrss of 26 MiB in at most 35.8 s. At most SWEEP_WORKERS sweep children run at once, each
 # with at most 1 gate child, so the children of a sweep hold at most
-# SWEEP_WORKERS * 2 * SWEEP_MEMORY bytes of address space.
+# SWEEP_WORKERS * 2 * SWEEP_MEMORY bytes of address space. The stopping-site case runs its
+# probe gate children under SWEEP_MEMORY too, at most SWEEP_WORKERS at once, so they hold at
+# most SWEEP_WORKERS * SWEEP_MEMORY bytes; the cases of the suite run 1 after another.
 SWEEP_MEMORY = 192 * 1024 * 1024
 # Each line that run_child() writes to standard error when a child hits a limit starts so.
 LIMIT_HIT = "limit hit: "
@@ -257,6 +264,27 @@ ORPHAN_SPIN = ("import os, sys\n"
                "    pass\n")
 ORPHAN_TIMEOUT = 5
 ORPHAN_BOUND = 5
+# The case that a grandchild ends when the output of its parent cannot be decoded runs this
+# parent through run_child(). It starts STARTED_SPIN with subprocess.Popen, in the parent's
+# process group, with its standard streams on os.devnull, so the grandchild holds no pipe that
+# run_child() reads, and under the limits it inherits from the parent; it is the only process
+# that code of this suite starts other than through run_child(). The parent waits until the
+# grandchild has written its PID, writes a byte that is not UTF-8 and ends.
+UNDECODABLE_PARENT = (
+    "import os, subprocess, sys, time\n"
+    "fd, folder, spin = int(sys.argv[1]), sys.argv[2], sys.argv[3]\n"
+    "subprocess.Popen([sys.executable, '-I', '-B', '-c', spin, str(fd), folder],\n"
+    "                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+    "                 stderr=subprocess.DEVNULL, pass_fds=(fd,))\n"
+    "path = os.path.join(folder, 'grandchild.pid')\n"
+    "while not (os.path.exists(path) and open(path).read().strip()):\n"
+    "    time.sleep(0.01)\n"
+    "os.write(1, b'\\xff\\n')\n")
+STARTED_SPIN = ("import os, sys\n"
+                "os.write(int(sys.argv[1]), b'started\\n')\n"
+                "open(os.path.join(sys.argv[2], 'grandchild.pid'), 'w').write(str(os.getpid()))\n"
+                "while True:\n"
+                "    pass\n")
 
 
 def memory_limit(memory):
@@ -285,26 +313,47 @@ def cpu_hit(returncode, cpu):
                                                signal.Signals(-returncode).name)
 
 
+def end_group(child, outermost):
+    """Kill the process group of child with SIGKILL when an outermost call started it.
+
+    The group's id is the child's PID, and Linux does not give that PID to a new process while
+    a process of the group lives, so while one lives the kill reaches only that group, even
+    after the child is reaped. A group with no process left raises ProcessLookupError, which is
+    passed over. Residual: once no process of the group is left, the PID can be given to a new
+    process, and if that process makes a group of its own in the moment before the kill, the
+    kill reaches that group.
+    """
+    if not outermost:
+        return
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def run_child(args, *, memory, timeout, cwd, stack=None, cpu=GATE_CPU, **options):
     """The finished python3 child run with args under memory, CPU and wall limits.
 
     The child runs through LIMIT_LAUNCH with RLIMIT_AS set to memory bytes, RLIMIT_CPU set to
     cpu seconds and a hard limit CPU_GRACE s above it, and, when stack is given, the soft stack
     limit set to stack bytes. This process enforces the wall timeout of timeout seconds: on that
-    timeout, or on any other exception while the child runs, KeyboardInterrupt included, it
+    timeout, or on any other exception while it waits on the child, KeyboardInterrupt included,
+    such as a UnicodeDecodeError raised after the child ended when its output is decoded, it
     kills the child and reaps it before it re-raises.
 
     The nested shape, a call made inside a child that run_child() started, as a sweep child runs
     a gate child: LIMIT_LAUNCH sets CHILD_MARK in each child, so a call reads from it whether it
     is outermost. Only an outermost call starts its child in a new session, and so a new process
-    group, and on a timeout or an exception it kills that whole group with os.killpg and
-    SIGKILL. A nested call keeps its child in the process group of its caller, which is the
-    group of the outermost child above it, so that os.killpg reaches it: when SWEEP_TIMEOUT
-    stops a sweep child, the gate child it is running ends with it. If every call started a new
-    session, the gate child would be in a group of its own, which the kill of the sweep child's
-    group would not reach. A nested call that times out kills its own child by its PID alone,
-    since a kill of the group would kill its caller too; a process that child started stays in
-    the outermost group, which only the outermost call's timeout or exception kills, unless it
+    group, and end_group() kills that whole group with os.killpg and SIGKILL on every path out
+    of the wait: on a timeout, on any other exception, whether or not the child has already
+    ended and been reaped, and on a normal return. A nested call keeps its child in the process
+    group of its caller, which is the group of the outermost child above it, so that os.killpg
+    reaches it: when SWEEP_TIMEOUT stops a sweep child, the gate child it is running ends with
+    it. If every call started a new session, the gate child would be in a group of its own,
+    which the kill of the sweep child's group would not reach. A nested call that times out
+    kills its own child by its PID alone, since a kill of the group would kill its caller too;
+    a process that child started stays in the outermost group, which only the outermost call
+    kills, when it leaves its wait, unless it
     leaves that group, as a process that starts its own session does: the kill of the outermost
     group does not reach such a process, which can outlive it. A gate child starts no process,
     and the guarantee that a child ends with its group does not cover a process that starts its
@@ -324,17 +373,14 @@ def run_child(args, *, memory, timeout, cwd, stack=None, cpu=GATE_CPU, **options
         try:
             stdout, stderr = child.communicate(timeout=timeout)
         except BaseException as error:
-            if outermost and child.returncode is None:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            end_group(child, outermost)
             child.kill()
             child.wait()
             if isinstance(error, subprocess.TimeoutExpired):
                 print("{}the wall timeout of {} s".format(LIMIT_HIT, timeout), file=sys.stderr,
                       flush=True)
             raise
+        end_group(child, outermost)
     done = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
     found = done.stdout + done.stderr
     if ("MemoryError" if isinstance(found, str) else b"MemoryError") in found:
@@ -1632,6 +1678,17 @@ class OutputAndHonestTexts(GateCase):
         self.assertEqual(result, (1, ["description:2: an em dash, U+2014: A lone ` run "
                                       "\\u2014 here.", "pr-text: 1 defect(s)"]))
 
+    def test_lone_last_backtick_run_closes_no_span(self):
+        # Each text is 1 line with no final line feed, so its every line holds a backtick run.
+        # A lone run last on the line closes no span: alone, it stays as written in the report
+        # line; after a closed span, the text between them is not masked.
+        self.assertEqual(self.description("A lone ` then " + EM_DASH + " here."),
+                         (1, ["description:1: an em dash, U+2014: A lone ` then \\u2014 here.",
+                              "pr-text: 1 defect(s)"]))
+        self.assertEqual(self.description(LONE_LAST_RUN),
+                         (1, ["description:1: an -ise spelling: " + ISE_WORD,
+                              "pr-text: 1 defect(s)"]))
+
     def test_child_over_its_memory_limit_fails_by_it(self):
         code = ("import resource, sys; print(*resource.getrlimit(resource.RLIMIT_AS));"
                 " sys.stdout.flush(); bytearray(int(sys.argv[1]))")
@@ -1693,20 +1750,47 @@ class OutputAndHonestTexts(GateCase):
                           pass_fds=(write,))
         finally:
             os.close(write)
+        found, ended = self.read_to_end(read)
+        self.assertEqual(found, b"started\n", "the grandchild did not start")
+        self.assertTrue(ended, "the grandchild ran on {} s after the timeout of its parent".format(
+            ORPHAN_BOUND))
+
+    def read_to_end(self, read):
+        """(bytes read, whether EOF came) from the read end within ORPHAN_BOUND s."""
         found, ended = b"", False
         deadline = time.monotonic() + ORPHAN_BOUND
         while not ended and select.select([read], [], [], max(0, deadline - time.monotonic()))[0]:
             chunk = os.read(read, 64)
             found, ended = found + chunk, not chunk
+        return found, ended
+
+    def test_grandchild_ends_when_the_output_of_its_parent_cannot_be_decoded(self):
+        # A parent child started through run_child() starts a spinning grandchild in its process
+        # group, waits until it has started, writes a byte that is not UTF-8 and ends.
+        # run_child() reaps the parent, then raises UnicodeDecodeError as it decodes the output;
+        # the grandchild must end with the parent's group all the same. As in the case of the
+        # timed-out parent, EOF on the pipe shows that the grandchild has ended.
+        read, write = os.pipe()
+        self.addCleanup(os.close, read)
+        self.addCleanup(self.stop_recorded, self.tmp)
+        try:
+            with self.assertRaises(UnicodeDecodeError):
+                run_child(["-I", "-B", "-c", UNDECODABLE_PARENT, write, self.tmp, STARTED_SPIN],
+                          memory=GATE_MEMORY, timeout=ORPHAN_TIMEOUT, cwd=self.cwd,
+                          pass_fds=(write,), text=True, encoding="utf-8")
+        finally:
+            os.close(write)
+        found, ended = self.read_to_end(read)
         self.assertEqual(found, b"started\n", "the grandchild did not start")
-        self.assertTrue(ended, "the grandchild ran on {} s after the timeout of its parent".format(
-            ORPHAN_BOUND))
+        self.assertTrue(ended, "the grandchild ran on {} s after its parent's output failed to "
+                        "decode".format(ORPHAN_BOUND))
 
     def test_every_child_runs_under_its_limits(self):
         # The only call that starts a process is in run_child(): it starts LIMIT_LAUNCH, an
-        # outermost call in a new session, waits with a timeout, and kills the child's group
-        # on a timeout; run_child() takes its memory limit and timeout with no default, and
-        # LIMIT_LAUNCH sets the memory and CPU limits and the mark of a nested call.
+        # outermost call in a new session, waits with a timeout, and calls end_group(), which
+        # kills the child's group, on each path out of the wait; run_child() takes its memory
+        # limit and timeout with no default, and LIMIT_LAUNCH sets the memory and CPU limits
+        # and the mark of a nested call.
         def starts_a_process(node):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                     and isinstance(node.func.value, ast.Name)):
@@ -1727,7 +1811,11 @@ class OutputAndHonestTexts(GateCase):
         self.assertEqual(ast.unparse(call.args[0]), "command")
         made = [ast.unparse(node) for node in ast.walk(child) if isinstance(node, ast.Call)]
         self.assertIn("child.communicate(timeout=timeout)", made)
-        self.assertIn("os.killpg(child.pid, signal.SIGKILL)", made)
+        self.assertEqual(made.count("end_group(child, outermost)"), 2)
+        ender = next(node for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef) and node.name == "end_group")
+        ended = [ast.unparse(node) for node in ast.walk(ender) if isinstance(node, ast.Call)]
+        self.assertIn("os.killpg(child.pid, signal.SIGKILL)", ended)
         assigned = [ast.unparse(node) for node in ast.walk(child) if isinstance(node, ast.Assign)]
         self.assertIn("outermost = os.environ.get(CHILD_MARK) != '1'", assigned)
         command = next(node.value for node in ast.walk(child) if isinstance(node, ast.Assign)
@@ -2242,13 +2330,18 @@ def generate_sites(source):
     pattern_calls = []
 
     def statements(stack, block, inside):
-        """Deletion sites of each statement of a block, and of each block within it."""
+        """Deletion sites of each statement of a block, and of each block within it.
+
+        A nested function or class is a statement too, and its body is a block within it; each
+        case of a match statement holds a block. A decorated definition raises UnknownConstruct,
+        since its deletion would leave its decorators.
+        """
         for statement in block:
             if (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
                     and isinstance(statement.value.value, str)):
                 continue
-            if isinstance(statement, (ast.FunctionDef, ast.ClassDef)):
-                continue
+            if getattr(statement, "decorator_list", None):
+                raise UnknownConstruct("a decorated definition: " + line_of(statement))
             if inside:
                 first = smap.line_start(statement.lineno)
                 last = smap.line_end(statement.end_lineno)
@@ -2266,6 +2359,8 @@ def generate_sites(source):
                     statements(stack, inner, inside)
             for handler in getattr(statement, "handlers", []):
                 statements(stack, handler.body, inside)
+            for case in getattr(statement, "cases", []):
+                statements(stack, case.body, inside)
 
     def expressions(stack, node):
         """The expression sites of node and every node within it."""
@@ -2363,14 +2458,15 @@ def generate_sites(source):
         add("handler body replaced by raise", "{}, the body of `{}` replaced by `raise`".format(
             where, head), [(first, last, indent + "raise\n")])
 
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     for node in body:
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, functions):
             stack = [node.name + "()"]
             statements(stack, node.body, True)
             expressions(stack, node)
         elif isinstance(node, ast.ClassDef):
             for item in node.body:
-                if isinstance(item, ast.FunctionDef):
+                if isinstance(item, functions):
                     stack = ["{}.{}()".format(node.name, item.name)]
                     statements(stack, item.body, True)
                     expressions(stack, item)
@@ -2825,10 +2921,10 @@ SWEEP_ROWS = {
         (D + 'test_em_dash_fails',),
     'in check_text(), the statement `for match in ISE.finditer(line):` deleted, at its 1st '
     'occurrence':
-        (D + 'test_each_ise_ending_fails',),
+        (D + 'test_ise_spelling_fails',),
     'in check_text(), the statement `report.defect(prefix, ":{}: an -ise spelling: '
     '{}".format(number, match.group(0)))` deleted, at its 1st occurrence':
-        (D + 'test_each_ise_ending_fails',),
+        (D + 'test_ise_spelling_fails',),
     'in check_text(), the statement `if width_applies:` deleted, at its 1st occurrence':
         (D + 'test_squash_line_over_72_characters_fails',),
     'in check_text(), the statement `for number, line in enumerate(lines, 1):` deleted, at its '
@@ -3449,7 +3545,7 @@ SWEEP_ROWS = {
     'in the constant ISE_STEMS, the member `optim` removed, at its 1st occurrence':
         (D + 'test_every_ise_stem_fails',),
     'in the constant ISE_STEMS, the member `organ` removed, at its 1st occurrence':
-        (D + 'test_each_ise_ending_fails',),
+        (D + 'test_every_ise_stem_fails',),
     'in the constant ISE_STEMS, the member `parameter` removed, at its 1st occurrence':
         (D + 'test_every_ise_stem_fails',),
     'in the constant ISE_STEMS, the member `priorit` removed, at its 1st occurrence':
@@ -3480,6 +3576,12 @@ SWEEP_ROWS = {
         (D + 'test_every_ise_stem_fails',),
     'in the constant ISE_STEMS, the member `visual` removed, at its 1st occurrence':
         (D + 'test_every_ise_stem_fails',),
+    # The reverse scan then visits index -1 after index 0: on a line with no backtick run,
+    # runs[-1] raises IndexError, but on a line with one, runs[-1] is the last run, which then
+    # takes as its closer the first run of its width, so a lone last run closes a span.
+    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
+    'its 2nd occurrence':
+        (O + 'test_lone_last_backtick_run_closes_no_span',),
 }
 
 # The generated sites that are equivalent: the mutated gate gives the same exit status and the
@@ -3590,329 +3692,443 @@ UNCOMPILABLE_SITES = {
         'the ) closes the group of the 2 alternatives, so the ) that closed it has no group to '
         'close and re.compile raises re.error, unbalanced parenthesis, when the gate loads.',
 }
+# The probe runs of test_stopping_sites_stop_the_gate, by name, each on a tree that
+# MutantSweep.probe_tree() writes, with a clean squash file of number 999: a clean description;
+# a description with a code span, an -ise spelling and a closed backtick fence; a description of
+# 1 line with no final line feed, so its every line holds a backtick run, with a code span, an
+# -ise spelling and then a lone backtick run; the squash file with --number; the squash file
+# bound by its name; a clean squash file whose name binds it to number 42, so its subject fails;
+# a squash file with a revision id and a line over 72 characters; a squash file with a code
+# span, an -ise spelling, a revision id, a closed tilde fence and a line over 72 characters; 2
+# squash files whose names have a further suffix, so they bind no number; a clean event; and an
+# event whose body holds a code span, an -ise spelling and a closed backtick fence.
+STOP_PROBES = {
+    "clean": ("--description", "clean.md"),
+    "spans": ("--description", "spans.md"),
+    "backticks": ("--description", "backticks.md"),
+    "number": ("--squash", ".github/squash/999.txt", "--number", "999"),
+    "name": ("--squash", ".github/squash/999.txt"),
+    "name 42": ("--squash", ".github/squash/42.txt"),
+    "revision": ("--squash", "revision.txt", "--number", "999"),
+    "defects": ("--squash", "defects.txt", "--number", "999"),
+    "txtx": ("--squash", ".github/squash/999.txtx"),
+    "txt.bak": ("--squash", ".github/squash/999.txt.bak"),
+    "event": ("--event", "event.json"),
+    "event defects": ("--event", "event-defects.json"),
+}
+# The probes on which a stopping site shows a stop, at least STOP_PROBES_EACH of them, so that a
+# stop that 1 input alone makes is not taken for a stop on every input the site changes.
+STOP_PROBES_EACH = 2
+EVERY_PROBE = tuple(STOP_PROBES)
 # The generated sites whose mutated gate stops: on every run on which the changed code acts
 # otherwise than the gate's, it raises an error that the gate does not raise, such as a
 # NameError for a name the site leaves unbound, so it stops with a traceback or with the line of
 # an unexpected error, or reports the label lint as unreadable. Every case on which the site has
 # an effect fails because the gate stops, not for the reason the site changes, so no case can
-# kill it as a row asks, and the table lists it with the argument instead of a row.
-# test_stopping_sites_stop_the_gate checks that each listed site stops on 1 or more of the runs
-# of STOP_PROBES with a stop sign that the gate does not show.
+# kill it as a row asks, and the table lists it, in place of a row, with the names of the
+# probes of STOP_PROBES on which it stops, at least STOP_PROBES_EACH of them, and the argument.
+# test_stopping_sites_stop_the_gate checks for each listed site that its mutated gate shows a
+# stop sign that the gate does not show on exactly the probes it names, and gives the gate's
+# exit status, output and standard error on every other probe, so a site that acts otherwise
+# than the gate on a probe with no stop, or that stops on fewer probes than it names, fails it.
+# The probes are a finite set: the argument, not the case, covers every other input.
 STOPPING_SITES = {
     'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
     'len(match.group(1)) >= len(opener)`, at its 1st occurrence':
-        'FENCE has no group 2, so match.group raises IndexError on every fence line inside an '
-        'open fence, and every run with one stops on it.',
+        (('spans', 'defects', 'event defects'),
+         'FENCE has no group 2, so match.group raises IndexError on every fence line inside an '
+         'open fence, and every run with one stops on it.'),
     'in fenced(), `1` changed up to `2` in `if (match and match.group(1)[0] == opener[0] and '
     'len(match.group(1)) >= len(opener)`, at its 2nd occurrence':
-        'FENCE has no group 2, so match.group raises IndexError on every fence line of the '
-        "opener's character inside an open fence, and every run with one stops on it.",
+        (('spans', 'defects', 'event defects'),
+         'FENCE has no group 2, so match.group raises IndexError on every fence line of the '
+         "opener's character inside an open fence, and every run with one stops on it."),
     'in code_spans(), `1` changed up to `2` in `spans.append((runs[index][0], '
     'runs[closer[index]][1]))`, at its 1st occurrence':
-        'each run is a pair (start, end), so runs[closer[index]][2] raises IndexError on every '
-        'code span, and every run with a code span stops on it.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'each run is a pair (start, end), so runs[closer[index]][2] raises IndexError on every '
+         'code span, and every run with a code span stops on it.'),
     'in check_text(), the statement `exempt = number - 1 in fence or excess_is_url(line)` '
     'deleted, at its 1st occurrence':
-        'the site deletes the only binding of exempt before it is read, and the width check '
-        'reads it on each squash line over 72 characters, so every squash run with such a line '
-        'stops on an UnboundLocalError.',
+        (('revision', 'defects'),
+         'the site deletes the only binding of exempt, so the name is read as a global that does '
+         'not exist; the width check reads it only on a squash line over 72 characters, so every '
+         'squash run with such a line stops on a NameError, and every other run is unchanged.'),
     'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: an -ise spelling: '
     '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        'ISE has no group 1, so match.group raises IndexError on every -ise hit, and every run '
-        'with one stops on it.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'ISE has no group 1, so match.group raises IndexError on every -ise hit, and every run '
+         'with one stops on it.'),
     'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: an -ise '
     'spelling: {}".format(number, match.group(0)))`, at its 1st occurrence':
-        'ISE has no group -1, so match.group raises IndexError on every -ise hit, and every run '
-        'with one stops on it.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'ISE has no group -1, so match.group raises IndexError on every -ise hit, and every run '
+         'with one stops on it.'),
     'in check_text(), `0` changed up to `1` in `report.defect(prefix, ":{}: a revision id: '
     '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        'REVISION has no group 1, so match.group raises IndexError on every revision id, and '
-        'every run with one stops on it.',
+        (('revision', 'defects'),
+         'REVISION has no group 1, so match.group raises IndexError on every revision id, and '
+         'every run with one stops on it.'),
     'in check_text(), `0` changed down to `-1` in `report.defect(prefix, ":{}: a revision id: '
     '{}".format(number, match.group(0)))`, at its 1st occurrence':
-        'REVISION has no group -1, so match.group raises IndexError on every revision id, and '
-        'every run with one stops on it.',
+        (('revision', 'defects'),
+         'REVISION has no group -1, so match.group raises IndexError on every revision id, and '
+         'every run with one stops on it.'),
     'in number_from_name(), `fullmatch` changed to `match` in `if parts[-3:-1] == (".github", '
     '"squash") and SQUASH_NAME.fullmatch(parts[-1]):`, at its 1st occurrence':
-        'match then also takes a name that has more text after .txt, and every such name, cut '
-        'by 4 characters at its end, keeps a character other than a digit, so int() raises '
-        'ValueError on it and every run on such a squash name stops.',
+        (('txtx', 'txt.bak'),
+         'match then also takes a squash name with more text after .txt, and number_from_name() '
+         'passes that name cut by 4 characters to bounded_number(). The cut keeps the full stop '
+         'of .txt, so when it holds at most 18 characters, int() raises ValueError on it and the '
+         'run stops; on a longer cut, bounded_number() returns None before int(), as the gate '
+         'returns None for a name that fullmatch refuses, so such a run is unchanged, and a run '
+         'with --number does not read the name.'),
     'in ascii_text(), the statement `out = []` deleted, at its 1st occurrence':
-        'the site deletes the only binding of out before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of out before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in ascii_text(), the statement `code = ord(char)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of code before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of code before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in ascii_text(), the statement `return "".join(out)` deleted, at its 1st occurrence':
-        'ascii_text() then returns None, which emit() adds to a prefix, so every line printed '
-        'stops the gate on a TypeError, and the handler that reports it stops on it again.',
+        (EVERY_PROBE,
+         'ascii_text() then returns None, which emit() adds to a prefix, so every line printed '
+         'stops the gate on a TypeError, and the handler that reports it stops on it again.'),
     'in Report.__init__(), the statement `self.count = 0` deleted, at its 1st occurrence':
-        'Report then has no count, so every run stops on an AttributeError when the count line '
-        'reads it, after any defect line.',
+        (EVERY_PROBE,
+         'Report then has no count, so every run stops on an AttributeError when the count line '
+         'reads it, after any defect line.'),
     'in read_utf8(), the statement `try:` deleted, at its 1st occurrence':
-        'the site deletes the only binding of data before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of data before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_utf8(), the statement `data = Path(path).read_bytes()` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of data before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of data before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_utf8(), the statement `try:` deleted, at its 2nd occurrence':
-        'the site deletes the only binding of text before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of text before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_utf8(), the statement `text = data.decode("utf-8", "strict")` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of text before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of text before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_utf8(), the statement `return text.replace("\\r\\n", "\\n")` deleted, at its 1st '
     'occurrence':
-        'the function then returns None, and its caller uses the value at once, so every run '
-        'that reaches the call stops on a TypeError.',
+        (EVERY_PROBE,
+         'the function then returns None, and its caller uses the value at once, so every run '
+         'that reaches the call stops on a TypeError.'),
     'in read_event(), the statement `text = read_utf8(path, "event payload")` deleted, at its '
     '1st occurrence':
-        'the site deletes the only binding of text before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of text before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `try:` deleted, at its 1st occurrence':
-        'the site deletes the only binding of event before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of event before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `event = json.loads(text)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of event before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of event before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `pull = event.get("pull_request") if isinstance(event, '
     'dict) else None` deleted, at its 1st occurrence':
-        'the site deletes the only binding of pull before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of pull before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `number = pull.get("number")` deleted, at its 1st occurrence':
-        'the site deletes the only binding of number before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of number before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `body = pull.get("body")` deleted, at its 1st occurrence':
-        'the site deletes the only binding of body before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of body before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in read_event(), the statement `return number, body.replace("\\r\\n", "\\n")` deleted, at '
     'its 1st occurrence':
-        'read_event() then returns None, which main() unpacks at once, so every event run stops '
-        'on a TypeError.',
+        (('event', 'event defects'),
+         'read_event() then returns None, which main() unpacks at once, so every event run stops '
+         'on a TypeError.'),
     'in load_scan(), the statement `try:` deleted, at its 1st occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'the whole try statement goes, so load_scan() returns scan, which nothing binds, and '
+         'every run that gets past parse() stops on a NameError, which main() reports as an '
+         'unexpected error.'),
     'in load_scan(), the statement `spec = '
     'importlib.util.spec_from_file_location("pr_text_label_lint", LINT)` deleted, at its 1st '
     'occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'spec is then bound nowhere, so module_from_spec(spec) raises NameError inside the try, '
+         'and every run that gets past parse() reports the lint as unreadable with that '
+         'NameError.'),
     'in load_scan(), the statement `module = importlib.util.module_from_spec(spec)` deleted, at '
     'its 1st occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'module is then bound nowhere, so exec_module(module) raises NameError inside the try, '
+         'and every run that gets past parse() reports the lint as unreadable with that '
+         'NameError.'),
     'in load_scan(), the statement `spec.loader.exec_module(module)` deleted, at its 1st '
     'occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'the lint module is then never run, so module.scan raises AttributeError inside the try, '
+         'and every run that gets past parse() reports the lint as unreadable with that '
+         'AttributeError.'),
     'in load_scan(), the statement `scan = module.scan` deleted, at its 1st occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'scan is then bound nowhere, so return scan raises NameError after the try, and every '
+         'run that gets past parse() stops on it, which main() reports as an unexpected error.'),
     'in load_scan(), the statement `return scan` deleted, at its 1st occurrence':
-        'the lint is then not loaded or its scan not bound, so load_scan() reports the lint as '
-        'unreadable with NameError, AttributeError or TypeError, or main() stops on a '
-        'TypeError, on every run.',
+        (EVERY_PROBE,
+         'load_scan() then returns None, and check_text() calls that value as the scan, so every '
+         'run that checks a text that is not blank stops on a TypeError, which main() reports as '
+         'an unexpected error; a run on a blank text calls no scan and is unchanged.'),
     'in fenced(), the statement `inside = set()` deleted, at its 1st occurrence':
-        'the site deletes the only binding of inside before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of inside before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in fenced(), the statement `opener = None` deleted, at its 1st occurrence':
-        'the site deletes the only binding of opener before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of opener before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in fenced(), the statement `match = FENCE.match(line)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of match before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of match before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in fenced(), the statement `return inside, (start if opener is not None else None)` '
     'deleted, at its 1st occurrence':
-        'the function then returns None, and its caller uses the value at once, so every run '
-        'that reaches the call stops on a TypeError.',
+        (EVERY_PROBE,
+         'the function then returns None, and its caller uses the value at once, so every run '
+         'that reaches the call stops on a TypeError.'),
     'in fenced(), `1` changed up to `2` in `opener = match.group(1)`, at its 1st occurrence':
-        'FENCE has 1 group, so match.group(2) raises IndexError on every fence line, and every '
-        'run with a fence stops on it.',
+        (('spans', 'defects', 'event defects'),
+         'FENCE has 1 group, so match.group(2) raises IndexError on every fence line, and every '
+         'run with a fence stops on it.'),
     'in code_spans(), the statement `runs = [match.span() for match in '
     'BACKTICKS.finditer(line)]` deleted, at its 1st occurrence':
-        'the site deletes the only binding of runs before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of runs before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in code_spans(), the statement `closer = [None] * len(runs)` deleted, at its 1st occurrence':
-        'on a line with a backtick run the scan then reads a list it never built or an index '
-        'past its end, so every run with a code span stops on a NameError, IndexError or '
-        'TypeError.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'closer is then bound nowhere, so on a masked line with a backtick run the reverse loop '
+         'raises NameError when it stores into closer, and every run with such a line stops on '
+         'it; a line with no run enters neither loop and is unchanged.'),
     'in code_spans(), the statement `later = {}` deleted, at its 1st occurrence':
-        'on a line with a backtick run the scan then reads a list it never built or an index '
-        'past its end, so every run with a code span stops on a NameError, IndexError or '
-        'TypeError.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'later is then bound nowhere, so on a masked line with a backtick run later.get() raises '
+         'NameError, and every run with such a line stops on it; a line with no run enters '
+         'neither loop and is unchanged.'),
     'in code_spans(), the statement `width = runs[index][1] - runs[index][0]` deleted, at its '
     '1st occurrence':
-        'on a line with a backtick run the scan then reads a list it never built or an index '
-        'past its end, so every run with a code span stops on a NameError, IndexError or '
-        'TypeError.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'width is then bound nowhere, so on a masked line with a backtick run later.get(width) '
+         'raises NameError, and every run with such a line stops on it; a line with no run enters '
+         'neither loop and is unchanged.'),
     'in code_spans(), the statement `spans = []` deleted, at its 1st occurrence':
-        'the site deletes the only binding of spans before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of spans before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in code_spans(), the statement `index = 0` deleted, at its 1st occurrence':
-        'the site deletes the only binding of index before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('clean', 'spans', 'number', 'name', 'name 42', 'revision', 'defects', 'txtx', 'txt.bak',
+          'event', 'event defects'),
+         'the reverse loop before it also binds index and ends with index 0 when the line holds a '
+         'backtick run, so such a line is scanned as before; on a masked line with no backtick '
+         'run nothing binds index, so the scan stops on an UnboundLocalError. The site acts '
+         'otherwise only on such a line, and every run with one stops.'),
     'in code_spans(), the statement `return spans` deleted, at its 1st occurrence':
-        'the function then returns None, and its caller uses the value at once, so every run '
-        'that reaches the call stops on a TypeError.',
+        (EVERY_PROBE,
+         'the function then returns None, and its caller uses the value at once, so every run '
+         'that reaches the call stops on a TypeError.'),
     'in code_spans(), `0` changed down to `-1` in `index = 0`, at its 1st occurrence':
-        'the scan then reads an index past the end of a list on every line, so every run stops '
-        'on an IndexError, or on a ValueError for a range step of 0.',
+        (('clean', 'spans', 'number', 'name', 'name 42', 'revision', 'defects', 'txtx', 'txt.bak',
+          'event', 'event defects'),
+         'on a masked line with no backtick run closer is empty, so closer[-1] raises IndexError '
+         'and the run stops; on a line with one, closer[-1] is the closer of the last run, which '
+         "is always None, so the scan steps to index 0 and goes on as the gate's. The site acts "
+         'otherwise only on a line with no run, and every run with one stops.'),
     'in code_spans(), `<` changed to `<=` in `index < len(runs)`, at its 1st occurrence':
-        'the scan then reads an index past the end of a list on every line, so every run stops '
-        'on an IndexError, or on a ValueError for a range step of 0.',
+        (EVERY_PROBE,
+         'each step of the scan moves index to at most len(runs), so the scan ends with index '
+         'equal to len(runs), where the changed test lets it in once more and closer[len(runs)] '
+         'raises IndexError; every run with a masked line stops on it, a line with no run '
+         'included.'),
     'in code_spans(), `is` changed to `is not` in `closer[index] is None`, at its 1st occurrence':
-        'on a line with a backtick run the scan then reads a list it never built or an index '
-        'past its end, so every run with a code span stops on a NameError, IndexError or '
-        'TypeError.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'on a masked line with a backtick run the scan then steps past each run with a closer '
+         'and stops at the first run with none, at the latest the last run, whose closer is '
+         'always None; it then reads runs[None], which raises TypeError, so every run with such a '
+         'line stops. A line with no run enters neither loop and is unchanged.'),
     'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
     'at its 1st occurrence':
-        'the scan then reads an index past the end of a list on every line, so every run stops '
-        'on an IndexError, or on a ValueError for a range step of 0.',
-    'in code_spans(), `1` changed up to `2` in `for index in range(len(runs) - 1, -1, -1):`, at '
-    'its 2nd occurrence':
-        'the scan then reads an index past the end of a list on every line, so every run stops '
-        'on an IndexError, or on a ValueError for a range step of 0.',
+        (EVERY_PROBE,
+         'the reverse loop then starts at index len(runs), past the end of runs, so '
+         'runs[len(runs)] raises IndexError on every masked line, a line with no run included, '
+         'and every run with a masked line stops.'),
     'in code_spans(), `1` changed down to `0` in `for index in range(len(runs) - 1, -1, -1):`, '
     'at its 3rd occurrence':
-        'the scan then reads an index past the end of a list on every line, so every run stops '
-        'on an IndexError, or on a ValueError for a range step of 0.',
+        (EVERY_PROBE,
+         'the step of the range is then 0, so range() raises ValueError on every masked line, and '
+         'every run with one stops, which main() reports as an unexpected error.'),
     'in code_spans(), `1` changed up to `2` in `width = runs[index][1] - runs[index][0]`, at '
     'its 1st occurrence':
-        'on a line with a backtick run the scan then reads a list it never built or an index '
-        'past its end, so every run with a code span stops on a NameError, IndexError or '
-        'TypeError.',
+        (('spans', 'backticks', 'defects', 'event defects'),
+         'each run is a pair (start, end), so runs[index][2] raises IndexError on every masked '
+         'line with a backtick run, and every run with such a line stops; a line with no run '
+         'enters neither loop and is unchanged.'),
     'in masked(), the statement `chars = list(line)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of chars before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of chars before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in masked(), the statement `return "".join(chars)` deleted, at its 1st occurrence':
-        'the function then returns None, and its caller uses the value at once, so every run '
-        'that reaches the call stops on a TypeError.',
+        (EVERY_PROBE,
+         'the function then returns None, and its caller uses the value at once, so every run '
+         'that reaches the call stops on a TypeError.'),
     'in mask(), the statement `return line` deleted, at its 1st occurrence':
-        'mask() then returns None for every line outside a fence, and the scan joins those '
-        'values as text, so every run with such a line stops on a TypeError.',
+        (EVERY_PROBE,
+         'mask() then returns None for every line outside a fence, and the scan joins those '
+         'values as text, so every run with such a line stops on a TypeError.'),
     'in check_text(), the statement `lines = text.split("\\n")` deleted, at its 1st occurrence':
-        'the site deletes the only binding of lines before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of lines before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `fence, unclosed = fenced(lines)` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of fence before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of fence before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `prose = ["" if index in fence else mask(line) for index, '
     'line in enumerate(lines)]` deleted, at its 1st occurrence':
-        'the site deletes the only binding of prose before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of prose before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `rel = prefix + ".md"` deleted, at its 1st occurrence':
-        'the site deletes the only binding of rel before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of rel before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `hits = scan(rel, "\\n".join(prose))` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of hits before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of hits before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `width_applies = squash` deleted, at its 1st occurrence':
-        'the site deletes the only binding of width_applies before it is read, so every run '
-        'that reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of width_applies before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in check_text(), the statement `revision_applies = squash` deleted, at its 1st occurrence':
-        'the site deletes the only binding of revision_applies before it is read, so every run '
-        'that reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of revision_applies before it is read, so every run '
+         'that reaches the read stops on a NameError or an UnboundLocalError.'),
     'in check_squash(), the statement `subject = text.split("\\n", 1)[0]` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of subject before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('number', 'name', 'name 42', 'revision', 'defects', 'event', 'event defects'),
+         'the site deletes the only binding of subject before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in check_squash(), the statement `suffix = " (#{})".format(number)` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of suffix before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('number', 'name', 'name 42', 'revision', 'defects', 'event', 'event defects'),
+         'the site deletes the only binding of suffix before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in number_from_name(), the statement `try:` deleted, at its 1st occurrence':
-        'the site deletes the only binding of parts before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('name', 'name 42', 'txtx', 'txt.bak'),
+         'the site deletes the only binding of parts before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in number_from_name(), the statement `parts = Path(path).absolute().parts` deleted, at its '
     '1st occurrence':
-        'the site deletes the only binding of parts before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('name', 'name 42', 'txtx', 'txt.bak'),
+         'the site deletes the only binding of parts before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in number_from_name(), `1` changed up to `2` in `return '
     'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
-        'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
-        'raises ValueError on every squash file the name binds, and every such run stops on it.',
+        (('name', 'name 42'),
+         'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
+         'raises ValueError on every squash file the name binds, and every such run stops on it.'),
     'in number_from_name(), `1` changed down to `0` in `return '
     'bounded_number(parts[-1][:-len(".txt")])`, at its 1st occurrence':
-        'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
-        'raises ValueError on every squash file the name binds, and every such run stops on it.',
+        (('name', 'name 42'),
+         'the path then names parts[-2], which is always squash, or parts[0], the root, so int() '
+         'raises ValueError on every squash file the name binds, and every such run stops on it.'),
     'in parse(), the statement `options = {}` deleted, at its 1st occurrence':
-        'the site deletes the only binding of options before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of options before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in parse(), the statement `rest = list(argv)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of rest before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of rest before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in parse(), the statement `flag = rest.pop(0)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of flag before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of flag before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in parse(), the statement `modes = [flag for flag in ("--event", "--description", '
     '"--squash") if flag in options]` deleted, at its 1st occurrence':
-        'the site deletes the only binding of modes before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of modes before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in parse(), the statement `number = None` deleted, at its 1st occurrence':
-        'number is then bound only when --number is given, so every run without it stops on an '
-        'UnboundLocalError, and a run with it is unchanged.',
+        (('clean', 'spans', 'backticks', 'name', 'name 42', 'txtx', 'txt.bak', 'event',
+          'event defects'),
+         'number is then bound only when --number is given, so every run that reaches the return '
+         'of parse() without it stops on an UnboundLocalError, and a run with it is unchanged.'),
     'in parse(), the statement `return modes[0], options[modes[0]], number` deleted, at its 1st '
     'occurrence':
-        'parse() then returns None, which main() unpacks at once, so every run stops on a '
-        'TypeError.',
+        (EVERY_PROBE,
+         'parse() then returns None, which main() unpacks at once, so every run stops on a '
+         'TypeError.'),
     'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
     '1st occurrence':
-        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
-        'raises IndexError on every run that gets past that test.',
+        (EVERY_PROBE,
+         'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+         'raises IndexError on every run that gets past that test.'),
     'in parse(), `0` changed up to `1` in `if modes[0] != "--squash":`, at its 1st occurrence':
-        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
-        'raises IndexError on every run that gives --number.',
+        (('number', 'revision', 'defects'),
+         'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+         'raises IndexError on every run that gives --number.'),
     'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
     '2nd occurrence':
-        'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
-        'raises IndexError on every run that gets past that test.',
+        (EVERY_PROBE,
+         'modes holds exactly 1 flag once the length test before it has passed, so modes[1] '
+         'raises IndexError on every run that gets past that test.'),
     'in main(), the statement `report = Report()` deleted, at its 1st occurrence':
-        'the site deletes the only binding of report before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of report before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `try:` deleted, at its 1st occurrence':
-        'the site deletes the only binding of status before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the whole try statement goes, so main() checks nothing, prints the count line and then '
+         'returns status, which nothing binds, so every run stops on a NameError.'),
     'in main(), the statement `mode, path, given_number = parse(argv)` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of mode before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of mode before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `scan = load_scan()` deleted, at its 1st occurrence':
-        'the site deletes the only binding of scan before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of scan before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `number, body = read_event(path)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of body before it is read, so every run that reaches '
-        'the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of body before it is read, so every run that reaches '
+         'the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `squash_path = SQUASH_DIR / "{}.txt".format(number)` deleted, at '
     'its 1st occurrence':
-        'the site deletes the only binding of squash_path before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('event', 'event defects'),
+         'the site deletes the only binding of squash_path before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `number = given_number if given_number is not None else '
     'number_from_name(path)` deleted, at its 1st occurrence':
-        'the site deletes the only binding of number before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (('number', 'name', 'name 42', 'revision', 'defects', 'txtx', 'txt.bak'),
+         'the site deletes the only binding of number before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
     'in main(), the statement `status = EXIT_DEFECT if report.count else 0` deleted, at its 1st '
     'occurrence':
-        'the site deletes the only binding of status before it is read, so every run that '
-        'reaches the read stops on a NameError or an UnboundLocalError.',
+        (EVERY_PROBE,
+         'the site deletes the only binding of status before it is read, so every run that '
+         'reaches the read stops on a NameError or an UnboundLocalError.'),
 }
-# The runs of that case, each on a tree with a clean squash file of number 999: a clean
-# description, a description with a code span, an -ise spelling and a closed fence, the squash
-# file with --number, the squash file bound by its name, a squash file with a revision id and a
-# line over 72 characters, a squash file whose name has a further suffix, and an event.
-STOP_PROBES = (("--description", "clean.md"), ("--description", "spans.md"),
-               ("--squash", ".github/squash/999.txt", "--number", "999"),
-               ("--squash", ".github/squash/999.txt"),
-               ("--squash", "revision.txt", "--number", "999"),
-               ("--squash", ".github/squash/999.txtx"), ("--event", "event.json"))
 # The child of that case: it loads this suite by path, applies each site that generate_sites()
 # yields from the gate source, runs the module level of each mutated gate, with a name other
 # than __main__, so its patterns compile and main() does not run, and prints a JSON object of
@@ -4451,8 +4667,10 @@ class MutantSweep(unittest.TestCase):
 
     generate_sites() reads tools/check-pr-text.py, leaves out its docstrings and its
     "if __name__" block, and yields every site of a closed set of operators, OPERATORS. In the
-    Python code, from its ast: each statement of a function body deleted, or replaced by pass
-    when it is the only statement of its block; each comparison operator replaced by its
+    Python code, from its ast: each statement of the body of a function or async function
+    deleted, a nested function or class, each statement in its body, and each statement in a
+    case of a match statement included, or replaced by pass when it is the only statement of
+    its block; each comparison operator replaced by its
     partner (< and <=, > and >=, == and !=, is and is not, in and not in); each and or or
     swapped; each not removed; each True or False flipped; each integer constant changed by 1
     up and by 1 down; in each except clause, each member of its tuple removed, BaseException
@@ -4468,19 +4686,26 @@ class MutantSweep(unittest.TestCase):
     argument removed. regex_parse() raises UnknownConstruct on a construct it does not know,
     pattern_pieces() on a pattern expression other than string literals, their concatenation
     with + and a string's join of a name, and generate_sites() on a call written re.<name> for
-    any other function of re, such as re.findall, re.sub or re.split, so a new construct or a
-    pattern given to such a call fails the adequacy test by name. A pattern given to a function
+    any other function of re, such as re.findall, re.sub or re.split, and on a decorated nested
+    definition, so a new construct, a pattern given to such a call or a decorated nested
+    definition fails the adequacy test by name. A pattern given to a function
     of re reached by another name, such as one imported with from re import, is not seen.
     Each site is named in words, from where it is, the operator and the text it changes, and its
     occurrence, with its exact old text, whole lines, its new text and the number of times its
     old text occurs.
 
-    The adequacy test runs no mutant. It fails when a generated site has neither a row in
-    SWEEP_ROWS nor an entry in EQUIVALENT_SITES, UNCOMPILABLE_SITES or STOPPING_SITES, when a
-    row or an entry names a site the generator does not yield, and when an operator of
-    OPERATORS yields no site, since each of them has a site in the gate as it stands, so a
-    broken generator cannot pass by yielding nothing. HAND_ROWS holds rows the generator does
-    not make, which it leaves alone.
+    The adequacy test runs no mutant. The rule it holds is that a generated site with neither a
+    row in SWEEP_ROWS nor an entry in EQUIVALENT_SITES fails it. The sites of UNCOMPILABLE_SITES
+    and STOPPING_SITES are recorded exemptions from that rule, which the test reads: no case can
+    kill such a site as a row asks, since every case on which it has an effect fails because the
+    gate does not load or stops, so each carries its argument in place of a row, and its own
+    case checks it, test_uncompilable_sites_are_those_whose_gate_does_not_load or
+    test_stopping_sites_stop_the_gate. The test fails when a generated site has neither a row,
+    an equivalent entry nor a recorded exemption, when a row, an entry or an exemption names a
+    site the generator does not yield, when an exempt site also has a row or an equivalent
+    entry, and when an operator of OPERATORS yields no site, since each of them has a site in
+    the gate as it stands, so a broken generator cannot pass by yielding nothing. HAND_ROWS
+    holds rows the generator does not make, which it leaves alone.
 
     The kill criterion: a row is killed when its named cases, run on a copy of the tree with
     the site or the hand row applied, exit 1 with FAILED and failures alone, no error, under
@@ -4525,10 +4750,12 @@ class MutantSweep(unittest.TestCase):
     mutated gate, on every run on which the changed code acts otherwise than the gate's,
     raises an error that the gate does not raise, such as a NameError for a name the site
     leaves unbound: every case on which the site has an effect fails because the gate stops,
-    not for the reason the site changes, so STOPPING_SITES
-    lists it with the argument instead of a row, and test_stopping_sites_stop_the_gate fails
-    unless each listed site shows a stop sign that the gate does not on 1 or more runs of
-    STOP_PROBES. For each
+    not for the reason the site changes, so STOPPING_SITES lists it with the probes of
+    STOP_PROBES on which it stops, at least STOP_PROBES_EACH of them, and the argument instead
+    of a row. test_stopping_sites_stop_the_gate fails unless each listed site shows a stop sign
+    that the gate does not show on exactly the probes it names, and gives the gate's exit
+    status, output and standard error on every other probe; its probe runs are children under
+    SWEEP_MEMORY, at most SWEEP_WORKERS at once. For each
     row the sweep copies the gate, this suite, the label lint and the workflow into a fresh
     temporary tree, checks that the old text occurs the recorded number of times, applies the
     change and runs the named cases there in a separate process. The named cases also pass on
@@ -4668,9 +4895,14 @@ class MutantSweep(unittest.TestCase):
                     self.assertNotEqual(class_name, type(self).__name__, "the sweep would recurse")
                     self.assertTrue(hasattr(globals().get(class_name), method), case)
         for words, argument in (list(EQUIVALENT_SITES.items()) + list(UNCOMPILABLE_SITES.items())
-                                + list(STOPPING_SITES.items())):
+                                + [(words, entry[1]) for words, entry in STOPPING_SITES.items()]):
             with self.subTest(site=words):
                 self.assertTrue(argument.strip())
+        for words, (probes, argument) in STOPPING_SITES.items():
+            with self.subTest(stopping=words):
+                self.assertGreaterEqual(len(set(probes)), STOP_PROBES_EACH)
+                self.assertEqual(len(probes), len(set(probes)))
+                self.assertLessEqual(set(probes), set(STOP_PROBES))
         rows = set(SWEEP_ROWS) | set(names)
         for words, (limit, argument) in RUNAWAY_SITES.items():
             with self.subTest(runaway=words):
@@ -4691,22 +4923,40 @@ class MutantSweep(unittest.TestCase):
         (root / "revision.txt").write_text(CLEAN_SQUASH + "\nBuilt on e233a7f.\n" + "a" * 73
                                            + "\n", encoding="utf-8")
         (root / ".github" / "squash" / "999.txtx").write_text(CLEAN_SQUASH, encoding="utf-8")
+        (root / "backticks.md").write_text(LONE_LAST_RUN, encoding="utf-8")
+        (root / ".github" / "squash" / "999.txt.bak").write_text(CLEAN_SQUASH, encoding="utf-8")
+        (root / ".github" / "squash" / "42.txt").write_text(CLEAN_SQUASH, encoding="utf-8")
+        (root / "defects.txt").write_text(CLEAN_SQUASH + "\nRun `x`, then " + ISE_WORD
+                                          + " it on e233a7f.\n\n~~~\ncode\n~~~\n" + "a" * 73
+                                          + "\n", encoding="utf-8")
         (root / "event.json").write_text(json.dumps(
             {"pull_request": {"number": 999, "body": "A clean body.\n"}}), encoding="utf-8")
+        (root / "event-defects.json").write_text(json.dumps(
+            {"pull_request": {"number": 999, "body": "Run `x` and " + ISE_WORD
+                              + " it.\n\n```\ncode\n```\n"}}), encoding="utf-8")
         return root
 
-    def probe_signs(self, root):
-        """For each run of STOP_PROBES, the stop signs the gate in root shows."""
-        signs = []
-        for args in STOP_PROBES:
+    def probe_runs(self, root):
+        """For each run of STOP_PROBES, by name, the stop signs the gate in root shows and its
+        exit status, output and standard error, with the path of root written as <root>.
+
+        Each run is a child under SWEEP_MEMORY, so the SWEEP_WORKERS threads of the stopping
+        site case hold at most SWEEP_WORKERS * SWEEP_MEMORY bytes of address space at once.
+        """
+        runs = {}
+        for name, args in STOP_PROBES.items():
             done = run_child(["-I", "-B", root / "tools" / GATE.name, *args],
-                             memory=GATE_MEMORY, timeout=GATE_TIMEOUT, cwd=root, text=True,
+                             memory=SWEEP_MEMORY, timeout=GATE_TIMEOUT, cwd=root, text=True,
                              encoding="utf-8")
-            signs.append({sign for sign in STOP_SIGNS if sign in done.stdout + done.stderr})
-        return signs
+            signs = {sign for sign in STOP_SIGNS if sign in done.stdout + done.stderr}
+            runs[name] = (signs, tuple(str(part).replace(str(root), "<root>") for part in (
+                done.returncode, done.stdout, done.stderr)))
+        return runs
 
     def site_stops(self, item):
-        """None when the mutated gate of a listed site stops on a probe run, or why not."""
+        """None when the mutated gate of a listed site stops on exactly its probes, at least
+        STOP_PROBES_EACH of them, and on every other probe gives the gate's result; or why not.
+        """
         words, base = item
         site = self.sites.get(words)
         if site is None:
@@ -4714,17 +4964,25 @@ class MutantSweep(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         try:
             mutated = apply_site(GATE.read_text(encoding="utf-8"), site)
-            signs = self.probe_signs(self.probe_tree(root / "tree", mutated))
+            runs = self.probe_runs(self.probe_tree(root / "tree", mutated))
         finally:
             shutil.rmtree(root, ignore_errors=True)
-        if any(found - known for found, known in zip(signs, base)):
-            return None
-        return "does not stop on any run of STOP_PROBES"
+        stopped = sorted(name for name in STOP_PROBES if runs[name][0] - base[name][0])
+        live = sorted(name for name in STOP_PROBES
+                      if name not in stopped and runs[name][1] != base[name][1])
+        reasons = []
+        if len(stopped) < STOP_PROBES_EACH:
+            reasons.append("stops on fewer than {} probes: {}".format(STOP_PROBES_EACH, stopped))
+        if stopped != sorted(STOPPING_SITES[words][0]):
+            reasons.append("stops on the probes {}, not on the probes it names".format(stopped))
+        if live:
+            reasons.append("gives another result than the gate with no stop on " + ", ".join(live))
+        return "; ".join(reasons) or None
 
     def test_stopping_sites_stop_the_gate(self):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, root, True)
-        base = self.probe_signs(self.probe_tree(root / "tree", GATE.read_text(encoding="utf-8")))
+        base = self.probe_runs(self.probe_tree(root / "tree", GATE.read_text(encoding="utf-8")))
         with ThreadPoolExecutor(max_workers=SWEEP_WORKERS) as pool:
             results = list(pool.map(self.site_stops, [(words, base) for words in STOPPING_SITES]))
         for words, reason in zip(STOPPING_SITES, results):
@@ -4732,11 +4990,18 @@ class MutantSweep(unittest.TestCase):
                 self.assertIsNone(reason, words)
 
     def test_generated_sites_are_adequate(self):
+        # The rule: each generated site has a row or an equivalent entry. The recorded
+        # exemptions from it are the sites of UNCOMPILABLE_SITES and STOPPING_SITES, each with
+        # its argument and its own case; no other site is exempt.
         generated = set(self.sites)
-        listed = (set(SWEEP_ROWS) | set(EQUIVALENT_SITES) | set(UNCOMPILABLE_SITES)
-                  | set(STOPPING_SITES))
-        self.assertEqual(sorted(generated - listed), [], "generated sites with no row")
-        self.assertEqual(sorted(listed - generated), [], "rows of sites not generated")
+        covered = set(SWEEP_ROWS) | set(EQUIVALENT_SITES)
+        exempt = set(UNCOMPILABLE_SITES) | set(STOPPING_SITES)
+        self.assertEqual(sorted(covered & exempt), [], "exempt sites that have a row")
+        self.assertEqual(sorted(generated - covered - exempt), [],
+                         "generated sites with neither a row, an equivalent entry nor a "
+                         "recorded exemption")
+        self.assertEqual(sorted((covered | exempt) - generated), [],
+                         "rows, entries or exemptions of sites not generated")
         counts = collections.Counter(site.operator for site in self.sites.values())
         self.assertEqual([operator for operator in OPERATORS if not counts[operator]], [],
                          "operators with no site")
@@ -4784,6 +5049,41 @@ class MutantSweep(unittest.TestCase):
                     generate_sites(source.replace(old, new))
                 self.assertEqual(str(caught.exception),
                                  "a re call the generator does not read: " + name)
+
+    def test_nested_definitions_match_cases_and_async_functions_are_walked(self):
+        # A gate copy with a nested function, a match statement or a module-level async
+        # function yields a deletion site for each statement inside it, named for the function
+        # that holds it, and a decorated nested function raises UnknownConstruct by name.
+        source = GATE.read_text(encoding="utf-8")
+        old_return = '    return not INVISIBLE.sub("", COMMENT.sub("", text))\n'
+        nested = ('    def inner():\n        hidden = 1\n        return hidden\n'
+                  '    class Inner:\n        kept = 2\n')
+        matched = '    match text:\n        case "":\n            hidden = 1\n'
+        spare = 'async def spare():\n    hidden = 1\n    return hidden\n\n\ndef blank(text):\n'
+        for name, variant, expected in (
+                ("nested", source.replace(old_return, nested + old_return, 1),
+                 ["in blank(), the statement `def inner():` deleted",
+                  "in blank(), the statement `hidden = 1` deleted",
+                  "in blank(), the statement `return hidden` deleted",
+                  "in blank(), the statement `class Inner:` deleted",
+                  "in blank(), the statement `kept = 2` deleted"]),
+                ("match", source.replace(old_return, matched + old_return, 1),
+                 ["in blank(), the statement `match text:` deleted",
+                  "in blank(), the statement `hidden = 1` deleted"]),
+                ("async", source.replace("def blank(text):\n", spare, 1),
+                 ["in spare(), the statement `hidden = 1` deleted",
+                  "in spare(), the statement `return hidden` deleted"])):
+            with self.subTest(variant=name):
+                self.assertNotEqual(variant, source)
+                words = {site.words for site in generate_sites(variant)}
+                for item in expected:
+                    self.assertIn(item + ", at its 1st occurrence", words)
+                self.assertEqual([item for item in words if item.startswith("at module level")
+                                  and "hidden" in item], [])
+        decorated = source.replace(old_return, "    @staticmethod\n" + nested + old_return, 1)
+        with self.assertRaises(UnknownConstruct) as caught:
+            generate_sites(decorated)
+        self.assertEqual(str(caught.exception), "a decorated definition: def inner():")
 
     def test_named_cases_pass_unmutated(self):
         ids = sorted({case for ids in SWEEP_ROWS.values() for case in ids}

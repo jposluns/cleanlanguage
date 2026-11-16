@@ -25,14 +25,18 @@ The defect classes, each with a failing case in tools/test-check-pr-text.py:
   "is", then ers or able is reported; with no ending, or with any other ending, such as ings,
   ably, ability or ational, the word is outside the rule and passes;
 - an empty or blank text, in either text, which includes a description whose body is null: a
-  text is blank when nothing is left of it once whitespace, U+200B, U+FEFF and HTML comments are
-  removed, and a comment opened with "<!--" and never closed runs to the end of the text;
+  text is blank when nothing is left of it once its HTML comments are removed first and then
+  its whitespace as Python's \\s reads it, U+200B and U+FEFF, in that order, so a comment
+  opener that whitespace, U+200B or U+FEFF splits, such as "< !--", opens no comment; a comment
+  opened with "<!--" and never closed runs to the end of the text;
 - a code fence that is opened and never closed, in either text, reported at the line of its
   opener, since every line after that opener is masked as fenced code;
 - in the squash message only, a line over 72 characters;
 - in the squash message only, a revision id: 7 to 40 characters from 0 to 9 and a to f, holding
-  at least 1 digit and at least 1 letter, matched on the raw line, so a revision id written as
-  inline code still fails;
+  at least 1 digit and at least 1 letter, with a word boundary on each side as Python's re
+  module reads \\b, so no letter, digit or underscore that \\w takes touches the run on either
+  side, matched on the raw line, so a revision id written as inline code still fails, and a
+  run glued to such a character, such as one followed by an underscore, is not reported;
 - in the squash message only, a subject that does not end with " (#<number>)".
 
 Before the label, dash and spelling checks, the gate masks fenced code blocks, then on each
@@ -344,10 +348,11 @@ def load_scan():
 
 
 def blank(text):
-    """Whether nothing is left of text once HTML comments, whitespace, U+200B and U+FEFF go.
+    """Whether nothing is left of text once HTML comments, then whitespace, U+200B and U+FEFF go.
 
-    A comment runs from "<!--" to the next "-->", or to the end of the text when it is never
-    closed.
+    The comments go first, so a comment opener split by whitespace, U+200B or U+FEFF opens no
+    comment. A comment runs from "<!--" to the next "-->", or to the end of the text when it is
+    never closed.
     """
     return not INVISIBLE.sub("", COMMENT.sub("", text))
 
