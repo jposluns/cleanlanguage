@@ -1810,13 +1810,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # in the middle or last, or merge base output that does not end
         # with a line feed; an object name of 64 digits beside main's tip
         # of 40 in the tree entry at HEAD or at the merge base, or from git
-        # hash-object; a tree entry
-        # whose mode and type are not a pair that git
-        # prints, whose fields are joined by other than 1 space, or which
-        # has no object name; a line that git prints with leading or
+        # hash-object; a tree entry whose mode and type are not a pair that
+        # git prints, whose fields are joined by other than 1 space, or
+        # which has no object name; a line that git prints with leading or
         # trailing whitespace, with a CR or with a blank line, or with no
         # line feed at its end; an object name in upper case or of 88 or
-        # 104 digits; and shallow status or git hash-object output with no line.
+        # 104 digits; and shallow status or git hash-object output with no
+        # line.
         cases += [(("for-each-ref",), b"refs/remotes/origin/mainx {main}\nrefs/remotes/origin/main {main}\n"),
                   (("for-each-ref",), b"refs/heads/main {main}\n"),
                   (("for-each-ref",), b"refs/remotes/origin/main\x0b{main}\n"),
@@ -1884,6 +1884,21 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 problems, stderr = self.check_with_fake_git(prefix, output)
                 self.assertIsNone(problems, stderr)
                 self.assertIn(words, stderr)
+
+    def test_byte_that_is_not_ascii_in_an_object_name_exits_3(self):
+        # The byte 0xff before the object name on the protected refname's
+        # line of the ref listing, or before the object name in the tree
+        # entry at HEAD, stops the check with exit 3 and the message that
+        # names a byte that is not ASCII, not the message for output that
+        # the gate cannot use.
+        entry = b"100644 blob {blob}\tsite/index.html\0"
+        for prefix, output in ((("for-each-ref",), b"refs/remotes/origin/main \xff{main}\n"),
+                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"\xff{blob}"))):
+            with self.subTest(prefix=prefix, output=output):
+                problems, stderr = self.check_with_fake_git(prefix, output)
+                self.assertIsNone(problems, stderr)
+                self.assertIn("printed a byte that is not ASCII", stderr)
+                self.assertNotIn("printed output that the gate cannot use", stderr)
 
     def test_usable_git_output_is_read(self):
         # Output of the form that git prints is read: a tree or a gitlink
@@ -2020,11 +2035,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 self.assertEqual(problems, [], stderr)
 
     def test_listing_line_of_other_length_exits_3(self):
-        # A ref listing line below the protected refname whose object name
-        # differs in length from that of the listing's first line, before
-        # or after the protected refname, or with no protected refname
-        # listed, stops the check with exit 3: an object name of 64 digits
-        # beside main's tip of 40, and one of 40 beside a tip of 64.
+        # A ref listing line whose object name differs in length from that
+        # of the listing's first line stops the check with exit 3: the
+        # protected refname's line, with main's tip of 40 digits, after a
+        # line below it of 64; a line below the protected refname of 64
+        # digits after the protected refname's line of 40, or after another
+        # line below it of 40 with no protected refname listed; and a line
+        # below it of 40 digits after a tip of 64 in a SHA-256 repository.
         other = b"0123456789abcdef" * 4
         protected = b"refs/remotes/origin/main {main}\n"
         below = b"refs/remotes/origin/main/x "
