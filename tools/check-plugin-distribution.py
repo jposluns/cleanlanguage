@@ -15,23 +15,30 @@ the plan's numbering, which CHECKS maps to the names used here.
       plugin entry name in either marketplace (the repository's and the
       vendored plugin/.claude-plugin/marketplace.json) is missing, is not a
       string or is empty, or starts with a reserved prefix of
-      RESERVED_PREFIXES in any letter case; and in both marketplaces each
-      plugin entry whose source resolves has the name of the plugin manifest
-      it reaches. Whether the Claude Code CLI reserves the prefixes in any
-      letter case is not known offline, so the gate refuses every case.
+      RESERVED_PREFIXES in any letter case; no marketplace lists 2 plugin
+      entries whose names are the same in any letter case; and in both
+      marketplaces each plugin entry whose source resolves has the name of
+      the plugin manifest it reaches. Whether the Claude Code CLI reserves
+      the prefixes in any letter case, or refuses a plugin name listed twice,
+      is not known offline, so the gate refuses both, in every letter case.
   Sources exist: in both marketplaces each plugin entry has a string source
       that starts with "./", has no empty, no "." and no ".." component and
       is a path the operating system accepts (a NUL character, or a
       component too long for the file system, is refused), and it resolves
-      below the marketplace root, each component reached with os.lstat and
-      none a symlink, to a directory that holds a regular
-      .claude-plugin/plugin.json. The plugin entry of
-      .claude-plugin/marketplace.json must reach CLAUDE_MANIFEST, this
-      repository's plugin. Since no component of a source is empty, "." or
-      ".." and none is a symlink, the path a source spells is the path it
-      resolves to, so the gate compares that path with CLAUDE_MANIFEST as
-      text. A source that is not a string, such as a GitHub source object,
-      is refused, because this gate cannot read where it leads.
+      below the marketplace root, each component reached with os.lstat, none
+      a symlink and each spelled exactly as os.listdir of its folder lists
+      it, to a directory that holds a regular .claude-plugin/plugin.json.
+      The plugin entry of .claude-plugin/marketplace.json must reach
+      CLAUDE_MANIFEST, this repository's plugin. Since no component of a
+      source is empty, "." or "..", none is a symlink and each is spelled as
+      its folder lists it, the path a source spells is the path it resolves
+      to, so the gate compares that path with CLAUDE_MANIFEST as text. This
+      holds on a file system that folds letter case too, such as the default
+      one of macOS, where os.lstat alone also finds a name spelled in another
+      letter case: the listing refuses that spelling there, as a file system
+      that keeps letter case refuses it as missing. A source that is not a
+      string, such as a GitHub source object, is refused, because this gate
+      cannot read where it leads.
   Versions agree: the versions of both plugin manifests, the Version: line of
       the skill's SKILL.md, read with the VERSION_LINE and SKILL_VERSION
       patterns of the shared extractor tools/skill-version.py, and the version
@@ -59,8 +66,9 @@ The checks of the hosted catalog and of the release zips (the standard's
 sha256 and zip-content checks) belong to a later unit and are not made here.
 
 Every file, the extractor tools/skill-version.py among them, is reached from
-REPO_ROOT with os.lstat on each path component, so no component may be a
-symlink, and opened with O_NOFOLLOW; the gate runs the extractor's bytes as
+REPO_ROOT with os.lstat on each path component, none of which may be a
+symlink and each of which must be spelled as os.listdir of its folder lists
+it, and opened with O_NOFOLLOW; the gate runs the extractor's bytes as
 read, so it never opens the extractor again by path. JSON is decoded as
 utf-8-sig, so a leading byte-order mark does not fail a conforming file, the
 non-standard constants NaN and Infinity are refused, and a key repeated in any
@@ -80,11 +88,13 @@ such as a plugin entry name that is an array or an object, is such an
 inconsistency, never a traceback. A SKILL.md whose first Version: line is
 missing or is not a bare X.Y.Z is such an inconsistency: the versions check
 fails with exit 1. 3 when an input cannot be read: a file that is missing,
-reached through a symlink, not a regular file, not UTF-8, not JSON, nested
-more than MAX_JSON_DEPTH levels deep or too deeply for the interpreter to
-decode, not a JSON object, or that repeats a key; a component of a relative
-source that the operating system will not let the gate reach for a cause
-other than a missing or too long name, such as a denied permission; or an
+spelled otherwise than its folder lists it, reached through a symlink, not
+a regular file, not UTF-8, not JSON, nested more than MAX_JSON_DEPTH levels
+deep or too deeply for the interpreter to decode, not a JSON object, or that
+repeats a key; a component of a relative source that the operating system
+will not let the gate reach, or a folder on its way that it will not let the
+gate list, for a cause other than a missing or too long name, such as a
+denied permission; or an
 extractor that cannot be used, because it raises any exception while it
 loads or lacks a VERSION_LINE or SKILL_VERSION pattern of text. The cause
 goes to standard error, with a last line "UNREADABLE: exit 3". The gate
@@ -164,15 +174,21 @@ def _reject_constant(token: str):
 
 def walk(rel: str) -> Path:
     """The path of rel below REPO_ROOT, reached with os.lstat on each component,
-    none a symlink, each before the last a directory, the last a regular file."""
+    none a symlink, each spelled as its folder lists it, each before the last a
+    directory, the last a regular file."""
     current = REPO_ROOT
     parts = rel.split("/")
     for index, part in enumerate(parts):
-        current = current / part
+        parent, current = current, current / part
         try:
             info = os.lstat(current)
+            # A file system that folds letter case lets os.lstat find the name in another case too.
+            listed = part in os.listdir(parent)
         except OSError as error:
             raise Unreadable(f"{rel} could not be read: {error.strerror or error}") from error
+        if not listed:
+            raise Unreadable(f"{rel} could not be read: the component {part!r} is not spelled as its folder "
+                             "lists it")
         if stat.S_ISLNK(info.st_mode):
             raise Unreadable(f"{rel} could not be read: the component {part!r} is a symlink")
         if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
@@ -318,14 +334,26 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
             failures.append(f"D1: {label} is {value!r}, not {PROJECT!r}")
     for rel, data in markets.items():
         names = [(f"{rel} name", data.get("name"))]
+        # The index of the first entry with each plugin name in lower case, so that a second is refused.
+        listed: dict = {}
+        repeats = []
         for index, entry in enumerate(data.get("plugins") if isinstance(data.get("plugins"), list) else []):
             if isinstance(entry, dict):
-                names.append((f"{rel} plugins[{index}].name", entry.get("name")))
+                name = entry.get("name")
+                names.append((f"{rel} plugins[{index}].name", name))
+                if isinstance(name, str) and name:
+                    key = name.lower()
+                    if key in listed:
+                        repeats.append(f"D1: {rel} plugins[{index}].name {name!r} lists the plugin of "
+                                       f"plugins[{listed[key]}] a second time, which this gate refuses")
+                    else:
+                        listed[key] = index
         for label, value in names:
             if not isinstance(value, str) or not value:
                 failures.append(f"D1: {label} is {value!r}, not a name")
             elif value.lower().startswith(RESERVED_PREFIXES):
                 failures.append(f"D1: {label} {value!r} starts with a reserved prefix")
+        failures.extend(repeats)
 
 
 def resolve_source(rel: str, index: int, source, failures: list):
@@ -342,7 +370,7 @@ def resolve_source(rel: str, index: int, source, failures: list):
     current = REPO_ROOT.joinpath(*base) if base else REPO_ROOT
     steps = [*parts, ".claude-plugin", "plugin.json"]
     for position, part in enumerate(steps):
-        current = current / part
+        parent, current = current, current / part
         try:
             info = os.lstat(current)
         except ValueError:
@@ -358,6 +386,15 @@ def resolve_source(rel: str, index: int, source, failures: list):
                 failures.append(f"{label} is not a path the operating system accepts: {error.strerror or error}")
                 return None
             raise Unreadable(f"{current.relative_to(REPO_ROOT)} could not be read: {error.strerror or error}") from error
+        try:
+            # A file system that folds letter case lets os.lstat find the name in another case too.
+            listed = part in os.listdir(parent)
+        except OSError as error:
+            raise Unreadable(f"{parent.relative_to(REPO_ROOT)} could not be listed: {error.strerror or error}") from error
+        if not listed:
+            failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is not spelled as its "
+                            "folder lists it")
+            return None
         if stat.S_ISLNK(info.st_mode):
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is a symlink")
             return None
@@ -427,7 +464,8 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
     for rel, data in markets.items():
         market = data.get("name")
         entries = data.get("plugins") if isinstance(data.get("plugins"), list) else []
-        # Only a string name can be named by a dependency; the names check reports any other.
+        # Only a string name can be named by a dependency; the names check reports any other, and a
+        # name listed twice.
         names = {e["name"] for e in entries if isinstance(e, dict) and isinstance(e.get("name"), str)}
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
