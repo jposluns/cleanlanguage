@@ -32,8 +32,18 @@ loading ``tools/check-baseline-pin.py`` from its path as
 ``tools/copy-baseline.py`` does. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
-version as BASELINE, read by the generator's load_pin(). The configured base is
-``/``; the staged cases first set the base to ``/draft/`` and exclude the
+version as BASELINE, read by the generator's load_pin(). Another reads the
+same source and fails when main() may not run a top-level check_* case
+group in a form that the source shows: main bound other than once by a
+def, a top-level check_* name bound other than once by a def, either with
+a decorator, so an async def group fails, main or a group holding a yield,
+a check_* name bound by main() or in any scope inside it, a parameter
+included, a global statement that names main or a check_* name in any
+scope, no call of a top-level check_* name in main(), or a last top-level
+statement other than if __name__ == "__main__": sys.exit(main()). That
+case runs inside this file, so a changed block that does not run main(),
+or drops its result, is not carried by the exit status. The configured
+base is ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
 when every case passes; 1 otherwise, naming each failing case.
@@ -41,6 +51,7 @@ when every case passes; 1 otherwise, naming each failing case.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import html
 import importlib.util
@@ -2810,6 +2821,104 @@ def check_family_pages(failures: list[str]) -> int:
     return 2
 
 
+STATED_COUNT = re.compile(r"the same content the full download saves \((\d+) characters\)")
+
+
+def begins_plainly(data: bytes) -> bool:
+    """Whether the data decodes as UTF-8 and its first character, not its first byte, is neither U+FEFF nor
+    whitespace as str.isspace() reads it, so that U+00A0, U+3000 and U+001C count as whitespace."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and text[0] != "\ufeff" and not text[0].isspace()
+
+
+# (data, whether begins_plainly accepts it): the first-character guard's own cases.
+PLAIN_STARTS = [(b"x", True), ("\u00e9".encode("utf-8"), True), (b"", False), (b"\xff", False),
+                (b"\xef\xbb\xbfx", False), (b" x", False), (b"\tx", False), (b"\nx", False),
+                ("\u00a0x".encode("utf-8"), False), ("\u3000x".encode("utf-8"), False), (b"\x1cx", False)]
+
+
+def check_stated_count(failures: list[str]) -> int:
+    """The instructions page states the download's character count as saved:
+    its bytes decoded as UTF-8 with no newline translation and nothing
+    stripped. The first case builds from the committed download. The second
+    gives the download an extra line with a CR LF line end and 2 non-ASCII
+    characters, so a count that translates line ends or counts bytes states the
+    wrong number. The third gives it an extra line with U+1F600, which lies
+    outside the Basic Multilingual Plane, and an e followed by U+0301, so a
+    count of UTF-16 code units or of NFC-normalized text states the wrong
+    number. The fourth removes the download's final newline, which must be
+    exactly 1 LF, so a count that strips a final line end and adds 1 for it
+    states the wrong number. The fifth to ninth put U+FEFF, LF, a space, a
+    tab or U+00A0 before the download's first character, which must be neither
+    U+FEFF nor whitespace, so a count that decodes as utf-8-sig, or strips a
+    leading set of characters that holds U+FEFF, LF, the space, the tab or
+    U+00A0, states the wrong number. The tenth to twelfth replace the
+    download's final newline, which must be exactly 1 LF, by a space, a tab or
+    U+00A0, so a count that strips a trailing set of characters that holds the
+    space, the tab or U+00A0, and adds nothing for it, states the wrong
+    number. A thirteenth case holds
+    the first-character guard to PLAIN_STARTS, so a guard that reads the first
+    byte instead fails."""
+    extra = "Caf\u00e9 \u00e0 la carte.\r\n".encode("utf-8")
+    astral = "Smile \U0001f600, cafe\u0301.\n".encode("utf-8")
+    final = "end in exactly 1 LF"
+    first = "begin with a character other than U+FEFF and whitespace"
+    wrong = [(data, accepted) for data, accepted in PLAIN_STARTS if begins_plainly(data) != accepted]
+    if wrong:
+        failures.append(f"stated count, the first-character guard: wrong for {[data for data, _ in wrong]!r}")
+
+    def without_final_newline(data: bytes) -> bytes | None:
+        if not data.endswith(b"\n") or data.endswith((b"\n\n", b"\r\n")):
+            return None
+        return data[:-1]
+
+    def leading(prefix: bytes):
+        def change(data: bytes) -> bytes | None:
+            return prefix + data if begins_plainly(data) else None
+        return change
+
+    def trailing(suffix: bytes):
+        def change(data: bytes) -> bytes | None:
+            stripped = without_final_newline(data)
+            return None if stripped is None else stripped + suffix
+        return change
+
+    cases = [("clean build", lambda data: data, ""),
+             ("download with a CR LF line and 2 non-ASCII characters", lambda data: data + extra, ""),
+             ("download with U+1F600 and a combining accent", lambda data: data + astral, ""),
+             ("download without its final newline", without_final_newline, final),
+             ("download beginning with U+FEFF", leading(b"\xef\xbb\xbf"), first),
+             ("download beginning with a blank line", leading(b"\n"), first),
+             ("download beginning with a space", leading(b" "), first),
+             ("download beginning with a tab", leading(b"\t"), first),
+             ("download beginning with U+00A0", leading("\xa0".encode("utf-8")), first),
+             ("download ending in a space in place of its final newline", trailing(b" "), final),
+             ("download ending in a tab in place of its final newline", trailing(b"\t"), final),
+             ("download ending in U+00A0 in place of its final newline", trailing("\xa0".encode("utf-8")), final)]
+    for name, change, expected in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            download = root / "site/downloads/cleanlanguage.md"
+            data = change(download.read_bytes())
+            if data is None:
+                failures.append(f"stated count, {name}: the download does not {expected}")
+                continue
+            download.write_bytes(data)
+            out = Path(scratch) / "out"
+            result = run(root, "--out", str(out))
+            if result.returncode != 0:
+                failures.append(f"stated count, {name}: build exit {result.returncode}: {result.stderr.strip()[:200]}")
+                continue
+            held = len(download.read_bytes().decode("utf-8"))
+            stated = STATED_COUNT.findall((out / "instructions/index.html").read_text(encoding="utf-8"))
+            if stated != [str(held)]:
+                failures.append(f"stated count, {name}: the page states {stated} characters, the download holds {held}")
+    return len(cases) + 1
+
+
 VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
 # The seventh footer card of template specification 7.19 (baseline 1.11.0), byte for byte as the footer of the 1.11.1
 # package's reference/landing.html gives it, apart from the logo path: ../logos/ there, /assets/baseline/logos/ here.
@@ -3705,6 +3814,320 @@ def check_version_literals(failures: list[str]) -> int:
     return 1
 
 
+# The comprehensions, each a scope of its own in which a := still binds in the scope around it.
+COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def header(node: ast.AST) -> list[ast.AST]:
+    """The expressions of a def, async def, class or lambda that run in the scope around it: the decorators of a def
+    or class, the defaults and keyword-only defaults of a def or lambda, the annotations and return annotation of a
+    def, and the bases and keyword values of a class. A := in an annotation is read too, although the compiler
+    refuses it on Python 3.14 and under `from __future__ import annotations` an annotation is never run."""
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(keyword.value for keyword in node.keywords)]
+    arguments = node.args
+    found = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+    if isinstance(node, ast.Lambda):
+        return found
+    every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+             *(extra for extra in (arguments.vararg, arguments.kwarg) if extra is not None)]
+    return [*node.decorator_list, *found, *(argument.annotation for argument in every if argument.annotation),
+            *([node.returns] if node.returns else [])]
+
+
+def bindings(nodes: list[ast.AST]) -> list[tuple[str, ast.AST]]:
+    """The names that the statements bind in their own scope in the forms read here, with the node that binds each: a
+    def, async def or class by its name, an import by the name it binds, an except, match or store target such as
+    an assignment, for or with target, and a := target. A nested scope is not entered, apart from what runs in this
+    scope or binds in it: the header() of a def, async def, class or lambda, the first iterable of a comprehension,
+    and a := anywhere in a comprehension, which binds in the scope around it. So a := in the body of a lambda, a
+    def or a class, which binds in that scope, is not read, nor is a global statement in another scope."""
+    found: list[tuple[str, ast.AST]] = []
+    # (node, whether only := targets bind here): the parts of a comprehension other than its first iterable run in
+    # its own scope, where only a := binds a name in the scope being read.
+    stack = [(node, False) for node in nodes]
+    while stack:
+        node, named_only = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and not named_only:
+            found.append((node.name, node))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack += [(part, named_only) for part in header(node)]
+            continue
+        if isinstance(node, COMPREHENSIONS):
+            first, *rest = node.generators
+            stack.append((first.iter, named_only))
+            inner = [first.target, *first.ifs, *rest]
+            inner += [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            stack += [(part, True) for part in inner]
+            continue
+        if isinstance(node, ast.NamedExpr):
+            # Its target is read here and not again as a store name.
+            found.append((node.target.id, node))
+            stack.append((node.value, named_only))
+            continue
+        if named_only:
+            pass
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found += [((alias.asname or alias.name).split(".")[0], node) for alias in node.names]
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            found.append((node.id, node))
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.append((node.name, node))
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.append((node.rest, node))
+        stack += [(child, named_only) for child in ast.iter_child_nodes(node)]
+    return found
+
+
+def names_bound_within(function: ast.AST) -> set[str]:
+    """The names that the def and everything inside it bind, in any scope: its own name and parameters, the
+    parameters of each def and lambda inside it, comprehension targets, store and del targets, := targets, imports,
+    except and match names, type parameters, and the names of global and nonlocal statements. Unlike bindings(),
+    it enters every nested scope, since a parameter or a target there shadows a top-level name for the code in that
+    scope, which may be where a group is called."""
+    found: set[str] = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.arg):
+            found.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.TypeVar, ast.ParamSpec,
+                               ast.TypeVarTuple)):
+            found.add(node.name)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.add(node.rest)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            found.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            found.update(node.names)
+    return found
+
+
+def is_generator(function: ast.AST) -> bool:
+    """Whether the def holds a yield or yield from in its own scope, which makes a call of it return a generator
+    without running its body. A nested def, class or lambda is not entered apart from its header(), which runs in
+    the def's own scope."""
+    stack = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
+            return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            stack += header(node)
+            continue
+        stack += ast.iter_child_nodes(node)
+    return False
+
+
+def runs_main(node: ast.AST) -> bool:
+    """Whether the statement is exactly `if __name__ == "__main__":` holding only `sys.exit(main())`, with no else."""
+    if not isinstance(node, ast.If) or node.orelse or len(node.body) != 1:
+        return False
+    test, (statement,) = node.test, node.body
+    if not (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+            and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == "__main__"):
+        return False
+    if not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)):
+        return False
+    call = statement.value
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "exit" and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "sys" and len(call.args) == 1 and not call.keywords):
+        return False
+    inner = call.args[0]
+    return (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == "main"
+            and not inner.args and not inner.keywords)
+
+
+def case_group_problems(source: str) -> list[str]:
+    """The ways in which main() of the source may fail to run a top-level check_* case group, or its result may not
+    reach the exit status. main must be bound exactly once at the top level, by a def without a decorator; each
+    top-level check_* name must be bound exactly once, by a def without a decorator, so that calling it runs its
+    body, which an async def does not; neither main nor a group may hold a yield in its own scope, which makes it a
+    generator whose body a call does not run; no check_* name may be bound by main() or inside it, in any scope, as
+    names_bound_within() reads it, its parameters and those of a def or lambda inside it included; main() must hold
+    a call by the name of each top-level check_* name; and the last top-level statement must be exactly
+    `if __name__ == "__main__": sys.exit(main())`, as runs_main() reads it, with sys bound at the top level only by
+    `import sys` and __name__ not bound there. So a second def of main or of a group, an assignment of either name,
+    a := binding of either in a place that WALRUS_PLACES names, an import of a group, a decorator on either, an
+    async def group, a generator group, a binding of a group by main() or inside it, a deleted call, main() called
+    without sys.exit(), and a __main__ test in any other form each fail; GUARD_FORMS holds 1 or more of each. A
+    global statement that names main or a check_* name, in any scope of the source, fails too: bindings() does not
+    enter a class body or a function body, where such a statement lets an assignment rebind the top-level name, and
+    a class body runs when the file is loaded."""
+    tree = ast.parse(source)
+    declared = sorted({name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names
+                       if name == "main" or name.startswith("check_")})
+    if declared:
+        return [f"a global statement names {', '.join(declared)}"]
+    top = bindings(tree.body)
+    mains = [node for name, node in top if name == "main"]
+    if len(mains) != 1 or type(mains[0]) is not ast.FunctionDef or mains[0].decorator_list:
+        return [f"main is bound {len(mains)} time(s) at the top level, expected once, by a def without a decorator"]
+    problems = []
+    if is_generator(mains[0]):
+        problems.append("main holds a yield, so calling it does not run its body")
+    if not tree.body or not runs_main(tree.body[-1]):
+        problems.append('the last top-level statement is not exactly if __name__ == "__main__": sys.exit(main())')
+    plain_import = [("sys", None)]
+    if any(not (isinstance(node, ast.Import) and [(alias.name, alias.asname) for alias in node.names] == plain_import)
+           for name, node in top if name == "sys"):
+        problems.append("sys is bound at the top level other than by import sys")
+    if any(name == "__name__" for name, _ in top):
+        problems.append("__name__ is bound at the top level")
+    groups: dict[str, list[ast.AST]] = {}
+    for name, node in top:
+        if name.startswith("check_"):
+            groups.setdefault(name, []).append(node)
+    for name, nodes in sorted(groups.items()):
+        if len(nodes) != 1 or type(nodes[0]) is not ast.FunctionDef or nodes[0].decorator_list:
+            problems.append(f"{name} is bound {len(nodes)} time(s) at the top level, expected once, by a def "
+                            "without a decorator")
+        elif is_generator(nodes[0]):
+            problems.append(f"{name} holds a yield, so calling it does not run its body")
+    local = sorted(name for name in names_bound_within(mains[0]) if name.startswith("check_"))
+    if local:
+        problems.append(f"main() or a scope inside it binds {', '.join(local)}")
+    called = {node.func.id for node in ast.walk(mains[0]) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    uncalled = [name for name in groups if name not in called]
+    if uncalled:
+        problems.append(f"main() does not call {', '.join(uncalled)}")
+    return problems
+
+
+# The name of a case group, written in 2 parts so that no fixture text below occurs in this source as it stands.
+GROUP = "check_" + "stated_count"
+CALL = f"ran += {GROUP}(failures)"
+# (form, anchor or None to insert before the block that runs main(), replacement): each changed source must give
+# case_group_problems a problem.
+GUARD_FORMS = [
+    ("the call of a group deleted", f"    {CALL}\n", ""),
+    ("an uncalled def check_extra", None, "\ndef check_" + "extra(failures):\n    return 1\n"),
+    ("an uncalled async def check_extra", None, "\nasync def check_" + "extra(failures):\n    return 1\n"),
+    ("a second top-level def main", None, "\ndef " + "main() -> int:\n    return 0\n"),
+    ("main rebound by assignment", None, "\nmain " + "= lambda: 0\n"),
+    ("main decorated", "\ndef " + "main() -> int:", "\n@staticmethod\ndef " + "main() -> int:"),
+    ("a group bound by import", None, f"\nfrom os import getpid as {GROUP}\n"),
+    ("a second top-level def of a group", None, f"\ndef {GROUP}(failures):\n    return 3\n"),
+    ("a group rebound by assignment", None, f"\n{GROUP} = lambda failures: 3\n"),
+    ("a check_* name bound by assignment", None, "\ncheck_" + "assigned = lambda failures: 1\n"),
+    ("a group decorated", f"\ndef {GROUP}(", f"\n@staticmethod\ndef {GROUP}("),
+    ("a group rebound inside main()", f"    {CALL}\n", f"    {GROUP} = len\n    {CALL}\n"),
+    ("a group defined again inside main()", f"    {CALL}\n", f"    def {GROUP}(failures):\n        return 3\n    {CALL}\n"),
+]
+# (place, code that binds NAME by := there): each place where a := outside a plain statement binds in the top-level
+# scope, as bindings() reads it.
+WALRUS_PLACES = [
+    ("a decorator", "\n@(NAME := staticmethod)\ndef bound_here():\n    return 0\n"),
+    ("a default", "\ndef bound_here(value=(NAME := len)):\n    return 0\n"),
+    ("a keyword-only default", "\ndef bound_here(*, value=(NAME := len)):\n    return 0\n"),
+    ("a parameter annotation", "\ndef bound_here(value: (NAME := len)):\n    return 0\n"),
+    ("a return annotation", "\ndef bound_here() -> (NAME := len):\n    return 0\n"),
+    ("a class base", "\nclass BoundHere((NAME := object)):\n    pass\n"),
+    ("a class keyword", "\nclass BoundHere(metaclass=(NAME := type)):\n    pass\n"),
+    ("a lambda default", "\nbound_here = lambda value=(NAME := len): 0\n"),
+    ("a comprehension", "\nbound_here = [(NAME := value) for value in (len,)]\n"),
+]
+GUARD_FORMS += [(f"{name} bound by := in {place}", None, code.replace("NAME", name))
+                for place, code in WALRUS_PLACES for name in ("main", GROUP)]
+MAIN_DEF = "\ndef " + "main() -> int:"
+# A default that shadows the group: the call by its name still occurs, and the group does not run.
+SHADOW = "lambda failures: 9"
+# (form, replacement of MAIN_DEF or of the call): each binds the group as a parameter, so each must fail on the
+# binding alone, with the call by the group's name still in main().
+GUARD_FORMS += [(f"a group bound by {form} of main()", MAIN_DEF, "\ndef " + f"main({parameters}) -> int:")
+                for form, parameters in [("a positional parameter", f"{GROUP}={SHADOW}"),
+                                         ("a positional-only parameter", f"{GROUP}={SHADOW}, /"),
+                                         ("a keyword-only parameter", f"*, {GROUP}={SHADOW}"),
+                                         ("the * parameter", f"*{GROUP}"), ("the ** parameter", f"**{GROUP}")]]
+GUARD_FORMS += [
+    ("a group bound by a lambda parameter inside main()", f"    {CALL}\n",
+     f"    ran += (lambda {GROUP}={SHADOW}: {GROUP}(failures))()\n"),
+    ("a group bound by the * parameter of a lambda inside main()", f"    {CALL}\n",
+     f"    ran += (lambda *{GROUP}: {GROUP}(failures) if {GROUP} else 9)()\n"),
+    ("a group bound by a parameter of a def inside main()", f"    {CALL}\n",
+     f"    def run({GROUP}={SHADOW}):\n        return {GROUP}(failures)\n    ran += run()\n"),
+    ("a group bound by a comprehension target inside main()", f"    {CALL}\n",
+     f"    ran += sum([{GROUP}(failures) for {GROUP} in ({SHADOW},)])\n"),
+]
+# (form, code appended): each rebinds a top-level name through a global statement in a scope that bindings() does
+# not enter.
+GUARD_FORMS += [
+    ("a group rebound by a global statement in a top-level class body", None,
+     f"\nclass Shadow:\n    global {GROUP}\n    {GROUP} = {SHADOW}\n"),
+    ("a group rebound by a global statement in a class body inside a top-level if", None,
+     f"\nif True:\n    class Shadow:\n        global {GROUP}\n        {GROUP} = {SHADOW}\n"),
+    ("main rebound by a global statement in a top-level class body", None,
+     "\nclass Shadow:\n    global " + "main\n    main = lambda: 0\n"),
+    ("a group rebound by a global statement in a top-level def", None,
+     f"\ndef rebind():\n    global {GROUP}\n    {GROUP} = {SHADOW}\n"),
+]
+# A group's def line, and the block that runs main(): with MAIN_DEF, the anchors of the forms below. Each form keeps
+# every call by a group's name in main(), and each changes a group, main() or that block from the form that
+# case_group_problems requires.
+GROUP_DEF = f"\ndef {GROUP}(failures: list[str]) -> int:\n"
+MAIN_BLOCK = '\nif __name__ == "__main__":\n    sys.exit(main())\n'
+GUARD_FORMS += [
+    ("a group made an async def", f"\ndef {GROUP}(", f"\nasync def {GROUP}("),
+    ("a group made a generator by yield", GROUP_DEF, GROUP_DEF + "    if False:\n        yield\n"),
+    ("a group made a generator by yield from", GROUP_DEF, GROUP_DEF + "    if False:\n        yield from ()\n"),
+    ("a group made a generator by a yield in the default of a def inside it", GROUP_DEF,
+     GROUP_DEF + "    def inner(value=(yield)):\n        return value\n"),
+    ("main made a generator", MAIN_DEF + "\n", MAIN_DEF + "\n    if False:\n        yield\n"),
+    ("main() called without sys.exit()", MAIN_BLOCK, '\nif __name__ == "__main__":\n    main()\n'),
+    ("main() passed to sys.exit() inside another call", MAIN_BLOCK,
+     '\nif __name__ == "__main__":\n    sys.exit(bool(main()) and 0)\n'),
+    ("the __main__ test comparing another string", MAIN_BLOCK, MAIN_BLOCK.replace('"__main__"', '"__mian__"')),
+    ("the __main__ test negated", MAIN_BLOCK, MAIN_BLOCK.replace("==", "!=")),
+    ("the __main__ test made false by and False", MAIN_BLOCK,
+     MAIN_BLOCK.replace("if __name__", "if False and __name__")),
+    ("the __main__ block given an else", MAIN_BLOCK, MAIN_BLOCK + "else:\n    pass\n"),
+    ("the __main__ block removed", MAIN_BLOCK, "\n"),
+    ("the __main__ block followed by a statement", MAIN_BLOCK, MAIN_BLOCK + "pass\n"),
+    ("sys rebound before the __main__ block", MAIN_BLOCK,
+     "\nclass sys:\n    exit = staticmethod(lambda code: None)\n" + MAIN_BLOCK),
+    ("__name__ rebound before the __main__ block", MAIN_BLOCK, '\n__name__ = "other"\n' + MAIN_BLOCK),
+]
+
+
+def check_case_groups_called(failures: list[str]) -> int:
+    """This file's own source gives case_group_problems no problem, so a case group whose call is deleted, or whose
+    name main() calls is bound to something else in a form the guard reads, fails here instead of only lowering the
+    printed total; and each of GUARD_FORMS, applied to that source, gives a problem. It does not check that a call
+    runs (under a false condition or after an early return it does not), that its count and failures are kept, that
+    a group's own body does more than return at once, or that it is not removed from main() itself, since a guard
+    that does not run cannot fail. For the same reason, a block that does not run main(), or drops its result, is a
+    problem when the guard reads it but not in the exit status of the changed file: with main() in place of
+    sys.exit(main()) the problem is printed and the file exits 0, and with a __main__ test that is never true
+    nothing runs. It does not check what runs before the block that runs main(): a top-level statement that ends
+    the process, such as sys.exit(0), or that changes an attribute, such as an assignment to sys.exit, is not read.
+    It reads only the bindings that the source shows as names: a check_* function defined inside a class or another
+    function is not a case group, and a binding through globals(), setattr() or exec() is not read. A global
+    statement that names main or a check_* name fails in any scope, a class body or a def included. At the top
+    level, a := in the header of a def, class or lambda or in a comprehension is read, as bindings() says; inside
+    main(), every binding in every scope is read, as names_bound_within() says, parameters included."""
+    source = Path(__file__).read_text(encoding="utf-8")
+    failures += [f"case groups: {problem}" for problem in case_group_problems(source)]
+    for form, anchor, replacement in GUARD_FORMS:
+        if anchor is None and not source.endswith(MAIN_BLOCK):
+            failures.append(f"case groups, {form}: the source does not end with the block that runs main()")
+            continue
+        if anchor is None:
+            # Put before that block, so that the form is judged by the check it is written for, and not by the
+            # check of the last top-level statement.
+            changed = source[:-len(MAIN_BLOCK)] + replacement + MAIN_BLOCK
+        elif source.count(anchor) == 1:
+            changed = source.replace(anchor, replacement)
+        else:
+            failures.append(f"case groups, {form}: the anchor occurs {source.count(anchor)} times, expected 1")
+            continue
+        if not case_group_problems(changed):
+            failures.append(f"case groups, {form}: the guard found no problem")
+    return 1 + len(GUARD_FORMS)
+
+
 def main() -> int:
     failures: list[str] = []
     ran = 0
@@ -3724,6 +4147,7 @@ def main() -> int:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_version_literals(failures)
+    ran += check_case_groups_called(failures)
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
     ran += check_source_passes(failures)
@@ -3749,6 +4173,7 @@ def main() -> int:
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
+    ran += check_stated_count(failures)
     ran += check_footer(failures)
     ran += check_favicon(failures)
     ran += check_logo_set(failures)
