@@ -13,12 +13,20 @@ to equal the Claude manifest version, so the two manifests cannot drift.
 
 It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
-a FIFO, a folder or any other file that is not regular fails before it is read,
-so the gate neither reads a copy through a link nor waits on a copy that is a
-FIFO. The plugin installs the cleanlanguage/ tree and the skill zip takes these
-2 files from it, so a copy that drifted from the root file would ship a licence
-text the repository does not state. The gate reads the working tree;
-tools/release-package.sh makes the same comparison on the git blobs at HEAD.
+is missing, or is a FIFO, a folder or any other file that is not regular fails
+with exit 1, and the code reads a copy only after those checks. The tests
+observe that order only for a FIFO: a copy that is a FIFO with no writer, or a
+symlink to one, must end within FIFO_TIMEOUT (10 seconds) with exit 1 and its
+message (test_licence_copy_fifo_fails and the FIFO subtests of
+test_licence_copy_symlink_fails in tools/test-agent-plugin-manifest.py), so a
+gate that waits on such a FIFO fails. A read before the refusal through a link
+to a regular file, a read of a folder, or a non-blocking open of a FIFO is an
+untested residual: no case catches it, because the exit code and the message
+stay the same. The plugin installs the cleanlanguage/ tree and the skill zip
+takes these 2 files from it, so a copy that drifted from the root file would
+ship a licence text the repository does not state. The gate reads the working
+tree; tools/release-package.sh makes the same comparison on the git blobs at
+HEAD.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
@@ -84,7 +92,13 @@ def check_licence_copies() -> None:
     """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file.
 
     A copy that is a symlink, is missing, or is a FIFO, a folder or any other
-    file that is not regular fails with exit 1 before that copy is read.
+    file that is not regular fails with exit 1, and a copy is read only after
+    it passes those checks. The tests observe that order only for a FIFO copy,
+    or a symlink to one, which must end with exit 1 and its message within the
+    test's time limit (test_licence_copy_fifo_fails, and the FIFO subtests of
+    test_licence_copy_symlink_fails). No case catches a read before the refusal
+    through a link to a regular file, a read of a folder, or a non-blocking
+    open of a FIFO: each leaves the exit code and the message the same.
     """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name

@@ -5,34 +5,45 @@ Patch the gate's manifest paths to a temp fixture and drive the failure and
 success paths offline with the standard library. The fixture also holds a root
 LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
 cases can make a copy differ, go missing, or become a symlink, a FIFO or a
-folder. Each fixture text is longer than 64 bytes, and the cases for a missing
-copy, a symlink, a FIFO, a folder, a same-length difference, a difference past
-the first 64 bytes, a difference only in line endings, a difference only in
-case and a difference only in trailing spaces each cover both files. These
-cases name the 2 files in COPIED_FILES below, not in the gate's own list, so a
-gate that drops a file from its list, compares lengths, compares only a prefix,
-or ignores line endings, case or trailing spaces fails a case. The FIFO case,
-and the symlink case whose link points at a FIFO, also fail when the gate opens
-that FIFO, and the symlink case whose link points at the root file fails when
-the gate opens the link or the file it points at through open(), io.open() or
-os.open(), so a gate that reads a copy that is not a regular file before
-refusing it fails a case.
+folder. The cases name the 2 files in COPIED_FILES below, not in the gate's own
+list.
+
+The licence-copy cases check outcomes only: the exit code, the message, and
+that the gate ends. They state no rule about how the gate reads a file:
+
+- The edit sweep makes every copy that differs from its root file by 1 byte
+  inserted (a space, a CR or an LF), 1 byte deleted, or 1 byte replaced (a
+  letter by the same letter in the other case, any other byte by x or y), at
+  every offset of the fixture texts below, and at offsets 0, len - 1 and len
+  (where only an insertion exists) of the repository's real LICENSE and
+  NOTICE.md. The gate must refuse every one of them with exit 1 and the
+  message that the copy differs from the root file.
+- A copy that is a FIFO with no writer, or a symlink to such a FIFO, is
+  checked in a process of its own, which must exit 1 with the copy's message
+  within FIFO_TIMEOUT seconds. A gate that opens that FIFO for a blocking
+  read, as open() and Path.read_bytes do, waits for a writer that never
+  comes, so it fails the case by timing out.
+
+No case catches a gate that, before refusing a copy, reads through a symlink
+to a regular file, reads a folder, or opens a FIFO without blocking: each
+leaves the exit code and the message the same.
 """
 from __future__ import annotations
 
-import builtins
 import contextlib
 import importlib.util
 import io
 import json
 import os
+import signal
+import subprocess
+import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
-from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-agent-plugin-manifest.py"
+REAL_ROOT = MODULE_PATH.parent.parent
 spec = importlib.util.spec_from_file_location("check_agent_plugin_manifest", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
@@ -41,96 +52,39 @@ SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 # The root files that cleanlanguage/ must carry as byte-equal copies, named
 # here and not read from the gate, so a gate that drops 1 of them fails.
 COPIED_FILES = ("LICENSE", "NOTICE.md")
-# Each text is longer than 64 bytes, so a difference can lie past a 64-byte
-# prefix, and holds several LF line endings, so a copy can differ in CR LF only.
 LICENCE_TEXTS = {
     "LICENSE": b"Apache License\nVersion 2.0, January 2004\nhttp://www.apache.org/licenses/\n\nTERMS AND CONDITIONS\n",
     "NOTICE.md": b"# Notice\n\n## Scope\n\nThe licence text is in [LICENSE](LICENSE).\n\n## Clean Language\n\nCopyright line.\n",
 }
+# Seconds the gate may take to refuse a FIFO copy that has no writer.
+FIFO_TIMEOUT = 10
+# Runs the gate's licence-copy check on the fixture root given as argv[2].
+DRIVER = (
+    "import importlib.util, sys\n"
+    "from pathlib import Path\n"
+    "spec = importlib.util.spec_from_file_location('gate', sys.argv[1])\n"
+    "gate = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(gate)\n"
+    "gate.REPO_ROOT = Path(sys.argv[2])\n"
+    "gate.check_licence_copies()\n"
+)
 
 
-def with_byte_changed(data: bytes, index: int) -> bytes:
-    """``data`` with the byte at ``index`` replaced by another, so the length stays the same."""
-    changed = b"x" if data[index:index + 1] != b"x" else b"y"
-    return data[:index] + changed + data[index + 1:]
-
-
-@contextlib.contextmanager
-def recording_opens():
-    """Within the block, record the resolved path of every file opened by
-    name through open(), io.open() or os.open(). Path.read_bytes and
-    Path.read_text open through io.open, so a read in any of these forms is
-    recorded, and a link is recorded as the file it points at."""
-    opened = []
-    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
-
-    def note(file) -> None:
-        if not isinstance(file, int):
-            opened.append(os.path.realpath(os.fsdecode(os.fspath(file))))
-
-    def spy_open(file, *args, **kwargs):
-        note(file)
-        return real_open(file, *args, **kwargs)
-
-    def spy_io_open(file, *args, **kwargs):
-        note(file)
-        return real_io_open(file, *args, **kwargs)
-
-    def spy_os_open(path, *args, **kwargs):
-        note(path)
-        return real_os_open(path, *args, **kwargs)
-
-    with mock.patch.object(builtins, "open", spy_open), mock.patch.object(io, "open", spy_io_open), \
-            mock.patch.object(os, "open", spy_os_open):
-        yield opened
-
-
-class FifoWitness:
-    """A FIFO at ``path`` and a thread that writes ``data`` into it once a
-    reader opens it, which records whether anything opened the FIFO.
-
-    A gate that reads the FIFO gets ``data``, the root file's bytes, so it
-    finds them equal and does not block. ``opened_by_reader`` tells whether a
-    reader opened the FIFO before ``release``: a gate that reads the FIFO to
-    its end returns only after the writer has opened it and recorded that, and
-    the short wait covers a gate that opens it and closes it without reading.
-    ``release`` opens the FIFO itself, so the writer ends, and records nothing.
-    """
-
-    def __init__(self, path: Path, data: bytes):
-        self.path = path
-        self.data = data
-        self._opened = threading.Event()
-        self._releasing = threading.Event()
-        os.mkfifo(path)
-        self._writer = threading.Thread(target=self._feed, daemon=True)
-        self._writer.start()
-
-    def _feed(self) -> None:
-        try:
-            with open(self.path, "wb") as fifo:
-                if not self._releasing.is_set():
-                    self._opened.set()
-                fifo.write(self.data)
-        except OSError:
-            pass
-
-    def opened_by_reader(self) -> bool:
-        return self._opened.wait(0.2)
-
-    def release(self) -> bool:
-        """End a writer still waiting for a reader: open the FIFO for reading
-        without blocking until the writer ends. Return whether it ended."""
-        self._releasing.set()
-        for _ in range(100):
-            if not self._writer.is_alive():
-                return True
-            reader = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-            try:
-                self._writer.join(0.05)
-            finally:
-                os.close(reader)
-        return not self._writer.is_alive()
+def single_edits(data: bytes):
+    """Yield (kind, offset, edited) for every 1-byte insertion, deletion and
+    replacement of ``data`` described in the module docstring."""
+    for offset in range(len(data) + 1):
+        for inserted in (b" ", b"\r", b"\n"):
+            yield f"insert {inserted!r}", offset, data[:offset] + inserted + data[offset:]
+        if offset == len(data):
+            break
+        byte = data[offset:offset + 1]
+        if byte.isalpha():
+            replaced = byte.swapcase()
+        else:
+            replaced = b"x" if byte != b"x" else b"y"
+        yield "replace", offset, data[:offset] + replaced + data[offset + 1:]
+        yield "delete", offset, data[:offset] + data[offset + 1:]
 
 
 def valid_manifest():
@@ -189,6 +143,23 @@ class AgentPluginManifestTest(unittest.TestCase):
             gate.main()
         self.assertEqual(caught.exception.code, code)
         self.assertIn(needle, err.getvalue())
+
+    def expect_bounded_refusal(self, needle):
+        """Run the licence-copy check in a process of its own and require exit
+        1 with ``needle`` within FIFO_TIMEOUT seconds; on timeout, kill the
+        process group, so a reader the gate started ends too."""
+        proc = subprocess.Popen(
+            [sys.executable, "-I", "-c", DRIVER, str(MODULE_PATH), str(gate.REPO_ROOT)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+        )
+        try:
+            _out, err = proc.communicate(timeout=FIFO_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            self.fail(f"the gate did not end within {FIFO_TIMEOUT} s; it waits on a FIFO copy")
+        self.assertEqual(proc.returncode, 1, err)
+        self.assertIn(needle, err.decode("utf-8", "replace"))
 
     def test_valid_passes(self):
         self.write(valid_manifest())
@@ -319,17 +290,48 @@ class AgentPluginManifestTest(unittest.TestCase):
                 (gate.REPO_ROOT / "cleanlanguage" / name).unlink()
                 self.expect_exit(1, f"cleanlanguage/{name} is missing")
 
+    def test_licence_copy_single_edit_sweep_fails(self):
+        # See the module docstring: every 1-byte edit at every offset of the
+        # fixture texts, and at the first and last offsets of the real files,
+        # so a comparison of any prefix shorter than the real file also fails.
+        for name in COPIED_FILES:
+            real = (REAL_ROOT / name).read_bytes()
+            self.assertGreater(len(real), 1000)
+            for label, data, edits in (
+                ("fixture", LICENCE_TEXTS[name], single_edits(LICENCE_TEXTS[name])),
+                ("real", real, (edit for edit in single_edits(real)
+                                if edit[1] in (0, len(real) - 1, len(real)))),
+            ):
+                root = gate.REPO_ROOT / name
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                root.write_bytes(data)
+                copy.write_bytes(data)
+                gate.check_licence_copies()  # the unedited pair passes
+                needle = f"cleanlanguage/{name} differs from the root {name}"
+                accepted = []
+                count = 0
+                for kind, offset, edited in edits:
+                    self.assertNotEqual(edited, data)
+                    copy.write_bytes(edited)
+                    count += 1
+                    err = io.StringIO()
+                    try:
+                        with contextlib.redirect_stderr(err):
+                            gate.check_licence_copies()
+                    except SystemExit as stop:
+                        if stop.code != 1 or needle not in err.getvalue():
+                            accepted.append((kind, offset, f"exit {stop.code}: {err.getvalue().strip()}"))
+                        continue
+                    accepted.append((kind, offset, "accepted"))
+                self.assertGreaterEqual(count, 10)
+                self.assertEqual(accepted[:5], [],
+                                 f"{label} cleanlanguage/{name}: {len(accepted)} of {count} edits not refused "
+                                 f"with exit 1 and {needle!r}")
+            self.restore_licence_files()
+
     def test_licence_copy_symlink_fails(self):
         # A symlink to the root file reads equal, but the plugin tree would
-        # then point outside itself, so only a regular file passes. The case
-        # records every file the gate opens through open(), io.open() or
-        # os.open(), which Path.read_bytes and Path.read_text use, and fails
-        # if the gate opens the link or the root file the link points at,
-        # which the gate has no reason to read before it refuses the link. A second link points at a FIFO that
-        # a writer feeds with the root file's bytes, and the case fails if the
-        # gate opens that FIFO. So a gate that reads through a link before
-        # refusing it fails here, whether the link points at a regular file
-        # or at a FIFO.
+        # then point outside itself, so only a regular file passes.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name, target="root file"):
@@ -337,128 +339,30 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 copy.symlink_to(gate.REPO_ROOT / name)
-                target = os.path.realpath(copy)
-                self.assertEqual(target, os.path.realpath(gate.REPO_ROOT / name))
-                # The recorder sees a read through the link in the form the
-                # gate reads a copy, so an empty record is not a blind one.
-                with recording_opens() as opened:
-                    gate.read_bytes(copy)
-                self.assertIn(target, opened)
-                with recording_opens() as opened:
-                    self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
-                self.assertNotIn(target, opened,
-                                 f"the gate read through the symlink cleanlanguage/{name} before refusing it")
+                self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
             with self.subTest(name, target="FIFO"):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 fifo = gate.REPO_ROOT / f"{name}.fifo"
-                witness = FifoWitness(fifo, LICENCE_TEXTS[name])
+                os.mkfifo(fifo)
                 copy.symlink_to(fifo)
                 try:
-                    self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
-                    opened = witness.opened_by_reader()
+                    self.expect_bounded_refusal(f"cleanlanguage/{name} is a symlink")
                 finally:
-                    ended = witness.release()
                     fifo.unlink()
-                self.assertTrue(ended, "the FIFO writer did not end")
-                self.assertFalse(opened, f"the gate read through the symlink cleanlanguage/{name} before refusing it")
-
-    def test_licence_copy_same_length_difference_fails(self):
-        # 1 changed byte keeps the length, so a gate that compares only
-        # lengths passes this copy.
-        self.write(valid_manifest())
-        for name in COPIED_FILES:
-            with self.subTest(name):
-                self.restore_licence_files()
-                copy = gate.REPO_ROOT / "cleanlanguage" / name
-                copy.write_bytes(with_byte_changed(LICENCE_TEXTS[name], 0))
-                self.assertEqual(len(copy.read_bytes()), len(LICENCE_TEXTS[name]))
-                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
-
-    def test_licence_copy_late_difference_fails(self):
-        # The changed byte lies past the first 64 bytes and keeps the length,
-        # so a gate that compares a 64-byte prefix or the lengths passes this
-        # copy.
-        self.write(valid_manifest())
-        for name in COPIED_FILES:
-            with self.subTest(name):
-                self.restore_licence_files()
-                index = len(LICENCE_TEXTS[name]) - 2
-                self.assertGreaterEqual(index, 64)
-                copy = gate.REPO_ROOT / "cleanlanguage" / name
-                copy.write_bytes(with_byte_changed(LICENCE_TEXTS[name], index))
-                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
-
-    def test_licence_copy_line_ending_difference_fails(self):
-        # The copy differs from its root file only in CR LF line endings, so a
-        # gate that reads text with universal newlines, or folds CR LF to LF
-        # before comparing, passes this copy.
-        self.write(valid_manifest())
-        for name in COPIED_FILES:
-            with self.subTest(name):
-                self.restore_licence_files()
-                data = LICENCE_TEXTS[name]
-                crlf = data.replace(b"\n", b"\r\n")
-                self.assertNotEqual(crlf, data)
-                self.assertEqual(crlf.replace(b"\r\n", b"\n"), data)
-                (gate.REPO_ROOT / "cleanlanguage" / name).write_bytes(crlf)
-                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
-
-    def test_licence_copy_case_difference_fails(self):
-        # The copy differs from its root file only in the case of its
-        # letters, so a gate that lowercases or uppercases both texts before
-        # comparing them passes this copy.
-        self.write(valid_manifest())
-        for name in COPIED_FILES:
-            with self.subTest(name):
-                self.restore_licence_files()
-                data = LICENCE_TEXTS[name]
-                swapped = data.swapcase()
-                self.assertNotEqual(swapped, data)
-                self.assertEqual(swapped.lower(), data.lower())
-                self.assertEqual(swapped.upper(), data.upper())
-                (gate.REPO_ROOT / "cleanlanguage" / name).write_bytes(swapped)
-                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
-
-    def test_licence_copy_trailing_space_difference_fails(self):
-        # The copy differs from its root file only by 1 space at the end of
-        # its first line, or by 1 space after its last line ending, so a gate
-        # that strips trailing spaces from each line, or from the end of the
-        # text, before comparing passes 1 of these copies.
-        self.write(valid_manifest())
-        for name in COPIED_FILES:
-            data = LICENCE_TEXTS[name]
-            first_end = data.index(b"\n")
-            for where, spaced in (("line end", data[:first_end] + b" " + data[first_end:]),
-                                  ("text end", data + b" ")):
-                with self.subTest(name, where=where):
-                    self.restore_licence_files()
-                    self.assertNotEqual(spaced, data)
-                    self.assertEqual(
-                        b"\n".join(line.rstrip(b" ") for line in spaced.split(b"\n")), data)
-                    (gate.REPO_ROOT / "cleanlanguage" / name).write_bytes(spaced)
-                    self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
 
     def test_licence_copy_fifo_fails(self):
-        # A FIFO is neither a symlink nor missing. A writer feeds it the root
-        # file's bytes, so a gate that reads it finds them equal and does not
-        # block; the case also fails if the gate opens the FIFO at all, so it
-        # passes only for a gate that refuses the FIFO before reading it.
+        # A FIFO with no writer: a gate that opens it for a blocking read
+        # waits for ever, so the case fails by timing out.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                witness = FifoWitness(copy, LICENCE_TEXTS[name])
-                try:
-                    self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
-                    opened = witness.opened_by_reader()
-                finally:
-                    ended = witness.release()
-                self.assertTrue(ended, "the FIFO writer did not end")
-                self.assertFalse(opened, f"the gate read the FIFO cleanlanguage/{name} before refusing it")
+                os.mkfifo(copy)
+                self.expect_bounded_refusal(f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_folder_fails(self):
         self.write(valid_manifest())

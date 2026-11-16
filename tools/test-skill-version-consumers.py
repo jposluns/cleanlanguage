@@ -618,21 +618,31 @@ class PackagerContractTest(unittest.TestCase):
 class PackagerLicenceCopyTest(unittest.TestCase):
     """The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and its
     entry list and byte check read them there too, so in the packager only its
-    licence-copy check ties each copy to its root file. Most cases change 1
-    copy at HEAD of a throwaway worktree and require the build to refuse it.
-    Without that check the build ends 0 and every such case fails; with the
-    check narrowed to 1 file, the cases for the other file fail; with the
-    blob comparison dropped, the cases for a differing copy fail; and with the
-    comparison made blind to line endings, case or trailing spaces, the cases
-    for a copy that differs only in CR LF line endings, only in case or only
-    by a trailing space fail.
+    licence-copy check ties each copy to its root file. The cases cover both
+    files, which the test names itself.
 
-    The other cases make HEAD and the worktree's files disagree, both ways,
-    for both files. A copy that differs from its root file or is missing at
-    HEAD, while the worktree's file equals the root file, must be refused;
-    a copy that equals its root file at HEAD must build, while the
-    worktree's file differs or is missing. So a check that compares or tests
-    the worktree's files in place of the git tree at HEAD fails a case."""
+    Most cases change 1 copy at HEAD of a throwaway worktree and require exit
+    1 and the message for that copy: a copy that is missing; a copy with 1
+    byte replaced past the first 64, the length kept; a copy whose every LF
+    is CR LF; and, from 1 loop, a copy with the case of every letter swapped,
+    with 1 space before its first line ending, with 1 space after its last
+    line ending, with 1 LF added at its end, or with its final LF removed.
+
+    The other cases come from SOURCE_ROWS: for each of the 4 paths the check
+    reads (each copy and each root file), and for the index and for the
+    worktree's files, 4 rows: the place differs or is missing while HEAD is
+    good, which must build (exit 0), and HEAD differs or is missing while the
+    place is good, which must fail (exit 1) with the message for HEAD's
+    defect."""
+
+    # (path kind, place, change at HEAD, change at the place, expected exit)
+    SOURCE_ROWS = tuple(
+        (kind, place, head, there, code)
+        for kind in ("copy", "root")
+        for place in ("index", "worktree")
+        for head, there, code in ((None, "differs", 0), (None, "missing", 0),
+                                  ("differs", "restored", 1), ("missing", "restored", 1))
+    )
 
     COPIED_FILES = ("LICENSE", "NOTICE.md")
 
@@ -663,6 +673,11 @@ class PackagerLicenceCopyTest(unittest.TestCase):
             # 1 space after the last line ending.
             self.assertTrue(data.endswith(b"\n"))
             changed = data + b" "
+        elif change == "final LF added":
+            changed = data + b"\n"
+        elif change == "final LF removed":
+            self.assertTrue(data.endswith(b"\n"))
+            changed = data[:-1]
         elif change == "differs":
             # 1 byte past the first 64 changed, the length kept.
             index = len(data) // 2
@@ -721,42 +736,62 @@ class PackagerLicenceCopyTest(unittest.TestCase):
         self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
 
     def test_copy_differing_only_in_case_or_trailing_spaces_fails(self):
-        # A comparison that lowercases both texts, or strips trailing spaces
-        # from each line or from the end of the text, passes 1 of these.
+        # Each change keeps every byte but the ones it names: the case of the
+        # letters, 1 space at the end of a line or of the text, or 1 final LF.
         for name in self.COPIED_FILES:
-            for change in ("case", "line-end space", "text-end space"):
+            for change in ("case", "line-end space", "text-end space", "final LF added", "final LF removed"):
                 with self.subTest(name, change=change):
                     code, stderr = self.build_with_copy(name, change)
                     self.assertEqual(code, 1, stderr)
                     self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD",
                                   stderr)
 
-    def test_copy_differing_at_head_fails_when_the_worktree_file_is_equal(self):
-        for name in self.COPIED_FILES:
-            with self.subTest(name):
-                code, stderr = self.build_with_copy(name, "differs", checkout_change="restored")
-                self.assertEqual(code, 1, stderr)
-                self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD", stderr)
+    def set_place(self, wt: Path, rel: str, place: str, change: str, good: bytes) -> None:
+        """Make the file ``rel`` at ``place`` (the index or the worktree's
+        files) hold the change ``change``, ``restored`` being ``good``, and
+        leave the other place as HEAD has it."""
+        path = wt / rel
+        head = path.read_bytes() if path.exists() else None
+        if change == "restored":
+            path.write_bytes(good)
+        else:
+            if not path.exists():
+                path.write_bytes(good)
+            self.change_copy(path, change)
+        if place == "worktree":
+            return
+        if change == "missing":
+            subprocess.run(["git", "-C", str(wt), "rm", "-q", "--cached", "--", rel], capture_output=True, check=True)
+        else:
+            subprocess.run(["git", "-C", str(wt), "add", "--", rel], capture_output=True, check=True)
+        if head is None:
+            if path.exists():
+                path.unlink()
+        else:
+            path.write_bytes(head)
 
-    def test_copy_missing_at_head_fails_when_the_worktree_file_is_present(self):
+    def test_verdict_follows_head_not_the_index_or_the_worktree(self):
         for name in self.COPIED_FILES:
-            with self.subTest(name):
-                code, stderr = self.build_with_copy(name, "missing", checkout_change="restored")
-                self.assertEqual(code, 1, stderr)
-                self.assertIn(f"release-package: cleanlanguage/{name} is missing at HEAD; it must be a copy of the "
-                              f"root {name}", stderr)
+            for kind, place, head_change, there, expected in self.SOURCE_ROWS:
+                rel = f"cleanlanguage/{name}" if kind == "copy" else name
+                with self.subTest(name, kind=kind, place=place, head=head_change, there=there):
+                    good = {}
 
-    def test_copy_equal_at_head_builds_when_the_worktree_file_differs(self):
-        for name in self.COPIED_FILES:
-            with self.subTest(name):
-                code, stderr = self.build_with_copy(name, None, checkout_change="differs")
-                self.assertEqual(code, 0, stderr)
+                    def tree_edit(wt: Path) -> None:
+                        good["bytes"] = (wt / name).read_bytes()
+                        if head_change is not None:
+                            self.change_copy(wt / rel, head_change)
 
-    def test_copy_equal_at_head_builds_when_the_worktree_file_is_missing(self):
-        for name in self.COPIED_FILES:
-            with self.subTest(name):
-                code, stderr = self.build_with_copy(name, None, checkout_change="missing")
-                self.assertEqual(code, 0, stderr)
+                    def checkout_edit(wt: Path) -> None:
+                        self.set_place(wt, rel, place, there, good["bytes"])
+
+                    code, stderr = run_packager(None, HEAD_VERSION, tree_edit=tree_edit, checkout_edit=checkout_edit)
+                    self.assertEqual(code, expected, stderr)
+                    if head_change == "differs":
+                        self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD",
+                                      stderr)
+                    elif head_change == "missing":
+                        self.assertIn(f"release-package: {rel} is missing at HEAD", stderr)
 
 
 class PackagerReleaseDateTest(unittest.TestCase):
