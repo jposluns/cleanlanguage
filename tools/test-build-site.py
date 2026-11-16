@@ -22,7 +22,8 @@ any page fails these cases too; the pin's comment names how to update it.
 The first case runs ``--check`` on this repository. One checks that
 ``site/favicon.ico``, listed in ``static_files``, is a whole ICO file of
 PNG frames, its directory and each frame inside the file, with every
-chunk CRC and its image data 1 whole zlib stream with no byte after it,
+chunk CRC, exactly 1 IHDR chunk, any PLTE chunk of 1 to 256 entries of 3
+bytes and its image data 1 whole zlib stream with no byte after it,
 in IDAT chunks that no other chunk separates;
 that check refuses every BMP frame, which the card builder does not
 write, and the case requires it to refuse a truncated, header-only or
@@ -3620,10 +3621,11 @@ def ico_problems(data: bytes) -> list[str]:
 
 def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
     """Why a PNG frame of an ICO file fails these checks (none if it passes): its chunks, each with a matching CRC,
-    fill it exactly from the signature to an empty IEND chunk at its end; its first chunk is an IHDR of the entry's
-    width and height, 8-bit, of compression method 0, filter method 0 and interlace method 0, of colour type 0, 2, 3,
-    4 or 6; it has at most 1 PLTE chunk, and none after its first IDAT chunk; a colour type 3 frame has exactly 1 PLTE
-    chunk of 1 to 256 entries before its first IDAT chunk, and a colour type 0 or 4 frame has none; its IDAT chunks
+    fill it exactly from the signature to an empty IEND chunk at its end; its first chunk, and no other, is an IHDR of
+    the entry's width and height, 8-bit, of compression method 0, filter method 0 and interlace method 0, of colour
+    type 0, 2, 3, 4 or 6; it has at most 1 PLTE chunk, and none after its first IDAT chunk, and that chunk holds 1 to
+    256 entries of 3 bytes whatever the colour type; a colour type 3 frame has exactly 1 PLTE chunk before its first
+    IDAT chunk, and a colour type 0 or 4 frame has none; its IDAT chunks
     are consecutive, as the PNG format requires, with no other chunk between 2 of them; and its IDAT data is 1 whole
     zlib stream with no byte after it, which inflates to exactly 1 filter byte and the pixels of each row, each filter
     byte 0 to 4. It reads the body of no other chunk."""
@@ -3649,6 +3651,8 @@ def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
     kind, header = chunks[0]
     if kind != b"IHDR" or len(header) != 13 or struct.unpack_from(">II", header) != (width, height):
         return ["its PNG does not begin with an IHDR chunk of the entry's width and height"]
+    if [kind for kind, _ in chunks].count(b"IHDR") != 1:
+        return ["its PNG has more than 1 IHDR chunk"]
     depth, colour, compression, method, interlace = header[8], header[9], header[10], header[11], header[12]
     channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
     if depth != 8 or channels is None or compression != 0 or method != 0 or interlace != 0:
@@ -3660,7 +3664,9 @@ def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
     if kinds.count(b"PLTE") > 1 or b"PLTE" in kinds[first_data:]:
         return ["its PNG has more than 1 PLTE chunk or a PLTE chunk after its image data"]
     palettes = [body for kind, body in chunks[:first_data] if kind == b"PLTE"]
-    if colour == 3 and (len(palettes) != 1 or not 3 <= len(palettes[0]) <= 768 or len(palettes[0]) % 3):
+    if any(not 3 <= len(body) <= 768 or len(body) % 3 for body in palettes):
+        return ["its PNG has a PLTE chunk that is not 1 to 256 entries of 3 bytes"]
+    if colour == 3 and len(palettes) != 1:
         return ["its PNG is of colour type 3 and has no single PLTE chunk of 1 to 256 entries before its image data"]
     if colour in (0, 4) and b"PLTE" in kinds:
         return [f"its PNG is of colour type {colour} and has a PLTE chunk"]
@@ -3690,9 +3696,11 @@ def png_chunk(kind: bytes, body: bytes) -> bytes:
 
 
 def made_ico(colour: int = 3, compression: int = 0, method: int = 0, palette: bool = True, end: bytes = b"",
-             after: bytes = b"", late_palette: bool = False, between: bytes | None = None) -> bytes:
+             after: bytes = b"", late_palette: bool = False, between: bytes | None = None,
+             header_twice: bool = False, palette_body: bytes = b"\x00\x00\x00") -> bytes:
     """An ICO file of 1 frame, a 2 by 2 PNG of colour type colour with the IHDR compression and filter methods given,
-    a PLTE chunk of 1 entry if palette, IDAT data of a zlib stream followed by the bytes after, in 1 IDAT chunk, or,
+    a second, equal IHDR chunk after the first if header_twice, a PLTE chunk holding palette_body (by default 1 entry)
+    if palette, IDAT data of a zlib stream followed by the bytes after, in 1 IDAT chunk, or,
     if between is given, split at its middle into 2 IDAT chunks with the bytes between (whole chunks, or none)
     between them, a second PLTE chunk after the IDAT chunks if late_palette, and an IEND chunk holding end; with the
     defaults, and with between empty, png_frame_problems() passes it."""
@@ -3702,7 +3710,8 @@ def made_ico(colour: int = 3, compression: int = 0, method: int = 0, palette: bo
     half = len(data) // 2
     image = (png_chunk(b"IDAT", data) if between is None
              else png_chunk(b"IDAT", data[:half]) + between + png_chunk(b"IDAT", data[half:]))
-    frame = (PNG_SIGNATURE + png_chunk(b"IHDR", header) + (png_chunk(b"PLTE", b"\x00\x00\x00") if palette else b"")
+    frame = (PNG_SIGNATURE + png_chunk(b"IHDR", header) * (2 if header_twice else 1)
+             + (png_chunk(b"PLTE", palette_body) if palette else b"")
              + image + (png_chunk(b"PLTE", b"\x00\x00\x00") if late_palette else b"") + png_chunk(b"IEND", end))
     return ICO_MAGIC + struct.pack("<H", 1) + struct.pack("<BBBBHHII", 2, 2, 0, 0, 1, 8, len(frame), 22) + frame
 
@@ -3720,8 +3729,9 @@ def check_favicon(failures: list[str]) -> int:
     frame changed, the committed file with a byte inside the second chunk of its first frame changed, which fails that
     chunk's CRC, an ICO file of 62 bytes whose frame is a BMP header with no pixels, and an ICO file whose PNG frame is
     of colour type 3 with no PLTE chunk, of compression method 1, of filter method 1, with an IEND chunk that holds
-    a byte, with 8 bytes after the zlib stream of its image data, with a second PLTE chunk after its image data, or
-    with its image data split between 2 IDAT chunks that a tEXt chunk separates; and it must pass the same file whose
+    a byte, with 8 bytes after the zlib stream of its image data, with a second PLTE chunk after its image data,
+    with its image data split between 2 IDAT chunks that a tEXt chunk separates, with a second IHDR chunk after its
+    first, or of colour type 2 with a PLTE chunk of 1 byte; and it must pass the same file whose
     PNG frame has none of those faults, in 1 IDAT chunk and with that image data split between 2 consecutive IDAT
     chunks."""
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
@@ -3761,7 +3771,10 @@ def check_favicon(failures: list[str]) -> int:
                made_ico(after=b"\x00" * 8)),
               ("an ICO file whose PNG frame has a second PLTE chunk after its image data", made_ico(late_palette=True)),
               ("an ICO file whose PNG frame has its image data split between 2 IDAT chunks that a tEXt chunk separates",
-               made_ico(between=png_chunk(b"tEXt", b"k\x00v"))))
+               made_ico(between=png_chunk(b"tEXt", b"k\x00v"))),
+              ("an ICO file whose PNG frame has a second IHDR chunk after its first", made_ico(header_twice=True)),
+              ("an ICO file whose PNG frame is of colour type 2 with a PLTE chunk of 1 byte",
+               made_ico(colour=2, palette_body=b"\x00")))
     for name, fault in faults:
         if not ico_problems(fault):
             failures.append(f"favicon: ico_problems() passes {name}")

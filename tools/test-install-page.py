@@ -18,11 +18,12 @@ as a source, an unreadable page or stylesheet, a file of each suffix that
 the search reads only as UTF-8 that is not UTF-8, a page, a stylesheet, an
 SVG file or a script that declares an encoding other than UTF-8 or holds an
 escape character, a text file and a binary file under site/install/, a page
-3 folders below site/, a _redirects file below site/, a link, a folder set
-to mode 000 or a folder under site/assets/ that cannot be listed, an SVG
-file whose references make the rounds of the search hold exactly the most
-forms, or characters in all, that the gate reads (FORM_LIMIT and
-FORM_CHARACTERS) or 1 more,
+3 folders below site/, a _redirects file below site/, a link, a FIFO, a
+folder set to mode 000 or a folder under site/assets/ that cannot be
+listed, an SVG file whose references make the rounds of the search hold
+exactly the most forms, or characters in all, that the gate reads
+(FORM_LIMIT and FORM_CHARACTERS) or 1 more, a file with no reference that
+holds exactly the most characters or 1 more,
 or copy the whole committed site/ over the copy, or add a line to
 site/_redirects that holds a character other than the line feed at which a
 reading may end a line or a field, and assert that such a line fails, that a source of
@@ -379,16 +380,19 @@ REDIRECT = ("which this gate reads, failing closed, as able to match an install 
 # beneath, and that cannot be evaluated; and the 10 release lines of the committed file, before its logo redirects.
 NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
 NAMED_THERE = (REDIRECT + " from the page or serve other content. A file under site/install/, where the install pages "
-               "are, names its file name in some letter case: site/install/")
-NAMED = "a file under site/ names in some letter case ("
+               "are, names its file name in some letter case, as written or in another form that the name search "
+               "reads (name_tokens()): site/install/")
+NAMED = ("a file under site/ names in some letter case, as written or in another form that the name search reads "
+         "(name_tokens()): ")
 OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
 UNEVALUATED = "which could not be evaluated: "
 RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:10])
 # The gate's words for a rule of site/_redirects whose destination names the file name of the source that the
 # committed line 11 holds, and for 1 whose destination holds a placeholder or a splat, so that the gate reads each as
 # able to lead to a source that the redirect reading accepts.
-LEADS = ("which names the file name of a source that the redirect reading accepts under a loaded segment, compared in "
-         "any letter case: line 11 (/assets/baseline/logos/aiqt-card.svg)")
+LEADS = ("which names, as written or percent-decoded, the file name of a source that the redirect reading accepts "
+         "under a loaded segment, compared in any letter case, each source given with the first form of the field that "
+         "names it: line 11 (/assets/baseline/logos/aiqt-card.svg)")
 EXPANDS = ("as a placeholder or a splat does; the reading does not expand either, so it reads the destination as able "
            "to give the path of every source that it accepts")
 # The gate's words for a line of site/_redirects that holds a character other than the line feed at which a reading
@@ -417,7 +421,10 @@ FORMS_CASE = "the committed redirects beside an SVG file whose entity and charac
 # The gate's words for a redirect source whose first segment is favicon.ico, which a browser may request without a link.
 REQUESTED = ("which this gate reads, failing closed, as able to match /favicon.ico, a file that a browser may request "
              "from the site's root without a link for any page")
-TIMED = {FORMS_CASE: 60}
+# A case with a FIFO under site/, which the name search must name and not read: a gate that opens it as a file waits
+# for a writer that never comes, so the case must end within the seconds that TIMED gives it.
+FIFO_CASE = "the committed redirects beside a FIFO under site/"
+TIMED = {FORMS_CASE: 60, FIFO_CASE: 60}
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -712,7 +719,7 @@ def leads(destination: str, source: str = "/foo.svg"):
 def naming(name: str, where: str = "site/about/index.html") -> tuple[int, str]:
     """The exit code and words of the gate's refusal of a source whose file name is name, named by the file where
     alone."""
-    return (1, f"whose file name {name} {NAMED}{where});")
+    return (1, f"whose file name {name} {NAMED}{where};")
 
 
 # Markup inside a file name in the text of a style or script element, which the name search reads without that markup,
@@ -1772,11 +1779,11 @@ CASES = [
         (1, NAMED_THERE)),
     ("a dropped logo that another page of the site loads",
         create("site/about/index.html", '<!doctype html>\n<img src="/assets/baseline/logos/AIQT-CARD.svg" alt="">\n'),
-        (1, f"whose file name aiqt-card.svg {NAMED}site/about/index.html)")),
+        (1, f"whose file name aiqt-card.svg {NAMED}site/about/index.html;")),
     ("a dropped logo that a stylesheet of another page loads",
         both(create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/about.css">\n'),
              create("site/assets/about.css", ".x { background: url(baseline/logos/aiqt-mono.svg); }\n")),
-        (1, f"whose file name aiqt-mono.svg {NAMED}site/assets/about.css)")),
+        (1, f"whose file name aiqt-mono.svg {NAMED}site/assets/about.css;")),
     # Loads that a grammar of loads can miss: each page or file writes the file name of the source in a form that the
     # name search reads, so each source fails.
     ("a srcset whose URL and descriptor a tab separates",
@@ -1804,7 +1811,7 @@ CASES = [
         both(create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/i.css">\n'),
              create("site/assets/i.css", '@import"/assets/x2.css";\n'),
              append(REDIRECTS, "/assets/x2.css /x.css 200\n")),
-        (1, f"has the source /assets/x2.css, whose file name x2.css {NAMED}site/assets/i.css);")),
+        (1, f"has the source /assets/x2.css, whose file name x2.css {NAMED}site/assets/i.css;")),
     ("an @import of a file without the .css suffix, and what that file loads",
         named('<link rel="stylesheet" href="/assets/qa/q.css">', "/assets/nc.svg", "site/about/index.html",
               create("site/assets/qa/q.css", '@import "u";\n'),
@@ -2031,6 +2038,14 @@ CASES = [
                + SVG_FILE.format("<text>" + "&a;" * 4001 + "y" * 6328977 + "</text>")),
         (1, UNEVALUATED + "the file site/assets/chars1.svg could not be read: its HTML character references and XML "
             "entity references decode and expand to more than 64 forms, or to forms of more than 16777216 characters")),
+    # The same bound holds the text as written, before any round adds a form: a file of exactly 16777216 characters
+    # and no reference passes, and 1 of 16777217 fails.
+    ("the committed redirects beside a file of exactly 16777216 characters with no reference",
+        create("site/assets/size0.txt", "y" * 16777216), 0),
+    ("the committed redirects beside a file of 16777217 characters with no reference",
+        create("site/assets/size1.txt", "y" * 16777217),
+        (1, UNEVALUATED + "the file site/assets/size1.txt could not be read: it holds 16777217 characters, more than "
+            "the 16777216 characters in all that the forms of the name search may hold")),
     ("the committed redirects beside an SVG file whose internal entities name each other",
         create("site/assets/loop.svg", '<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]>'
                + SVG_FILE.format("<text>&a;</text>")),
@@ -2071,6 +2086,11 @@ CASES = [
     ("the committed redirects beside a linked file", linked_file,
         (1, "site/_redirects line 11 has the source /assets/baseline/logos/aiqt-card.svg, " + UNEVALUATED
             + "site/ext.html is a link")),
+    # An entry that is neither a file, a folder nor a link, here a FIFO, is not read either, so every source under a
+    # loaded segment fails and names it.
+    (FIFO_CASE, lambda root: os.mkfifo(root / "site" / "pipe"),
+        (1, "site/_redirects line 11 has the source /assets/baseline/logos/aiqt-card.svg, " + UNEVALUATED
+            + "site/pipe is neither a file nor a folder, which the name search does not follow or read")),
     # What occupies a source: a page there that Pages serves without its .html or .htm, in any letter case, and a folder
     # at its last segment; and a file above it in another letter case.
     ("a redirect of a page's address without its .html", both(create("site/assets/qzv.html", "<!doctype html>\n"),
@@ -2131,7 +2151,8 @@ CASES = [
     ("a page that loads a path that a redirect sends to an accepted logo source",
         both(whole_site, edit("site/license/index.html", "</body>", '<img alt="" src="/foo.svg">\n</body>'),
              append(REDIRECTS, "/foo.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS
+            + " as written")),
     ("a redirect to an accepted logo source in another letter case", leads("/ASSETS/Baseline/Logos/AIQT-Card.SVG"),
         (1, "site/_redirects line 33 has the destination /ASSETS/Baseline/Logos/AIQT-Card.SVG, " + LEADS)),
     ("a redirect to an accepted logo source under a full URL on another host",
@@ -2148,8 +2169,8 @@ CASES = [
     ("a redirect to an accepted logo source written with backslashes",
         leads("\\assets\\baseline\\logos\\aiqt-card.svg"), (1, LEADS)),
     ("a redirect whose destination holds a placeholder", leads("/assets/baseline/logos/:name", "/foo/:name"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/:name, which holds a : or a * after "
-            "any http:// or https:// at its start, " + EXPANDS)),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/:name, which, as written, holds a : "
+            "after any http:// or https:// at its start, " + EXPANDS)),
     ("a redirect whose destination holds a splat", leads("/assets/baseline/:splat", "/foo/*"), (1, EXPANDS)),
     ("a redirect to another host with a port", leads("https://other.example:8443/x.svg"), (1, EXPANDS)),
     # A : or a * in a destination fails only while the redirect reading accepts a source, so a port passes when the
@@ -2167,10 +2188,35 @@ CASES = [
         (1, "site/_redirects line 33 has after its destination the field /assets/baseline/logos/aiqt-card.svg, "
             + LEADS)),
     ("a redirect whose destination holds a * and no :", leads("/assets/baseline/logos/*"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/*, which holds a : or a * after any "
-            "http:// or https:// at its start, " + EXPANDS)),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/*, which, as written, holds a * after "
+            "any http:// or https:// at its start, " + EXPANDS)),
     ("a redirect to another host whose scheme is in capitals", leads("HTTPS://other.example/x.svg"), 0),
     ("a redirect to another host whose scheme is in mixed letter case", leads("hTtP://other.example/x.svg"), 0),
+    # Every form of a destination is read: a : or a * that only a percent-decoded form holds fails, and so does the
+    # file name of an accepted source that only the form as written holds, here 1 that the percent-decoding joins to a
+    # further letter, so that a reading of the first form alone, or of the last alone, fails 1 of these cases.
+    ("a redirect whose destination holds a : only once percent-decoded", leads("/assets/x%3Aname"),
+        (1, "site/_redirects line 33 has the destination /assets/x%3Aname, which, once percent-decoded, holds a : "
+            "after any http:// or https:// at its start, " + EXPANDS)),
+    ("a redirect whose destination holds a * only once percent-decoded twice", leads("/assets/x%252A"),
+        (1, "site/_redirects line 33 has the destination /assets/x%252A, which, percent-decoded 2 times, holds a * "
+            "after any http:// or https:// at its start, " + EXPANDS)),
+    # Each refusal of a field names the form of it that fails, so a refusal whose field holds the character or the
+    # file name only in a percent-decoded form does not say that the field as written holds it.
+    ("a redirect from /x whose destination holds a * only once percent-decoded", append(REDIRECTS, "/x /y%2A 301\n"),
+        (1, "site/_redirects line 33 has the destination /y%2A, which, once percent-decoded, holds a * after any "
+            "http:// or https:// at its start, " + EXPANDS)),
+    ("a redirect to an accepted logo source whose file name only the percent-decoded form names",
+        leads("/assets/baseline/logos/aiqt%2Dcard.svg"),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt%2Dcard.svg, " + LEADS
+            + " once percent-decoded")),
+    ("a redirect to an accepted logo source whose file name only the form percent-decoded twice names",
+        leads("/assets/baseline/logos/aiqt%252Dcard.svg#top"),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt%252Dcard.svg#top, " + LEADS
+            + " percent-decoded 2 times")),
+    ("a redirect to an accepted logo source whose percent-decoding joins a letter to its file name",
+        leads("/assets/baseline/logos/aiqt-card.svg%41"),
+        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg%41, " + LEADS)),
     # site/_redirects ends a line only at a line feed, and a line that holds another character at which a reading may
     # end a line or a field fails, so a destination after such a character cannot go unjudged.
     *break_cases(),
@@ -2250,6 +2296,14 @@ CASES = [
              append(REDIRECTS, "/assets/zi1.svg /y 301\n")),
         (1, "site/_redirects line 33 has the source /assets/zi1.svg, " + NAMED_THERE
             + "blob.bin, site/install/notes.txt.")),
+    # Each refusal of a source whose file name a file names says that the file names it as written or in another form
+    # that the name search reads, so a refusal of a file that names it only percent-encoded is true of that file.
+    ("a text file under site/install/ that names a source's file name only percent-encoded",
+        both(create("site/install/pe.txt", "see /assets/zi%32.svg\n"), append(REDIRECTS, "/assets/zi2.svg /y 301\n")),
+        (1, "site/_redirects line 33 has the source /assets/zi2.svg, " + NAMED_THERE + "pe.txt.")),
+    ("a page that loads a source by a percent-encoded file name alone",
+        named('<img alt="" src="/assets/baseline/logos/q%2Dpe.svg">', "/assets/baseline/logos/q-pe.svg"),
+        naming("q-pe.svg")),
     # The name search walks every folder under site/, at any depth, and leaves out only the root site/_redirects.
     ("a page 3 folders below site/ that loads a source",
         named('<img alt="" src="/assets/dp4.svg">', "/assets/dp4.svg", "site/d1/d2/d3/deep.html"),

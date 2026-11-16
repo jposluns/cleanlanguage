@@ -328,7 +328,8 @@ What it verifies
    character references still decode, or its entity references still
    expand, after ``UNESCAPE_ROUNDS`` rounds of both, or those rounds hold
    more than ``FORM_LIMIT`` forms or forms of more than
-   ``FORM_CHARACTERS`` characters in all, which bounds their work, or an entry there is a link or
+   ``FORM_CHARACTERS`` characters in all, the file's text as written
+   included, which bounds their work, or an entry there is a link or
    neither a file nor a folder, fails and names that input. Every other
    source passes: 1 whose first segment is 1 of ``LOADED_SEGMENTS`` is then
    an accepted source, and 1 whose first segment is none of them is not
@@ -1348,7 +1349,9 @@ ENTITY_LIMIT = 1 << 22
 # all. The rounds stop after UNESCAPE_ROUNDS + 1 in any case, but an entity declared many times with references
 # escaped to many depths makes each round add forms for each form that the round before added, so the forms, and the
 # work of each round, could grow many times over from round to round; these bounds limit the work of each round, and a
-# file that needs more fails closed (name_tokens()). The committed files need at most 2 forms and 267259 characters.
+# file that needs more fails closed (name_tokens()). The text as written counts among the forms, so a file of more than
+# FORM_CHARACTERS characters fails closed before the first round, whether or not it holds a reference. The committed
+# files need at most 2 forms and 267259 characters.
 FORM_LIMIT = 64
 FORM_CHARACTERS = 1 << 24
 # Check 7: the files that this gate judges among those that a browser may request from the site's root without a link,
@@ -2194,7 +2197,8 @@ def name_tokens(text: str) -> set[str]:
     a srcdoc, is decoded too, and an entity whose value or whose reference a character reference writes, such as
     <!ENTITY a "&#38;p1;&#38;p2;">, is expanded too, in at most UNESCAPE_ROUNDS rounds, a ValueError if round
     UNESCAPE_ROUNDS + 1 still adds a form, and a ValueError as soon as the rounds hold more than FORM_LIMIT forms or
-    forms of more than FORM_CHARACTERS characters in all, so that the work of the rounds is bounded; the text of each
+    forms of more than FORM_CHARACTERS characters in all, the text as written included (a text of more than
+    FORM_CHARACTERS characters fails at once), so that the work of the rounds is bounded; the text of each
     style or script element of each form so far without the comments, processing instructions, CDATA section markers and
     child elements inside it, by XML_MARKUP and by HTML_MARKUP (markup_forms()); each form so far with CSS escapes
     decoded and with JavaScript escapes decoded (JS_ESCAPE, and the JavaScript string escapes of JS_STRING_ESCAPE,
@@ -2213,6 +2217,9 @@ def name_tokens(text: str) -> set[str]:
     forms = {text}
     fresh = set(forms)
     held = len(text)
+    if held > FORM_CHARACTERS:
+        raise ValueError(f"it holds {held} characters, more than the {FORM_CHARACTERS} characters in all that the "
+                         "forms of the name search may hold")
     for rounds in range(UNESCAPE_ROUNDS + 1):
         added: set[str] = set()
         for form in sorted(fresh):
@@ -2367,6 +2374,14 @@ def destination_forms(destination: str) -> list[str]:
     return forms
 
 
+def form_name(index: int) -> str:
+    """Check 7: the form of destination_forms() at index, as a refusal names it: as written, or percent-decoded once
+    or the given number of times."""
+    if index == 0:
+        return "as written"
+    return "once percent-decoded" if index == 1 else f"percent-decoded {index} times"
+
+
 def destination_problem(destination: str, accepted: list[tuple[int, str]]) -> str | None:
     """Check 7: why this reading reads a field of site/_redirects after its source, its destination or a later field,
     as able to lead to a source that the redirect reading accepts under 1 of LOADED_SEGMENTS (accepted: each such
@@ -2384,19 +2399,25 @@ def destination_problem(destination: str, accepted: list[tuple[int, str]]) -> st
     does not tell apart from a placeholder. So a failure here shows that the field holds such a token or such a
     character, not that it leads to an accepted source."""
     forms = destination_forms(destination)
-    tokens = {token for form in forms for token in NAME_TOKEN.findall(fold(form))}
+    held = [set(NAME_TOKEN.findall(fold(form))) for form in forms]
+    tokens = set().union(*held)
     named = [(number, source) for number, source in accepted if fold(source.rsplit("/", 1)[1]) in tokens]
     if named:
-        shown = ", ".join(f"line {number} ({source})" for number, source in named)
-        return ("which names the file name of a source that the redirect reading accepts under a loaded segment, "
-                f"compared in any letter case: {shown}")
-    for form in forms:
+        shown = ", ".join(
+            f"line {number} ({source}) "
+            + form_name(next(index for index, found in enumerate(held) if fold(source.rsplit("/", 1)[1]) in found))
+            for number, source in named)
+        return ("which names, as written or percent-decoded, the file name of a source that the redirect reading "
+                "accepts under a loaded segment, compared in any letter case, each source given with the first form "
+                f"of the field that names it: {shown}")
+    for index, form in enumerate(forms):
         scheme = DESTINATION_SCHEME.match(form)
-        if accepted and re.search(r"[:*]", form[scheme.end() if scheme else 0:]):
+        found = re.search(r"[:*]", form[scheme.end() if scheme else 0:])
+        if accepted and found:
             shown = ", ".join(str(number) for number, _ in accepted)
-            return ("which holds a : or a * after any http:// or https:// at its start, as a placeholder or a splat "
-                    "does; the reading does not expand either, so it reads the destination as able to give the path "
-                    f"of every source that it accepts under a loaded segment: lines {shown}")
+            return (f"which, {form_name(index)}, holds a {found.group()} after any http:// or https:// at its start, "
+                    "as a placeholder or a splat does; the reading does not expand either, so it reads the destination "
+                    f"as able to give the path of every source that it accepts under a loaded segment: lines {shown}")
     return None
 
 
@@ -2478,10 +2499,12 @@ def redirect_problems(redirects: str) -> list[str]:
             shown = ", ".join(sorted(set(install or names[name])))
             if install:
                 problems.append(head + reach + " A file under site/install/, where the install pages are, names its "
-                                f"file name in some letter case: {shown}.")
+                                "file name in some letter case, as written or in another form that the name search "
+                                f"reads (name_tokens()): {shown}.")
             else:
-                problems.append(head + f"whose file name {name} a file under site/ names in some letter case "
-                                f"({shown}); a file that names it may load it, so a rule there may send the reader "
+                problems.append(head + f"whose file name {name} a file under site/ names in some letter case, as "
+                                "written or in another form that the name search reads (name_tokens()): "
+                                f"{shown}; a file that names it may load it, so a rule there may send the reader "
                                 "away from that file or serve other content.")
             continue
         entry, unlisted = occupied(source)
