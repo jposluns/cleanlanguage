@@ -90,8 +90,8 @@ Per item (the machine-local "Working method" section sets which of these steps a
     its place. While a seed is owed, the COMBINE step is HELD as (c) holds it, and each later FEED
     THE PIPELINE step (cycle step 2) re-issues the owed seed only when that family can run:
     `orch-verify --pick` for that family succeeds AND that family is not at its cost cap. A seed leg
-    that runs on gemini and ends in any of the ways VERIFIER DIVERSITY lists for a failed gemini leg
-    (for a seed leg, a delivered seed counts as a delivered verdict) is a failed seed leg: its seed
+    that runs on gemini and delivers no seed is a failed seed leg (the quote and leg-failure
+    conditions of FAILED LEG below bind review legs only, not seed output): its seed
     is OWED in the same way, so the COMBINE step stays HELD until the owed seed arrives, and it is
     re-issued on the re-issue terms VERIFIER DIVERSITY sets for a failed gemini leg, never replaced
     by a claude seed. When neither combiner in (c) can combine, the COMBINE step is still HELD, as
@@ -124,48 +124,89 @@ Per item (the machine-local "Working method" section sets which of these steps a
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
+FAILED LEG (every family, every tier): this is the 1 definition of a failed leg, and every other
+place in this file that names a failed leg, except the failed seed leg of step (b), refers to it.
+A review leg of any family, claude, gemini or codex, is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the
+family, when it ends in any of these 3 ways (maintainer decision, Entry 125, 2026-11-15):
+(1) it delivers no verdict: it ends `FAILOVER_LIMIT` (exit 4), or in an empty, degenerate, or
+5xx chain, at the failover bound of its own dispatch; it ends `EXHAUSTED` (exit 5, rate-limited
+or out of quota); it is stopped by a cost cap; or it otherwise delivers no verdict (a dispatch
+timeout, a dispatch auth failure, or a delivery that lacks the agreed completion evidence); an
+UNVERIFIABLE result is a delivered verdict, not a failed leg;
+(2) a quote in it is absent from its source;
+(3) a quote in it breaches the whole-line rule of the maintainer decisions of Entries 61, 63, 64
+and 69 (2026-11-14 and 2026-11-15): a quote counts as found when its exact text is on its cited
+line or within 1 line of it, a range quote when its joined text matches the cited lines or the
+same lines within 1 line of the cited range, and either of them also when it matches only once
+each line's leading spaces are stripped or only without its Markdown formatting marks
+(backticks, emphasis asterisks or underscores), with each offset, range, collapse and mark
+recorded; text more than 1 line off, changed or missing words, a dropped comment marker, or any
+other changed character fails it.
+These quote and leg-failure conditions bind review legs only, not seed or drafter output, whose
+cited evidence is checked at source (coordinator ruling under the maintainer's delegation,
+2026-11-15).
+Every QA brief states this rule in the same words for every family and asks for the same claims
+block, and 1 checker applies it to the legs of every family. Wherever this file keeps a seat
+OWED until a leg of a family delivers a verdict, a failed leg does not end it, whether the family
+is claude, gemini or codex. Each family keeps its own re-issue terms: the CODEX ROLE LIMIT sets
+them for a leg in codex's own seat, VERIFIER DIVERSITY sets them for a gemini leg and for a
+failed stand-in leg or owed leg, and a failed claude leg is re-issued as the claude leg of the
+next round, under the same-family rule (coordinator ruling under the maintainer's delegation,
+2026-11-15).
+
 CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the implementation, or fixes.
-Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1` (one account, no failover). A codex leg that
-ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT` (exit 4), or an empty, degenerate, or
-5xx chain), or that ends `EXHAUSTED` (exit 5, rate-limited or out of quota), or that is stopped by a
-cost cap, or that otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or a
-delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered verdict, not a
-failed leg), is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
+Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1` (1 account, no failover), which is the
+failover bound of its dispatch under FAILED LEG. A codex leg that fails in any of the ways FAILED
+LEG sets is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
 It is recorded, then re-issued at most once, after a wait between attempts (not cycle step 8,
 PAUSE), never with a higher limit, and only when `orch-verify --pick codex` succeeds AND codex is
 not at its cost cap; the machine-local "Working method" section sets when, and as which leg, the
-re-issue runs. While undelivered, its seat is OWED, a ?HOLD on
+re-issue runs. This single re-issue binds only a leg in codex's own seat: a failed codex stand-in
+leg in the gemini seat is re-issued on the terms VERIFIER DIVERSITY sets for that seat. While
+a failed leg in codex's own seat is undelivered, that seat is OWED, a ?HOLD on
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
-dropped or substituted on that basis. The machine-local "Working method" section sets when an owed
-seat ends. A codex seat still owed after its single re-issue is filled by the codex leg of the next
-DISCOVERY round, from the sixth DISCOVERY round on, since the first 5 DISCOVERY rounds have no
-seat for that family (that section sets the case of a light item; a codex seat owed from a light
-item's QA runs lapses when the item is regraded, and the regraded item's DISCOVERY panel governs
-from its first DISCOVERY round); after the last DISCOVERY round
-that section sets, no VERIFY round fills that seat, which stays owed until the item parks
-(maintainer decisions, Entries 95 to 98, 2026-11-15).
+dropped or substituted on that basis. The rest of this paragraph sets when an owed codex seat
+ends, and the machine-local "Working method" section sets when an item parks. A codex seat still
+owed after its single re-issue is filled by the codex leg of the next DISCOVERY round whose panel
+holds a codex seat: for a critical change, as defined below, the next DISCOVERY round; for any
+other change, the next DISCOVERY round from the sixth on, since its first 5 DISCOVERY rounds have
+no seat for that family; after the last DISCOVERY round that section sets, no VERIFY round fills
+that seat, which stays owed until the item parks (maintainer decisions, Entries 90 and 124,
+2026-11-15).
+That section sets the case of a light item, except that a codex seat owed from a light item's QA
+runs lapses when the item is regraded, and the regraded item's DISCOVERY panel governs from its
+first DISCOVERY round (maintainer decision, Entry 98, 2026-11-15), so a light item regraded and
+found critical enters its first DISCOVERY round with all 3 families (coordinator ruling under
+the maintainer's delegation, 2026-11-15).
 codex may review any change, including a change to a guard, hook, sandbox, filter, or permission
 check, but only through a brief worded neutrally as a review for any issues to fix before release, for
 example "review this code for any issues that should be fixed before release": no wording that
 sets codex against the change, asks it to disprove the change, or frames the review as a security
 review (maintainer decision, 2026-11-14). The neutral wording binds the codex brief: where 1
 brief would serve several families, codex gets its own neutral brief, and the other families
-may keep the review framing. A security-control review (a review of a change that
-touches, in whole or in part, a guard, hook, sandbox, filter, or permission check) is of the tier
-that the machine-local "Working method" section grades the change, which governs that tier; this
-file sets no tier for it. VERIFIER DIVERSITY sets its panel as for any other review on that tier,
-so the third seat goes to codex (neutral brief) only from the sixth DISCOVERY round; in the first
-5 DISCOVERY rounds, in a VERIFY round, or in a light item's dual-family QA run, that family takes
-a seat only as the stand-in for a genuinely unreachable family (maintainer decision, 2026-11-15,
-which supersedes the 2026-11-14 decision that gave a codex seat to such a review from the first
-DISCOVERY round). This rule adds no seat to that panel. Its codex leg goes only to this orchestrator's individual codex seat, never
-to the multi-seat codex pool that uses API keys (a pool now being onboarded; infrastructure
-orchestrator ruling, 2026-11-14). The orchestrator classifies each
-review at brief time, checks each codex brief's wording against this limit, and records the
-classification and the check in the item QA record (the QA notes on the item's entry in
-`/opt/cleanlanguage/private/TODO.md`, carried into `DONE.md` at CLOSE).
+may keep the review framing. A CRITICAL change is a change to a security-relevant gate, a
+guard or hook change, or a change to release-integrity code; a security-control review (a review
+of a change that touches, in whole or in part, a guard, hook, sandbox, filter, or permission
+check) is a review of a critical change (maintainer decision, Entry 124, 2026-11-15, which
+narrows the decision of Entry 95, 2026-11-15, back to a codex seat from the first DISCOVERY
+round for such a review, and coordinator ruling under the maintainer's delegation, 2026-11-15,
+which keeps sandbox, filter and permission checks in it); and a change whose classification is
+doubtful counts as critical, the heavier tier when in doubt (coordinator ruling under the
+maintainer's delegation, 2026-11-15). A critical change is never graded light:
+it is of at least the substantive tier, and of the tier within that floor that the machine-local
+"Working method" section gives it, which governs that tier (coordinator ruling under the
+maintainer's delegation, 2026-11-15). VERIFIER
+DIVERSITY sets its panel: the third seat goes to codex (neutral brief) from its first DISCOVERY
+round. Only this orchestrator's individual codex seat takes the codex leg of a security-control
+review, never the multi-seat codex pool that uses API keys (a pool now being onboarded;
+infrastructure orchestrator ruling, 2026-11-14). The orchestrator classifies each item as
+critical or not by reading its diff, and counts a doubtful classification as critical, with its
+reason recorded; it
+classifies each review at brief time, checks each codex brief's wording against this limit, and
+records the classifications and the check in the item QA record (the QA notes on the item's
+entry in `/opt/cleanlanguage/private/TODO.md`, carried into `DONE.md` at CLOSE).
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
 PROMISE: collect through the tracked background mechanism that survives to completion.
@@ -176,26 +217,36 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 
 The tiers (light, substantive, and sensitive) and the per-change QA cycle (DISCOVERY and VERIFY
 rounds, the round budget, the premise review, failed rounds, convergence, and parking) are defined
-ONLY in that file's "Working method" section; do not restate them here, except that the CODEX ROLE
-LIMIT above names which round fills an owed codex seat, and VERIFIER DIVERSITY below names the
-rounds that seat the third family, the round in which an owed gemini leg or a failed stand-in leg
-runs, and when an owed gemini or claude seat ends; the two name, in that order, the lapse of an
-owed codex seat and of an owed gemini seat when a light item is regraded. Pool workers
+ONLY in that file's "Working method" section; do not restate them here, except that FAILED LEG
+above defines a failed leg of every family and names the round in which a failed claude leg is
+re-issued, the CODEX ROLE LIMIT above defines a critical change, bars a light grade for it,
+and names the rounds that seat the third family, which round fills an owed codex seat, and when
+an owed codex seat ends, and VERIFIER DIVERSITY below names the
+rounds that seat the third family, the VERIFY panel and the convergence of a critical change,
+the round in which an owed gemini leg or a failed stand-in leg
+runs, and when an owed gemini or claude seat ends; those 2 sections name, in that order, the lapse
+of an owed codex seat and of an owed gemini seat when a light item is regraded. Pool workers
 cannot read it, so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline
 section above).
-The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
-so do the two tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
+The GEMINI ROLE LIMIT, FAILED LEG, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind
+every tier; so do the 2 tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
 de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOLD above. The
 "Working method" section in that file sets when a light item is regraded and how a regraded item
 enters the QA cycle.
 
 VERIFIER DIVERSITY (QA, every tier): agy (gemini) is the second family in every panel, except
 where gemini is genuinely unreachable and its seat is given to codex as set out below. codex, on
-the terms of the CODEX ROLE LIMIT, is the third family from the sixth DISCOVERY round of the QA
-cycle, a security-control review included, as that limit states; the first 5 DISCOVERY rounds,
-every VERIFY round, and a light item's dual-family QA run have no seat for that family, so their
-panel is claude and the holder of the gemini seat, which is gemini, or codex as the stand-in set
-out below (maintainer decision, 2026-11-15). A second claude
+the terms of the CODEX ROLE LIMIT, is the third family from the first DISCOVERY round of the QA
+cycle for a critical change, as that limit defines it, a security-control review included, and
+from the sixth DISCOVERY round for every other change (maintainer decisions, Entries 90 and 124,
+2026-11-15); every VERIFY round, a light item's dual-family QA run, and the first 5 DISCOVERY
+rounds of a change that is not critical have no seat for that family, so their panel is claude
+and the holder of the gemini seat, which is gemini, or codex as the stand-in set out below
+(maintainer decision, 2026-11-15). Every VERIFY round of a critical change keeps the standard
+VERIFY panel, claude executing plus gemini static; before the sixth DISCOVERY round, a critical
+change's DISCOVERY panel is claude, codex and gemini, and its convergence needs all 3, with
+equal weight and every finding checked at source (coordinator rulings under the maintainer's
+delegation, 2026-11-15). A second claude
 review never fills a family's seat, nor does any other second review by a family that already
 holds a seat, however it is primed (maintainer decision, 2026-11-14; project rule
 `.claude/rules/external/verifier-panel.md`). A required family is dropped only when genuinely
@@ -203,9 +254,11 @@ UNREACHABLE, never for cost; cost never buys the reduction. When a required fami
 unreachable, record the drop. Where that family is gemini and the panel has no codex seat, give
 the gemini seat to codex as the stand-in, through a neutral brief on the CODEX ROLE LIMIT terms,
 only while gemini is genuinely unreachable (maintainer decision, 2026-11-15), and only where the
-panel has no codex seat of its own: the first 5 DISCOVERY rounds, every VERIFY round, and a light
-item's QA runs; from the sixth DISCOVERY round on, it never stands in and sits only in its own
-seat, and a genuinely unreachable gemini leaves the gemini seat OWED on the terms set below for
+panel has no codex seat of its own: every VERIFY round, a light item's QA runs, and the first 5
+DISCOVERY rounds of a change that is not critical; in a DISCOVERY round whose panel holds a codex
+seat, which is each DISCOVERY round of a critical change and the sixth and each later DISCOVERY
+round of any other change, it never stands in and sits only in its own seat, and a genuinely
+unreachable gemini leaves the gemini seat OWED on the terms set below for
 gemini (coordinator ruling under the maintainer's delegation, 2026-11-15). The seat of any other
 unreachable family goes to a reachable family that holds no seat (codex, through a neutral brief on
 the same terms); where there is none, the seat stays OWED, a ?HOLD on the QA STEP that needs it
@@ -224,21 +277,18 @@ substituted on that basis; the obligation ends when the item parks. A failed sta
 owed leg is re-issued in the next round in the family of the seat it fills: for the gemini seat,
 gemini when it is reachable, with codex standing in again only while gemini is still genuinely
 unreachable (maintainer decisions, 2026-11-15), and only where the panel of that next round has no
-seat of codex's own; from the sixth DISCOVERY round on, it never stands in, and a failed stand-in
-leg of the fifth DISCOVERY round leaves the seat it fills OWED while gemini is unreachable (coordinator ruling under
+seat of codex's own; in a DISCOVERY round whose panel holds a codex seat, it never stands in, so a failed
+stand-in leg whose next round is such a round (for a change that is not critical, a failed
+stand-in leg of the fifth DISCOVERY round) leaves the seat it fills OWED on the terms set above
+for gemini (coordinator ruling under
 the maintainer's delegation, 2026-11-15). A codex stand-in leg re-issued in this way is the
 gemini seat's re-issue, not codex's own: the single re-issue of a codex leg binds only the codex
 seat, and the `ORCH_MAX_FAILOVERS=1` bound is unaffected (coordinator ruling under the
 maintainer's delegation, 2026-11-15).
-A gemini leg is a failed leg, NOT an unreachable family, when it ends in any of these ways, which
-are the ways the CODEX ROLE LIMIT lists for a failed codex leg, read without the codex bound: it
-ends `FAILOVER_LIMIT` (exit 4), or in an empty, degenerate, or 5xx chain, at the failover bound
-of its own dispatch; it ends `EXHAUSTED` (exit 5, rate-limited or out of quota); it is stopped by
-a cost cap; or it otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or
-a delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered
-verdict, not a failed leg). The codex-only terms (the `ORCH_MAX_FAILOVERS=1` bound, the single
-re-issue, and the rule on which round fills a seat still owed after that re-issue) do not apply
-to it.
+A gemini leg that fails in any of the ways FAILED LEG sets is a failed leg, NOT an unreachable
+family; the failover bound under FAILED LEG is that of its own dispatch. The codex-only terms (the
+`ORCH_MAX_FAILOVERS=1` bound, the single re-issue, and the rule on which round fills a seat still
+owed after that re-issue) do not apply to it.
 Its re-issue terms: it is recorded, then re-issued to gemini, after a wait between
 attempts, and only when `orch-verify --pick gemini` succeeds AND gemini is not at its cost cap,
 with a slim brief that gives the file pointers and line ranges to read rather than pasting whole
@@ -303,7 +353,7 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   entry and at each task boundary, and a decision-timeout switch changes the session's mode
   without a write, so the session's mode can differ from what the guard reads. When the host's
   mode folder, `/opt/orch-operator`, is itself absent, the guard allows a question, with a
-  one-line note, while the session reads the mode as unattended.
+  1-line note, while the session reads the mode as unattended.
   Whenever an AskUserQuestion guard denies an AskUserQuestion call, whether the repository's guard,
   the vendored AIQT guard `orch_ask_guard` or any other, for any reason and in any mode, the session
   records each decision it could not ask in its pending-decisions record,
@@ -333,7 +383,7 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   the guard does not read it.
 - DECISIONS: blocking + attended-autonomous -> surface immediately, up to 4 per round, in the four-role shape.
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
-  the four roles replace its Option A to D lettering. See that note for the roles, their order, and
+  the 4 roles replace its Option A to D lettering. See that note for the roles, their order, and
   which role carries the recommendation; this file does not restate them.
   Blocking + unattended -> the unattended vote rule in the machine-local
   `/opt/cleanlanguage/.claude/CLAUDE.md` "Put decisions to the maintainer in the four-role shape"
