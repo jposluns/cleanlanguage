@@ -76,12 +76,16 @@ These deny an untracked background detach (a bare `&`), a truncated background c
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop.
 `orch_truncation_guard` also denies, in every session, a Bash call whose payload it cannot
 read or whose working directory it cannot walk. How the detach scan reads here-document
-bodies and quotes comes from a recorded decision-table run for pull request 275, which passed
-328 named forms, in 407 rows of a form and a working directory (326 on a branch, 79 on a
-detached HEAD, for each git form, and 2 in a missing directory, for the 2 forms run there), to
-every Bash handler of the hook before the refresh and of the refreshed hook; forms not named
-here were not tried. Through `orch_truncation_guard` the
-refreshed hook denies:
+bodies and quotes comes from the decision-table run for pull request 275 that maintainer
+decision Entry 99 asked for, over 256 named forms (table sha256
+f2c518a0d1ee3da56c26f20f4615e9b4103cec8379c1061aba8308c38c07d0a2), and from its extension
+after review with the 72 forms that the third review ran. The extended run passed 328 named
+forms, in 407 rows of a form and a working directory (326 on a branch, 79 on a detached HEAD,
+for each git form, and 2 in a missing directory, for the 2 forms run there), to every Bash
+handler of the hook before the refresh and of the refreshed hook (table sha256
+ba0f9b6fc7c39d5f57f4cd94f9f906d1d19b4a7b9fe3646ee66106ca89f53a93, class summary sha256
+b4870a6ea63388179ee62750e36eae45f54cc4b3ede0cf8670095045f34f829d); forms not named here were
+not tried. Through `orch_truncation_guard` the refreshed hook denies:
 
 - a here-document body that a shell runs and that holds a bare `&`: `bash`, `sh`, `bash -s` or
   `sh -s`, directly or piped from `cat`, under a quoted, partly quoted, backslashed or `<<-`
@@ -104,7 +108,8 @@ refreshed hook denies:
   `setsid true`, or by `.` running the written file.
 
 The refreshed hook does not deny the following forms, which the hook before the refresh denied
-through `orch_truncation_guard` (80 rows, 57 distinct commands; the pull request 275
+through `orch_truncation_guard` (80 rows of the extended run, 57 distinct commands: 65 rows of
+the run that Entry 99 asked for and 15 of the forms added after review; the pull request 275
 description lists every form id by class):
 
 - a here-document of data written by `cat` (to a file, appended or to standard output), by
@@ -127,20 +132,25 @@ description lists every form id by class):
   `echo 'unfinished` and `echo "it`.
 
 None of these 80 rows starts a command in the background. Neither hook denies these forms of
-the run, each of which starts a background job: `bash -c "$(cat <<'EOF' ... EOF)"` and
+the extended run, each of which starts a background job: `bash -c "$(cat <<'EOF' ... EOF)"` and
 `out="$(bash <<'EOF' ... EOF)"` with `sleep 100 &` in the body, `bash <<< 'sleep 100 &'`,
 `bash -c 'sleep 100 &'`, a script written by `printf 'sleep 100 &\n'` and then run with `bash`
 or `sh`, a `python3 -` here-document whose body runs `os.system('sleep 100 &')`, and a body run
 by `bash` that holds `coproc true` or `setsid sleep 100` and no `&`. Neither denies a body run by `sh` that holds
 `setsid true`, a `python3 -I -` here-document with an `&` or an apostrophe inside a
 double-quoted Python string, under either delimiter, with or without a `2>&1` on its line or
-after it, or a `perl` body with an `&` inside a Perl string.
+after it, or a `perl` body with an `&` inside a Perl string. Outside both decision-table runs,
+`sh -c 'sleep 100 &'`, which starts a background job, was observed to get no decision from the
+refreshed hook: none of its Bash handlers decides it. It is not a form of either run, and no
+authorization is claimed for it.
 
 Maintainer decision Entry 99 accepted the pack's decisions verbatim and named the list, by
-class, of every form of this run that the refreshed hook no longer denies, in the pull request
-275 description, as the recorded authorization for those forms; maintainer decisions Entry 59
-and Entry 62 had already authorized 4 of them, all `cat > file` writes. Any form the maintainer
-later objects to goes to guardrails as a seed. Against the earlier pin of this change,
+class, of every form of the run it asked for that the refreshed hook no longer denies, in the
+pull request 275 description, as the recorded authorization for those forms. The 15 forms
+that were added to the run after review, from the third review's run, are covered by Entry 99
+as well (maintainer decision Entry 126). Maintainer decisions Entry 59 and Entry 62 had
+already authorized 4 of the forms, all `cat > file` writes. Any form the maintainer later
+objects to goes to guardrails as a seed. Against the earlier pin of this change,
 730c039b, the run of the first 256 forms moved 13 rows from deny to no decision, all data here-documents written
 by `cat` whose body holds an apostrophe beside a word that can start a background job, and 40
 rows from no decision to deny: the bodies that a shell runs, the write-then-run detach forms,
@@ -201,7 +211,7 @@ the refresh did not decide and the refreshed hook denies. 4 are the detached-HEA
   not;
 - `orch_truncation_guard` denies a Bash call whose working directory does not exist.
 
-The 72 forms that the third review ran add 15 such rows: `protected_line` denies
+In the extended run, the 72 forms that the third review ran add 15 such rows: `protected_line` denies
 `git -c core.hooksPath=/dev/null commit -m x`, a commit message holding an apostrophe on a
 detached HEAD, and a script written under an unquoted delimiter that runs
 `git -c core.hooksPath=/var/empty commit` with `sh`; `gate_weakening` denies 4 more
@@ -221,7 +231,7 @@ launch in `dispatch-ledger.jsonl`, and `orch_prompt_stamp` stamps each human pro
 one decision core. With no AEI enumerator declared, a turn-end Stop in scope is denied on
 `NO_ENUMERATOR` unless the operator escape sentinel `ESCAPE-ALLOW-YIELD` in `state_dir`
 releases it; on the maintainer host that sentinel is a root-owned file (observed 2026-10-29),
-and each release is logged as an operator escape event. The denial has two further exits.
+and each release is logged as an operator escape event. The denial has 2 further exits.
 It is bounded: after 2 denials since the last human prompt (the loop bound), or when the
 Stop event reports that a stop hook is already active, the Stop is allowed with the
 unresolved items reported as findings, and the forced exit is recorded for the next resume

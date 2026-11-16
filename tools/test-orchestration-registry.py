@@ -1986,6 +1986,20 @@ class HookCountDisclosure(unittest.TestCase):
                 self.assertIn("count {} but {} clock hooks registered".format(wrong, registered),
                               self._clock_problems(changed))
 
+    def test_clock_check_refuses_a_clock_hook_named_twice(self):
+        # 1 clock hook named twice must be refused, although the stated count and the number of
+        # names listed both still equal the registered count.
+        text = self._config_text()
+        match = re.search(self.CLOCK, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        clocks = sorted(name for name in self._registered() if name.startswith("clock_"))
+        self.assertGreaterEqual(len(clocks), 2, "naming 1 clock hook twice needs 2 registered")
+        twice = re.sub(r"`clock_\w+`", "`{}`".format(clocks[0]), match.group(2))
+        self.assertEqual(self._listed(twice).count(clocks[0]), len(clocks))
+        changed = text[:match.start(2)] + twice + text[match.end(2):]
+        self.assertIn("names {} but registered {}".format([clocks[0]] * len(clocks), clocks),
+                      self._clock_problems(changed))
+
     def test_each_registration_names_a_distinct_handler(self):
         names = self._registered()
         handlers = self._handlers()

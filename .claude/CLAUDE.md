@@ -10,9 +10,9 @@ The one priority ordering, decided in advance:
 
 **(Accuracy = Integrity = Quality = Trust) > Progress > Speed > Cost.**
 
-The four facets form one non-negotiable top tier, co-equal, with no ranking among
-them. Below the top tier sit three throughput values, in order: Progress, then
-Speed, then Cost. When two dimensions conflict, the higher tier wins outright, and
+The 4 facets form one non-negotiable top tier, co-equal, with no ranking among
+them. Below the top tier sit 3 throughput values, in order: Progress, then
+Speed, then Cost. When 2 dimensions conflict, the higher tier wins outright, and
 that call is made once, up front, so it never has to be re-argued under pressure.
 "Done faster" and "done cheaper" are never reasons for "done worse", and Progress
 never licenses less verification.
@@ -35,7 +35,7 @@ If any constraint would force a compromise on the top tier, halt and surface the
 tradeoff to the maintainer rather than resolving it silently in favour of
 progress, speed, or cost.
 
-The full AIQT standard, including the five rules of AIQT, is at
+The full AIQT standard, including the 5 rules of AIQT, is at
 https://aiqt.ai.
 
 The authoritative full statement is the vendored apex rule

@@ -1258,9 +1258,10 @@ class Doctor(Stage2Harness):
                              "attestations-validated.json", "guard-events.jsonl")
     # The state files orch_resume_audit opens with a plain blocking open (guard-events.jsonl at 33020 and
     # `_orch_append_jsonl` at 22162, escape-spoof.json at 33212, forced-exit.jsonl at 33160 and
-    # `_orch_read_jsonl` at 22173, forced-exit-surfaced.json at 33172, and the temporary files
-    # _orch_write_json_atomic opens for writing at 22267, via 33191 and, with attestations declared, via
-    # 33124).
+    # `_orch_read_jsonl` at 22173, and forced-exit-surfaced.json at 33172), and the 2 old fixed
+    # temporary paths that the doctor still checks. The refreshed hook no longer opens those 2: its
+    # _orch_write_json_atomic, via 33191 and, with attestations declared, via 33124, opens a random
+    # <name>.<16 hex>.tmp at 22266-22267.
     AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
                          "forced-exit-surfaced.json", "forced-exit-surfaced.json.tmp",
                          "attestations-validated.json.tmp")

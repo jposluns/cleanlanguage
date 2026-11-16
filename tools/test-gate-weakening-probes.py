@@ -35,8 +35,9 @@ pinned by its sha256, so any edit to a payload fails a named case until the pin 
 The hooks before the refresh to pack commit 9d249b47 allowed all 5 probes, so this test is red on
 them; --hook PATH runs the same cases against another copy of the hook to show that. The test pins
 these 5 forms only. It does not show that every write-then-run commit that skips hooks is denied:
-a written script that sets core.hooksPath, or a script decoded from base64, gets no decision from
-the refreshed hook (see .aiqt/config.md).
+a script written under a quoted delimiter that sets core.hooksPath, or a script decoded from
+base64, gets no decision from the refreshed hook, while protected_line denies such a
+core.hooksPath script written under an unquoted delimiter (see .aiqt/config.md).
 
 Usage: python3 -I tools/test-gate-weakening-probes.py [--hook PATH]
 """

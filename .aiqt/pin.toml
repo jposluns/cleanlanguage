@@ -60,7 +60,7 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # wrtscp / cnsdif hardening. This is a SCOPED, hooks-only advance: the rule corpus and
 # everything else remain at v1.0.0. The [integrity] tree-sha256 above (9dbbe17c) therefore
 # describes the v1.0.0 baseline and NO LONGER matches the working tree; the per-file hashes
-# in .aiqt/manifest.toml (updated for the two plugin hook files) are authoritative for what
+# in .aiqt/manifest.toml (updated for the 2 plugin hook files) are authoritative for what
 # is installed.
 # 2026-09-13: reconciled aiqt_hooks.py to guardrails main (PR #233, 2eb6812) - the
 # protected_line no-remote commit exemption (unblocks a local no-remote store's handoff
@@ -82,11 +82,15 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # release 1.1.1 with no date set; a re-pin to that release replaces this block once it is cut.
 # The refreshed gate_weakening denies the 5 write-then-run commit probes of
 # tools/test-gate-weakening-probes.py, which the 2eb6812c hooks allowed; other write-then-run
-# forms, such as a script that sets core.hooksPath or a base64-decoded script, still get no
-# decision. The refreshed orch_truncation_guard denies a here-document body that a shell runs
-# with a bare & in it, as the 2eb6812c hooks did, and no longer denies 80 here-document and
-# open-quote rows of a recorded decision-table run that the 2eb6812c hooks denied; the
-# refresh adds 2 context-only clock hooks (see .aiqt/config.md for both).
+# forms, such as a script written under a quoted delimiter that sets core.hooksPath, or a
+# base64-decoded script, still get no decision (protected_line denies such a core.hooksPath
+# script written under an unquoted delimiter). The refreshed orch_truncation_guard denies a
+# here-document body that a shell runs with a bare & in it, as the 2eb6812c hooks did, and no
+# longer denies 80 here-document and open-quote rows of the extended decision-table run
+# (table sha256 ba0f9b6fc7c39d5f57f4cd94f9f906d1d19b4a7b9fe3646ee66106ca89f53a93, class
+# summary sha256 b4870a6ea63388179ee62750e36eae45f54cc4b3ede0cf8670095045f34f829d) that the
+# 2eb6812c hooks denied; the refresh adds 2 context-only clock hooks (see .aiqt/config.md for
+# both).
 # Still a SCOPED hooks-only advance; the rule corpus is unchanged.
 # The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
 advanced = "2026-11-15"

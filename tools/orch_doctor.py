@@ -168,12 +168,14 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          :33334), escape-spoof.json (:33212), forced-exit.jsonl (:33160),
                          forced-exit-surfaced.json (:33172) only when os.stat succeeds on
                          forced-exit.jsonl and it is not empty (no rows return at :33168-33169),
-                         forced-exit-surfaced.json.tmp (written by os.open at :22267 through
-                         _orch_write_json_atomic at :33191) only when the surfaced file is reached
+                         forced-exit-surfaced.json.tmp only when the surfaced file is reached
                          and its stat raises nothing other than FileNotFoundError (any other open
                          error takes `return findings` at :33176-33179) and, when attestations is
-                         declared, attestations-validated.json.tmp (os.open at :22267 through
-                         _orch_write_json_atomic at :33124). With an unreadable registry the hook
+                         declared, attestations-validated.json.tmp. The refreshed hook no longer
+                         opens either .tmp path: _orch_write_json_atomic (via :33191 and :33124)
+                         writes a new <name>.<16 hex>.tmp file (os.urandom at :22266, os.open
+                         with O_EXCL at :22267); the doctor still checks the 2 old fixed paths,
+                         which errs toward refusing. With an unreadable registry the hook
                          opens only resume-barrier.json.unused (_orch_append_jsonl at :33317) and
                          guard-events.jsonl (_orch_event_warn at :33334). A special file at one of
                          these is reported as
@@ -669,8 +671,10 @@ def _audit_read_paths(hook, reg, root):
       attestations.anchor             _orch_register_authority 32968, only when os.stat succeeds
                                       on the register (a failed register open takes
                                       `return ("hold"` at 32923-32924)
-      attestations-validated.json.tmp written by _orch_write_json_atomic at 22266-22267 (via 33124),
-                                      when attestations is declared
+      attestations-validated.json.tmp the old fixed path, still checked; the hook's
+                                      _orch_write_json_atomic (via 33124) now opens a random
+                                      name, attestations-validated.json.<16 hex>.tmp, at
+                                      22266-22267, when attestations is declared
       mistakes_register               _orch_chained_rows 32875-32877 (via 33132-33134), when declared
       guard-events.jsonl              read by _orch_pointer_resolves at 33020 (via 33111 and 33144),
                                       opened by _orch_read_jsonl at 22173; appended by _orch_guard_event
@@ -681,8 +685,11 @@ def _audit_read_paths(hook, reg, root):
       forced-exit.jsonl               _orch_forced_exit_findings 33159-33160, opened at 22173
       forced-exit-surfaced.json       opened at 33171-33172, only when the log may hold rows
                                       (_forced_exit_may_have_rows; no rows return at 33168-33169)
-      forced-exit-surfaced.json.tmp   written by _orch_write_json_atomic at 22266-22267 (via 33191),
-                                      only when the surfaced file is reached and its open does not
+      forced-exit-surfaced.json.tmp   the old fixed path, still checked; the hook's
+                                      _orch_write_json_atomic (via 33191) now opens a random
+                                      name, forced-exit-surfaced.json.<16 hex>.tmp, at
+                                      22266-22267, only when the surfaced file is reached and
+                                      its open does not
                                       fail other than as absent (_open_fails_other_than_absent;
                                       `return findings` at 33176-33179)
     resume-barrier.json (written at 33324) is read before the audit by _barrier_snapshot, which
