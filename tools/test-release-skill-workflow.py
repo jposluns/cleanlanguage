@@ -78,6 +78,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -521,8 +522,10 @@ def script_reads(script: str) -> set[str]:
 
 
 # The options git and gh accept before their subcommand that take the next
-# argument as their value. Any other leading argument that starts with - is
-# read as an option with no separate value.
+# argument as their value. takes_separate_value also reads a gh api option
+# that takes a value there with its separate value, as in gh -X POST api.
+# Any other leading argument that starts with - is read as an option with no
+# separate value.
 LEADING_VALUE_OPTIONS = {
     "git": ("-c", "-C", "--git-dir", "--work-tree", "--namespace"),
     "gh": ("-R", "--repo"),
@@ -534,6 +537,10 @@ API_SHORT_VALUE_OPTIONS = {"-X": "--method", "-F": "--field", "-f": "--raw-field
 API_LONG_VALUE_OPTIONS = ("--method", "--field", "--raw-field", "--header", "--preview", "--jq",
                           "--template", "--input", "--cache", "--hostname")
 API_SHORT_FLAGS = {"-i": "--include"}
+# The values that this file takes the flag parser of gh to read as true for
+# an option that takes no value but is given one after =, as in -i=t or
+# --include=true. Like the option lists, they were not checked against gh.
+FLAG_TRUE_VALUES = ("1", "t", "T", "TRUE", "true", "True")
 # The gh api options that add parameters or a request body, by long name, so
 # -f and -F count as --raw-field and --field. A call that holds
 # any of them and gives no method is read as POST, the default the gh api
@@ -544,20 +551,16 @@ API_BODY_OPTIONS = ("--field", "--raw-field", "--input")
 def takes_separate_value(name, arg):
     """Whether the leading option arg of git or gh takes the next argument
     as its value: an option of LEADING_VALUE_OPTIONS given alone, or, for
-    gh, a gh api option that takes a value and has none in arg, read as
-    api_options reads it, as in -X POST, -iX POST, --method POST or
-    -f NAME=VALUE. A -R joined to its value, as in -RREPO, holds its value."""
+    gh, a gh api option that takes a value and has none in arg, as in
+    -X POST, -iX POST, --method POST or -f NAME=VALUE. For gh, arg takes the
+    next argument exactly when api_options, given arg and 1 more argument,
+    takes that argument as a value, so both read arg alike: -i=X holds its
+    value. A -R joined to its value, as in -RREPO, holds its value."""
     if arg in LEADING_VALUE_OPTIONS.get(name, ()):
         return True
     if name != "gh" or arg[:2] in LEADING_VALUE_OPTIONS["gh"]:
         return False
-    if arg.startswith("--"):
-        option, equals, _value = arg.partition("=")
-        return option in API_LONG_VALUE_OPTIONS and not equals
-    for position in range(1, len(arg)):
-        if "-" + arg[position] in API_SHORT_VALUE_OPTIONS:
-            return position == len(arg) - 1
-    return False
+    return not api_options([arg, ""])[1]
 
 
 def subcommand(name, args):
@@ -570,13 +573,19 @@ def subcommand(name, args):
 
 def api_options(args):
     """The options and the operands of a gh api call, given its arguments
-    after api, read as gh reads them. Each option is a pair of its long name
-    and its value, None for an option that takes no value. A long option
-    takes its value after = or from the next argument. Short options may be
-    grouped in 1 argument, as in -iX POST: a short option that takes a value
-    ends the group, and its value is the rest of the argument, after an
-    optional =, or the next argument when nothing of the argument is left.
-    Every argument after -- is an operand."""
+    after api, read by the rules this file models for the flag parser of
+    gh, from the option lists above. Each option is a pair of its long name and its value, None
+    for an option that takes no value and is given none. A long option takes
+    its value after = or, when it takes a value, from the next argument; a
+    long option that takes no value keeps a value given after =, as in
+    --include=false. Short options may be grouped in 1 argument, as in
+    -iX POST. A short option followed by = and at least 1 more character
+    takes the rest of the argument after the = as its value and ends the
+    group, whether or not it takes a value, so -i=false is --include with
+    the value false, not -i, -= and -f. Otherwise a short option that takes
+    a value ends the group, and its value is the rest of the argument, or
+    the next argument when nothing of the argument is left. Every argument
+    after -- is an operand."""
     options, operands = [], []
     index = 0
     while index < len(args):
@@ -588,7 +597,7 @@ def api_options(args):
         if arg.startswith("--"):
             name, equals, value = arg.partition("=")
             if name not in API_LONG_VALUE_OPTIONS:
-                options.append((name, None))
+                options.append((name, value if equals else None))
                 continue
             if not equals:
                 value = args[index] if index < len(args) else ""
@@ -597,16 +606,18 @@ def api_options(args):
         elif arg.startswith("-") and len(arg) > 1:
             for position in range(1, len(arg)):
                 short = "-" + arg[position]
-                if short not in API_SHORT_VALUE_OPTIONS:
-                    options.append((API_SHORT_FLAGS.get(short, short), None))
-                    continue
+                name = API_SHORT_VALUE_OPTIONS.get(short) or API_SHORT_FLAGS.get(short, short)
                 value = arg[position + 1:]
-                if value.startswith("="):
-                    value = value[1:]
-                elif not value:
+                if len(value) > 1 and value.startswith("="):
+                    options.append((name, value[1:]))
+                    break
+                if short not in API_SHORT_VALUE_OPTIONS:
+                    options.append((name, None))
+                    continue
+                if not value:
                     value = args[index] if index < len(args) else ""
                     index += 1
-                options.append((API_SHORT_VALUE_OPTIONS[short], value))
+                options.append((name, value))
                 break
         else:
             operands.append(arg)
@@ -652,6 +663,7 @@ LEADING_VALUE_OPTIONS = """ + repr(LEADING_VALUE_OPTIONS) + """
 API_SHORT_VALUE_OPTIONS = """ + repr(API_SHORT_VALUE_OPTIONS) + """
 API_LONG_VALUE_OPTIONS = """ + repr(API_LONG_VALUE_OPTIONS) + """
 API_SHORT_FLAGS = """ + repr(API_SHORT_FLAGS) + """
+FLAG_TRUE_VALUES = """ + repr(FLAG_TRUE_VALUES) + """
 API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + "".join(
     inspect.getsource(function) for function in (takes_separate_value, subcommand, api_options, api_method)) + """
 SUB = subcommand(NAME, ARGS)
@@ -664,13 +676,14 @@ FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
 # The seconds a step run allows the step, and every process that still holds
 # the output of the step, to exit before the run fails its test, so a step
 # that hangs, or that leaves a process holding its output, cannot hang the
-# suite (see run_step).
+# suite (see run_step). A case may lower it through step_run_limit.
 STEP_RUN_LIMIT = 60
-# The seconds a step run then waits, after the step exits, for the processes
-# that still hold the pipe the step inherited to exit before the run fails
-# its test. A process that closes the descriptors it inherited no longer
-# holds the pipe, so it is not waited for, and a change it makes after the
-# step exits is missed (see run_step).
+# The seconds a step run then waits in all, after the step exits, for the
+# processes that still hold the pipe the step inherited to exit before the
+# run fails its test. Bytes written to the pipe do not end the wait; only
+# its end of file does. A process that closes the descriptors it inherited
+# no longer holds the pipe, so it is not waited for, and a change it makes
+# after the step exits is missed (see run_step).
 STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
@@ -699,10 +712,14 @@ if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["a
     with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
         writes.write(json.dumps(SUB) + "\\n")
 if SUB[:1] == ["api"]:
-    # Row 59: every API path is answered from the same state, so the exact
-    # path each call names is logged for ApiPathTest to pin.
+    # Every API path is answered from the same state, so the exact path each
+    # call names is logged for ApiPathTest to pin. A repeated option counts
+    # by its last value, as api_options models gh, so the field read is the
+    # last --jq and the call includes its status line when its last
+    # --include, or -i, has no value or a value in FLAG_TRUE_VALUES.
     OPTIONS, paths = api_options(SUB[1:])
     JQ = [value for option, value in OPTIONS if option == "--jq"]
+    INCLUDE = [value for option, value in OPTIONS if option == "--include"]
     kind = JQ[-1] if JQ else "status"
     with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
         log.write(json.dumps([kind, paths]) + "\\n")
@@ -712,7 +729,7 @@ if SUB[:1] == ["release"]:
     # name, and any repository a leading -R names, is pinned by ApiPathTest.
     with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
         log.write(json.dumps([SUB[1] if len(SUB) > 1 else "", SUB[2:] + LEADING]) + "\\n")
-if SUB[:1] == ["api"] and ("--include", None) in OPTIONS:
+if SUB[:1] == ["api"] and INCLUDE and INCLUDE[-1] in (None,) + FLAG_TRUE_VALUES:
     status = read("status", "404")
     print("HTTP/2.0 " + status + " Fake")
     sys.exit(0 if status == "200" else 1)
@@ -840,6 +857,8 @@ VERDICT_TEXTS = ("is malformed", "Could not read", "rejected the version", "unex
 
 
 class WorkflowStepTest(unittest.TestCase):
+    step_run_limit = STEP_RUN_LIMIT
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
@@ -957,29 +976,36 @@ class WorkflowStepTest(unittest.TestCase):
         # pipe, so its read end reaches end of file only when every process
         # holding that end has exited: a change that such a process, left
         # running in the background, makes after the step exits is in the
-        # state a later assertion reads. A process that closes the
-        # descriptors it inherited no longer holds the pipe, so this wait
-        # does not cover it, and a change it makes after the step exits is
-        # missed. The run itself ends at STEP_RUN_LIMIT: a step that is still
-        # running then, or that has left a process still holding its output,
-        # fails the test rather than hanging the suite or passing once that
-        # process exits.
+        # state a later assertion reads. Such a process may also write to
+        # the pipe, so the wait reads the pipe until its end of file: a byte
+        # that makes it readable does not end the wait. A process that
+        # closes the descriptors it inherited no longer holds the pipe, so
+        # this wait does not cover it, and a change it makes after the step
+        # exits is missed. The run itself ends at step_run_limit: a step that
+        # is still running then, or that has left a process still holding
+        # its output, fails the test rather than hanging the suite or passing
+        # once that process exits.
         done_read, done_write = os.pipe()
         try:
             try:
                 proc = subprocess.run(
                     ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
                     cwd=self.work, env=env, capture_output=True, text=True, pass_fds=(done_write,),
-                    timeout=STEP_RUN_LIMIT,
+                    timeout=self.step_run_limit,
                 )
             except subprocess.TimeoutExpired:
                 raise self.failureException(
                     f"step {name!r}, or a process it left holding its output, was still running"
-                    f" {STEP_RUN_LIMIT} s after the step started") from None
+                    f" {self.step_run_limit} s after the step started") from None
             os.close(done_write)
             done_write = None
-            ended, _, _ = select.select([done_read], [], [], STEP_PROCESS_WAIT)
-            self.assertTrue(ended, f"step {name!r} left a process running {STEP_PROCESS_WAIT} s after it exited")
+            deadline = time.monotonic() + STEP_PROCESS_WAIT
+            while True:
+                left = deadline - time.monotonic()
+                ready = select.select([done_read], [], [], left)[0] if left > 0 else []
+                self.assertTrue(ready, f"step {name!r} left a process running {STEP_PROCESS_WAIT} s after it exited")
+                if not os.read(done_read, 4096):
+                    break
         finally:
             os.close(done_read)
             if done_write is not None:
@@ -1128,12 +1154,14 @@ def is_date(call):
 def is_field_read(field):
     """A gh api call that reads field through --jq or -q, wherever the option
     stands and in each form api_options reads: --jq .field, --jq=.field,
-    -q .field, -q.field, -q=.field, or -q last in a group of short options."""
+    -q .field, -q.field, -q=.field, or -q last in a group of short options.
+    When the call repeats the option, only its last value counts, as this
+    file models gh and as the fake gh answers it."""
     def reads(call):
         if call[0] != "gh" or sub(call)[:1] != ["api"]:
             return False
         options, _operands = api_options(sub(call)[1:])
-        return ("--jq", "." + field) in options
+        return [value for name, value in options if name == "--jq"][-1:] == ["." + field]
     return reads
 
 
@@ -1301,8 +1329,10 @@ class HarnessTest(WorkflowStepTest):
             (["api", "-iXPOST", path], True), (["api", "-iX=POST", path], True),
             (["api", "-if", "tag_name=v1.0.15", path], True), (["api", "-iftag_name=v1.0.15", path], True),
             (["api", "-iF", "draft=false", path], True), (["api", "--method=PUT", path], True),
-            (["api", "--method", "POST", path], True), (["api", "--input", "-", path], True),
-            (["api", path], False), (["api", "--include", "--silent", path], False),
+            (["api", "--method=POST", path], True), (["api", "--method", "POST", path], True),
+            (["api", "--input", "-", path], True), (["api", "-i=t", "-XPOST", path], True),
+            (["api", path], False), (["api", "-i=false", path], False),
+            (["api", "--include", "--silent", path], False),
             (["api", "-i", path], False), (["api", "-iX", "GET", path], False),
             (["api", "-if", "x=1", "-X", "GET", path], False), (["api", path, "--jq", "-f"], False),
             (["api", path, "-q-XPOST"], False), (["api", "-H", "-XPOST", path], False),
@@ -1329,6 +1359,7 @@ class HarnessTest(WorkflowStepTest):
             (["-X", "POST", "api", path], "unknown shorthand flag: 'X' in -X"),
             (["--method", "POST", "api", path], "unknown flag: --method"),
             (["-f", "tag_name=v1.0.15", "api", path], "unknown shorthand flag: 'f' in -f"),
+            (["-i=t", "-XPOST", "api", path], "unknown shorthand flag: 'i' in -i=t"),
         )
         for args, message in refused:
             with self.subTest(args=args):
@@ -1342,9 +1373,13 @@ class HarnessTest(WorkflowStepTest):
                 self.assertFalse((self.state / "gh_writes").exists())
                 self.assertFalse((self.state / "api.log").exists())
         # Each form of a --jq or -q read of the immutable field, and calls
-        # that name the field without reading it.
+        # that name the field without reading it. A repeated query option
+        # reads only its last value, so is_field_read agrees with the field
+        # the fake gh answers, in either order.
         release = path + "/tags/v1.0.15"
         reads = (
+            (["api", release, "--jq", ".immutable", "--jq", ".published_at"], False),
+            (["api", release, "--jq", ".published_at", "-q.immutable"], True),
             (["api", release, "--jq", ".immutable"], True), (["api", release, "--jq=.immutable"], True),
             (["api", release, "-q", ".immutable"], True), (["api", release, "-q.immutable"], True),
             (["api", release, "-q=.immutable"], True), (["api", "-iq", ".immutable", release], True),
@@ -1356,6 +1391,26 @@ class HarnessTest(WorkflowStepTest):
         for args, read in reads:
             with self.subTest(args=args):
                 self.assertEqual(is_field_read("immutable")(["gh", args]), read)
+                if args[0] == "api":
+                    (self.state / "api.log").unlink(missing_ok=True)
+                    subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                                   capture_output=True, text=True)
+                    kind = json.loads((self.state / "api.log").read_text(encoding="utf-8"))[0]
+                    self.assertEqual(kind == ".immutable", read, kind)
+
+    def test_a_step_still_running_at_the_limit_fails_its_test(self):
+        # With the limit lowered to 1 s, a step that runs for 5 s fails its
+        # test at the limit with a message naming the step. The step is the
+        # sleep itself, through exec, so the run stops it and leaves no
+        # process behind.
+        self.step_run_limit = 1
+        start = time.monotonic()
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, "exec sleep 5\n")
+        self.assertLess(time.monotonic() - start, 4)
+        self.assertEqual(str(raised.exception),
+                         f"step {PUBLISH!r}, or a process it left holding its output, was still running"
+                         " 1 s after the step started")
 
     def test_every_variable_a_step_reads_is_declared(self):
         for name in (VALIDATE, DETERMINE, PACKAGE, PUBLISH):
@@ -2129,11 +2184,16 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 for marker in ("corrective", "new version"):
                     self.assertNotIn(marker, (out + err).lower())
                 calls = self.calls()
-                self.assert_no_mutation(calls)
-                # The fakes' tag and write state is the state the run started
-                # from, whatever the call log shows.
+                # The fakes' tag and write state is the state this case set,
+                # whatever the call log shows. It is compared with that state
+                # as written here, before assert_no_mutation compares it with
+                # the copy run_step took, so a hidden change fails here naming
+                # the expected state, and so does a reading of the state that
+                # drops 1 of its files, which the comparison of 2 readings by
+                # the same function cannot see.
                 self.assertEqual(self.fake_write_state(),
                                  {"local_tag": None, "remote_tag": remote_tag, "gh_writes": None}, calls)
+                self.assert_no_mutation(calls)
                 self.assertEqual(len([c for c in calls if is_lookup(c)]), 1, calls)
                 # Only the early window check reads the clock; the binding
                 # check before the create call is never reached.
@@ -2181,6 +2241,37 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(len([c for c in self.calls() if is_tag(c)]), 1, self.calls())
         with self.assertRaises(AssertionError):
             self.assert_no_mutation(self.calls())
+
+    def test_a_byte_written_to_the_pipe_does_not_end_the_wait(self):
+        # A background process that writes to the pipe it inherited makes
+        # the pipe readable while it still holds it. The step run reads the
+        # pipe until its end of file, so a tag that such a process writes
+        # 1 s later is still in the call log and the state that
+        # assert_no_mutation reads. The bytes are written by a Python child
+        # of that process, which inherits no descriptor that bash keeps for
+        # itself, so the pipe is the only one from 3 up that it can write;
+        # it counts the descriptors it wrote to, and exactly 1 shows that
+        # the byte reached the pipe.
+        self.tag_push_mismatch(True, OTHER_COMMIT)
+        writer = ("import os\n"
+                  "count = 0\n"
+                  "for fd in range(3, 255):\n"
+                  "    try:\n"
+                  "        os.write(fd, b\"x\")\n"
+                  "        count += 1\n"
+                  "    except OSError:\n"
+                  "        pass\n"
+                  "with open(os.path.join(os.environ[\"FAKE_STATE\"], \"pipe_writes\"), \"w\") as handle:\n"
+                  "    handle.write(str(count))\n")
+        script = ("( \"" + sys.executable + "\" -I -c '" + writer + "'; sleep 1; "
+                  + VCS + " tag v1.0.15 " + COMMIT + " ) >/dev/null 2>&1 &\nexit 1\n")
+        code, _out, err = self.run_step(PUBLISH, script)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
+        self.assertEqual(len([c for c in self.calls() if is_tag(c)]), 1, self.calls())
+        with self.assertRaises(AssertionError):
+            self.assert_no_mutation(self.calls())
+        self.assertEqual((self.state / "pipe_writes").read_text(encoding="utf-8"), "1")
 
     def test_the_fake_gh_reads_a_leading_option_as_gh_does(self):
         # Each gh release call of the publish step, with a leading -R option
