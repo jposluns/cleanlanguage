@@ -40,10 +40,12 @@ name: Orchestration registry
 # unattended is missing, or when any of the 7 pinned paragraphs (the header, the cycle steps,
 # the seeding paragraph, FAILED LEG, the CODEX ROLE LIMIT, the tiers paragraph and VERIFIER
 # DIVERSITY) is not found once or differs from the sha256 that the check holds for it in
-# anything but the white space between its words or after its last word. So every edit of
-# those 7 paragraphs fails this step until the paragraph's sha256 in the check is updated;
-# the report gives the 1-line update. It reads words, not meaning: outside the MODE line, the
-# bare "attended" test is the only test that can fail a line, so a third mode value named
+# anything but the white space between its words or after its last word, inside its opening
+# text too. So every edit of those 7 paragraphs that changes more than that white space fails
+# this step. When the paragraph is still found once, the report gives the 1-line update of its
+# sha256 in the check; an edit of its opening text needs the row's opening text and sha256
+# rewritten. It reads words, not meaning: outside the MODE line and the 7 pinned paragraphs,
+# the bare "attended" test is the only test that can fail a line, so a third mode value named
 # there, such as "supervised", passes, and one that holds a bare "attended", such as
 # "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
 # a quotation wrapped from the line above pairs that closing quote with the next opening

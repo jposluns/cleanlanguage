@@ -33,18 +33,30 @@ fails when any of them is missing:
   section, must be in the file once and unchanged: the header, the cycle steps (cycle step 4,
   GRADE, among them), the seeding paragraph, FAILED LEG (the entry list of its whole-line rule,
   Entries 61, 63, 64 and 69, among its text), the CODEX ROLE LIMIT, the tiers paragraph and
-  VERIFIER DIVERSITY. A paragraph is a maximal run of lines that are not blank, and a line is
-  blank when it is empty or holds only white space, as Python's str.isspace() defines it. Each
-  row of PARAGRAPHS gives a paragraph's name, the text that its first line starts with, and the
-  sha256 of the paragraph with each run of white space, as Python's str.split() defines it,
-  collapsed to 1 space and none at either end. So the check fails when no paragraph or more than
-  1 paragraph starts with that text, so an indent put before that text fails too, and when the
-  paragraph differs in anything other than the amount or kind of white space between its words
-  or after its last word: a character that is not white space added, removed or changed, a
-  letter in another case, 2 words joined, a line added to it, or a blank line put inside it. That
-  is the cost of this contract: every edit of these 7 paragraphs, meant or not, fails this check
-  until the paragraph's sha256 in PARAGRAPHS is updated. For each such paragraph the report gives
-  its name, its line range, its new sha256 and the 1-line update to PARAGRAPHS that accepts it.
+  VERIFIER DIVERSITY. A line ends at a line feed, a carriage return, or a carriage return and a
+  line feed, as Python's universal newlines read a file, and the check splits standard input by
+  the same rule; no other character ends a line. White space is what Python's str.isspace()
+  defines, which str.split() and the check's WHITE_SPACE pattern also use. A paragraph is a
+  maximal run of lines that are not blank, and a line is blank when it is empty or holds only
+  white space. Each row of PARAGRAPHS gives a paragraph's name, the text that the paragraph
+  starts with, and the sha256 of the paragraph with each run of white space collapsed to 1 space
+  and none at either end. A paragraph starts with that text when its text, with each run of
+  white space made 1 space, starts with that text made 1 space in the same way; no opening text
+  starts with white space. So the check fails when no paragraph or more than 1 paragraph starts
+  with that text, so an indent put before that text fails too, and when the paragraph differs in
+  anything other than the amount or kind of white space between its words or after its last
+  word: a character that is not white space added, removed or changed, a letter in another case,
+  2 words joined, a line added to it, or a blank line put inside it. That is the cost of this
+  contract: every edit of these 7 paragraphs that changes more than the white space between
+  their words or after their last word, meant or not, fails this check. When the edited
+  paragraph is still found once, the check fails until the paragraph's sha256 in PARAGRAPHS is
+  updated, and the report gives the paragraph's name, its line range, its new sha256 and the
+  1-line update to PARAGRAPHS that accepts the edit. When no paragraph, or more than 1, starts
+  with the opening text, as after a change of that text, an indent before it, a join to the
+  paragraph before it or a repeat of the paragraph, the report gives the paragraph's name, its
+  opening text and the number of paragraphs found, with no line range and no sha256, and a
+  sha256 update alone never accepts the edit, since the check finds a paragraph by its opening
+  text before it compares a sha256.
 
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
@@ -52,23 +64,25 @@ so a copy from another commit can be checked through git show.
 Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
 UTF-8, and when more than 1 argument is given.
 
-Residual: the check reads text literally. Outside the MODE line, the bare "attended" test is the
-only test that can fail a line for what it holds, so a line there fails exactly when it holds a
-bare "attended" outside the text that this test skips as quoted, and passes otherwise, whatever
-mode value it names: a third value such as "supervised" named there passes, and one that holds a
-bare "attended", such as "attended-only", fails. A line that holds "- MODE (" after any other
-character, such as an indented one, is not a MODE line, so the MODE line tests do not read it. Only
-the bare "attended" test skips quoted text, and only text between straight double quotes that it
-pairs left to right on one line, so a retired default written inside such quotes passes, while
-"attended" inside typographic quotes (U+201C and U+201D) fails. Straight double quotes do not show
-which one opens a quotation and which one closes it, so this pairing can differ from the author's
-quotations when a quotation wraps across a line break. A quoted phrase that wraps is not skipped,
-so it can fail the check falsely. A bare "attended" can also pass: a line that closes a quotation
-opened on the line above pairs that closing quote with the next opening quote on the line, so a
-bare "attended" between them is skipped, as in the line 'unattended" though Absent = attended
-"for now".'. No pairing rule for straight quotes recovers every author's quotations, so the check
-keeps this simple rule and states this limit. The MODE line and absent-rule tests read quoted
-text as any other text, so the absent-rule sentence inside a quotation that rejects it passes.
+Residual: the check reads text literally. Outside the MODE line and the 7 pinned paragraphs, the
+bare "attended" test is the only test that can fail a line for what it holds, so a line there
+fails exactly when it holds a bare "attended" outside the text that this test skips as quoted,
+and passes otherwise, whatever mode value it names: a third value such as "supervised" named
+there passes, and one that holds a bare "attended", such as "attended-only", fails. Named inside
+a pinned paragraph, any mode value fails, as any other edit there does. A line that holds
+"- MODE (" after any other character, such as an indented one, is not a MODE line, so the MODE
+line tests do not read it. Only the bare "attended" test skips quoted text, and only text between
+straight double quotes that it pairs left to right on one line, so a retired default written
+inside such quotes passes, while "attended" inside typographic quotes (U+201C and U+201D) fails.
+Straight double quotes do not show which one opens a quotation and which one closes it, so this
+pairing can differ from the author's quotations when a quotation wraps across a line break. A
+quoted phrase that wraps is not skipped, so it can fail the check falsely. A bare "attended" can
+also pass: a line that closes a quotation opened on the line above pairs that closing quote with
+the next opening quote on the line, so a bare "attended" between them is skipped, as in the line
+'unattended" though Absent = attended "for now".'. No pairing rule for straight quotes recovers
+every author's quotations, so the check keeps this simple rule and states this limit. The MODE
+line and absent-rule tests read quoted text as any other text, so the absent-rule sentence inside
+a quotation that rejects it passes.
 Any ordinary use of the English word "attended" outside the text that the check skips, such as
 "the call was attended", fails the check, so such a sentence must be reworded or quote the word.
 The check cannot tell whether a sentence states the rule it matches or only mentions those words.
@@ -76,12 +90,14 @@ So a sentence elsewhere that contradicts the absent rule passes while the matche
 matched sentence itself can be negated and still pass, as in "The session never reads an absent
 mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
 absent rule in other words fails. A pinned paragraph with its words kept and only the white space
-between them changed passes, and so does a mention of its opening text inside another paragraph.
-Text outside the 7 paragraphs is not pinned: an edit there passes, and so does a paragraph
-elsewhere that contradicts one of them, such as one that adds Entry 62 to the entries of the
-whole-line rule. An edit committed with the paragraph's new sha256 in PARAGRAPHS passes; the
-changed row in the diff is what shows it to a reviewer. tools/test-check-flow-mode.py holds a case
-for each verdict named in this docstring.
+between them or after its last word changed passes, inside its opening text too, and so does a
+mention of its opening text inside another paragraph. Text outside the 7 paragraphs is not
+pinned: an edit there passes, and so does a paragraph elsewhere that contradicts one of them, such
+as one that adds Entry 62 to the entries of the whole-line rule. An edit that leaves the paragraph
+found once passes when it is committed with the paragraph's new sha256 in PARAGRAPHS, and an edit
+of its opening text passes when it is committed with the row's opening text and sha256 both
+rewritten; the changed row in the diff is what shows it to a reviewer.
+tools/test-check-flow-mode.py holds a case for each verdict named in this docstring.
 """
 import hashlib
 import re
@@ -103,12 +119,16 @@ BARE_ATTENDED = re.compile(r"(?i)\battended\b(?!-autonomous\b)")
 QUOTED = re.compile(r"\"[^\"\n]*\"")
 ABSENT_RULE = re.compile(r"(?i)\breads an absent mode record as unattended\b"
                          r"|\ban absent mode record is read as unattended\b")
+# The line ends of Python's universal newlines, which a file read through its path already has;
+# splitting by them reads standard input by the same rule.
+LINE_END = re.compile(r"\r\n|\r|\n")
+WHITE_SPACE = re.compile(r"\s+")
 
 # The 7 paragraphs of flow.md into which this change writes rule text, outside the mode section,
-# each with the name the report gives it, the text its first line starts with, and the sha256 of
-# its text with its white space collapsed. flow.md is the only copy of their text. Each sha256
-# stands alone on its line in the form of DIGEST_LINE, so accepting an edit of a paragraph is
-# the 1-line update that the report gives.
+# each with the name the report gives it, the text it starts with, and the sha256 of its text
+# with its white space collapsed. flow.md is the only copy of their text. Each sha256
+# stands alone on its line in the form of DIGEST_LINE, so accepting an edit that leaves a
+# paragraph found once is the 1-line update that the report gives.
 PARAGRAPHS = [
     ("the header", "INTERIM. This command's own inlined text",
      "eff52ed68ba81c266e056737cf7fbdeaf8973371d07d8bb43dcc6ff30c95e7ae"),
@@ -149,6 +169,13 @@ def digest(paragraph):
     return hashlib.sha256(" ".join(paragraph.split()).encode("utf-8")).hexdigest()
 
 
+def starts_with(paragraph, opening):
+    """Whether paragraph, with each run of white space made 1 space, starts with opening made 1
+    space in the same way, so white space inside the opening text may be of any amount or kind,
+    while an indent before it stays 1 space, which no opening text starts with."""
+    return WHITE_SPACE.sub(" ", paragraph).startswith(WHITE_SPACE.sub(" ", opening))
+
+
 def changed_report(name, first, last, label, pinned, now):
     """The report line for a pinned paragraph whose sha256 is no longer the pinned one."""
     return ("{}:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to accept the"
@@ -161,7 +188,7 @@ def findings(text, name):
     """The report lines for each way text drifts from the writer's values and for each pinned
     paragraph that it does not hold once and unchanged."""
     found = []
-    lines = text.split("\n")
+    lines = LINE_END.split(text)
     modes = [(number, line) for number, line in enumerate(lines, 1) if line.startswith(MODE_PREFIX)]
     if len(modes) != 1:
         found.append("{}: expected 1 MODE line starting \"- MODE (\", found {}".format(name, len(modes)))
@@ -191,7 +218,7 @@ def findings(text, name):
         found.append("{}: no statement that an absent mode record is read as unattended".format(name))
     blocks = paragraphs(lines)
     for label, opening, pinned in PARAGRAPHS:
-        starting = [block for block in blocks if block[2].startswith(opening)]
+        starting = [block for block in blocks if starts_with(block[2], opening)]
         if len(starting) != 1:
             found.append("{}: expected 1 pinned paragraph, {}, starting {!r}, found {}".format(
                 name, label, opening, len(starting)))
