@@ -37,8 +37,9 @@
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Stages the package from git archive, removes both plugin manifests, which
-#      ship through the marketplace rather than the zip, adds LICENSE and
+#   5. Lays out the package from git archive in a source folder under TMPDIR,
+#      removes both plugin manifests, which ship through the marketplace
+#      rather than the zip, adds LICENSE and
 #      NOTICE.md, restores SKILL.md and references/ from skills/cleanlanguage/
 #      to the archive root, and zips the files at the archive ROOT (SKILL.md,
 #      agents/, assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
@@ -105,6 +106,10 @@
 #   0  built and verified
 #   1  a validation or layout check failed
 #   129, 130, 143  ended by SIGHUP, SIGINT or SIGTERM
+#   other codes  the exit code of a command that failed, such as zip, mv
+#                or git, which set -e passes through unchanged and the
+#                exit trap keeps; such a command can also give 1, 129,
+#                130 or 143
 
 set -euo pipefail
 
@@ -156,7 +161,9 @@ fi
 # same_dist is checked at the start of each pass of the removal, after the
 # build makes dist/ and again after it makes its staging folder there, once
 # more before the 2 moves, and in the exit trap before it removes the
-# staging folder.
+# staging folder in dist/ (the folder in out). The exit trap does not check
+# dist before it removes the source folder under TMPDIR (the folder in
+# source_dir), which does not lie in dist/.
 dist_id=""
 if [ -d dist ]; then
   dist_id="$(stat -c '%d:%i' -- dist)"
@@ -203,9 +210,11 @@ remove_outputs() {
   return "${rc}"
 }
 
-# The 2 work folders: the source folder under TMPDIR, and the staging folder
-# inside dist/. Each is empty until the build makes it.
-staging=""
+# The 2 work folders: source_dir holds the source folder under TMPDIR, in
+# which the build lays out the files to zip, and out holds the staging
+# folder inside dist/, in which it builds and verifies the outputs. Each is
+# empty until the build makes its folder.
+source_dir=""
 out=""
 # On each exit that runs this trap, which a SIGKILL does not, remove both
 # work folders. On a failed exit, which includes an exit through 1 of the
@@ -227,7 +236,7 @@ cleanup() {
   if [ "${rc}" -ne 0 ]; then
     remove_outputs || true
   fi
-  [ -z "${staging}" ] || rm -rf "${staging}" || true
+  [ -z "${source_dir}" ] || rm -rf "${source_dir}" || true
   if [ -n "${out}" ] && same_dist; then
     rm -rf "${out}" || true
   fi
@@ -454,10 +463,10 @@ grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
 # inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
 # root so a marketplace install copies only the skill tree. The plugin
 # manifest therefore sits inside the tree this script archives, and the
-# staging step below deliberately keeps it out of the zip: the zip is the
-# skill artefact, and the plugin ships through the marketplace. The version,
-# name, and source checks run here because this is the script that runs at
-# release time. A version that disagrees with SKILL.md is exactly what would
+# layout step in the source folder below deliberately keeps it out of the
+# zip: the zip is the skill artefact, and the plugin ships through the
+# marketplace. The version, name, and source checks run here because this
+# is the script that runs at release time. A version that disagrees with SKILL.md is exactly what would
 # ship a plugin pinned to the wrong release, and a source that regresses to
 # "./" is exactly what would ship the whole repository. Read from the git
 # tree at HEAD, like everything else above, so a dirty working tree cannot
@@ -554,42 +563,43 @@ sys.exit(1 if bad else 0)
 ' || exit 1
 fi
 
-staging="$(mktemp -d)"
-git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
+source_dir="$(mktemp -d)"
+git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${source_dir}"
 # Keep the downloadable skill zip free of plugin metadata: the Claude manifest
 # (.claude-plugin/plugin.json) and the Agent Plugins manifest (the root
 # plugin.json) both ship through the marketplace install, never through the zip.
 # rmdir, not rm -rf, so an unexpected extra file under .claude-plugin/ fails the
 # build loudly instead of being discarded.
-rm "${staging}/cleanlanguage/plugin.json"
-rm "${staging}/cleanlanguage/.claude-plugin/plugin.json"
-rmdir "${staging}/cleanlanguage/.claude-plugin"
+rm "${source_dir}/cleanlanguage/plugin.json"
+rm "${source_dir}/cleanlanguage/.claude-plugin/plugin.json"
+rmdir "${source_dir}/cleanlanguage/.claude-plugin"
 # The source keeps SKILL.md and references/ under skills/cleanlanguage/ for
 # Agent Plugins discovery; Claude, ChatGPT, and Copilot Studio load the zip
 # only with SKILL.md at the archive root, so restore the root layout here.
 # rmdir, not rm -rf, so an unexpected extra entry under skills/ fails loudly.
-mv "${staging}/cleanlanguage/skills/cleanlanguage/SKILL.md" "${staging}/cleanlanguage/SKILL.md"
-mv "${staging}/cleanlanguage/skills/cleanlanguage/references" "${staging}/cleanlanguage/references"
-rmdir "${staging}/cleanlanguage/skills/cleanlanguage"
-rmdir "${staging}/cleanlanguage/skills"
-git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
-git show HEAD:NOTICE.md > "${staging}/cleanlanguage/NOTICE.md"
-chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md"
+mv "${source_dir}/cleanlanguage/skills/cleanlanguage/SKILL.md" "${source_dir}/cleanlanguage/SKILL.md"
+mv "${source_dir}/cleanlanguage/skills/cleanlanguage/references" "${source_dir}/cleanlanguage/references"
+rmdir "${source_dir}/cleanlanguage/skills/cleanlanguage"
+rmdir "${source_dir}/cleanlanguage/skills"
+git show HEAD:LICENSE > "${source_dir}/cleanlanguage/LICENSE"
+git show HEAD:NOTICE.md > "${source_dir}/cleanlanguage/NOTICE.md"
+chmod 644 "${source_dir}/cleanlanguage/LICENSE" "${source_dir}/cleanlanguage/NOTICE.md"
 
-# A byte-reproducible archive: stamp every staged path with the commit's own
-# timestamp, order the entries, and read the DOS times in UTC, so the same
-# commit always yields the same zip and therefore the same checksum, on any
-# machine and at any clock time. Without this the staged licence files would
-# carry the build clock, so a later rebuild of the same commit would not match.
+# A byte-reproducible archive: stamp every path in the source folder with the
+# commit's own timestamp, order the entries, and read the DOS times in UTC,
+# so the same commit always yields the same zip and therefore the same
+# checksum, on any machine and at any clock time. Without this the licence
+# files written to the source folder would carry the build clock, so a
+# later rebuild of the same commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
 # files carry only regular content (the mode gate above rejects anything but
 # 100644), so normalize every directory to 0755 and every file to 0644. Zip
 # records the Unix mode in each entry, so without this an ambient umask would
 # change the central-directory bytes and the checksum for the same commit.
-find "${staging}" -type d -exec chmod 755 {} +
-find "${staging}" -type f -exec chmod 644 {} +
-find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
+find "${source_dir}" -type d -exec chmod 755 {} +
+find "${source_dir}" -type f -exec chmod 644 {} +
+find "${source_dir}" -exec touch -h -d "@${commit_epoch}" {} +
 
 mkdir -p dist
 if [ -z "${dist_id}" ] && [ ! -L dist ]; then
@@ -611,7 +621,7 @@ same_dist || fail "${DIST_REPLACED}"
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
 # bytes at any clock time and umask, given the same zip binary.
-(cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
+(cd "${source_dir}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
   | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${out}/cleanlanguage.zip")
 cp "${out}/cleanlanguage.zip" "${out}/cleanlanguage-${version}.zip"
 (cd "${out}" && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
@@ -647,18 +657,19 @@ fi
 grep -qx 'SKILL.md' <<< "${actual}" \
   || fail "SKILL.md is not at the archive root"
 
-# The source nests the skill under skills/cleanlanguage/; the staging step above
-# re-roots it, so a surviving skills/ entry means that re-root was dropped.
+# The source nests the skill under skills/cleanlanguage/; the layout step in
+# the source folder above re-roots it, so a surviving skills/ entry means
+# that re-root was dropped.
 if grep -q '^skills/' <<< "${actual}"; then
   echo "release-package: the archive must not carry a skills/ subtree" >&2
   exit 1
 fi
 
 # The entry-list check above already excludes the plugin manifest, but a
-# coordinated revert of the staging rm and the expected-list filter would put
-# the manifest in both lists and slip past it, the same shape the root-layout
-# check above guards for its own pair of lines. This proves the shipped zip
-# itself carries no plugin metadata.
+# coordinated revert of the rm in the source folder and the expected-list
+# filter would put the manifest in both lists and slip past it, the same
+# shape the root-layout check above guards for its own pair of lines. This
+# proves the shipped zip itself carries no plugin metadata.
 if grep -q '^\.claude-plugin/' <<< "${actual}"; then
   echo "release-package: the plugin manifest must not ship in the skill zip" >&2
   exit 1

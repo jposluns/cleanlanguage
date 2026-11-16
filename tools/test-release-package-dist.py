@@ -174,7 +174,18 @@ that clone:
     staging folder, holding a file, puts a symbolic link to the outside
     folder in place of dist and exits 9, exits 9; the outside folder, with
     that folder and file, is unchanged, and the renamed dist keeps the
-    build's staging folder.
+    build's staging folder. 2 cases pin the parts of the identity of dist
+    through a stand-in stat. In the first, from its third call on, it
+    gives another device with the same inode, as a folder mounted over
+    dist would; the build exits 1 with the packager's message, keeps the
+    planted paths, removes the leftover staging folders and leaves no
+    output and no staging folder in dist/. In the second, from its second
+    call on, it gives the device and inode of its first call, as a
+    symbolic link that took the inode of a removed dist would; the build
+    in which a stand-in mktemp replaces dist by a link after its first
+    call is refused as above. No mount is made: a stand-in stat is the
+    only way that the test makes the device or the inode of dist differ
+    from what the file system holds.
 14. A stand-in mktemp records the 2 work folders of a build. After a good
     build, and after a build whose stand-in mv refuses each move of a
     .sha256 file with exit 7, both are gone; the failed build exits 7 and
@@ -1002,15 +1013,68 @@ class DistTests(unittest.TestCase):
         bash_env.write_text("GLOBIGNORE='dist/*'\n", encoding="ascii")
         self.assert_inherited_option(BASH_ENV=str(bash_env))
 
+    def identity_stat(self, mode: str, first: int) -> tuple:
+        """Write a stand-in stat, first on the PATH, that runs the real stat
+        and counts its calls. From its first-th call on, with mode "device",
+        it puts a 9 before an answer of the form device:inode, so that the
+        device differs and the inode does not, as a folder mounted over dist
+        with the same inode number would give; with mode "replay", it gives
+        the answer of its first call, as a symbolic link that took the inode
+        of a removed dist on the same filesystem would give. An answer
+        without a colon passes unchanged. Return its folder and the file
+        that holds the number of its calls."""
+        bin_dir = self.bin_dir("identity-stat")
+        count, saved = bin_dir / "count", bin_dir / "first"
+        self.write_script(bin_dir / "stat",
+                          "n=$(($(cat '%s' 2>/dev/null || echo 0) + 1))\n"
+                          "echo \"$n\" > '%s'\n"
+                          "out=$('%s' \"$@\") || exit\n"
+                          "if [ \"$n\" -eq 1 ]; then printf '%%s\\n' \"$out\" > '%s'; fi\n"
+                          "if [ \"$n\" -ge %d ]; then\n"
+                          "  case %s in\n"
+                          "    device) case \"$out\" in *:*) out=\"9$out\" ;; esac ;;\n"
+                          "    replay) out=$(cat '%s') ;;\n"
+                          "  esac\n"
+                          "fi\n"
+                          "printf '%%s\\n' \"$out\"\n"
+                          % (count, count, self.real("stat"), saved, first, mode, saved))
+        return str(bin_dir), count
+
+    def test_dist_on_another_device_refused(self):
+        """A stand-in stat that, from its third call on, gives another
+        device for dist with the same inode makes the check after the build
+        makes dist/ refuse the build: it exits 1 with the packager's
+        message, keeps the planted paths, has removed the leftover staging
+        folders in its first removal, and leaves no output and no staging
+        folder in dist/."""
+        bin_dir, count = self.identity_stat("device", 3)
+        self.plant()
+        code, stderr = self.build(path_prefix=bin_dir)
+        self.assertGreaterEqual(int(count.read_text(encoding="ascii")), 3,
+                                "the build called stat fewer than 3 times")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn(DIST_REPLACED, stderr)
+        self.assertEqual(outputs(self.dist), [], "a build refused for another device left output in dist/")
+        self.assert_plants_kept()
+
+    def test_dist_replaced_by_link_with_same_identity_refused(self):
+        """As test_dist_replaced_after_first_mktemp_refused, with a stand-in
+        stat that, from its second call on, gives the device and inode of
+        its first call, so that only the test for a symbolic link tells the
+        link in place of dist from the recorded folder."""
+        bin_dir, _ = self.identity_stat("replay", 2)
+        self.assert_replaced_dist_refused("mktemp", 1, after=True, staging_kept=False, path_prefix=bin_dir)
+
     def assert_replaced_dist_refused(self, command: str, call: int, after: bool, staging_kept: bool,
-                                     link: bool = True, made_in_target: bool = False):
+                                     link: bool = True, made_in_target: bool = False, path_prefix: str = ""):
         """A stand-in for command renames dist and puts in its place a
         symbolic link to a folder outside the clone, or with link false a new
         empty folder, at its call-th call, after or before it runs the real
         command. With made_in_target, the build made its staging folder
         through the link, in the outside folder, and the exit trap, which
         removes nothing through a replaced dist, leaves that folder there,
-        empty; the outside folder must otherwise be unchanged."""
+        empty; the outside folder must otherwise be unchanged. A path_prefix
+        goes on the PATH after the folder of that stand-in."""
         target = self.outside("replaced-dist-target")
         (target / "cleanlanguage.zip").write_bytes(b"a reader's file\n")
         before = snapshot(target)
@@ -1032,7 +1096,7 @@ class DistTests(unittest.TestCase):
                           % (count, count, call, "after" if after else "before", swap, self.real(command),
                              call, "after" if after else "before", swap))
         self.plant()
-        code, stderr = self.build(path_prefix=str(bin_dir))
+        code, stderr = self.build(path_prefix=os.pathsep.join(p for p in (str(bin_dir), path_prefix) if p))
         self.assertTrue(self.moved_dist.is_dir(), "the stand-in %s never replaced dist" % command)
         found = snapshot(target)
         if made_in_target:
