@@ -8,12 +8,16 @@ Each case of PluginDistributionTest starts from a temporary tree that holds
 the files the gate reads and a copy of the real tools/skill-version.py, with
 the gate's REPO_ROOT pointed at it. expect runs the gate's main and requires
 the exit status, each text given and the lines of that status (assert_lines).
-test_gate_runs_as_a_command runs a copy of the gate as a command, and
-RepositoryTreeTest runs the gate on the repository itself. The permission
-cases are skipped when the test runs as root.
+test_gate_runs_as_a_command runs a copy of the gate as a command,
+test_loading_a_gate_that_raises_stops_the_test runs a copy of this test as a
+command, and RepositoryTreeTest runs the gate on the repository itself. The
+permission cases are skipped when the test runs as root, and the case of a
+file swapped for a FIFO where os.mkfifo or signal.SIGALRM is missing.
 
 Loading the gate must print nothing and raise nothing; a gate that does either
-while this test loads it stops the test with exit 1 before any case runs.
+while this test loads it stops the test with exit 1 before any case runs. The
+exception's type name and message are shown as the gate shows them: each made
+with its output dropped, and a stand-in for one that cannot be made.
 
 Usage: python3 -I tools/test-check-plugin-distribution.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -22,6 +26,7 @@ Exit status: 0 when every case passes, 1 otherwise.
 from __future__ import annotations
 
 import ast
+import builtins
 import contextlib
 import errno
 import importlib.util
@@ -29,6 +34,7 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -39,18 +45,33 @@ from unittest import mock
 MODULE_PATH = Path(__file__).resolve().parent / "check-plugin-distribution.py"
 REAL_EXTRACTOR = Path(__file__).resolve().parent / "skill-version.py"
 EXTRACTOR_REL = "tools/skill-version.py"
-# Written out, not read from the gate, so a gate that drops a prefix fails.
+# Written out, not read from the gate.
 RESERVED_PREFIXES = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
-# Written out, not read from the gate, so a gate that drops or raises its bound fails.
+# Written out, not read from the gate.
 MAX_JSON_DEPTH = 64
-# The tags of the 4 checks, written out, so a FAIL line under any other tag fails.
+# The tags of the 4 checks, written out, not read from the gate.
 TAGS = ("D1", "D2", "D3", "D4")
+# The stand-ins for a message and for a type name that cannot be made, written out.
+UNSHOWN_MESSAGE = "(a message that cannot be shown)"
+UNSHOWN_NAME = "(a name that cannot be shown)"
 # Line breaks that str.splitlines honours, to put into paths and names.
 BREAKS = ("\n", "\r", "\x0b", "\x85", "\u2028")
 # A folder name that holds a line break and, after it, the start of a forged FAIL line; and how the
 # gate shows it.
 BROKEN = "h\nFAIL D9: k"
 BROKEN_SHOWN = "h\\nFAIL D9: k"
+
+
+def _made(make, stand_in: str) -> str:
+    """What make returns, as a str of its own type, with what make writes to sys.stdout and sys.stderr
+    dropped; or stand_in when make raises an exception of any class or returns no str."""
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return str.__str__(make())
+    except BaseException:
+        return stand_in
+
+
 spec = importlib.util.spec_from_file_location("check_plugin_distribution", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 _loaded = io.StringIO()
@@ -59,13 +80,36 @@ try:
         spec.loader.exec_module(gate)
 except BaseException as error:
     # A gate that raises while it loads would end this test before any case runs, with the gate's own
-    # exit status; stop with exit 1 instead.
-    raise SystemExit(f"loading {MODULE_PATH} raised {type(error).__name__}: {error}") from None
+    # exit status; stop with exit 1 instead, whatever making the exception's name or message does.
+    _name = _made(lambda: type(error).__name__, UNSHOWN_NAME)
+    _message = _made(lambda: str(error), UNSHOWN_MESSAGE)
+    raise SystemExit(f"loading {MODULE_PATH} raised {_name}: {_message}") from None
 if _loaded.getvalue():
     # The gate's main prints at least 2 lines, so a gate that runs it while it loads prints.
     raise SystemExit(f"loading {MODULE_PATH} printed {_loaded.getvalue()!r}")
 
 VERSION = "1.0.15"
+
+
+class OwnBaseException(BaseException):
+    """An exception class of this test's own, outside the Exception tree."""
+
+
+class OwnException(Exception):
+    """An exception class of this test's own."""
+
+
+# Every exception class that builtins holds, and the 2 of this test's own, in order of name.
+RAISED = sorted({value for value in vars(builtins).values()
+                 if isinstance(value, type) and issubclass(value, BaseException)} | {OwnBaseException, OwnException},
+                key=lambda cls: cls.__name__)
+
+
+def built(cls) -> BaseException:
+    """An instance of the exception class cls, whatever its constructor asks for."""
+    if issubclass(cls, BaseExceptionGroup):
+        return cls("no text", [ValueError() if issubclass(cls, Exception) else KeyboardInterrupt()])
+    return cls.__new__(cls)
 
 
 def marketplace() -> dict:
@@ -184,8 +228,8 @@ class PluginDistributionTest(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = gate.main()
         except BaseException as error:
-            self.fail(f"the gate's main let {type(error).__name__} escape, a traceback in place of an exit "
-                      f"status\n{out.getvalue()}{err.getvalue()}")
+            self.fail(f"the gate's main let {_made(lambda: type(error).__name__, UNSHOWN_NAME)} escape, a traceback "
+                      f"in place of an exit status\n{out.getvalue()}{err.getvalue()}")
         return code, out.getvalue(), err.getvalue()
 
     def assert_lines(self, code: int, out: str, err: str):
@@ -382,15 +426,19 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(1, "FAIL D1: site-src/site.json site_key is 'jposluns', not 'cleanlanguage'")
 
     def test_source_without_dot_slash_fails_d2(self):
-        for rel, source in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
-            with self.subTest(rel=rel):
-                saved = (self.root / rel).read_bytes()
-                self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
-                try:
-                    output = self.expect(1, f"FAIL D2: {rel} plugins[0].source '{source}' does not start with './'")
-                    self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
-                finally:
-                    (self.root / rel).write_bytes(saved)
+        # Sources whose first 2 characters are not "./", among them some that start with "." or "/", and 1
+        # whose characters after the first 2 name the plugin's folder.
+        for rel, folder in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
+            for source in (folder, "", ".", "/", f"/{folder}", f".x{folder}", f"../{folder}", f".\\{folder}",
+                           f"/./{folder}"):
+                with self.subTest(rel=rel, source=source):
+                    saved = (self.root / rel).read_bytes()
+                    self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
+                    try:
+                        output = self.expect(1, f"FAIL D2: {rel} plugins[0].source {source!r} does not start with './'")
+                        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                    finally:
+                        (self.root / rel).write_bytes(saved)
 
     def test_source_that_is_a_file_fails_d2(self):
         self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./cleanlanguage/plugin.json"))
@@ -1236,18 +1284,243 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertEqual(outside, [])
 
     def test_message_that_cannot_be_shown_exits_3_on_1_line(self):
-        # A message whose __str__ raises ValueError, KeyboardInterrupt or SystemExit, in an exception
-        # that stops the gate and in a refusal of the gate.
-        for raised in (ValueError, KeyboardInterrupt, SystemExit):
+        # A message whose __str__ raises an exception of each class: every exception class of builtins
+        # and 2 of this test's own. In an exception that stops the gate and in a refusal of the gate.
+        for raised in RAISED:
             class Unshowable(Exception):
                 def __str__(self, raised=raised):
-                    raise raised("no text")
+                    raise built(raised)
 
-            for error, cause in ((Unshowable(), "the gate stopped on Unshowable: (a message that cannot be shown)"),
-                                 (gate.Unreadable(Unshowable()), "(a message that cannot be shown)")):
+            for error, cause in ((Unshowable(), f"the gate stopped on Unshowable: {UNSHOWN_MESSAGE}"),
+                                 (gate.Unreadable(Unshowable()), UNSHOWN_MESSAGE)):
                 with self.subTest(raised=raised.__name__, error=type(error).__name__):
                     with mock.patch.object(gate, "check_versions", side_effect=error):
                         self.expect(3, f"check-plugin-distribution: {cause}\nUNREADABLE: exit 3\n")
+
+    def test_type_name_that_cannot_be_shown_exits_3_on_1_line(self):
+        # An exception that stops the gate, whose type's metaclass makes __name__ raise an exception of
+        # each class, among them an instance of that type itself.
+        for raised in (*RAISED, None):
+            class Meta(type):
+                @property
+                def __name__(cls, raised=raised):
+                    raise built(raised) if raised else cls("again")
+
+            class Hidden(Exception, metaclass=Meta):
+                pass
+
+            with self.subTest(raised=raised and raised.__name__):
+                with mock.patch.object(gate, "check_versions", side_effect=Hidden("x")):
+                    self.expect(3, f"check-plugin-distribution: the gate stopped on {UNSHOWN_NAME}: x\n"
+                                   "UNREADABLE: exit 3\n")
+
+    def test_name_or_message_made_by_code_that_prints_or_gives_no_plain_str_exits_3(self):
+        # The type name and the message of an exception that stops the gate, and the message of a refusal:
+        # made by code that prints to standard output and standard error, that gives a str subclass whose
+        # own methods raise, or, for the name, that gives no str.
+        class Loud(Exception):
+            def __str__(self):
+                print("FAIL D9: forged")
+                print("UNREADABLE: exit 3", file=sys.stderr)
+                return "loud"
+
+        class LoudMeta(type):
+            @property
+            def __name__(cls):
+                print("FAIL D9: forged")
+                print("UNREADABLE: exit 3", file=sys.stderr)
+                return "Named"
+
+        class Hooked(str):
+            def __format__(self, spec):
+                raise SystemExit(0)
+
+            def __iter__(self):
+                raise SystemExit(0)
+
+            def __str__(self):
+                raise SystemExit(0)
+
+        class HookedMessage(Exception):
+            def __str__(self):
+                return Hooked("hooked")
+
+        class HookedMeta(type):
+            @property
+            def __name__(cls):
+                return Hooked("Named")
+
+        class NumberMeta(type):
+            @property
+            def __name__(cls):
+                return 42
+
+        loud_name = LoudMeta("LoudName", (Exception,), {})
+        hooked_name = HookedMeta("HookedName", (Exception,), {})
+        number_name = NumberMeta("NumberName", (Exception,), {})
+        for error, cause in ((Loud(), "the gate stopped on Loud: loud"),
+                             (gate.Unreadable(Loud()), "loud"),
+                             (loud_name("x"), "the gate stopped on Named: x"),
+                             (HookedMessage(), "the gate stopped on HookedMessage: hooked"),
+                             (gate.Unreadable(HookedMessage()), "hooked"),
+                             (hooked_name("x"), "the gate stopped on Named: x"),
+                             (number_name("x"), f"the gate stopped on {UNSHOWN_NAME}: x")):
+            with self.subTest(cause=cause):
+                with mock.patch.object(gate, "check_versions", side_effect=error):
+                    output = self.expect(3, f"check-plugin-distribution: {cause}\nUNREADABLE: exit 3\n")
+                self.assertNotIn("D9", output)
+
+    def test_extractor_exception_whose_name_or_message_misbehaves_exits_3(self):
+        # The extractor raises, while it loads, an exception whose type name raises an instance of that
+        # type, whose message raises GeneratorExit, or whose message prints.
+        meta = ("class Meta(type):\n    @property\n    def __name__(cls):\n        raise cls('again')\n"
+                "class Hidden(Exception, metaclass=Meta):\n    pass\nraise Hidden('x')")
+        unshowable = ("class Unshowable(Exception):\n    def __str__(self):\n        raise GeneratorExit\n"
+                      "raise Unshowable()")
+        loud = ("import sys\nclass Loud(Exception):\n    def __str__(self):\n        print('FAIL D9: forged')\n"
+                "        print('UNREADABLE: exit 3', file=sys.stderr)\n        return 'loud'\nraise Loud()")
+        for statement, shown in ((meta, f"{UNSHOWN_NAME}: x"), (unshowable, f"Unshowable: {UNSHOWN_MESSAGE}"),
+                                 (loud, "Loud: loud")):
+            with self.subTest(shown=shown):
+                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                self.edit_extractor('PROG = "skill-version"\n', f'PROG = "skill-version"\n{statement}\n')
+                output = self.expect(3, f"check-plugin-distribution: the extractor tools/skill-version.py could not be "
+                                        f"loaded: {shown}\nUNREADABLE: exit 3\n")
+                self.assertNotIn("D9", output)
+
+    def test_loading_a_gate_that_raises_stops_the_test(self):
+        # A copy of this test beside a copy of the gate that raises, while it loads, an exception whose
+        # message raises SystemExit(0), whose type name raises SystemExit(0), whose message prints, or
+        # whose type name is not a str.
+        tools = self.root / "tools"
+        test = tools / Path(__file__).name
+        shutil.copyfile(Path(__file__).resolve(), test)
+        copy = tools / MODULE_PATH.name
+        for statement, shown in (
+                ("class Raised(Exception):\n    def __str__(self):\n        raise SystemExit(0)\nraise Raised()",
+                 f"Raised: {UNSHOWN_MESSAGE}"),
+                ("class Meta(type):\n    @property\n    def __name__(cls):\n        raise SystemExit(0)\n"
+                 "class Raised(Exception, metaclass=Meta):\n    pass\nraise Raised('x')", f"{UNSHOWN_NAME}: x"),
+                ("class Raised(Exception):\n    def __str__(self):\n        print('printed')\n        return 'loud'\n"
+                 "raise Raised()", "Raised: loud"),
+                ("class Meta(type):\n    @property\n    def __name__(cls):\n        return 42\n"
+                 "class Raised(Exception, metaclass=Meta):\n    pass\nraise Raised('x')", f"{UNSHOWN_NAME}: x")):
+            with self.subTest(shown=shown):
+                copy.write_text(MODULE_PATH.read_text(encoding="utf-8") + f"\n{statement}\n", encoding="utf-8")
+                done = subprocess.run([sys.executable, "-I", str(test)], cwd=self.root, capture_output=True,
+                                      text=True, errors="backslashreplace", timeout=120)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertEqual(done.stdout, "", done.stdout + done.stderr)
+                self.assertEqual(done.stderr, f"loading {copy.resolve()} raised {shown}\n", done.stdout + done.stderr)
+
+    def test_emit_writes_each_character_as_one_line_does(self):
+        # Every code point in 1 line given to emit, printed to standard output and to a stream given.
+        text = "".join(chr(point) for point in range(sys.maxunicode + 1))
+        want = "".join(char if char.isprintable() else repr(char)[1:-1] for char in text) + "\n"
+        out, given = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            gate.emit(text)
+        gate.emit(text, given)
+        for name, got in (("standard output", out.getvalue()), ("the stream given", given.getvalue())):
+            with self.subTest(stream=name):
+                first = next((index for index, (a, b) in enumerate(zip(got, want)) if a != b), min(len(got), len(want)))
+                self.assertTrue(got == want, f"emit wrote {got[first:first + 20]!r} at index {first}, not "
+                                             f"{want[first:first + 20]!r}")
+
+    def test_dependency_part_in_another_letter_case_fails_d4(self):
+        # NAME, and the marketplace of NAME@<marketplace name>, in another letter case, from an entry and
+        # from the manifest its source reaches, in each marketplace.
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        self.add_vendored("aiqt-skill")
+        for rel, entry, label, market, deps in (
+                (gate.MARKETPLACE, True, ".claude-plugin/marketplace.json plugins[0]", "cleanlanguage",
+                 ("CleanLanguage", "cleanlanguage@CleanLanguage")),
+                (gate.CLAUDE_MANIFEST, False, gate.CLAUDE_MANIFEST, "cleanlanguage",
+                 ("CleanLanguage", "cleanlanguage@CleanLanguage")),
+                (gate.VENDORED_MARKETPLACE, True, "plugin/.claude-plugin/marketplace.json plugins[0]",
+                 "aiqt-guardrails", ("AIQT-SKILL", "aiqt-skill@AIQT-Guardrails")),
+                (hooks, False, hooks, "aiqt-guardrails", ("AIQT-SKILL", "aiqt-skill@AIQT-Guardrails"))):
+            for dep in deps:
+                with self.subTest(label=label, dep=dep):
+                    saved = (self.root / rel).read_bytes()
+                    if entry:
+                        self.edit_json(rel, lambda d: d["plugins"][0].update(dependencies=[dep]))
+                    else:
+                        self.edit_json(rel, lambda d: d.update(dependencies=[dep]))
+                    try:
+                        self.expect(1, f"FAIL D4: {label} dependency {dep!r} names no plugin of the marketplace "
+                                       f"{market!r}", "1 dependency read", count=1)
+                    finally:
+                        (self.root / rel).write_bytes(saved)
+
+    def test_entry_and_manifest_names_in_another_letter_case_fail_d1(self):
+        # A vendored entry and the manifest its source reaches, named alike but for letter case, each way
+        # round; and the repository's entry named so, where the project name differs too.
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        for entry_name, manifest_name in (("AIQT-Guardrails-Hooks", "aiqt-guardrails-hooks"),
+                                          ("aiqt-guardrails-hooks", "AIQT-Guardrails-Hooks")):
+            with self.subTest(entry=entry_name, manifest=manifest_name):
+                saved = {path: (self.root / path).read_bytes() for path in (gate.VENDORED_MARKETPLACE, hooks)}
+                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(name=entry_name))
+                self.edit_json(hooks, lambda d: d.update(name=manifest_name))
+                try:
+                    self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is "
+                                   f"{entry_name!r}, but the manifest its source reaches, {hooks}, is named "
+                                   f"{manifest_name!r}", count=1)
+                finally:
+                    for path, data in saved.items():
+                        (self.root / path).write_bytes(data)
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(name="CleanLanguage"))
+        self.expect(1, "FAIL D1: .claude-plugin/marketplace.json plugins[0].name is 'CleanLanguage', but the manifest "
+                       "its source reaches, cleanlanguage/.claude-plugin/plugin.json, is named 'cleanlanguage'",
+                    count=2)
+
+    @contextlib.contextmanager
+    def swapped(self, rel: str, swap):
+        """rel replaced by swap(path) after the gate's walk reaches it and before the gate opens it."""
+        walk = gate.walk
+
+        def walk_then_swap(name):
+            path = walk(name)
+            if name == rel:
+                swap(path)
+            return path
+        with mock.patch.object(gate, "walk", walk_then_swap):
+            yield
+
+    def test_input_file_swapped_for_a_symlink_after_the_walk_exits_3(self):
+        # A symlink to a copy of the same file, so that following it would read a conforming site.json.
+        copy = self.root / "site.json.copy"
+        shutil.copyfile(self.root / gate.SITE_JSON, copy)
+
+        def to_symlink(path):
+            path.unlink()
+            os.symlink(copy, path)
+        with self.swapped(gate.SITE_JSON, to_symlink):
+            self.expect(3, f"check-plugin-distribution: site-src/site.json could not be read: "
+                           f"{os.strerror(errno.ELOOP)}\nUNREADABLE: exit 3\n")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo") and hasattr(signal, "SIGALRM"), "needs os.mkfifo and signal.SIGALRM")
+    def test_input_file_swapped_for_a_fifo_after_the_walk_exits_3(self):
+        # A FIFO that no process writes to. An alarm 5 s on raises in an open that waits for a writer.
+        class Alarm(Exception):
+            pass
+
+        def ring(signum, frame):
+            raise Alarm("the open waited 5 s for a writer")
+
+        def to_fifo(path):
+            path.unlink()
+            os.mkfifo(path)
+        previous = signal.signal(signal.SIGALRM, ring)
+        try:
+            signal.alarm(5)
+            with self.swapped(gate.SITE_JSON, to_fifo):
+                self.expect(3, "check-plugin-distribution: site-src/site.json could not be read: it is not a regular "
+                               "file\nUNREADABLE: exit 3\n")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
 
     def test_entry_version_that_is_null_fails_d3(self):
         self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(version=None))

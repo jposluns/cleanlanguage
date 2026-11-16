@@ -59,16 +59,21 @@ Output and exit status:
      any other exception, of any class, that reaches main.
   Every line goes through emit, which writes each character that
   str.isprintable refuses as its Python backslash escape, so each line the
-  gate prints is 1 line. A message whose __str__ raises an exception of any
-  class is shown by a stand-in. What the extractor writes to sys.stdout or
-  sys.stderr while it loads is dropped.
+  gate prints is 1 line. Where a line shows the name of an exception's type
+  or its message, the gate makes each into a str of its own type, with what
+  that writes to sys.stdout or sys.stderr dropped; a name or message whose
+  making raises an exception of any class, or a name that is not a str, is
+  shown by a stand-in. What the extractor writes to sys.stdout or sys.stderr
+  while it loads is dropped.
 
 Residual: the gate does not ask git which files are tracked and does not run
-the Claude Code CLI. The extractor is code the gate runs: a write of it to a
-file descriptor or to sys.__stdout__ is not confined. A file swapped between
-the walk and the open is met by O_NOFOLLOW and the check after the open,
-which no case reaches. An exception raised while the gate writes to standard
-error is not caught.
+the Claude Code CLI. The extractor, and the code that makes an exception's
+name or message, are code the gate runs: a write of either to a file
+descriptor or to sys.__stdout__ is not confined. A file swapped between the
+walk and the open is met by O_NOFOLLOW, O_NONBLOCK and the check after the
+open; O_NOFOLLOW covers only the last component, so a folder on the path
+swapped for a symlink in that time is followed. An exception raised while the
+gate writes to standard error is not caught.
 
 Usage: python3 -I tools/check-plugin-distribution.py
 """
@@ -152,17 +157,24 @@ def emit(line: str, stream=None) -> None:
     print(one_line(line), file=stream)
 
 
-def shown(error: BaseException) -> str:
-    """The message of the exception, or a stand-in when its __str__ raises an exception of any class."""
+def plain(make, stand_in: str) -> str:
+    """What make returns, as a str of its own type, with what make writes to sys.stdout and sys.stderr
+    dropped; or stand_in when make raises an exception of any class or returns no str."""
     try:
-        return str(error)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return str.__str__(make())
     except BaseException:
-        return "(a message that cannot be shown)"
+        return stand_in
+
+
+def shown(error: BaseException) -> str:
+    """The message of the exception, as plain makes it."""
+    return plain(lambda: str(error), "(a message that cannot be shown)")
 
 
 def described(error: BaseException) -> str:
-    """The name of the exception's type and its message as shown gives it."""
-    return f"{type(error).__name__}: {shown(error)}"
+    """The name of the exception's type and its message, each as plain makes it."""
+    return f"{plain(lambda: type(error).__name__, '(a name that cannot be shown)')}: {shown(error)}"
 
 
 def walk(rel: str) -> Path:
