@@ -31,7 +31,7 @@ per-test comments. Dispatch-action names are the keys of the dispatch table
 `HANDLERS = {` (aiqt_hooks.py:37584-37618), passed as the single argv (`main(sys.argv[1:])` at
 aiqt_hooks.py:38363). The repo root is the git top level of
 data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:21723-21728, 10532), and scope goes live only
-when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:22596-22654).
+when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:22596-22656).
 """
 
 from __future__ import annotations
@@ -705,8 +705,9 @@ class WholeFunctionCitations(unittest.TestCase):
     compares the counts with WHOLE. A re-pin that moves or lengthens a cited function lowers its count,
     and a new whole-function citation raises one, so either fails here until the citations and WHOLE
     follow. The case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range
-    written A-B with a hyphen is read; a range that covers part of a function, a single line and a
-    nested function are not checked."""
+    written A-B with a hyphen is read; a range that covers part of a function, a range over more than
+    1 whole function (such as A, the def line of 1 function, to B, the last line of a later one), a
+    single line and a nested function are not checked."""
 
     WHOLE = {
         ("check-orchestration-registry.py", "_orch_root"): 1,
@@ -725,6 +726,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("orch_doctor.py", "_orch_resume_probes"): 2,
         ("orch_doctor.py", "_orch_root"): 2,
         ("orch_doctor.py", "_orch_save_turn_state"): 2,
+        ("orch_doctor.py", "_orch_scope_live"): 2,
         ("orch_doctor.py", "_orch_state_dir_for_root"): 2,
         ("orch_doctor.py", "_orch_stop_family"): 1,
         ("orch_doctor.py", "_orch_write_json_at"): 1,
@@ -734,6 +736,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-no-qa-labels.py", "_orch_checkpoint_union"): 1,
         ("test-no-qa-labels.py", "_orch_escape_active"): 1,
         ("test-no-qa-labels.py", "_orch_record_escape_spoof"): 1,
+        ("test-no-qa-labels.py", "_orch_scope_live"): 1,
         ("test-no-qa-labels.py", "_schema_staleness"): 1,
         ("test-no-qa-labels.py", "orch_ask_guard"): 1,
         ("test-no-qa-labels.py", "orch_teammate_idle"): 1,
@@ -745,6 +748,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage1-hooks.py", "_deny"): 1,
         ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"): 1,
         ("test-orch-stage1-hooks.py", "_orch_root"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_scope_live"): 1,
         ("test-orch-stage1-hooks.py", "orch_dispatch_ledger"): 1,
         ("test-orch-stage1-hooks.py", "orch_prompt_stamp"): 1,
         ("test-orch-stage1-hooks.py", "orch_resume_audit"): 1,
@@ -760,6 +764,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage2-hooks.py", "_orch_register_tip"): 1,
         ("test-orch-stage2-hooks.py", "_orch_register_wake"): 1,
         ("test-orch-stage2-hooks.py", "_orch_resume_probes"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_scope_live"): 1,
         ("test-orch-stage2-hooks.py", "_schema_staleness"): 1,
         ("test-orch-stage2-hooks.py", "orch_ask_guard"): 1,
         ("test-orch-stage2-hooks.py", "orch_teammate_idle"): 1,
@@ -780,6 +785,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("a shortened range lowers a count", "f at 1-3", {("a.py", "f"): 1}, [("a.py", "f", 0, 1)]),
         ("only the def line to the last line counts", "f at 1-1, h at 5-5, f at 4-4", {}, []),
         ("only top-level functions count", "g at 2-3", {}, []),
+        ("a range over more than 1 function counts for none", "f and h at 1-6", {}, []),
         ("no letter, digit or dot before the range", "v1-4, x.1-4, 11-4", {}, []),
         ("no letter, digit or dot after the range", "1-4a, 1-4.5, 1-44", {}, []),
     )

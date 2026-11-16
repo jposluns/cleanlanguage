@@ -21,13 +21,17 @@ through permissionDecision on exit 0. A missing hook or payload fails the case r
 skipping it, so an absent file cannot read as a green run.
 
 The probes must stay write-then-run forms, since the hook before the refresh already denied the
-direct form. The shape check (write_then_run) accepts only the closed form that GRAMMAR and
-STRUCTURE define and rejects every other command text: 1 or more writes, and then 1 run line as the
-last line. The run line must name a written path, and 1 line of the text written to that path must
-hold a git commit with --no-verify or -n. The check reads text only; it makes no claim about how a
-shell runs any command. GRAMMAR_FORMS holds rejected and accepted forms for each rule of GRAMMAR and
-STRUCTURE, and a case fails when a rule has no rejected form. Each payload file is also pinned by its
-sha256, so any edit to a payload fails a named case until the pin is updated with it.
+direct form. Each payload file is pinned by its sha256, so any edit to a payload fails a named case
+until the pin is updated with it, and each probe must pass the shape check (write_then_run). The
+check reads text only; it makes no claim about how a shell runs a command. It returns a path only
+for 1 or more writes, each alone on its line and each to a path not written before, and then, as
+the last line, a run with bash, sh or python3 of a written path, where 1 line of the text written
+to that path holds the words git and commit, in that order, and --no-verify or -n as a whole word.
+SHAPE_RULES lists rules of the check, each with a form that the check rejects and an edit of the
+check's source that removes or loosens the rule. 1 case fails when the check accepts a listed form.
+Another fails when a listed edit does not match the check's source exactly once, or when the check
+with the edit applied still rejects the form. Only the rules listed in SHAPE_RULES are pinned this
+way; a rule that is not listed is not pinned.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
 is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
@@ -73,163 +77,171 @@ PAYLOAD_SHA256 = {
     "c1": "83fd994d0fd708e27f00fd291a84716cebadc174e09afe853064b1ad90c96ce6",
     "c2": "cc5a3f5a0b4c1c4c6a24e570a1932c2c5829a8906afd260ada04ee72cdd701eb",
 }
-# The closed probe grammar. Each pattern must match a whole line. A path is absolute and ends in .sh or
-# .py. A here-document write takes a single-quoted delimiter; its written text is the lines up to the
-# first line that is exactly the delimiter. A printf write takes a single-quoted text with no %, and
-# no backslash but \n, which the check reads as a line break. The run line is bash, sh or python3 and
-# a path, and may end with `; echo "name=$?"`.
-PATH_FORM = r"(?P<path>/[A-Za-z0-9_./+-]+\.(?:sh|py))"
-GRAMMAR = {
-    "heredoc write": re.compile(r"cat > " + PATH_FORM + r" <<'(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)'"),
-    "printf write": re.compile(r"printf '(?P<text>(?:[^'\\%]|\\n)*)' > " + PATH_FORM),
-    "run line": re.compile(r"(?:bash|sh|python3) " + PATH_FORM + r"(?:; echo \"[a-z]+=\$\?\")?"),
-}
-# The rules of the order of the lines: every line before the run line belongs to a write, and the run
-# line is the last line.
-STRUCTURE = ("only writes before the run line", "the run line is the last line")
-# A git commit with a hook-skipping flag, as shell words or as a Python argument list.
-COMMIT_WORDS = re.compile(r"\bgit\b[^\n]*\bcommit\b|\"git\",\s*\"commit\"")
-SKIP_FLAG = re.compile(r"--no-verify|(?:^|[\s\"])-n(?:[\s\"]|$)", re.MULTILINE)
-# 3 moved forms that the shape check must reject: each script holds no commit, and a direct commit
-# with a hook-skipping flag stands between the written text and the run line.
-MOVED_COMMIT_FORMS = (
-    "cat > /tmp/probe-m1.sh <<'EOF'\necho probe\nEOF\ngit commit --no-verify -m probe\nbash /tmp/probe-m1.sh",
-    "cat > /tmp/probe-m2.py <<'EOF'\nprint('probe')\nEOF\ngit commit -n -m probe\npython3 /tmp/probe-m2.py",
-    "printf 'echo probe\\n' > /tmp/probe-m3.sh\ngit commit --no-verify -m probe\nsh /tmp/probe-m3.sh",
-)
-# 1 pair per shape condition: (condition, a form that fails only that condition, the same form with the
-# condition met). The shape check must reject the first and accept the second, so removing any 1 of the
-# 4 conditions makes its rejected form pass and fails the case.
-SHAPE_CONDITION_FORMS = (
-    ("hook-skipping flag",
-     "cat > /tmp/probe-s1.sh <<'EOF'\ngit commit -m probe\nEOF\nbash /tmp/probe-s1.sh",
-     "cat > /tmp/probe-s1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s1.sh"),
-    ("commit word",
-     "cat > /tmp/probe-s2.sh <<'EOF'\necho --no-verify\nEOF\nbash /tmp/probe-s2.sh",
-     "cat > /tmp/probe-s2.sh <<'EOF'\ngit commit --no-verify\nEOF\nbash /tmp/probe-s2.sh"),
-    ("run after the written text",
-     "bash /tmp/probe-s3.sh\ncat > /tmp/probe-s3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF",
-     "cat > /tmp/probe-s3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s3.sh"),
-    ("run of the written path",
-     "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-other.sh",
-     "cat > /tmp/probe-s4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s4.sh"),
-)
-# A form whose script holds the commit word and the hook-skipping flag on 2 different lines, which the
-# shape check must reject, and the same form with both on 1 line, which it must accept.
-SPLIT_LINE_FORMS = (
-    "cat > /tmp/probe-s5.sh <<'EOF'\ngit commit -m probe\necho --no-verify\nEOF\nbash /tmp/probe-s5.sh",
-    "cat > /tmp/probe-s5.sh <<'EOF'\ngit commit --no-verify -m probe\necho done\nEOF\nbash /tmp/probe-s5.sh",
-)
-# A printf write followed by more text on its line (here a second printf that overwrites the script with
-# no commit), which the shape check must reject, and the same printf write alone on its line, which it
-# must accept.
-PRINTF_MORE_TEXT_FORMS = (
-    "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh; printf 'echo probe\\n' > /tmp/probe-s6.sh\n"
-    "bash /tmp/probe-s6.sh",
-    "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh\nbash /tmp/probe-s6.sh",
-)
-# 1 entry per side of the rule that a write stands alone on its line: (side, the forms that break the
-# rule on that side only, which the shape check must reject, and the same writes alone on their lines,
-# which it must accept). Removing or loosening the rule on any 1 side makes 1 of its rejected forms pass,
-# or 1 of its accepted forms fail, and fails the case.
-ALONE_ON_ITS_LINE_FORMS = (
-    ("text before cat on the line of a here-document write",
-     ("false && cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh",
-      "echo probe; cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh"),
-     ("cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh",)),
-    ("text after the here-document opener",
-     ("cat > /tmp/probe-a2.sh <<'EOF'; printf 'echo probe\\n' > /tmp/probe-a2.sh\n"
-      "git commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",
-      "cat > /tmp/probe-a2.sh <<'EOF' && echo probe\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",
-      "cat > /tmp/probe-a2.sh <<'EOF' | tee /tmp/probe-a2.log\ngit commit --no-verify -m probe\nEOF\n"
-      "bash /tmp/probe-a2.sh"),
-     ("cat > /tmp/probe-a2.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",)),
-    ("text before a printf write",
-     ("false && printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh",
-      "echo probe; printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh"),
-     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh",)),
-    ("text after a printf write",
-     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh && printf 'echo probe\\n' > /tmp/probe-a4.sh\n"
-      "bash /tmp/probe-a4.sh",
-      "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh || true\nbash /tmp/probe-a4.sh"),
-     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh\nbash /tmp/probe-a4.sh",)),
-    ("the closing delimiter line of a here-document",
-     ("cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF x\nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\n EOF\nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF \nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh"),
-     ("cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<'EOF'\nEOF x\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh")),
-)
-# 1 entry per rule of GRAMMAR and STRUCTURE: (rule, forms that break only that rule, which the shape
-# check must reject, and the same forms with the rule kept, which it must accept). A case fails when a
-# rule of GRAMMAR or STRUCTURE has no rejected form here.
-W = "cat > /tmp/probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
-GRAMMAR_FORMS = (
-    ("heredoc write",
-     ("cat > /tmp/probe-g.sh <<EOF\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.sh",
-      "cat > /tmp/probe-g.sh <<\"EOF\"\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.sh",
-      "cat > /tmp/probe-g.sh <<-'EOF'\n\tgit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-g.sh",
-      "cat > probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash probe-g.sh",
-      "cat > /tmp/probe-g.txt <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.txt",
-      "cat > /tmp/probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nbash /tmp/probe-g.sh"),
-     (W + "bash /tmp/probe-g.sh",)),
-    ("printf write",
-     ("printf 'git commit --no-verify -m probe%s\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",
-      "printf 'git commit --no-verify -m probe\\t\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",
-      "printf \"git commit --no-verify -m probe\\n\" > /tmp/probe-g.sh\nbash /tmp/probe-g.sh"),
-     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",)),
-    ("run line",
-     (W + "echo bash /tmp/probe-g.sh",
-      W + "bash  /tmp/probe-g.sh",
-      W + "bash /tmp/probe-g.sh; exit 0",
-      W + "bash /tmp/probe-g.sh; echo \"script=$?",
-      W + "bash /tmp/probe-g.sh \\"),
-     (W + "bash /tmp/probe-g.sh; echo \"script=$?\"", W + "sh /tmp/probe-g.sh")),
-    ("only writes before the run line",
-     (W + "git commit --no-verify -m probe\nbash /tmp/probe-g.sh",
-      W + "exit 0\nbash /tmp/probe-g.sh",
-      W + "true; exit 0\nbash /tmp/probe-g.sh",
-      W + "{ exit 0; }\nbash /tmp/probe-g.sh",
-      W + "echo \\\nbash /tmp/probe-g.sh",
-      W + "echo 'start\nbash /tmp/probe-g.sh",
-      W + "cat > /tmp/probe-g.txt <<'TXT'\nbash /tmp/probe-g.sh",
-      "cat <<'OUTER'\n" + W + "bash /tmp/probe-g.sh\nOUTER",
-      "echo '" + W + "bash /tmp/probe-g.sh'"),
-     (W + "cat > /tmp/probe-h.py <<'EOF'\nprint(1)\nEOF\nbash /tmp/probe-g.sh",
-      "printf 'echo x\\n' > /tmp/probe-h.sh\n" + W + "bash /tmp/probe-g.sh")),
-    ("the run line is the last line",
-     (W + "bash /tmp/probe-g.sh\n", W + "bash /tmp/probe-g.sh\necho done", W.rstrip("\n")),
-     (W + "bash /tmp/probe-g.sh",)),
-)
+# The lines between these 2 markers are the shape check; a case runs them with each edit of SHAPE_RULES.
+SHAPE_BEGIN = "# The shape check: begin"
+SHAPE_END = "# The shape check: end"
+# The shape check: begin
+# A path is absolute, of the characters A-Z a-z 0-9 _ . / -, and ends in .sh or .py. A here-document
+# write is `cat > PATH <<'EOF'`; its written text is the lines up to the first line that is exactly
+# EOF. A printf write is `printf 'TEXT' > PATH`; TEXT holds no ', no % and no backslash but \n, at
+# which the check splits it into lines. The run line is bash, sh or python3 and a path, and may end
+# with `; echo "script=$?"`. A commit line holds the words git and commit, in that order, and the
+# flag --no-verify or -n as a whole word: with a line end, whitespace or a double quote on each side.
+PATH_FORM = r"(?P<path>/[A-Za-z0-9_./-]+\.(?:sh|py))"
+HEREDOC_WRITE = re.compile(r"cat > " + PATH_FORM + r" <<'EOF'")
+PRINTF_WRITE = re.compile(r"printf '(?P<text>(?:[^'\\%]|\\n)*)' > " + PATH_FORM)
+RUN_LINE = re.compile(r"(?:bash|sh|python3) " + PATH_FORM + r"(?:; echo \"script=\$\?\")?")
+COMMIT_WORDS = re.compile(r"\bgit\b.*\bcommit\b")
+SKIP_FLAG = re.compile(r"(?<![^\s\"])(?:--no-verify|-n)(?![^\s\"])")
 
 
 def write_then_run(command):
-    """The run path when command is in the closed grammar of GRAMMAR and STRUCTURE and the text written
-    to that path holds, on 1 line, a git commit with a hook-skipping flag; else None."""
+    """The run path when command is 1 or more writes, each alone on its line and each to a path not
+    written before, and then, as the last line, a run of a written path whose written text holds a
+    commit line; else None."""
     lines = command.split("\n")
     written = {}
     i = 0
     while i < len(lines) - 1:
-        heredoc = GRAMMAR["heredoc write"].fullmatch(lines[i])
-        printf = GRAMMAR["printf write"].fullmatch(lines[i])
-        if heredoc:
-            close = lines.index(heredoc["delimiter"], i + 1) if heredoc["delimiter"] in lines[i + 1:] else -1
-            if close < 0:
-                return None
-            written[heredoc["path"]] = lines[i + 1:close]
-            i = close + 1
+        heredoc = HEREDOC_WRITE.fullmatch(lines[i])
+        printf = PRINTF_WRITE.fullmatch(lines[i])
+        if heredoc and "EOF" in lines[i + 1:]:
+            close = lines.index("EOF", i + 1)
+            path, text, i = heredoc["path"], lines[i + 1:close], close + 1
         elif printf:
-            written[printf["path"]] = printf["text"].replace("\\n", "\n").split("\n")
-            i += 1
+            path, text, i = printf["path"], printf["text"].split("\\n"), i + 1
         else:
             return None
-    run = GRAMMAR["run line"].fullmatch(lines[-1])
-    if not run:
-        return None
-    if not any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in written.get(run["path"], ())):
-        return None
-    return run["path"]
+        if path in written:
+            return None
+        written[path] = text
+    run = RUN_LINE.fullmatch(lines[-1])
+    if run and any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in written.get(run["path"], ())):
+        return run["path"]
+    return None
+# The shape check: end
+
+# The rules of the shape check that the test pins, 1 entry each: (rule, a form that the check rejects,
+# and an edit (old, new) of the shape check's source that removes or loosens the rule). The check must
+# reject the form; the edit's old text must occur exactly once in the check's source, and the check
+# with the edit applied must accept the form. A rule that is not listed here is not pinned.
+W = "cat > /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
+RUN = "bash /tmp/probe-s.sh"
+SHAPE_RULES = (
+    ("the path is absolute",
+     "cat > probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash probe-s.sh",
+     ('r"(?P<path>/[', 'r"(?P<path>/?[')),
+    ("the path has only the listed characters",
+     "cat > /tmp/$P.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/$P.sh",
+     ("/[A-Za-z0-9_./-]+", r"/\S+")),
+    ("the path ends in .sh or .py",
+     "cat > /tmp/probe-s.txt <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-s.txt",
+     (r'\.(?:sh|py))"', ')"')),
+    ("a here-document write is to a path of PATH_FORM",
+     "cat > probe-r.sh <<'EOF'\necho probe\nEOF\n" + W + RUN,
+     ('r"cat > " + PATH_FORM', r'r"cat > (?P<path>\S+)"')),
+    ("a printf write is to a path of PATH_FORM",
+     "printf 'echo probe\\n' > probe-r.sh\n" + W + RUN,
+     ("' > \" + PATH_FORM)", r"""' > (?P<path>\S+)")""")),
+    ("a here-document write is cat > PATH",
+     "cat >> /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ('r"cat > "', 'r"cat >>? "')),
+    ("the here-document delimiter is 'EOF'",
+     "cat > /tmp/probe-s.sh <<EOF\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ("r\" <<'EOF'\")", "r\" <<'?EOF'?\")")),
+    ("a here-document write is alone on its line",
+     "echo probe; cat > /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ("HEREDOC_WRITE.fullmatch(", "HEREDOC_WRITE.search(")),
+    ("a here-document has a closing line",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\n" + RUN,
+     ('if heredoc and "EOF" in lines[i + 1:]:\n            close = lines.index("EOF", i + 1)',
+      'if heredoc:\n            close = lines.index("EOF", i + 1) if "EOF" in lines[i + 1:] else len(lines) - 1')),
+    ("a here-document closes at the first EOF line",
+     "cat > /tmp/probe-s.sh <<'EOF'\nEOF\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ('close = lines.index("EOF", i + 1)', 'close = len(lines) - 1 - lines[::-1].index("EOF")')),
+    ("a here-document's text ends before its closing line",
+     "cat > /tmp/probe-s.sh <<'EOF'\necho probe\nEOF\n"
+     "cat > /tmp/probe-t.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ("lines[i + 1:close]", "lines[i + 1:]")),
+    ("a printf write is printf > PATH",
+     "printf 'git commit --no-verify -m probe\\n' >> /tmp/probe-s.sh\n" + RUN,
+     (")*)' > \"", ")*)' >>? \"")),
+    ("printf text is single-quoted",
+     "printf \"git commit --no-verify -m probe\\n\" > /tmp/probe-s.sh\n" + RUN,
+     ("r\"printf '(?P<text>(?:[^'\\\\%]|\\\\n)*)' > \"",
+      "r\"printf ['\\\"](?P<text>(?:[^'\\\"\\\\%]|\\\\n)*)['\\\"] > \"")),
+    ("printf text has no %",
+     "printf 'git commit --no-verify -m probe%s\\n' > /tmp/probe-s.sh\n" + RUN,
+     ("[^'\\\\%]", "[^'\\\\]")),
+    ("printf text has no backslash but \\n",
+     "printf 'git commit --no-verify -m probe\\t\\n' > /tmp/probe-s.sh\n" + RUN,
+     ("[^'\\\\%]", "[^'%]")),
+    ("printf text is read as lines at \\n",
+     "printf 'git commit -m probe\\necho --no-verify x\\n' > /tmp/probe-s.sh\n" + RUN,
+     ('printf["text"].split("\\\\n")', '[printf["text"]]')),
+    ("a printf write is alone on its line",
+     "echo probe; printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s.sh\n" + RUN,
+     ("PRINTF_WRITE.fullmatch(", "PRINTF_WRITE.search(")),
+    ("only writes come before the run line",
+     W + "git commit --no-verify -m probe\n" + RUN,
+     ("        else:\n            return None\n", "        else:\n            i += 1\n            continue\n")),
+    ("every line before the last line is read",
+     "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s.sh\nexit 0\n" + RUN,
+     ("while i < len(lines) - 1:", "while i < len(lines) - 2:")),
+    ("each path is written once",
+     "printf 'echo probe\\n' > /tmp/probe-s.sh\n" + W + RUN,
+     ("        if path in written:\n            return None\n", "")),
+    ("the run line is bash, sh or python3 and a path",
+     W + "rm /tmp/probe-s.sh",
+     ('r"(?:bash|sh|python3) "', r'r"\S+ "')),
+    ("the run line ends with the path or with the echo of its status",
+     W + "bash /tmp/probe-s.sh; exit 0",
+     (r'r"(?:; echo \"script=\$\?\")?"', r'r"(?:;.*)?"')),
+    ("the run line is the whole last line",
+     W + "echo " + RUN,
+     ("RUN_LINE.fullmatch(", "RUN_LINE.search(")),
+    ("the run line runs a written path",
+     W + "bash /tmp/probe-other.sh",
+     ('written.get(run["path"], ())', "[line for text in written.values() for line in text]")),
+    ("the commit line holds the word git",
+     "cat > /tmp/probe-s.sh <<'EOF'\necho commit --no-verify\nEOF\n" + RUN,
+     (r'r"\bgit\b.*\bcommit\b"', r'r"\bcommit\b"')),
+    ("the commit line holds the word commit",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit log -n 1\nEOF\n" + RUN,
+     (r'r"\bgit\b.*\bcommit\b"', r'r"\bgit\b"')),
+    ("the flag starts a word",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -m probe-n\nEOF\n" + RUN,
+     (r'(?<![^\s\"])(?:--no-verify|-n)', '(?:--no-verify|-n)')),
+    ("the flag ends a word",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -nx -m probe\nEOF\n" + RUN,
+     (r'(?:--no-verify|-n)(?![^\s\"])', '(?:--no-verify|-n)')),
+    ("the commit words and the flag are on 1 line",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -m probe\necho --no-verify\nEOF\n" + RUN,
+     ('any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in written.get(run["path"], ()))',
+      'COMMIT_WORDS.search("\\n".join(written.get(run["path"], ()))) '
+      'and SKIP_FLAG.search("\\n".join(written.get(run["path"], ())))')),
+    ("the command splits into lines only at \\n",
+     W + RUN + "\r",
+     ('command.split("\\n")', "command.splitlines()")),
+)
+
+
+def shape_source():
+    """The source lines of the shape check, between SHAPE_BEGIN and SHAPE_END, as 1 string."""
+    lines = Path(__file__).read_text(encoding="utf-8").split("\n")
+    return "\n".join(lines[lines.index(SHAPE_BEGIN) + 1:lines.index(SHAPE_END)])
+
+
+def shape_check(source):
+    """The write_then_run function that source defines."""
+    namespace = {"re": re}
+    exec(source, namespace)
+    return namespace["write_then_run"]
+
+
+def probe_command(name):
+    """The command text of the payload file name.json."""
+    return json.loads((PAYLOADS / (name + ".json")).read_text(encoding="utf-8"))["tool_input"]["command"]
 
 
 def run_hook(name):
@@ -280,61 +292,24 @@ class GateWeakeningProbes(unittest.TestCase):
                                      "probe {} is not a write-then-run commit form: {!r}"
                                      .format(name, command[:200]))
 
-    def test_shape_check_rejects_a_commit_outside_the_script(self):
-        for index, command in enumerate(MOVED_COMMIT_FORMS, 1):
-            with self.subTest(moved_form=index):
-                self.assertIsNone(write_then_run(command),
-                                  "a commit outside the written script passed the shape check: {!r}"
-                                  .format(command))
-
-    def test_shape_check_requires_each_condition(self):
-        for condition, rejected, accepted in SHAPE_CONDITION_FORMS:
-            with self.subTest(condition=condition):
-                self.assertIsNotNone(write_then_run(accepted),
-                                     "the form that meets every condition failed the shape check: {!r}"
-                                     .format(accepted))
+    def test_shape_check_rejects_the_form_of_each_rule(self):
+        for rule, rejected, _edit in SHAPE_RULES:
+            with self.subTest(rule=rule):
                 self.assertIsNone(write_then_run(rejected),
-                                  "a form without the {} passed the shape check: {!r}"
-                                  .format(condition, rejected))
+                                  "a form against the rule ({}) passed the shape check: {!r}".format(rule, rejected))
 
-    def test_shape_check_requires_the_commit_and_the_flag_on_1_line(self):
-        rejected, accepted = SPLIT_LINE_FORMS
-        self.assertIsNotNone(write_then_run(accepted),
-                             "the commit and the flag on 1 line failed the shape check: {!r}".format(accepted))
-        self.assertIsNone(write_then_run(rejected),
-                          "the commit and the flag on 2 lines passed the shape check: {!r}".format(rejected))
-
-    def test_shape_check_requires_a_printf_write_alone_on_its_line(self):
-        rejected, accepted = PRINTF_MORE_TEXT_FORMS
-        self.assertIsNotNone(write_then_run(accepted),
-                             "a printf write alone on its line failed the shape check: {!r}".format(accepted))
-        self.assertIsNone(write_then_run(rejected),
-                          "a printf write followed by more text passed the shape check: {!r}".format(rejected))
-
-    def test_shape_check_requires_each_write_alone_on_its_line(self):
-        for side, rejected_forms, accepted_forms in ALONE_ON_ITS_LINE_FORMS:
-            for index, accepted in enumerate(accepted_forms, 1):
-                with self.subTest(side=side, accepted=index):
-                    self.assertIsNotNone(write_then_run(accepted),
-                                         "a write alone on its line failed the shape check: {!r}".format(accepted))
-            for index, rejected in enumerate(rejected_forms, 1):
-                with self.subTest(side=side, rejected=index):
-                    self.assertIsNone(write_then_run(rejected),
-                                      "a write with {} passed the shape check: {!r}".format(side, rejected))
-
-    def test_shape_check_accepts_only_its_grammar(self):
-        self.assertEqual({rule for rule, rejected, _accepted in GRAMMAR_FORMS if rejected},
-                         set(GRAMMAR) | set(STRUCTURE), "a rule of the grammar has no rejected form")
-        for rule, rejected_forms, accepted_forms in GRAMMAR_FORMS:
-            for index, accepted in enumerate(accepted_forms, 1):
-                with self.subTest(rule=rule, accepted=index):
-                    self.assertIsNotNone(write_then_run(accepted),
-                                         "a form that keeps the rule failed the shape check: {!r}".format(accepted))
-            for index, rejected in enumerate(rejected_forms, 1):
-                with self.subTest(rule=rule, rejected=index):
-                    self.assertIsNone(write_then_run(rejected),
-                                      "a form against the rule ({}) passed the shape check: {!r}"
-                                      .format(rule, rejected))
+    def test_each_rule_is_what_rejects_its_form(self):
+        source = shape_source()
+        unchanged = shape_check(source)
+        for form in [probe_command(name) for name in PROBES] + [rejected for _rule, rejected, _edit in SHAPE_RULES]:
+            self.assertEqual(unchanged(form), write_then_run(form), "the shape source read back differs")
+        for rule, rejected, (old, new) in SHAPE_RULES:
+            with self.subTest(rule=rule):
+                self.assertEqual(source.count(old), 1, "the edit for the rule ({}) does not match the shape "
+                                 "check once: {!r}".format(rule, old))
+                self.assertIsNotNone(shape_check(source.replace(old, new))(rejected),
+                                     "the shape check without the rule ({}) still rejects its form: {!r}"
+                                     .format(rule, rejected))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:

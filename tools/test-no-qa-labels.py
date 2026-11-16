@@ -516,7 +516,7 @@ ALLOWLIST = {
         "# T7. staleness horizons `task_hours` and `ext_hours` (aiqt_hooks.py:22881, 23013-23015, 23242-23249)",
         "# T8. orch_yield_tool over the scheduling tools (aiqt_hooks.py:23666-23780)",
         "# T9. orch_ask_guard against the declared mode record (aiqt_hooks.py:23783-23855)",
-        "# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22654)",
+        "# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22656)",
         "# T11. escape: `_orch_escape_active` and `escape-spoof` (aiqt_hooks.py:22680-22740, 23500-23519)",
         "# T12. mistakes_register (OPTIONAL KEY, open point P6; aiqt_hooks.py:33132-33148)",
         "# T13. TeammateIdle mirrors the Stop decision (aiqt_hooks.py:23635-23638)",

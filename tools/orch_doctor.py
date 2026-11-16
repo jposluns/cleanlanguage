@@ -113,7 +113,7 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          FileNotFoundError (:22087-22089), since a present local file returns at
                          :22096-22121 (os.open) whatever its content and an lstat fault returns at
                          :22090-22095 (`except OSError as exc`).
-                         Before the scope test (_orch_scope_live, :22596-22654) it checks lease.path
+                         Before the scope test (_orch_scope_live, :22596-22656) it checks lease.path
                          only when the hook would open the lease for holder scoping (:22640: the
                          stat at :22617 succeeds, the lease is non-empty and fresh, :22618-22632,
                          holder_is_session_id is set, :22633, and a session id is given, :22637),
@@ -524,7 +524,7 @@ def _lease_fresh_states(hook, lease, st):
 
 
 def _scope_read_paths(hook, reg, root, session_id):
-    """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:22596-22654) opens with a plain
+    """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:22596-22656) opens with a plain
     blocking open, each only when the hook reaches that open:
       lease.path  opened at 22639-22641 only when the lease section is a non-empty object (22611-22613),
                   its path resolves (_orch_path at 22614-22615), os.stat succeeds (22617), the lease

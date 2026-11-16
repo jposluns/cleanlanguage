@@ -862,7 +862,7 @@ class T09AskGuard(Stage2Harness):
 
 
 # =====================================================================================================
-# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22654)
+# T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22656)
 # =====================================================================================================
 class T10ScopeByMode(Stage2Harness):
     def _arm(self, registry):
