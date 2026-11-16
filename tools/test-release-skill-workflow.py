@@ -541,12 +541,30 @@ API_SHORT_FLAGS = {"-i": "--include"}
 API_BODY_OPTIONS = ("--field", "--raw-field", "--input")
 
 
+def takes_separate_value(name, arg):
+    """Whether the leading option arg of git or gh takes the next argument
+    as its value: an option of LEADING_VALUE_OPTIONS given alone, or, for
+    gh, a gh api option that takes a value and has none in arg, read as
+    api_options reads it, as in -X POST, -iX POST, --method POST or
+    -f NAME=VALUE. A -R joined to its value, as in -RREPO, holds its value."""
+    if arg in LEADING_VALUE_OPTIONS.get(name, ()):
+        return True
+    if name != "gh" or arg[:2] in LEADING_VALUE_OPTIONS["gh"]:
+        return False
+    if arg.startswith("--"):
+        option, equals, _value = arg.partition("=")
+        return option in API_LONG_VALUE_OPTIONS and not equals
+    for position in range(1, len(arg)):
+        if "-" + arg[position] in API_SHORT_VALUE_OPTIONS:
+            return position == len(arg) - 1
+    return False
+
+
 def subcommand(name, args):
     """args from the subcommand on, past any leading options of git or gh."""
-    takes_value = LEADING_VALUE_OPTIONS.get(name, ())
     index = 0
     while index < len(args) and args[index].startswith("-"):
-        index += 2 if args[index] in takes_value else 1
+        index += 2 if takes_separate_value(name, args[index]) else 1
     return args[index:]
 
 
@@ -595,23 +613,28 @@ def api_options(args):
     return options, operands
 
 
-def api_method(args):
-    """The HTTP method of a gh api call, given its arguments after api: the
-    last --method or -X value when one is given, otherwise POST when a body
-    option is present and GET when none is."""
-    options, _operands = api_options(args)
+def api_method(args, leading=()):
+    """The HTTP method of a gh api call, given its arguments after api and
+    any options before api, each read by api_options: the last --method or
+    -X value when one is given, otherwise POST when a body option is present
+    and GET when none is."""
+    options = api_options(list(leading))[0] + api_options(args)[0]
     methods = [value for name, value in options if name == "--method"]
     if methods:
         return methods[-1].upper()
     return "POST" if any(name in API_BODY_OPTIONS for name, _value in options) else "GET"
 
 
-# Every fake records its call, then reads it with the same functions the
-# predicates below use (subcommand, api_options and api_method), and routes
-# each answer by the subcommand after any leading options, so a call with
-# leading options gets the answer of the same call without them. The
-# exception is gh api: the fake gh refuses a call with any option before api,
-# as gh does for -R, which gh api does not define (nor --repo).
+# Every fake records its call. The fakes of git and gh then read it with the
+# same functions the predicates below use (takes_separate_value, subcommand,
+# api_options and api_method), and route each answer by the subcommand after
+# any leading options, so a git call, or a gh call other than gh api, with
+# leading options gets the answer of the same call without them. The fake gh
+# refuses a gh api call with an option before api, as gh does for -R, which
+# gh api does not define (nor --repo); it reads a gh api option that takes a
+# value there with its separate value, as in -X POST, so it does not take
+# that value for the subcommand. The fake date has no subcommand: it answers
+# only a call that holds -u, wherever -u stands, and refuses any other.
 FAKE_COMMON = """
 import hashlib, json, os, sys
 STATE = os.environ["FAKE_STATE"]
@@ -630,7 +653,7 @@ API_SHORT_VALUE_OPTIONS = """ + repr(API_SHORT_VALUE_OPTIONS) + """
 API_LONG_VALUE_OPTIONS = """ + repr(API_LONG_VALUE_OPTIONS) + """
 API_SHORT_FLAGS = """ + repr(API_SHORT_FLAGS) + """
 API_BODY_OPTIONS = """ + repr(API_BODY_OPTIONS) + "\n" + "".join(
-    inspect.getsource(function) for function in (subcommand, api_options, api_method)) + """
+    inspect.getsource(function) for function in (takes_separate_value, subcommand, api_options, api_method)) + """
 SUB = subcommand(NAME, ARGS)
 """
 
@@ -638,19 +661,29 @@ SUB = subcommand(NAME, ARGS)
 # tag on origin, and every gh call that writes, which the fake gh appends to
 # gh_writes. A step that changed nothing leaves all 3 as they were.
 FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes")
-# The seconds a step run waits, after the step exits, for the processes that
-# still hold the pipe the step inherited to exit before the run fails. A
-# process that closes the descriptors it inherited no longer holds the pipe,
-# so it is not waited for, and a change it makes after the step exits is
-# missed (see run_step).
+# The seconds a step run allows the step, and every process that still holds
+# the output of the step, to exit before the run fails its test, so a step
+# that hangs, or that leaves a process holding its output, cannot hang the
+# suite (see run_step).
+STEP_RUN_LIMIT = 60
+# The seconds a step run then waits, after the step exits, for the processes
+# that still hold the pipe the step inherited to exit before the run fails
+# its test. A process that closes the descriptors it inherited no longer
+# holds the pipe, so it is not waited for, and a change it makes after the
+# step exits is missed (see run_step).
 STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
 LEADING = ARGS[:len(ARGS) - len(SUB)]
 # gh api defines no -R or --repo option, and gh 2.103.3 refuses a -R before
-# api with exit 1 before it sends any request. The fake refuses every option
+# api with exit 1 before it sends any request. The fake refuses an option
 # before api the same way, with no write and no answer, while a release
-# subcommand still takes a leading -R or --repo.
+# subcommand still takes a leading -R or --repo. A gh api option that takes
+# a value, such as -X POST, --method POST or -f NAME=VALUE, is read there with
+# its separate value, so the call is refused rather than read as a call of
+# the subcommand POST or NAME=VALUE. A leading option that takes a separate
+# value and is missing from the option lists is still misread: its value is
+# taken for the subcommand.
 if SUB[:1] == ["api"] and LEADING:
     first = LEADING[0]
     if first.startswith("--"):
@@ -666,7 +699,7 @@ if (SUB[:1] == ["release"] and SUB[1:2] not in RELEASE_READS) or (SUB[:1] == ["a
     with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
         writes.write(json.dumps(SUB) + "\\n")
 if SUB[:1] == ["api"]:
-    # Row 59: every API path is answered from one shared state, so the exact
+    # Row 59: every API path is answered from the same state, so the exact
     # path each call names is logged for ApiPathTest to pin.
     OPTIONS, paths = api_options(SUB[1:])
     JQ = [value for option, value in OPTIONS if option == "--jq"]
@@ -927,13 +960,22 @@ class WorkflowStepTest(unittest.TestCase):
         # state a later assertion reads. A process that closes the
         # descriptors it inherited no longer holds the pipe, so this wait
         # does not cover it, and a change it makes after the step exits is
-        # missed.
+        # missed. The run itself ends at STEP_RUN_LIMIT: a step that is still
+        # running then, or that has left a process still holding its output,
+        # fails the test rather than hanging the suite or passing once that
+        # process exits.
         done_read, done_write = os.pipe()
         try:
-            proc = subprocess.run(
-                ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
-                cwd=self.work, env=env, capture_output=True, text=True, pass_fds=(done_write,),
-            )
+            try:
+                proc = subprocess.run(
+                    ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
+                    cwd=self.work, env=env, capture_output=True, text=True, pass_fds=(done_write,),
+                    timeout=STEP_RUN_LIMIT,
+                )
+            except subprocess.TimeoutExpired:
+                raise self.failureException(
+                    f"step {name!r}, or a process it left holding its output, was still running"
+                    f" {STEP_RUN_LIMIT} s after the step started") from None
             os.close(done_write)
             done_write = None
             ended, _, _ = select.select([done_read], [], [], STEP_PROCESS_WAIT)
@@ -1029,11 +1071,19 @@ def ignore_lookup_failure(script: str) -> str:
     return script.replace(lookup[0], lookup[0] + " || true", 1)
 
 
-# Each predicate reads a recorded call by its subcommand, past any leading
-# options of git or gh, so git -c NAME=VALUE tag and gh -R REPO release create
-# are classified as tag and create calls.
+# Each predicate of a git or gh call reads a recorded call by its
+# subcommand, past any leading options of git or gh, so git -c NAME=VALUE tag
+# and gh -R REPO release create are classified as tag and create calls, and
+# is_api_write reads the method of a gh api call from its options before api
+# as well as after it, so gh -X POST api is a write. is_date reads only the
+# command name, since date takes no subcommand.
 def sub(call):
     return subcommand(call[0], call[1])
+
+
+def leading_options(call):
+    """The leading options of a recorded git or gh call, before its subcommand."""
+    return call[1][:len(call[1]) - len(sub(call))]
 
 
 def is_push(call):
@@ -1062,8 +1112,9 @@ def is_release_change(call):
 
 
 def is_api_write(call):
-    """A gh api call whose method is not GET, given or implied by a body option."""
-    return call[0] == "gh" and sub(call)[:1] == ["api"] and api_method(sub(call)[1:]) != "GET"
+    """A gh api call whose method is not GET, given or implied by a body
+    option before or after api."""
+    return call[0] == "gh" and sub(call)[:1] == ["api"] and api_method(sub(call)[1:], leading_options(call)) != "GET"
 
 
 def is_mutation(call):
@@ -1265,12 +1316,19 @@ class HarnessTest(WorkflowStepTest):
                 self.assertEqual((self.state / "gh_writes").exists(), write)
         # gh api defines no -R or --repo option, so the fake gh refuses a
         # call with an option before api, as gh refuses -R there: exit 1,
-        # no write and no API log entry. The predicates still read such a
-        # call past its leading options, so a no-change assertion fails on it.
+        # no write and no API log entry. A gh api option that takes a value
+        # is read there with its separate value, so -X POST, --method POST
+        # and -f NAME=VALUE before api are refused too, not read as the
+        # subcommand POST or NAME=VALUE. The predicates read the method of
+        # such a call from its options before api as well as after it, so a
+        # no-change assertion fails on each of these writes.
         refused = (
             (["-R", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown shorthand flag: 'R' in -R"),
             (["--repo", "jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
             (["--repo=jposluns/cleanlanguage", "api", "-iXPOST", path], "unknown flag: --repo"),
+            (["-X", "POST", "api", path], "unknown shorthand flag: 'X' in -X"),
+            (["--method", "POST", "api", path], "unknown flag: --method"),
+            (["-f", "tag_name=v1.0.15", "api", path], "unknown shorthand flag: 'f' in -f"),
         )
         for args, message in refused:
             with self.subTest(args=args):
