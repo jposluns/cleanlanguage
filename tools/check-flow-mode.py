@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Check /flow's mode text for a literal regression to the retired mode words.
+"""Check /flow's mode text and 4 pinned rule texts for a literal regression.
 
 .claude/commands/flow.md tells an orchestrator session how to read the host's mode record. The
 only writer of that record, orch-set-mode, writes exactly 2 values, attended-autonomous and
 unattended, and .claude/hooks/ask_mode_guard.py names the same 2. A session that follows a /flow
 that names another value, or that reads a missing record as "attended", can put a blocking
-question to a host that nobody attends. This check is a literal regression check of 3 things in
-flow.md, not a reading of what its sentences mean. It fails when any of them is missing:
+question to a host that nobody attends. flow.md also states rules that the maintainer's decisions
+and the coordinator's rulings set and that a later edit could revert unseen. This check is a
+literal regression check of 7 things in flow.md, not a reading of what its sentences mean. It
+fails when any of them is missing:
 
 - exactly 1 line is a MODE line, a line whose first characters are "- MODE (", closed or not; that
   line closes its parenthesis on the same line, and the text between the parentheses names
@@ -26,7 +28,17 @@ flow.md, not a reading of what its sentences mean. It fails when any of them is 
   attended-autonomous"x"ly.' holds none and passes;
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
-  in any letter case and matched across line breaks.
+  in any letter case and matched across line breaks;
+- the file must hold each of these 4 pinned texts, in the letter case given and matched across
+  line breaks, each a run of spaces and line breaks matching any other such run:
+  - the whole-line test of the FAILED LEG rule: "a single-line quote must be a whole line, from
+    the line's first character to its last, and a range quote must be whole lines";
+  - the entry list of that rule: "Entries 61, 63, 64 and 69";
+  - the tier floor of the CODEX ROLE LIMIT: "A critical change is never graded light: it is of at
+    least the substantive tier";
+  - the statement of which tier rules /flow keeps: "the 2 tier rules kept here, which the "Working
+    method" section names: in cycle step 4 (GRADE), escalation is immediate and de-escalation
+    needs a maintainer decision and a recorded basis; and the AIQT HOLD above".
 
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
@@ -57,8 +69,10 @@ The check cannot tell whether a sentence states the rule it matches or only ment
 So a sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
 matched sentence itself can be negated and still pass, as in "The session never reads an absent
 mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
-absent rule in other words fails. tools/test-check-flow-mode.py holds a case for each verdict
-named in this docstring.
+absent rule in other words fails. The same holds for each pinned text: one rewrapped across
+other line breaks passes, one kept inside a sentence that negates it passes, and the same rule
+in other words fails. tools/test-check-flow-mode.py holds a case for each verdict named in this
+docstring.
 """
 import re
 import sys
@@ -79,6 +93,22 @@ BARE_ATTENDED = re.compile(r"(?i)\battended\b(?!-autonomous\b)")
 QUOTED = re.compile(r"\"[^\"\n]*\"")
 ABSENT_RULE = re.compile(r"(?i)\breads an absent mode record as unattended\b"
                          r"|\ban absent mode record is read as unattended\b")
+
+# Texts that flow.md must hold word for word, each with the name the report gives it. The check
+# collapses each run of spaces and line breaks in flow.md to 1 space before it looks for them, so
+# a pin matches however its words wrap.
+PINS = [
+    ("the whole-line test of the FAILED LEG rule",
+     "a single-line quote must be a whole line, from the line's first character to its last, and a"
+     " range quote must be whole lines"),
+    ("the entry list of the whole-line rule", "Entries 61, 63, 64 and 69"),
+    ("the tier floor of the CODEX ROLE LIMIT",
+     "A critical change is never graded light: it is of at least the substantive tier"),
+    ("the statement of which tier rules /flow keeps",
+     "the 2 tier rules kept here, which the \"Working method\" section names: in cycle step 4"
+     " (GRADE), escalation is immediate and de-escalation needs a maintainer decision and a"
+     " recorded basis; and the AIQT HOLD above"),
+]
 
 
 def findings(text, name):
@@ -109,8 +139,12 @@ def findings(text, name):
         if BARE_ATTENDED.search(QUOTED.sub(" ", line)):
             found.append("{}:{}: unquoted bare \"attended\": {}".format(
                 name, number, line.strip()))
-    if not ABSENT_RULE.search(" ".join(text.split())):
+    joined = " ".join(text.split())
+    if not ABSENT_RULE.search(joined):
         found.append("{}: no statement that an absent mode record is read as unattended".format(name))
+    for label, pin in PINS:
+        if pin not in joined:
+            found.append("{}: the pinned text of {} is missing: {}".format(name, label, pin))
     return found
 
 
@@ -134,7 +168,8 @@ def main(argv):
         print("FAIL: {} finding(s)".format(len(found)))
         return 1
     print("OK: {}: the MODE line names the writer's 2 modes, no line holds an unquoted bare "
-          "\"attended\", and the absent-record sentence is present".format(source))
+          "\"attended\", and the absent-record sentence and the {} pinned texts are present".format(
+              source, len(PINS)))
     return 0
 
 

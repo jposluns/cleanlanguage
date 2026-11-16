@@ -1,11 +1,11 @@
 # /flow (cleanlanguage, interim local command)
 
 INTERIM. This command's own inlined text below is authoritative for cleanlanguage (except for the
-tiers and the QA cycle, which the machine-local "Working method" section governs; that section
-carries the same floor as the CODEX ROLE LIMIT below, that a critical change is never graded
-light, so the 2 agree on it; and except for the unattended
-vote rule, which the machine-local "Put decisions to the maintainer in the four-role shape" section
-governs) and is reviewed
+tiers and the QA cycle, which the machine-local "Working method" section governs, apart from the 2
+tier rules that it names as kept here, the escalation rule of cycle step 4 (GRADE) and the AIQT
+HOLD; that section and the CODEX ROLE LIMIT below both state the floor that a critical change is
+never graded light; and except for the unattended vote rule, which the machine-local "Put
+decisions to the maintainer in the four-role shape" section governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard. The reference copy of that
 standard is the host's deployed `/usr/local/share/orch/operating-model.md`, a render of lab_infra's
 `docs/operating-model.md`; that source is NORMATIVE and governs wherever the deployed copy differs
@@ -137,17 +137,17 @@ or out of quota); it is stopped by a cost cap; or it otherwise delivers no verdi
 timeout, a dispatch auth failure, or a delivery that lacks the agreed completion evidence); an
 UNVERIFIABLE result is a delivered verdict, not a failed leg;
 (2) a quote in it is absent from its source;
-(3) a quote in it breaches the whole-line rule of the maintainer decisions of Entries 61, 63, 64
-and 69 (2026-11-14 and 2026-11-15; the coordinator's correction recorded with Entry 127,
-2026-11-15, gives the rule's entries as these 4): a single-line quote must be a whole line, from
-the line's first character to its last, and a range quote must be whole lines; a quote counts as found
-when its exact text is the whole of its cited line or of a line within 1 line of it, a range
-quote when its joined text is the whole of the cited lines or of the same lines within 1 line of
-the cited range, and either of them also when it matches in that way only once each line's
-leading spaces are stripped or only without its Markdown formatting marks (backticks, emphasis
-asterisks or underscores), with each offset, range, collapse and mark recorded; a quote of only
-part of a line, text more than 1 line off, changed or missing words, a dropped comment marker,
-or any other changed character fails it.
+(3) a quote in it breaches the whole-line rule that Entry 125 states, the rule of the maintainer
+decisions of Entries 61, 63, 64 and 69 (2026-11-14 and 2026-11-15; the coordinator's correction
+recorded with Entry 127, 2026-11-15, gives the rule's entries as these 4): a single-line quote
+must be a whole line, from the line's first character to its last, and a range quote must be whole
+lines; a quote counts as found when its exact text is the whole of its cited line or of a line
+within 1 line of it, a range quote when its joined text is the whole of the cited lines or of the
+same lines within 1 line of the cited range, and either of them also when it matches in that way
+only once either or both of 2 allowances apply, each line's leading spaces stripped or its
+Markdown formatting marks (backticks, emphasis asterisks or underscores) missing, with each
+offset, range, collapse and mark recorded; a quote of only part of a line, text more than 1 line
+off, changed or missing words, a dropped comment marker, or any other changed character fails it.
 These quote and leg-failure conditions bind review legs only, not seed or drafter output, whose
 cited evidence is checked at source (coordinator ruling under the maintainer's delegation,
 2026-11-15).
@@ -235,11 +235,11 @@ lapse of an owed codex seat and of an owed gemini seat when a light item is regr
 cannot read it, so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline
 section above).
 The GEMINI ROLE LIMIT, FAILED LEG, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind
-every tier; so do the 3 tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
-de-escalation needs a maintainer decision and a recorded basis; in the CODEX ROLE LIMIT, a critical
-change is never graded light, the same floor as the "Working method" section's; and the AIQT
-HOLD above. The
-"Working method" section in that file sets when a light item is regraded and how a regraded item
+every tier; so do the 2 tier rules kept here, which the "Working method" section names: in cycle
+step 4 (GRADE), escalation is immediate and de-escalation needs a maintainer decision and a
+recorded basis; and the AIQT HOLD above. The CODEX ROLE LIMIT and that section both state the
+floor that a critical change is never graded light.
+That section also sets when a light item is regraded and how a regraded item
 enters the QA cycle.
 
 VERIFIER DIVERSITY (QA, every tier): agy (gemini) is the second family in every panel, except
