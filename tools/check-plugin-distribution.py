@@ -45,7 +45,9 @@ the plan's numbering, which CHECKS maps to the names used here.
       cannot read where it leads.
   Versions agree: the versions of both plugin manifests, the Version: line of
       the skill's SKILL.md, read with the VERSION_LINE and SKILL_VERSION
-      patterns of the shared extractor tools/skill-version.py, and the version
+      patterns of the shared extractor tools/skill-version.py after its line
+      endings are read as universal newlines (CR LF and a lone CR each read
+      as LF), and the version
       of any plugin entry of .claude-plugin/marketplace.json that carries one,
       are each a nonempty string and are the same text. The entries of the
       vendored marketplace are other plugins, with versions of their own, so
@@ -87,6 +89,11 @@ Usage: python3 -I tools/check-plugin-distribution.py
 Exit status: 0 when every check passes, with a last line that starts "OK:";
 1 when a check finds an inconsistency, with 1 line "FAIL <tag>: ..." for each
 and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for 1).
+Each inconsistency is 1 line whatever the input: every line the gate prints,
+on standard output and on standard error, writes each character that
+str.isprintable refuses (a line break, another control character or a lone
+surrogate) as its Python backslash escape, so no path, name or message of an
+input can split a line or start one.
 A value of an unexpected JSON type that the gate reads inside a JSON object,
 such as a plugin entry name that is an array or an object, is such an
 inconsistency, never a traceback. A SKILL.md whose first Version: line is
@@ -100,19 +107,31 @@ will not let the gate reach, or a folder on its way that it will not let the
 gate list, for a cause other than a missing or too long name, such as a
 denied permission; or an
 extractor that cannot be used, because it raises any exception while it
-loads, lacks a VERSION_LINE or SKILL_VERSION pattern of text, has a
-SKILL_VERSION pattern with no group 1, or has one whose group 1 takes no
-part in its match of the first Version: line. The cause
-goes to standard error, with a last line "UNREADABLE: exit 3". The gate
-fails closed: it never passes a check it could not make.
+loads (any BaseException, SystemExit and KeyboardInterrupt among them, also
+one whose message cannot be shown), lacks a VERSION_LINE or SKILL_VERSION
+pattern of text, has a SKILL_VERSION pattern with no group 1, or has one
+whose group 1 takes no part in its match of the first Version: line. The
+cause goes to standard error, in 1 line, with a last line
+"UNREADABLE: exit 3". Any other exception that stops the gate, of any
+class (KeyboardInterrupt and SystemExit among them, and one whose message
+cannot be shown), exits 3 the same way, with the cause "the gate stopped
+on <class>: <message>", never with a traceback and never with exit 1.
+What the extractor writes to sys.stdout or sys.stderr
+while it loads is dropped, so it adds no line to the gate's output. The
+gate fails closed: it never passes a check it could not make.
 
 Residual: the gate reads the files as they are on disk; it does not ask git
 which files are tracked, and it does not run the Claude Code CLI, whose own
-reading of the manifests the pinned Plugin manifests job checks.
+reading of the manifests the pinned Plugin manifests job checks. The
+extractor is code that the gate runs: code in it that writes to a file
+descriptor directly, or to sys.__stdout__, is not confined. An exception
+raised while the gate writes its cause to standard error, such as on a
+closed standard error, is not caught, since no stream is left to report it.
 """
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import io
 import json
@@ -176,6 +195,27 @@ def _unique_object(pairs: list) -> dict:
 
 def _reject_constant(token: str):
     raise ValueError(f"non-standard JSON constant {token!r}")
+
+
+def one_line(text: str) -> str:
+    """text with each character that str.isprintable refuses, such as a line break, another control
+    character or a lone surrogate, written as its Python backslash escape, so the text is 1 line."""
+    return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+
+
+def emit(line: str, stream=None) -> None:
+    """Print 1 line of output, to stream or else to standard output, as 1 line whatever it holds."""
+    print(one_line(line), file=stream)
+
+
+def described(error: BaseException) -> str:
+    """The name of the exception's type and its message, or a stand-in when the message cannot be
+    shown, since an exception that the extractor or the gate raises can be of any type."""
+    try:
+        text = str(error)
+    except BaseException:
+        text = "(a message that cannot be shown)"
+    return f"{type(error).__name__}: {text}"
 
 
 def walk(rel: str) -> Path:
@@ -275,15 +315,17 @@ def load_json(rel: str) -> dict:
 
 def extractor_patterns() -> tuple:
     """VERSION_LINE and SKILL_VERSION of the shared extractor, whose bytes are reached and read like
-    every other input and run as read, never opened again by path. Any exception while it runs, a
-    pattern that is missing or is not a compiled pattern of text, or a SKILL_VERSION pattern with no
-    group 1 to hold the version, makes the extractor unusable."""
+    every other input and run as read, never opened again by path, with what it writes to sys.stdout
+    and sys.stderr dropped. Any exception while it runs, any BaseException among them, a pattern
+    that is missing or is not a compiled pattern of text, or a SKILL_VERSION pattern with no group 1
+    to hold the version, makes the extractor unusable."""
     source = read_bytes(EXTRACTOR)
     namespace = {"__name__": "skill_version"}
     try:
-        exec(compile(source, EXTRACTOR, "exec", dont_inherit=True), namespace)
-    except (Exception, SystemExit) as error:
-        raise Unreadable(f"the extractor {EXTRACTOR} could not be loaded: {type(error).__name__}: {error}") from error
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            exec(compile(source, EXTRACTOR, "exec", dont_inherit=True), namespace)
+    except BaseException as error:
+        raise Unreadable(f"the extractor {EXTRACTOR} could not be loaded: {described(error)}") from error
     patterns = []
     for name in ("VERSION_LINE", "SKILL_VERSION"):
         pattern = namespace.get(name)
@@ -296,8 +338,8 @@ def extractor_patterns() -> tuple:
 
 
 def skill_version() -> str | None:
-    """The SKILL.md version as the shared extractor reads it, or None when its
-    first Version: line is missing or is not a bare X.Y.Z."""
+    """The SKILL.md version as the shared extractor reads it, with universal newlines, or None when
+    its first Version: line is missing or is not a bare X.Y.Z."""
     data = read_bytes(SKILL_MD)
     version_line, skill_version_pattern = extractor_patterns()
     try:
@@ -537,15 +579,15 @@ def run() -> int:
     check_versions(markets, claude, agent, version, failures)
     count = check_dependencies(markets, folders, failures)
     for failure in failures:
-        print(f"FAIL {failure}")
-    print(f"{PROG}: {counted(len(folders), 'relative source', 'relative sources')} resolved, "
-          f"{counted(count, 'dependency', 'dependencies')} read")
+        emit(f"FAIL {failure}")
+    emit(f"{PROG}: {counted(len(folders), 'relative source', 'relative sources')} resolved, "
+         f"{counted(count, 'dependency', 'dependencies')} read")
     if failures:
-        print(f"FAIL: {counted(len(failures), 'inconsistency', 'inconsistencies')}")
+        emit(f"FAIL: {counted(len(failures), 'inconsistency', 'inconsistencies')}")
         return 1
     tags = list(CHECKS)
-    print(f"OK: {tags[0]} to {tags[-1]} hold ({', '.join(CHECKS.values())}); the plugin, marketplace and site "
-          f"key are {PROJECT!r} at version {version}")
+    emit(f"OK: {tags[0]} to {tags[-1]} hold ({', '.join(CHECKS.values())}); the plugin, marketplace and site "
+         f"key are {PROJECT!r} at version {version}")
     return 0
 
 
@@ -553,9 +595,14 @@ def main() -> int:
     try:
         return run()
     except Unreadable as error:
-        print(f"{PROG}: {error}", file=sys.stderr)
-        print("UNREADABLE: exit 3", file=sys.stderr)
-        return 3
+        cause = str(error)
+    except BaseException as error:
+        # Whatever else stops the gate, of any class, it could not make its checks: exit 3, never a
+        # traceback and never exit 1, which means an inconsistency found.
+        cause = f"the gate stopped on {described(error)}"
+    emit(f"{PROG}: {cause}", sys.stderr)
+    emit("UNREADABLE: exit 3", sys.stderr)
+    return 3
 
 
 if __name__ == "__main__":
