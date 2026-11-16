@@ -14,7 +14,8 @@ could not read (client exit 14) apart from an extractor that failed inside or
 broke its contract (client exit 16), which is never read as malformed content;
 the dry run read is exercised from the block extracted from its real script.
 The packager is also built with cleanlanguage/LICENSE or cleanlanguage/NOTICE.md
-missing or differing from its root file at HEAD, and must refuse each.
+missing, differing from its root file, or differing from it only in CR LF line
+endings at HEAD, and must refuse each.
 """
 
 from __future__ import annotations
@@ -526,9 +527,11 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             pj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             if tree_edit is not None:
                 tree_edit(wt)
+            # core.autocrlf=false commits each file's bytes as written, so a
+            # copy given CR LF line endings keeps them in its blob.
             subprocess.run(
                 ["git", "-C", str(wt), "-c", "user.name=t", "-c", "user.email=t@t",
-                 "commit", "-qam", "fixture"],
+                 "-c", "core.autocrlf=false", "commit", "-qam", "fixture"],
                 capture_output=True, check=True,
             )
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
@@ -610,14 +613,22 @@ class PackagerLicenceCopyTest(unittest.TestCase):
     licence-copy check ties each copy to its root file. Each case changes 1
     copy at HEAD of a throwaway worktree and requires the build to refuse it.
     Without that check the build ends 0 and every case fails; with the check
-    narrowed to 1 file, the cases for the other file fail; and with the blob
-    comparison dropped, the cases for a differing copy fail."""
+    narrowed to 1 file, the cases for the other file fail; with the blob
+    comparison dropped, the cases for a differing copy fail; and with the
+    comparison made blind to line endings, the cases for a copy that differs
+    only in CR LF line endings fail."""
 
     def build_with_copy(self, name: str, change: str):
         def edit(wt: Path) -> None:
             copy = wt / "cleanlanguage" / name
             if change == "missing":
                 copy.unlink()
+            elif change == "crlf":
+                # Every LF becomes CR LF, so only the line endings differ.
+                data = copy.read_bytes()
+                self.assertIn(b"\n", data)
+                self.assertNotIn(b"\r", data)
+                copy.write_bytes(data.replace(b"\n", b"\r\n"))
             else:
                 # 1 byte past the first 64 changed, the length kept.
                 data = copy.read_bytes()
@@ -646,6 +657,16 @@ class PackagerLicenceCopyTest(unittest.TestCase):
 
     def test_differing_notice_copy_fails(self):
         code, stderr = self.build_with_copy("NOTICE.md", "differs")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
+
+    def test_line_ending_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "crlf")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE differs from the root LICENSE at HEAD", stderr)
+
+    def test_line_ending_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "crlf")
         self.assertEqual(code, 1, stderr)
         self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
 
