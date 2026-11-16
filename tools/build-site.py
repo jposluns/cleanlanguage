@@ -2799,6 +2799,23 @@ def file_kb(root: Path, name: str) -> str:
     return f"{round(size / 1000)} KB"
 
 
+def file_chars(root: Path, name: str) -> str:
+    """The character count of a download as saved: its bytes decoded as UTF-8
+    with no newline translation, every line end and the final newline
+    included, as wc -m counts them in a UTF-8 locale."""
+    path = root / DOWNLOADS / name
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        raise Unreadable(f"{DOWNLOADS / name} could not be read: {error}") from error
+    if not stat.S_ISREG(info.st_mode):
+        raise Unreadable(f"{DOWNLOADS / name} is not a regular file")
+    try:
+        return str(len(path.read_bytes().decode("utf-8")))
+    except (OSError, UnicodeError) as error:
+        raise Unreadable(f"{DOWNLOADS / name} could not be read: {error}") from error
+
+
 def build(
     root: Path,
     base: str | None = None,
@@ -2863,7 +2880,7 @@ def build(
         "base": base,
         **release,
         "size.full": file_kb(root, "cleanlanguage.md"),
-        "chars.full": str(len(instructions)),
+        "chars.full": file_chars(root, "cleanlanguage.md"),
         "count.examples": str(example_count),
         "count.channels": str(len(channel_sections)),
         "count.modes": str(operating_mode_count(root)),
