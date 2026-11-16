@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check /flow's mode text and 8 pinned rule texts for a literal regression.
+"""Check /flow's mode text and 7 pinned rule paragraphs for a literal regression.
 
 .claude/commands/flow.md tells an orchestrator session how to read the host's mode record. The
 only writer of that record, orch-set-mode, writes exactly 2 values, attended-autonomous and
@@ -7,7 +7,7 @@ unattended, and .claude/hooks/ask_mode_guard.py names the same 2. A session that
 that names another value, or that reads a missing record as "attended", can put a blocking
 question to a host that nobody attends. flow.md also states rules that the maintainer's decisions
 and the coordinator's rulings set and that a later edit could revert unseen. This check is a
-literal regression check of 11 things in flow.md, not a reading of what its sentences mean. It
+literal regression check of 10 things in flow.md, not a reading of what its sentences mean. It
 fails when any of them is missing:
 
 - exactly 1 line is a MODE line, a line whose first characters are "- MODE (", closed or not; that
@@ -29,34 +29,22 @@ fails when any of them is missing:
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
   in any letter case and matched across line breaks;
-- the file must hold each of these 8 pinned texts, in the letter case given and matched across
-  line breaks, each a run of spaces and line breaks matching any other such run, and each
-  bounded: a space, a line break, or the start or end of the file must come just before its first
-  character and just after its last, so a pinned text joined to other characters on either side
-  fails. Each pinned text runs from where its clause or phrase starts in flow.md to the
-  punctuation that ends it, so a word added to it, removed from it or changed in it fails, and
-  so does an entry list that adds an entry, such as Entry 62, before or after its other entries:
-  - the header's statement of which tier rules /flow keeps: "apart from the 2 tier rules that it
-    names as kept here, the escalation rule of cycle step 4 (GRADE) and the AIQT HOLD;";
-  - the attribution of the whole-line rule to Entry 125: "(3) a quote in it breaches the
-    whole-line rule that Entry 125 states,";
-  - the entry list of the whole-line rule: "the rule of the maintainer decisions of Entries 61,
-    63, 64 and 69 (2026-11-14 and 2026-11-15; the coordinator's correction recorded with Entry
-    127, 2026-11-15, gives the rule's entries as these 4):";
-  - the whole-line test of the FAILED LEG rule: "a single-line quote must be a whole line, from
-    the line's first character to its last, and a range quote must be whole lines;";
-  - the allowances of the whole-line rule: "either of them also when it matches in that way only
-    once either or both of 2 allowances apply, each line's leading spaces stripped or its
-    Markdown formatting marks (backticks, emphasis asterisks or underscores) missing, with each
-    offset, range, collapse and mark recorded;";
-  - the failures of the whole-line rule: "a quote of only part of a line, text more than 1 line
-    off, changed or missing words, a dropped comment marker, or any other changed character
-    fails it.";
-  - the tier floor of the CODEX ROLE LIMIT: "A critical change is never graded light: it is of at
-    least the substantive tier,";
-  - the statement of which tier rules /flow keeps: "so do the 2 tier rules kept here, which the
-    "Working method" section names: in cycle step 4 (GRADE), escalation is immediate and
-    de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOLD above.".
+- each of the 7 paragraphs of flow.md into which this change writes rule text, outside the mode
+  section, must be in the file once and unchanged: the header, the cycle steps (cycle step 4,
+  GRADE, among them), the seeding paragraph, FAILED LEG (the entry list of its whole-line rule,
+  Entries 61, 63, 64 and 69, among its text), the CODEX ROLE LIMIT, the tiers paragraph and
+  VERIFIER DIVERSITY. A paragraph is a maximal run of lines that are not blank, and a line is
+  blank when it is empty or holds only white space, as Python's str.isspace() defines it. Each
+  row of PARAGRAPHS gives a paragraph's name, the text that its first line starts with, and the
+  sha256 of the paragraph with each run of white space, as Python's str.split() defines it,
+  collapsed to 1 space and none at either end. So the check fails when no paragraph or more than
+  1 paragraph starts with that text, so an indent put before that text fails too, and when the
+  paragraph differs in anything other than the amount or kind of white space between its words
+  or after its last word: a character that is not white space added, removed or changed, a
+  letter in another case, 2 words joined, a line added to it, or a blank line put inside it. That
+  is the cost of this contract: every edit of these 7 paragraphs, meant or not, fails this check
+  until the paragraph's sha256 in PARAGRAPHS is updated. For each such paragraph the report gives
+  its name, its line range, its new sha256 and the 1-line update to PARAGRAPHS that accepts it.
 
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
@@ -87,12 +75,15 @@ The check cannot tell whether a sentence states the rule it matches or only ment
 So a sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
 matched sentence itself can be negated and still pass, as in "The session never reads an absent
 mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
-absent rule in other words fails. The same holds for each pinned text: one rewrapped across
-other line breaks passes, one kept inside a sentence that negates it passes, a sentence elsewhere
-that contradicts it passes, such as one that adds Entry 62 to the entries of the whole-line rule,
-and the same rule in other words fails. tools/test-check-flow-mode.py holds a case for each
-verdict named in this docstring.
+absent rule in other words fails. A pinned paragraph with its words kept and only the white space
+between them changed passes, and so does a mention of its opening text inside another paragraph.
+Text outside the 7 paragraphs is not pinned: an edit there passes, and so does a paragraph
+elsewhere that contradicts one of them, such as one that adds Entry 62 to the entries of the
+whole-line rule. An edit committed with the paragraph's new sha256 in PARAGRAPHS passes; the
+changed row in the diff is what shows it to a reviewer. tools/test-check-flow-mode.py holds a case
+for each verdict named in this docstring.
 """
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -113,47 +104,62 @@ QUOTED = re.compile(r"\"[^\"\n]*\"")
 ABSENT_RULE = re.compile(r"(?i)\breads an absent mode record as unattended\b"
                          r"|\ban absent mode record is read as unattended\b")
 
-# Texts that flow.md must hold word for word, each with the name the report gives it. The check
-# collapses each run of spaces and line breaks in flow.md to 1 space before it looks for them, so
-# a pin matches however its words wrap. Each pin runs from where its clause or phrase starts to
-# the punctuation that ends it, and PIN_TEXTS bounds each match by white space or the end of the
-# text on both sides, so a pin that a longer text holds, such as an entry list with a further
-# entry joined to it, does not match.
-PINS = [
-    ("the header's statement of which tier rules /flow keeps",
-     "apart from the 2 tier rules that it names as kept here, the escalation rule of cycle step 4"
-     " (GRADE) and the AIQT HOLD;"),
-    ("the attribution of the whole-line rule to Entry 125",
-     "(3) a quote in it breaches the whole-line rule that Entry 125 states,"),
-    ("the entry list of the whole-line rule",
-     "the rule of the maintainer decisions of Entries 61, 63, 64 and 69 (2026-11-14 and"
-     " 2026-11-15; the coordinator's correction recorded with Entry 127, 2026-11-15, gives the"
-     " rule's entries as these 4):"),
-    ("the whole-line test of the FAILED LEG rule",
-     "a single-line quote must be a whole line, from the line's first character to its last, and a"
-     " range quote must be whole lines;"),
-    ("the allowances of the whole-line rule",
-     "either of them also when it matches in that way only once either or both of 2 allowances"
-     " apply, each line's leading spaces stripped or its Markdown formatting marks (backticks,"
-     " emphasis asterisks or underscores) missing, with each offset, range, collapse and mark"
-     " recorded;"),
-    ("the failures of the whole-line rule",
-     "a quote of only part of a line, text more than 1 line off, changed or missing words, a"
-     " dropped comment marker, or any other changed character fails it."),
-    ("the tier floor of the CODEX ROLE LIMIT",
-     "A critical change is never graded light: it is of at least the substantive tier,"),
-    ("the statement of which tier rules /flow keeps",
-     "so do the 2 tier rules kept here, which the \"Working method\" section names: in cycle step 4"
-     " (GRADE), escalation is immediate and de-escalation needs a maintainer decision and a"
-     " recorded basis; and the AIQT HOLD above."),
+# The 7 paragraphs of flow.md into which this change writes rule text, outside the mode section,
+# each with the name the report gives it, the text its first line starts with, and the sha256 of
+# its text with its white space collapsed. flow.md is the only copy of their text. Each sha256
+# stands alone on its line in the form of DIGEST_LINE, so accepting an edit of a paragraph is
+# the 1-line update that the report gives.
+PARAGRAPHS = [
+    ("the header", "INTERIM. This command's own inlined text",
+     "eff52ed68ba81c266e056737cf7fbdeaf8973371d07d8bb43dcc6ff30c95e7ae"),
+    ("the cycle steps", "1. REFRESH: ",
+     "989b6c8929d8818cd2b63341f622dfaed510c89efed1ef9bf6e12dc050131a94"),
+    ("the seeding paragraph", "Per item (the machine-local",
+     "9a967eaf04b8ff43cdd6ac9ca8f84600f039c2e5ce3217e456f392a9c86e777d"),
+    ("FAILED LEG", "FAILED LEG (every family, every tier):",
+     "205b52031f15672704d3a10e7b0b367a28cc6f38da3cb97f79d149130af74ae3"),
+    ("the CODEX ROLE LIMIT", "CODEX ROLE LIMIT: ",
+     "bf963078ff3d181f83f457ad7aad1294461d8b9f0a17bbbc21bb5be1dcb46843"),
+    ("the tiers paragraph", "The tiers (light, substantive, and sensitive)",
+     "6a4d7ca0524b52a69295cd0a39d0eb8ab3dfc50a1baa0e0041f09789e9a926d7"),
+    ("VERIFIER DIVERSITY", "VERIFIER DIVERSITY (QA, every tier):",
+     "eb1f7fc8e9bb4929122a59dbed2fe04ba7629339393a87f6adb23ae85510a70d"),
 ]
-PIN_TEXTS = [(label, pin, re.compile(r"(?<!\S)" + re.escape(pin) + r"(?!\S)"))
-             for label, pin in PINS]
+DIGEST_LINE = "     \"{}\"),"
+TABLE_FILE = "tools/check-flow-mode.py"
+
+
+def paragraphs(lines):
+    """Each paragraph of lines, a maximal run of lines that are not blank, as its first and last
+    line numbers and its text."""
+    found = []
+    start = None
+    for number, line in enumerate(lines + [""], 1):
+        if line.strip():
+            if start is None:
+                start = number
+        elif start is not None:
+            found.append((start, number - 1, "\n".join(lines[start - 1:number - 1])))
+            start = None
+    return found
+
+
+def digest(paragraph):
+    """The sha256 of paragraph with each run of white space collapsed to 1 space."""
+    return hashlib.sha256(" ".join(paragraph.split()).encode("utf-8")).hexdigest()
+
+
+def changed_report(name, first, last, label, pinned, now):
+    """The report line for a pinned paragraph whose sha256 is no longer the pinned one."""
+    return ("{}:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to accept the"
+            " change, replace the line '{}' of PARAGRAPHS in {} with '{}'".format(
+                name, first, last, label, now, DIGEST_LINE.format(pinned), TABLE_FILE,
+                DIGEST_LINE.format(now)))
 
 
 def findings(text, name):
     """The report lines for each way text drifts from the writer's values and for each pinned
-    text that it does not hold."""
+    paragraph that it does not hold once and unchanged."""
     found = []
     lines = text.split("\n")
     modes = [(number, line) for number, line in enumerate(lines, 1) if line.startswith(MODE_PREFIX)]
@@ -183,9 +189,17 @@ def findings(text, name):
     joined = " ".join(text.split())
     if not ABSENT_RULE.search(joined):
         found.append("{}: no statement that an absent mode record is read as unattended".format(name))
-    for label, pin, bounded in PIN_TEXTS:
-        if not bounded.search(joined):
-            found.append("{}: the pinned text of {} is missing: {}".format(name, label, pin))
+    blocks = paragraphs(lines)
+    for label, opening, pinned in PARAGRAPHS:
+        starting = [block for block in blocks if block[2].startswith(opening)]
+        if len(starting) != 1:
+            found.append("{}: expected 1 pinned paragraph, {}, starting {!r}, found {}".format(
+                name, label, opening, len(starting)))
+            continue
+        first, last, paragraph = starting[0]
+        now = digest(paragraph)
+        if now != pinned:
+            found.append(changed_report(name, first, last, label, pinned, now))
     return found
 
 
@@ -209,8 +223,8 @@ def main(argv):
         print("FAIL: {} finding(s)".format(len(found)))
         return 1
     print("OK: {}: the MODE line names the writer's 2 modes, no line holds an unquoted bare "
-          "\"attended\", and the absent-record sentence and the {} pinned texts are present".format(
-              source, len(PINS)))
+          "\"attended\", the absent-record sentence is present, and the {} pinned paragraphs are "
+          "unchanged".format(source, len(PARAGRAPHS)))
     return 0
 
 
