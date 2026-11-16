@@ -83,16 +83,18 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # The refreshed gate_weakening denies the 5 write-then-run commit probes of
 # tools/test-gate-weakening-probes.py, which the 2eb6812c hooks allowed; other write-then-run
 # forms, such as a script written under a quoted delimiter that sets core.hooksPath, or a
-# base64-decoded script, still get no decision where git can probe the directory that the
-# script's path names (review_workdir_hold denies the core.hooksPath script where git cannot;
+# base64-decoded script, still get no decision where the script's path is absolute and git can
+# probe the directory that it names (review_workdir_hold denies the core.hooksPath script where
+# git cannot; bash_absolute_paths denies either script written with > to a relative path;
 # protected_line denies such a core.hooksPath script written under an unquoted delimiter).
 # The refreshed orch_truncation_guard denies a
 # here-document body that a shell runs with a bare & in it, as the 2eb6812c hooks did, and no
 # longer denies 80 here-document and open-quote rows of the extended decision-table run
 # (table sha256 ba0f9b6fc7c39d5f57f4cd94f9f906d1d19b4a7b9fe3646ee66106ca89f53a93, class
 # summary sha256 b4870a6ea63388179ee62750e36eae45f54cc4b3ede0cf8670095045f34f829d) that the
-# 2eb6812c hooks denied; the refresh adds 2 context-only clock hooks (see .aiqt/config.md for
-# both).
+# 2eb6812c hooks denied; 15 of those rows are of the 15 forms added to the run after review,
+# and Entry 99 covers those forms as well (maintainer decision Entry 126); the refresh adds 2
+# context-only clock hooks (see .aiqt/config.md for both).
 # Still a SCOPED hooks-only advance; the rule corpus is unchanged.
 # The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
 advanced = "2026-11-15"

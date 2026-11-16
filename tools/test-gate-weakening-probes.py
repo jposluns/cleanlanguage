@@ -32,7 +32,11 @@ that the shape check rejects 3 such moved forms, and that it rejects a form that
 written path) while it accepts the same form with that condition met. 2 further cases check that it
 rejects a script whose commit word and hook-skipping flag stand on 2 different lines, and a printf
 write followed by more text on its line, while it accepts the same forms with the commit and the
-flag on 1 line and with the printf write alone on its line. Each payload file is also
+flag on 1 line and with the printf write alone on its line. A further case checks each side
+of the rule that a write stands alone on its line: it rejects a form with text before `cat` or after
+the here-document opener on the line of a here-document write, with text before or after a printf
+write, or with a closing line that holds more than the delimiter (or a tab before it under `<<`),
+and accepts the same writes alone on their lines. Each payload file is also
 pinned by its sha256, so any edit to a payload fails a named case until the pin is updated with it.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
@@ -41,8 +45,9 @@ show that. The hook of the first pin of this pull request, 730c039b, already den
 test passes on it, as on the hook of the re-pin to pack commit 9d249b47. The test pins
 these 5 forms only. It does not show that every write-then-run commit that skips hooks is denied:
 a script written under a quoted delimiter that sets core.hooksPath, or a script decoded from
-base64, gets no decision from the refreshed hook where git can probe the directory that the
-script's path names (where it cannot, review_workdir_hold denies the core.hooksPath script), while
+base64, gets no decision from the refreshed hook where the script's path is absolute and git can
+probe the directory that it names (where git cannot, review_workdir_hold denies the core.hooksPath
+script; bash_absolute_paths denies either script written with > to a relative path), while
 protected_line denies such a core.hooksPath script written under an unquoted delimiter (see
 .aiqt/config.md).
 
@@ -123,6 +128,40 @@ PRINTF_MORE_TEXT_FORMS = (
     "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh; printf 'echo probe\\n' > /tmp/probe-s6.sh\n"
     "bash /tmp/probe-s6.sh",
     "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s6.sh\nbash /tmp/probe-s6.sh",
+)
+# 1 entry per side of the rule that a write stands alone on its line: (side, the forms that break the
+# rule on that side only, which the shape check must reject, and the same writes alone on their lines,
+# which it must accept). Removing or loosening the rule on any 1 side makes 1 of its rejected forms pass,
+# or 1 of its accepted forms fail, and fails the case.
+ALONE_ON_ITS_LINE_FORMS = (
+    ("text before cat on the line of a here-document write",
+     ("false && cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh",
+      "echo probe; cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh"),
+     ("cat > /tmp/probe-a1.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a1.sh",)),
+    ("text after the here-document opener",
+     ("cat > /tmp/probe-a2.sh <<'EOF'; printf 'echo probe\\n' > /tmp/probe-a2.sh\n"
+      "git commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",
+      "cat > /tmp/probe-a2.sh <<'EOF' && echo probe\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",
+      "cat > /tmp/probe-a2.sh <<'EOF' | tee /tmp/probe-a2.log\ngit commit --no-verify -m probe\nEOF\n"
+      "bash /tmp/probe-a2.sh"),
+     ("cat > /tmp/probe-a2.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a2.sh",)),
+    ("text before a printf write",
+     ("false && printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh",
+      "echo probe; printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh"),
+     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a3.sh\nbash /tmp/probe-a3.sh",)),
+    ("text after a printf write",
+     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh && printf 'echo probe\\n' > /tmp/probe-a4.sh\n"
+      "bash /tmp/probe-a4.sh",
+      "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh || true\nbash /tmp/probe-a4.sh"),
+     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-a4.sh\nbash /tmp/probe-a4.sh",)),
+    ("the closing delimiter line of a here-document",
+     ("cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF x\nbash /tmp/probe-a5.sh",
+      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\n EOF\nbash /tmp/probe-a5.sh",
+      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF \nbash /tmp/probe-a5.sh",
+      "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh"),
+     ("cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
+      "cat > /tmp/probe-a5.sh <<'EOF'\nEOF x\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
+      "cat > /tmp/probe-a5.sh <<-'EOF'\n\tgit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh")),
 )
 
 
@@ -255,6 +294,17 @@ class GateWeakeningProbes(unittest.TestCase):
                              "a printf write alone on its line failed the shape check: {!r}".format(accepted))
         self.assertIsNone(write_then_run(rejected),
                           "a printf write followed by more text passed the shape check: {!r}".format(rejected))
+
+    def test_shape_check_requires_each_write_alone_on_its_line(self):
+        for side, rejected_forms, accepted_forms in ALONE_ON_ITS_LINE_FORMS:
+            for index, accepted in enumerate(accepted_forms, 1):
+                with self.subTest(side=side, accepted=index):
+                    self.assertIsNotNone(write_then_run(accepted),
+                                         "a write alone on its line failed the shape check: {!r}".format(accepted))
+            for index, rejected in enumerate(rejected_forms, 1):
+                with self.subTest(side=side, rejected=index):
+                    self.assertIsNone(write_then_run(rejected),
+                                      "a write with {} passed the shape check: {!r}".format(side, rejected))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:

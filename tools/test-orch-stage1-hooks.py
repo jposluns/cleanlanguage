@@ -36,9 +36,11 @@ when the declared lease file is present, non-empty and fresh (_orch_scope_live, 
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -689,6 +691,30 @@ class StopFamilySurface(HookHarness):
         spoof = self.read_json("escape-spoof.json")
         self.assertIsNotNone(spoof, "an ignored sentinel is spoof-recorded")
         self.assertIn("uid", (spoof.get("detail") or ""))
+
+
+# =====================================================================================================
+# 10. Citations of a whole hook function in this file
+# =====================================================================================================
+class WholeFunctionCitations(unittest.TestCase):
+    """Each function of the vendored hook that a comment of this file cites as a whole must be cited
+    once, by the range from its def line to its last line, so a re-pin that moves or lengthens it fails
+    here until the citation follows. The citation reads `name` at A-B, with or without
+    aiqt_hooks.py: or a bare colon before A."""
+
+    WHOLE = ("_deny", "_orch_record_forced_exit")
+
+    def test_each_whole_function_citation_names_its_lines(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        tree = ast.parse(HOOK.read_text(encoding="utf-8"))
+        ranges = {node.name: (node.lineno, node.end_lineno) for node in tree.body
+                  if isinstance(node, ast.FunctionDef)}
+        for name in self.WHOLE:
+            with self.subTest(function=name):
+                self.assertIn(name, ranges, "the hook defines no function {}".format(name))
+                cited = re.findall(r"`" + re.escape(name) + r"` at (?:aiqt_hooks\.py)?:?(\d+)-(\d+)", source)
+                self.assertEqual(len(cited), 1, "{} must be cited exactly once: {}".format(name, cited))
+                self.assertEqual(tuple(int(n) for n in cited[0]), ranges[name])
 
 
 if __name__ == "__main__":

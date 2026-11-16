@@ -1954,14 +1954,31 @@ class HookCountDisclosure(unittest.TestCase):
                       self._registry_alone_problems(twice))
 
     def test_registry_alone_check_refuses_a_wrong_count(self):
-        # A count 1 higher than the number of hooks listed must be refused.
+        # A count 1 higher or 1 lower than the number of hooks listed must be refused.
         text = self._config_text()
         match = re.search(self.REGISTRY_ALONE, text)
         self.assertIsNotNone(match, "the anchored sentence is missing")
         listed = len(self._listed(match.group(2)))
-        wrong = text[:match.start(1)] + str(listed + 1) + text[match.end(1):]
-        self.assertIn("count {} but {} names listed".format(listed + 1, listed),
-                      self._registry_alone_problems(wrong))
+        for count in (listed + 1, listed - 1):
+            with self.subTest(count=count):
+                wrong = text[:match.start(1)] + str(count) + text[match.end(1):]
+                self.assertIn("count {} but {} names listed".format(count, listed),
+                              self._registry_alone_problems(wrong))
+
+    def test_registry_alone_check_refuses_a_name_that_is_not_a_registered_handler(self):
+        # A listed name that no registration holds must be refused, although it begins with orch_ and
+        # the count still equals the number of names listed.
+        text = self._config_text()
+        match = re.search(self.REGISTRY_ALONE, text)
+        self.assertIsNotNone(match, "the anchored sentence is missing")
+        names = self._listed(match.group(2))
+        self.assertGreaterEqual(len(names), 1, "the anchored sentence lists no hook")
+        unregistered = "orch_not_a_registered_hook"
+        self.assertNotIn(unregistered, self._registered())
+        listed = match.group(2).replace("`{}`".format(names[-1]), "`{}`".format(unregistered))
+        changed = text[:match.start(2)] + listed + text[match.end(2):]
+        self.assertEqual(self._registry_alone_problems(changed),
+                         ["{} is not a registered handler".format(unregistered)])
 
     def test_registry_alone_check_refuses_clock_hooks_as_orchestrator_hooks(self):
         # The registered clock hooks listed in place of the orchestrator hooks must be refused, although
@@ -2001,7 +2018,8 @@ class HookCountDisclosure(unittest.TestCase):
         self.assertEqual(self._clock_problems(self._config_text()), [])
 
     def test_clock_check_refuses_a_changed_count(self):
-        # "The 2 clock hooks" changed to 3 must be refused, as must a count of 1.
+        # "The 2 clock hooks" changed to 3 must be refused, as must a count of 1, by each count check:
+        # the count against the registered clock hooks and the count against the names listed.
         text = self._config_text()
         match = re.search(self.CLOCK, text)
         self.assertIsNotNone(match, "the anchored sentence is missing")
@@ -2010,6 +2028,8 @@ class HookCountDisclosure(unittest.TestCase):
             with self.subTest(count=wrong):
                 changed = text[:match.start(1)] + str(wrong) + text[match.end(1):]
                 self.assertIn("count {} but {} clock hooks registered".format(wrong, registered),
+                              self._clock_problems(changed))
+                self.assertIn("count {} but {} names listed".format(wrong, registered),
                               self._clock_problems(changed))
 
     def test_clock_check_refuses_a_clock_hook_named_twice(self):
