@@ -20,24 +20,33 @@ the plan's numbering, which CHECKS maps to the names used here.
       it reaches. Whether the Claude Code CLI reserves the prefixes in any
       letter case is not known offline, so the gate refuses every case.
   Sources exist: in both marketplaces each plugin entry has a string source
-      that starts with "./", has no empty and no ".." component and is a path
-      the operating system accepts (a NUL character is refused), and it
-      resolves below the marketplace root, each component reached with
-      os.lstat and none a symlink, to a directory that holds a regular
+      that starts with "./", has no empty, no "." and no ".." component and
+      is a path the operating system accepts (a NUL character, or a
+      component too long for the file system, is refused), and it resolves
+      below the marketplace root, each component reached with os.lstat and
+      none a symlink, to a directory that holds a regular
       .claude-plugin/plugin.json. The plugin entry of
       .claude-plugin/marketplace.json must reach CLAUDE_MANIFEST, this
-      repository's plugin. A source that is not a string, such as a GitHub
-      source object, is refused, because this gate cannot read where it leads.
+      repository's plugin. Since no component of a source is empty, "." or
+      ".." and none is a symlink, the path a source spells is the path it
+      resolves to, so the gate compares that path with CLAUDE_MANIFEST as
+      text. A source that is not a string, such as a GitHub source object,
+      is refused, because this gate cannot read where it leads.
   Versions agree: the versions of both plugin manifests, the Version: line of
       the skill's SKILL.md, read with the VERSION_LINE and SKILL_VERSION
       patterns of the shared extractor tools/skill-version.py, and the version
       of any plugin entry of .claude-plugin/marketplace.json that carries one,
-      are each a nonempty string and are the same text.
-  Dependencies resolve: every dependency named by a plugin entry or by the
-      plugin manifest its relative source reaches is a nonempty string that
-      names a plugin entry of the same marketplace, as a bare name or as
-      name@<that marketplace>, and does not name the plugin itself: the
-      entry's own name, or for the manifest's list the manifest's own name.
+      are each a nonempty string and are the same text. The entries of the
+      vendored marketplace are other plugins, with versions of their own, so
+      their versions are not read.
+  Dependencies resolve: a plugin entry or the plugin manifest its relative
+      source reaches may leave out dependencies, but one that holds the key
+      holds a list, never a JSON null. Every dependency named by a plugin
+      entry or by the plugin manifest its relative source reaches is a
+      nonempty string that names a plugin entry of the same marketplace, as
+      a bare name or as name@<that marketplace>, and does not name the
+      plugin itself: the entry's own name, or for the manifest's list the
+      manifest's own name.
       Whether the Claude Code CLI accepts a plugin that depends on itself is
       not known offline, so the gate refuses it. No list names the same
       plugin twice: a dependency that names a plugin the same list has
@@ -73,11 +82,13 @@ missing or is not a bare X.Y.Z is such an inconsistency: the versions check
 fails with exit 1. 3 when an input cannot be read: a file that is missing,
 reached through a symlink, not a regular file, not UTF-8, not JSON, nested
 more than MAX_JSON_DEPTH levels deep or too deeply for the interpreter to
-decode, not a JSON object, or that repeats a key, or an extractor that
-cannot be used, because it raises any exception while it loads or lacks a
-VERSION_LINE or SKILL_VERSION pattern of text; the cause goes to standard
-error, with a last line "UNREADABLE: exit 3". The gate fails closed: it never
-passes a check it could not make.
+decode, not a JSON object, or that repeats a key; a component of a relative
+source that the operating system will not let the gate reach for a cause
+other than a missing or too long name, such as a denied permission; or an
+extractor that cannot be used, because it raises any exception while it
+loads or lacks a VERSION_LINE or SKILL_VERSION pattern of text. The cause
+goes to standard error, with a last line "UNREADABLE: exit 3". The gate
+fails closed: it never passes a check it could not make.
 
 Residual: the gate reads the files as they are on disk; it does not ask git
 which files are tracked, and it does not run the Claude Code CLI, whose own
@@ -86,6 +97,7 @@ reading of the manifests the pinned Plugin manifests job checks.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import os
@@ -122,6 +134,8 @@ READ_BLOCK = 65536
 # object is 1 level. Far below any default recursion limit, so every supported
 # interpreter decodes JSON at this depth, and far above the manifests' own.
 MAX_JSON_DEPTH = 64
+# The value read for a key a JSON object does not hold, unlike any value JSON can hold.
+ABSENT = object()
 
 
 class Unreadable(Exception):
@@ -321,8 +335,8 @@ def resolve_source(rel: str, index: int, source, failures: list):
         failures.append(f"{label} does not start with './'")
         return None
     parts = source[2:].split("/")
-    if any(part in ("", "..") for part in parts):
-        failures.append(f"{label} has an empty or '..' component")
+    if any(part in ("", ".", "..") for part in parts):
+        failures.append(f"{label} has an empty, '.' or '..' component")
         return None
     base = rel.split("/")[:-2]
     current = REPO_ROOT.joinpath(*base) if base else REPO_ROOT
@@ -339,6 +353,10 @@ def resolve_source(rel: str, index: int, source, failures: list):
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is missing")
             return None
         except OSError as error:
+            if error.errno == errno.ENAMETOOLONG:
+                # A fault of the source text, not of the tree, so a failure of this check.
+                failures.append(f"{label} is not a path the operating system accepts: {error.strerror or error}")
+                return None
             raise Unreadable(f"{current.relative_to(REPO_ROOT)} could not be read: {error.strerror or error}") from error
         if stat.S_ISLNK(info.st_mode):
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is a symlink")
@@ -414,13 +432,14 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
-            lists = [(f"{rel} plugins[{index}]", entry.get("name"), entry.get("dependencies"))]
+            lists = [(f"{rel} plugins[{index}]", entry.get("name"), entry.get("dependencies", ABSENT))]
             if (rel, index) in folders:
                 manifest = f"{folders[(rel, index)]}/.claude-plugin/plugin.json"
                 reached = load_json(manifest)
-                lists.append((manifest, reached.get("name"), reached.get("dependencies")))
+                lists.append((manifest, reached.get("name"), reached.get("dependencies", ABSENT)))
             for label, own, deps in lists:
-                if deps is None:
+                # Only a missing key is no list; an explicit JSON null is refused below as not a list.
+                if deps is ABSENT:
                     continue
                 if not isinstance(deps, list):
                     failures.append(f"D4: {label} dependencies is not a list")

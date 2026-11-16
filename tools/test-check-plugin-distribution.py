@@ -3,11 +3,15 @@
 
 Each case builds a temporary tree that holds the files the gate reads, points
 the gate's REPO_ROOT at it, as tools/test-agent-plugin-manifest.py points that
-gate's paths at a fixture, and runs the gate's main. The conforming tree must
-pass, also with a byte-order mark before a JSON file; each case then changes 1
-thing and requires the exit status, the text of the failure with the tag of
-its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
-"FAIL: " for exit 1 and "UNREADABLE: exit 3" on standard error for exit 3.
+gate's paths at a fixture, and runs the gate's main; 1 case instead runs a
+copy of the gate in the tree as a command, through subprocess. The
+conforming tree must pass, also with a byte-order mark before a JSON file;
+each case then changes 1 thing. Every case requires the exit status and the
+last line: "OK:" for exit 0, "FAIL: " for exit 1 and "UNREADABLE: exit 3" on
+standard error for exit 3. Every case that expects a failure also requires
+its text, with the tag of its check as the gate's CHECKS holds it, except 2
+cases that require only the exact last line: the count line for 1 and for 2
+inconsistencies, and "UNREADABLE: exit 3".
 
 - The names check fails on: the marketplace named jposluns; a plugin entry
   name that differs from the manifest name; a second plugin entry or none; a
@@ -20,14 +24,15 @@ its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
   entry name that is an array or an object, a marketplace name that is an
   array where a qualified dependency reads it, and a manifest name that is
   an array where its entry and its own dependencies read it.
-- The sources check fails on: a missing source folder; a source with a ".."
-  or an empty component; a source with a NUL character or with a character
-  the file system encoding cannot hold; a source without "./"; a source that
-  is a file; a manifest that is a directory; a symlinked source folder, a
-  symlinked .claude-plugin folder or a symlinked manifest; an entry with no
-  source; an object source; a vendored marketplace with no plugins list or
-  with an entry that is not an object; and a source of the repository's
-  entry that reaches another plugin or a copy of this one.
+- The sources check fails on: a missing source folder; a source with a "..",
+  a "." or an empty component, the "." in each marketplace; a source with a
+  NUL character, with a character the file system encoding cannot hold or
+  with a component too long for the file system; a source without "./"; a
+  source that is a file; a manifest that is a directory; a symlinked source
+  folder, a symlinked .claude-plugin folder or a symlinked manifest; an
+  entry with no source; an object source; a vendored marketplace with no
+  plugins list or with an entry that is not an object; and a source of the
+  repository's entry that reaches another plugin or a copy of this one.
 - The versions check fails on: a version that differs in the Claude
   manifest, the Agent Plugins manifest, the SKILL.md Version: line or a
   marketplace entry; a version that is missing, empty or not a string; and a
@@ -38,22 +43,30 @@ its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
   entry, as a bare or a qualified name, or from a plugin manifest; on a
   plugin that 1 list names twice, as the same bare name, as a bare and a
   qualified name, or in a plugin manifest; and on dependencies that are not
-  a list or not names, an empty string among them. Dependencies that
+  a list, a JSON null in a marketplace entry and in a plugin manifest among
+  them, or not names, an empty string among them. Dependencies that
   resolve pass, among them 2 that a plugin entry holds on 2 other plugins of
-  its marketplace.
+  its marketplace, and 3 lists that each name the same plugin once.
 - Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
-  regular file; NaN; JSON nested 1 level deeper than the gate's bound of 64,
-  which every supported Python decodes, while JSON at the bound, with escaped
-  quotes and brackets inside a string, passes; a JSON file that is not
-  an object; a file or a SKILL.md that is not UTF-8; a symlinked input file or
-  input folder; and an extractor that is missing, symlinked, raises an
-  exception or SystemExit while it loads, lacks VERSION_LINE or
-  SKILL_VERSION, or holds either as a pattern of bytes.
+  regular file; an input file and a source folder that deny permission;
+  NaN; JSON nested 1 level deeper than the gate's bound of 64, which every
+  supported Python decodes, while JSON at the bound, with escaped quotes and
+  brackets inside a string, passes, and so does JSON nested 3 levels deep
+  that holds more than 64 arrays in all; a JSON file that is not an object;
+  a file or a SKILL.md that is not UTF-8; a symlinked input file or input
+  folder; and an extractor that is missing, symlinked, raises an exception
+  or SystemExit while it loads, lacks VERSION_LINE or SKILL_VERSION, or
+  holds either as a pattern of bytes.
+- Run as a command, the gate exits 0, 1 and 3 with the same last lines.
 - The count lines read "1 relative source", "1 dependency" and "FAIL: 1
   inconsistency" for 1, and the plural for 0 and for more than 1.
 
-A last case runs the gate on the repository itself, so this test fails while
-the repository's own names, sources, versions or dependencies disagree.
+A last case runs the gate on the repository itself and requires exit 0 and a
+last line "OK:", so this test fails while the repository's own names,
+sources, versions or dependencies disagree.
+
+The permission cases need a user whose permissions the file system enforces,
+so they are skipped when the test runs as root.
 
 The SKILL.md version is read by a copy of the real tools/skill-version.py in
 each tree, which the gate reaches from REPO_ROOT like every other file.
@@ -70,6 +83,8 @@ import io
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -204,7 +219,7 @@ class PluginDistributionTest(unittest.TestCase):
     def test_source_with_dotdot_fails_d2(self):
         self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./x/../cleanlanguage"))
         self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source './x/../cleanlanguage' has an "
-                       "empty or '..' component")
+                       "empty, '.' or '..' component")
 
     def test_symlinked_source_fails_d2(self):
         os.symlink(self.root / "cleanlanguage", self.root / "linked")
@@ -454,7 +469,7 @@ class PluginDistributionTest(unittest.TestCase):
             with self.subTest(source=source):
                 self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
                 self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source '{source}' has "
-                               "an empty or '..' component")
+                               "an empty, '.' or '..' component")
 
     # The extractor: reached from REPO_ROOT, and exit 3 when it cannot be used.
 
@@ -631,13 +646,117 @@ class PluginDistributionTest(unittest.TestCase):
                 self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source {shown} is not a "
                                "path the operating system accepts")
 
+    # Cases for a "." component, an unusable source, a null dependency list, the depth count, the scope
+    # of the repeated-dependency check, denied permissions and the command-line entry point.
+
+    def test_source_with_dot_component_fails_d2(self):
+        for rel, folder in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
+            for source in (f"././{folder}", f"./{folder}/."):
+                with self.subTest(rel=rel, source=source):
+                    saved = (self.root / rel).read_bytes()
+                    self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
+                    try:
+                        output = self.expect(1, f"FAIL D2: {rel} plugins[0].source '{source}' has an empty, '.' "
+                                                "or '..' component", "1 relative source resolved")
+                        self.assertNotIn("reaches", output)
+                        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                    finally:
+                        (self.root / rel).write_bytes(saved)
+
+    def test_source_with_too_long_component_fails_d2(self):
+        source = "./" + "a" * 300
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
+        output = self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source '{source}' is "
+                                "not a path the operating system accepts: ", "1 relative source resolved")
+        self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+
+    def test_null_dependencies_fails_d4(self):
+        for rel, change, label in (
+                (gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=None),
+                 ".claude-plugin/marketplace.json plugins[0]"),
+                (gate.CLAUDE_MANIFEST, lambda d: d.update(dependencies=None),
+                 "cleanlanguage/.claude-plugin/plugin.json")):
+            with self.subTest(label=label):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, change)
+                try:
+                    output = self.expect(1, f"FAIL D4: {label} dependencies is not a list")
+                    self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
+    def test_many_sibling_arrays_within_the_depth_bound_pass(self):
+        # 3 levels deep, but more than MAX_JSON_DEPTH arrays and objects in all: the bound counts nesting.
+        siblings = ", ".join(["[]"] * (MAX_JSON_DEPTH + 6))
+        self.write_text(gate.SITE_JSON, '{"schema": 1, "site_key": "cleanlanguage", "deep": [' + siblings + "]}\n")
+        self.expect(0, "OK: D1 to D4 hold")
+
+    def test_lists_naming_the_same_plugin_pass(self):
+        # An entry's list, its manifest's list and another entry's list each name aiqt-skill once.
+        self.add_vendored("aiqt-skill")
+        self.add_vendored("aiqt-docs")
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: (d["plugins"][0].update(dependencies=["aiqt-skill"]),
+                                                             d["plugins"][2].update(dependencies=["aiqt-skill"])))
+        self.edit_json("plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",
+                       lambda d: d.update(dependencies=["aiqt-skill@aiqt-guardrails"]))
+        output = self.expect(0, "OK: D1 to D4 hold", "4 relative sources resolved, 3 dependencies read")
+        self.assertNotIn("FAIL", output)
+
+    @contextlib.contextmanager
+    def denied(self, rel: str):
+        """rel with every permission taken away, given back before the tree is removed."""
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root is not refused by file permissions")
+        path = self.root / rel
+        mode = path.stat().st_mode
+        path.chmod(0)
+        try:
+            yield
+        finally:
+            path.chmod(mode)
+
+    def test_input_file_denying_permission_exits_3(self):
+        with self.denied(gate.SITE_JSON):
+            self.expect(3, "site-src/site.json could not be read: Permission denied")
+
+    def test_source_folder_denying_permission_exits_3(self):
+        with self.denied("plugin/aiqt-guardrails-hooks"):
+            self.expect(3, "plugin/aiqt-guardrails-hooks/.claude-plugin could not be read: Permission denied")
+
+    def test_gate_runs_as_a_command(self):
+        # A copy of the gate in the tree, so its REPO_ROOT is the tree, run as CI runs it.
+        script = self.root / "tools" / "check-plugin-distribution.py"
+        shutil.copyfile(MODULE_PATH, script)
+
+        def command():
+            done = subprocess.run([sys.executable, "-I", str(script)], cwd=self.root, capture_output=True,
+                                  text=True, timeout=120)
+            return done.returncode, done.stdout, done.stderr
+
+        code, out, err = command()
+        self.assertEqual(code, 0, out + err)
+        self.assertTrue(out.splitlines()[-1].startswith("OK: D1 to D4 hold"), out + err)
+        self.edit_json(gate.SITE_JSON, lambda d: d.update(site_key="jposluns"))
+        code, out, err = command()
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("FAIL D1: site-src/site.json site_key is 'jposluns', not 'cleanlanguage'\n", out)
+        self.assertEqual(out.splitlines()[-1], "FAIL: 1 inconsistency")
+        (self.root / gate.SITE_JSON).unlink()
+        code, out, err = command()
+        self.assertEqual(code, 3, out + err)
+        self.assertIn("site-src/site.json could not be read", err)
+        self.assertEqual(err.splitlines()[-1], "UNREADABLE: exit 3")
+
 
 class RepositoryTreeTest(unittest.TestCase):
     def test_repository_is_consistent(self):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = gate.main()
-        self.assertEqual(code, 0, out.getvalue() + err.getvalue())
+        output = out.getvalue() + err.getvalue()
+        self.assertEqual(code, 0, output)
+        self.assertTrue(out.getvalue().splitlines()[-1].startswith("OK: D1 to D4 hold"), output)
+        self.assertNotIn("FAIL", output)
 
 
 if __name__ == "__main__":
