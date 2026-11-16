@@ -683,7 +683,8 @@ STEP_RUN_LIMIT = 60
 # run fails its test. Bytes written to the pipe do not end the wait; only
 # its end of file does. A process that closes the descriptors it inherited
 # no longer holds the pipe, so it is not waited for, and a change it makes
-# after the step exits is missed (see run_step).
+# after the step exits is missed (see run_step). A case may lower it through
+# step_process_wait.
 STEP_PROCESS_WAIT = 60
 
 FAKE_GH = FAKE_COMMON + """
@@ -858,6 +859,7 @@ VERDICT_TEXTS = ("is malformed", "Could not read", "rejected the version", "unex
 
 class WorkflowStepTest(unittest.TestCase):
     step_run_limit = STEP_RUN_LIMIT
+    step_process_wait = STEP_PROCESS_WAIT
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -999,11 +1001,11 @@ class WorkflowStepTest(unittest.TestCase):
                     f" {self.step_run_limit} s after the step started") from None
             os.close(done_write)
             done_write = None
-            deadline = time.monotonic() + STEP_PROCESS_WAIT
+            deadline = time.monotonic() + self.step_process_wait
             while True:
                 left = deadline - time.monotonic()
                 ready = select.select([done_read], [], [], left)[0] if left > 0 else []
-                self.assertTrue(ready, f"step {name!r} left a process running {STEP_PROCESS_WAIT} s after it exited")
+                self.assertTrue(ready, f"step {name!r} left a process running {self.step_process_wait} s after it exited")
                 if not os.read(done_read, 4096):
                     break
         finally:
@@ -1344,6 +1346,46 @@ class HarnessTest(WorkflowStepTest):
                 subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
                                capture_output=True, text=True)
                 self.assertEqual((self.state / "gh_writes").exists(), write)
+        # Each form of --include or -i, with whether the fake gh prints the
+        # status line for it: exactly when the last --include or -i has no
+        # value or a value in FLAG_TRUE_VALUES. The status state reads 404,
+        # so a call that prints the line exits 1, and a call that does not
+        # prints nothing and exits 0.
+        self.set_state(status="404")
+        includes = (
+            (["api", path], False), (["api", "-i", path], True), (["api", "--include", path], True),
+            (["api", "-i=t", path], True), (["api", "-i=1", path], True), (["api", "--include=true", path], True),
+            (["api", "-i=false", path], False), (["api", "--include=false", path], False),
+            (["api", "-i=x", path], False), (["api", "-i", "-i=false", path], False),
+            (["api", "--include", "--include=false", path], False), (["api", "-i=false", "-i", path], True),
+            (["api", "--include=false", "--include", path], True), (["api", "-iX", "GET", path], True),
+            (["api", "--include", "--silent", path], True),
+        )
+        for args, status in includes:
+            with self.subTest(include=args):
+                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                                      capture_output=True, text=True)
+                self.assertEqual((proc.returncode, proc.stdout), (1, "HTTP/2.0 404 Fake\n") if status else (0, ""),
+                                 proc.stderr)
+        # Each gh call with a leading option, with the arguments from its
+        # subcommand on as subcommand reads them through takes_separate_value:
+        # an option that takes a value and has none in its argument, alone
+        # or last in a group, takes the next argument, and an option whose
+        # argument holds a value, joined or after =, takes none, whether or
+        # not the option takes a value, as api_options reads it.
+        leading = (
+            (["-i=t", "api", "-XPOST", path], ["api", "-XPOST", path]), (["-i=X", "api", path], ["api", path]),
+            (["-i", "api", path], ["api", path]), (["-X", "POST", "api", path], ["api", path]),
+            (["-XPOST", "api", path], ["api", path]), (["-X=POST", "api", path], ["api", path]),
+            (["-iX", "POST", "api", path], ["api", path]), (["--method", "POST", "api", path], ["api", path]),
+            (["--method=POST", "api", path], ["api", path]), (["--include=false", "api", path], ["api", path]),
+            (["-R", "jposluns/cleanlanguage", "api", path], ["api", path]),
+            (["-Rjposluns/cleanlanguage", "api", path], ["api", path]),
+            (["--repo=jposluns/cleanlanguage", "api", path], ["api", path]),
+        )
+        for args, rest in leading:
+            with self.subTest(leading=args):
+                self.assertEqual(subcommand("gh", args), rest)
         # gh api defines no -R or --repo option, so the fake gh refuses a
         # call with an option before api, as gh refuses -R there: exit 1,
         # no write and no API log entry. A gh api option that takes a value
@@ -1360,6 +1402,7 @@ class HarnessTest(WorkflowStepTest):
             (["--method", "POST", "api", path], "unknown flag: --method"),
             (["-f", "tag_name=v1.0.15", "api", path], "unknown shorthand flag: 'f' in -f"),
             (["-i=t", "-XPOST", "api", path], "unknown shorthand flag: 'i' in -i=t"),
+            (["-i=t", "api", "-XPOST", path], "unknown shorthand flag: 'i' in -i=t"),
         )
         for args, message in refused:
             with self.subTest(args=args):
@@ -1375,7 +1418,13 @@ class HarnessTest(WorkflowStepTest):
         # Each form of a --jq or -q read of the immutable field, and calls
         # that name the field without reading it. A repeated query option
         # reads only its last value, so is_field_read agrees with the field
-        # the fake gh answers, in either order.
+        # the fake gh logs, in either order, and the fake prints the value of
+        # the field it logs: true for the immutable field, the publication
+        # time for the published_at field, and nothing for a call with no
+        # query option. A call that groups -q after -i includes the status
+        # line, so the fake prints that line, which reads 404, and no field.
+        self.set_state(immutable="true", published_at="2026-11-15T12:00:03Z")
+        answers = {".immutable": "true\n", ".published_at": "2026-11-15T12:00:03Z\n", "status": ""}
         release = path + "/tags/v1.0.15"
         reads = (
             (["api", release, "--jq", ".immutable", "--jq", ".published_at"], False),
@@ -1393,10 +1442,12 @@ class HarnessTest(WorkflowStepTest):
                 self.assertEqual(is_field_read("immutable")(["gh", args]), read)
                 if args[0] == "api":
                     (self.state / "api.log").unlink(missing_ok=True)
-                    subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
-                                   capture_output=True, text=True)
+                    proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                                          capture_output=True, text=True)
                     kind = json.loads((self.state / "api.log").read_text(encoding="utf-8"))[0]
                     self.assertEqual(kind == ".immutable", read, kind)
+                    self.assertEqual(proc.stdout, "HTTP/2.0 404 Fake\n" if args[1].startswith("-i") else answers[kind],
+                                     kind)
 
     def test_a_step_still_running_at_the_limit_fails_its_test(self):
         # With the limit lowered to 1 s, a step that runs for 5 s fails its
@@ -1411,6 +1462,32 @@ class HarnessTest(WorkflowStepTest):
         self.assertEqual(str(raised.exception),
                          f"step {PUBLISH!r}, or a process it left holding its output, was still running"
                          " 1 s after the step started")
+
+    def test_a_process_still_holding_the_pipe_after_the_wait_fails_its_test(self):
+        # With the wait lowered to 1 s, a step that exits at once but leaves
+        # a background process holding the pipe for about 3 s fails its test
+        # once that 1 s has passed in all, with a message naming the step.
+        # The process is a Python child that writes 1 byte to each descriptor
+        # from 3 to 254 that it can write, every 0.3 s, so the pipe becomes
+        # readable many times during the wait: a wait that restarts its limit
+        # on each read, or that has no limit, would pass once the process
+        # exits. Its output goes to /dev/null, so it does not hold the output
+        # of the step, and the step limit does not apply.
+        self.step_process_wait = 1
+        writer = ("import os, time\n"
+                  "for _ in range(10):\n"
+                  "    for fd in range(3, 255):\n"
+                  "        try:\n"
+                  "            os.write(fd, b\"x\")\n"
+                  "        except OSError:\n"
+                  "            pass\n"
+                  "    time.sleep(0.3)\n")
+        script = "\"" + sys.executable + "\" -I -c '" + writer + "' >/dev/null 2>&1 &\nexit 0\n"
+        start = time.monotonic()
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, script)
+        self.assertLess(time.monotonic() - start, 2.5)
+        self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
 
     def test_every_variable_a_step_reads_is_declared(self):
         for name in (VALIDATE, DETERMINE, PACKAGE, PUBLISH):
