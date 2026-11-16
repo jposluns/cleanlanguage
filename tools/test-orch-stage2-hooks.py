@@ -356,14 +356,14 @@ class Stage2Harness(unittest.TestCase):
         env["XDG_STATE_HOME"] = str(self.store / "xdg")
         return env
 
-    def run_hook(self, action, payload=None):
+    def run_hook(self, action, payload=None, timeout=120):
         """Invoke python3 -I aiqt_hooks.py <action> with the JSON payload on stdin (HOME and
         XDG_STATE_HOME pinned inside the throwaway tree, as in the stage-1 harness)."""
         payload = dict(payload or {})
         payload.setdefault("cwd", str(self.repo))
         return subprocess.run([sys.executable, "-I", str(HOOK), action],
                               input=json.dumps(payload), capture_output=True, text=True,
-                              env=self._env(), timeout=120)
+                              env=self._env(), timeout=timeout)
 
     def run_doctor(self, *args):
         return subprocess.run([sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
@@ -1047,25 +1047,109 @@ class T14PosturePins(Stage2Harness):
 # =====================================================================================================
 # T15. Enumerator timeout yields ENUMERATOR_ERROR, never a hang (aiqt_hooks.py:7974-7978)
 # =====================================================================================================
+# The heartbeat enumerator: argv[1] is the heartbeat file. It appends 1 line per second, flushing and
+# fsyncing each line, 90 times (about 90 s, well past the hook's 60 s fallback), then exits 0 and
+# prints nothing.
+HEARTBEAT_ENUMERATOR = (
+    "import os, sys, time\n"
+    "with open(sys.argv[1], 'a', encoding='utf-8') as f:\n"
+    "    for i in range(90):\n"
+    "        f.write('beat {}\\n'.format(i))\n"
+    "        f.flush()\n"
+    "        os.fsync(f.fileno())\n"
+    "        time.sleep(1)\n"
+)
+
+# Runs in a separate python3 -I process: argv[1] is the hook file, argv[2] the record file and argv[3]
+# the hook action. It replaces subprocess.run with a recorder that appends a JSON line for each call
+# (the argv, and the timeout argument or "absent" when none is passed) and then makes the real call
+# with the same arguments, and runs the unchanged hook file as __main__, so the hook reads its stdin
+# payload and exits as it does when it is run directly.
+RECORDING_HOOK_PROG = """
+import json, runpy, subprocess, sys
+
+hook, record, action = sys.argv[1:4]
+real_run = subprocess.run
+
+
+def recording_run(*args, **kwargs):
+    with open(record, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"argv": args[0] if args else kwargs.get("args"),
+                             "timeout": kwargs.get("timeout", "absent")}, default=repr) + "\\n")
+    return real_run(*args, **kwargs)
+
+
+subprocess.run = recording_run
+sys.argv = [hook, action]
+runpy.run_path(hook, run_name="__main__")
+"""
+
+
 class T15EnumeratorTimeout(Stage2Harness):
+    HEARTBEATS_MAX = 5
+    WALL_CLOCK_BOUND = 240
+
     def test_sleeping_enumerator_times_out_and_denies(self):
-        # The enumerator sleeps 120 s against a declared timeout of 1 s. The 45 s bound on the whole
-        # call leaves room for a loaded host, where a 15 s bound failed once at 16.05 s, and stays
-        # below the hook's 60 s fallback, so a hook that uses the fallback fails. A hook that
-        # applies no timeout lets the sleep run past the bound, and the test errors when the
-        # harness's 120 s limit on the hook call fires. Untested residual: any hook whose effective
-        # timeout for the declared 1 s stays below about 44 s passes, whether that timeout is fixed
-        # (such as 20 s), floored (such as max(timeout, 30)) or multiplied (such as timeout * 3).
+        # Catches: the heartbeat enumerator runs under a declared timeout of 1 s, and the test
+        # requires fewer than 5 heartbeat lines once the hook call ends, then exit 2,
+        # ENUMERATOR_ERROR and 'failed to run' in stderr. The first line is written at start and 1
+        # more each second, so 5 lines need the enumerator alive for about 4 s: a hook that stops it
+        # at a fixed 20 s, at max(timeout, 30), at its 60 s fallback, or not at all fails. The count
+        # depends on how long the enumerator lived, not on how long the hook call took; a hook call
+        # that reaches the 240 s bound fails with its own message.
+        # Misses: a hook whose effective timeout is not the declared 1 s but at most about 4 s, such
+        # as timeout * 2 or timeout * 3, passes, as does a hook that stops the enumerator sooner than
+        # declared; test_declared_timeout_reaches_the_enumerator_call catches each of these that
+        # passes subprocess.run a timeout other than the declared 1. Neither test exercises the
+        # hook's check of the declared value (a number, above 0, at most 600), as 1 passes it.
+        beats = self._tmp / "heartbeats.txt"
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(120)"], "timeout": 1}))
+            "argv": [sys.executable, "-I", "-c", HEARTBEAT_ENUMERATOR, str(beats)], "timeout": 1}))
         self.arm_lease()
         started = time.monotonic()
-        r = self.stop()
+        try:
+            r = self.run_hook("orch_stop_guard", timeout=self.WALL_CLOCK_BOUND)
+        except subprocess.TimeoutExpired:
+            self.fail("the hook call hit the {} s wall-clock bound".format(self.WALL_CLOCK_BOUND))
         elapsed = time.monotonic() - started
+        count = beats.read_text(encoding="utf-8").count("\n") if beats.exists() else 0
+        self.assertLess(count, self.HEARTBEATS_MAX,
+                        "{} heartbeats in a {:.1f} s hook call: the declared 1 s timeout was not "
+                        "enforced".format(count, elapsed))
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
-        self.assertLess(elapsed, 45, "the declared timeout bounds the hook")
+
+    def test_declared_timeout_reaches_the_enumerator_call(self):
+        # The unchanged hook runs through RECORDING_HOOK_PROG, which records the timeout argument of
+        # each subprocess.run call and then makes the real call. The enumerator is the writing
+        # fixture under a declared timeout of 1 s. The test requires that the calls whose argv is the
+        # declared enumerator argv passed exactly [1]: 1 call, with the timeout argument equal to the
+        # declared 1. A hook that passes a fixed 20 s, its 60 s fallback, max(timeout, 30),
+        # timeout * 2, timeout * 3, or no timeout argument fails, and no elapsed time is measured, so
+        # this check does not depend on host load. The fixture's mark file must then hold 'ran\n', so
+        # the recorded call ran the real enumerator once. Residuals: the test does not check that the
+        # timeout is enforced (test_sleeping_enumerator_times_out_and_denies checks the kill) or the
+        # hook's verdict; a hook that starts the enumerator other than through subprocess.run records
+        # no call and fails here even if it enforces the declared value; and the hook's check of the
+        # declared value (a number, above 0, at most 600) is not exercised, as 1 passes it.
+        mark = self._tmp / "enumerator-ran.txt"
+        script = self._tmp / "writing_enum_fixture.py"
+        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
+        argv = [sys.executable, "-I", str(script), str(self.backlog), str(mark)]
+        self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": 1}))
+        self.arm_lease()
+        record = self._tmp / "run-calls.jsonl"
+        r = subprocess.run([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK), str(record),
+                            "orch_stop_guard"], input=json.dumps({"cwd": str(self.repo)}),
+                           capture_output=True, text=True, env=self._env(), timeout=120)
+        rows = [json.loads(line) for line in
+                (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
+        timeouts = [row["timeout"] for row in rows if row["argv"] == argv]
+        self.assertEqual(timeouts, [1], "timeout arguments of the enumerator call: {}; hook exit {}, "
+                         "stderr: {}".format(timeouts, r.returncode, r.stderr))
+        self.assertEqual(mark.read_text(encoding="utf-8") if mark.exists() else "", "ran\n",
+                         "the recorded call did not run the enumerator once")
 
     def test_stage1_contrast(self):
         self.write_registry(self.stage1())
