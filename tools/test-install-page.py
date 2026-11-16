@@ -410,10 +410,10 @@ UTF8_SUFFIXES = (".css", ".htm", ".html", ".js", ".json", ".mjs", ".svg", ".webm
 DECLARES = "which could not be evaluated: the {} declares the encoding {!r}, which the name search does not decode"
 ESCAPED = "which could not be evaluated: the file {} holds an escape character (U+001B)"
 TO_ASCII = "\x1b(B"
-# A case whose input makes the forms of the name search grow without end unless the gate bounds them, and the seconds
-# in which each case named here must end, so that a gate that does not bound them fails the case and does not stop
-# this test; a case not named here has no such limit.
-FORMS_CASE = "the committed redirects beside an SVG file whose entity and character references give forms without end"
+# A case whose input makes the forms of the name search, and the work of each of its rounds, grow many times over from
+# round to round unless the gate bounds them, and the seconds in which each case named here must end, so that a gate
+# that does not bound them fails the case and does not stop this test; a case not named here has no such limit.
+FORMS_CASE = "the committed redirects beside an SVG file whose entity and character references multiply the forms"
 # The gate's words for a redirect source whose first segment is favicon.ico, which a browser may request without a link.
 REQUESTED = ("which this gate reads, failing closed, as able to match /favicon.ico, a file that a browser may request "
              "from the site's root without a link for any page")
@@ -1998,8 +1998,9 @@ CASES = [
         (1, UNEVALUATED + "the file site/assets/lim1.svg could not be read: its XML entity references expand to more "
             "than 4194304 further characters")),
     # An entity declared 16 times, each with its own value, and references to it escaped 0 to 5 times: each round of
-    # the name search adds a form for each declaration of each form that the round before added, so the forms grow
-    # without end unless the search bounds them; it fails closed, and soon (TIMED).
+    # the name search adds a form for each declaration of each form that the round before added, so the forms, and the
+    # work of each round, grow many times over from round to round unless the search bounds them; it fails closed, and
+    # soon (TIMED).
     (FORMS_CASE,
         create("site/assets/forms.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(16))
                + "]>" + SVG_FILE.format("<text>" + "".join("&" + "amp;" * depth + "e;" for depth in range(6))
@@ -2230,11 +2231,17 @@ CASES = [
     ("the committed redirects beside a stylesheet that declares UTF-8 by an @charset label with spaces around it",
         create("site/assets/sp.css", '@charset " utf-8 ";\n.x { color: red; }\n'), 0),
     # A browser may request /favicon.ico from the site's root for any page without a link, so a redirect of that path
-    # fails, in any letter case, whatever its destination and status.
+    # fails, in any letter case, whatever its destination and status. The gate reads the first segment of the source,
+    # after any https:// and host, so a source below the file and a source on the site's own host fail too.
     ("a redirect of /favicon.ico to another host", append(REDIRECTS, "/favicon.ico https://other.example/x.ico 301\n"),
         (1, "site/_redirects line 33 has the source /favicon.ico, " + REQUESTED)),
     ("a rewrite of /FAVICON.ICO to another file", append(REDIRECTS, "/FAVICON.ICO /x.ico 200\n"),
         (1, "site/_redirects line 33 has the source /FAVICON.ICO, " + REQUESTED)),
+    ("a redirect of /favicon.ico/x, a path below the file", append(REDIRECTS, "/favicon.ico/x /y 301\n"),
+        (1, "site/_redirects line 33 has the source /favicon.ico/x, " + REQUESTED)),
+    ("a redirect of https://cleanlanguage.ai/favicon.ico, the file on a host",
+        append(REDIRECTS, "https://cleanlanguage.ai/favicon.ico /y 301\n"),
+        (1, "site/_redirects line 33 has the source https://cleanlanguage.ai/favicon.ico, " + REQUESTED)),
     # The refusal for a file under site/install/ that names a source's file name names every such file, a text file
     # and a binary file that are not pages included.
     ("a text file and a binary file under site/install/ that name a source's file name",
@@ -2272,10 +2279,15 @@ CASES = [
                + SVG_FILE.format("<text>&e;</text>")),
         (1, UNEVALUATED + "the file site/assets/many.svg could not be read: it declares an XML entity more than 16")),
     # A character reference encoded 3 times, as a srcdoc inside a srcdoc writes it: the name search decodes character
-    # references until nothing changes, at most 16 times, and fails closed on a file that needs more.
+    # references until nothing changes, at most 16 times, and fails closed on a file that needs more. The
+    # UNESCAPE_ROUNDS boundary, 16 decodes, is written out here and not read from the gate, so that a changed bound
+    # fails 1 of the 2 cases after the first: a reference that decodes exactly 16 times passes, and 1 that decodes 17
+    # times fails.
     ("an img of an iframe srcdoc inside an iframe srcdoc whose name is escaped 3 times",
         named('<iframe srcdoc="&lt;iframe srcdoc=&quot;&amp;lt;img src=&amp;quot;/assets/s3&amp;amp;#46;svg'
               '&amp;quot;&amp;gt;&quot;&gt;&lt;/iframe&gt;"></iframe>', "/assets/s3.svg"), naming("s3.svg")),
+    ("the committed redirects beside a page whose character reference decodes exactly 16 times",
+        create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 15 + "#46;</p>\n"), 0),
     ("the committed redirects beside a page whose character reference decodes 17 times",
         create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 16 + "#46;</p>\n"),
         (1, UNEVALUATED + "the page site/about/index.html could not be read: its HTML character references still "

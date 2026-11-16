@@ -267,11 +267,13 @@ What it verifies
    of them, so that a destination after one would go unjudged, and the gate
    does not know how Cloudflare Pages reads each. A source that
    ``reaches_install`` reads as able to match an install page fails, and
-   so does a source whose first segment is 1 of ``REQUESTED_FILES``
-   (``favicon.ico``) in any letter case, a file that a browser may request
+   so does a source whose first segment, after any ``https://`` and host,
+   is 1 of ``REQUESTED_FILES`` (``favicon.ico``) in any letter case, the
+   files that this gate judges among those that a browser may request
    from the site's root without a link, whatever its destination and
-   status (``/favicon.ico https://other.example/x.ico 301`` and
-   ``/FAVICON.ICO /x.ico 200`` fail). A source
+   status (``/favicon.ico https://other.example/x.ico 301``,
+   ``/FAVICON.ICO /x.ico 200``, ``/favicon.ico/x /y 301`` and
+   ``https://cleanlanguage.ai/favicon.ico /y 301`` fail). A source
    whose first segment is 1 of ``LOADED_SEGMENTS`` in any letter case passes
    only when all of these hold, and fails otherwise: it is an exact path
    (``exact_path_problem``: it starts with ``/``, so it carries no scheme or
@@ -328,7 +330,10 @@ What it verifies
    more than ``FORM_LIMIT`` forms or forms of more than
    ``FORM_CHARACTERS`` characters in all, which bounds their work, or an entry there is a link or
    neither a file nor a folder, fails and names that input. Every other
-   source passes. A rule whose destination, or a later field of its line,
+   source passes: 1 whose first segment is 1 of ``LOADED_SEGMENTS`` is then
+   an accepted source, and 1 whose first segment is none of them is not
+   added to the accepted sources, so no destination is held to it. A rule
+   whose destination, or a later field of its line,
    this reading reads, failing closed, as able to lead to a source that it
    accepts fails too, and names its line and the line of that source
    (``destination_problem``), so that a page that loads the rule's source
@@ -396,7 +401,14 @@ What it verifies
    no encoding and, if its suffix is 1 of ``TEXT_SUFFIXES``, holds no escape
    character, should a browser decode it in such an encoding all the same,
    by the ``Content-Type`` that Pages sends, by detection or by the encoding
-   of the page that loads it; and an accepted rule
+   of the page that loads it; a redirect of another path that a browser
+   may request from the site's root without a link, such as
+   ``/apple-touch-icon.png``, which committed line 10 of
+   ``site/_redirects`` redirects, passes, since the redirect reading
+   judges only ``REQUESTED_FILES`` among such paths; a rule of
+   ``site/_headers`` for ``/favicon.ico`` is held only to the checks that
+   apply to every rule, since ``reaches_page`` does not read it as able to
+   match an install page or a file the pages load; and an accepted rule
    redirects a path whose file name the search did not find, so a reader who
    asks for such a path gets the redirect's destination, whatever it is,
    since the reading holds a destination only to naming the file name of no
@@ -1333,14 +1345,17 @@ XML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 ENTITY_ROUNDS = 16
 ENTITY_LIMIT = 1 << 22
 # Check 7: the most forms that the rounds of the name search hold, and the most characters that those forms hold in
-# all, so that an entity declared many times with references escaped to many depths, each round adding forms for each
-# form that the round before added, cannot make the rounds run without end; a file that needs more fails closed
-# (name_tokens()). The committed files need at most 2 forms and 267259 characters.
+# all. The rounds stop after UNESCAPE_ROUNDS + 1 in any case, but an entity declared many times with references
+# escaped to many depths makes each round add forms for each form that the round before added, so the forms, and the
+# work of each round, could grow many times over from round to round; these bounds limit the work of each round, and a
+# file that needs more fails closed (name_tokens()). The committed files need at most 2 forms and 267259 characters.
 FORM_LIMIT = 64
 FORM_CHARACTERS = 1 << 24
-# Check 7: the file names, each the whole first segment of a path, that a browser may request from the site's root
-# without a link, as it requests /favicon.ico for a page; a redirect source whose first segment is 1 of them, in any
-# letter case, fails (redirect_problems()).
+# Check 7: the files that this gate judges among those that a browser may request from the site's root without a link,
+# as it requests /favicon.ico for a page, each named as the whole first segment of a path; a redirect source whose
+# first segment, after any https:// and host, is 1 of them, in any letter case, fails (redirect_problems()). It is
+# not every such file: a redirect of another, such as /apple-touch-icon.png, which committed line 10 of
+# site/_redirects redirects, is not judged, a residual that the module docstring names.
 REQUESTED_FILES = ("favicon.ico",)
 # Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
@@ -2391,8 +2406,9 @@ def redirect_problems(redirects: str) -> list[str]:
     or a later field of its line, destination_problem() reads, failing closed, as able to lead to a source that the
     reading accepts. The lines end only at a line feed, so a destination after a vertical tab, a form feed, U+2028 or
     a lone carriage return stays on its line, and that character fails. A source fails when reaches_install
-    reads it as able to match an install page, and when its first segment is 1 of REQUESTED_FILES in any letter case,
-    a file that a browser may request without a link, whatever its destination and status. A source whose first
+    reads it as able to match an install page, and when its first segment, after any https:// and host, is 1 of
+    REQUESTED_FILES in any letter case, the files that this gate judges among those that a browser may request
+    without a link, whatever its destination and status. A source whose first
     segment is 1 of LOADED_SEGMENTS, in any letter case, passes only when all of these hold, and fails otherwise: it
     is an exact path (exact_path_problem()); no file under site/ but site/_redirects names its file name, compared
     in any letter case (site_names(), which reads no grammar of loads; a page that loads the path by a name that a
@@ -2403,18 +2419,20 @@ def redirect_problems(redirects: str) -> list[str]:
     that cannot be evaluated, because a file or a folder under site/ cannot be read or listed, a file declares an
     encoding other than UTF-8 or, with 1 of TEXT_SUFFIXES, holds an escape character, a file's entity references
     expand or its character references decode too far, or an entry there is a link or neither a file nor a folder,
-    fails and names that input. Every other source passes, whatever its destination and status, and is accepted.
-    Then every rule, a rule whose source fails and each rule of a chain included, fails when destination_problem()
-    reads its destination or a later field of its line as able to lead to an accepted source (a token that is the
-    file name of an accepted source, in any letter case, as written or percent-decoded, or a : or a * after any
-    http:// or https:// at its start, as a placeholder or a splat holds), naming its line and the line of that
-    source, so that a page that loads its source does not reach the accepted source through that rule though no file
-    under site/ names that file name. This refuses more than it must, by design, and fails closed: it also refuses a
-    field that does not point at an accepted source, such as the same file name in another folder or inside the query
-    of a URL on another host, and a URL with a port, so its message says only that the gate reads such a field,
-    failing closed, as able to lead there. A destination that leads to an accepted source through a matching
-    behaviour of Cloudflare Pages beyond this reading, such as a handling of .html, and a load from another host or a
-    redirect that another host makes, are residuals, as are the loads that site_names() does not find."""
+    fails and names that input. Every other source passes, whatever its destination and status: 1 whose first
+    segment is 1 of LOADED_SEGMENTS is added to the accepted sources, and 1 whose first segment is none of them is
+    not, so no destination is held to it. Then every rule, a rule whose source fails and each rule of a chain
+    included, fails when destination_problem() reads its destination or a later field of its line as able to lead to
+    an accepted source (a token that is the file name of an accepted source, in any letter case, as written or
+    percent-decoded, or a : or a * after any http:// or https:// at its start, as a placeholder or a splat holds),
+    naming its line and the line of that source, so that a page that loads its source does not reach the accepted
+    source through that rule though no file under site/ names that file name. This refuses more than it must, by
+    design, and fails closed: it also refuses a field that does not point at an accepted source, such as the same
+    file name in another folder or inside the query of a URL on another host, and a URL with a port, so its message
+    says only that the gate reads such a field, failing closed, as able to lead there. A destination that leads to an
+    accepted source through a matching behaviour of Cloudflare Pages beyond this reading, such as a handling of
+    .html, and a load from another host or a redirect that another host makes, are residuals, as are the loads that
+    site_names() does not find."""
     problems: list[str] = []
     reach = ("which this gate reads, failing closed, as able to match an install page or a file the install pages "
              "load; a rule that matches such a path can send the reader away from the page or serve other content.")
