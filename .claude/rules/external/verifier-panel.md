@@ -57,10 +57,11 @@ reason recorded.
   unreachable family goes to a reachable family that holds no seat (codex, through its own
   neutral brief); where there is none, the seat stays owed, and the step that needs it holds,
   until a leg of that family delivers a verdict, a failed leg not counting, or the item parks. A
-  codex or gemini seat owed from a light item's QA runs lapses when the item is regraded, and the
-  regraded item's DISCOVERY panel governs from its first DISCOVERY round, so a light item
-  regraded and found critical enters its first DISCOVERY round with all 3 families (coordinator
-  ruling under the maintainer's delegation, 2026-11-15). A failed stand-in leg or
+  codex seat owed from a light item's QA runs lapses when the item is regraded, and the regraded
+  item's DISCOVERY panel governs from its first DISCOVERY round (maintainer decision, Entry 98,
+  2026-11-15). A gemini seat owed from those runs lapses at the regrade in the same way, and a
+  light item regraded and found critical enters its first DISCOVERY round with all 3 families
+  (coordinator rulings under the maintainer's delegation, 2026-11-15). A failed stand-in leg or
   owed leg is re-issued in the next round in the family of the seat it fills: for the gemini
   seat, gemini when it is reachable, with codex standing in again only while gemini is still
   genuinely unreachable and only where the panel of that next round has no seat of codex's own;

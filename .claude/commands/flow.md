@@ -1,7 +1,9 @@
 # /flow (cleanlanguage, interim local command)
 
 INTERIM. This command's own inlined text below is authoritative for cleanlanguage (except for the
-tiers and the QA cycle, which the machine-local "Working method" section governs, and the unattended
+tiers and the QA cycle, which the machine-local "Working method" section governs; that section
+carries the same floor as the CODEX ROLE LIMIT below, that a critical change is never graded
+light, so the 2 agree on it; and except for the unattended
 vote rule, which the machine-local "Put decisions to the maintainer in the four-role shape" section
 governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard. The reference copy of that
@@ -51,7 +53,8 @@ only the affected file(s).
    non-blocking; move on.
 3. SELECT the top actionable item.
 4. GRADE the tier (light | substantive | sensitive), per the machine-local
-   `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section. Record the grade.
+   `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section, which never grades a critical
+   change light, the same floor as the CODEX ROLE LIMIT below. Record the grade.
    Escalation is immediate; de-escalation needs a maintainer decision + a recorded basis.
 5. AUTHORIZE within the standing grant. Not covered: attended-autonomous -> surface a work-naming go
    and hold only this item's AUTHORIZE STEP until the go is given, while research and preparation
@@ -135,13 +138,16 @@ timeout, a dispatch auth failure, or a delivery that lacks the agreed completion
 UNVERIFIABLE result is a delivered verdict, not a failed leg;
 (2) a quote in it is absent from its source;
 (3) a quote in it breaches the whole-line rule of the maintainer decisions of Entries 61, 63, 64
-and 69 (2026-11-14 and 2026-11-15): a quote counts as found when its exact text is on its cited
-line or within 1 line of it, a range quote when its joined text matches the cited lines or the
-same lines within 1 line of the cited range, and either of them also when it matches only once
-each line's leading spaces are stripped or only without its Markdown formatting marks
-(backticks, emphasis asterisks or underscores), with each offset, range, collapse and mark
-recorded; text more than 1 line off, changed or missing words, a dropped comment marker, or any
-other changed character fails it.
+and 69 (2026-11-14 and 2026-11-15; the coordinator's correction recorded with Entry 127,
+2026-11-15, gives the rule's entries as these 4): a single-line quote must be a whole line, from
+the line's first character to its last, and a range quote must be whole lines; a quote counts as found
+when its exact text is the whole of its cited line or of a line within 1 line of it, a range
+quote when its joined text is the whole of the cited lines or of the same lines within 1 line of
+the cited range, and either of them also when it matches in that way only once each line's
+leading spaces are stripped or only without its Markdown formatting marks (backticks, emphasis
+asterisks or underscores), with each offset, range, collapse and mark recorded; a quote of only
+part of a line, text more than 1 line off, changed or missing words, a dropped comment marker,
+or any other changed character fails it.
 These quote and leg-failure conditions bind review legs only, not seed or drafter output, whose
 cited evidence is checked at source (coordinator ruling under the maintainer's delegation,
 2026-11-15).
@@ -219,18 +225,20 @@ The tiers (light, substantive, and sensitive) and the per-change QA cycle (DISCO
 rounds, the round budget, the premise review, failed rounds, convergence, and parking) are defined
 ONLY in that file's "Working method" section; do not restate them here, except that FAILED LEG
 above defines a failed leg of every family and names the round in which a failed claude leg is
-re-issued, the CODEX ROLE LIMIT above defines a critical change, bars a light grade for it,
-and names the rounds that seat the third family, which round fills an owed codex seat, and when
-an owed codex seat ends, and VERIFIER DIVERSITY below names the
-rounds that seat the third family, the VERIFY panel and the convergence of a critical change,
-the round in which an owed gemini leg or a failed stand-in leg
-runs, and when an owed gemini or claude seat ends; those 2 sections name, in that order, the lapse
-of an owed codex seat and of an owed gemini seat when a light item is regraded. Pool workers
+re-issued, the CODEX ROLE LIMIT above defines a critical change, bars a light grade for it
+(the same floor as that section's), and names the rounds that seat the third family, which
+round fills an owed codex seat, and when an owed codex seat ends, and VERIFIER DIVERSITY below
+names the rounds that seat the third family, the VERIFY panel and the convergence of a critical
+change, the round in which an owed gemini leg or a failed stand-in leg runs, and when an owed
+gemini or claude seat ends; the CODEX ROLE LIMIT and VERIFIER DIVERSITY name, in that order, the
+lapse of an owed codex seat and of an owed gemini seat when a light item is regraded. Pool workers
 cannot read it, so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline
 section above).
 The GEMINI ROLE LIMIT, FAILED LEG, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind
-every tier; so do the 2 tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
-de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOLD above. The
+every tier; so do the 3 tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
+de-escalation needs a maintainer decision and a recorded basis; in the CODEX ROLE LIMIT, a critical
+change is never graded light, the same floor as the "Working method" section's; and the AIQT
+HOLD above. The
 "Working method" section in that file sets when a light item is regraded and how a regraded item
 enters the QA cycle.
 
