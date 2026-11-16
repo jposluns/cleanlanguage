@@ -176,7 +176,7 @@ check_common() {
     echo "${canonical} is not byte-equal to ${twin29}." >&2; return 1
   fi
   # Every size-labelled file must stay within its label. The 29k twin is
-  # byte-equal to the canonical file (checked above), so one count covers both.
+  # byte-equal to the canonical file (checked above), so 1 count covers both.
   local n
   n="$(wc -m < "${eight}")"
   [ "${n}" -le 8000 ] || { echo "${eight} is ${n} chars, over its 8000 label." >&2; return 1; }
