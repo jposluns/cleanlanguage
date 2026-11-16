@@ -30,21 +30,28 @@ name: Orchestration registry
 # statement, fails; a line that names a review pass or a finding by number in a phrasing, or
 # with a separator before its number, that no history pattern matches passes, such as
 # finding-3 or VERIFY3 (tools/test-no-qa-labels.py). A further step runs a literal regression
-# check of the /flow command's mode text, since a session follows /flow when it reads the
-# host's mode record (tools/check-flow-mode.py). It fails when the file does not hold exactly
-# 1 line starting "- MODE (", when that line is not closed on the same line or does not name
-# exactly the 2 values that the host's mode writer writes, each 1 time and in lower case,
-# when any line holds a bare "attended" outside the text between straight double quotes that
-# the check pairs left to right on that line, or when the sentence that an absent mode record
-# is read as unattended is missing. It reads words, not meaning: outside the MODE line, the
+# check of the /flow command's mode text and of 8 of its rule texts, since a session follows
+# /flow when it reads the host's mode record and when it runs its QA cycle
+# (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line starting
+# "- MODE (", when that line is not closed on the same line or does not name exactly the 2
+# values that the host's mode writer writes, each 1 time and in lower case, when any line
+# holds a bare "attended" outside the text between straight double quotes that the check
+# pairs left to right on that line, when the sentence that an absent mode record is read as
+# unattended is missing, or when any of 8 pinned texts is missing: the statements of the 2
+# tier rules that /flow keeps, in its header and in its tiers section, the tier floor of a
+# critical change, and the attribution, entry list, whole-line test, allowances and failures
+# of the whole-line rule of FAILED LEG. Each pinned text must stand in the file word for
+# word, in the letter case given, with white space or the end of the file on both sides,
+# however its words wrap. It reads words, not meaning: outside the MODE line, the
 # bare "attended" test is the only test that can fail a line, so a third mode value named
 # there, such as "supervised", passes, and one that holds a bare "attended", such as
 # "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
 # a quotation wrapped from the line above pairs that closing quote with the next opening
 # quote, so a bare "attended" between them passes; a sentence that contradicts the absent
 # rule passes, so does that sentence negated or inside a quotation that rejects it; and the
-# absent rule stated in other words fails. The step after it, tools/test-check-flow-mode.py,
-# runs a case for each of those verdicts.
+# absent rule stated in other words fails. The same holds for each pinned text: a sentence
+# that negates or contradicts it passes, and the same rule in other words fails. The step
+# after it, tools/test-check-flow-mode.py, runs a case for each of those verdicts.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
@@ -103,7 +110,7 @@ jobs:
         shell: bash
         run: python3 -I tools/test-ask-mode-guard.py
 
-      - name: Check /flow's mode text for a regression to the retired mode words
+      - name: Check /flow's mode text and its pinned rule texts for a literal regression
         shell: bash
         run: python3 -I tools/check-flow-mode.py
 

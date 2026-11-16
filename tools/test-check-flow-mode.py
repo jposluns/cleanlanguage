@@ -6,14 +6,19 @@ a pass and 1 for a failure, and for a failure the report line that names the rea
 give the check the text on standard input.
 
 The verdict cases are these. The committed .claude/commands/flow.md passes on standard input, as
-a path argument and as the default path, and its pass names the 4 pinned texts. The mode text of
-main's flow.md at ee6be48 fails with 13 findings, 9 from the mode tests and 1 for each pinned
+a path argument and as the default path, and its pass names the 8 pinned texts. The mode text of
+main's flow.md at ee6be48 fails with 17 findings, 9 from the mode tests and 1 for each pinned
 text, which the copied lines do not hold; the case copies the lines of that flow.md that the mode
 tests report, so it needs no git history and runs in a shallow checkout. The committed flow.md
-with 1 change each fails when any 1 of the 4 pinned texts is replaced: the whole-line test of the
-FAILED LEG rule, its entry list (Entries 61, 63, 64 and 69), the tier floor that a critical
-change is never graded light, and the statement of the 2 tier rules that /flow keeps; and when a
-pinned text is in another letter case. The committed flow.md with 1 change each fails when its
+with 1 change each fails when any 1 of the 8 pinned texts is replaced: the header's statement of
+the 2 tier rules that /flow keeps, the attribution of the whole-line rule to Entry 125, its entry
+list (Entries 61, 63, 64 and 69), its whole-line test, its allowances, which may apply alone or
+together, its failures, among them a quote of only part of a line, the tier floor that a
+critical change is never graded light, and the tiers section's statement of the 2 tier rules
+that /flow keeps; when the entry list puts Entry 62 back, inside the list or after it; and, for
+each pinned text, when it is in another letter case, when its first word or its last word is
+cut, and when another character is joined to its first or its last character. The committed
+flow.md with 1 change each fails when its
 MODE line names a third value, repeats a value, names a value with capital letters, drops either
 value, uses a comma as the separator or puts its values inside double quotes, when the MODE line
 is renamed so that none is left, when a second MODE line is added, closed or with no closing
@@ -40,7 +45,8 @@ English use of "attended" fails, a quoted "attended" whose quotes wrap across a 
 fails, and a bare "attended" passes on a line that closes a quotation wrapped from the line above
 when it stands between that closing quote and the next opening quote. For the pinned texts, a
 pinned text rewrapped across other line breaks passes, a pinned text kept inside a sentence that
-negates it passes, and the tier floor in other words fails.
+negates it passes, a sentence elsewhere that adds Entry 62 to the entries of the whole-line rule
+passes, and the tier floor in other words fails.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
@@ -64,7 +70,7 @@ DECISIONS = "- DECISIONS: "
 # The lines of .claude/commands/flow.md at main ee6be48 that the check reports, copied with the
 # lines that open their items: cycle step 5, the first 2 lines of cycle step 8, the MODE bullet and
 # the first line of the DECISIONS bullet. That file has no absent-record sentence either, so the
-# mode tests report here what they report on the whole file; the copied lines hold none of the 4
+# mode tests report here what they report on the whole file; the copied lines hold none of the 8
 # pinned texts, so the check also reports each of those.
 MAIN_MODE_TEXT = """\
 5. AUTHORIZE within the standing grant. Not covered: attended -> surface a work-naming go, hold THIS
@@ -85,19 +91,38 @@ BARE = "unquoted bare \"attended\""
 UNCLOSED = "the MODE line has no closing parenthesis"
 NO_ABSENT = "no statement that an absent mode record is read as unattended"
 PIN_MISSING = "the pinned text of {} is missing"
-PINS_PRESENT = "the 4 pinned texts are present"
+PINS_PRESENT = "the 8 pinned texts are present"
 
-# The 4 pinned texts, as tools/check-flow-mode.py names them in its reports.
+# The 8 pinned texts, as tools/check-flow-mode.py names them in its reports.
+HEADER_RULES = ("the header's statement of which tier rules /flow keeps",
+                "apart from the 2 tier rules that it names as kept here, the escalation rule of"
+                " cycle step 4 (GRADE) and the AIQT HOLD;")
+ENTRY_125 = ("the attribution of the whole-line rule to Entry 125",
+             "(3) a quote in it breaches the whole-line rule that Entry 125 states,")
+ENTRY_LIST = ("the entry list of the whole-line rule",
+              "the rule of the maintainer decisions of Entries 61, 63, 64 and 69 (2026-11-14 and"
+              " 2026-11-15; the coordinator's correction recorded with Entry 127, 2026-11-15,"
+              " gives the rule's entries as these 4):")
 WHOLE_LINE = ("the whole-line test of the FAILED LEG rule",
               "a single-line quote must be a whole line, from the line's first character to its"
-              " last, and a range quote must be whole lines")
-ENTRY_LIST = ("the entry list of the whole-line rule", "Entries 61, 63, 64 and 69")
+              " last, and a range quote must be whole lines;")
+ALLOWANCES = ("the allowances of the whole-line rule",
+              "either of them also when it matches in that way only once either or both of 2"
+              " allowances apply, each line's leading spaces stripped or its Markdown formatting"
+              " marks (backticks, emphasis asterisks or underscores) missing, with each offset,"
+              " range, collapse and mark recorded;")
+FAILURES = ("the failures of the whole-line rule",
+            "a quote of only part of a line, text more than 1 line off, changed or missing words,"
+            " a dropped comment marker, or any other changed character fails it.")
 TIER_FLOOR = ("the tier floor of the CODEX ROLE LIMIT",
-              "A critical change is never graded light: it is of at least the substantive tier")
+              "A critical change is never graded light: it is of at least the substantive tier,")
 TIER_RULES = ("the statement of which tier rules /flow keeps",
-              "the 2 tier rules kept here, which the \"Working method\" section names: in cycle"
-              " step 4 (GRADE), escalation is immediate and de-escalation needs a maintainer"
-              " decision and a recorded basis; and the AIQT HOLD above")
+              "so do the 2 tier rules kept here, which the \"Working method\" section names: in"
+              " cycle step 4 (GRADE), escalation is immediate and de-escalation needs a"
+              " maintainer decision and a recorded basis; and the AIQT HOLD above.")
+PINS = (HEADER_RULES, ENTRY_125, ENTRY_LIST, WHOLE_LINE, ALLOWANCES, FAILURES, TIER_FLOOR,
+        TIER_RULES)
+ENTRIES = "Entries 61, 63, 64 and 69"
 
 
 def run_check(args, data=b""):
@@ -165,15 +190,46 @@ class Verdicts(unittest.TestCase):
     def test_the_committed_flow_passes(self):
         self.assert_passes(committed())
 
-    def test_the_committed_flow_passes_with_the_4_pins(self):
+    def test_the_committed_flow_passes_with_the_8_pins(self):
         self.assert_passes_with_pins(committed())
 
+    def test_the_header_tier_rule_statement_replaced_fails(self):
+        self.assert_fails(replaced(HEADER_RULES[1],
+                                   "apart from the 3 tier rules kept here, the floor among them;"),
+                          PIN_MISSING.format(HEADER_RULES[0]))
+
+    def test_the_entry_125_attribution_removed_fails(self):
+        self.assert_fails(replaced(ENTRY_125[1],
+                                   ENTRY_125[1].replace(" that Entry 125 states", "")),
+                          PIN_MISSING.format(ENTRY_125[0]))
+
     def test_the_whole_line_test_replaced_fails(self):
-        self.assert_fails(replaced(WHOLE_LINE[1], "a quote must be found within 1 line"),
+        self.assert_fails(replaced(WHOLE_LINE[1], "a quote must be found within 1 line;"),
                           PIN_MISSING.format(WHOLE_LINE[0]))
 
+    def test_the_allowances_as_alternatives_only_fail(self):
+        self.assert_fails(replaced(ALLOWANCES[1], ALLOWANCES[1].replace(
+            "only once either or both of 2 allowances apply, each line's leading spaces"
+            " stripped or", "only once each line's leading spaces are stripped or only without")),
+                          PIN_MISSING.format(ALLOWANCES[0]))
+
+    def test_a_quote_of_part_of_a_line_allowed_fails(self):
+        self.assert_fails(replaced(FAILURES[1], "a quote of part of a line counts."),
+                          PIN_MISSING.format(FAILURES[0]))
+
     def test_the_entry_list_replaced_fails(self):
-        self.assert_fails(replaced(ENTRY_LIST[1], "Entries 61 to 64 and 69"),
+        self.assert_fails(replaced(ENTRY_LIST[1],
+                                   ENTRY_LIST[1].replace(ENTRIES, "Entries 61 to 64 and 69")),
+                          PIN_MISSING.format(ENTRY_LIST[0]))
+
+    def test_the_entry_list_with_entry_62_put_back_fails(self):
+        for entries in ("Entries 61, 62, 63, 64 and 69", "Entries 62, 61, 63, 64 and 69",
+                        "Entries 61, 63, 64 and 69 and of Entry 62",
+                        "Entries 61, 63, 64, 69 and 62", "Entries 61, 63, 64 and 69, 62"):
+            with self.subTest(entries=entries):
+                self.assert_fails(replaced(ENTRY_LIST[1], ENTRY_LIST[1].replace(ENTRIES, entries)),
+                                  PIN_MISSING.format(ENTRY_LIST[0]))
+        self.assert_fails(replaced(ENTRY_LIST[1], ENTRY_LIST[1].replace("these 4", "these 5")),
                           PIN_MISSING.format(ENTRY_LIST[0]))
 
     def test_the_tier_floor_replaced_fails(self):
@@ -190,6 +246,34 @@ class Verdicts(unittest.TestCase):
         self.assert_fails(replaced(TIER_FLOOR[1], TIER_FLOOR[1].lower()),
                           PIN_MISSING.format(TIER_FLOOR[0]))
 
+    def test_each_pinned_text_in_another_letter_case_fails(self):
+        # A check that compared any 1 pin without regard to letter case would pass the upper-case
+        # copy of that pin.
+        for label, pin in PINS:
+            with self.subTest(pin=label):
+                self.assertNotEqual(pin, pin.upper())
+                self.assert_fails(replaced(pin, pin.upper()), PIN_MISSING.format(label))
+
+    def test_each_pinned_text_with_its_last_word_cut_fails(self):
+        # A check whose pin held only a prefix of the pinned text would pass this copy.
+        for label, pin in PINS:
+            with self.subTest(pin=label):
+                self.assert_fails(replaced(pin, pin.rsplit(" ", 1)[0]), PIN_MISSING.format(label))
+
+    def test_each_pinned_text_with_its_first_word_cut_fails(self):
+        # A check whose pin held only a suffix of the pinned text would pass this copy.
+        for label, pin in PINS:
+            with self.subTest(pin=label):
+                self.assert_fails(replaced(pin, pin.split(" ", 1)[1]), PIN_MISSING.format(label))
+
+    def test_each_pinned_text_joined_to_another_character_fails(self):
+        # A check that looked for a pin as a bare substring would pass these copies, since each
+        # still holds the pinned text, joined to 1 more character on 1 side.
+        for label, pin in PINS:
+            for joined in ("x" + pin, pin + "x"):
+                with self.subTest(pin=label, joined=joined[:1] + "..." + joined[-1:]):
+                    self.assert_fails(replaced(pin, joined), PIN_MISSING.format(label))
+
     def test_the_committed_flow_passes_by_path_and_by_default(self):
         for args in ([str(FLOW)], []):
             with self.subTest(args=args):
@@ -201,11 +285,11 @@ class Verdicts(unittest.TestCase):
         status, output = verdict(MAIN_MODE_TEXT)
         self.assertEqual(status, 1, output)
         lines = output.splitlines()
-        self.assertEqual(lines[-1], "FAIL: 13 finding(s)", output)
+        self.assertEqual(lines[-1], "FAIL: 17 finding(s)", output)
         self.assertEqual(sum(WRONG_MODES in line for line in lines), 1, output)
         self.assertEqual(sum(BARE in line for line in lines), 7, output)
         self.assertEqual(sum(NO_ABSENT in line for line in lines), 1, output)
-        for label, _ in (WHOLE_LINE, ENTRY_LIST, TIER_FLOOR, TIER_RULES):
+        for label, _ in PINS:
             self.assertEqual(sum(PIN_MISSING.format(label) in line for line in lines), 1, output)
 
     def test_a_third_value_on_the_mode_line_fails(self):
@@ -388,7 +472,8 @@ class Residual(unittest.TestCase):
         self.assertIn(BARE, output)
 
     def test_a_pinned_text_rewrapped_passes(self):
-        status, output = verdict(replaced(ENTRY_LIST[1], "Entries 61,\n63, 64\n  and 69"))
+        status, output = verdict(replaced(ENTRY_LIST[1], ENTRY_LIST[1].replace(
+            ENTRIES, "Entries 61,\n63, 64\n  and 69")))
         self.assertEqual(status, 0, output)
         self.assertIn(PINS_PRESENT, output)
 
@@ -397,10 +482,15 @@ class Residual(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertIn(PINS_PRESENT, output)
 
+    def test_entry_62_added_to_the_rule_in_another_sentence_passes(self):
+        status, output = verdict(added("- The whole-line rule also rests on Entry 62."))
+        self.assertEqual(status, 0, output)
+        self.assertIn(PINS_PRESENT, output)
+
     def test_the_tier_floor_in_other_words_fails(self):
         status, output = verdict(replaced(
             TIER_FLOOR[1], "A critical change is never given the light tier: it is of at least the"
-            " substantive tier"))
+            " substantive tier,"))
         self.assertEqual(status, 1, output)
         self.assertIn(PIN_MISSING.format(TIER_FLOOR[0]), output)
 
