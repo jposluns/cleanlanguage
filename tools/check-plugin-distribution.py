@@ -20,7 +20,8 @@ the plan's numbering, which CHECKS maps to the names used here.
       it reaches. Whether the Claude Code CLI reserves the prefixes in any
       letter case is not known offline, so the gate refuses every case.
   Sources exist: in both marketplaces each plugin entry has a string source
-      that starts with "./" and has no empty and no ".." component, and it
+      that starts with "./", has no empty and no ".." component and is a path
+      the operating system accepts (a NUL character is refused), and it
       resolves below the marketplace root, each component reached with
       os.lstat and none a symlink, to a directory that holds a regular
       .claude-plugin/plugin.json. The plugin entry of
@@ -33,9 +34,17 @@ the plan's numbering, which CHECKS maps to the names used here.
       of any plugin entry of .claude-plugin/marketplace.json that carries one,
       are each a nonempty string and are the same text.
   Dependencies resolve: every dependency named by a plugin entry or by the
-      plugin manifest its relative source reaches names a plugin entry of the
-      same marketplace, as a bare name or as name@<that marketplace>. The count
-      is printed, so a pass with no dependency to resolve is visible.
+      plugin manifest its relative source reaches is a nonempty string that
+      names a plugin entry of the same marketplace, as a bare name or as
+      name@<that marketplace>, and does not name the plugin itself: the
+      entry's own name, or for the manifest's list the manifest's own name.
+      Whether the Claude Code CLI accepts a plugin that depends on itself is
+      not known offline, so the gate refuses it. No list names the same
+      plugin twice: a dependency that names a plugin the same list has
+      already named, as a bare name, as a qualified name or as one of each,
+      is refused. An entry whose name is not a string is no plugin a
+      dependency can name. The count is printed, so a pass with no dependency
+      to resolve is visible.
 
 The checks of the hosted catalog and of the release zips (the standard's
 sha256 and zip-content checks) belong to a later unit and are not made here.
@@ -57,15 +66,18 @@ Usage: python3 -I tools/check-plugin-distribution.py
 Exit status: 0 when every check passes, with a last line that starts "OK:";
 1 when a check finds an inconsistency, with 1 line "FAIL <tag>: ..." for each
 and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for 1).
-A SKILL.md whose first Version: line is missing or is not a bare X.Y.Z is such
-an inconsistency: the versions check fails with exit 1. 3 when an input cannot
-be read: a file that is missing, reached through a symlink, not a regular
-file, not UTF-8, not JSON, nested more than MAX_JSON_DEPTH levels deep or
-too deeply for the interpreter to decode, not a JSON object, or
-that repeats a key, or an extractor that cannot be used, because it raises
-any exception while it loads or lacks a VERSION_LINE or SKILL_VERSION pattern
-of text; the cause goes to standard error, with a last line "UNREADABLE: exit
-3". The gate fails closed: it never passes a check it could not make.
+A value of an unexpected JSON type that the gate reads inside a JSON object,
+such as a plugin entry name that is an array or an object, is such an
+inconsistency, never a traceback. A SKILL.md whose first Version: line is
+missing or is not a bare X.Y.Z is such an inconsistency: the versions check
+fails with exit 1. 3 when an input cannot be read: a file that is missing,
+reached through a symlink, not a regular file, not UTF-8, not JSON, nested
+more than MAX_JSON_DEPTH levels deep or too deeply for the interpreter to
+decode, not a JSON object, or that repeats a key, or an extractor that
+cannot be used, because it raises any exception while it loads or lacks a
+VERSION_LINE or SKILL_VERSION pattern of text; the cause goes to standard
+error, with a last line "UNREADABLE: exit 3". The gate fails closed: it never
+passes a check it could not make.
 
 Residual: the gate reads the files as they are on disk; it does not ask git
 which files are tracked, and it does not run the Claude Code CLI, whose own
@@ -319,6 +331,10 @@ def resolve_source(rel: str, index: int, source, failures: list):
         current = current / part
         try:
             info = os.lstat(current)
+        except ValueError:
+            # A NUL character, or a character the file system encoding cannot hold.
+            failures.append(f"{label} is not a path the operating system accepts")
+            return None
         except FileNotFoundError:
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is missing")
             return None
@@ -393,20 +409,24 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
     for rel, data in markets.items():
         market = data.get("name")
         entries = data.get("plugins") if isinstance(data.get("plugins"), list) else []
-        names = {e.get("name") for e in entries if isinstance(e, dict)}
+        # Only a string name can be named by a dependency; the names check reports any other.
+        names = {e["name"] for e in entries if isinstance(e, dict) and isinstance(e.get("name"), str)}
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
-            lists = [(f"{rel} plugins[{index}]", entry.get("dependencies"))]
+            lists = [(f"{rel} plugins[{index}]", entry.get("name"), entry.get("dependencies"))]
             if (rel, index) in folders:
                 manifest = f"{folders[(rel, index)]}/.claude-plugin/plugin.json"
-                lists.append((manifest, load_json(manifest).get("dependencies")))
-            for label, deps in lists:
+                reached = load_json(manifest)
+                lists.append((manifest, reached.get("name"), reached.get("dependencies")))
+            for label, own, deps in lists:
                 if deps is None:
                     continue
                 if not isinstance(deps, list):
                     failures.append(f"D4: {label} dependencies is not a list")
                     continue
+                # The plugins this list has already named, so that a second naming of one is refused.
+                seen = set()
                 for dep in deps:
                     count += 1
                     if not isinstance(dep, str) or not dep:
@@ -416,6 +436,14 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
                     if (at and where != market) or name not in names:
                         failures.append(f"D4: {label} dependency {dep!r} names no plugin of the marketplace "
                                         f"{market!r} in {rel}")
+                    elif name == own:
+                        failures.append(f"D4: {label} dependency {dep!r} names the plugin itself, which this gate "
+                                        "refuses")
+                    elif name in seen:
+                        failures.append(f"D4: {label} dependency {dep!r} names the plugin {name!r} a second time, "
+                                        "which this gate refuses")
+                    else:
+                        seen.add(name)
     return count
 
 

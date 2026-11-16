@@ -4,20 +4,6 @@ These instructions cover ChatGPT, Claude, Gemini, Copilot, and other AI systems.
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-Added Clean Language in Claude Code through the `jposluns` marketplace? From the first release after 1.0.15, the marketplace is named `cleanlanguage`, the same as the plugin; the `v1.0.15` tag still names it `jposluns`. Switch only once that release is out, because the commands below pin the marketplace to a release tag. To switch, remove the old plugin and marketplace:
-
-```text
-/plugin uninstall cleanlanguage@jposluns
-/plugin marketplace remove jposluns
-```
-
-Then add the marketplace pinned to the tag of that release or a later one, with its version in place of `<version>`, and install the plugin again:
-
-```text
-/plugin marketplace add jposluns/cleanlanguage#v<version>
-/plugin install cleanlanguage@cleanlanguage
-```
-
 The site's [download link](https://cleanlanguage.ai/download) saves a version-named file, `cleanlanguage-<version>.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
 
 ## Claude

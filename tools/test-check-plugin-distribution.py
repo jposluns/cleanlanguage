@@ -13,30 +13,42 @@ its check, as the gate's CHECKS holds it, and the last line: "OK:" for exit 0,
   name that differs from the manifest name; a second plugin entry or none; a
   Claude or Agent Plugins manifest name or a site key that differs; a vendored
   entry named unlike the manifest it reaches; a marketplace name that is
-  missing or empty; and a marketplace name or a plugin entry name that starts
-  with each reserved prefix, in lower case or in another letter case.
+  missing or empty; a marketplace name or a plugin entry name that starts
+  with each reserved prefix, in lower case or in another letter case; each
+  name and the site key that differ from cleanlanguage only in letter case;
+  and, with the FAIL lines and the count line and no traceback, a plugin
+  entry name that is an array or an object, a marketplace name that is an
+  array where a qualified dependency reads it, and a manifest name that is
+  an array where its entry and its own dependencies read it.
 - The sources check fails on: a missing source folder; a source with a ".."
-  or an empty component; a source without "./"; a source that is a file; a
-  manifest that is a directory; a symlinked source folder, a symlinked
-  .claude-plugin folder or a symlinked manifest; an entry with no source; an
-  object source; a vendored marketplace with no plugins list or with an entry
-  that is not an object; and a source of the repository's entry that reaches
-  another plugin or a copy of this one.
+  or an empty component; a source with a NUL character or with a character
+  the file system encoding cannot hold; a source without "./"; a source that
+  is a file; a manifest that is a directory; a symlinked source folder, a
+  symlinked .claude-plugin folder or a symlinked manifest; an entry with no
+  source; an object source; a vendored marketplace with no plugins list or
+  with an entry that is not an object; and a source of the repository's
+  entry that reaches another plugin or a copy of this one.
 - The versions check fails on: a version that differs in the Claude
   manifest, the Agent Plugins manifest, the SKILL.md Version: line or a
   marketplace entry; a version that is missing, empty or not a string; and a
   SKILL.md with no Version: line.
 - The dependencies check fails on: a dependency that names no plugin of its
-  marketplace or is qualified with another marketplace, and dependencies that
-  are not a list or not names; dependencies that resolve pass.
+  marketplace, is qualified with another marketplace or with an empty one
+  (a name and "@" alone), or names the plugin itself, from a marketplace
+  entry, as a bare or a qualified name, or from a plugin manifest; on a
+  plugin that 1 list names twice, as the same bare name, as a bare and a
+  qualified name, or in a plugin manifest; and on dependencies that are not
+  a list or not names, an empty string among them. Dependencies that
+  resolve pass, among them 2 that a plugin entry holds on 2 other plugins of
+  its marketplace.
 - Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
   regular file; NaN; JSON nested 1 level deeper than the gate's bound of 64,
   which every supported Python decodes, while JSON at the bound, with escaped
   quotes and brackets inside a string, passes; a JSON file that is not
   an object; a file or a SKILL.md that is not UTF-8; a symlinked input file or
   input folder; and an extractor that is missing, symlinked, raises an
-  exception or SystemExit while it loads, or lacks VERSION_LINE or
-  SKILL_VERSION.
+  exception or SystemExit while it loads, lacks VERSION_LINE or
+  SKILL_VERSION, or holds either as a pattern of bytes.
 - The count lines read "1 relative source", "1 dependency" and "FAIL: 1
   inconsistency" for 1, and the plural for 0 and for more than 1.
 
@@ -147,6 +159,11 @@ class PluginDistributionTest(unittest.TestCase):
         last = (stream.splitlines() or [""])[-1]
         self.assertTrue(last.startswith(start), f"last line {last!r} does not start {start!r}\n{output}")
         return output
+
+    def add_vendored(self, name: str):
+        """Add a plugin entry to the vendored marketplace, with a manifest of the same name."""
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"].append({"name": name, "source": f"./{name}"}))
+        self.write_json(f"plugin/{name}/.claude-plugin/plugin.json", manifest(name, "0.4.0"))
 
     def edit_extractor(self, old: str, new: str):
         path = self.root / EXTRACTOR_REL
@@ -479,18 +496,140 @@ class PluginDistributionTest(unittest.TestCase):
     # The count lines for 1 and for more than 1.
 
     def test_count_lines_read_for_1(self):
-        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(
-            source={"source": "github", "repo": "someone/else"}))
+        # An empty vendored list resolves no source and is no failure; the 1 dependency is the 1 failure.
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(plugins=[]))
         self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["cleanlanguage"]))
-        output = self.expect(1)
+        output = self.expect(1, "FAIL D4: .claude-plugin/marketplace.json plugins[0] dependency 'cleanlanguage' "
+                                "names the plugin itself")
         self.assertIn("check-plugin-distribution: 1 relative source resolved, 1 dependency read\n", output)
         self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
 
     def test_count_lines_read_for_more_than_1(self):
-        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(
-            dependencies=["cleanlanguage", "cleanlanguage@cleanlanguage"]))
+        self.add_vendored("aiqt-skill")
+        self.add_vendored("aiqt-docs")
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(
+            dependencies=["aiqt-skill", "aiqt-docs@aiqt-guardrails"]))
         output = self.expect(0)
-        self.assertIn("check-plugin-distribution: 2 relative sources resolved, 2 dependencies read\n", output)
+        self.assertIn("check-plugin-distribution: 4 relative sources resolved, 2 dependencies read\n", output)
+
+    # A value of an unexpected JSON type, at each place the gate reads one: the FAIL lines and the
+    # count line, never a traceback.
+
+    def test_entry_name_that_is_an_array_fails_d1(self):
+        # Read by the names check, by the reach check and by the dependencies check's set of names.
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(name=["x"]))
+        output = self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is ['x'], not a name",
+                             "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is ['x'], but the "
+                             "manifest its source reaches",
+                             "check-plugin-distribution: 2 relative sources resolved, 0 dependencies read\n")
+        self.assertEqual(output.splitlines()[-1], "FAIL: 2 inconsistencies")
+
+    def test_entry_name_that_is_an_object_fails_d1(self):
+        # The repository's second entry: read by the names check and by the dependencies check.
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"].append({"name": {"a": 1}, "source": "./absent"}))
+        self.expect(1, "FAIL D1: .claude-plugin/marketplace.json lists 2 plugins, not exactly 1",
+                    "FAIL D1: .claude-plugin/marketplace.json plugins[1].name is {'a': 1}, not a name")
+
+    def test_marketplace_name_that_is_an_array_fails_d1_and_d4(self):
+        # Read by the names check and by a qualified dependency.
+        self.add_vendored("aiqt-skill")
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(name=["x"]))
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["aiqt-skill@x"]))
+        self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json name is ['x'], not a name",
+                    "FAIL D4: plugin/.claude-plugin/marketplace.json plugins[0] dependency 'aiqt-skill@x' names no "
+                    "plugin of the marketplace ['x']")
+
+    def test_manifest_name_that_is_an_array_fails_d1(self):
+        # Read by the reach check, and by the dependencies check as the manifest's own name.
+        self.add_vendored("aiqt-skill")
+        self.edit_json("plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",
+                       lambda d: d.update(name=["x"], dependencies=["aiqt-skill"]))
+        self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is 'aiqt-guardrails-hooks', "
+                       "but the manifest its source reaches, plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, "
+                       "is named ['x']", "1 dependency read")
+
+    # Cases for mutants that the cases above let pass, for a plugin that depends on itself and for a
+    # dependency listed twice.
+
+    def test_project_name_in_another_letter_case_fails_d1(self):
+        for rel, key, label in ((gate.MARKETPLACE, "name", ".claude-plugin/marketplace.json name"),
+                                (gate.CLAUDE_MANIFEST, "name", "cleanlanguage/.claude-plugin/plugin.json name"),
+                                (gate.AGENT_MANIFEST, "name", "cleanlanguage/plugin.json name"),
+                                (gate.SITE_JSON, "site_key", "site-src/site.json site_key")):
+            with self.subTest(label=label):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, lambda d: d.update({key: "CleanLanguage"}))
+                self.expect(1, f"FAIL D1: {label} is 'CleanLanguage', not 'cleanlanguage'")
+                (self.root / rel).write_bytes(saved)
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(name="CleanLanguage"))
+        self.expect(1, "FAIL D1: .claude-plugin/marketplace.json plugins[0].name is 'CleanLanguage', not "
+                       "'cleanlanguage'")
+
+    def test_dependency_with_an_empty_marketplace_fails_d4(self):
+        self.add_vendored("aiqt-skill")
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["aiqt-skill@"]))
+        self.expect(1, "FAIL D4: plugin/.claude-plugin/marketplace.json plugins[0] dependency 'aiqt-skill@' names no "
+                       "plugin of the marketplace 'aiqt-guardrails'")
+
+    def test_empty_dependency_fails_d4(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=[""]))
+        self.expect(1, "FAIL D4: .claude-plugin/marketplace.json plugins[0] names the dependency '', not a plugin name")
+
+    def test_extractor_pattern_of_bytes_exits_3(self):
+        for name in ("VERSION_LINE", "SKILL_VERSION"):
+            with self.subTest(name=name):
+                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                self.edit_extractor(f'{name} = re.compile(r"', f'{name} = re.compile(rb"')
+                self.expect(3, f"the extractor tools/skill-version.py could not be used: it has no {name} "
+                               "pattern of text")
+
+    def test_self_dependency_fails_d4(self):
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        for rel, change, label, dep in (
+                (gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["cleanlanguage"]),
+                 ".claude-plugin/marketplace.json plugins[0]", "cleanlanguage"),
+                (gate.MARKETPLACE, lambda d: d["plugins"][0].update(dependencies=["cleanlanguage@cleanlanguage"]),
+                 ".claude-plugin/marketplace.json plugins[0]", "cleanlanguage@cleanlanguage"),
+                (gate.CLAUDE_MANIFEST, lambda d: d.update(dependencies=["cleanlanguage"]),
+                 "cleanlanguage/.claude-plugin/plugin.json", "cleanlanguage"),
+                (hooks, lambda d: d.update(dependencies=["aiqt-guardrails-hooks@aiqt-guardrails"]),
+                 hooks, "aiqt-guardrails-hooks@aiqt-guardrails")):
+            with self.subTest(label=label, dep=dep):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, change)
+                output = self.expect(1, f"FAIL D4: {label} dependency {dep!r} names the plugin itself, which this "
+                                        "gate refuses")
+                self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                (self.root / rel).write_bytes(saved)
+
+    def test_repeated_dependency_fails_d4(self):
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        self.add_vendored("aiqt-skill")
+        for rel, change, label, dep in (
+                (gate.VENDORED_MARKETPLACE,
+                 lambda d: d["plugins"][0].update(dependencies=["aiqt-skill", "aiqt-skill"]),
+                 "plugin/.claude-plugin/marketplace.json plugins[0]", "aiqt-skill"),
+                (gate.VENDORED_MARKETPLACE,
+                 lambda d: d["plugins"][0].update(dependencies=["aiqt-skill", "aiqt-skill@aiqt-guardrails"]),
+                 "plugin/.claude-plugin/marketplace.json plugins[0]", "aiqt-skill@aiqt-guardrails"),
+                (hooks, lambda d: d.update(dependencies=["aiqt-skill@aiqt-guardrails", "aiqt-skill"]),
+                 hooks, "aiqt-skill")):
+            with self.subTest(label=label, dep=dep):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, change)
+                try:
+                    output = self.expect(1, f"FAIL D4: {label} dependency {dep!r} names the plugin 'aiqt-skill' a "
+                                            "second time, which this gate refuses", "2 dependencies read")
+                    self.assertEqual(output.splitlines()[-1], "FAIL: 1 inconsistency")
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
+    def test_source_that_is_no_path_fails_d2(self):
+        for source, shown in (("./a\x00b", "'./a\\x00b'"), ("./\ud800", "'./\\ud800'")):
+            with self.subTest(source=shown):
+                self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(source=source))
+                self.expect(1, f"FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source {shown} is not a "
+                               "path the operating system accepts")
 
 
 class RepositoryTreeTest(unittest.TestCase):
