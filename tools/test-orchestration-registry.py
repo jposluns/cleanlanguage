@@ -566,7 +566,8 @@ class Rejects(unittest.TestCase):
 
     # --- record/lease path colliding with state_dir -------------------------------------------------
     # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
-    # write there: orch_resume_audit opens <state_dir>/resume-barrier.json with mode "w" unconditionally
+    # write there: orch_resume_audit replaces <state_dir>/resume-barrier.json unconditionally through
+    # _orch_barrier_write, which writes a temporary file beside it and then calls os.replace
     # (aiqt_hooks.py:33315, 33324-33325), so such a path would be clobbered by that hook write. The gate
     # rejects the dangerous config. These are RED without the cross-field collision check (the per-key
     # validation accepts each path in isolation).

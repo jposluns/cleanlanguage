@@ -63,9 +63,9 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          rewrite, or for a schedule_idle call a wake digest that cannot be saved to
                          turn-state.json, _orch_register_wake, :23641-23663, called at :23751) is
                          reported as ALLOW_WITH_FINDINGS, as the hook surfaces it (:23621-23624 for
-                         a Stop, :23952 for a scheduling call). The doctor itself WRITES NOTHING: no
-                         checkpoint, no init marker, no guard event, no turn-state, no spoof record,
-                         and no bytecode cache. It does run the enumerator the registry declares,
+                         a Stop, :23775-23779 for a scheduling call). The doctor itself WRITES
+                         NOTHING: no checkpoint, no init marker, no guard event, no turn-state, no spoof
+                         record, and no bytecode cache. It does run the enumerator the registry declares,
                          exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:22815-22848: the
                          declared argv as a subprocess with cwd = the root, no shell). That program
                          is outside this tool, and anything it writes is its own, not the doctor's;
@@ -922,8 +922,8 @@ def _preflight(hook, root, kind_name, data):
         print("denial counter: not checked; a scheduling DENY stands whether or not the counter "
               "is saved (_orch_record_denial at aiqt_hooks.py:23730-23747)")
     # The hook adds a recording-failure warning to an allow when a checkpoint write fails
-    # (ctx["record_warn"], aiqt_hooks.py:23442, surfaced at :23621-23624 for a Stop and :23952 for
-    # a scheduling call), and, for an allowed schedule_idle call, when the wake digest cannot be
+    # (ctx["record_warn"], aiqt_hooks.py:23442, surfaced at :23621-23624 for a Stop and :23775-23779
+    # for a scheduling call), and, for an allowed schedule_idle call, when the wake digest cannot be
     # saved to turn-state.json (_orch_register_wake, :23641-23663); the ALLOW stands, with that
     # warning as a finding.
     record_warn = list(ctx.get("record_warn") or [])
@@ -1026,7 +1026,8 @@ def _resume_audit(hook, root):
         return 2
     if before is not None and after == before:
         print("barrier: NOT rewritten by this audit ({} has the same mtime and content as before "
-              "the run); the hook could not write it (for example the file is read-only), so the "
+              "the run); the hook could not replace it (for example its state directory cannot be "
+              "written), so the "
               "state it holds is stale and the audit result is unverified".format(barrier_path))
         return 2
     try:

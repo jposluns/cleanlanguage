@@ -376,7 +376,8 @@ class ResumeAudit(HookHarness):
         # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:33324-33325),
         # so this proves the clean audit CLEARS an existing barrier (overwrites active:true -> false),
         # not merely that a fresh barrier initializes inactive. orch_resume_audit writes the barrier with
-        # "active": bool(findings) unconditionally (mode "w", aiqt_hooks.py:33324-33325), so a no-findings
+        # "active": bool(findings) unconditionally (it replaces the file through _orch_barrier_write,
+        # aiqt_hooks.py:33324-33325), so a no-findings
         # audit overwrites the seed; removing that clear-write breaks this test.
         self.write_registry(self.stage1())
         self.arm_lease()
@@ -697,53 +698,123 @@ class StopFamilySurface(HookHarness):
 # 10. Citations of a whole hook function in the tools files
 # =====================================================================================================
 class WholeFunctionCitations(unittest.TestCase):
-    """Each function of the vendored hook that a comment or docstring of a tools file cites as a whole
-    must be cited once in that file, by the range from its def line to its last line, so a re-pin that
-    moves or lengthens it fails here until the citation follows. The citation reads `name` at A-B, with
-    or without aiqt_hooks.py: or a bare colon before A. A citation in a tools file whose range is the
-    whole of a hook function must be listed in WHOLE, so a new one is checked too."""
+    """A line range A-B in a tools/*.py file whose 2 numbers are the def line and the last line of a
+    top-level function of the vendored hook is a whole-function citation, whatever words stand around
+    it. WHOLE holds, for each tools file and hook function, how many such ranges the file holds. The
+    case counts, in each tools file, the A-B tokens equal to the current range of each hook function and
+    compares the counts with WHOLE. A re-pin that moves or lengthens a cited function lowers its count,
+    and a new whole-function citation raises one, so either fails here until the citations and WHOLE
+    follow. The case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range
+    written A-B with a hyphen is read; a range that covers part of a function, a single line and a
+    nested function are not checked."""
 
-    WHOLE = (
-        ("check-orchestration-registry.py", "_v_finite_pos"),
-        ("orch-enumerate-backlog.py", "_orch_enumerate"),
-        ("test-orch-enumerate-backlog.py", "_orch_enumerate"),
-        ("test-orch-stage1-hooks.py", "_deny"),
-        ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"),
-        ("test-orch-stage2-hooks.py", "_orch_chained_rows"),
-        ("test-orch-stage2-hooks.py", "_orch_pointer_resolves"),
-        ("test-orch-stage2-hooks.py", "_orch_resume_probes"),
+    WHOLE = {
+        ("check-orchestration-registry.py", "_orch_root"): 1,
+        ("check-orchestration-registry.py", "_schema_staleness"): 1,
+        ("check-orchestration-registry.py", "_state_dir_from_registry"): 2,
+        ("check-orchestration-registry.py", "_v_finite_pos"): 3,
+        ("orch-enumerate-backlog.py", "_orch_enumerate"): 1,
+        ("orch-enumerate-backlog.py", "_orch_parse_utc"): 1,
+        ("orch-enumerate-backlog.py", "validate_enumeration"): 1,
+        ("orch_doctor.py", "_orch_barrier_write"): 1,
+        ("orch_doctor.py", "_orch_build_ctx"): 2,
+        ("orch_doctor.py", "_orch_checkpoint_union"): 1,
+        ("orch_doctor.py", "_orch_enumerate"): 4,
+        ("orch_doctor.py", "_orch_path"): 1,
+        ("orch_doctor.py", "_orch_register_wake"): 3,
+        ("orch_doctor.py", "_orch_resume_probes"): 2,
+        ("orch_doctor.py", "_orch_root"): 2,
+        ("orch_doctor.py", "_orch_save_turn_state"): 2,
+        ("orch_doctor.py", "_orch_state_dir_for_root"): 2,
+        ("orch_doctor.py", "_orch_stop_family"): 1,
+        ("orch_doctor.py", "_orch_write_json_at"): 1,
+        ("orch_doctor.py", "_orch_write_json_atomic"): 1,
+        ("orch_doctor.py", "orch_resume_audit"): 2,
+        ("test-no-qa-labels.py", "_orch_attestation_refs"): 1,
+        ("test-no-qa-labels.py", "_orch_checkpoint_union"): 1,
+        ("test-no-qa-labels.py", "_orch_escape_active"): 1,
+        ("test-no-qa-labels.py", "_orch_record_escape_spoof"): 1,
+        ("test-no-qa-labels.py", "_schema_staleness"): 1,
+        ("test-no-qa-labels.py", "orch_ask_guard"): 1,
+        ("test-no-qa-labels.py", "orch_teammate_idle"): 1,
+        ("test-no-qa-labels.py", "orch_yield_tool"): 1,
+        ("test-orch-enumerate-backlog.py", "_orch_enumerate"): 1,
+        ("test-orch-enumerate-backlog.py", "classify_backlog"): 1,
+        ("test-orch-enumerate-backlog.py", "validate_enumeration"): 2,
+        ("test-orch-migrate-todo.py", "validate_enumeration"): 1,
+        ("test-orch-stage1-hooks.py", "_deny"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_root"): 1,
+        ("test-orch-stage1-hooks.py", "orch_dispatch_ledger"): 1,
+        ("test-orch-stage1-hooks.py", "orch_prompt_stamp"): 1,
+        ("test-orch-stage1-hooks.py", "orch_resume_audit"): 1,
+        ("test-orch-stage1-hooks.py", "orch_resume_barrier"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_attestation_refs"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_barrier_write"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_chained_rows"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_checkpoint_union"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_escape_active"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_event_warn"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_pointer_resolves"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_record_escape_spoof"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_register_tip"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_register_wake"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_resume_probes"): 1,
+        ("test-orch-stage2-hooks.py", "_schema_staleness"): 1,
+        ("test-orch-stage2-hooks.py", "orch_ask_guard"): 1,
+        ("test-orch-stage2-hooks.py", "orch_teammate_idle"): 1,
+        ("test-orch-stage2-hooks.py", "orch_yield_tool"): 1,
+        ("test-orch-stage2-hooks.py", "validate_enumeration"): 1,
+        ("test-orchestration-registry.py", "_orch_root"): 1,
+        ("test-orchestration-registry.py", "_state_dir_from_registry"): 1,
+    }
+    RANGE = re.compile(r"(?<![\w.])(\d+)-(\d+)(?![\w.])")
+    # 1 entry per rule of the count: (rule, the text of a fixture file a.py, a fixture WHOLE, the
+    # mismatches the count must give against FIXTURE_HOOK). FIXTURE_HOOK defines f on its lines 1 to 4,
+    # g nested in f on lines 2 and 3, and h on lines 5 and 6.
+    FIXTURE_HOOK = "def f():\n    def g():\n        pass\n    return g\ndef h():\n    pass\n"
+    RANGE_FORMS = (
+        ("a range in any words is read", "`f` at 1-4; f (aiqt_hooks.py:1-4); lines 1-4 of h",
+         {("a.py", "f"): 3}, []),
+        ("an unlisted range raises a count", "f, 1-4", {}, [("a.py", "f", 1, 0)]),
+        ("a shortened range lowers a count", "f at 1-3", {("a.py", "f"): 1}, [("a.py", "f", 0, 1)]),
+        ("only the def line to the last line counts", "f at 1-1, h at 5-5, f at 4-4", {}, []),
+        ("only top-level functions count", "g at 2-3", {}, []),
+        ("no letter, digit or dot before the range", "v1-4, x.1-4, 11-4", {}, []),
+        ("no letter, digit or dot after the range", "1-4a, 1-4.5, 1-44", {}, []),
     )
-    CITATION = r"`{}` at (?:aiqt_hooks\.py)?:?(\d+)-(\d+)"
 
     @staticmethod
-    def _ranges():
-        tree = ast.parse(HOOK.read_text(encoding="utf-8"))
-        return {node.name: (node.lineno, node.end_lineno) for node in tree.body
+    def functions(source):
+        """{(def line, last line): name} for each top-level function of the source."""
+        return {(node.lineno, node.end_lineno): node.name for node in ast.parse(source).body
                 if isinstance(node, ast.FunctionDef)}
 
-    def test_each_whole_function_citation_names_its_lines(self):
-        ranges = self._ranges()
-        tools = Path(__file__).resolve().parent
-        for file_name, name in self.WHOLE:
-            with self.subTest(file=file_name, function=name):
-                self.assertIn(name, ranges, "the hook defines no function {}".format(name))
-                source = (tools / file_name).read_text(encoding="utf-8")
-                cited = re.findall(self.CITATION.format(re.escape(name)), source)
-                self.assertEqual(len(cited), 1, "{} must be cited exactly once in {}: {}"
-                                 .format(name, file_name, cited))
-                self.assertEqual(tuple(int(n) for n in cited[0]), ranges[name])
+    @classmethod
+    def mismatches(cls, functions, texts, whole):
+        """[(file, function, ranges found, count in whole)] for each file and function whose number of
+        A-B ranges equal to the function's range in texts ({file: text}) differs from whole."""
+        found = {}
+        for file_name, text in texts.items():
+            for match in cls.RANGE.finditer(text):
+                name = functions.get((int(match.group(1)), int(match.group(2))))
+                if name:
+                    found[(file_name, name)] = found.get((file_name, name), 0) + 1
+        return [(key[0], key[1], found.get(key, 0), whole.get(key, 0))
+                for key in sorted(set(found) | set(whole)) if found.get(key, 0) != whole.get(key, 0)]
 
-    def test_every_whole_function_citation_is_listed(self):
-        ranges = self._ranges()
-        listed = set(self.WHOLE)
-        for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
-            source = path.read_text(encoding="utf-8")
-            for match in re.finditer(self.CITATION.format(r"([A-Za-z_][A-Za-z0-9_]*)"), source):
-                name, first, last = match.group(1), int(match.group(2)), int(match.group(3))
-                if ranges.get(name) == (first, last):
-                    with self.subTest(file=path.name, function=name):
-                        self.assertIn((path.name, name), listed,
-                                      "a whole-function citation not listed in WHOLE")
+    def test_whole_function_citations_follow_the_hook(self):
+        fixture = self.functions(self.FIXTURE_HOOK)
+        for rule, text, whole, expected in self.RANGE_FORMS:
+            with self.subTest(rule=rule):
+                self.assertEqual(self.mismatches(fixture, {"a.py": text}, whole), expected)
+        functions = self.functions(HOOK.read_text(encoding="utf-8"))
+        for _file_name, name in self.WHOLE:
+            self.assertIn(name, functions.values(), "the hook defines no function {}".format(name))
+        texts = {path.name: path.read_text(encoding="utf-8")
+                 for path in sorted(Path(__file__).resolve().parent.glob("*.py"))}
+        self.assertEqual(self.mismatches(functions, texts, self.WHOLE), [],
+                         "(file, function, whole-function ranges found, count in WHOLE)")
 
 
 if __name__ == "__main__":

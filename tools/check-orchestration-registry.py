@@ -786,8 +786,9 @@ def validate(path):
     # Cross-field REQUIREMENT: a declared `record` or `lease` must be accompanied
     # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
     # _state_dir_from_registry (aiqt_hooks.py:22133-22146) falls back to
-    # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still opens
-    # `<state_dir>/resume-barrier.json` with mode "w" there (aiqt_hooks.py:33324-33325). A record/lease path
+    # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still replaces
+    # `<state_dir>/resume-barrier.json` there through _orch_barrier_write, which writes a temporary file
+    # beside it and then calls os.replace (aiqt_hooks.py:33324-33325). A record/lease path
     # landing inside that DEFAULT dir is clobbered exactly as in a declared-state_dir collision, but
     # the collision check below runs only `if "state_dir" in obj`, so the default-dir sibling slips through
     # (reproduced: gate exit 0, then the hook clobbers the declared record). Requiring

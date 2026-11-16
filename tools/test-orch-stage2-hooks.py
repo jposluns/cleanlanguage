@@ -1809,6 +1809,7 @@ class Doctor(Stage2Harness):
         r = self.run_doctor("--resume-audit")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("NOT rewritten by this audit", r.stdout)
+        self.assertIn("its state directory cannot be written", r.stdout)
         self.assertNotIn("barrier: clear", r.stdout)
         self.assertEqual(path.read_bytes(), before, "precondition: the hook could not rewrite it")
 
@@ -1822,6 +1823,7 @@ class Doctor(Stage2Harness):
         r = self.run_doctor("--resume-audit")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("NOT rewritten by this audit", r.stdout)
+        self.assertIn("its state directory cannot be written", r.stdout)
         self.assertEqual(path.read_bytes(), before)
 
     def test_resume_audit_rewrite_with_a_ts_outside_the_run_is_unverified(self):

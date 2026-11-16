@@ -21,28 +21,13 @@ through permissionDecision on exit 0. A missing hook or payload fails the case r
 skipping it, so an absent file cannot read as a green run.
 
 The probes must stay write-then-run forms, since the hook before the refresh already denied the
-direct form: each probe command must write a script file, by a here-document (`cat > FILE <<'EOF'`)
-or by a single-quoted printf (`printf '...' > FILE`), and then, on a later line after the written
-text ends, run that same file with bash, sh or python3; and 1 line of the text the command writes
-into that file must hold a git commit with --no-verify or -n. A commit placed anywhere else, such as
-a direct commit between the end of the here-document and the run line, does not count, so a probe
-moved to the direct form with its script holding no commit fails the case. The test also checks
-that the shape check rejects 3 such moved forms, and that it rejects a form that fails only 1 of its
-4 conditions (the hook-skipping flag, the commit word, a run after the written text, a run of the
-written path) while it accepts the same form with that condition met. 2 further cases check that it
-rejects a script whose commit word and hook-skipping flag stand on 2 different lines, and a printf
-write followed by more text on its line, while it accepts the same forms with the commit and the
-flag on 1 line and with the printf write alone on its line. A further case checks each side
-of the rule that a write stands alone on its line: it rejects a form with text before `cat` or after
-the here-document opener on the line of a here-document write, with text before or after a printf
-write, or with a closing line that holds more than the delimiter (or a tab before it under `<<`),
-and accepts the same writes alone on their lines. A further case checks the rules of the
-here-document opener and of the run line: it accepts a delimiter in double quotes and a bare
-delimiter, and it rejects a run with other text before it on its line, a run line that is data (a
-line of a later here-document body or of a quoted string) and a run line after an unconditional
-exit, while it accepts the same forms with the run on a command line of its own. Each payload file
-is also pinned by its sha256, so any edit to a payload fails a named case until the pin is updated
-with it.
+direct form. The shape check (write_then_run) accepts only the closed form that GRAMMAR and
+STRUCTURE define and rejects every other command text: 1 or more writes, and then 1 run line as the
+last line. The run line must name a written path, and 1 line of the text written to that path must
+hold a git commit with --no-verify or -n. The check reads text only; it makes no claim about how a
+shell runs any command. GRAMMAR_FORMS holds rejected and accepted forms for each rule of GRAMMAR and
+STRUCTURE, and a case fails when a rule has no rejected form. Each payload file is also pinned by its
+sha256, so any edit to a payload fails a named case until the pin is updated with it.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
 is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
@@ -88,22 +73,23 @@ PAYLOAD_SHA256 = {
     "c1": "83fd994d0fd708e27f00fd291a84716cebadc174e09afe853064b1ad90c96ce6",
     "c2": "cc5a3f5a0b4c1c4c6a24e570a1932c2c5829a8906afd260ada04ee72cdd701eb",
 }
-# A write of a script file: "> path" where the path ends in .sh or .py.
-SCRIPT_WRITE = re.compile(r">\s*(/[^\s;&|'\"]+\.(?:sh|py))")
-# A run of a script file at the start of a command line: bash, sh or python3 and the path.
-SCRIPT_RUN = re.compile(r"^(?:bash|sh|python3)\s+([^\s;&|'\"]+)")
-# A here-document operator on a line after the written text: <<, <<-, and a delimiter bare, backslashed
-# or in quotes.
-HEREDOC_LATER = re.compile(r"<<(-?)\s*(?:'([A-Za-z0-9_.+-]+)'|\"([A-Za-z0-9_.+-]+)\"|\\?([A-Za-z0-9_.+-]+))")
-# An unconditional exit: a command line whose first word is exit.
-EXIT_LINE = re.compile(r"\s*exit(?:\s|;|$)")
+# The closed probe grammar. Each pattern must match a whole line. A path is absolute and ends in .sh or
+# .py. A here-document write takes a single-quoted delimiter; its written text is the lines up to the
+# first line that is exactly the delimiter. A printf write takes a single-quoted text with no %, and
+# no backslash but \n, which the check reads as a line break. The run line is bash, sh or python3 and
+# a path, and may end with `; echo "name=$?"`.
+PATH_FORM = r"(?P<path>/[A-Za-z0-9_./+-]+\.(?:sh|py))"
+GRAMMAR = {
+    "heredoc write": re.compile(r"cat > " + PATH_FORM + r" <<'(?P<delimiter>[A-Za-z_][A-Za-z0-9_]*)'"),
+    "printf write": re.compile(r"printf '(?P<text>(?:[^'\\%]|\\n)*)' > " + PATH_FORM),
+    "run line": re.compile(r"(?:bash|sh|python3) " + PATH_FORM + r"(?:; echo \"[a-z]+=\$\?\")?"),
+}
+# The rules of the order of the lines: every line before the run line belongs to a write, and the run
+# line is the last line.
+STRUCTURE = ("only writes before the run line", "the run line is the last line")
 # A git commit with a hook-skipping flag, as shell words or as a Python argument list.
 COMMIT_WORDS = re.compile(r"\bgit\b[^\n]*\bcommit\b|\"git\",\s*\"commit\"")
 SKIP_FLAG = re.compile(r"--no-verify|(?:^|[\s\"])-n(?:[\s\"]|$)", re.MULTILINE)
-# The here-document operator after the written path: <<, <<-, and a delimiter bare or in quotes.
-HEREDOC_OPEN = re.compile(r"\s*<<(-?)\s*(?:'([A-Za-z0-9_.+-]+)'|\"([A-Za-z0-9_.+-]+)\"|([A-Za-z0-9_.+-]+))\s*$")
-# A single-quoted printf whose output is redirected to the written path, alone on its line.
-PRINTF_WRITE = re.compile(r"\s*printf\s+'([^']*)'\s*$")
 # 3 moved forms that the shape check must reject: each script holds no commit, and a direct commit
 # with a hook-skipping flag stands between the written text and the run line.
 MOVED_COMMIT_FORMS = (
@@ -173,145 +159,77 @@ ALONE_ON_ITS_LINE_FORMS = (
       "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF \nbash /tmp/probe-a5.sh",
       "cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh"),
      ("cat > /tmp/probe-a5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<'EOF'\nEOF x\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
-      "cat > /tmp/probe-a5.sh <<-'EOF'\n\tgit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh")),
+      "cat > /tmp/probe-a5.sh <<'EOF'\nEOF x\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh")),
 )
-# 1 entry per rule of the here-document opener and of the run line: (rule, the forms that break only
-# that rule, which the shape check must reject, and the same forms with the rule kept, which it must
-# accept). Removing any 1 of these rules makes 1 of its rejected forms pass, or 1 of its accepted forms
-# fail, and fails the case.
-RUN_LINE_FORMS = (
-    ("a delimiter in double quotes",
-     (),
-     ("cat > /tmp/probe-r1.sh <<\"EOF\"\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r1.sh",)),
-    ("a bare delimiter",
-     (),
-     ("cat > /tmp/probe-r2.sh <<EOF\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r2.sh",)),
-    ("the run starts its line",
-     ("cat > /tmp/probe-r3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho bash /tmp/probe-r3.sh",),
-     ("cat > /tmp/probe-r3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r3.sh",)),
-    ("a line of a later here-document body is data",
-     ("cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
-      "cat > /tmp/probe-r4.txt <<'TXT'\nbash /tmp/probe-r4.sh\nTXT",
-      "cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
-      "cat > /tmp/probe-r4.txt <<-TXT\n\tbash /tmp/probe-r4.sh\n\tTXT"),
-     ("cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
-      "cat > /tmp/probe-r4.txt <<'TXT'\nnotes\nTXT\nbash /tmp/probe-r4.sh",)),
-    ("a line inside a quoted string is data",
-     ("cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho 'start\nbash /tmp/probe-r5.sh\nend'",
-      "cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho \"start\nbash /tmp/probe-r5.sh\nend\""),
-     ("cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho 'start end'\nbash /tmp/probe-r5.sh",)),
-    ("a line after an unconditional exit does not run",
-     ("cat > /tmp/probe-r6.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nexit 0\nbash /tmp/probe-r6.sh",),
-     ("cat > /tmp/probe-r6.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho done\nbash /tmp/probe-r6.sh",)),
+# 1 entry per rule of GRAMMAR and STRUCTURE: (rule, forms that break only that rule, which the shape
+# check must reject, and the same forms with the rule kept, which it must accept). A case fails when a
+# rule of GRAMMAR or STRUCTURE has no rejected form here.
+W = "cat > /tmp/probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
+GRAMMAR_FORMS = (
+    ("heredoc write",
+     ("cat > /tmp/probe-g.sh <<EOF\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.sh",
+      "cat > /tmp/probe-g.sh <<\"EOF\"\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.sh",
+      "cat > /tmp/probe-g.sh <<-'EOF'\n\tgit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-g.sh",
+      "cat > probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash probe-g.sh",
+      "cat > /tmp/probe-g.txt <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-g.txt",
+      "cat > /tmp/probe-g.sh <<'EOF'\ngit commit --no-verify -m probe\nbash /tmp/probe-g.sh"),
+     (W + "bash /tmp/probe-g.sh",)),
+    ("printf write",
+     ("printf 'git commit --no-verify -m probe%s\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",
+      "printf 'git commit --no-verify -m probe\\t\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",
+      "printf \"git commit --no-verify -m probe\\n\" > /tmp/probe-g.sh\nbash /tmp/probe-g.sh"),
+     ("printf 'git commit --no-verify -m probe\\n' > /tmp/probe-g.sh\nbash /tmp/probe-g.sh",)),
+    ("run line",
+     (W + "echo bash /tmp/probe-g.sh",
+      W + "bash  /tmp/probe-g.sh",
+      W + "bash /tmp/probe-g.sh; exit 0",
+      W + "bash /tmp/probe-g.sh; echo \"script=$?",
+      W + "bash /tmp/probe-g.sh \\"),
+     (W + "bash /tmp/probe-g.sh; echo \"script=$?\"", W + "sh /tmp/probe-g.sh")),
+    ("only writes before the run line",
+     (W + "git commit --no-verify -m probe\nbash /tmp/probe-g.sh",
+      W + "exit 0\nbash /tmp/probe-g.sh",
+      W + "true; exit 0\nbash /tmp/probe-g.sh",
+      W + "{ exit 0; }\nbash /tmp/probe-g.sh",
+      W + "echo \\\nbash /tmp/probe-g.sh",
+      W + "echo 'start\nbash /tmp/probe-g.sh",
+      W + "cat > /tmp/probe-g.txt <<'TXT'\nbash /tmp/probe-g.sh",
+      "cat <<'OUTER'\n" + W + "bash /tmp/probe-g.sh\nOUTER",
+      "echo '" + W + "bash /tmp/probe-g.sh'"),
+     (W + "cat > /tmp/probe-h.py <<'EOF'\nprint(1)\nEOF\nbash /tmp/probe-g.sh",
+      "printf 'echo x\\n' > /tmp/probe-h.sh\n" + W + "bash /tmp/probe-g.sh")),
+    ("the run line is the last line",
+     (W + "bash /tmp/probe-g.sh\n", W + "bash /tmp/probe-g.sh\necho done", W.rstrip("\n")),
+     (W + "bash /tmp/probe-g.sh",)),
 )
-
-
-def written_script(command, write):
-    """(text written into the file, offset where the writing ends) for the script write that the
-    SCRIPT_WRITE match write starts, or None when that line is not one of the 2 write forms this test
-    reads: a here-document opened on the writing line and closed by its delimiter line, or a single-quoted
-    printf whose only escape sequence read is \\n."""
-    line_start = command.rfind("\n", 0, write.start()) + 1
-    line_end = command.find("\n", write.end())
-    if line_end < 0:
-        line_end = len(command)
-    before = command[line_start:write.start()]
-    after = command[write.end():line_end]
-    opener = HEREDOC_OPEN.fullmatch(after)
-    if opener and re.fullmatch(r"\s*cat\s*", before):
-        strip_tabs = opener.group(1) == "-"
-        delimiter = opener.group(2) or opener.group(3) or opener.group(4)
-        body = []
-        pos = line_end + 1
-        while pos <= len(command):
-            nxt = command.find("\n", pos)
-            if nxt < 0:
-                nxt = len(command)
-            line = command[pos:nxt]
-            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                return "\n".join(body), nxt
-            body.append(line)
-            pos = nxt + 1
-        return None
-    printf = PRINTF_WRITE.fullmatch(before)
-    if printf and not after.strip():
-        return printf.group(1).replace("\\n", "\n"), line_end
-    return None
-
-
-def scan_line(line, quote):
-    """(the quote character left open at the end of line, or None; the (delimiter, strip_tabs) of each
-    here-document that line opens), reading line from the quote state quote. Outside quotes a backslash
-    escapes the next character and a # that starts a word starts a comment."""
-    openers = []
-    i = 0
-    while i < len(line):
-        c = line[i]
-        if quote == "'":
-            if c == "'":
-                quote = None
-        elif quote == '"':
-            if c == "\\":
-                i += 1
-            elif c == '"':
-                quote = None
-        elif c == "\\":
-            i += 1
-        elif c in "'\"":
-            quote = c
-        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|("):
-            break
-        elif line.startswith("<<<", i):
-            i += 2
-        elif line.startswith("<<", i):
-            opener = HEREDOC_LATER.match(line, i)
-            if opener:
-                openers.append((opener.group(2) or opener.group(3) or opener.group(4), opener.group(1) == "-"))
-                i = opener.end() - 1
-        i += 1
-    return quote, openers
-
-
-def command_lines(command, end):
-    """Each line after offset end that a shell reads as a command line: not a line of a here-document
-    body, not a line that a quote left open on an earlier line continues, and no line after a line whose
-    first word is exit."""
-    pending = []
-    quote = None
-    for line in command[end:].split("\n")[1:]:
-        if pending:
-            delimiter, strip_tabs = pending[0]
-            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                pending.pop(0)
-            continue
-        if quote is None:
-            if EXIT_LINE.match(line):
-                return
-            yield line
-        quote, openers = scan_line(line, quote)
-        pending.extend(openers)
 
 
 def write_then_run(command):
-    """The script path when command writes a script whose written text holds, on 1 line, a git commit
-    with a hook-skipping flag, and then, on a command line after the written text ends, runs that file
-    with bash, sh or python3; else None. A commit outside the written text does not count, and neither
-    does a run line that is data (a line of a later here-document body or of a quoted string) or that
-    follows an unconditional exit."""
-    for write in SCRIPT_WRITE.finditer(command):
-        path = write.group(1)
-        written = written_script(command, write)
-        if written is None:
-            continue
-        body, end = written
-        if not any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in body.split("\n")):
-            continue
-        for line in command_lines(command, end):
-            run = SCRIPT_RUN.search(line)
-            if run and run.group(1) == path:
-                return path
-    return None
+    """The run path when command is in the closed grammar of GRAMMAR and STRUCTURE and the text written
+    to that path holds, on 1 line, a git commit with a hook-skipping flag; else None."""
+    lines = command.split("\n")
+    written = {}
+    i = 0
+    while i < len(lines) - 1:
+        heredoc = GRAMMAR["heredoc write"].fullmatch(lines[i])
+        printf = GRAMMAR["printf write"].fullmatch(lines[i])
+        if heredoc:
+            close = lines.index(heredoc["delimiter"], i + 1) if heredoc["delimiter"] in lines[i + 1:] else -1
+            if close < 0:
+                return None
+            written[heredoc["path"]] = lines[i + 1:close]
+            i = close + 1
+        elif printf:
+            written[printf["path"]] = printf["text"].replace("\\n", "\n").split("\n")
+            i += 1
+        else:
+            return None
+    run = GRAMMAR["run line"].fullmatch(lines[-1])
+    if not run:
+        return None
+    if not any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in written.get(run["path"], ())):
+        return None
+    return run["path"]
 
 
 def run_hook(name):
@@ -404,8 +322,10 @@ class GateWeakeningProbes(unittest.TestCase):
                     self.assertIsNone(write_then_run(rejected),
                                       "a write with {} passed the shape check: {!r}".format(side, rejected))
 
-    def test_shape_check_reads_only_the_command_lines_that_run(self):
-        for rule, rejected_forms, accepted_forms in RUN_LINE_FORMS:
+    def test_shape_check_accepts_only_its_grammar(self):
+        self.assertEqual({rule for rule, rejected, _accepted in GRAMMAR_FORMS if rejected},
+                         set(GRAMMAR) | set(STRUCTURE), "a rule of the grammar has no rejected form")
+        for rule, rejected_forms, accepted_forms in GRAMMAR_FORMS:
             for index, accepted in enumerate(accepted_forms, 1):
                 with self.subTest(rule=rule, accepted=index):
                     self.assertIsNotNone(write_then_run(accepted),
