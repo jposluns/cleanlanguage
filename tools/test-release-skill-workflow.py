@@ -1338,6 +1338,9 @@ class HarnessTest(WorkflowStepTest):
             (["api", "-i", path], False), (["api", "-iX", "GET", path], False),
             (["api", "-if", "x=1", "-X", "GET", path], False), (["api", path, "--jq", "-f"], False),
             (["api", path, "-q-XPOST"], False), (["api", "-H", "-XPOST", path], False),
+            # A repeated method counts by its last value, in both orders.
+            (["api", "-X", "GET", "-X", "POST", path], True), (["api", "-X", "POST", "-X", "GET", path], False),
+            (["api", "--method=GET", "-XPOST", path], True), (["api", "--method", "POST", "--method=GET", path], False),
         )
         for args, write in writes:
             with self.subTest(args=args):
@@ -1348,13 +1351,22 @@ class HarnessTest(WorkflowStepTest):
                 self.assertEqual((self.state / "gh_writes").exists(), write)
         # Each form of --include or -i, with whether the fake gh prints the
         # status line for it: exactly when the last --include or -i has no
-        # value or a value in FLAG_TRUE_VALUES. The status state reads 404,
-        # so a call that prints the line exits 1, and a call that does not
-        # prints nothing and exits 0.
+        # value or a value in FLAG_TRUE_VALUES. Each of the 6 values is given
+        # after -i= and after --include=, and 2 values that differ from 1 of
+        # them only in case print no line. -i= with nothing after the = is -i
+        # followed by the short option -=, as api_options reads it, so it
+        # prints the line. The status state reads 404, so a call that prints
+        # the line exits 1, and a call that does not prints nothing and exits 0.
         self.set_state(status="404")
         includes = (
             (["api", path], False), (["api", "-i", path], True), (["api", "--include", path], True),
             (["api", "-i=t", path], True), (["api", "-i=1", path], True), (["api", "--include=true", path], True),
+            (["api", "-i=T", path], True), (["api", "-i=TRUE", path], True), (["api", "-i=true", path], True),
+            (["api", "-i=True", path], True), (["api", "--include=1", path], True),
+            (["api", "--include=t", path], True), (["api", "--include=T", path], True),
+            (["api", "--include=TRUE", path], True), (["api", "--include=True", path], True),
+            (["api", "-i=tRUE", path], False), (["api", "--include=TRue", path], False),
+            (["api", "-i=", path], True),
             (["api", "-i=false", path], False), (["api", "--include=false", path], False),
             (["api", "-i=x", path], False), (["api", "-i", "-i=false", path], False),
             (["api", "--include", "--include=false", path], False), (["api", "-i=false", "-i", path], True),
@@ -1367,6 +1379,42 @@ class HarnessTest(WorkflowStepTest):
                                       capture_output=True, text=True)
                 self.assertEqual((proc.returncode, proc.stdout), (1, "HTTP/2.0 404 Fake\n") if status else (0, ""),
                                  proc.stderr)
+        # A short option followed by = takes the rest of the argument as its
+        # value only when at least 1 more character follows the =; a lone =
+        # is read as the short option -=, or, after an option that takes a
+        # value, as that value.
+        equals = (
+            (["-i=", path], ([("--include", None), ("-=", None)], [path])),
+            (["-i=x", path], ([("--include", "x")], [path])),
+            (["-q=", path], ([("--jq", "=")], [path])),
+            (["-q=.immutable", path], ([("--jq", ".immutable")], [path])),
+        )
+        for args, parsed in equals:
+            with self.subTest(equals=args):
+                self.assertEqual(api_options(args), parsed)
+        # Every argument after -- is an operand, so an option written after
+        # it is neither a method nor a query: the call is no change and no
+        # field read, the fake gh records no write, logs the call as a status
+        # read of all its operands and prints nothing, and an --include after
+        # -- prints no status line.
+        terminated = (
+            ["api", path, "--", "-XPOST", "-q.immutable"],
+            ["api", "--", path, "--method=POST", "--jq", ".immutable", "-i"],
+        )
+        for args in terminated:
+            with self.subTest(terminated=args):
+                operands = [arg for arg in args[1:] if arg != "--"]
+                self.assertEqual(api_options(args[1:]), ([], operands))
+                self.assertFalse(is_mutation(["gh", args]))
+                self.assertFalse(is_field_read("immutable")(["gh", args]))
+                for name in ("gh_writes", "api.log"):
+                    (self.state / name).unlink(missing_ok=True)
+                proc = subprocess.run([str(self.bin / "gh"), *args], env={"FAKE_STATE": str(self.state)},
+                                      capture_output=True, text=True)
+                self.assertEqual((proc.returncode, proc.stdout), (0, ""), proc.stderr)
+                self.assertFalse((self.state / "gh_writes").exists())
+                self.assertEqual(json.loads((self.state / "api.log").read_text(encoding="utf-8")),
+                                 ["status", operands])
         # Each gh call with a leading option, with the arguments from its
         # subcommand on as subcommand reads them through takes_separate_value:
         # an option that takes a value and has none in its argument, alone
@@ -1448,6 +1496,37 @@ class HarnessTest(WorkflowStepTest):
                     self.assertEqual(kind == ".immutable", read, kind)
                     self.assertEqual(proc.stdout, "HTTP/2.0 404 Fake\n" if args[1].startswith("-i") else answers[kind],
                                      kind)
+
+    def test_the_predicates_and_the_fake_git_read_each_leading_git_option(self):
+        # Each git option of LEADING_VALUE_OPTIONS, given before the
+        # subcommand with its value as the next argument, as in git -C DIR tag
+        # or git -c NAME=VALUE tag, and 3 of them with the value joined after
+        # =, which takes no separate value. For each, subcommand reads the
+        # call from the subcommand on, the predicates count the tag call as a
+        # tag call and a change and the lookup as a lookup and no change, and
+        # the fake git answers each call by its subcommand: the tag call moves
+        # the local tag, and rev-parse prints the commit.
+        options = (
+            ["-c", "advice.detachedHead=false"], ["-C", str(self.work)], ["--git-dir", ".git"],
+            ["--work-tree", "."], ["--namespace", "other"],
+            ["--git-dir=.git"], ["--work-tree=."], ["--namespace=other"],
+        )
+        for leading in options:
+            with self.subTest(leading=leading):
+                tag = [*leading, "tag", "v1.0.15", COMMIT]
+                lookup = [*leading, "ls-remote", "--tags", "origin", "refs/tags/v1.0.15"]
+                self.assertEqual(subcommand(VCS, tag), ["tag", "v1.0.15", COMMIT])
+                self.assertEqual(subcommand(VCS, lookup), ["ls-remote", "--tags", "origin", "refs/tags/v1.0.15"])
+                self.assertEqual((is_tag([VCS, tag]), is_mutation([VCS, tag])), (True, True))
+                self.assertEqual((is_lookup([VCS, lookup]), is_mutation([VCS, lookup])), (True, False))
+                self.set_state(local_tag=None)
+                proc = subprocess.run([str(self.bin / VCS), *tag], env={"FAKE_STATE": str(self.state)},
+                                      capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
+                proc = subprocess.run([str(self.bin / VCS), *leading, "rev-parse", "HEAD"],
+                                      env={"FAKE_STATE": str(self.state)}, capture_output=True, text=True)
+                self.assertEqual((proc.returncode, proc.stdout), (0, COMMIT + "\n"), proc.stderr)
 
     def test_a_step_still_running_at_the_limit_fails_its_test(self):
         # With the limit lowered to 1 s, a step that runs for 5 s fails its
@@ -2349,6 +2428,26 @@ class ImmutableReleaseTest(WorkflowStepTest):
         with self.assertRaises(AssertionError):
             self.assert_no_mutation(self.calls())
         self.assertEqual((self.state / "pipe_writes").read_text(encoding="utf-8"), "1")
+
+    def test_a_push_of_the_tag_ref_followed_by_an_option_moves_the_tag(self):
+        # The fake git moves the tag on origin for a push that names the full
+        # tag ref as a whole argument, wherever it stands, so a push that
+        # names the ref and then an option, as in git push origin
+        # refs/tags/v1.0.15 --force, moves it to the local tag too. A step
+        # that makes such a push fails assert_no_mutation on the state of the
+        # fakes alone, given an empty call log.
+        for option in ("--force", "-f"):
+            with self.subTest(option=option):
+                self.tag_push_mismatch(True, OTHER_COMMIT)
+                self.set_state(local_tag=COMMIT)
+                script = VCS + " push origin refs/tags/v1.0.15 " + option + "\nexit 1\n"
+                code, _out, err = self.run_step(PUBLISH, script)
+                self.assertEqual(code, 1, err)
+                self.assertEqual(self.state_before_run["remote_tag"], OTHER_COMMIT)
+                self.assertEqual(self.fake_write_state()["remote_tag"], COMMIT)
+                self.assertEqual(len([c for c in self.calls() if is_push(c)]), 1, self.calls())
+                with self.assertRaises(AssertionError):
+                    self.assert_no_mutation([])
 
     def test_the_fake_gh_reads_a_leading_option_as_gh_does(self):
         # Each gh release call of the publish step, with a leading -R option
