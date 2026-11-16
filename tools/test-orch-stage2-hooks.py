@@ -1049,8 +1049,11 @@ class T14PosturePins(Stage2Harness):
 # =====================================================================================================
 class T15EnumeratorTimeout(Stage2Harness):
     def test_sleeping_enumerator_times_out_and_denies(self):
+        # The enumerator sleeps 120 s against a declared timeout of 1 s. The 45 s bound on the whole
+        # call leaves room for a loaded host, where a 15 s bound failed once at 16.05 s, and stays
+        # below the hook's 60 s fallback, so a hook that ignored the declared timeout still fails.
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(30)"], "timeout": 1}))
+            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(120)"], "timeout": 1}))
         self.arm_lease()
         started = time.monotonic()
         r = self.stop()
@@ -1058,7 +1061,7 @@ class T15EnumeratorTimeout(Stage2Harness):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
-        self.assertLess(elapsed, 15, "the declared timeout bounds the hook")
+        self.assertLess(elapsed, 45, "the declared timeout bounds the hook")
 
     def test_stage1_contrast(self):
         self.write_registry(self.stage1())
