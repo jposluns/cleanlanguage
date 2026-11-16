@@ -1,132 +1,76 @@
 #!/usr/bin/env python3
 """Offline consistency check of the plugin distribution (TODO 234).
 
-The fleet plugin distribution standard asks for an offline consistency check,
-stdlib only and with no network, beside the pinned `claude plugin validate`
-runs, because that validator passes a marketplace whose relative source names
-a folder that does not exist. This gate reads the repository's manifests and
-makes 4 checks. Each failure line is FAIL, a space and the tag of its check,
-the plan's numbering, which CHECKS maps to the names used here.
+The fleet plugin distribution standard asks for an offline check, stdlib only
+and with no network, beside the pinned `claude plugin validate` runs, because
+that validator passes a marketplace whose relative source names a folder that
+does not exist. This gate reads the manifests as they are on disk and makes 4
+checks; CHECKS maps the tag that starts the FAIL lines of each to its name.
+MARKETPLACE is the repository's marketplace and VENDORED_MARKETPLACE the
+vendored one; "both marketplaces" means these 2.
 
-  Names agree: the name of .claude-plugin/marketplace.json, the name of its
-      plugin entry, the names of cleanlanguage/.claude-plugin/plugin.json and
-      cleanlanguage/plugin.json and the site_key of site-src/site.json are all
-      PROJECT; the marketplace lists exactly 1 plugin; no marketplace name or
-      plugin entry name in either marketplace (the repository's and the
-      vendored plugin/.claude-plugin/marketplace.json) is missing, is not a
-      string or is empty, or starts with a reserved prefix of
-      RESERVED_PREFIXES after Unicode case folding (str.casefold); no
-      marketplace lists 2 plugin entries whose names are the same after
-      case folding; and in both marketplaces each plugin entry whose source
-      resolves has the name of the plugin manifest it reaches. Whether the
-      Claude Code CLI reserves the prefixes in any letter case, or refuses a
-      plugin name listed twice, is not known offline, so the gate refuses
-      both under case folding, which takes in every letter case and such
-      forms as the long s. A name that matches only under another mapping,
-      such as a capital I with a dot above (U+0130), which case folding
-      turns into 2 characters, is not refused.
-  Sources exist: in both marketplaces each plugin entry has a string source
-      that starts with "./", has no empty, no "." and no ".." component and
-      is a path the operating system accepts (a NUL character, or a
-      component too long for the file system, is refused), and it resolves
-      below the marketplace root, each component reached with os.lstat, none
-      a symlink and each spelled exactly as os.listdir of its folder lists
-      it, to a directory that holds a regular .claude-plugin/plugin.json.
-      The plugin entry of .claude-plugin/marketplace.json must reach
-      CLAUDE_MANIFEST, this repository's plugin. Since no component of a
-      source is empty, "." or "..", none is a symlink and each is spelled as
-      its folder lists it, the path a source spells is the path it resolves
-      to, so the gate compares that path with CLAUDE_MANIFEST as text. This
-      holds on a file system that folds letter case too, such as the default
-      one of macOS, where os.lstat alone also finds a name spelled in another
-      letter case: the listing refuses that spelling there, as a file system
-      that keeps letter case refuses it as missing. A source that is not a
-      string, such as a GitHub source object, is refused, because this gate
-      cannot read where it leads.
-  Versions agree: the versions of both plugin manifests, the Version: line of
-      the skill's SKILL.md, read with the VERSION_LINE and SKILL_VERSION
-      patterns of the shared extractor tools/skill-version.py after its line
-      endings are read as universal newlines (CR LF and a lone CR each read
-      as LF), and the version
-      of any plugin entry of .claude-plugin/marketplace.json that carries one,
-      are each a nonempty string and are the same text. The entries of the
-      vendored marketplace are other plugins, with versions of their own, so
-      their versions are not read.
-  Dependencies resolve: a plugin entry or the plugin manifest its relative
-      source reaches may leave out dependencies, but one that holds the key
-      holds a list, never a JSON null. Every dependency named by a plugin
-      entry or by the plugin manifest its relative source reaches is a
-      nonempty string that names a plugin entry of the same marketplace, as
-      a bare name or as name@<that marketplace>, and does not name the
-      plugin itself: the entry's own name, or for the manifest's list the
-      manifest's own name.
-      Whether the Claude Code CLI accepts a plugin that depends on itself is
-      not known offline, so the gate refuses it. No list names the same
-      plugin twice: a dependency that names a plugin the same list has
-      already named, as a bare name, as a qualified name or as one of each,
-      is refused. An entry whose name is not a string is no plugin a
-      dependency can name. The count is printed, so a pass with no dependency
-      to resolve is visible.
+  Names agree: the name of MARKETPLACE, the name of its first plugin entry,
+      the names of CLAUDE_MANIFEST and AGENT_MANIFEST and the site_key of
+      SITE_JSON are PROJECT, and MARKETPLACE lists exactly 1 plugin. In both
+      marketplaces, each marketplace name and plugin entry name is a nonempty
+      string that does not start with a prefix of RESERVED_PREFIXES after
+      str.casefold; no 2 plugin entries have names equal after str.casefold;
+      and each entry whose source resolves has the name of the manifest it
+      reaches.
+  Sources exist: in both marketplaces, the plugins key holds a list, and
+      each plugin entry is a JSON object whose source is a string that starts
+      with "./", has no empty, "." or ".." component, is a path the operating
+      system accepts, and resolves, through the walk rules (below), to a
+      folder that holds a regular .claude-plugin/plugin.json. The entry of
+      MARKETPLACE reaches CLAUDE_MANIFEST.
+  Versions agree: the versions of CLAUDE_MANIFEST and AGENT_MANIFEST, the
+      version in the first Version: line of SKILL_MD as the patterns of
+      tools/skill-version.py read it, after universal newlines, and the
+      version of each plugin entry of MARKETPLACE that holds a version key,
+      are each a nonempty string, and are all the same. The versions of the
+      vendored entries are not read.
+  Dependencies resolve: a dependencies key, in a plugin entry of either
+      marketplace or in the manifest its source reaches, holds a list; each
+      item is a nonempty string that names, exactly as written, another
+      plugin entry of the same marketplace, as NAME or NAME@<marketplace
+      name>; and no list names 1 plugin twice. The count of items read is
+      printed.
 
-The checks of the hosted catalog and of the release zips (the standard's
-sha256 and zip-content checks) belong to a later unit and are not made here.
+Walk rules: every path the gate reads, and every source, is reached 1
+component at a time with os.lstat, none a symlink, each spelled as os.listdir
+of its folder lists it. The hosted catalog and the release zips are not
+checked here.
 
-Every file, the extractor tools/skill-version.py among them, is reached from
-REPO_ROOT with os.lstat on each path component, none of which may be a
-symlink and each of which must be spelled as os.listdir of its folder lists
-it, and opened with O_NOFOLLOW; the gate runs the extractor's bytes as
-read, so it never opens the extractor again by path. JSON is decoded as
-utf-8-sig, so a leading byte-order mark does not fail a conforming file, the
-non-standard constants NaN and Infinity are refused, and a key repeated in any
-JSON object is refused, as tools/check-manifest-icon.py does, since json.loads
-alone keeps only the last value of a repeated key. Before decoding, the gate
-counts the nesting of arrays and objects in the text, outside strings, and
-refuses a file nested more than MAX_JSON_DEPTH (64) levels deep, so the
-refusal does not depend on the interpreter's recursion limit; a RecursionError
-raised while decoding is still refused as a second layer.
+Output and exit status:
+  0: every check holds; a line of counts, then a last line that starts "OK:".
+  1: an inconsistency; 1 line "FAIL <tag>: ..." for each, a line of counts,
+     and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for
+     1).
+  3: the gate could not make its checks: on standard error, 1 cause line and
+     a last line "UNREADABLE: exit 3". The causes: an input file that is
+     missing, that the walk rules refuse, that is not a regular file or not
+     UTF-8, that json.loads refuses (NaN, Infinity and -Infinity among
+     them), that nests arrays and objects more than MAX_JSON_DEPTH levels
+     deep, that repeats a key in a JSON object, or that is not a JSON object;
+     a source folder the operating system will not let the gate reach or list
+     for a cause other than a missing or too long name; an extractor that
+     raises an exception of any class while it loads, or lacks a VERSION_LINE
+     or a SKILL_VERSION pattern of text whose group 1 holds the version; and
+     any other exception, of any class, that reaches main.
+  Every line goes through emit, which writes each character that
+  str.isprintable refuses as its Python backslash escape, so each line the
+  gate prints is 1 line. A message whose __str__ raises an exception of any
+  class is shown by a stand-in. What the extractor writes to sys.stdout or
+  sys.stderr while it loads is dropped.
+
+Residual: the gate does not ask git which files are tracked and does not run
+the Claude Code CLI. The extractor is code the gate runs: a write of it to a
+file descriptor or to sys.__stdout__ is not confined. A file swapped between
+the walk and the open is met by O_NOFOLLOW and the check after the open,
+which no case reaches. An exception raised while the gate writes to standard
+error is not caught.
 
 Usage: python3 -I tools/check-plugin-distribution.py
-Exit status: 0 when every check passes, with a last line that starts "OK:";
-1 when a check finds an inconsistency, with 1 line "FAIL <tag>: ..." for each
-and a last line "FAIL: <n> inconsistencies" ("FAIL: 1 inconsistency" for 1).
-Each inconsistency is 1 line whatever the input: every line the gate prints,
-on standard output and on standard error, writes each character that
-str.isprintable refuses (a line break, another control character or a lone
-surrogate) as its Python backslash escape, so no path, name or message of an
-input can split a line or start one.
-A value of an unexpected JSON type that the gate reads inside a JSON object,
-such as a plugin entry name that is an array or an object, is such an
-inconsistency, never a traceback. A SKILL.md whose first Version: line is
-missing or is not a bare X.Y.Z is such an inconsistency: the versions check
-fails with exit 1. 3 when an input cannot be read: a file that is missing,
-spelled otherwise than its folder lists it, reached through a symlink, not
-a regular file, not UTF-8, not JSON, nested more than MAX_JSON_DEPTH levels
-deep or too deeply for the interpreter to decode, not a JSON object, or that
-repeats a key; a component of a relative source that the operating system
-will not let the gate reach, or a folder on its way that it will not let the
-gate list, for a cause other than a missing or too long name, such as a
-denied permission; or an
-extractor that cannot be used, because it raises any exception while it
-loads (any BaseException, SystemExit and KeyboardInterrupt among them, also
-one whose message cannot be shown), lacks a VERSION_LINE or SKILL_VERSION
-pattern of text, has a SKILL_VERSION pattern with no group 1, or has one
-whose group 1 takes no part in its match of the first Version: line. The
-cause goes to standard error, in 1 line, with a last line
-"UNREADABLE: exit 3". Any other exception that stops the gate, of any
-class (KeyboardInterrupt and SystemExit among them, and one whose message
-cannot be shown), exits 3 the same way, with the cause "the gate stopped
-on <class>: <message>", never with a traceback and never with exit 1.
-What the extractor writes to sys.stdout or sys.stderr
-while it loads is dropped, so it adds no line to the gate's output. The
-gate fails closed: it never passes a check it could not make.
-
-Residual: the gate reads the files as they are on disk; it does not ask git
-which files are tracked, and it does not run the Claude Code CLI, whose own
-reading of the manifests the pinned Plugin manifests job checks. The
-extractor is code that the gate runs: code in it that writes to a file
-descriptor directly, or to sys.__stdout__, is not confined. An exception
-raised while the gate writes its cause to standard error, such as on a
-closed standard error, is not caught, since no stream is left to report it.
 """
 
 from __future__ import annotations
@@ -198,8 +142,8 @@ def _reject_constant(token: str):
 
 
 def one_line(text: str) -> str:
-    """text with each character that str.isprintable refuses, such as a line break, another control
-    character or a lone surrogate, written as its Python backslash escape, so the text is 1 line."""
+    """text with each character that str.isprintable refuses written as its Python backslash escape,
+    so the text is 1 line."""
     return "".join(char if char.isprintable() else repr(char)[1:-1] for char in text)
 
 
@@ -208,14 +152,17 @@ def emit(line: str, stream=None) -> None:
     print(one_line(line), file=stream)
 
 
-def described(error: BaseException) -> str:
-    """The name of the exception's type and its message, or a stand-in when the message cannot be
-    shown, since an exception that the extractor or the gate raises can be of any type."""
+def shown(error: BaseException) -> str:
+    """The message of the exception, or a stand-in when its __str__ raises an exception of any class."""
     try:
-        text = str(error)
+        return str(error)
     except BaseException:
-        text = "(a message that cannot be shown)"
-    return f"{type(error).__name__}: {text}"
+        return "(a message that cannot be shown)"
+
+
+def described(error: BaseException) -> str:
+    """The name of the exception's type and its message as shown gives it."""
+    return f"{type(error).__name__}: {shown(error)}"
 
 
 def walk(rel: str) -> Path:
@@ -307,7 +254,7 @@ def load_json(rel: str) -> dict:
     except RecursionError as error:
         raise Unreadable(f"{rel} is nested too deeply to decode: the decoder raised RecursionError") from error
     except ValueError as error:
-        raise Unreadable(f"{rel} is not valid JSON: {error}") from error
+        raise Unreadable(f"{rel} could not be decoded as JSON: {error}") from error
     if not isinstance(data, dict):
         raise Unreadable(f"{rel} is not a JSON object")
     return data
@@ -595,7 +542,7 @@ def main() -> int:
     try:
         return run()
     except Unreadable as error:
-        cause = str(error)
+        cause = shown(error)
     except BaseException as error:
         # Whatever else stops the gate, of any class, it could not make its checks: exit 3, never a
         # traceback and never exit 1, which means an inconsistency found.

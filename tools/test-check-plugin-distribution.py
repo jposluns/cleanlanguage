@@ -1,143 +1,19 @@
 #!/usr/bin/env python3
 """Tests for tools/check-plugin-distribution.py.
 
-Each case builds a temporary tree that holds the files the gate reads, points
-the gate's REPO_ROOT at it, as tools/test-agent-plugin-manifest.py points that
-gate's paths at a fixture, and runs the gate's main; 1 case instead runs a
-copy of the gate in the tree as a command, through subprocess. The
-conforming tree must pass, also with a byte-order mark before a JSON file;
-each case then changes 1 thing. Every case requires the exit status and the
-last line: "OK:" for exit 0, "FAIL: " for exit 1 and "UNREADABLE: exit 3" on
-standard error for exit 3. Every case that expects a failure also requires
-its text, with the tag of its check as the gate's CHECKS holds it, except 2
-cases that require of their failure only the exact last line: the count line
-for 1 and for 2 inconsistencies, and "UNREADABLE: exit 3".
+The gate's docstring states its behaviour; this docstring does not list the
+cases, whose names and comments say what each sets up.
 
-Every case that runs the gate's main through expect, and the command case,
-also requires the lines of the exit status, split at every line break that
-str.splitlines knows: for exit 1, 1 line "FAIL <tag>: " under 1 of the 4
-tags for each inconsistency the count line names, then the line of counts
-and the count line; for exit 0, the line of counts and the "OK:" line; for
-exit 3, nothing on standard output, and on standard error the cause and
-"UNREADABLE: exit 3". A main that lets any exception escape fails the case.
-Loading the gate must not run it: a gate that raises, or runs its main,
+Each case of PluginDistributionTest starts from a temporary tree that holds
+the files the gate reads and a copy of the real tools/skill-version.py, with
+the gate's REPO_ROOT pointed at it. expect runs the gate's main and requires
+the exit status, each text given and the lines of that status (assert_lines).
+test_gate_runs_as_a_command runs a copy of the gate as a command, and
+RepositoryTreeTest runs the gate on the repository itself. The permission
+cases are skipped when the test runs as root.
+
+Loading the gate must print nothing and raise nothing; a gate that does either
 while this test loads it stops the test with exit 1 before any case runs.
-A symlinked source, .claude-plugin folder or manifest, a version that is
-not a string and an empty version each require exactly 1 inconsistency, so
-a refusal that adds a second line for the same fault fails.
-
-- The names check fails on: the marketplace named jposluns; a plugin entry
-  name that differs from the manifest name; a second plugin entry or none; a
-  Claude or Agent Plugins manifest name or a site key that differs; a vendored
-  entry named unlike the manifest it reaches; a marketplace name that is
-  missing or empty; a marketplace name or a plugin entry name, in each
-  marketplace, that starts with each reserved prefix, in lower case, upper
-  case and title case, and with "anthropics-" spelled with a long s; each
-  name and the site key that differ from cleanlanguage only in letter case;
-  and, with the FAIL lines and the count line and no traceback, a plugin
-  entry name that is an array or an object, a marketplace name that is an
-  array where a qualified dependency reads it, and a manifest name that is
-  an array where its entry and its own dependencies read it; a plugin
-  name listed twice in the repository's marketplace and in the vendored
-  one, there also in another letter case; in the vendored one, a
-  marketplace name with a reserved prefix and a plugin name listed twice
-  that are equal only under Unicode case folding (a long s); and, with no
-  traceback, a repository marketplace whose plugins list is missing or is
-  an object, or whose 1 entry is a string. 2 vendored entries named "" are
-  2 names that are not names, and neither is a plugin listed twice.
-- The sources check fails on: a missing source folder; a source with a "..",
-  a "." or an empty component, the "." and the empty component in each
-  marketplace; a source with a NUL character or with a character the file
-  system encoding cannot hold, in each marketplace; a source with a
-  component too long for the file system, in each marketplace; a source in
-  each marketplace, a .claude-plugin folder or a manifest file name,
-  spelled in another letter case on a file system that folds letter case,
-  which the case imitates by giving the gate an os.lstat, an os.open and
-  an os.listdir that fold letter case; a source without "./", an entry
-  with no source and an object source, in each marketplace; a source that
-  is a file; a manifest that is a directory; a symlinked source folder, a
-  symlinked .claude-plugin folder or a symlinked manifest; a marketplace
-  with no plugins list or with an entry that is not an object; and a source of the
-  repository's entry that reaches another plugin or a copy of this one.
-- The versions check fails on: a version that differs in the Claude
-  manifest, the Agent Plugins manifest, the SKILL.md Version: line or a
-  marketplace entry; a version that is missing, empty or not a string; a
-  SKILL.md with no Version: line; and a SKILL.md whose first Version: line
-  is not a bare X.Y.Z, alone or before a valid one. It passes on a SKILL.md
-  whose lines end in CR LF or in a lone CR, and on a vendored entry whose
-  version differs, is not a string or is empty, since those versions are
-  not read.
-- The dependencies check fails on: a dependency that names no plugin of its
-  marketplace, is qualified with another marketplace or with an empty one
-  (a name and "@" alone), or names the plugin itself, from an entry and from
-  a plugin manifest of each marketplace, the plugin itself also from the
-  repository's entry as a bare and as a qualified name; on a plugin that 1
-  list names twice, from an entry and from a plugin manifest of each
-  marketplace, as the same bare name, as a bare and a qualified name, or as
-  a qualified and a bare name; on dependencies that are not a list, a JSON
-  null in a marketplace entry and in a plugin manifest of each marketplace
-  among them; and on a dependency that is not a name, an object or an
-  empty string, from an entry and from a plugin manifest of each
-  marketplace.
-  Dependencies that
-  resolve pass, among them 2 that a plugin entry holds on 2 other plugins of
-  its marketplace, and 3 lists that each name the same plugin once.
-- Exit 3 holds for: a repeated JSON key; a missing file; a file that is not a
-  regular file; an input folder that is a file; an input file and a source
-  folder that deny permission; an
-  input folder and a source folder that can be searched but not listed
-  (mode 0111); NaN; JSON nested 1 level deeper than the gate's bound of 64, which every
-  supported Python decodes, in arrays and in objects, while JSON at the
-  bound passes, in arrays with escaped quotes and brackets inside a string
-  and in objects, and so does JSON nested 3 levels deep that holds more
-  than 64 arrays, or more than 64 objects, in all; a JSON file that is not
-  an object; a file or a SKILL.md that is not UTF-8; a symlinked input file
-  or input folder; an input folder and an input file name spelled in
-  another letter case on a file system that folds letter case, imitated as
-  above; and an extractor that is missing, symlinked, raises an exception,
-  SystemExit, BaseException, GeneratorExit or KeyboardInterrupt while it
-  loads, also an exception whose message holds a line break or cannot be
-  shown, lacks VERSION_LINE or SKILL_VERSION, holds
-  either as a pattern of bytes, has a SKILL_VERSION with no group 1, or has
-  one whose group 1 takes no part in its match. What an extractor prints to
-  standard output and standard error while it loads is not in the output.
-  An exception raised in the gate itself, outside the extractor, also gives
-  exit 3 with 1 cause line and no traceback: a TypeError, a BaseException,
-  KeyboardInterrupt and SystemExit, also one whose message holds a line
-  break or cannot be shown. A missing input file gives its exact cause
-  line. An OSError with no strerror, as one built by hand has, raised by
-  os.lstat, os.listdir or os.open on an input or by os.fstat or os.read
-  while one is read, and by os.lstat or os.listdir on a source folder, is
-  shown by its message, and an input/output error while an input is read
-  by its strerror, which the case imitates by giving the gate an os whose
-  1 function raises it; with the errno of a name too long, on a source
-  folder, an OSError with no strerror is a failure of the sources check,
-  exit 1.
-- A line break in a path or a name is written as an escape on its line, at
-  each place one enters a line of output: a missing source in each
-  marketplace, with each of LF, CR, VT, NEL and U+2028; a source that is a
-  file, a symlinked source, a source in another letter case, a source of
-  the repository's entry that reaches another manifest, the manifest path
-  of a names failure and of a dependencies failure, and a source folder
-  that denies permission or cannot be listed (on standard error); and a
-  marketplace name, a name with a reserved prefix, a version, a dependency
-  and the marketplace name a qualified dependency reads.
-- Run as a command, the gate exits 0, 1 and 3 with the same last lines, and
-  a missing source whose path holds a line break and a lone surrogate gives
-  1 FAIL line, with both written as escapes.
-- The count lines read "1 relative source", "1 dependency" and "FAIL: 1
-  inconsistency" for 1, and the plural for 0 and for more than 1.
-
-A last case runs the gate on the repository itself and requires exit 0 and a
-last line "OK:", so this test fails while the repository's own names,
-sources, versions or dependencies disagree.
-
-The permission cases, those of mode 0111 among them, need a user whose
-permissions the file system enforces, so they are skipped when the test
-runs as root.
-
-The SKILL.md version is read by a copy of the real tools/skill-version.py in
-each tree, which the gate reaches from REPO_ROOT like every other file.
 
 Usage: python3 -I tools/test-check-plugin-distribution.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -145,6 +21,7 @@ Exit status: 0 when every case passes, 1 otherwise.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import errno
 import importlib.util
@@ -176,12 +53,17 @@ BROKEN = "h\nFAIL D9: k"
 BROKEN_SHOWN = "h\\nFAIL D9: k"
 spec = importlib.util.spec_from_file_location("check_plugin_distribution", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
+_loaded = io.StringIO()
 try:
-    spec.loader.exec_module(gate)
+    with contextlib.redirect_stdout(_loaded), contextlib.redirect_stderr(_loaded):
+        spec.loader.exec_module(gate)
 except BaseException as error:
-    # A gate that runs its main when it is loaded, or cannot be loaded, would end this test before any
-    # case runs, with the gate's own exit status; stop with exit 1 instead.
+    # A gate that raises while it loads would end this test before any case runs, with the gate's own
+    # exit status; stop with exit 1 instead.
     raise SystemExit(f"loading {MODULE_PATH} raised {type(error).__name__}: {error}") from None
+if _loaded.getvalue():
+    # The gate's main prints at least 2 lines, so a gate that runs it while it loads prints.
+    raise SystemExit(f"loading {MODULE_PATH} printed {_loaded.getvalue()!r}")
 
 VERSION = "1.0.15"
 
@@ -308,8 +190,8 @@ class PluginDistributionTest(unittest.TestCase):
 
     def assert_lines(self, code: int, out: str, err: str):
         """The lines of each exit status, split as str.splitlines splits them, at every line break
-        Python knows: for exit 1, 1 "FAIL <tag>: " line under a tag of TAGS for each inconsistency
-        the count line names, then the count line and that line; for exit 0, the count line and the
+        Python knows: for exit 1, 1 "FAIL <tag>: " line under a tag of TAGS that the gate's CHECKS
+        holds, for each inconsistency the count line names, then the count line and that line; for exit 0, the count line and the
         "OK: " line; for exit 3, nothing on standard output and 2 lines on standard error."""
         lines, problems = out.splitlines(), err.splitlines()
         if code == 3:
@@ -330,6 +212,7 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertTrue(failures, out + err)
         for line in failures:
             self.assertTrue(line.startswith(tuple(f"FAIL {tag}: " for tag in TAGS)), f"{line!r}\n{out}")
+            self.assertIn(line[len("FAIL "):].split(":")[0], gate.CHECKS, f"{line!r}\n{out}")
         noun = "inconsistency" if len(failures) == 1 else "inconsistencies"
         self.assertEqual(lines[-1], f"FAIL: {len(failures)} {noun}", out + err)
 
@@ -390,10 +273,17 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(1, "FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source './absent' does not "
                        "resolve: plugin/absent is missing")
 
-    def test_source_with_dotdot_fails_d2(self):
-        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(source="./x/../cleanlanguage"))
-        self.expect(1, "FAIL D2: .claude-plugin/marketplace.json plugins[0].source './x/../cleanlanguage' has an "
-                       "empty, '.' or '..' component")
+    def test_source_with_dotdot_in_each_marketplace_fails_d2(self):
+        for rel, folder in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
+            source = f"./x/../{folder}"
+            with self.subTest(rel=rel):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, lambda d: d["plugins"][0].update(source=source))
+                try:
+                    self.expect(1, f"FAIL D2: {rel} plugins[0].source '{source}' has an empty, '.' or '..' "
+                                   "component", "1 relative source resolved", count=1)
+                finally:
+                    (self.root / rel).write_bytes(saved)
 
     def test_symlinked_source_fails_d2(self):
         os.symlink(self.root / "cleanlanguage", self.root / "linked")
@@ -553,8 +443,11 @@ class PluginDistributionTest(unittest.TestCase):
                        "a plugin name")
 
     def test_nan_exits_3(self):
-        self.write_text(gate.SITE_JSON, '{"schema": NaN, "site_key": "cleanlanguage"}\n')
-        self.expect(3, "site-src/site.json is not valid JSON: non-standard JSON constant 'NaN'")
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                self.write_text(gate.SITE_JSON, '{"schema": ' + constant + ', "site_key": "cleanlanguage"}\n')
+                self.expect(3, f"site-src/site.json could not be decoded as JSON: non-standard JSON constant "
+                               f"{constant!r}")
 
     def test_json_that_is_not_an_object_exits_3(self):
         self.write_text(gate.AGENT_MANIFEST, '["cleanlanguage"]\n')
@@ -573,8 +466,6 @@ class PluginDistributionTest(unittest.TestCase):
         (self.root / gate.SITE_JSON).rename(target)
         os.symlink(target, self.root / gate.SITE_JSON)
         self.expect(3, "site-src/site.json could not be read: the component 'site.json' is a symlink")
-
-    # Cases for docstring claims that the cases above did not hold.
 
     def test_each_reserved_prefix_fails_d1(self):
         for prefix in RESERVED_PREFIXES:
@@ -670,8 +561,6 @@ class PluginDistributionTest(unittest.TestCase):
                     finally:
                         (self.root / rel).write_bytes(saved)
 
-    # The extractor: reached from REPO_ROOT, and exit 3 when it cannot be used.
-
     def test_extractor_without_a_pattern_exits_3(self):
         for name in ("VERSION_LINE", "SKILL_VERSION"):
             with self.subTest(name=name):
@@ -681,8 +570,8 @@ class PluginDistributionTest(unittest.TestCase):
                                "pattern of text")
 
     def test_extractor_raising_while_it_loads_exits_3(self):
-        # Any BaseException, and a message that holds a line break or cannot be shown, which the cause
-        # line must hold on 1 line.
+        # BaseException and 5 of its subclasses, among them 1 message that holds a line break and 1
+        # that cannot be shown; the cause line holds each on 1 line.
         unshowable = ("class Unshowable(Exception):\n    def __str__(self):\n        raise ValueError('no text')\n"
                       "raise Unshowable()")
         for statement, shown in (("raise RuntimeError('broken')", "RuntimeError: broken"),
@@ -698,8 +587,8 @@ class PluginDistributionTest(unittest.TestCase):
                 self.expect(3, f"the extractor tools/skill-version.py could not be loaded: {shown}")
 
     def test_any_exception_in_the_gate_exits_3_on_1_line(self):
-        # An exception raised in the gate itself, not in the extractor, of any class, also with a message
-        # that holds a line break or cannot be shown: exit 3 and 1 cause line, never a traceback.
+        # An exception raised in the gate itself, not in the extractor: BaseException and 4 of its
+        # subclasses, 2 messages with a line break and 1 that cannot be shown; exit 3 and 1 cause line.
         class Unshowable(Exception):
             def __str__(self):
                 raise ValueError("no text")
@@ -724,16 +613,12 @@ class PluginDistributionTest(unittest.TestCase):
         os.symlink(path.with_name("real-skill-version.py"), path)
         self.expect(3, "tools/skill-version.py could not be read: the component 'skill-version.py' is a symlink")
 
-    # The reserved prefixes in another letter case.
-
     def test_reserved_prefix_in_any_case_fails_d1(self):
         for name in ("Claude-x", "ANTHROPIC-x", "Anthropics-x", "CC-Plugin-x"):
             with self.subTest(name=name):
                 self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(name=name))
                 self.expect(1, f"FAIL D1: plugin/.claude-plugin/marketplace.json name '{name}' starts with a "
                                "reserved prefix")
-
-    # The count lines for 1 and for more than 1.
 
     def test_count_lines_read_for_1(self):
         # An empty vendored list resolves no source and is no failure; the 1 dependency is the 1 failure.
@@ -751,9 +636,6 @@ class PluginDistributionTest(unittest.TestCase):
             dependencies=["aiqt-skill", "aiqt-docs@aiqt-guardrails"]))
         output = self.expect(0)
         self.assertIn("check-plugin-distribution: 4 relative sources resolved, 2 dependencies read\n", output)
-
-    # A value of an unexpected JSON type, at each place the gate reads one: the FAIL lines and the
-    # count line, never a traceback.
 
     def test_entry_name_that_is_an_array_fails_d1(self):
         # Read by the names check, by the reach check and by the dependencies check's set of names.
@@ -787,9 +669,6 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(1, "FAIL D1: plugin/.claude-plugin/marketplace.json plugins[0].name is 'aiqt-guardrails-hooks', "
                        "but the manifest its source reaches, plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, "
                        "is named ['x']", "1 dependency read")
-
-    # Cases for mutants that the cases above let pass, for a plugin that depends on itself and for a
-    # dependency listed twice.
 
     def test_project_name_in_another_letter_case_fails_d1(self):
         for rel, key, label in ((gate.MARKETPLACE, "name", ".claude-plugin/marketplace.json name"),
@@ -879,9 +758,6 @@ class PluginDistributionTest(unittest.TestCase):
                     finally:
                         (self.root / rel).write_bytes(saved)
 
-    # Cases for a "." component, an unusable source, a null dependency list, the depth count, the scope
-    # of the repeated-dependency check, denied permissions and the command-line entry point.
-
     def test_source_with_dot_component_fails_d2(self):
         for rel, folder in ((gate.MARKETPLACE, "cleanlanguage"), (gate.VENDORED_MARKETPLACE, "aiqt-guardrails-hooks")):
             for source in (f"././{folder}", f"./{folder}/."):
@@ -934,9 +810,6 @@ class PluginDistributionTest(unittest.TestCase):
         siblings = ", ".join(["[]"] * (MAX_JSON_DEPTH + 6))
         self.write_text(gate.SITE_JSON, '{"schema": 1, "site_key": "cleanlanguage", "deep": [' + siblings + "]}\n")
         self.expect(0, "OK: D1 to D4 hold")
-
-    # Cases for objects beside the arrays above, a plugin name listed twice and a file system that
-    # folds letter case.
 
     def test_many_sibling_objects_within_the_depth_bound_pass(self):
         # The same with objects: each closing brace lowers the count, as each closing bracket does.
@@ -1047,10 +920,6 @@ class PluginDistributionTest(unittest.TestCase):
         with self.denied("plugin/aiqt-guardrails-hooks"):
             self.expect(3, "plugin/aiqt-guardrails-hooks/.claude-plugin could not be read: Permission denied")
 
-    # Cases for a folder that can be searched but not listed, a malformed first Version: line, a final
-    # file name in another letter case, names equal only under case folding, a dependency listed twice
-    # in the repository's marketplace and an extractor pattern with no usable group 1.
-
     def test_source_folder_that_cannot_be_listed_exits_3(self):
         # Mode 0111: os.lstat reaches the .claude-plugin folder inside, but os.listdir of the folder fails.
         with self.denied("plugin/aiqt-guardrails-hooks", 0o111):
@@ -1125,10 +994,6 @@ class PluginDistributionTest(unittest.TestCase):
                 shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
                 self.edit_extractor(old, new)
                 self.expect(3, f"the extractor tools/skill-version.py could not be used: {shown}")
-
-    # Cases for an extractor that writes while it loads, a line break at each place a path or a name
-    # enters a line of output, the rules of the names, sources and dependencies checks in each place
-    # they apply, the line endings of SKILL.md and the versions of vendored entries.
 
     def test_extractor_output_while_it_loads_is_dropped(self):
         self.edit_extractor('PROG = "skill-version"\n', 'PROG = "skill-version"\nimport sys\nprint("FAIL D9: forged")\n'
@@ -1347,6 +1212,72 @@ class PluginDistributionTest(unittest.TestCase):
             with self.subTest(version=version):
                 self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"][0].update(version=version))
                 self.expect(0, "OK: D1 to D4 hold")
+
+    def test_one_line_escapes_every_character_str_isprintable_refuses(self):
+        # Every code point: one str.isprintable accepts is kept, any other is written as its backslash
+        # escape, and the result is printable, so it is 1 line.
+        wrong = []
+        for point in range(sys.maxunicode + 1):
+            char = chr(point)
+            want = char if char.isprintable() else repr(char)[1:-1]
+            got = gate.one_line(f"a{char}b")
+            if got != f"a{want}b" or not got.isprintable():
+                wrong.append(hex(point))
+        self.assertEqual(wrong, [])
+
+    def test_every_line_is_printed_through_emit(self):
+        # No print call and no write or writelines call outside emit, which prints through one_line.
+        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+        emit = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "emit")
+        inside = {id(node) for node in ast.walk(emit)}
+        outside = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and id(node) not in inside
+                   and ((isinstance(node.func, ast.Name) and node.func.id == "print")
+                        or (isinstance(node.func, ast.Attribute) and node.func.attr in ("write", "writelines")))]
+        self.assertEqual(outside, [])
+
+    def test_message_that_cannot_be_shown_exits_3_on_1_line(self):
+        # A message whose __str__ raises ValueError, KeyboardInterrupt or SystemExit, in an exception
+        # that stops the gate and in a refusal of the gate.
+        for raised in (ValueError, KeyboardInterrupt, SystemExit):
+            class Unshowable(Exception):
+                def __str__(self, raised=raised):
+                    raise raised("no text")
+
+            for error, cause in ((Unshowable(), "the gate stopped on Unshowable: (a message that cannot be shown)"),
+                                 (gate.Unreadable(Unshowable()), "(a message that cannot be shown)")):
+                with self.subTest(raised=raised.__name__, error=type(error).__name__):
+                    with mock.patch.object(gate, "check_versions", side_effect=error):
+                        self.expect(3, f"check-plugin-distribution: {cause}\nUNREADABLE: exit 3\n")
+
+    def test_entry_version_that_is_null_fails_d3(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"][0].update(version=None))
+        self.expect(1, "FAIL D3: .claude-plugin/marketplace.json plugins[0].version is None, not a version", count=1)
+
+    def test_dependency_in_another_letter_case_fails_d4(self):
+        # In another letter case a dependency names no plugin, also where it would name the plugin itself.
+        self.add_vendored("aiqt-skill")
+        for rel, dep, label, market in (
+                (gate.VENDORED_MARKETPLACE, "AIQT-SKILL", "plugin/.claude-plugin/marketplace.json plugins[0]",
+                 "aiqt-guardrails"),
+                (gate.MARKETPLACE, "CleanLanguage", ".claude-plugin/marketplace.json plugins[0]", "cleanlanguage")):
+            with self.subTest(dep=dep):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, lambda d: d["plugins"][0].update(dependencies=[dep]))
+                try:
+                    self.expect(1, f"FAIL D4: {label} dependency {dep!r} names no plugin of the marketplace "
+                                   f"{market!r}", count=1)
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
+    def test_count_lines_read_for_0(self):
+        self.edit_json(gate.MARKETPLACE, lambda d: d.update(plugins=[]))
+        self.edit_json(gate.VENDORED_MARKETPLACE, lambda d: d.update(plugins=[]))
+        self.expect(1, "check-plugin-distribution: 0 relative sources resolved, 0 dependencies read\n")
+
+    def test_json_the_decoder_refuses_exits_3(self):
+        # Valid JSON past a limit of the decoder: an integer of 5000 digits.
+        self.write_text(gate.SITE_JSON, '{"schema": ' + "9" * 5000 + ', "site_key": "cleanlanguage"}\n')
+        self.expect(3, "check-plugin-distribution: site-src/site.json could not be decoded as JSON: ")
 
     def test_gate_runs_as_a_command(self):
         # A copy of the gate in the tree, so its REPO_ROOT is the tree, run as CI runs it.
