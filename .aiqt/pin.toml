@@ -56,7 +56,7 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 
 [hooks-update]
 # 2026-09-12: the enforcement hooks were advanced from the v1.0.0 baseline to guardrails
-# round-2 (PR #232, merged as fa5f942) - the no-ask posture conversion plus git_discard /
+# PR #232 (merged as fa5f942) - the no-ask posture conversion plus git_discard /
 # wrtscp / cnsdif hardening. This is a SCOPED, hooks-only advance: the rule corpus and
 # everything else remain at v1.0.0. The [integrity] tree-sha256 above (9dbbe17c) therefore
 # describes the v1.0.0 baseline and NO LONGER matches the working tree; the per-file hashes
@@ -69,7 +69,7 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # manifest. hooks.json UNCHANGED (these change hook logic, not registrations). Still a SCOPED
 # hooks-only advance; the orchestrator suite stays inert (no registry). Adopted per maintainer
 # decision 2026-09-13 (32-adopt, option C sequenced, Step 1). Prior advance: 2026-09-12 PR #232
-# fa5f942 (round-2 hardening).
+# fa5f942 (the no-ask posture conversion and hardening).
 advanced = "2026-09-13"
 source-commit = "2eb6812c" # guardrails main PR #233; file == upstream HEAD 0510edd
 files = [

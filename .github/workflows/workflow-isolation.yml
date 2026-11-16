@@ -20,8 +20,20 @@ name: Workflow launch isolation
 # tools/*.py script refers to sys.path, sys.meta_path, sys.path_hooks or
 # sys.path_importer_cache or imports site, and the sixth runs
 # tools/test-action-pins.py, which checks that every uses in the workflows is
-# pinned to a full 40-character commit. Each of those 2 files holds its gate's
-# scope and residuals.
+# pinned to a full 40-character commit. The seventh runs
+# tools/test-run-all-checks.py, which checks that each run text it reads in
+# the workflows it selects is a command line of tools/run_all_checks.sh or one
+# of the exceptions that the test lists, for each of which the script runs
+# another command line in its place, and that the script gives no command line
+# a pipe as its standard output or standard error and fails when a command
+# line fails, though it reads the output of some commands through command
+# substitutions, which are pipes. It selects the workflows that a pull request
+# or a push to main triggers. It also selects a class of workflows whatever
+# their push filters match, such as one whose branches hold a pattern, one
+# whose branches-ignore holds a pattern that excludes main and one whose push
+# trigger holds only tags-ignore; its docstring names that class as a safe
+# failure where neither a pull request nor a push to main triggers such a
+# workflow. Each of those 3 files holds its gate's scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -79,3 +91,7 @@ jobs:
       - name: Check that every uses in the workflows is pinned to a full 40-character commit
         shell: bash
         run: python3 -I tools/test-action-pins.py
+
+      - name: Check that tools/run_all_checks.sh covers the workflow run text that its test reads and fails when a command line fails
+        shell: bash
+        run: python3 -I tools/test-run-all-checks.py
