@@ -694,27 +694,56 @@ class StopFamilySurface(HookHarness):
 
 
 # =====================================================================================================
-# 10. Citations of a whole hook function in this file
+# 10. Citations of a whole hook function in the tools files
 # =====================================================================================================
 class WholeFunctionCitations(unittest.TestCase):
-    """Each function of the vendored hook that a comment of this file cites as a whole must be cited
-    once, by the range from its def line to its last line, so a re-pin that moves or lengthens it fails
-    here until the citation follows. The citation reads `name` at A-B, with or without
-    aiqt_hooks.py: or a bare colon before A."""
+    """Each function of the vendored hook that a comment or docstring of a tools file cites as a whole
+    must be cited once in that file, by the range from its def line to its last line, so a re-pin that
+    moves or lengthens it fails here until the citation follows. The citation reads `name` at A-B, with
+    or without aiqt_hooks.py: or a bare colon before A. A citation in a tools file whose range is the
+    whole of a hook function must be listed in WHOLE, so a new one is checked too."""
 
-    WHOLE = ("_deny", "_orch_record_forced_exit")
+    WHOLE = (
+        ("check-orchestration-registry.py", "_v_finite_pos"),
+        ("orch-enumerate-backlog.py", "_orch_enumerate"),
+        ("test-orch-enumerate-backlog.py", "_orch_enumerate"),
+        ("test-orch-stage1-hooks.py", "_deny"),
+        ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"),
+        ("test-orch-stage2-hooks.py", "_orch_chained_rows"),
+        ("test-orch-stage2-hooks.py", "_orch_pointer_resolves"),
+        ("test-orch-stage2-hooks.py", "_orch_resume_probes"),
+    )
+    CITATION = r"`{}` at (?:aiqt_hooks\.py)?:?(\d+)-(\d+)"
+
+    @staticmethod
+    def _ranges():
+        tree = ast.parse(HOOK.read_text(encoding="utf-8"))
+        return {node.name: (node.lineno, node.end_lineno) for node in tree.body
+                if isinstance(node, ast.FunctionDef)}
 
     def test_each_whole_function_citation_names_its_lines(self):
-        source = Path(__file__).read_text(encoding="utf-8")
-        tree = ast.parse(HOOK.read_text(encoding="utf-8"))
-        ranges = {node.name: (node.lineno, node.end_lineno) for node in tree.body
-                  if isinstance(node, ast.FunctionDef)}
-        for name in self.WHOLE:
-            with self.subTest(function=name):
+        ranges = self._ranges()
+        tools = Path(__file__).resolve().parent
+        for file_name, name in self.WHOLE:
+            with self.subTest(file=file_name, function=name):
                 self.assertIn(name, ranges, "the hook defines no function {}".format(name))
-                cited = re.findall(r"`" + re.escape(name) + r"` at (?:aiqt_hooks\.py)?:?(\d+)-(\d+)", source)
-                self.assertEqual(len(cited), 1, "{} must be cited exactly once: {}".format(name, cited))
+                source = (tools / file_name).read_text(encoding="utf-8")
+                cited = re.findall(self.CITATION.format(re.escape(name)), source)
+                self.assertEqual(len(cited), 1, "{} must be cited exactly once in {}: {}"
+                                 .format(name, file_name, cited))
                 self.assertEqual(tuple(int(n) for n in cited[0]), ranges[name])
+
+    def test_every_whole_function_citation_is_listed(self):
+        ranges = self._ranges()
+        listed = set(self.WHOLE)
+        for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            source = path.read_text(encoding="utf-8")
+            for match in re.finditer(self.CITATION.format(r"([A-Za-z_][A-Za-z0-9_]*)"), source):
+                name, first, last = match.group(1), int(match.group(2)), int(match.group(3))
+                if ranges.get(name) == (first, last):
+                    with self.subTest(file=path.name, function=name):
+                        self.assertIn((path.name, name), listed,
+                                      "a whole-function citation not listed in WHOLE")
 
 
 if __name__ == "__main__":

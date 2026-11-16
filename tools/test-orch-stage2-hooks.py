@@ -1258,13 +1258,12 @@ class Doctor(Stage2Harness):
                              "attestations-validated.json", "guard-events.jsonl")
     # The state files orch_resume_audit opens with a plain blocking open (guard-events.jsonl at 33020 and
     # `_orch_append_jsonl` at 22162, escape-spoof.json at 33212, forced-exit.jsonl at 33160 and
-    # `_orch_read_jsonl` at 22173, and forced-exit-surfaced.json at 33172), and the 2 old fixed
-    # temporary paths that the doctor still checks. The refreshed hook no longer opens those 2: its
-    # _orch_write_json_atomic, via 33191 and, with attestations declared, via 33124, opens a random
-    # <name>.<16 hex>.tmp at 22266-22267.
+    # `_orch_read_jsonl` at 22173, and forced-exit-surfaced.json at 33172). Its rewrites open no fixed
+    # temporary path: _orch_write_json_atomic, via 33191 and, with attestations declared, via 33124,
+    # opens a new random <name>.<16 hex>.tmp at 22266-22267, so the doctor checks neither old fixed
+    # path (test_resume_audit_ignores_the_old_fixed_temporary_paths).
     AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
-                         "forced-exit-surfaced.json", "forced-exit-surfaced.json.tmp",
-                         "attestations-validated.json.tmp")
+                         "forced-exit-surfaced.json")
 
     def _with_attestations(self, reg):
         # A declared attestations register, absent on disk (an open the hook raises on, never blocks
@@ -1284,8 +1283,8 @@ class Doctor(Stage2Harness):
         # Seed the state the hook needs to reach the open of name. The preview reads
         # guard-events.jsonl only past a snapshot open (`_orch_attestation_refs` at
         # aiqt_hooks.py:22934-22937) and a register open (`_orch_register_authority` at 32921-32924);
-        # the audit opens the surfaced set and its temporary file only for a forced-exit log that
-        # holds rows (`_orch_forced_exit_findings` at 33160-33169).
+        # the audit opens the surfaced set only for a forced-exit log that holds rows
+        # (`_orch_forced_exit_findings` at 33160-33169).
         if command == "preflight" and name == "guard-events.jsonl":
             self.seed_state("attestations-validated.json", {})
             Path(self._p("attestations.jsonl")).write_text("", encoding="utf-8")
@@ -1329,6 +1328,28 @@ class Doctor(Stage2Harness):
                 self.tearDown()
                 self.setUp()
                 self._assert_state_special_refused(name, "--resume-audit")
+
+    def test_resume_audit_ignores_the_old_fixed_temporary_paths(self):
+        # Contrast: the hook's _orch_write_json_atomic opens a new random <name>.<16 hex>.tmp with
+        # O_EXCL (aiqt_hooks.py:22266-22267), via 33124 for the attestation snapshot and via 33191
+        # for the surfaced set, so a FIFO at the old fixed attestations-validated.json.tmp or
+        # forced-exit-surfaced.json.tmp neither blocks the audit nor makes the doctor refuse it.
+        for name in ("attestations-validated.json.tmp", "forced-exit-surfaced.json.tmp"):
+            with self.subTest(name=name):
+                self.tearDown()
+                self.setUp()
+                reg, _marker = self._arm_writing_enumerator()
+                self.write_registry(self._with_attestations(reg))
+                self.set_items([item("42")])
+                self._seed_reach("forced-exit-surfaced.json", "--resume-audit")
+                path = self._make_state_fifo(name)
+                r = self._doctor_bounded("--resume-audit")
+                self.assertNotEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertNotIn("cannot evaluate", r.stdout)
+                self.assertNotIn("Traceback", r.stderr)
+                h = self.run_hook("orch_resume_audit", {})
+                self.assertEqual(h.returncode, 0, h.stdout + h.stderr)
+                self.assertTrue(path.is_fifo(), "the hook left the old fixed entry alone")
 
     def test_resume_audit_on_an_unreadable_registry_checks_its_state_files(self):
         # On an unreadable registry the hook appends to resume-barrier.json.unused beside the barrier
@@ -1941,9 +1962,6 @@ PRECHECK_SITES = {
         "modelled)",
         "_orch_register_authority 32921-32924 hold on a failed register open; "
         "anchor os.open 32962-32968 via _orch_validate_attestations 33097"),
-    "audit.snapshot_tmp": (
-        "--resume-audit", True, "attestations is declared",
-        "_orch_validate_attestations 33094, _orch_write_json_atomic 22266-22267 via 33124"),
     "audit.mistakes_register": (
         "--resume-audit", False, "mistakes_register is declared", "33132-33134, open 32876"),
     "audit.guard_events": (
@@ -1960,11 +1978,6 @@ PRECHECK_SITES = {
         "--resume-audit", True,
         "os.stat succeeds on forced-exit.jsonl and it is not empty (its rows are not modelled)",
         "_orch_read_jsonl 22173-22178, no rows return _orch_forced_exit_findings 33168-33169, open 33172"),
-    "audit.forced_exit_surfaced_tmp": (
-        "--resume-audit", True,
-        "as the surfaced set, and its os.stat raises nothing other than FileNotFoundError (fresh "
-        "rows are not modelled)",
-        "33174-33179, _orch_write_json_atomic 22266-22267 via 33191"),
     "audit_bad.unused": (
         "--resume-audit", False, "an unreadable registry; then always",
         "orch_resume_audit 33316-33317, open 22162"),
@@ -2011,8 +2024,6 @@ PRECHECK_CASES = [
     ("audit.attestations", "reach", "case_audit_register"),
     ("audit.attestations_anchor", "reach", "case_audit_anchor"),
     ("audit.attestations_anchor", "skip", "case_audit_anchor_without_register"),
-    ("audit.snapshot_tmp", "reach", "case_audit_snapshot_tmp"),
-    ("audit.snapshot_tmp", "skip", "case_audit_snapshot_tmp_undeclared"),
     ("audit.mistakes_register", "reach", "case_audit_mistakes"),
     ("audit.guard_events", "reach", "case_audit_guard_events"),
     ("audit.escape_spoof", "reach", "case_audit_escape_spoof"),
@@ -2020,9 +2031,6 @@ PRECHECK_CASES = [
     ("audit.forced_exit_surfaced", "reach", "case_audit_surfaced"),
     ("audit.forced_exit_surfaced", "skip", "case_audit_surfaced_without_log"),
     ("audit.forced_exit_surfaced", "skip", "case_audit_surfaced_with_empty_log"),
-    ("audit.forced_exit_surfaced_tmp", "reach", "case_audit_surfaced_tmp"),
-    ("audit.forced_exit_surfaced_tmp", "skip", "case_audit_surfaced_tmp_without_log"),
-    ("audit.forced_exit_surfaced_tmp", "skip", "case_audit_surfaced_tmp_behind_unopenable_set"),
     ("audit_bad.unused", "reach", "case_bad_registry_unused"),
     ("audit_bad.guard_events", "reach", "case_bad_registry_guard_events"),
 ]
@@ -2267,14 +2275,6 @@ class DoctorPrecheckSites(Stage2Harness):
         self._reg(attestations=self._at())
         return Path(self._at() + ".anchor"), None, self.AUDIT, {}
 
-    def case_audit_snapshot_tmp(self):
-        self._reg(attestations=self._at())
-        return self._sd("attestations-validated.json.tmp"), None, self.AUDIT, {}
-
-    def case_audit_snapshot_tmp_undeclared(self):
-        self._reg()
-        return self._sd("attestations-validated.json.tmp"), None, self.AUDIT, {}
-
     def case_audit_mistakes(self):
         self._reg(mistakes_register=self._p("mistakes.jsonl"))
         return Path(self._p("mistakes.jsonl")), None, self.AUDIT, {}
@@ -2304,25 +2304,6 @@ class DoctorPrecheckSites(Stage2Harness):
         self._reg()
         self._rows_file(self._sd("forced-exit.jsonl"), [])
         return self._sd("forced-exit-surfaced.json"), None, self.AUDIT, {}
-
-    def case_audit_surfaced_tmp(self):
-        self._reg()
-        self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
-        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
-
-    def case_audit_surfaced_tmp_without_log(self):
-        self._reg()
-        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
-
-    def case_audit_surfaced_tmp_behind_unopenable_set(self):
-        # A surfaced set that loops on itself: its open raises ELOOP, not FileNotFoundError, so the
-        # hook returns (`surfaced-set is unreadable` at 33176-33179) before the rewrite
-        # (`_orch_write_json_atomic` at 33191).
-        self._reg()
-        self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
-        surfaced = self._sd("forced-exit-surfaced.json")
-        os.symlink(surfaced.name, surfaced)
-        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
 
     def _bad_registry_state(self, name):
         (self.repo / ".aiqt").mkdir(exist_ok=True)

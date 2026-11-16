@@ -83,10 +83,14 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # The refreshed gate_weakening denies the 5 write-then-run commit probes of
 # tools/test-gate-weakening-probes.py, which the 2eb6812c hooks allowed; other write-then-run
 # forms, such as a script written under a quoted delimiter that sets core.hooksPath, or a
-# base64-decoded script, still get no decision where the script's path is absolute and git can
-# probe the directory that it names (review_workdir_hold denies the core.hooksPath script where
-# git cannot; bash_absolute_paths denies either script written with > to a relative path;
-# protected_line denies such a core.hooksPath script written under an unquoted delimiter).
+# base64-decoded script, still get no decision, on a branch and on a detached HEAD, where the
+# script's path is absolute and git can probe the directory that it names, inside the work tree
+# or not, and where either script is written to a relative path with >> or tee
+# (git_discard denies the core.hooksPath script when the command text also holds a word it reads
+# as a git verb that can lose work, such as branch, clean or reset in a directory name;
+# review_workdir_hold denies it where git cannot probe that directory; bash_absolute_paths
+# denies either script written with > to a relative path; protected_line denies such a
+# core.hooksPath script written under an unquoted delimiter).
 # The refreshed orch_truncation_guard denies a
 # here-document body that a shell runs with a bare & in it, as the 2eb6812c hooks did, and no
 # longer denies 80 here-document and open-quote rows of the extended decision-table run

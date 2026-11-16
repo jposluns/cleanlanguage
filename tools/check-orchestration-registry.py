@@ -811,8 +811,8 @@ def validate(path):
                   "check its path needs, would bind to an XDG-default state directory this gate never "
                   "sees; declare `state_dir` explicitly".format(key))
     # Cross-field collision: a declared record/lease path that lands ON or INSIDE
-    # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
-    # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:33315, 33324-33325), so
+    # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit replaces
+    # `<state_dir>/resume-barrier.json` UNCONDITIONALLY (aiqt_hooks.py:33315, 33324-33325), so
     # a record/lease path pointing into state_dir would be clobbered by that hook write (destructive, no
     # lease needed). The per-key checks above validate each path in isolation and cannot see this; this
     # runs ONLY when `state_dir` is declared and valid (execution reaches here only past its
@@ -903,10 +903,15 @@ def validate(path):
         #       record/lease file and a machine-state file the hooks write. os.path.realpath resolves symlinks
         #       but NOT hard links, the JSON cannot express a link, and the colliding derived file (e.g.
         #       <state_dir>/resume-barrier.json) does not exist at gate time, so no commit-time comparison can
-        #       see it. orch_resume_audit's barrier write is a direct truncating open(barrier, "w") with NO
-        #       S_ISREG guard (aiqt_hooks.py:33324, unlike the shared _wrtscp_read_json_artifact reader), so an
-        #       aliased record file is SILENTLY CLOBBERED, not denied. Precondition: write+search access to
-        #       state_dir (and, under fs.protected_hardlinks, to the record file) -- already store-defeating.
+        #       see it. orch_resume_audit's barrier write (aiqt_hooks.py:33324) goes through
+        #       _orch_barrier_write (33229), which creates a new temporary file beside the barrier and
+        #       os.replace()s it onto the barrier name, so it replaces the directory entry and does not write
+        #       through it: a record file hard-linked or symlinked AT the barrier name keeps its content (the
+        #       link is replaced, not followed). What stays open is a record/lease path that NAMES the barrier
+        #       file itself (a symlink or a later swap in a parent directory that makes the declared path
+        #       reach <state_dir>/resume-barrier.json): the hook's replace then lands on what the record path
+        #       reads, SILENTLY CLOBBERED, not denied. Precondition: write+search access to state_dir (and,
+        #       under fs.protected_hardlinks, to the record file) -- already store-defeating.
         # The Windows-spelling parity residual an earlier revision disclosed here is closed: every declared
         # path, every enumerator argv operand, and the escape path reject a backslash or a drive-letter
         # prefix (_is_windows_shaped), so no Windows-shaped spelling reaches the collision checks above.

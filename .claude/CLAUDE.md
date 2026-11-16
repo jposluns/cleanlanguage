@@ -10,7 +10,7 @@ The one priority ordering, decided in advance:
 
 **(Accuracy = Integrity = Quality = Trust) > Progress > Speed > Cost.**
 
-The 4 facets form one non-negotiable top tier, co-equal, with no ranking among
+The 4 facets form 1 non-negotiable top tier, co-equal, with no ranking among
 them. Below the top tier sit 3 throughput values, in order: Progress, then
 Speed, then Cost. When 2 dimensions conflict, the higher tier wins outright, and
 that call is made once, up front, so it never has to be re-argued under pressure.

@@ -176,14 +176,21 @@ does not deny every write-then-run commit that skips hooks. In hook runs on a br
 detached HEAD, a script written under a quoted delimiter that runs
 `git -c core.hooksPath=/dev/null commit` (or `/var/empty`), and a script decoded from base64
 and then run with bash, got no decision from any of the 19 Bash handlers when the script's
-path was absolute and git could probe the git identity of the directory that it names. When git
-could not, for a
+path was absolute and git could probe the git identity of the directory that it names, inside
+the work tree or outside any repository alike. `git_discard` (prsunc) denied the
+core.hooksPath script, on either HEAD and wherever its path pointed, when the command text also
+held a word that it reads as a git verb that can lose work, such as `branch`, `clean` or
+`reset` in a directory name of the path, since a heredoc and a redirection to a script are
+outside its closed allowlist grammar; it did not decide the base64 script, whose command text
+holds no git word. When git could not probe the directory, for a
 directory that git cannot enter, `review_workdir_hold` (rvwpin) failed closed and denied the
-core.hooksPath script, the only handler that did, and none decided the base64 script, whose
-command text holds no git word. With a relative script path, `bash_absolute_paths` (abspth)
-denied each of these scripts, the base64 one included, since the `>` that writes it is a
-truncating redirect to a relative target; a quoted-delimiter core.hooksPath script appended
-with `>>` to a relative path got no decision. The direct
+core.hooksPath script, the only handler that did, and none decided the base64 script. With a
+relative script path, `bash_absolute_paths` (abspth)
+denied each of these scripts written with `>`, the base64 one included, since `>` is a
+truncating redirect to a relative target. Written to a relative path by `>>` or `tee`, each
+got no decision, as with an absolute path: the core.hooksPath script appended with
+`cat >> FILE <<'EOF'` or written with `cat <<'EOF' | tee FILE > /dev/null`, and the base64
+script written with `base64 -d >> FILE` or `base64 -d | tee FILE > /dev/null`. The direct
 `git -c core.hooksPath=/dev/null commit` and
 `echo --no-verify | xargs git commit` forms get no decision from `gate_weakening`, as before
 the refresh; in runs on a branch and on a detached HEAD, `protected_line` (artbr1) denied
@@ -237,7 +244,7 @@ reach the lease file
 is in scope, so the scope-gated hooks fire. `orch_dispatch_ledger` records each background
 launch in `dispatch-ledger.jsonl`, and `orch_prompt_stamp` stamps each human prompt in
 `turn-state.json`, both under `state_dir`. `orch_stop_guard` and `orch_teammate_idle` share
-one decision core. With no AEI enumerator declared, a turn-end Stop in scope is denied on
+1 decision core. With no AEI enumerator declared, a turn-end Stop in scope is denied on
 `NO_ENUMERATOR` unless the operator escape sentinel `ESCAPE-ALLOW-YIELD` in `state_dir`
 releases it; on the maintainer host that sentinel is a root-owned file (observed 2026-10-29),
 and each release is logged as an operator escape event. The denial has 2 further exits.

@@ -166,16 +166,14 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          mistakes_register (:33134), and the state files guard-events.jsonl (read at
                          :33020, appended by _orch_append_jsonl at :22162 through _orch_event_warn at
                          :33334), escape-spoof.json (:33212), forced-exit.jsonl (:33160),
-                         forced-exit-surfaced.json (:33172) only when os.stat succeeds on
-                         forced-exit.jsonl and it is not empty (no rows return at :33168-33169),
-                         forced-exit-surfaced.json.tmp only when the surfaced file is reached
-                         and its stat raises nothing other than FileNotFoundError (any other open
-                         error takes `return findings` at :33176-33179) and, when attestations is
-                         declared, attestations-validated.json.tmp. The refreshed hook no longer
-                         opens either .tmp path: _orch_write_json_atomic (via :33191 and :33124)
+                         and forced-exit-surfaced.json (:33172) only when os.stat succeeds on
+                         forced-exit.jsonl and it is not empty (no rows return at :33168-33169).
+                         The hook's rewrites of the surfaced set and of the attestation snapshot
+                         open no fixed path: _orch_write_json_atomic (via :33191 and :33124)
                          writes a new <name>.<16 hex>.tmp file (os.urandom at :22266, os.open
-                         with O_EXCL at :22267); the doctor still checks the 2 old fixed paths,
-                         which errs toward refusing. With an unreadable registry the hook
+                         with O_EXCL at :22267), so the doctor checks neither the old fixed
+                         forced-exit-surfaced.json.tmp nor attestations-validated.json.tmp
+                         path. With an unreadable registry the hook
                          opens only resume-barrier.json.unused (_orch_append_jsonl at :33317) and
                          guard-events.jsonl (_orch_event_warn at :33334). A special file at one of
                          these is reported as
@@ -645,20 +643,6 @@ def _forced_exit_may_have_rows(log):
         return False
 
 
-def _open_fails_other_than_absent(path):
-    """True when os.stat on path raises an error other than FileNotFoundError: the open of
-    surfaced_path at 33172 then raises that error too, and _orch_forced_exit_findings returns at
-    33176-33179 before the surfaced-set rewrite, whereas FileNotFoundError reads as an empty set
-    (33174-33175)."""
-    try:
-        os.stat(path)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return True
-    return False
-
-
 def _audit_read_paths(hook, reg, root):
     """The paths orch_resume_audit (aiqt_hooks.py:33270-33354) opens with a plain blocking open on a
     readable registry, traced through _orch_resume_probes (32738-32822) and every reader it calls,
@@ -671,10 +655,6 @@ def _audit_read_paths(hook, reg, root):
       attestations.anchor             _orch_register_authority 32968, only when os.stat succeeds
                                       on the register (a failed register open takes
                                       `return ("hold"` at 32923-32924)
-      attestations-validated.json.tmp the old fixed path, still checked; the hook's
-                                      _orch_write_json_atomic (via 33124) now opens a random
-                                      name, attestations-validated.json.<16 hex>.tmp, at
-                                      22266-22267, when attestations is declared
       mistakes_register               _orch_chained_rows 32875-32877 (via 33132-33134), when declared
       guard-events.jsonl              read by _orch_pointer_resolves at 33020 (via 33111 and 33144),
                                       opened by _orch_read_jsonl at 22173; appended by _orch_guard_event
@@ -685,13 +665,10 @@ def _audit_read_paths(hook, reg, root):
       forced-exit.jsonl               _orch_forced_exit_findings 33159-33160, opened at 22173
       forced-exit-surfaced.json       opened at 33171-33172, only when the log may hold rows
                                       (_forced_exit_may_have_rows; no rows return at 33168-33169)
-      forced-exit-surfaced.json.tmp   the old fixed path, still checked; the hook's
-                                      _orch_write_json_atomic (via 33191) now opens a random
-                                      name, forced-exit-surfaced.json.<16 hex>.tmp, at
-                                      22266-22267, only when the surfaced file is reached and
-                                      its open does not
-                                      fail other than as absent (_open_fails_other_than_absent;
-                                      `return findings` at 33176-33179)
+    The hook's rewrites of the attestation snapshot (via 33124) and of the surfaced set (via 33191)
+    go through _orch_write_json_atomic, which opens a new random name, <name>.<16 hex>.tmp, with
+    O_EXCL at 22266-22267 and so opens no existing entry; neither old fixed path
+    (attestations-validated.json.tmp, forced-exit-surfaced.json.tmp) is checked.
     resume-barrier.json (written at 33324) is read before the audit by _barrier_snapshot, which
     refuses a special file there. The audit runs no enumerator and does not open the lease (os.stat
     only, 32800), the mode record, turn-state.json, dispatch-ledger.jsonl or backlog-checkpoint.json,
@@ -712,8 +689,6 @@ def _audit_read_paths(hook, reg, root):
         if not _stat_fails(at_path):
             out.append(_site("audit.attestations_anchor", "declared attestations.anchor",
                              at_path + ".anchor"))
-        out.append(_site("audit.snapshot_tmp", "hook state file attestations-validated.json.tmp",
-                         _state_path(hook, root, "attestations-validated.json.tmp")))
     out.append(_site("audit.mistakes_register", "declared mistakes_register",
                      hook._orch_path(root, reg.get("mistakes_register"))))
     out.append(_site("audit.guard_events", "hook state file guard-events.jsonl",
@@ -726,9 +701,6 @@ def _audit_read_paths(hook, reg, root):
         surfaced = _state_path(hook, root, "forced-exit-surfaced.json")
         out.append(_site("audit.forced_exit_surfaced", "hook state file forced-exit-surfaced.json",
                          surfaced))
-        if not _open_fails_other_than_absent(surfaced):
-            out.append(_site("audit.forced_exit_surfaced_tmp",
-                             "hook state file forced-exit-surfaced.json.tmp", surfaced + ".tmp"))
     return out
 
 

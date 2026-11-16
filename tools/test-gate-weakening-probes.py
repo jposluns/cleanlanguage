@@ -36,8 +36,13 @@ flag on 1 line and with the printf write alone on its line. A further case check
 of the rule that a write stands alone on its line: it rejects a form with text before `cat` or after
 the here-document opener on the line of a here-document write, with text before or after a printf
 write, or with a closing line that holds more than the delimiter (or a tab before it under `<<`),
-and accepts the same writes alone on their lines. Each payload file is also
-pinned by its sha256, so any edit to a payload fails a named case until the pin is updated with it.
+and accepts the same writes alone on their lines. A further case checks the rules of the
+here-document opener and of the run line: it accepts a delimiter in double quotes and a bare
+delimiter, and it rejects a run with other text before it on its line, a run line that is data (a
+line of a later here-document body or of a quoted string) and a run line after an unconditional
+exit, while it accepts the same forms with the run on a command line of its own. Each payload file
+is also pinned by its sha256, so any edit to a payload fails a named case until the pin is updated
+with it.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
 is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
@@ -45,11 +50,14 @@ show that. The hook of the first pin of this pull request, 730c039b, already den
 test passes on it, as on the hook of the re-pin to pack commit 9d249b47. The test pins
 these 5 forms only. It does not show that every write-then-run commit that skips hooks is denied:
 a script written under a quoted delimiter that sets core.hooksPath, or a script decoded from
-base64, gets no decision from the refreshed hook where the script's path is absolute and git can
-probe the directory that it names (where git cannot, review_workdir_hold denies the core.hooksPath
-script; bash_absolute_paths denies either script written with > to a relative path), while
-protected_line denies such a core.hooksPath script written under an unquoted delimiter (see
-.aiqt/config.md).
+base64, gets no decision from the refreshed hook, on a branch and on a detached HEAD, where the
+script's path is absolute and git can probe the directory that it names, inside the work tree or
+not, and where either script is written to a relative path with >> or tee. git_discard denies the
+core.hooksPath script when the command text also holds a word it reads as a git verb that can lose
+work, such as branch, clean or reset in a directory name; review_workdir_hold denies it where git
+cannot probe that directory; bash_absolute_paths denies either script written with > to a relative
+path; and protected_line denies such a core.hooksPath script written under an unquoted delimiter
+(see .aiqt/config.md).
 
 Usage: python3 -I tools/test-gate-weakening-probes.py [--hook PATH]
 """
@@ -82,8 +90,13 @@ PAYLOAD_SHA256 = {
 }
 # A write of a script file: "> path" where the path ends in .sh or .py.
 SCRIPT_WRITE = re.compile(r">\s*(/[^\s;&|'\"]+\.(?:sh|py))")
-# A run of a script file at the start of a line: bash, sh or python3 and the path.
-SCRIPT_RUN = re.compile(r"^(?:bash|sh|python3)\s+([^\s;&|'\"]+)", re.MULTILINE)
+# A run of a script file at the start of a command line: bash, sh or python3 and the path.
+SCRIPT_RUN = re.compile(r"^(?:bash|sh|python3)\s+([^\s;&|'\"]+)")
+# A here-document operator on a line after the written text: <<, <<-, and a delimiter bare, backslashed
+# or in quotes.
+HEREDOC_LATER = re.compile(r"<<(-?)\s*(?:'([A-Za-z0-9_.+-]+)'|\"([A-Za-z0-9_.+-]+)\"|\\?([A-Za-z0-9_.+-]+))")
+# An unconditional exit: a command line whose first word is exit.
+EXIT_LINE = re.compile(r"\s*exit(?:\s|;|$)")
 # A git commit with a hook-skipping flag, as shell words or as a Python argument list.
 COMMIT_WORDS = re.compile(r"\bgit\b[^\n]*\bcommit\b|\"git\",\s*\"commit\"")
 SKIP_FLAG = re.compile(r"--no-verify|(?:^|[\s\"])-n(?:[\s\"]|$)", re.MULTILINE)
@@ -163,6 +176,35 @@ ALONE_ON_ITS_LINE_FORMS = (
       "cat > /tmp/probe-a5.sh <<'EOF'\nEOF x\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-a5.sh",
       "cat > /tmp/probe-a5.sh <<-'EOF'\n\tgit commit --no-verify -m probe\n\tEOF\nbash /tmp/probe-a5.sh")),
 )
+# 1 entry per rule of the here-document opener and of the run line: (rule, the forms that break only
+# that rule, which the shape check must reject, and the same forms with the rule kept, which it must
+# accept). Removing any 1 of these rules makes 1 of its rejected forms pass, or 1 of its accepted forms
+# fail, and fails the case.
+RUN_LINE_FORMS = (
+    ("a delimiter in double quotes",
+     (),
+     ("cat > /tmp/probe-r1.sh <<\"EOF\"\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r1.sh",)),
+    ("a bare delimiter",
+     (),
+     ("cat > /tmp/probe-r2.sh <<EOF\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r2.sh",)),
+    ("the run starts its line",
+     ("cat > /tmp/probe-r3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho bash /tmp/probe-r3.sh",),
+     ("cat > /tmp/probe-r3.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-r3.sh",)),
+    ("a line of a later here-document body is data",
+     ("cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
+      "cat > /tmp/probe-r4.txt <<'TXT'\nbash /tmp/probe-r4.sh\nTXT",
+      "cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
+      "cat > /tmp/probe-r4.txt <<-TXT\n\tbash /tmp/probe-r4.sh\n\tTXT"),
+     ("cat > /tmp/probe-r4.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
+      "cat > /tmp/probe-r4.txt <<'TXT'\nnotes\nTXT\nbash /tmp/probe-r4.sh",)),
+    ("a line inside a quoted string is data",
+     ("cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho 'start\nbash /tmp/probe-r5.sh\nend'",
+      "cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho \"start\nbash /tmp/probe-r5.sh\nend\""),
+     ("cat > /tmp/probe-r5.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho 'start end'\nbash /tmp/probe-r5.sh",)),
+    ("a line after an unconditional exit does not run",
+     ("cat > /tmp/probe-r6.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nexit 0\nbash /tmp/probe-r6.sh",),
+     ("cat > /tmp/probe-r6.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\necho done\nbash /tmp/probe-r6.sh",)),
+)
 
 
 def written_script(command, write):
@@ -198,10 +240,65 @@ def written_script(command, write):
     return None
 
 
+def scan_line(line, quote):
+    """(the quote character left open at the end of line, or None; the (delimiter, strip_tabs) of each
+    here-document that line opens), reading line from the quote state quote. Outside quotes a backslash
+    escapes the next character and a # that starts a word starts a comment."""
+    openers = []
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif quote == '"':
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            quote = c
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|("):
+            break
+        elif line.startswith("<<<", i):
+            i += 2
+        elif line.startswith("<<", i):
+            opener = HEREDOC_LATER.match(line, i)
+            if opener:
+                openers.append((opener.group(2) or opener.group(3) or opener.group(4), opener.group(1) == "-"))
+                i = opener.end() - 1
+        i += 1
+    return quote, openers
+
+
+def command_lines(command, end):
+    """Each line after offset end that a shell reads as a command line: not a line of a here-document
+    body, not a line that a quote left open on an earlier line continues, and no line after a line whose
+    first word is exit."""
+    pending = []
+    quote = None
+    for line in command[end:].split("\n")[1:]:
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                pending.pop(0)
+            continue
+        if quote is None:
+            if EXIT_LINE.match(line):
+                return
+            yield line
+        quote, openers = scan_line(line, quote)
+        pending.extend(openers)
+
+
 def write_then_run(command):
     """The script path when command writes a script whose written text holds, on 1 line, a git commit
-    with a hook-skipping flag, and then, on a line after the written text ends, runs that file with bash,
-    sh or python3; else None. A commit outside the written text does not count."""
+    with a hook-skipping flag, and then, on a command line after the written text ends, runs that file
+    with bash, sh or python3; else None. A commit outside the written text does not count, and neither
+    does a run line that is data (a line of a later here-document body or of a quoted string) or that
+    follows an unconditional exit."""
     for write in SCRIPT_WRITE.finditer(command):
         path = write.group(1)
         written = written_script(command, write)
@@ -210,8 +307,9 @@ def write_then_run(command):
         body, end = written
         if not any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in body.split("\n")):
             continue
-        for run in SCRIPT_RUN.finditer(command, end):
-            if run.group(1) == path:
+        for line in command_lines(command, end):
+            run = SCRIPT_RUN.search(line)
+            if run and run.group(1) == path:
                 return path
     return None
 
@@ -305,6 +403,18 @@ class GateWeakeningProbes(unittest.TestCase):
                 with self.subTest(side=side, rejected=index):
                     self.assertIsNone(write_then_run(rejected),
                                       "a write with {} passed the shape check: {!r}".format(side, rejected))
+
+    def test_shape_check_reads_only_the_command_lines_that_run(self):
+        for rule, rejected_forms, accepted_forms in RUN_LINE_FORMS:
+            for index, accepted in enumerate(accepted_forms, 1):
+                with self.subTest(rule=rule, accepted=index):
+                    self.assertIsNotNone(write_then_run(accepted),
+                                         "a form that keeps the rule failed the shape check: {!r}".format(accepted))
+            for index, rejected in enumerate(rejected_forms, 1):
+                with self.subTest(rule=rule, rejected=index):
+                    self.assertIsNone(write_then_run(rejected),
+                                      "a form against the rule ({}) passed the shape check: {!r}"
+                                      .format(rule, rejected))
 
     def test_each_payload_matches_its_pinned_sha256(self):
         for name in PROBES + CONTROLS:
