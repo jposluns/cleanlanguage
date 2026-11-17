@@ -1168,14 +1168,19 @@ SLOT_SAMPLES = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
 # For each slot, values that its pattern must not match, each 1 change from
 # its value in SLOT_SAMPLES, or an option, where a change is a character
 # replaced, added or dropped, or a repeated part emptied: the option -x;
-# the value led by -; each character that the pattern names (the v and the
-# dots of a tag, the dots of a version, the slash of a repository and the
-# leading slash of a directory) replaced by X (the v by Y) and dropped, and
-# the v also in its other case; a character of each class replaced by one
-# outside it; each repeated part emptied; and a character added where the
-# pattern allows none. They are written out here, not derived from SLOTS,
-# and test_each_predicate_reads_only_the_calls_of_its_rows puts each in
-# place of its slot in each row.
+# the value with - added before it; each character that the pattern names
+# (the v and the dots of a tag, the dots of a version, the slash of a
+# repository and the leading slash of a directory) replaced by X (the v by
+# Y) and dropped, and the v also in its other case; a digit of each part of
+# a tag or a version replaced by X, and the first character of the commit
+# replaced by -, g and C and dropped; each part of a tag, a version or a
+# repository emptied; and a character added that the pattern does not take
+# where it stands. No value replaces a character of a repository or a
+# directory by one outside its class;
+# test_each_slot_matches_exactly_the_values_its_rule_allows checks the
+# classes of every slot (see SLOTS). The values are written out here, not
+# derived from SLOTS, and test_each_predicate_reads_only_the_calls_of_its_rows
+# puts each in place of its slot in each row.
 SLOT_NEAR_MISSES = {
     "<TAG>": ("-x", "-v1.0.15", "Y1.0.15", "1.0.15", "V1.0.15", "v1X0.15", "v10.15", "v1.0X15", "v1.015",
               "vX.0.15", "v1.X.15", "v1.0.1X", "v.0.15", "v1..15", "v1.0.", "v1.0.15X"),
