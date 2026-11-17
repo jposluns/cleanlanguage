@@ -73,6 +73,14 @@ PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text f
 so a copy from another commit can be checked through git show.
 Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
 UTF-8, and when more than 1 argument is given.
+Output: each finding is 1 line that starts with "FAIL: " and the name of the text read, which is
+PATH as given, the default path when no PATH is given, or "-" for standard input, and a last line
+gives the number of findings. The report that the text holds no MODE line or more than 1, and the
+report that a pinned paragraph is not found once, give the number found, whatever it is; the
+report of a MODE line with no closing parenthesis or of a bare "attended" gives the number of its
+line, and the report that a paragraph has changed gives its line range. A pass prints 1 line,
+which names the text read in the same way and gives the number of pinned paragraphs, and text
+that cannot be read gives 1 line, which names it in the same way.
 
 Residual: the check reads text literally. Text outside the 7 pinned paragraphs is not pinned, and
 an edit there fails only in these ways: a MODE line test fails, as when a line there starts with

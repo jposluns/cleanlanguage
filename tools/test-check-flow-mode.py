@@ -17,8 +17,9 @@ sha256 in the check's PARAGRAPHS is updated. The test holds its own list, so a c
 drops, adds or moves a paragraph fails, and it reads the paragraph texts only from flow.md.
 
 The verdict cases are these. The committed flow.md passes on standard input, as a path argument
-and as the default path; its pass gives the count of pinned paragraphs, and through a path and
-the default path it also names the file read. The check's table
+and as the default path. Each pass in a verdict case must print only the whole pass line, which
+names the text read, "-" on standard input and the file through a path or the default path, and
+gives the count of pinned paragraphs. The check's table
 names the 7 paragraphs of NAMED, in that order and with the same opening texts; each of its
 sha256 values is the one this test computes from flow.md, and each stands alone on 1 line of the
 check in the form that the report gives. The entry list of the whole-line rule, Entries 61, 63,
@@ -54,19 +55,24 @@ end do not pair, so the "attended" inside it is bare, and a closing quote at the
 pairs with the next quote on that line, while across any other white-space character the quotes
 pair as on 1 line; the absent-record sentence wrapped at any white-space character is found; and
 the committed flow.md with carriage returns, or carriage return and line feed pairs, for its line
-ends passes. Each of 3 texts gives the same reports on standard input, through a path and through
-the default path, which a copy of the check with only its DEFAULT line rewritten reads when it
-runs with no argument, as CI runs the check, and between them they give every kind of report
-line of the check's findings: the committed flow.md with every test failed at once, by a word
-appended to each pinned paragraph, a third value on the MODE line, a bare "attended" added and
-the absent-record sentence removed, gives 10 reports; with the opening text of each pinned
-paragraph changed, its MODE line left unclosed and a second, unclosed MODE line added, it gives
-10, 1 for each paragraph found 0 times, 1 for 2 MODE lines and 2 for a MODE line with no closing
-parenthesis; and with each pinned paragraph repeated and its MODE line renamed, it gives 8, 1 for
-each paragraph found 2 times and 1 for no MODE line. For each pinned paragraph, the report of a
-change names the paragraph and its line range, gives its new sha256 and gives the 1-line update
-to PARAGRAPHS as the way to clear that report alone, and a copy of the check with that 1 line
-updated passes the changed text. For each
+ends passes. Each of 3 texts gives its whole expected output, every report line in order with
+its counts and line numbers, and the count of findings, on standard input, through a path and
+through the default path, which a copy of the check with only its DEFAULT line rewritten reads
+when it runs with no argument, as CI runs the check; each report line names the text read, "-"
+on standard input and the file's path through a path and through the default path. Between them
+the 3 texts give every kind of report line of the check's findings: the committed flow.md with
+every test failed at once, by a word appended to each pinned paragraph, a third value on the
+MODE line, a bare "attended" added and the absent-record sentence removed, gives 10 reports;
+with the opening text of each pinned paragraph changed, its MODE line left unclosed and a second,
+unclosed MODE line added, it gives 10, 1 for each paragraph found 0 times, 1 for 2 MODE lines
+and 2 for a MODE line with no closing parenthesis; and with each pinned paragraph repeated and
+its MODE line renamed, it gives 8, 1 for each paragraph found 2 times and 1 for no MODE line. A
+report of a number found gives that number, whatever it is: with the MODE line written 2 to 9
+times, and each pinned paragraph written a different number of times from that number up, the
+check prints on standard input only the report of each number found and the count of 8
+findings. For each pinned paragraph, the report of a change names the paragraph and its line
+range, gives its new sha256 and gives the 1-line update to PARAGRAPHS as the way to clear that
+report alone, and a copy of the check with that 1 line updated passes the changed text. For each
 pinned paragraph whose opening text is changed, the report is the line that the paragraph was
 found 0 times, with no sha256; a copy of the check with only the paragraph's sha256 updated
 still fails with that line, a copy with only the row's opening text rewritten fails with the
@@ -179,12 +185,19 @@ NO_ABSENT = "no statement that an absent mode record is read as unattended"
 CHANGED = "{}, a pinned paragraph, has changed: its sha256 is now "
 NOT_ONCE = "expected 1 pinned paragraph, {}, starting {!r}, found {}"
 PINS_PRESENT = "the 7 pinned paragraphs are unchanged"
-SECOND_MODE = "expected 1 MODE line starting \"- MODE (\", found 2"
-NO_MODE = "expected 1 MODE line starting \"- MODE (\", found 0"
+# The whole output of a pass, written out here with the name of the text read, so that a check
+# whose pass line names another file or another count fails.
+PASS = ("OK: {}: the MODE line names the writer's 2 modes, no line holds an unquoted bare"
+        " \"attended\", the absent-record sentence is present, and the 7 pinned paragraphs are"
+        " unchanged\n")
+MODE_COUNT = "expected 1 MODE line starting \"- MODE (\", found {}"
+SECOND_MODE = MODE_COUNT.format(2)
+NO_MODE = MODE_COUNT.format(0)
 UNREADABLE = "cannot be read: "
-# The report line for a changed paragraph, written out here so that a check whose report drops
-# any part of it, or whose 1-line update does not match its table, fails.
-REPORT = ("FAIL: -:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to clear this"
+# The report line for a changed paragraph, written out here with the name of the text read, so
+# that a check whose report drops any part of it, names another file, or gives a 1-line update
+# that does not match its table, fails.
+REPORT = ("FAIL: {}:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to clear this"
           " report alone, replace the line '     \"{}\"),' of PARAGRAPHS in"
           " tools/check-flow-mode.py with '     \"{}\"),'")
 DIGEST_LINE = "     \"{}\"),"
@@ -323,6 +336,16 @@ def line_range(text, opening):
     return text.count("\n", 0, start) + 1, text.count("\n", 0, end) + 1
 
 
+def line_of(text, fragment):
+    """The number of the 1 line of text, split at line feeds, that holds fragment, and that line
+    with the white space at either end removed."""
+    lines = text.split("\n")
+    numbers = [number for number, line in enumerate(lines, 1) if fragment in line]
+    if len(numbers) != 1:
+        raise AssertionError("expected 1 line holding {!r}, found {}".format(fragment, len(numbers)))
+    return numbers[0], lines[numbers[0] - 1].strip()
+
+
 def with_paragraph(opening, change):
     """The committed flow.md with the paragraph that starts with opening replaced by change of
     it."""
@@ -390,25 +413,50 @@ def failing_text():
 
 def failing_texts():
     """Texts that between them give every kind of report line that the check's findings give,
-    each with the number of findings and the count of each kind of report line in its output:
-    failing_text(); the committed flow.md with the opening text of each pinned paragraph changed,
-    its MODE line left unclosed and a second, unclosed MODE line added; and the committed flow.md
-    with each pinned paragraph repeated and its MODE line renamed so that none is left."""
+    each with a function that gives, for the name of the text read, the whole output that the
+    check must print, in its order, each report line with its counts and line numbers and the last
+    line with the number of findings: failing_text(); the committed flow.md with the opening text
+    of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
+    added; and the committed flow.md with each pinned paragraph repeated and its MODE line renamed
+    so that none is left. Each sha256 is the one this test computes, so the expected output owes
+    nothing to the check."""
+    text = committed()
+    pinned = {opening: own_digest(text[slice(*span(text, opening))]) for _, opening in NAMED}
+    failed = failing_text()
+    bare, bare_line = line_of(failed, "- Absent = attended (conservative).")
+    changes = []
+    for name, opening in NAMED:
+        first, last = line_range(failed, opening)
+        now = own_digest(failed[slice(*span(failed, opening))])
+        changes.append((first, last, name, now, pinned[opening], now))
     lost = with_paragraphs(lambda p, o: "x" + p[1:])
     lost = replaced(lost, MODE_LINE, MODE_LINE[:-1])
     lost = replaced(lost, DECISIONS, "- MODE (supervised is a third mode.\n" + DECISIONS)
+    unclosed = sorted([line_of(lost, MODE_LINE[:-1]),
+                       line_of(lost, "- MODE (supervised is a third mode.")])
     repeated = with_paragraphs(lambda p, o: p + "\n\n" + p)
     repeated = replaced(repeated, MODE_LINE, MODE_LINE.replace("MODE", "Mode"))
+
+    def output(lines):
+        return "".join(line + "\n" for line in lines + ["FAIL: {} finding(s)".format(len(lines))])
+
     return [
-        ("every test failed", failing_text(), 10,
-         [(CHANGED.format(name), 1) for name, _ in NAMED]
-         + [(WRONG_MODES, 1), (BARE, 1), (NO_ABSENT, 1)]),
-        ("each opening text changed", lost, 10,
-         [(NOT_ONCE.format(name, opening, 0), 1) for name, opening in NAMED]
-         + [(SECOND_MODE, 1), (UNCLOSED, 2)]),
-        ("each pinned paragraph repeated", repeated, 8,
-         [(NOT_ONCE.format(name, opening, 2), 1) for name, opening in NAMED]
-         + [(NO_MODE, 1)]),
+        ("every test failed", failed, lambda source: output(
+            ["FAIL: {}: {} attended-autonomous | unattended | supervised, not exactly"
+             " attended-autonomous | unattended".format(source, WRONG_MODES),
+             "FAIL: {}:{}: {}: {}".format(source, bare, BARE, bare_line),
+             "FAIL: {}: {}".format(source, NO_ABSENT)]
+            + [REPORT.format(source, *change) for change in changes])),
+        ("each opening text changed", lost, lambda source: output(
+            ["FAIL: {}: {}".format(source, SECOND_MODE)]
+            + ["FAIL: {}:{}: {}: {}".format(source, number, UNCLOSED, line)
+               for number, line in unclosed]
+            + ["FAIL: {}: {}".format(source, NOT_ONCE.format(name, opening, 0))
+               for name, opening in NAMED])),
+        ("each pinned paragraph repeated", repeated, lambda source: output(
+            ["FAIL: {}: {}".format(source, NO_MODE)]
+            + ["FAIL: {}: {}".format(source, NOT_ONCE.format(name, opening, 2))
+               for name, opening in NAMED])),
     ]
 
 
@@ -462,7 +510,7 @@ class Verdicts(unittest.TestCase):
     def assert_passes(self, text):
         status, output = verdict(text)
         self.assertEqual(status, 0, output)
-        self.assertTrue(output.startswith("OK: "), output)
+        self.assertEqual(output, PASS.format("-"))
 
     def assert_fails(self, text, reason):
         status, output = verdict(text)
@@ -476,7 +524,7 @@ class Verdicts(unittest.TestCase):
     def assert_passes_with_pins(self, text):
         status, output = verdict(text)
         self.assertEqual(status, 0, output)
-        self.assertTrue(output.startswith("OK: "), output)
+        self.assertEqual(output, PASS.format("-"))
         self.assertIn(PINS_PRESENT, output)
 
     def assert_each_changed(self, status, output):
@@ -640,7 +688,7 @@ class Verdicts(unittest.TestCase):
                         status, output = run_check(args, given)
                         if passes:
                             self.assertEqual(status, 0, output)
-                            self.assertIn(PINS_PRESENT, output)
+                            self.assertEqual(output, PASS.format(args[0]))
                         else:
                             self.assert_each_changed(status, output)
 
@@ -691,22 +739,20 @@ class Verdicts(unittest.TestCase):
                     with self.subTest(line_ends=what, read=read):
                         status, output = run_check(args, given)
                         self.assertEqual(status, 0, output)
-                        self.assertIn(PINS_PRESENT, output)
+                        self.assertEqual(output, PASS.format(args[0]))
 
     def test_every_test_fails_alike_on_standard_input_by_path_and_by_default(self):
         # CI runs the check with no argument, so no verdict may depend on how the check gets its
         # text. A copy of the check with only its DEFAULT line rewritten runs as a separate
         # process with no argument, as CI runs the check, and reads the changed copy of flow.md.
         # The texts give between them every kind of report line that the check's findings give.
-        for what, text, count, reasons in failing_texts():
-            status, given = verdict(text)
+        # Each read must print the whole expected output, each report line naming the text read:
+        # "-" on standard input, and the file's path through a path and through the default path.
+        for what, text, expected in failing_texts():
             with self.subTest(text=what, read="standard input"):
-                self.assertEqual(status, 1, given)
-                self.assertEqual(given.splitlines()[-1], "FAIL: {} finding(s)".format(count), given)
-                self.assertEqual(len(given.splitlines()), count + 1, given)
-                for reason, times in reasons:
-                    self.assertEqual(sum(reason in line for line in given.splitlines()), times,
-                                     given)
+                status, output = verdict(text)
+                self.assertEqual(status, 1, output)
+                self.assertEqual(output, expected("-"))
             with tempfile.TemporaryDirectory() as folder:
                 path = Path(folder) / "flow.md"
                 path.write_text(text, encoding="utf-8")
@@ -715,7 +761,25 @@ class Verdicts(unittest.TestCase):
                     with self.subTest(text=what, read=read):
                         status, output = run_check(args, check=check)
                         self.assertEqual(status, 1, output)
-                        self.assertEqual(output.replace(str(path), "-"), given)
+                        self.assertEqual(output, expected(str(path)))
+
+    def test_each_report_of_a_number_found_gives_that_number(self):
+        # A report that the MODE line or a pinned paragraph is not found once gives the number
+        # found, whatever it is. Here the MODE line is written 2 to 9 times, and in each text
+        # every pinned paragraph is written a different number of times, from that number up.
+        for times in range(2, 10):
+            counts = {opening: times + row for row, (_, opening) in enumerate(NAMED)}
+            text = with_paragraphs(lambda p, o, c=counts: "\n\n".join([p] * c[o]))
+            text = replaced(text, DECISIONS,
+                            (MODE_LINE + " is repeated.\n") * (times - 1) + DECISIONS)
+            expected = (["FAIL: -: " + MODE_COUNT.format(times)]
+                        + ["FAIL: -: " + NOT_ONCE.format(name, opening, counts[opening])
+                           for name, opening in NAMED]
+                        + ["FAIL: 8 finding(s)"])
+            with self.subTest(times=times):
+                status, output = verdict(text)
+                self.assertEqual(status, 1, output)
+                self.assertEqual(output, "".join(line + "\n" for line in expected))
 
     def test_each_report_of_a_change_gives_the_1_line_update(self):
         table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
@@ -728,7 +792,7 @@ class Verdicts(unittest.TestCase):
                 now = own_digest(text[start:end])
                 status, output = verdict(text)
                 self.assertEqual(status, 1, output)
-                self.assertIn(REPORT.format(first, last, name, now, table[name], now),
+                self.assertIn(REPORT.format("-", first, last, name, now, table[name], now),
                               output.splitlines())
                 old_line = DIGEST_LINE.format(table[name])
                 self.assertEqual(source.count(old_line), 1)
@@ -738,7 +802,7 @@ class Verdicts(unittest.TestCase):
                                        encoding="utf-8")
                     status, output = verdict(text, updated)
                 self.assertEqual(status, 0, output)
-                self.assertIn(PINS_PRESENT, output)
+                self.assertEqual(output, PASS.format("-"))
 
     def test_an_edit_of_each_opening_text_needs_its_row_rewritten(self):
         # The check finds a paragraph by its opening text before it compares a sha256, so the
@@ -774,12 +838,12 @@ class Verdicts(unittest.TestCase):
                     updated.write_text(opening_only, encoding="utf-8")
                     status, output = verdict(text, updated)
                     self.assertEqual(status, 1, output)
-                    self.assertIn(REPORT.format(first, last, name, now, table[name], now),
+                    self.assertIn(REPORT.format("-", first, last, name, now, table[name], now),
                                   output.splitlines())
                     updated.write_text(rewritten, encoding="utf-8")
                     status, output = verdict(text, updated)
                 self.assertEqual(status, 0, output)
-                self.assertIn(PINS_PRESENT, output)
+                self.assertEqual(output, PASS.format("-"))
 
     def test_an_edit_of_any_character_of_each_opening_text_needs_its_row_rewritten(self):
         # The check matches every character of an opening text, each letter in its case, and
@@ -891,8 +955,7 @@ class Verdicts(unittest.TestCase):
             with self.subTest(args=args):
                 status, output = run_check(args)
                 self.assertEqual(status, 0, output)
-                self.assertTrue(output.startswith("OK: {}: ".format(FLOW)), output)
-                self.assertIn(PINS_PRESENT, output)
+                self.assertEqual(output, PASS.format(FLOW))
 
     def test_the_mode_text_of_main_fails(self):
         status, output = verdict(MAIN_MODE_TEXT)
