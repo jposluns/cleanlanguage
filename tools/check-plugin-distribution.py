@@ -59,21 +59,25 @@ Output and exit status:
      any other exception, of any class, that reaches main.
   Every line goes through emit, which writes each character that
   str.isprintable refuses as its Python backslash escape, so each line the
-  gate prints is 1 line. Where a line shows the name of an exception's type
-  or its message, the gate makes each into a str of its own type, with what
-  that writes to sys.stdout or sys.stderr dropped; a name or message whose
-  making raises an exception of any class, or a name that is not a str, is
-  shown by a stand-in. What the extractor writes to sys.stdout or sys.stderr
-  while it loads is dropped.
+  gate prints is 1 line. Where a line shows the name of an exception's type,
+  its message or the strerror of an OSError, the gate makes each into a str
+  of its own type, with what that writes to sys.stdout or sys.stderr
+  dropped; a name, message or strerror whose making raises an exception of
+  any class, or a name that is not a str, is shown by a stand-in. What the
+  extractor writes to sys.stdout or sys.stderr while it loads is dropped.
 
 Residual: the gate does not ask git which files are tracked and does not run
 the Claude Code CLI. The extractor, and the code that makes an exception's
-name or message, are code the gate runs: a write of either to a file
-descriptor or to sys.__stdout__ is not confined. A file swapped between the
-walk and the open is met by O_NOFOLLOW, O_NONBLOCK and the check after the
-open; O_NOFOLLOW covers only the last component, so a folder on the path
-swapped for a symlink in that time is followed. An exception raised while the
-gate writes to standard error is not caught.
+name, message or strerror, are code the gate runs in its own process, and
+only what that code writes to sys.stdout or sys.stderr while it runs is
+dropped. Nothing else it does is confined, among it a write to a file
+descriptor or to sys.__stdout__, a change to the interpreter or to the
+gate, and code it leaves to run later, such as an atexit handler or a
+thread, whose output can come after the last line stated above. A file
+swapped between the walk and the open is met by O_NOFOLLOW, O_NONBLOCK and
+the check after the open; O_NOFOLLOW covers only the last component, so a
+folder on the path swapped for a symlink in that time is followed. An
+exception raised while the gate writes to standard error is not caught.
 
 Usage: python3 -I tools/check-plugin-distribution.py
 """
@@ -172,6 +176,11 @@ def shown(error: BaseException) -> str:
     return plain(lambda: str(error), "(a message that cannot be shown)")
 
 
+def reason(error: OSError) -> str:
+    """The strerror of the OSError, or its message when it has none, as plain makes it."""
+    return plain(lambda: str(error.strerror or error), "(a message that cannot be shown)")
+
+
 def described(error: BaseException) -> str:
     """The name of the exception's type and its message, each as plain makes it."""
     return f"{plain(lambda: type(error).__name__, '(a name that cannot be shown)')}: {shown(error)}"
@@ -190,7 +199,7 @@ def walk(rel: str) -> Path:
             # A file system that folds letter case lets os.lstat find the name in another case too.
             listed = part in os.listdir(parent)
         except OSError as error:
-            raise Unreadable(f"{rel} could not be read: {error.strerror or error}") from error
+            raise Unreadable(f"{rel} could not be read: {reason(error)}") from error
         if not listed:
             raise Unreadable(f"{rel} could not be read: the component {part!r} is not spelled as its folder "
                              "lists it")
@@ -208,7 +217,7 @@ def read_bytes(rel: str) -> bytes:
     try:
         fd = os.open(path, OPEN_FLAGS)
     except OSError as error:
-        raise Unreadable(f"{rel} could not be read: {error.strerror or error}") from error
+        raise Unreadable(f"{rel} could not be read: {reason(error)}") from error
     blocks = []
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -219,7 +228,7 @@ def read_bytes(rel: str) -> bytes:
                 break
             blocks.append(block)
     except OSError as error:
-        raise Unreadable(f"{rel} could not be read: {error.strerror or error}") from error
+        raise Unreadable(f"{rel} could not be read: {reason(error)}") from error
     finally:
         os.close(fd)
     return b"".join(blocks)
@@ -255,7 +264,7 @@ def load_json(rel: str) -> dict:
     try:
         text = read_bytes(rel).decode("utf-8-sig")
     except UnicodeError as error:
-        raise Unreadable(f"{rel} is not UTF-8: {error}") from error
+        raise Unreadable(f"{rel} is not UTF-8: {shown(error)}") from error
     if exceeds_depth(text, MAX_JSON_DEPTH):
         raise Unreadable(f"{rel} is nested too deeply to decode: more than {MAX_JSON_DEPTH} levels of arrays "
                          "and objects")
@@ -266,7 +275,7 @@ def load_json(rel: str) -> dict:
     except RecursionError as error:
         raise Unreadable(f"{rel} is nested too deeply to decode: the decoder raised RecursionError") from error
     except ValueError as error:
-        raise Unreadable(f"{rel} could not be decoded as JSON: {error}") from error
+        raise Unreadable(f"{rel} could not be decoded as JSON: {shown(error)}") from error
     if not isinstance(data, dict):
         raise Unreadable(f"{rel} is not a JSON object")
     return data
@@ -304,7 +313,7 @@ def skill_version() -> str | None:
     try:
         text = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", newline=None).read()
     except UnicodeDecodeError as error:
-        raise Unreadable(f"{SKILL_MD} is not UTF-8: {error}") from error
+        raise Unreadable(f"{SKILL_MD} is not UTF-8: {shown(error)}") from error
     line = version_line.search(text)
     match = skill_version_pattern.match(line.group(0)) if line else None
     if not match:
@@ -399,14 +408,14 @@ def resolve_source(rel: str, index: int, source, failures: list):
         except OSError as error:
             if error.errno == errno.ENAMETOOLONG:
                 # A fault of the source text, not of the tree, so a failure of this check.
-                failures.append(f"{label} is not a path the operating system accepts: {error.strerror or error}")
+                failures.append(f"{label} is not a path the operating system accepts: {reason(error)}")
                 return None
-            raise Unreadable(f"{current.relative_to(REPO_ROOT)} could not be read: {error.strerror or error}") from error
+            raise Unreadable(f"{current.relative_to(REPO_ROOT)} could not be read: {reason(error)}") from error
         try:
             # A file system that folds letter case lets os.lstat find the name in another case too.
             listed = part in os.listdir(parent)
         except OSError as error:
-            raise Unreadable(f"{parent.relative_to(REPO_ROOT)} could not be listed: {error.strerror or error}") from error
+            raise Unreadable(f"{parent.relative_to(REPO_ROOT)} could not be listed: {reason(error)}") from error
         if not listed:
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is not spelled as its "
                             "folder lists it")
