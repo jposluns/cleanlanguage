@@ -13,8 +13,12 @@ the verify page's 2 states (a published checksum, or the zero placeholder with
 the not-yet-published note), each held to the download block tools/build-site.py
 renders for it (the verify page fixtures carry that block), the refusal of a page
 that mixes them, hides or moves the block, and the writer's round trip from the
-placeholder to a published checksum. They also pin that every rule of the
-committed ``site/_redirects`` reaches a file the site serves in 1 hop. They run
+placeholder to a published checksum. They also pin that each rule of the
+committed ``site/_redirects`` that stays on this site names a file under site/
+that is not an HTML file and that no rule's source matches, that each rule to
+another host names a target the writer documents, and that no scanned file
+names an old name of a portable instructions file outside the redirect rule
+that answers for it. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -1029,14 +1033,18 @@ class WriterTest(unittest.TestCase):
 
 
 class RedirectHopTest(unittest.TestCase):
-    """Every rule of the committed site/_redirects reaches a file the site serves in 1 hop.
+    """Each rule of the committed site/_redirects that stays on this site names a file under site/ that is not an
+    HTML file and that no rule's source matches, and each rule to another host names a target the writer documents.
 
     A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
     with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
     committed tree is the tree the site serves. A destination that is the source of another rule, or that a splat
     source (ending in *) matches, would send the reader through a second hop and fails, as does a destination with
-    no file. A destination on another host passes only when it is 1 of the targets the writer documents: the release
-    zip and its checksum for the version in site-src/release.json, and the privacy page.
+    no file. A destination that names an HTML file, such as /install/index.html, fails too: the site serves each
+    page at its folder path, and the host may answer a path that names the HTML file with a redirect of its own. A
+    destination on another host passes only when it is 1 of the targets the writer documents: the release zip and
+    its checksum for the version in site-src/release.json, and the privacy page. The test does not follow a
+    destination on another host, so it does not count the hops that host takes.
     """
 
     REPO = Path(__file__).resolve().parent.parent
@@ -1047,37 +1055,182 @@ class RedirectHopTest(unittest.TestCase):
                    f"/cleanlanguage-{release['version']}.zip")
         return {zip_url, zip_url + ".sha256", "https://posluns.ca/privacy/"}
 
-    def test_every_redirect_reaches_a_served_file_in_1_hop(self):
-        site = self.REPO / "site"
-        rules = []
+    def failures(self, site: Path) -> list[str]:
+        """Each line of site/_redirects under ``site`` that breaks the rule above, with its first reason."""
+        found, rules = [], []
         for number, line in enumerate((site / "_redirects").read_text(encoding="utf-8").splitlines(), 1):
             fields = line.split()
             if not fields or fields[0].startswith("#"):
                 continue
-            self.assertEqual(len(fields), 3, f"site/_redirects line {number} is not 'source destination status'")
+            if len(fields) != 3:
+                found.append(f"site/_redirects line {number} is not 'source destination status'")
+                continue
             rules.append((number, fields[0], fields[1]))
-        self.assertTrue(rules, "site/_redirects holds no rule")
+        if not rules:
+            found.append("site/_redirects holds no rule")
         sources = {source for _, source, _ in rules}
         splats = [source[:-1] for source in sources if source.endswith("*")]
         off_site = self.off_site_targets()
         for number, source, destination in rules:
-            with self.subTest(line=number, source=source):
-                where = f"site/_redirects line {number}: {source} redirects to {destination}"
-                if "://" in destination:
-                    self.assertIn(destination, off_site, f"{where}, a host other than this site's that is not a "
-                                  "documented target")
-                    continue
-                self.assertTrue(destination.startswith("/"), f"{where}, which is not a path on this site")
-                self.assertFalse(destination in sources, f"{where}, the source of another rule: 2 hops")
-                for prefix in splats:
-                    self.assertFalse(destination.startswith(prefix),
-                                     f"{where}, which the splat source {prefix}* matches: 2 hops")
-                parts = destination.strip("/").split("/")
-                self.assertNotIn("..", parts, f"{where}, which leaves site/")
-                target = site.joinpath(*parts)
-                if destination.endswith("/"):
-                    target = target / "index.html"
-                self.assertTrue(target.is_file(), f"{where}, which is not a file under site/")
+            where = f"site/_redirects line {number}: {source} redirects to {destination}"
+            parts = destination.strip("/").split("/")
+            splat = next((prefix for prefix in splats if destination.startswith(prefix)), None)
+            target = site.joinpath(*parts)
+            if destination.endswith("/"):
+                target = target / "index.html"
+            if "://" in destination:
+                if destination not in off_site:
+                    found.append(f"{where}, a host other than this site's that is not a documented target")
+            elif not destination.startswith("/"):
+                found.append(f"{where}, which is not a path on this site")
+            elif destination in sources:
+                found.append(f"{where}, the source of another rule: 2 hops")
+            elif splat is not None:
+                found.append(f"{where}, which the splat source {splat}* matches: 2 hops")
+            elif ".." in parts:
+                found.append(f"{where}, which leaves site/")
+            elif not destination.endswith("/") and parts[-1].lower().endswith((".html", ".htm")):
+                found.append(f"{where}, which names an HTML file that the host may redirect again: 2 hops")
+            elif not target.is_file():
+                found.append(f"{where}, which is not a file under site/")
+        return found
+
+    def test_every_committed_redirect_keeps_the_rule(self):
+        self.assertEqual(self.failures(self.REPO / "site"), [])
+
+    def test_a_destination_that_names_an_html_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp)
+            (site / "install").mkdir()
+            for name in ("install/index.html", "about.html", "About.HTM"):
+                (site / name).write_text("<p>page</p>\n", encoding="utf-8")
+            (site / "_redirects").write_text("/get /install/index.html 301\n/old-about /about.html 301\n"
+                                             "/older-about /About.HTM 301\n/go /install/ 301\n", encoding="utf-8")
+            reason = "which names an HTML file that the host may redirect again: 2 hops"
+            self.assertEqual(self.failures(site), [
+                f"site/_redirects line 1: /get redirects to /install/index.html, {reason}",
+                f"site/_redirects line 2: /old-about redirects to /about.html, {reason}",
+                f"site/_redirects line 3: /older-about redirects to /About.HTM, {reason}",
+            ])
+
+
+class OldNameTest(unittest.TestCase):
+    """No scanned file names an old name of a portable instructions file outside the redirect rule that answers
+    for it.
+
+    The old names are the sources of the 302 rules in the committed site/_redirects that send a path under
+    /downloads/ to a cleanlanguage-instructions file, so this test does not write them out. Each may appear only
+    inside the text of its own rule, '<old path> <new path> 302', as site/_redirects, redirects_body() in
+    tools/set-release-links.py and test_the_redirects_keep_every_fixed_path write it. A name counts where no letter,
+    digit, underscore, dot or hyphen comes directly before it and no letter, digit, underscore or hyphen comes
+    directly after it, as in a path, a URL, a link or an attachment filename. The scan reads every file under
+    SCANNED outside a __pycache__ folder: the hand-edited files that carry links and references to the instructions
+    files (INSTALL.md, .aiqt/gensrc.json, the workflows, site/_headers, site/README.md, the page sources and
+    site-src/site.json), the generated pages and the downloads beside them, and the tools. A missing entry of
+    SCANNED fails. Residual: a file outside SCANNED, and an old name written in another form, such as
+    percent-encoded or in other letter case, pass unseen.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+    SCANNED = ("INSTALL.md", ".aiqt/gensrc.json", ".github/workflows", "site", "site-src", "tools")
+
+    @staticmethod
+    def renames(root: Path) -> list[tuple[str, str, str]]:
+        """The rule text, old file name and new file name of each 302 rule for a renamed instructions file."""
+        found = []
+        for line in (root / "site/_redirects").read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if (len(fields) == 3 and fields[2] == "302" and fields[0].startswith("/downloads/")
+                    and fields[1].startswith("/downloads/cleanlanguage-instructions")):
+                found.append((" ".join(fields), fields[0].rsplit("/", 1)[1], fields[1].rsplit("/", 1)[1]))
+        return found
+
+    def references(self, root: Path) -> list[str]:
+        """Each old name a scanned file under ``root`` holds outside its rule, as 'path:line: name'."""
+        renames = self.renames(root)
+        if not renames:
+            return ["site/_redirects: no 302 rule for a renamed instructions file"]
+        names = re.compile(r"(?<![\w.-])(" + "|".join(re.escape(old) for _, old, _ in renames) + r")(?![\w-])")
+        found = []
+        for entry in self.SCANNED:
+            start = root / entry
+            if start.is_file():
+                paths = [start]
+            elif start.is_dir():
+                paths = sorted(path for path in start.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+            else:
+                found.append(f"{entry}: missing")
+                continue
+            for path in paths:
+                for number, line in enumerate(path.read_bytes().decode("utf-8", "replace").split("\n"), 1):
+                    for rule, _, _ in renames:
+                        line = line.replace(rule, "")
+                    found.extend(f"{path.relative_to(root).as_posix()}:{number}: {match.group(1)}"
+                                 for match in names.finditer(line))
+        return found
+
+    def fixture(self, files: dict[str, str]) -> Path:
+        """A tree under $TMPDIR with every SCANNED entry, the committed site/_redirects and ``files``."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for entry in self.SCANNED:
+            if entry.endswith((".md", ".json")):
+                (root / entry).parent.mkdir(parents=True, exist_ok=True)
+                (root / entry).write_text("\n", encoding="utf-8")
+            else:
+                (root / entry).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.REPO / "site/_redirects", root / "site/_redirects")
+        for relative, text in files.items():
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text(text, encoding="utf-8")
+        return root
+
+    def old(self) -> dict[str, str]:
+        return {new: old for _, old, new in self.renames(self.REPO)}
+
+    def test_no_committed_file_names_an_old_name(self):
+        self.assertEqual(len(self.renames(self.REPO)), 4)
+        self.assertEqual(self.references(self.REPO), [])
+
+    def test_an_old_name_outside_its_rule_fails(self):
+        old = self.old()
+        whole, n29 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-29k.md"]
+        n11, n8 = old["cleanlanguage-instructions-11k.md"], old["cleanlanguage-instructions-8k.md"]
+        blob = "https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/"
+        raw = "https://raw.githubusercontent.com/jposluns/cleanlanguage/main/site/downloads/"
+        root = self.fixture({
+            "site/_headers": f"/downloads/{n8}\n  Content-Disposition: attachment; filename=\"{n11}\"\n",
+            "INSTALL.md": f"1. Download the [instructions](https://cleanlanguage.ai/downloads/{whole}).\n",
+            "site-src/pages/demo.html": f"<p>Read {raw}{n8} first.</p>\n",
+            "site-src/pages/install.html": f"<a href=\"{blob}{whole}\">source</a>\n",
+            ".aiqt/gensrc.json": f"{{\"target\": \"site/downloads/{n29}\"}}\n",
+            ".github/workflows/sync.yml": f"# Keeps {n29} current.\n",
+            "tools/writer.py": f"RULE = \"/downloads/{n11} /downloads/cleanlanguage-instructions-11k.md 301\"\n",
+        })
+        # The rule text in tools/writer.py carries 301, not 302, so it is not the rule that answers for the name.
+        self.assertEqual(self.references(root), [
+            f"INSTALL.md:1: {whole}",
+            f".aiqt/gensrc.json:1: {n29}",
+            f".github/workflows/sync.yml:1: {n29}",
+            f"site/_headers:1: {n8}",
+            f"site/_headers:2: {n11}",
+            f"site-src/pages/demo.html:1: {n8}",
+            f"site-src/pages/install.html:1: {whole}",
+            f"tools/writer.py:1: {n11}",
+        ])
+
+    def test_the_rule_text_and_the_new_names_pass(self):
+        rules = "".join(f"    f\"{rule}\\n\"\n" for rule, _, _ in self.renames(self.REPO))
+        news = "".join(f"/downloads/{new}\n  Content-Disposition: attachment; filename=\"{new}\"\n"
+                       for new in self.old())
+        root = self.fixture({"tools/writer.py": f"BODY = (\n{rules})\n", "site/_headers": news})
+        self.assertEqual(self.references(root), [])
+
+    def test_a_missing_scanned_entry_fails(self):
+        root = self.fixture({})
+        shutil.rmtree(root / "site-src")
+        self.assertEqual(self.references(root), ["site-src: missing"])
 
 
 class WholePageTest(unittest.TestCase):

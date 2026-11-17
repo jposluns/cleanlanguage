@@ -5,12 +5,13 @@
 #
 # The size-labelled family in site/downloads/:
 #   cleanlanguage-instructions.md      the canonical file; always byte-equal to the largest
-#                         size-labelled rendering (29k for now).
+#                                      size-labelled rendering (29k for now).
 #   cleanlanguage-instructions-29k.md  the largest rendering; GENERATED from the skill by
-#                         tools/build-portable-text.py, byte-equal to cleanlanguage-instructions.md.
+#                                      tools/build-portable-text.py, byte-equal to
+#                                      cleanlanguage-instructions.md.
 #   cleanlanguage-instructions-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
 #   cleanlanguage-instructions-8k.md   a hand-maintained further-condensed rendering (<= 8000
-#                         chars) for assistants that cap instruction length.
+#                                      chars) for assistants that cap instruction length.
 #
 # The generated files are checked byte-for-byte by build-portable-text.py --check.
 # The instructions page embeds cleanlanguage-instructions.md; tools/build-site.py generates
