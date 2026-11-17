@@ -135,7 +135,10 @@ end with " (#N)"; N must be a number of 1 to 18 digits with no leading zero, and
 is a usage error. In --squash mode without --number, the number comes from the file name when
 the path ends .github/squash/<number>.txt, where <number> is such a number; otherwise, as for
 0.txt, 007.txt or a name of 19 digits, the gate prints the line "pr-text: subject binding not
-checked", which is not a defect, and goes on. The bound of 18 digits keeps the conversions of
+checked", which is not a defect, and goes on; it prints that line for a blank squash text too,
+after the defect that reports the text as empty. A blank squash text bound to a number is
+reported as empty, and its subject, which it does not have, is not checked. The bound of 18
+digits keeps the conversions of
 the --number value and of the squash file name to a number far under the limit of 4300 digits
 that Python sets. In --event mode the number is the payload's pull request number, a positive
 integer of any length the JSON reader accepts, and the squash file of that number,
@@ -170,12 +173,17 @@ among them, such as from a scan of the lint or from a hit it returns that cannot
 and reports it as unreadable with its type name.
 Each handler that writes a caught error into a report line writes it through describe(), or,
 for an OSError, writes its strerror when that is set, so an error whose message cannot be
-formatted, even one whose formatting exits, still ends in the count line.
+formatted, even one whose formatting raises SystemExit or KeyboardInterrupt, still ends in the
+count line. Formatting that ends the process, as with os._exit, or that writes to its standard
+output is lint code that changes the state of the process, outside the precondition below.
 
-The precondition of the contract: it holds when the label lint, which is trusted repository
-code run in the gate process, returns from loading and from each scan call without changing the
-state of that process, for example by ending it, as with os._exit, or by writing to, closing or
-replacing standard output. Outside it as well are a standard output that cannot be written, an
+The precondition of the contract: it holds when all code of the label lint that runs in the
+gate process, which is trusted repository code, returns without changing the state of that
+process, for example by ending it, as with os._exit, or by writing to, closing or replacing
+standard output. Lint code runs while the lint loads and in each scan call, and also in the
+objects that the lint hands to the gate: while the gate reads the hits that a scan returns,
+slices or writes out a hit, or formats an error that the lint raised, and when such an object
+is freed. Outside it as well are a standard output that cannot be written, an
 input that never ends, such as a FIFO given as the squash file, which the job's time limit ends,
 and a payload nested so deeply that its parse uses up memory on a stack with no limit: the JSON
 reader recurses once for each level, and under a stack limit it stops with a RecursionError,
@@ -467,12 +475,16 @@ def check_text(report, prefix, text, squash, scan):
 
 
 def check_squash(report, text, number, scan):
-    """Report the defects of a squash message, then its subject binding when number is known."""
+    """Report the defects of a squash message, then its subject binding.
+
+    When number is None, the note that the binding is not checked is printed, for a blank text
+    too; when number is known, the subject of a text that is not blank is checked against it.
+    """
     check_text(report, "squash", text, True, scan)
-    if blank(text):
-        return
     if number is None:
         report.note("pr-text:", " subject binding not checked")
+        return
+    if blank(text):
         return
     subject = text.split("\n", 1)[0]
     suffix = " (#{})".format(number)
@@ -555,7 +567,8 @@ def main(argv):
         # A scan of the lint, or a hit it returns, that raises SystemExit or KeyboardInterrupt
         # is caught here, as load_scan() catches a lint that does so while it loads, so it
         # cannot end the gate with no report. describe() keeps an error whose message raises
-        # from escaping this handler.
+        # from escaping this handler. Lint code that ends the process itself, as with os._exit,
+        # or writes to its standard output is outside the precondition of the exit contract.
         report.note("unreadable:", " the gate stopped on an unexpected error: {}".format(
             describe(error)))
         status = EXIT_UNREADABLE

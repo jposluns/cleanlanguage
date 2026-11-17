@@ -6,10 +6,13 @@ its exit status and its output; some cases, such as the static ones, run no gate
 starts every child through run_child(), which sets a memory limit, a CPU limit and, where a case
 asks, a stack limit in the child before it runs the gate or the suite, and enforces a wall
 timeout on the child from the process that started it, so a gate that never ends stops at a
-limit. When run_child() leaves its wait on a child of the top suite process, on its wall
-timeout, on any other exception or on a normal return, it kills the child's whole process
-group, which holds every process the child started through run_child(); LIMIT_LAUNCH and
-run_child() state which process runs under which limit. The suite sets no limit on its own top
+limit. One process that code of the suite starts does not go through run_child(): the
+grandchild that UNDECODABLE_PARENT, run as a child through run_child(), starts with
+subprocess.Popen in that child's process group, under the limits it inherits. When run_child()
+leaves its wait on a child of the top suite process, on its wall timeout, on any other
+exception or on a normal return, it kills the child's whole process group, which holds every
+process the child started through run_child(); LIMIT_LAUNCH and run_child() state which
+process runs under which limit. The suite sets no limit on its own top
 process: in CI the job's time limit in the workflow bounds it, and on a local run nothing in the
 suite does. A case that needs a squash folder copies the gate and the label lint into a
 temporary tree, since the gate finds both from its own path. Every review-history label and
@@ -441,9 +444,14 @@ class GateCase(unittest.TestCase):
             print("{}{} in {}".format(STOP_MARK, ", ".join(new), self.id()), file=sys.stderr,
                   flush=True)
 
-    def tree(self, squash=None, number=999, lint=True):
-        """A copy of the gate in a temporary tree, with the lint and a squash file if given."""
-        root = self.tmp / "tree"
+    def tree(self, squash=None, number=999, lint=True, name="tree"):
+        """A copy of the gate in a temporary tree, with the lint and a squash file if given.
+
+        The tree is the folder name in the case's temporary folder, which the cleanup of setUp
+        removes whatever the case does; a subtest that makes a tree passes a name of its own,
+        so a subtest that fails leaves nothing in the way of the next.
+        """
+        root = self.tmp / name
         (root / "tools").mkdir(parents=True)
         shutil.copyfile(GATE, root / "tools" / "check-pr-text.py")
         if lint:
@@ -700,6 +708,22 @@ class DefectClasses(GateCase):
         self.assertResult(result, 1, 1)
         self.assertReports(result, '" (#7)"')
 
+    def test_blank_unbound_squash_file_notes_that_its_binding_is_not_checked(self):
+        # A blank squash file that no number binds is reported as empty, and the gate prints the
+        # binding line after that defect, as for any other file it does not bind: an empty
+        # 0.txt, a 007.txt that holds a comment alone, and a blank file outside a squash folder.
+        folder = self.tmp / "other" / ".github" / "squash"
+        folder.mkdir(parents=True)
+        (folder / "0.txt").write_text("", encoding="utf-8")
+        (folder / "007.txt").write_text("<!-- a comment -->\n", encoding="utf-8")
+        blank = self.write("blank.txt", chr(0x200b) + "\n")
+        for path in (folder / "0.txt", folder / "007.txt", blank):
+            with self.subTest(name=path.name):
+                self.assertEqual(self.run_gate("--squash", path),
+                                 (1, ["squash: the text is empty",
+                                      "pr-text: subject binding not checked",
+                                      "pr-text: 1 defect(s)"]))
+
     def test_binding_not_checked_line_is_not_a_defect(self):
         result = self.run_gate("--squash", self.write("message.txt", CLEAN_SQUASH))
         self.assertResult(result, 0, 0)
@@ -753,11 +777,10 @@ class DefectClasses(GateCase):
         for subject, status in ((number, 0), (5, 1)):
             with self.subTest(subject=subject):
                 gate = self.tree(squash="Add a thing (#{})\n\nBody.\n".format(subject),
-                                 number=number)
+                                 number=number, name="tree-{}".format(subject))
                 result = self.run_gate("--event", self.event("A body.", number=number),
                                        gate=gate)
                 self.assertResult(result, status, status)
-                shutil.rmtree(self.tmp / "tree")
 
     def test_blank_text_reports_only_that_it_is_empty(self):
         result = self.description("<!--\n```\n" + EM_DASH)
@@ -1449,15 +1472,15 @@ class UnreadableInputs(GateCase):
                 lint = ("import __main__\n\n\nclass E(__main__." + kind + "):\n"
                         "    def __str__(self):\n        raise SystemExit(7)\n\n\n"
                         "def scan(rel, text):\n    raise E()\n")
-                result = self.run_lint(lint)
-                shutil.rmtree(self.tmp / "tree")
+                result = self.run_lint(lint, name="tree-" + kind)
                 self.assertResult(result, 2, 0)
                 self.assertEqual(result[1][0][:len(start)], start, result[1])
                 self.assertReports(result, "E (its message cannot be formatted)")
 
-    def run_lint(self, lint):
-        """The result of the gate on a clean description, with lint as the label lint."""
-        gate = self.tree(squash=CLEAN_SQUASH, lint=False)
+    def run_lint(self, lint, name="tree"):
+        """The result of the gate on a clean description, with lint as the label lint, in the
+        tree name."""
+        gate = self.tree(squash=CLEAN_SQUASH, lint=False, name=name)
         (gate.parent / "test-no-qa-labels.py").write_text(lint)
         return self.run_gate("--description", self.write("d.md", "Hi.\n"), gate=gate)
 
@@ -1467,8 +1490,8 @@ class UnreadableInputs(GateCase):
         for hits, printed in (("[rel.encode() + b':1: x']", 0),
                               ("[rel + ':1: x', rel.encode() + b':1: y']", 1)):
             with self.subTest(hits=hits):
-                result = self.run_lint("def scan(rel, text):\n    return " + hits + "\n")
-                shutil.rmtree(self.tmp / "tree")
+                result = self.run_lint("def scan(rel, text):\n    return " + hits + "\n",
+                                       name="tree-{}".format(printed))
                 defects = [line for line in result[1] if line.startswith("description")]
                 self.assertEqual(len(defects), printed, result[1])
                 self.assertResult(result, 2, printed)
@@ -1786,11 +1809,17 @@ class OutputAndHonestTexts(GateCase):
                         "decode".format(ORPHAN_BOUND))
 
     def test_every_child_runs_under_its_limits(self):
-        # The only call that starts a process is in run_child(): it starts LIMIT_LAUNCH, an
-        # outermost call in a new session, waits with a timeout, and calls end_group(), which
-        # kills the child's group, on each path out of the wait; run_child() takes its memory
-        # limit and timeout with no default, and LIMIT_LAUNCH sets the memory and CPU limits
-        # and the mark of a nested call.
+        # The only call in the suite's own code that starts a process is in run_child(): it
+        # starts LIMIT_LAUNCH, an outermost call in a new session, waits with a timeout, and
+        # calls end_group(), which kills the child's group, on each path out of the wait;
+        # run_child() takes its memory limit and timeout with no default, and LIMIT_LAUNCH sets
+        # the memory and CPU limits and the mark of a nested call. The code that the suite runs
+        # in a child holds 2 more such calls: UNDECODABLE_PARENT, which a case runs through
+        # run_child(), starts STARTED_SPIN with subprocess.Popen in its own process group, under
+        # the limits it inherits, and LIMIT_LAUNCH replaces its own process with os.execv. The
+        # check reads the suite's source and each text of code in it, every string constant of
+        # the source and every string the module binds, so a new call that starts a process in
+        # either fails it.
         def starts_a_process(node):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                     and isinstance(node.func.value, ast.Name)):
@@ -1803,6 +1832,20 @@ class OutputAndHonestTexts(GateCase):
         tree = ast.parse(SUITE.read_text(encoding="utf-8"))
         calls = [node for node in ast.walk(tree) if starts_a_process(node)]
         self.assertEqual([ast.unparse(node.func) for node in calls], ["subprocess.Popen"])
+        bound = {value: name for name, value in globals().items() if isinstance(value, str)}
+        texts = set(bound) | {node.value for node in ast.walk(tree)
+                              if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+        embedded = {}
+        for text in texts:
+            try:
+                code = ast.parse(text)
+            except (SyntaxError, ValueError):
+                continue
+            found = [ast.unparse(node.func) for node in ast.walk(code) if starts_a_process(node)]
+            if found:
+                embedded[bound.get(text, text)] = found
+        self.assertEqual(embedded, {"LIMIT_LAUNCH": ["os.execv"],
+                                    "UNDECODABLE_PARENT": ["subprocess.Popen"]})
         child = next(node for node in ast.walk(tree)
                      if isinstance(node, ast.FunctionDef) and node.name == "run_child")
         call = next(node for node in ast.walk(child) if starts_a_process(node))
@@ -1827,6 +1870,22 @@ class OutputAndHonestTexts(GateCase):
         self.assertIn("resource.setrlimit(resource.RLIMIT_AS", LIMIT_LAUNCH)
         self.assertIn("resource.setrlimit(resource.RLIMIT_CPU", LIMIT_LAUNCH)
         self.assertIn("os.environ['" + CHILD_MARK + "'] = '1'", LIMIT_LAUNCH)
+
+    def test_every_removal_runs_whatever_the_case_does(self):
+        # A file or folder that a case removes by a call after other statements stays when one
+        # of them fails, so a later subtest that makes it again stops on FileExistsError before
+        # it runs the gate. Each call in the suite that removes a file or folder is in a finally
+        # clause; a cleanup that addCleanup registers runs on every path too, and is a reference
+        # to shutil.rmtree, not a call.
+        def removes(node):
+            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("rmtree", "unlink", "remove", "rmdir", "removedirs"))
+        tree = ast.parse(SUITE.read_text(encoding="utf-8"))
+        guarded = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.Try)
+                   for statement in node.finalbody for inner in ast.walk(statement)}
+        self.assertEqual(["{}: {}".format(node.lineno, ast.unparse(node))
+                          for node in ast.walk(tree) if removes(node) and id(node) not in guarded],
+                         [])
 
     def test_workflow_job_has_a_time_limit(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -2473,6 +2532,13 @@ def generate_sites(source):
                 elif not (isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant)):
                     raise UnknownConstruct("a class body statement: " + line_of(item))
         else:
+            # A module-level statement is read for its expressions alone, so a function or class
+            # defined under one, such as in the body of an if or a try, would get none of the
+            # statement sites of its body; it raises, and is never passed over.
+            for inner in ast.walk(node):
+                if isinstance(inner, functions + (ast.ClassDef,)):
+                    raise UnknownConstruct("a definition under a module-level statement: "
+                                           + line_of(inner))
             name = None
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
@@ -2994,17 +3060,17 @@ SWEEP_ROWS = {
     'in check_squash(), the statement `check_text(report, "squash", text, True, scan)` deleted, '
     'at its 1st occurrence':
         (D + 'test_em_dash_in_squash_message_fails',),
-    'in check_squash(), the statement `if blank(text):` deleted, at its 1st occurrence':
-        (D + 'test_empty_or_blank_squash_file_fails',),
-    'in check_squash(), the statement `return` deleted, at its 1st occurrence':
-        (D + 'test_empty_or_blank_squash_file_fails',),
     'in check_squash(), the statement `if number is None:` deleted, at its 1st occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
     'in check_squash(), the statement `report.note("pr-text:", " subject binding not checked")` '
     'deleted, at its 1st occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
-    'in check_squash(), the statement `return` deleted, at its 2nd occurrence':
+    'in check_squash(), the statement `return` deleted, at its 1st occurrence':
         (D + 'test_binding_not_checked_line_is_not_a_defect',),
+    'in check_squash(), the statement `if blank(text):` deleted, at its 1st occurrence':
+        (D + 'test_empty_or_blank_squash_file_fails',),
+    'in check_squash(), the statement `return` deleted, at its 2nd occurrence':
+        (D + 'test_empty_or_blank_squash_file_fails',),
     'in check_squash(), the statement `if not subject.endswith(suffix):` deleted, at its 1st '
     'occurrence':
         (D + 'test_event_squash_subject_with_wrong_number_fails',),
@@ -3851,8 +3917,10 @@ STOPPING_SITES = {
     'in read_event(), the statement `return number, body.replace("\\r\\n", "\\n")` deleted, at '
     'its 1st occurrence':
         (('event', 'event defects'),
-         'read_event() then returns None, which main() unpacks at once, so every event run stops '
-         'on a TypeError.'),
+         'read_event() then returns None, which main() unpacks at once, so every event run that '
+         'reaches the deleted return, one whose payload read_event() accepts, stops on a '
+         'TypeError; an event run whose payload it refuses ends before the return and is '
+         'unchanged.'),
     'in load_scan(), the statement `try:` deleted, at its 1st occurrence':
         (EVERY_PROBE,
          'the whole try statement goes, so load_scan() returns scan, which nothing binds, and '
@@ -4076,8 +4144,9 @@ STOPPING_SITES = {
     'in parse(), the statement `return modes[0], options[modes[0]], number` deleted, at its 1st '
     'occurrence':
         (EVERY_PROBE,
-         'parse() then returns None, which main() unpacks at once, so every run stops on a '
-         'TypeError.'),
+         'parse() then returns None, which main() unpacks at once, so every run that reaches the '
+         'deleted return, one whose arguments parse() accepts, stops on a TypeError; a run whose '
+         'arguments it refuses ends on its usage error before the return and is unchanged.'),
     'in parse(), `0` changed up to `1` in `return modes[0], options[modes[0]], number`, at its '
     '1st occurrence':
         (EVERY_PROBE,
@@ -4686,9 +4755,10 @@ class MutantSweep(unittest.TestCase):
     argument removed. regex_parse() raises UnknownConstruct on a construct it does not know,
     pattern_pieces() on a pattern expression other than string literals, their concatenation
     with + and a string's join of a name, and generate_sites() on a call written re.<name> for
-    any other function of re, such as re.findall, re.sub or re.split, and on a decorated nested
-    definition, so a new construct, a pattern given to such a call or a decorated nested
-    definition fails the adequacy test by name. A pattern given to a function
+    any other function of re, such as re.findall, re.sub or re.split, on a decorated nested
+    definition, and on a function or class defined under a module-level statement, such as an
+    if or a try, whose body it would otherwise not walk, so a new construct, a pattern given to
+    such a call or such a definition fails the adequacy test by name. A pattern given to a function
     of re reached by another name, such as one imported with from re import, is not seen.
     Each site is named in words, from where it is, the operator and the text it changes, and its
     occurrence, with its exact old text, whole lines, its new text and the number of times its
@@ -5084,6 +5154,25 @@ class MutantSweep(unittest.TestCase):
         with self.assertRaises(UnknownConstruct) as caught:
             generate_sites(decorated)
         self.assertEqual(str(caught.exception), "a decorated definition: def inner():")
+
+    def test_definition_under_a_module_level_statement_fails_by_name(self):
+        # A gate copy with a function or a class defined under a module-level if or try holds a
+        # body that the generator does not walk, so the generator, and with it setUp and the
+        # adequacy test, raises UnknownConstruct naming that definition.
+        source = GATE.read_text(encoding="utf-8")
+        old = "def blank(text):\n"
+        self.assertEqual(source.count(old), 1)
+        function = "    def spare():\n        hidden = 1\n        return hidden\n"
+        method = "    class Spare:\n        def spare(self):\n            return 1\n"
+        for name, block, named in (
+                ("if", "if WIDTH:\n" + function, "def spare():"),
+                ("try", "try:\n" + function + "except ValueError:\n    pass\n", "def spare():"),
+                ("class", "if WIDTH:\n" + method, "class Spare:")):
+            with self.subTest(variant=name):
+                with self.assertRaises(UnknownConstruct) as caught:
+                    generate_sites(source.replace(old, block + "\n\n" + old, 1))
+                self.assertEqual(str(caught.exception),
+                                 "a definition under a module-level statement: " + named)
 
     def test_named_cases_pass_unmutated(self):
         ids = sorted({case for ids in SWEEP_ROWS.values() for case in ids}
