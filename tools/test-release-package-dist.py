@@ -64,13 +64,18 @@ whose path holds a colon, which no entry of PATH can hold, ends the set-up
 with an error. A build that the test starts and then signals writes its
 error output to a file of the temporary folder, not to a pipe, and its
 standard output is discarded, so it cannot block on a full pipe while the
-test waits for its stand-in. Every build runs in a session of its own. Once
-the bash of a build that the test signals has ended, the test ends with
-SIGKILL any process of that session that still runs, so that none changes
-dist/ while the test reads it; and when any build outlasts BUILD_TIMEOUT,
-the test ends every process of its session with SIGKILL and reaps its bash
-before it reports the timeout, so that none changes dist/ during a later
-case. The signal of the exit trap cases of case 14 goes
+test waits for its stand-in. Every build runs in a session and a process
+group of its own. Once the bash of a build that the test signals has ended,
+the test ends with SIGKILL any process of that process group that still
+runs, so that none changes dist/ while the test reads it; and when any build
+outlasts its time limit, BUILD_TIMEOUT unless case 27 gives a shorter one,
+the test ends every process of that group with SIGKILL, waits at most
+REAP_TIMEOUT seconds for its bash to end and at most REAP_TIMEOUT more for
+its output to close, and then reports the timeout, so that none of them
+changes dist/ during a later case and no wait of the case is unbounded. A
+process that has left the build's process group, such as 1 that the build
+starts under job control (set -m) or with setsid, is not ended; the
+packager does neither. The signal of the exit trap cases of case 14 goes
 to every process of the build's process group; the other signal cases
 send theirs to its bash only. In such a build each signal of
 TRAPPED_SIGNALS has its default action and is not blocked, since bash
@@ -205,19 +210,29 @@ that clone:
     paths, among them the near miss Cleanlanguage.zip, and removes the
     outputs of version 11111111111.0.0.
 16. The packager's code, with its comment lines and the Python programs
-    that it passes to python3 -c set aside, and with each line that ends
-    in a backslash joined to the next with nothing between them, as bash
-    joins them, holds exactly 1 rm with a recursive option,
-    `rm -rf -- "${work}" || true`, no rmdir in a for, while or until loop,
-    no rmdir with its parents option, no find -delete, and the line that
-    sets work from mktemp -d with a template in dist/. The scan decodes
-    each $'...' string as bash does, reads each $"..." as "...", reads each
-    ${...} as its parameter, its operator and its word, expands each brace
-    list or sequence in a word, such as -{r,f} or {a..c}, sets aside the
-    quotes and backslashes of each line, and starts a new command at each
-    (, ), backquote, {, }, ;, & and |, so it reads the commands of a
-    subshell, a command substitution, backquotes or a group too, in the
-    word of a ${...} as well. A word names rm or rmdir whatever folder
+    that it passes to python3 -c set aside, and with each line that bash
+    continues joined to the next with nothing between them, holds exactly
+    1 rm with a recursive option, `rm -rf -- "${work}" || true`, no rmdir
+    in a for, while or until loop, no rmdir with its parents option, no
+    find -delete, and the line that sets work from mktemp -d with a
+    template in dist/. A line that bash continues is 1 whose last
+    backslash is not escaped by a backslash before it and stands outside
+    single quotes, a $'...' string, a comment and the body of a
+    here-document whose delimiter is quoted; to tell, the scan follows
+    quotes, $'...' strings, backquotes, $(...), ${...}, comments and
+    here-documents across the lines. It joins lines before it sets comment
+    lines and blank lines aside, since bash joins them first, so a line
+    continued onto 1 of them ends there. The scan decodes each $'...'
+    string as bash does, reads each $"..." as "...", reads each ${...} as
+    its parameter, its operator and its word, expands each brace list or
+    sequence in a word, such as -{r,f} or {a..c}, sets aside the quotes and
+    backslashes of each line, and starts a new command at each (, ),
+    backquote, {, }, ;, & and |, so it reads the commands of a subshell, a
+    command substitution, backquotes or a group too, in the word of a
+    ${...} as well; such a character that a backslash escapes or that a
+    $'...' string gives is part of a word and starts no command. When it
+    counts loops, it reads a character that a backslash escapes, and a
+    $'...' string, as bash does. A word names rm or rmdir whatever folder
     path, quotes or backslash it carries (/usr/bin/rm, \\rm, 'rm'),
     wherever it stands in its command, such as after `command` or find
     -exec, and each option word up to the end of that command counts,
@@ -225,12 +240,17 @@ that clone:
     of short options that holds r or R, or --recursive or an abbreviation
     of it from --r on. When it counts loops, it sets aside each quoted
     string that holds no command substitution. The scan reads quotes by
-    their characters, not as bash pairs them, and makes no expansion that
-    depends on the run, so it does not see a removal whose command name or
-    option comes from a variable, eval of a variable, an alias, a function,
-    pathname expansion or another program, such as a Python program, nor a
-    loop whose words sit in a quoted string with no command substitution or
-    a line that it takes for part of a Python program; and it counts a
+    their characters, not as bash pairs them, except to tell which lines
+    bash continues, and makes no expansion that depends on the run, so it
+    does not see a removal whose command name or option comes from a
+    variable, eval of a variable, an alias, a function, pathname expansion
+    or another program, such as a Python program, nor an option after a
+    quoted (, ), backquote, {, }, ;, & or |, nor a loop whose words sit in
+    a quoted string with no command substitution or a line that it takes
+    for part of a Python program, nor a removal on a line that it joins or
+    leaves apart unlike bash after a construct that misleads the way it
+    follows quotes, such as the ) of a case pattern in a command
+    substitution or a << that shifts in arithmetic; and it counts a
     removal that a quoted message only names.
 17. A stand-in rm, found through the PATH, records each call and a
     stand-in mktemp the work folder: a good build, a build refused by the
@@ -279,13 +299,22 @@ that clone:
     ignores, each signal of TRAPPED_SIGNALS but that of a name that the
     stand-in does not know and, when RTMIN or RTMAX is among those names,
     the real-time range, so an unknown name makes the build drop no signal
-    whose name it knows. With the 4 together, a build that receives SIGSYS
-    while a stand-in mv holds the move of the .sha256 files exits 159 and
-    leaves no zip and no .sha256 in dist/.
+    whose name it knows. With the 4 together and the stand-in trap, a
+    build that receives SIGSYS while a stand-in mv holds the move of the
+    .sha256 files exits 159 and leaves no zip and no .sha256 in dist/; each
+    call of the stand-in kill was `kill -l NAME` for a NAME of
+    SIGNAL_NAMES, the build asked it for SYS after 1 or more of the 4, and
+    the build trapped, and its exit trap ignored, each signal of
+    TRAPPED_SIGNALS but SIGSTKFLT, SIGPWR and the real-time range, SIGSYS
+    among them.
 25. The scan of case 16 finds 1 more removal of its kind in the packager's
     text with each line of SECOND_REMOVALS added at its end than without:
     a recursive rm, an rmdir with its parents option, a find -delete or an
-    rmdir in a loop, in each form that case 16 names.
+    rmdir in a loop, in each form that case 16 names, among them a removal
+    on the line after 1 that ends in a backslash that bash does not read as
+    a continuation, and a removal with a word that a continued line splits
+    after a quote, comment or here-document that a scan which follows no
+    quotes would misread.
 26. For each glob or match option of SHELL_OPTIONS_OFF, which the packager
     turns off, with a stand-in shopt that records each call and fails as
     bash does for an option that it does not know at each call that names
@@ -296,6 +325,12 @@ that clone:
     that option; and at each trap that it set, its shell options held
     dotglob and none of the 5, so an option that the shell does not know
     neither ends the build nor leaves another option turned on.
+27. A build by a stand-in script, with a time limit of 1 second, that
+    starts in its own process group a child that writes a file after 3
+    seconds, starts under job control a process that leaves that group and
+    keeps the build's output open, and then sleeps, makes the test raise
+    the timeout within the limit plus twice REAP_TIMEOUT and 5 seconds,
+    long before that process ends; the child never writes its file.
 
 Each case starts with no dist/ in the clone.
 
@@ -395,6 +430,10 @@ GLOBIGNORE_VALUE = "dist/*:*"
 # build inherits them.
 SHELL_VARIABLES = ("BASHOPTS", "SHELLOPTS", "GLOBIGNORE", "BASH_ENV", "CDPATH")
 BUILD_TIMEOUT = 300
+# The longest that the test waits, once it has ended the process group of a
+# build with SIGKILL, for the build's bash to end, and then for its output
+# to close.
+REAP_TIMEOUT = 5
 # The exit code of the stand-in mv that refuses a move with a code other than 1.
 MOVE_EXIT = 7
 # The start of the name of the test's temporary folder. It starts with
@@ -435,6 +474,13 @@ PARAMETER = re.compile(r"\$\{([^{}]*)\}")
 PARAMETER_PARTS = re.compile(r"([#!]?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-*@#?$!])(?:\[[^]]*\])?)"
                              r"(:?[-+=?]|##?|%%?|/[/#%]?|\^\^?|,,?|:|@)?(.*)", re.S)
 COMMAND_STARTS = re.compile(r"[()`{};&|]")
+# A character that a backslash escapes, which bash reads as part of a word.
+ESCAPED = re.compile(r"\\(.)", re.S)
+# A here-document operator, <<, or <<- that strips leading tabs, with its
+# delimiter word; a here-string, <<<, is not one.
+HEREDOC = re.compile(r"<<(-?)[ \t]*([^\s;&|()<>]+)")
+# The characters before which a # starts a comment: those that end a word.
+WORD_ENDS = " \t\n;&|()<>"
 # An ANSI-C quoted string, $'...', the escapes in it that bash decodes, and
 # the 1-letter ones among them.
 ANSI_C = re.compile(r"\$'((?:\\.|[^'\\])*)'", re.S)
@@ -448,8 +494,10 @@ ANSI_C_LETTERS = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n"
 BRACES = re.compile(r"\{([^\s{}]*)\}")
 BRACE_SEQUENCE = re.compile(r"(-?[0-9]+|[A-Za-z])\.\.(-?[0-9]+|[A-Za-z])(?:\.\.(-?[0-9]+))?")
 # A quoted string of a shell line that holds no command substitution, which
-# the scan sets aside when it counts loops.
-QUOTED = re.compile(r"'[^']*'|\"(?:\\.|\$(?!\()|[^\"\\$`])*\"")
+# the scan sets aside when it counts loops: a $'...' string, a '...' string
+# or a "..." string; or a character that a backslash escapes outside them,
+# which it keeps, so that an escaped quote opens no string.
+QUOTED = re.compile(r"\\.|\$'(?:\\.|[^'\\])*'|'[^']*'|\"(?:\\.|\$(?!\()|[^\"\\$`])*\"", re.S)
 # A second removal in each form that the scan of the structural case must
 # see, as lines added at the end of the packager's text, with the list of
 # removal_scan that it adds to: recursive rm, looped rmdir or other.
@@ -500,6 +548,41 @@ SECOND_REMOVALS = (
     ("looped", '(for d in a b; do rmdir "${work}/$d"; done)'),
     ("looped", 'while false; do\n  rmdir "${work}/src"\ndone'),
     ("looped", 'gone="$(for d in a b; do rmdir "${work}/$d"; done)"'),
+    # A removal on the line after 1 that ends in a backslash that bash
+    # does not read as a continuation: an escaped backslash, 2 of them, a
+    # backslash in a comment, in single quotes, in a $'...' string and in
+    # the body of a here-document whose delimiter is quoted, and a line
+    # continued onto a comment line or a blank line, which ends there.
+    ("recursive", ': clean\\\\\nrm -rf -- "${work}/src"'),
+    ("recursive", ': clean\\\\\\\\\nrm -rf -- "${work}/src"'),
+    ("looped", ': clean\\\\\nfor d in a b; do rmdir "${work}/$d"; done'),
+    ("recursive", ': clean #x\\\nrm -rf -- "${work}/src"'),
+    ("recursive", ": 'clean\\\n'; rm -rf -- \"${work}/src\""),
+    ("recursive", ": $'clean\\\n'; rm -rf -- \"${work}/src\""),
+    ("recursive", "cat <<'E' >/dev/null\nclean\\\nE\nrm -rf -- \"${work}/src\""),
+    ("recursive", ': clean\\\n# a comment\nrm -rf -- "${work}/src"'),
+    ("recursive", ': clean\\\n\nrm -rf -- "${work}/src"'),
+    # A word that a continued line splits, after an escaped quote, an
+    # apostrophe in double quotes, in a comment, in a command substitution
+    # or a ${...} in double quotes, or in a here-document, after a # that
+    # starts no comment, and in double quotes and backquotes.
+    ("recursive", ": it\\'s\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
+    ("recursive", ': "it\'s"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
+    ("recursive", ": clean # it's\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
+    ("recursive", ': "$(echo "it\'s")"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
+    ("recursive", ': "${unset_name:-"it\'s"}"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
+    ("recursive", "cat <<E >/dev/null\nit's\nE\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
+    ("recursive", '/usr/bin/rm -f "${#work}" \\\n  -r "${work}/src"'),
+    ("recursive", '/usr/bin/rm -f "${work}/a$#" \\\n  -r "${work}/src"'),
+    ("recursive", '/usr/bin/rm "-r\\\nf" -- "${work}/src"'),
+    ("recursive", 'gone=`/usr/bin/r\\\nm -r -- "${work}/src"`'),
+    # A character that starts a command, escaped by a backslash or given
+    # by a $'...' string, which bash reads as part of a word; and an
+    # escaped quote and a $'...' string before a loop.
+    ("recursive", 'rm -f \\; \\& \\| \\( \\) \\{ \\} \\` -r -- "${work}/src"'),
+    ("recursive", "rm -f $'\\x3b' -r -- \"${work}/src\""),
+    ("looped", ": it\\'s; for d in a b; do rmdir \"${work}/$d\"; done; : \\'"),
+    ("looped", ": $'it\\'s'; for d in a b; do rmdir \"${work}/$d\"; done; : 'x'"),
 )
 
 
@@ -603,14 +686,20 @@ def trapped_without(names: tuple) -> list:
     return sorted(left)
 
 
-def end_session(proc: subprocess.Popen):
-    """End with SIGKILL every process of the session that proc leads that
-    still runs, and reap proc."""
+def end_group(proc: subprocess.Popen):
+    """End with SIGKILL every process of the process group that proc leads
+    that still runs, and wait at most REAP_TIMEOUT seconds for proc to end
+    and be reaped, so that this never blocks for longer. A process that has
+    left that group, such as 1 that proc starts under job control (set -m)
+    or with setsid, is not ended."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    proc.wait()
+    try:
+        proc.wait(timeout=REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def sh_word(value) -> str:
@@ -680,23 +769,88 @@ def code_lines(text: str) -> list:
     return found
 
 
+def continued_lines(text: str) -> set:
+    """The numbers of the lines of a shell script that bash continues on the
+    next line: each whose last character is a backslash that no backslash
+    before it escapes and that stands outside single quotes, a $'...'
+    string, a comment and the body of a here-document whose delimiter is
+    quoted. To tell, it follows across the lines each quoted string, $'...'
+    string, backquote, $(...), ${...} and here-document: a backslash
+    escapes the next character outside single quotes; a # starts a comment
+    where a word starts, outside quotes and ${...}; a here-document starts
+    on the line after its << and ends at the line that is its delimiter.
+    The ) of a case pattern in a command substitution, which it takes for
+    the end of that substitution, and a << that shifts in arithmetic, which
+    it takes for a here-document, mislead it."""
+    continued, stack, waiting, body, before = set(), [], [], None, "\n"
+    for number, line in enumerate(text.splitlines(), 1):
+        if body is not None:
+            delimiter, strip, quoted = body
+            if (line.lstrip("\t") if strip else line) == delimiter:
+                body = waiting.pop(0) if waiting else None
+            elif not quoted and (len(line) - len(line.rstrip("\\"))) % 2:
+                continued.add(number)
+            continue
+        index = 0
+        while index < len(line):
+            char, top = line[index], stack[-1] if stack else ""
+            redirect = char == "<" and top not in ("'", "$'", '"')
+            heredoc = HEREDOC.match(line, index) if redirect else None
+            if redirect and line.startswith("<<<", index):
+                index, heredoc = index + 2, None
+            elif char == "\\" and top != "'":
+                if index == len(line) - 1:
+                    if top != "$'":
+                        continued.add(number)
+                    break
+                index, char = index + 1, "\\"
+            elif top in ("'", "$'"):
+                if char == "'":
+                    stack.pop()
+            elif (top == char and char in '"`') or (top, char) in (("(", ")"), ("{", "}")):
+                stack.pop()
+            elif top not in ('"', "{") and char == "#" and before in WORD_ENDS:
+                break
+            elif heredoc:
+                word = heredoc.group(2)
+                waiting.append((re.sub(r"[\\'\"]", "", word), heredoc.group(1) == "-",
+                                any(c in word for c in "\\'\"")))
+                index, char = heredoc.end() - 1, word[-1]
+            elif line.startswith(("$(", "${"), index) or (top != '"' and line.startswith("$'", index)):
+                stack.append("$'" if line[index + 1] == "'" else line[index + 1])
+                index += 1
+            elif char in '"`' or (char == "'" and top != '"') or (char == "(" and top == "("):
+                stack.append(char)
+            before = char
+            index += 1
+        if number in continued:
+            continue
+        before = "\n"
+        if waiting:
+            body = waiting.pop(0)
+    return continued
+
+
 def logical_lines(text: str) -> list:
-    """(number, line) for each line of code_lines(text), with each line that
-    ends in a backslash joined to the next with nothing between them, as
+    """(number, line) for each line of code_lines(text), with each line of
+    continued_lines(text) joined to the next with nothing between them, as
     bash removes a backslash and the newline after it, so that a word split
     there, such as r and m, is read as 1 word; each is numbered by its first
-    line."""
-    found, pending = [], None
-    for n, line in code_lines(text):
-        if pending is not None:
-            n, line = pending[0], pending[1] + line
-        if line.endswith("\\"):
-            pending = (n, line[:-1])
-        else:
-            pending = None
-            found.append((n, line))
-    if pending is not None:
-        found.append(pending)
+    line. The join comes before comment lines and blank lines are set
+    aside, as in bash, so a line continued onto 1 of them ends there."""
+    code, continued = dict(code_lines(text)), continued_lines(text)
+    found, start, joined = [], None, ""
+    for number, line in enumerate(text.splitlines(), 1):
+        if start is None:
+            start, joined = number, ""
+        if number in continued:
+            joined += line[:-1]
+            continue
+        if start in code:
+            found.append((start, joined + line))
+        start = None
+    if start in code:
+        found.append((start, joined))
     return found
 
 
@@ -770,13 +924,19 @@ def commands(line: str) -> list:
     each brace expansion expanded, and the quotes and backslashes of the
     line set aside. A command starts at each character of COMMAND_STARTS,
     so the commands of a subshell, a command substitution, backquotes or a
-    group are read as well, in the word of a ${...} too."""
-    line = ANSI_C.sub(lambda match: ansi_c(match.group(1)), line)
+    group are read as well, in the word of a ${...} too; such a character
+    that a backslash escapes or that a $'...' string gives is read as part
+    of a word, as an underscore, and starts no command."""
+    def literal(match) -> str:
+        char = match.group(1)
+        return "_" if COMMAND_STARTS.match(char) else "" if char == "\\" else char
+
+    line = ANSI_C.sub(lambda match: COMMAND_STARTS.sub("_", ansi_c(match.group(1))), line)
     line = line.replace('$"', '"')
     while PARAMETER.search(line):
         line = PARAMETER.sub(parameter_words, line)
     line = brace_expand(line)
-    line = line.replace("\\", "").replace("'", "").replace('"', "")
+    line = ESCAPED.sub(literal, line).replace("\\", "").replace("'", "").replace('"', "")
     return [part.split() for part in COMMAND_STARTS.split(line) if part.split()]
 
 
@@ -784,8 +944,10 @@ def loop_counts(line: str) -> tuple:
     """The number of for, while and until loops that a logical line opens
     and the number of done words that close 1, read from its commands with
     its quoted strings set aside, so that a word of a message is not
-    taken for either."""
-    words = [w[0] for w in commands(QUOTED.sub("''", line))]
+    taken for either; a character that a backslash escapes stays, so an
+    escaped quote opens no string."""
+    kept = QUOTED.sub(lambda match: match.group(0) if match.group(0).startswith("\\") else "''", line)
+    words = [w[0] for w in commands(kept)]
     return sum(w in ("for", "while", "until") for w in words), words.count("done")
 
 
@@ -882,22 +1044,31 @@ class DistTests(unittest.TestCase):
 
     @classmethod
     def run_packager(cls, script: Path, *args: str, autocrlf: bool = False, path_prefix: str = "",
-                     extra: dict = None):
+                     extra: dict = None, timeout: float = BUILD_TIMEOUT):
         """Run script with bash in the clone and return its exit code and
-        error output. The build runs in a session of its own, so that a
-        build that outlasts BUILD_TIMEOUT has every process of that session
-        ended with SIGKILL, and its bash reaped, before the timeout is
-        raised, and none of them can change dist/ during a later case."""
-        with subprocess.Popen(["bash", str(script), *args], cwd=str(cls.clone),
-                              env=cls.packager_env(autocrlf, path_prefix, extra),
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, start_new_session=True) as proc:
+        error output. The build runs in a session and a process group of its
+        own. When it outlasts timeout, every process of that group is ended
+        with SIGKILL, the test waits at most REAP_TIMEOUT seconds for its
+        bash to end and at most REAP_TIMEOUT more for its output to close,
+        closes that output, and raises the timeout; so no process of the
+        group can change dist/ during a later case, and the wait is bounded
+        even when a process that has left the group keeps the output open."""
+        proc = subprocess.Popen(["bash", str(script), *args], cwd=str(cls.clone),
+                                env=cls.packager_env(autocrlf, path_prefix, extra),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, start_new_session=True)
+        try:
+            _, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as expired:
+            end_group(proc)
             try:
-                _, stderr = proc.communicate(timeout=BUILD_TIMEOUT)
+                proc.communicate(timeout=REAP_TIMEOUT)
             except subprocess.TimeoutExpired:
-                end_session(proc)
-                proc.communicate()
-                raise
+                pass
+            finally:
+                proc.stdout.close()
+                proc.stderr.close()
+            raise expired
         return proc.returncode, stderr
 
     def build(self, *args: str, autocrlf: bool = False, path_prefix: str = "", extra: dict = None):
@@ -1315,10 +1486,11 @@ class DistTests(unittest.TestCase):
         as a terminal or a CI runner does, then write go so that the
         stand-in goes on; once the build's bash has ended, or once
         BUILD_TIMEOUT has passed without its end, end with SIGKILL every
-        process of its session that still runs, such as a stand-in that a
-        build ended at once left behind, reap the bash and close its error
-        output, so that none changes dist/ after this returns or raises;
-        raise the timeout if there was one, and return the build's stderr
+        process of its process group that still runs, such as a stand-in
+        that a build ended at once left behind, wait at most REAP_TIMEOUT
+        seconds for the bash to be reaped and close its error output, so
+        that none of them changes dist/ after this returns or raises; raise
+        the timeout if there was one, and return the build's stderr
         otherwise."""
         try:
             deadline = time.monotonic() + BUILD_TIMEOUT
@@ -1335,7 +1507,7 @@ class DistTests(unittest.TestCase):
             try:
                 proc.wait(timeout=BUILD_TIMEOUT)
             finally:
-                end_session(proc)
+                end_group(proc)
                 proc.output.seek(0)
                 stderr = proc.output.read().decode("utf-8", "replace")
                 proc.output.close()
@@ -1347,7 +1519,8 @@ class DistTests(unittest.TestCase):
         read while it waits, and its standard output is discarded, so a
         build that writes more than a pipe holds does not block until the
         wait ends; held_signal reads the file. The build runs in a session
-        of its own, whose processes held_signal can signal and end together."""
+        and a process group of its own, whose processes held_signal can
+        signal and end together."""
         output = tempfile.TemporaryFile(dir=self.tmp.name)
         proc = subprocess.Popen(["bash", str(self.clone / "tools" / "release-package.sh"), *args],
                                 cwd=str(self.clone), env=self.packager_env(path_prefix=path_prefix, extra=extra),
@@ -1948,10 +2121,16 @@ class DistTests(unittest.TestCase):
         exit trap ignores, each signal of TRAPPED_SIGNALS but that of a name
         that it does not know and, when RTMIN or RTMAX is among those names,
         the real-time range, so an unknown name makes the build drop no other
-        signal. With NON_LINUX_NAMES unknown, SIGSYS, which comes after
-        STKFLT in the packager's list, still ends a build with 159 while a
-        stand-in mv holds the move of the .sha256 files, and the build leaves
-        no output."""
+        signal. With NON_LINUX_NAMES unknown and the stand-in trap, SIGSYS,
+        which comes after STKFLT and PWR in the packager's list, still ends
+        a build with 159 while a stand-in mv holds the move of the .sha256
+        files, and the build leaves no output; each call of the stand-in
+        kill was `kill -l NAME` for a NAME of SIGNAL_NAMES, the build asked
+        it for SYS after 1 or more names that it does not know, and the
+        build trapped, and its exit trap ignored, each signal of
+        TRAPPED_SIGNALS but SIGSTKFLT, SIGPWR and the real-time range, so a
+        packager that drops SIGSYS, or asks for no unknown name before SYS,
+        fails this subtest."""
         with self.subTest(unknown="none"):
             self.setUp()
             extra, trap_log = self.recording_trap()
@@ -1973,8 +2152,17 @@ class DistTests(unittest.TestCase):
         with self.subTest(unknown=" ".join(NON_LINUX_NAMES), signal="SIGSYS"):
             self.setUp()
             extra, log = self.kill_not_knowing(NON_LINUX_NAMES)
+            trap_entry, trap_log = self.recording_trap()
+            extra.update(trap_entry)
             self.assert_signal_ends_build(signal.SIGSYS, 128 + signal.SIGSYS, extra=extra)
-            self.assertTrue(self.records(log), "the build never asked the stand-in kill for an unknown name")
+            asked = self.records(log)
+            self.assertTrue(all(len(a) == 2 and a[0] == "-l" and a[1] in SIGNAL_NAMES for a in asked),
+                            "the stand-in kill recorded %r" % asked)
+            names = [a[1] for a in asked]
+            self.assertIn("SYS", names, "the build never asked the stand-in kill for SYS: %r" % names)
+            self.assertTrue(set(names[:names.index("SYS")]) & set(NON_LINUX_NAMES),
+                            "the build asked the stand-in kill for no unknown name before SYS: %r" % names)
+            self.assert_traps(trap_log, trapped_without(NON_LINUX_NAMES))
 
     def test_unknown_shell_options_skipped(self):
         """For each option of SHELL_OPTIONS_OFF, with a stand-in shopt that
@@ -2002,6 +2190,46 @@ class DistTests(unittest.TestCase):
                     self.assertIn("dotglob", held.split(":"), "a trap was set with the options %s" % held)
                     self.assertEqual(set(held.split(":")) & set(SHELL_OPTIONS_OFF), set(),
                                      "a trap was set with the options %s" % held)
+
+    @staticmethod
+    def end_left_group(pid_file: Path):
+        """End with SIGKILL the process group whose number pid_file holds,
+        that of a process that left the process group of a build, if it
+        still runs."""
+        try:
+            os.killpg(int(pid_file.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+
+    def test_build_past_its_limit_ends_within_bound(self):
+        """A build by a stand-in script, with a time limit of 1 second, that
+        starts in its own process group a child that writes a file after 3
+        seconds, starts under job control (set -m) a process that leaves
+        that group and keeps the build's output open, and then sleeps,
+        makes run_packager raise the timeout within the limit plus twice
+        REAP_TIMEOUT and 5 seconds, long before that process ends; the
+        child never writes its file, since the test ended the build's
+        process group with SIGKILL. A wait for the output with no bound
+        would last until that process ends, and this case would fail."""
+        folder = self.outside("timeout-build")
+        late, pid_file, script = folder / "late", folder / "left-group", folder / "build.sh"
+        limit = 1
+        bound = limit + 2 * REAP_TIMEOUT + 5
+        script.write_bytes(os.fsencode("(sleep 3; : > %s) &\n"
+                                       "set -m\n"
+                                       "sleep %d &\n"
+                                       "printf '%%s\\n' \"$!\" > %s\n"
+                                       "set +m\n"
+                                       "sleep %d\n" % (sh_word(late), bound + 30, sh_word(pid_file), bound + 30)))
+        self.addCleanup(self.end_left_group, pid_file)
+        start = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.run_packager(script, timeout=limit)
+        elapsed = time.monotonic() - start
+        self.assertTrue(pid_file.exists(), "the build never started the process that leaves its group")
+        self.assertLess(elapsed, bound, "the timeout was raised after %.1f seconds" % elapsed)
+        time.sleep(max(0.0, 4 - elapsed))
+        self.assertFalse(late.exists(), "a child in the build's process group outlived the timeout")
 
 
 if __name__ == "__main__":
