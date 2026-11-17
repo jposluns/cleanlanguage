@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import collections
 import contextlib
 import errno
 import importlib.util
@@ -182,30 +183,216 @@ def manifest(name: str = "cleanlanguage", version: str = VERSION) -> dict:
     return {"name": name, "version": version, "description": "d"}
 
 
+# The methods of dict that read a key, or every key, of the dict they are called on; KEYED_METHODS of
+# them take the key as their first argument.
+MAPPING_METHODS = frozenset({"get", "pop", "setdefault", "items", "keys", "values", "popitem", "copy",
+                             "__getitem__", "__contains__", "__iter__", "__reversed__", "__or__", "__ror__"})
+KEYED_METHODS = frozenset({"get", "pop", "setdefault", "__getitem__", "__contains__"})
+# The functions of the operator module that read a key: getitem and contains of the object given first,
+# itemgetter of the object the function it makes is called on.
+OPERATOR_READS = frozenset({"getitem", "contains", "itemgetter"})
+# The builtins and methods that iterate each positional argument, which reads every key of a dict; map
+# and filter take a function first.
+ITERATING = frozenset({"iter", "list", "tuple", "set", "frozenset", "sorted", "reversed", "dict", "enumerate", "zip",
+                       "map", "filter", "min", "max", "sum", "any", "all", "join", "extend", "update", "union",
+                       "intersection", "difference", "symmetric_difference", "issubset", "issuperset", "isdisjoint",
+                       "fromkeys"})
+# Calls whose result, iterated, is not recorded there: their own reads are recorded at the call.
+NOT_ITERATED_CALLS = ITERATING | MAPPING_METHODS
+
+
 def key_reads(source: str) -> list:
-    """Each place the Python source reads a key written as a string constant, as (function, object, key):
-    a call of get, a subscript, or an in or not in test, with the top-level function or class that holds
-    it ("<module>" for none) and the object read as ast.unparse writes it."""
+    """Each place the Python source may read a key of a dict, as (function, object, key): the top-level
+    function or class that holds it ("<module>" for none), the object read as ast.unparse writes it, and
+    the key as a str where it is written as a string constant or as a name that the module binds once, to
+    a string constant; else None, as for a place that reads every key.
+
+    The places: a subscript, an augmented assignment to one among them; an in or not in test, at each
+    link of a chain; a method of MAPPING_METHODS called on the object, called through dict or type(...)
+    with the object first, or taken as an attribute without a call; getattr of such a method, or of a
+    name not written as a string constant; a function of OPERATOR_READS; each key of a mapping pattern of
+    match, and its **rest; ** and * unpacking; and iteration: a for loop, a comprehension, yield from, an
+    assignment that unpacks, and each positional argument of a call of ITERATING. A subscript by an int or
+    a slice and an in test of a literal read no key. Where an object is iterated, a literal, a display, a
+    comprehension, a lambda, an f-string and a call of NOT_ITERATED_CALLS are not recorded, and each
+    branch of a conditional expression or of and or or is recorded on its own.
+
+    Residual: code outside the source, given an object, is not scanned, such as str, repr or json.dumps
+    given a dict; and the scan does not tell a dict from another object."""
     tree = ast.parse(source)
-    owner = {}
+    owner, parent = {}, {}
     for top in tree.body:
         name = top.name if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else "<module>"
         for node in ast.walk(top):
             owner[id(node)] = name
+            for child in ast.iter_child_nodes(node):
+                parent[id(child)] = node
+    bound = collections.Counter(node.id for node in ast.walk(tree)
+                                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load))
+    bound.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
+    constants = {target.id: top.value.value for top in tree.body if isinstance(top, ast.Assign)
+                 and isinstance(top.value, ast.Constant) and isinstance(top.value.value, str)
+                 for target in top.targets if isinstance(target, ast.Name) and bound[target.id] == 1}
 
     def text(node) -> str | None:
-        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+        return constants.get(node.id) if isinstance(node, ast.Name) else None
+
+    def literal(node) -> bool:
+        try:
+            ast.literal_eval(node)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            return False
+        return True
+
+    def node_name(node) -> str | None:
+        """The name a call, or the name or attribute it calls, is written with."""
+        node = node.func if isinstance(node, ast.Call) else node
+        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+
+    def objects(node) -> list:
+        """The objects that iterating node may iterate."""
+        if isinstance(node, ast.IfExp):
+            return [*objects(node.body), *objects(node.orelse)]
+        if isinstance(node, ast.BoolOp):
+            return [found for value in node.values for found in objects(value)]
+        if isinstance(node, ast.NamedExpr):
+            return objects(node.value)
+        if (literal(node) or isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp, ast.SetComp,
+                                               ast.DictComp, ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
+                or isinstance(node, ast.Call)
+                and node_name(node) in NOT_ITERATED_CALLS):
+            return []
+        return [node]
+
     reads = []
+
+    def add(place, obj, key):
+        reads.append((owner[id(place)], obj if isinstance(obj, str) else ast.unparse(obj), key))
+
+    def iterated(place, node):
+        for obj in objects(node):
+            add(place, obj, None)
+
+    def pattern(place, node, obj: str):
+        if isinstance(node, ast.MatchMapping):
+            for key, value in zip(node.keys, node.patterns):
+                add(place, obj, text(key))
+                pattern(place, value, f"{obj}[{ast.unparse(key)}]")
+            if node.rest is not None:
+                add(place, obj, None)
+        elif isinstance(node, ast.MatchSequence):
+            for index, value in enumerate(node.patterns):
+                pattern(place, value, f"{obj}[{index}]")
+        elif isinstance(node, ast.MatchClass):
+            for value in node.patterns:
+                pattern(place, value, obj)
+            for attr, value in zip(node.kwd_attrs, node.kwd_patterns):
+                pattern(place, value, f"{obj}.{attr}")
+        elif isinstance(node, ast.MatchOr):
+            for value in node.patterns:
+                pattern(place, value, obj)
+        elif isinstance(node, ast.MatchAs) and node.pattern is not None:
+            pattern(place, node.pattern, obj)
+
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
-                and node.args and text(node.args[0]) is not None):
-            reads.append((owner[id(node)], ast.unparse(node.func.value), text(node.args[0])))
-        elif isinstance(node, ast.Subscript) and text(node.slice) is not None:
-            reads.append((owner[id(node)], ast.unparse(node.value), text(node.slice)))
-        elif (isinstance(node, ast.Compare) and text(node.left) is not None
-              and isinstance(node.ops[0], (ast.In, ast.NotIn))):
-            reads.append((owner[id(node)], ast.unparse(node.comparators[0]), text(node.left)))
+        # Keys read by name.
+        if isinstance(node, ast.Subscript) and (
+                isinstance(node.ctx, ast.Load) or isinstance(parent.get(id(node)), ast.AugAssign)) and not (
+                isinstance(node.slice, ast.Slice)) and not (literal(node.slice) and text(node.slice) is None):
+            add(node, node.value, text(node.slice))
+        elif isinstance(node, ast.Compare):
+            left = node.left
+            for op, right in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.In, ast.NotIn)) and not literal(right):
+                    add(node, right, text(left))
+                left = right
+        elif isinstance(node, ast.Attribute) and node.attr in MAPPING_METHODS and isinstance(node.ctx, ast.Load):
+            call = parent.get(id(node))
+            if isinstance(call, ast.Call) and call.func is node:
+                through_class = (isinstance(node.value, ast.Name) and node.value.id == "dict"
+                                 or isinstance(node.value, ast.Call) and node_name(node.value) == "type")
+                keyed = node.attr in KEYED_METHODS and len(call.args) > (1 if through_class else 0)
+                key = text(call.args[1 if through_class else 0]) if keyed else None
+                add(node, call.args[0] if through_class and call.args else node.value, key)
+            else:
+                add(node, node.value, None)
+        elif isinstance(node, ast.Call) and node_name(node) == "getattr" and len(node.args) >= 2:
+            name = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
+            if name is None or name in MAPPING_METHODS:
+                add(node, node.args[0], None)
+        elif isinstance(node, (ast.Name, ast.Attribute)) and node_name(node) in OPERATOR_READS:
+            call = parent.get(id(node))
+            if isinstance(call, ast.Call) and call.func is node and node_name(node) == "itemgetter":
+                for key in call.args:
+                    add(node, node, text(key))
+            elif isinstance(call, ast.Call) and call.func is node and call.args:
+                add(node, call.args[0], text(call.args[1]) if len(call.args) > 1 else None)
+            else:
+                add(node, node, None)
+        elif isinstance(node, ast.Match):
+            for case in node.cases:
+                pattern(node, case.pattern, ast.unparse(node.subject))
+        # Every key read: unpacking.
+        elif isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values):
+                if key is None:
+                    iterated(node, value)
+        elif isinstance(node, ast.keyword) and node.arg is None:
+            iterated(node, node.value)
+        elif isinstance(node, ast.Starred) and isinstance(node.ctx, ast.Load):
+            iterated(node, node.value)
+        # Every key read: iteration.
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            iterated(node, node.iter)
+        elif isinstance(node, ast.comprehension):
+            iterated(node, node.iter)
+        elif isinstance(node, ast.YieldFrom):
+            iterated(node, node.value)
+        elif isinstance(node, ast.Assign) and any(
+                isinstance(target, (ast.Tuple, ast.List)) for target in node.targets):
+            iterated(node, node.value)
+        elif isinstance(node, ast.Call) and node_name(node) in ITERATING:
+            first = 1 if node_name(node) in ("map", "filter") else 0
+            for value in node.args[first:]:
+                if not isinstance(value, ast.Starred):
+                    iterated(node, value)
     return reads
+
+
+# The places key_reads finds in the gate that read no key of a JSON object, each as often as the gate
+# reads it there: the pairs the decoder gives and the object _unique_object builds from them; a str, a
+# list of str, a list of lines, a tuple of patterns, the extractor's namespace, the folder list of
+# os.listdir, a str split in 3; the dict of the 2 marketplaces by path; the gate's own lists, sets and
+# dicts of labels, values, names and folders, and the (index, entry) pairs of plugin_entries; and a JSON
+# array of plugins or of dependencies that the gate iterates only once it is a list.
+NOT_JSON_READS = (
+    ("_unique_object", "pairs", None), ("_unique_object", "result", None),
+    ("one_line", "text", None),
+    ("walk", "parts", None), ("walk", "os.listdir(parent)", None),
+    ("read_bytes", "blocks", None),
+    ("exceeds_depth", "text", None),
+    ("extractor_patterns", "namespace", None), ("extractor_patterns", "patterns", None),
+    ("skill_version", "extractor_patterns()", None),
+    ("plugin_entries", "plugins", None),
+    ("check_names", "markets", ".claude-plugin/marketplace.json"), ("check_names", "markets", None),
+    ("check_names", "pairs", None), ("check_names", "held", None), ("check_names", "listed", None),
+    ("check_names", "listed", None), ("check_names", "names", None), ("check_names", "repeats", None),
+    ("resolve_source", "parts", None), ("resolve_source", "parts", None), ("resolve_source", "parts", None),
+    ("resolve_source", "base", None), ("resolve_source", "base", None), ("resolve_source", "steps", None),
+    ("resolve_source", "os.listdir(parent)", None),
+    ("check_sources", "markets", None), ("check_sources", "plugin_entries(rel, data, failures, 'D2')", None),
+    ("check_reach", "folders", None),
+    ("check_versions", "markets", ".claude-plugin/marketplace.json"), ("check_versions", "held", None),
+    ("check_versions", "found", None), ("check_versions", "found", None), ("check_versions", "found", None),
+    ("check_dependencies", "markets", None), ("check_dependencies", "entries", None),
+    ("check_dependencies", "entries", None), ("check_dependencies", "folders", None),
+    ("check_dependencies", "folders", None), ("check_dependencies", "lists", None),
+    ("check_dependencies", "deps", None), ("check_dependencies", "dep.partition('@')", None),
+    ("check_dependencies", "names", None), ("check_dependencies", "seen", None),
+    ("run", "failures", None), ("run", "CHECKS", None), ("run", "CHECKS", None),
+)
 
 
 class FoldingOs:
@@ -455,9 +642,11 @@ class PluginDistributionTest(unittest.TestCase):
 
     def key_setups(self) -> list:
         """The setups of test_keys_in_another_letter_case_are_not_read, each (reads, rel, change, lines):
-        the places the gate reads a JSON key, as key_reads names them, at which a read of the key written
-        in another letter case would change the gate's output in this setup; the file the setup changes
-        and how; and the FAIL lines the gate gives, each without its "FAIL " (none: exit 0)."""
+        places the gate reads a JSON key, as key_reads names them, that this setup pins, since a read of
+        the key written in another letter case at any one of them would change the gate's output in this
+        setup; the file the setup changes and how; and the FAIL lines the gate gives, each without its
+        "FAIL " (none: exit 0). Such a read at a place a setup does not name can change its output too;
+        each place is named by at least 1 setup."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
 
@@ -601,14 +790,59 @@ class PluginDistributionTest(unittest.TestCase):
                     (self.root / rel).write_bytes(saved)
 
     def test_each_place_the_gate_reads_a_key_has_a_setup(self):
-        # Each place the gate reads a JSON key, as key_reads finds it, is read once, so a setup that
-        # reaches the place reaches its only read; and the setups of
-        # test_keys_in_another_letter_case_are_not_read name exactly those places. A read added, moved,
-        # or made twice fails here until a setup names it.
-        reads = key_reads(MODULE_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(sorted({read for read in reads if reads.count(read) > 1}), [])
-        named = {read for setup_reads, _, _, _ in self.key_setups() for read in setup_reads}
-        self.assertEqual((sorted(set(reads) - named), sorted(named - set(reads))), ([], []))
+        # The places key_reads finds in the gate, each counted as often as it is found, are exactly the
+        # places the setups of test_keys_in_another_letter_case_are_not_read name, each once, and those of
+        # NOT_JSON_READS, each as often as listed. So a read added in any form key_reads finds, moved, or
+        # made twice at 1 place fails here until a setup or NOT_JSON_READS names it; and a read whose key
+        # is not a string constant, or that reads every key, fails unless NOT_JSON_READS lists it.
+        reads = collections.Counter(key_reads(MODULE_PATH.read_text(encoding="utf-8")))
+        named = collections.Counter({read for setup_reads, _, _, _ in self.key_setups() for read in setup_reads})
+        self.assertEqual(set(named) & set(NOT_JSON_READS), set())
+        listed = named + collections.Counter(NOT_JSON_READS)
+        self.assertEqual((sorted((reads - listed).elements(), key=repr), sorted((listed - reads).elements(), key=repr)),
+                         ([], []))
+
+    def test_key_reads_finds_each_form_of_key_read(self):
+        # Each form in which Python source reads a key of a dict, in a function f, with KEY bound once at
+        # module level, and what key_reads finds for it; then forms that read no key of a dict.
+        one = [("f", "obj", "Version")]
+        every = [("f", "obj", None)]
+        forms = [
+            ('obj.get("Version")', one), ('obj.get("Version", None)', one), ('obj["Version"]', one),
+            ('obj["Version"] += "x"', one), ('"Version" in obj', one), ('"Version" not in obj', one),
+            ('"a" == "Version" in obj', one), ('"Version" in load(obj)', [("f", "load(obj)", "Version")]),
+            ('dict.get(obj, "Version")', one),
+            ('type(obj).get(obj, "Version")', one), ('obj.pop("Version")', one), ('obj.setdefault("Version")', one),
+            ('obj.__getitem__("Version")', one), ('obj.__contains__("Version")', one),
+            ('operator.getitem(obj, "Version")', one), ('operator.contains(obj, "Version")', one),
+            ('operator.itemgetter("Version")(obj)', [("f", "operator.itemgetter", "Version")]),
+            ('obj.get(KEY)', one), ('obj[KEY]', one),
+            ('match obj:\n        case {"Version": _}:\n            pass', one),
+            ('match obj:\n        case [{"Version": {"Inner": _}}]:\n            pass',
+             [("f", "obj[0]", "Version"), ("f", "obj[0]['Version']", "Inner")]),
+            ('obj.get(key)', every), ('obj.get(KEY.lower())', every), ('obj[key]', every), ('key in obj', every),
+            ('obj.items()', every), ('obj.keys()', every), ('obj.values()', every), ('obj.copy()', every),
+            ('obj.popitem()', every), ('obj.__iter__()', every), ('getter = obj.get', every),
+            ('getattr(obj, "get")("Version")', every), ('getattr(obj, key)', every),
+            ('operator.getitem', [("f", "operator.getitem", None)]),
+            ('match obj:\n        case {**rest}:\n            pass', every),
+            ('for key in obj:\n        pass', every), ('[key for key in obj]', every), ('{**obj}', every),
+            ('dict(**obj)', every), ('[*obj]', every), ('first, *rest = obj', every), ('yield from obj', every),
+            ('list(obj)', every), ('sorted(obj)', every), ('enumerate(obj)', every), ('map(str, obj)', every),
+            ('"".join(obj)', every), ('for key in (obj if key else []):\n        pass', every),
+            ('for key in key or obj:\n        pass', [("f", "key", None), ("f", "obj", None)]),
+            ('for key in load(obj):\n        pass', [("f", "load(obj)", None)]),
+            ('obj[0]', []), ('obj[-1]', []), ('obj[1:]', []), ('"a" in "abc"', []), ('"a" in ("a", "b")', []),
+            ('for key in ("a", "b"):\n        pass', []), ('getattr(obj, "real", 0)', []), ('x = {"a": obj}', []),
+            ('len(obj)', []), ('for key, value in obj.items():\n        pass', every),
+        ]
+        for statement, expected in forms:
+            with self.subTest(statement=statement):
+                source = f'import operator\nKEY = "Version"\n\n\ndef f(obj, key, load):\n    {statement}\n'
+                self.assertEqual(sorted(key_reads(source), key=repr), sorted(expected, key=repr))
+        # A name bound more than once is not read as a string constant.
+        source = 'KEY = "Version"\n\n\ndef f(obj):\n    KEY = "x"\n    obj.get(KEY)\n'
+        self.assertEqual(key_reads(source), [("f", "obj", None)])
 
     def test_unreadable_file_exits_3(self):
         (self.root / gate.SITE_JSON).unlink()
