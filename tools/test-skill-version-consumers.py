@@ -628,12 +628,17 @@ class PackagerLicenceCopyTest(unittest.TestCase):
     with 1 space before its first line ending, with 1 space after its last
     line ending, with 1 LF added at its end, or with its final LF removed.
 
-    The other cases come from SOURCE_ROWS: for each of the 4 paths the check
-    reads (each copy and each root file), and for the index and for the
-    worktree's files, 4 rows: the place differs or is missing while HEAD is
-    good, which must build (exit 0), and HEAD differs or is missing while the
-    place is good, which must fail (exit 1) with the message for HEAD's
-    defect."""
+    1 case comes from SOURCE_ROWS: for each of the 4 paths the check reads
+    (each copy and each root file), and for the index and for the worktree's
+    files, 4 rows: the place differs or is missing while HEAD is good, which
+    must build (exit 0), and HEAD differs or is missing while the place is
+    good, which must fail (exit 1) with the message for HEAD's defect.
+
+    1 case, for each file, commits a .gitattributes that gives the copy the
+    attributes text and eol=crlf, so git archive writes the copy's zip entry
+    with CR LF while its blob, and the root file's, keep LF; the build must
+    fail (exit 1) with the byte check's message for that entry and its
+    cleanlanguage/ blob."""
 
     # (path kind, place, change at HEAD, change at the place, expected exit)
     SOURCE_ROWS = tuple(
@@ -792,6 +797,21 @@ class PackagerLicenceCopyTest(unittest.TestCase):
                                       stderr)
                     elif head_change == "missing":
                         self.assertIn(f"release-package: {rel} is missing at HEAD", stderr)
+
+    def test_archived_copy_differing_from_its_blob_fails(self):
+        # The copy's blob equals the root file's, so the licence-copy check
+        # and the entry list pass; only the byte check sees the CR LF entry.
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                def tree_edit(wt: Path) -> None:
+                    (wt / ".gitattributes").write_text(f"cleanlanguage/{name} text eol=crlf\n", encoding="utf-8")
+                    subprocess.run(["git", "-C", str(wt), "add", "--", ".gitattributes"],
+                                   capture_output=True, check=True)
+
+                code, stderr = run_packager(None, HEAD_VERSION, tree_edit=tree_edit)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(f"release-package: archived {name} differs from its git blob "
+                              f"(HEAD:cleanlanguage/{name})", stderr)
 
 
 class PackagerReleaseDateTest(unittest.TestCase):

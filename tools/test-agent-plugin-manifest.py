@@ -8,25 +8,31 @@ cases can make a copy differ, go missing, or become a symlink, a FIFO or a
 folder. The cases name the 2 files in COPIED_FILES below, not in the gate's own
 list.
 
-The licence-copy cases check outcomes only: the exit code, the message, and
-that the gate ends. They state no rule about how the gate reads a file:
+The licence-copy cases check outcomes only: the exit code, the message, that
+the gate ends and, for a FIFO, whether anything opened it. They state no rule
+about how the gate reads a file:
 
 - The edit sweep makes every copy that differs from its root file by 1 byte
   inserted (a space, a CR or an LF), 1 byte deleted, or 1 byte replaced (a
   letter by the same letter in the other case, any other byte by x or y), at
-  every offset of the fixture texts below, and at offsets 0, len - 1 and len
-  (where only an insertion exists) of the repository's real LICENSE and
-  NOTICE.md. The gate must refuse every one of them with exit 1 and the
-  message that the copy differs from the root file.
-- A copy that is a FIFO with no writer, or a symlink to such a FIFO, is
-  checked in a process of its own, which must exit 1 with the copy's message
-  within FIFO_TIMEOUT seconds. A gate that opens that FIFO for a blocking
-  read, as open() and Path.read_bytes do, waits for a writer that never
-  comes, so it fails the case by timing out.
+  every offset of the fixture texts below. For the repository's real LICENSE
+  and NOTICE.md it makes the replacement at every offset, and every edit at
+  offsets 0, len - 1 and len (where only an insertion exists). The gate must
+  refuse every one of them with exit 1 and the message that the copy differs
+  from the root file.
+- A copy that is a FIFO, or a symlink to a FIFO, is checked in a process of
+  its own, which must exit 1 with the copy's message within FIFO_TIMEOUT
+  seconds, while a FifoWitness waits to open the FIFO for writing. A gate
+  that opens the FIFO for reading before refusing the copy, with or without
+  blocking, ends that wait, so it fails the case.
+- A gate that reads a missing copy or a folder with its own read_bytes
+  before refusing it stops with exit 3, not 1, so it fails the case for a
+  missing copy or for a folder.
 
 No case catches a gate that, before refusing a copy, reads through a symlink
-to a regular file, reads a folder, or opens a FIFO without blocking: each
-leaves the exit code and the message the same.
+to a regular file, lists a folder, or tries to read a missing copy or a
+folder and ignores the error: each leaves the exit code and the message the
+same.
 """
 from __future__ import annotations
 
@@ -39,6 +45,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -56,7 +63,7 @@ LICENCE_TEXTS = {
     "LICENSE": b"Apache License\nVersion 2.0, January 2004\nhttp://www.apache.org/licenses/\n\nTERMS AND CONDITIONS\n",
     "NOTICE.md": b"# Notice\n\n## Scope\n\nThe licence text is in [LICENSE](LICENSE).\n\n## Clean Language\n\nCopyright line.\n",
 }
-# Seconds the gate may take to refuse a FIFO copy that has no writer.
+# Seconds the gate may take to refuse a FIFO copy.
 FIFO_TIMEOUT = 10
 # Runs the gate's licence-copy check on the fixture root given as argv[2].
 DRIVER = (
@@ -70,12 +77,16 @@ DRIVER = (
 )
 
 
-def single_edits(data: bytes):
-    """Yield (kind, offset, edited) for every 1-byte insertion, deletion and
-    replacement of ``data`` described in the module docstring."""
+def single_edits(data: bytes, every_kind_at=None):
+    """Yield (kind, offset, edited) for the 1-byte insertions, deletions and
+    replacements of ``data`` described in the module docstring: a replacement
+    at every offset, and the insertions and the deletion at every offset in
+    ``every_kind_at``, or at every offset when it is None."""
     for offset in range(len(data) + 1):
-        for inserted in (b" ", b"\r", b"\n"):
-            yield f"insert {inserted!r}", offset, data[:offset] + inserted + data[offset:]
+        every_kind = every_kind_at is None or offset in every_kind_at
+        if every_kind:
+            for inserted in (b" ", b"\r", b"\n"):
+                yield f"insert {inserted!r}", offset, data[:offset] + inserted + data[offset:]
         if offset == len(data):
             break
         byte = data[offset:offset + 1]
@@ -84,7 +95,57 @@ def single_edits(data: bytes):
         else:
             replaced = b"x" if byte != b"x" else b"y"
         yield "replace", offset, data[:offset] + replaced + data[offset + 1:]
-        yield "delete", offset, data[:offset] + data[offset + 1:]
+        if every_kind:
+            yield "delete", offset, data[:offset] + data[offset + 1:]
+
+
+class FifoWitness:
+    """A thread that waits to open the FIFO at ``path`` for writing, which
+    records whether anything opened that FIFO for reading.
+
+    An open of a FIFO for writing waits until a reader opens it. On Linux a
+    reader that opens the FIFO, with or without O_NONBLOCK, ends that wait
+    even if it closes the FIFO at once, so a gate that only opens the FIFO
+    and closes it is recorded as well as one that reads it. The writer closes
+    the FIFO without writing, so a gate that reads it gets no bytes and ends.
+    Start the witness before the gate, and call ``opened_by_reader`` before
+    ``release``, so that release's own open of the FIFO is not counted. An
+    open by the gate before the thread begins to wait would go unrecorded,
+    so that race can only hide an open, never report one that did not
+    happen.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._waiting = threading.Event()
+        self._opened = threading.Event()
+        self._writer = threading.Thread(target=self._wait_for_reader, daemon=True)
+        self._writer.start()
+        self._waiting.wait(FIFO_TIMEOUT)
+
+    def _wait_for_reader(self) -> None:
+        self._waiting.set()
+        try:
+            os.close(os.open(self.path, os.O_WRONLY))
+        except OSError:
+            return
+        self._opened.set()
+
+    def opened_by_reader(self) -> bool:
+        return self._opened.wait(0.2)
+
+    def release(self) -> bool:
+        """End a writer still waiting for a reader: open the FIFO for reading
+        without blocking until the writer ends. Return whether it ended."""
+        for _ in range(100):
+            if not self._writer.is_alive():
+                return True
+            reader = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                self._writer.join(0.05)
+            finally:
+                os.close(reader)
+        return not self._writer.is_alive()
 
 
 def valid_manifest():
@@ -160,6 +221,19 @@ class AgentPluginManifestTest(unittest.TestCase):
             self.fail(f"the gate did not end within {FIFO_TIMEOUT} s; it waits on a FIFO copy")
         self.assertEqual(proc.returncode, 1, err)
         self.assertIn(needle, err.decode("utf-8", "replace"))
+
+    def expect_fifo_refusal(self, fifo: Path, needle):
+        """Require the bounded refusal with ``needle`` while a FifoWitness
+        watches ``fifo``, and require that nothing opened ``fifo``."""
+        witness = FifoWitness(fifo)
+        try:
+            self.expect_bounded_refusal(needle)
+            opened = witness.opened_by_reader()
+        finally:
+            ended = witness.release()
+        self.assertTrue(ended, "the FIFO witness did not end")
+        self.assertFalse(opened, f"the gate opened the FIFO {fifo.relative_to(gate.REPO_ROOT).as_posix()} "
+                                 "before refusing the copy")
 
     def test_valid_passes(self):
         self.write(valid_manifest())
@@ -292,15 +366,17 @@ class AgentPluginManifestTest(unittest.TestCase):
 
     def test_licence_copy_single_edit_sweep_fails(self):
         # See the module docstring: every 1-byte edit at every offset of the
-        # fixture texts, and at the first and last offsets of the real files,
-        # so a comparison of any prefix shorter than the real file also fails.
+        # fixture texts; for the real files, a replaced byte at every offset
+        # and every edit at the first and last offsets. So a comparison that
+        # ignores the byte at any offset of a real file, such as one of
+        # sampled windows, or that compares a prefix no longer than the real
+        # file, also fails.
         for name in COPIED_FILES:
             real = (REAL_ROOT / name).read_bytes()
             self.assertGreater(len(real), 1000)
             for label, data, edits in (
                 ("fixture", LICENCE_TEXTS[name], single_edits(LICENCE_TEXTS[name])),
-                ("real", real, (edit for edit in single_edits(real)
-                                if edit[1] in (0, len(real) - 1, len(real)))),
+                ("real", real, single_edits(real, {0, len(real) - 1, len(real)})),
             ):
                 root = gate.REPO_ROOT / name
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
@@ -348,13 +424,15 @@ class AgentPluginManifestTest(unittest.TestCase):
                 os.mkfifo(fifo)
                 copy.symlink_to(fifo)
                 try:
-                    self.expect_bounded_refusal(f"cleanlanguage/{name} is a symlink")
+                    # A gate that opens the FIFO through the link before
+                    # refusing the link fails, with or without blocking.
+                    self.expect_fifo_refusal(fifo, f"cleanlanguage/{name} is a symlink")
                 finally:
                     fifo.unlink()
 
     def test_licence_copy_fifo_fails(self):
-        # A FIFO with no writer: a gate that opens it for a blocking read
-        # waits for ever, so the case fails by timing out.
+        # A FifoWitness waits to open the FIFO for writing, so a gate that
+        # opens the FIFO before refusing it fails, with or without blocking.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):
@@ -362,7 +440,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 os.mkfifo(copy)
-                self.expect_bounded_refusal(f"cleanlanguage/{name} is not a regular file")
+                self.expect_fifo_refusal(copy, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_folder_fails(self):
         self.write(valid_manifest())

@@ -15,18 +15,20 @@ It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
 is missing, or is a FIFO, a folder or any other file that is not regular fails
 with exit 1, and the code reads a copy only after those checks. The tests
-observe that order only for a FIFO: a copy that is a FIFO with no writer, or a
-symlink to one, must end within FIFO_TIMEOUT (10 seconds) with exit 1 and its
-message (test_licence_copy_fifo_fails and the FIFO subtests of
+observe that order for a FIFO: a copy that is a FIFO, or a symlink to one, must
+end within FIFO_TIMEOUT (10 seconds) with exit 1 and its message while nothing
+opens the FIFO (test_licence_copy_fifo_fails and the FIFO subtests of
 test_licence_copy_symlink_fails in tools/test-agent-plugin-manifest.py), so a
-gate that waits on such a FIFO fails. A read before the refusal through a link
-to a regular file, a read of a folder, or a non-blocking open of a FIFO is an
-untested residual: no case catches it, because the exit code and the message
-stay the same. The plugin installs the cleanlanguage/ tree and the skill zip
-takes these 2 files from it, so a copy that drifted from the root file would
-ship a licence text the repository does not state. The gate reads the working
-tree; tools/release-package.sh makes the same comparison on the git blobs at
-HEAD.
+gate that opens such a FIFO first, with or without blocking, fails. They also
+observe it for a missing copy and a folder read with read_bytes, whose error
+stops the gate with exit 3, not 1. A read before the refusal through a link to
+a regular file, a listing of a folder, or a read of a missing copy or a folder
+whose error is ignored is an untested residual: no case catches it, because
+the exit code and the message stay the same. The plugin installs the
+cleanlanguage/ tree and the skill zip takes these 2 files from it, so a copy
+that drifted from the root file would ship a licence text the repository does
+not state. The gate reads the working tree; tools/release-package.sh makes the
+same comparison on the git blobs at HEAD.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
@@ -93,12 +95,15 @@ def check_licence_copies() -> None:
 
     A copy that is a symlink, is missing, or is a FIFO, a folder or any other
     file that is not regular fails with exit 1, and a copy is read only after
-    it passes those checks. The tests observe that order only for a FIFO copy,
-    or a symlink to one, which must end with exit 1 and its message within the
-    test's time limit (test_licence_copy_fifo_fails, and the FIFO subtests of
-    test_licence_copy_symlink_fails). No case catches a read before the refusal
-    through a link to a regular file, a read of a folder, or a non-blocking
-    open of a FIFO: each leaves the exit code and the message the same.
+    it passes those checks. The tests observe that order for a FIFO copy, or a
+    symlink to one, which must end with exit 1 and its message within the
+    test's time limit while nothing opens the FIFO, with or without blocking
+    (test_licence_copy_fifo_fails, and the FIFO subtests of
+    test_licence_copy_symlink_fails), and for a missing copy or a folder read
+    with read_bytes, whose error stops the gate with exit 3, not 1. No case
+    catches a read before the refusal through a link to a regular file, a
+    listing of a folder, or a read of a missing copy or a folder whose error
+    is ignored: each leaves the exit code and the message the same.
     """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name
