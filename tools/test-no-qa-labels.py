@@ -520,7 +520,7 @@ ALLOWLIST = {
         "# T12. mistakes_register (OPTIONAL KEY, open point P6; aiqt_hooks.py:9677-9693)",
         "# T13. TeammateIdle mirrors the Stop decision (aiqt_hooks.py:8624-8627)",
         "# T14. Runtime posture pins on malformed stage-2 values inside a registry the hook reads as ok",
-        "# T15. Enumerator timeout yields ENUMERATOR_ERROR, never a hang (aiqt_hooks.py:7974-7978)",
+        "# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:7974-7978)",
     ),
 }
 
