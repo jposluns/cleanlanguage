@@ -2,9 +2,12 @@
 """Tests for tools/check-flow-mode.py: its verdict on the flow.md texts it must pass or fail.
 
 Each case runs the check as a separate process, isolated (-I), and asserts its exit status, 0 for
-a pass and 1 for a failure, and for a failure the report line that names the reason, except that
-1 case calls the check's findings in this process with the check's table changed for each edit.
-Most cases give the check the text on standard input.
+a pass and 1 for a failure, and for a failure the report line that names the reason, except 3
+cases that start no check process: 1 compares the check's table with the test's own list and
+with flow.md, 1 calls the check's findings in this process with the check's table changed for
+each edit, and 1 loads a copy of the check whose bytecode cache is stale. Each case that reads
+the check in this process compiles it from its source as it is now, so no bytecode cache stands
+in for that source. Most cases give the check the text on standard input.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
@@ -51,20 +54,29 @@ end do not pair, so the "attended" inside it is bare, and a closing quote at the
 pairs with the next quote on that line, while across any other white-space character the quotes
 pair as on 1 line; the absent-record sentence wrapped at any white-space character is found; and
 the committed flow.md with carriage returns, or carriage return and line feed pairs, for its line
-ends passes. The committed flow.md with every test failed at once, by a word appended to each
-pinned paragraph, a third value on the MODE line, a bare "attended" added and the absent-record
-sentence removed, gives the same 10 reports on standard input, through a path and through the
-default path, which a copy of the check with only its DEFAULT line rewritten reads when it runs
-with no argument, as CI runs the check. For each pinned paragraph, the report of a change names
-the paragraph and its line range, gives its new sha256 and gives the 1-line update to
-PARAGRAPHS, and a copy of the check with that 1 line updated passes the changed text. For each
+ends passes. Each of 3 texts gives the same reports on standard input, through a path and through
+the default path, which a copy of the check with only its DEFAULT line rewritten reads when it
+runs with no argument, as CI runs the check, and between them they give every kind of report
+line of the check's findings: the committed flow.md with every test failed at once, by a word
+appended to each pinned paragraph, a third value on the MODE line, a bare "attended" added and
+the absent-record sentence removed, gives 10 reports; with the opening text of each pinned
+paragraph changed, its MODE line left unclosed and a second, unclosed MODE line added, it gives
+10, 1 for each paragraph found 0 times, 1 for 2 MODE lines and 2 for a MODE line with no closing
+parenthesis; and with each pinned paragraph repeated and its MODE line renamed, it gives 8, 1 for
+each paragraph found 2 times and 1 for no MODE line. For each pinned paragraph, the report of a
+change names the paragraph and its line range, gives its new sha256 and gives the 1-line update
+to PARAGRAPHS as the way to clear that report alone, and a copy of the check with that 1 line
+updated passes the changed text. For each
 pinned paragraph whose opening text is changed, the report is the line that the paragraph was
 found 0 times, with no sha256; a copy of the check with only the paragraph's sha256 updated
 still fails with that line, a copy with only the row's opening text rewritten fails with the
 report that the paragraph has changed, and a copy with the row's opening text and sha256 both
-rewritten passes. The check's findings give the same 3 verdicts for those 3 table states after an
-edit of any character of any opening text, a letter put in another case or a character replaced
-by one that is not white space, the trailing space of an opening text included. With a bare
+rewritten passes. The check's findings give the same 3 verdicts for those 3 table states after
+each 1-character edit of any opening text that changes more than its white space: each of its
+characters, the trailing space of an opening text included, put in another case when it has
+one, replaced by a character that is not white space, or removed, which joins 2 words when it
+is the space between them; a character that is not white space put before each of its
+characters; and a space put between 2 of its characters that are not white space. With a bare
 "attended" or a second MODE line added to a pinned paragraph and only that paragraph's sha256
 updated, the check fails with the report of that line and no report that the paragraph has
 changed. Each pinned paragraph passes at the start of the file and at the end of the file with
@@ -78,8 +90,10 @@ whole-line test replaced; the found clause reverted to "on its cited line"; the 
 quote widened to 2 lines; the allowances made alternatives only; a quote of part of a line
 allowed; the quote conditions bound to every leg; a checker for each family; a clause negated;
 the tier floor replaced and in other words; the header naming 3 tier rules; the statement of the
-tier rules kept here cut; and the floor removed from the header, from cycle step 4 and from the
-tiers paragraph. The committed flow.md with 1 change each fails when its
+tier rules kept here cut; the header and the tiers paragraph saying that only the CODEX ROLE
+LIMIT states the floor; the floor reversed in cycle step 4; and every statement of the floor
+removed from the header, from cycle step 4 and from the tiers paragraph, which states it twice.
+The committed flow.md with 1 change each fails when its
 MODE line names a third value, repeats a value, names a value with capital letters, drops either
 value, uses a comma as the separator or puts its values inside double quotes, when the MODE line
 is renamed so that none is left, when a second MODE line is added, closed or with no closing
@@ -93,7 +107,9 @@ the other order, with a quoted "attended", with a quotation just after "attended
 in 'attended-autonomous"x"ly', with a longer word that holds "attended", with
 "Attended-Autonomous" in capital letters outside the MODE line, and with the absent-record
 sentence in its second wording, in capital letters, or wrapped across a line break. A path that
-does not exist, text that is not UTF-8 and 2 arguments each give exit status 1.
+does not exist gives exit status 1 and the report that it cannot be read, through a path and
+through the default path; text that is not UTF-8 gives the same on standard input, through a path
+and through the default path; and 2 arguments give exit status 1.
 
 The residual cases hold the limits that the check's docstring states: outside the 7 pinned
 paragraphs, the line '- A third mode, supervised, is also read.' passes, and the line
@@ -115,12 +131,16 @@ case above.
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
 """
+import errno
 import hashlib
 import importlib.util
+import os
+import py_compile
 import re
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -160,11 +180,13 @@ CHANGED = "{}, a pinned paragraph, has changed: its sha256 is now "
 NOT_ONCE = "expected 1 pinned paragraph, {}, starting {!r}, found {}"
 PINS_PRESENT = "the 7 pinned paragraphs are unchanged"
 SECOND_MODE = "expected 1 MODE line starting \"- MODE (\", found 2"
+NO_MODE = "expected 1 MODE line starting \"- MODE (\", found 0"
+UNREADABLE = "cannot be read: "
 # The report line for a changed paragraph, written out here so that a check whose report drops
 # any part of it, or whose 1-line update does not match its table, fails.
-REPORT = ("FAIL: -:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to accept the"
-          " change, replace the line '     \"{}\"),' of PARAGRAPHS in tools/check-flow-mode.py"
-          " with '     \"{}\"),'")
+REPORT = ("FAIL: -:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to clear this"
+          " report alone, replace the line '     \"{}\"),' of PARAGRAPHS in"
+          " tools/check-flow-mode.py with '     \"{}\"),'")
 DIGEST_LINE = "     \"{}\"),"
 ENTRIES = "Entries 61, 63, 64 and 69"
 
@@ -231,6 +253,20 @@ RULE_CHANGES = [
      "escalation is immediate and de-escalation needs a"),
     ("the tiers paragraph", "The CODEX ROLE LIMIT and that section both state the",
      "The CODEX ROLE LIMIT states the"),
+]
+
+# The floor that a critical change is never graded light, removed from each of the 3 pinned
+# paragraphs outside the CODEX ROLE LIMIT that state it, each as the paragraph and the changes,
+# applied in turn, that remove every statement of the floor in it.
+FLOOR_REMOVALS = [
+    ("the header", [("HOLD; that section and the CODEX ROLE LIMIT below both state the floor that"
+                     " a critical change is\nnever graded light; and except", "HOLD; and except")]),
+    ("the cycle steps", [("section, which never grades a critical\n   change light, the same floor"
+                          " as the CODEX ROLE LIMIT below. Record", "section. Record")]),
+    ("the tiers paragraph", [
+        (" bars a light grade for it\n(the same floor as that section's),", ""),
+        (" The CODEX ROLE LIMIT and that section both state the\nfloor that a critical change is"
+         " never graded light.", "")]),
 ]
 
 
@@ -319,11 +355,13 @@ def own_digest(paragraph):
     return hashlib.sha256(" ".join(paragraph.split()).encode("utf-8")).hexdigest()
 
 
-def check_module():
-    """tools/check-flow-mode.py loaded as a module, without running its main."""
-    spec = importlib.util.spec_from_file_location("check_flow_mode", str(CHECK))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def check_module(path=CHECK):
+    """The check at path, tools/check-flow-mode.py by default, loaded as a module without running
+    its main. It is compiled from the bytes of its source as they are now, so no bytecode cache,
+    whose recorded size and time an edit can leave unchanged, stands in for that source."""
+    module = types.ModuleType("check_flow_mode")
+    module.__file__ = str(path)
+    exec(compile(Path(path).read_bytes(), str(path), "exec"), module.__dict__)
     return module
 
 
@@ -350,11 +388,64 @@ def failing_text():
     return replaced(text, DECISIONS, "- Absent = attended (conservative).\n" + DECISIONS)
 
 
+def failing_texts():
+    """Texts that between them give every kind of report line that the check's findings give,
+    each with the number of findings and the count of each kind of report line in its output:
+    failing_text(); the committed flow.md with the opening text of each pinned paragraph changed,
+    its MODE line left unclosed and a second, unclosed MODE line added; and the committed flow.md
+    with each pinned paragraph repeated and its MODE line renamed so that none is left."""
+    lost = with_paragraphs(lambda p, o: "x" + p[1:])
+    lost = replaced(lost, MODE_LINE, MODE_LINE[:-1])
+    lost = replaced(lost, DECISIONS, "- MODE (supervised is a third mode.\n" + DECISIONS)
+    repeated = with_paragraphs(lambda p, o: p + "\n\n" + p)
+    repeated = replaced(repeated, MODE_LINE, MODE_LINE.replace("MODE", "Mode"))
+    return [
+        ("every test failed", failing_text(), 10,
+         [(CHANGED.format(name), 1) for name, _ in NAMED]
+         + [(WRONG_MODES, 1), (BARE, 1), (NO_ABSENT, 1)]),
+        ("each opening text changed", lost, 10,
+         [(NOT_ONCE.format(name, opening, 0), 1) for name, opening in NAMED]
+         + [(SECOND_MODE, 1), (UNCLOSED, 2)]),
+        ("each pinned paragraph repeated", repeated, 8,
+         [(NOT_ONCE.format(name, opening, 2), 1) for name, opening in NAMED]
+         + [(NO_MODE, 1)]),
+    ]
+
+
 def other_characters(char):
-    """The edits of char that an opening text match must refuse: char in another case, when it
-    has one, and a character that is neither char nor white space."""
+    """The characters that may replace char in an edit that an opening text match must refuse:
+    char in another case, when it has one, and a character that is neither char nor white space."""
     edits = [char.swapcase()] if len(char.swapcase()) == 1 and char.swapcase() != char else []
     return edits + ["#" if char != "#" else "%"]
+
+
+def opening_edits(paragraph, opening):
+    """Each 1-character edit of the opening text that paragraph starts with that changes more than
+    the white space between its words, as a name and the edited opening text: each character
+    replaced by one of other_characters or removed, a character that is not white space put
+    before each character, and a space put before each character after the first where no white
+    space stands on either side. Removing the 1 white-space character between 2 words joins
+    them. A space put before the first character is an indent, which a case of its own covers,
+    and no opening text starts with white space, so that edit is left out here."""
+    if not paragraph.startswith(opening):
+        raise AssertionError("expected a paragraph starting {!r}".format(opening))
+    edits = []
+    for index, char in enumerate(opening):
+        for new in other_characters(char):
+            edits.append(("{} replaced by {!r}".format(index, new),
+                          opening[:index] + new + opening[index + 1:]))
+        # The character after the opening text decides whether removing white space at its end
+        # leaves white space there.
+        if char.isspace() and (index == 0 or paragraph[index - 1].isspace()
+                               or paragraph[index + 1].isspace()):
+            raise AssertionError("expected 1 white-space character at {} of {!r}".format(
+                index, opening))
+        edits.append(("{} removed".format(index), opening[:index] + opening[index + 1:]))
+        edits.append(("# put before {}".format(index), opening[:index] + "#" + opening[index:]))
+        if index > 0 and not char.isspace() and not opening[index - 1].isspace():
+            edits.append(("a space put before {}".format(index),
+                          opening[:index] + " " + opening[index:]))
+    return edits
 
 
 def after(paragraph, opening, pattern):
@@ -409,6 +500,31 @@ class Verdicts(unittest.TestCase):
                 start, end = span(text, opening)
                 self.assertEqual(pinned, own_digest(text[start:end]))
                 self.assertEqual(source.count(DIGEST_LINE.format(pinned)), 1)
+
+    def test_the_check_is_loaded_from_its_source_not_from_a_stale_cache(self):
+        # The cases that read the check's table or call its findings in this process load the
+        # check from its source as it is now. A copy of the check whose bytecode cache was made
+        # from an edit of the same size and time, which the standard loader reads in place of the
+        # source, must still load with the table of its source.
+        source = CHECK.read_text(encoding="utf-8")
+        pinned = check_module().PARAGRAPHS[0][2]
+        stale = ("0" if pinned[0] != "0" else "1") + pinned[1:]
+        edited = replaced(source, DIGEST_LINE.format(pinned), DIGEST_LINE.format(stale))
+        moment = 1700000000
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "check-flow-mode.py"
+            path.write_text(edited, encoding="utf-8")
+            os.utime(path, (moment, moment))
+            py_compile.compile(str(path), cfile=importlib.util.cache_from_source(str(path)),
+                               doraise=True,
+                               invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+            path.write_text(source, encoding="utf-8")
+            os.utime(path, (moment, moment))
+            spec = importlib.util.spec_from_file_location("check_flow_mode_cached", str(path))
+            cached = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cached)
+            self.assertEqual(cached.PARAGRAPHS[0][2], stale)
+            self.assertEqual(check_module(path).PARAGRAPHS[0][2], pinned)
 
     def test_the_entry_list_is_inside_the_pinned_failed_leg_paragraph(self):
         # The opening comes from the check's own table, so the list is pinned only when the check
@@ -581,21 +697,25 @@ class Verdicts(unittest.TestCase):
         # CI runs the check with no argument, so no verdict may depend on how the check gets its
         # text. A copy of the check with only its DEFAULT line rewritten runs as a separate
         # process with no argument, as CI runs the check, and reads the changed copy of flow.md.
-        text = failing_text()
-        status, given = verdict(text)
-        self.assertEqual(status, 1, given)
-        self.assertEqual(given.splitlines()[-1], "FAIL: 10 finding(s)", given)
-        for reason in [CHANGED.format(name) for name, _ in NAMED] + [WRONG_MODES, BARE, NO_ABSENT]:
-            self.assertEqual(sum(reason in line for line in given.splitlines()), 1, given)
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "flow.md"
-            path.write_text(text, encoding="utf-8")
-            copy = default_copy(folder, path)
-            for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
-                with self.subTest(read=read):
-                    status, output = run_check(args, check=check)
-                    self.assertEqual(status, 1, output)
-                    self.assertEqual(output.replace(str(path), "-"), given)
+        # The texts give between them every kind of report line that the check's findings give.
+        for what, text, count, reasons in failing_texts():
+            status, given = verdict(text)
+            with self.subTest(text=what, read="standard input"):
+                self.assertEqual(status, 1, given)
+                self.assertEqual(given.splitlines()[-1], "FAIL: {} finding(s)".format(count), given)
+                self.assertEqual(len(given.splitlines()), count + 1, given)
+                for reason, times in reasons:
+                    self.assertEqual(sum(reason in line for line in given.splitlines()), times,
+                                     given)
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "flow.md"
+                path.write_text(text, encoding="utf-8")
+                copy = default_copy(folder, path)
+                for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                    with self.subTest(text=what, read=read):
+                        status, output = run_check(args, check=check)
+                        self.assertEqual(status, 1, output)
+                        self.assertEqual(output.replace(str(path), "-"), given)
 
     def test_each_report_of_a_change_gives_the_1_line_update(self):
         table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
@@ -662,10 +782,12 @@ class Verdicts(unittest.TestCase):
                 self.assertIn(PINS_PRESENT, output)
 
     def test_an_edit_of_any_character_of_each_opening_text_needs_its_row_rewritten(self):
-        # The check matches every character of an opening text, each letter in its case, so an
-        # edit of any of them, the trailing space of an opening text included, leaves no
-        # paragraph that starts with that text. This case calls the check's findings in this
-        # process with the table changed for each edit, so it needs no copy of the check.
+        # The check matches every character of an opening text, each letter in its case, and
+        # lets only the white space between its words change while at least 1 character of it
+        # stays, so a character of it replaced or removed, 2 of its words joined, or a character
+        # put inside it, the trailing space of an opening text included, leaves no paragraph that
+        # starts with that text. This case calls the check's findings in this process with the
+        # table changed for each edit, so it needs no copy of the check.
         module = check_module()
         table = list(module.PARAGRAPHS)
         text = committed()
@@ -679,18 +801,16 @@ class Verdicts(unittest.TestCase):
 
         for row, (name, opening, pinned) in enumerate(table):
             start, end = span(text, opening)
-            for index, char in enumerate(opening):
-                for new in other_characters(char):
-                    edited = opening[:index] + new + opening[index + 1:]
-                    with self.subTest(paragraph=name, index=index, character=new):
-                        data = text[:start] + edited + text[start + len(opening):]
-                        now = own_digest(data[start:end])
-                        self.assertEqual(findings_with(row, opening, now, data),
-                                         ["-: " + NOT_ONCE.format(name, opening, 0)])
-                        found = findings_with(row, edited, pinned, data)
-                        self.assertEqual(len(found), 1, found)
-                        self.assertIn(CHANGED.format(name) + now, found[0])
-                        self.assertEqual(findings_with(row, edited, now, data), [])
+            for what, edited in opening_edits(text[start:end], opening):
+                with self.subTest(paragraph=name, edit=what):
+                    data = text[:start] + edited + text[start + len(opening):]
+                    now = own_digest(data[start:end + len(edited) - len(opening)])
+                    self.assertEqual(findings_with(row, opening, now, data),
+                                     ["-: " + NOT_ONCE.format(name, opening, 0)])
+                    found = findings_with(row, edited, pinned, data)
+                    self.assertEqual(len(found), 1, found)
+                    self.assertIn(CHANGED.format(name) + now, found[0])
+                    self.assertEqual(findings_with(row, edited, now, data), [])
 
     def test_a_sha256_update_leaves_the_mode_tests_reading_the_paragraph(self):
         # The 1-line update clears only the report that the paragraph has changed, so an edit
@@ -759,6 +879,12 @@ class Verdicts(unittest.TestCase):
         for name, old, new in RULE_CHANGES:
             with self.subTest(paragraph=name, old=old, new=new):
                 self.assert_fails(changed(old, new), CHANGED.format(name))
+        for name, changes in FLOOR_REMOVALS:
+            with self.subTest(paragraph=name, change="the floor removed"):
+                text = committed()
+                for old, new in changes:
+                    text = replaced(text, old, new)
+                self.assert_fails(text, CHANGED.format(name))
 
     def test_the_committed_flow_passes_by_path_and_by_default(self):
         for args in ([str(FLOW)], []):
@@ -885,14 +1011,37 @@ class Verdicts(unittest.TestCase):
     def test_the_absent_rule_wrapped_across_a_line_break_passes(self):
         self.assert_passes(changed(ABSENT_WORDS, "reads an absent mode\n  record as unattended"))
 
+    def assert_unreadable(self, status, output, source, reason):
+        self.assertEqual(status, 1, output)
+        self.assertEqual(len(output.splitlines()), 1, output)
+        self.assertTrue(output.startswith("FAIL: {} {}".format(source, UNREADABLE)), output)
+        self.assertIn(reason, output)
+
     def test_a_path_that_does_not_exist_fails(self):
+        # A missing file fails alike through a path and through the default path, as CI reads it.
         with tempfile.TemporaryDirectory() as folder:
-            status, output = run_check([str(Path(folder) / "missing.md")])
-        self.assert_status_one(status, output, "cannot be read")
+            path = Path(folder) / "missing.md"
+            copy = default_copy(folder, path)
+            for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                with self.subTest(read=read):
+                    status, output = run_check(args, check=check)
+                    self.assert_unreadable(status, output, path, "[Errno {}]".format(errno.ENOENT))
 
     def test_text_that_is_not_utf8_fails(self):
-        status, output = run_check(["-"], committed().encode("utf-8") + b"\xff\n")
-        self.assert_status_one(status, output, "cannot be read")
+        # Text that is not UTF-8 fails alike on standard input, through a path and through the
+        # default path, as CI reads it.
+        data = committed().encode("utf-8") + b"\xff\n"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "flow.md"
+            path.write_bytes(data)
+            copy = default_copy(folder, path)
+            for read, args, given, check, source in (
+                    ("standard input", ["-"], data, CHECK, "-"),
+                    ("path", [str(path)], b"", CHECK, path),
+                    ("default path", [], b"", copy, path)):
+                with self.subTest(read=read):
+                    status, output = run_check(args, given, check)
+                    self.assert_unreadable(status, output, source, "can't decode byte 0xff")
 
     def test_two_arguments_fail(self):
         status, output = run_check([str(FLOW), str(FLOW)])

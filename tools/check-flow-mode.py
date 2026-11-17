@@ -196,8 +196,8 @@ def starts_with(paragraph, opening):
 
 def changed_report(name, first, last, label, pinned, now):
     """The report line for a pinned paragraph whose sha256 is no longer the pinned one."""
-    return ("{}:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to accept the"
-            " change, replace the line '{}' of PARAGRAPHS in {} with '{}'".format(
+    return ("{}:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to clear this"
+            " report alone, replace the line '{}' of PARAGRAPHS in {} with '{}'".format(
                 name, first, last, label, now, DIGEST_LINE.format(pinned), TABLE_FILE,
                 DIGEST_LINE.format(now)))
 
