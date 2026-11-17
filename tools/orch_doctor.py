@@ -145,14 +145,17 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          that exists
                          and is not a regular file (a FIFO, which would block a blocking open
                          indefinitely; a directory; a device; or a symlink to one of these) is
-                         reported as cannot-evaluate, exit 2, naming the path and its type, and the
-                         hook reader that would open it is not called and no enumerator runs. The
-                         report then says how the hook would open that path: for the registry
+                         reported as cannot-evaluate, exit 2, naming the path and its type, and no
+                         hook reader is called on it and no enumerator runs. The report
+                         then says whether and how the hook would open that path: for the registry
                          files, mode.path, record.pending_decisions and the attestations anchor,
                          that the hook would not block on it, naming the reader that opens it with
                          O_NONBLOCK and what that reader makes of a file that is not regular; for
                          an enumerator operand, that the hook does not open it; and for every
-                         other path, that the hook would open it with a blocking open. An
+                         other path, that the hook would open it with a blocking open. It ends
+                         by saying that the hook reader that opens the path was not called and
+                         no enumerator ran, or, at an enumerator operand, which no hook reader
+                         opens, only that no enumerator ran. An
                          absent path is left to the hook, whose open raises rather than blocks. The
                          paths only the resume audit opens (the handoff and findings records,
                          mistakes_register and the audit state files) are not checked here, since
@@ -232,8 +235,8 @@ Options:
 Exit status:
   preflight      0 when the effective verdict is ALLOW (including out of scope or out of roster),
                  1 when it is DENY or ALLOW_WITH_FINDINGS, 2 on a usage error, an unresolvable root,
-                 an absent or unreadable registry, a registry file or a path the preview would
-                 open (see above) that exists and is not a regular file, an idle verdict that
+                 an absent or unreadable registry, a registry file or a path the preview
+                 checks (see above) that exists and is not a regular file, an idle verdict that
                  hangs on the quiet-claim check, which is not previewed, or a hook write that the
                  preview does not model.
   --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
@@ -505,8 +508,8 @@ def _registry_read_paths(hook, root):
 
 
 def _special_registry_file(hook, root):
-    """The first registry file the hook would open that is present but not a regular file, as a
-    _special_path message, or None."""
+    """The first registry file the hook would open that is present but not a regular file, as the
+    refusal that _first_special words, or None."""
     return _first_special(_registry_read_paths(hook, root))
 
 
@@ -739,12 +742,14 @@ def _audit_bad_registry_paths(hook, root):
 
 
 # How the hook opens the path of a pre-check site, where that is not a plain blocking open; every other
-# site is opened with one. tools/test-orch-stage2-hooks.py holds each site to the hook's open line
-# (PRECHECK_OPENS) and checks the wording of each refusal.
+# site is opened with one. tools/test-orch-stage2-hooks.py holds each site to the hook reader and line
+# that open its path (PRECHECK_OPENS, also by a run of the hook), holds each text here to an exact
+# expected text whose every cited hook line it checks at source (OPEN_ACCOUNTS), and checks the whole
+# refusal in every case in which the doctor refuses a special file.
 _RECORD_SURFACE_OPEN = ("the hook would not block on it: _orch_record_surface_read opens the path with "
-                        "O_NONBLOCK (aiqt_hooks.py:32703-32704) and reads a file that is not regular as "
-                        "unreadable, without a read (32709-32710), but the doctor refuses it without "
-                        "calling that reader")
+                        "O_NONBLOCK (aiqt_hooks.py:32703-32704) and returns no data for a file that is "
+                        "not regular, without a read (32709-32710, 32725-32726), but the doctor refuses "
+                        "it without calling that reader")
 _ANCHOR_OPEN = ("the hook would not block on it: _orch_register_authority opens the path with O_NONBLOCK "
                 "and O_NOFOLLOW (aiqt_hooks.py:32968-32969) and holds on a file that is not regular "
                 "(32975-32976) or a symlink (32971-32972), but the doctor refuses it without calling "
@@ -754,8 +759,9 @@ SITE_OPEN = {
                       "(aiqt_hooks.py:22096-22098) and reads a file that is not regular as a bad registry "
                       "(22102-22103), but the doctor refuses it without calling that reader"),
     "scope.mode": ("the hook's mode reader would not block on it: _orch_mode_read opens the path with "
-                   "O_NONBLOCK (aiqt_hooks.py:22445-22446) and reads a file that is not regular as "
-                   "unattended, fail-closed (22453-22454), but the doctor does not model that reader"),
+                   "O_NONBLOCK (aiqt_hooks.py:22445-22446) and gives a file that is not regular the "
+                   "status bad, without a read (22453-22454), which _orch_mode_detail takes as "
+                   "unattended, fail-closed (22529-22530), but the doctor does not model that reader"),
     "ctx.enumerator_operand": ("the hook does not open it: the declared enumerator, which the hook runs "
                                "(subprocess.run at aiqt_hooks.py:22833), takes it as an operand, and the "
                                "doctor does not model how that program opens it"),
@@ -767,25 +773,33 @@ SITE_OPEN = {
     "audit.attestations_anchor": _ANCHOR_OPEN,
 }
 BLOCKING_OPEN = "the hook would open it with a blocking open"
+# What the refusal says was not run: the hook reader that opens the path, and any enumerator. No hook
+# reader opens an enumerator operand, so its refusal names the enumerator alone.
+REFUSAL_END = "so the hook reader that opens it was not called and no enumerator ran"
+SITE_END = {
+    "ctx.enumerator_operand": "so no enumerator ran",
+}
 
 
 def _first_special(entries):
     """The first _site entry whose path is present but not a regular file, as a _special_path
-    message followed by how the hook opens that path (SITE_OPEN, else BLOCKING_OPEN), or None. An
-    entry with no path (an undeclared key) is skipped."""
+    message followed by how the hook opens that path (SITE_OPEN, else BLOCKING_OPEN) and what was
+    not run (SITE_END, else REFUSAL_END), or None. An entry with no path (an undeclared key) is
+    skipped."""
     for site_id, label, path in entries:
         if not path:
             continue
         found = _special_path(label, path)
         if found is not None:
-            return "{}; {}".format(found, SITE_OPEN.get(site_id, BLOCKING_OPEN))
+            return "{}; {}, {}".format(found, SITE_OPEN.get(site_id, BLOCKING_OPEN),
+                                       SITE_END.get(site_id, REFUSAL_END))
     return None
 
 
 def _refuse_special(found):
-    """Report a special file at a path the hook would open, as cannot-evaluate, exit 2."""
-    print("cannot evaluate: {}, so the hook reader that opens it was not called and no enumerator "
-          "ran".format(found))
+    """Report the refusal _first_special words for a special file at a pre-check site, as
+    cannot-evaluate, exit 2."""
+    print("cannot evaluate: {}".format(found))
     return 2
 
 

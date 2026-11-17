@@ -57,8 +57,17 @@ attestations-validated.json and guard-events.jsonl; for the resume audit guard-e
 escape-spoof.json and the forced-exit files, and with an unreadable registry
 resume-barrier.json.unused. Each refusal says how the hook would open the path: with a blocking
 open, without blocking (naming the reader that opens it with O_NONBLOCK), or not at all, for an
-enumerator operand; PRECHECK_OPENS holds each pre-check site to the hook line that opens it, and a
-source probe checks that line. Each command checks only what its own
+enumerator operand; then that the hook reader that opens it was not called and no enumerator ran,
+or, at an enumerator operand, only that no enumerator ran. PRECHECK_OPENS gives, for each pre-check
+site, the hook function and lines that open its path; a source probe checks each of those opens at
+source, and the reach case of each site runs the hook call path with open, os.open and
+subprocess.run wrapped and requires that the hook first opens that site's path, or runs the
+enumerator that takes it, by one of those opens. OPEN_ACCOUNTS gives the exact text of each refusal
+that is not a blocking open, and a claim for each hook line or range it cites; the probe requires
+the doctor's texts to equal those texts, each text to cite exactly the ranges of its claims, and
+each claim to hold at source. Every case that checks a refusal of a special file at a pre-check site
+checks the whole refusal line through assert_refusal, and a source probe keeps every refusal string
+of this file inside it. Each command checks only what its own
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
 an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview.
@@ -1219,9 +1228,9 @@ class Doctor(Stage2Harness):
         os.symlink(target, path)
         return "FIFO"
 
-    def _assert_special_refused(self, label, path, kind, *doctor_args, opened):
-        # opened is how the report must say that the hook opens the path; each caller gives it, as
-        # the hook opens these paths in different ways (PRECHECK_OPENS).
+    def _assert_special_refused(self, site, label, path, kind, *doctor_args):
+        # The report must word the refusal at site exactly (assert_refusal), as the hook opens these
+        # paths in different ways (PRECHECK_OPENS).
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(reg)
         self.set_items([item("42")])
@@ -1229,9 +1238,7 @@ class Doctor(Stage2Harness):
         before = tree_state(self._tmp)
         r = self._doctor_bounded(*doctor_args)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {}); {}"
-                      .format(label, path, named, opened), r.stdout)
-        self.assertIn("the hook reader that opens it was not called and no enumerator ran", r.stdout)
+        assert_refusal(self, r.stdout, site, "declared " + label, path, named)
         self.assertNotIn("Traceback", r.stderr)
         self.assertFalse(marker.exists(), "the enumerator ran")
         self.assertFalse(self.state_dir().exists(), "a hook state write happened")
@@ -1246,9 +1253,8 @@ class Doctor(Stage2Harness):
             with self.subTest(kind=kind):
                 self.tearDown()
                 self.setUp()
-                self._assert_special_refused("mode.path", self._p("operating-mode.md"), kind,
-                                             "preflight", "stop",
-                                             opened="the hook's mode reader would not block on it")
+                self._assert_special_refused("scope.mode", "mode.path", self._p("operating-mode.md"),
+                                             kind, "preflight", "stop")
                 r = self._doctor_bounded("preflight", "stop")
                 self.assertNotIn("blocking open", r.stdout)
 
@@ -1268,29 +1274,27 @@ class Doctor(Stage2Harness):
         before = tree_state(self._tmp)
         r = self._doctor_bounded("preflight", "stop", "--session-id", "sess-1")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the declared lease.path {} is not a regular file (it is a "
-                      "directory)".format(lease), r.stdout)
+        assert_refusal(self, r.stdout, "scope.lease", "declared lease.path", lease, "directory")
         self.assertFalse(marker.exists(), "the enumerator ran")
         self.assertEqual(tree_state(self._tmp), before, "the doctor changed a file or directory")
 
     def test_preflight_idle_special_mode_path_is_cannot_evaluate(self):
-        self._assert_special_refused("mode.path", self._p("operating-mode.md"), "fifo",
-                                     "preflight", "idle",
-                                     opened="the hook's mode reader would not block on it")
+        self._assert_special_refused("scope.mode", "mode.path", self._p("operating-mode.md"), "fifo",
+                                     "preflight", "idle")
 
     def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
         # The hook runs the enumerator (`subprocess.run` at aiqt_hooks.py:22833), which takes the
-        # backlog as an operand; the hook itself never opens it.
-        self._assert_special_refused("enumerator.argv[3]", str(self.backlog), "fifo",
-                                     "preflight", "stop", opened="the hook does not open it")
+        # backlog as an operand; the hook itself never opens it, so the refusal names no hook reader.
+        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[3]", str(self.backlog),
+                                     "fifo", "preflight", "stop")
 
     def test_resume_audit_special_handoff_is_cannot_evaluate(self):
         # The resume probes read the declared handoff
         # (`_orch_record_surface_read` at aiqt_hooks.py:32758-32760), which opens it with
         # O_NONBLOCK (32703); the doctor refuses a FIFO there as cannot-evaluate, and its report says
         # that the hook would not block on it, never that it would open it with a blocking open.
-        self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
-                                     "--resume-audit", opened="the hook would not block on it")
+        self._assert_special_refused("audit.handoff", "record.handoff", self._p("session-handoff.md"),
+                                     "fifo", "--resume-audit")
         self.assertNotIn("blocking open", self._doctor_bounded("--resume-audit").stdout)
 
     # --- the fixed hook state files are checked too, per command -----------------------
@@ -1340,6 +1344,19 @@ class Doctor(Stage2Harness):
         sd.mkdir(parents=True, exist_ok=True)
         (sd / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
+    # The pre-check site of each state file, by command.
+    STATE_FILE_SITES = {
+        ("preflight", "turn-state.json"): "ctx.turn_state",
+        ("preflight", "dispatch-ledger.jsonl"): "ctx.ledger",
+        ("preflight", "backlog-checkpoint.json"): "ctx.checkpoint",
+        ("preflight", "attestations-validated.json"): "ctx.attestation_snapshot",
+        ("preflight", "guard-events.jsonl"): "ctx.guard_events",
+        ("--resume-audit", "guard-events.jsonl"): "audit.guard_events",
+        ("--resume-audit", "escape-spoof.json"): "audit.escape_spoof",
+        ("--resume-audit", "forced-exit.jsonl"): "audit.forced_exit",
+        ("--resume-audit", "forced-exit-surfaced.json"): "audit.forced_exit_surfaced",
+    }
+
     def _assert_state_special_refused(self, name, *doctor_args):
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(self._with_attestations(reg))
@@ -1349,9 +1366,8 @@ class Doctor(Stage2Harness):
         before = tree_state(self._tmp)
         r = self._doctor_bounded(*doctor_args)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the hook state file {} {} is not a regular file (it is a "
-                      "FIFO)".format(name, path), r.stdout)
-        self.assertIn("the hook reader that opens it was not called and no enumerator ran", r.stdout)
+        assert_refusal(self, r.stdout, self.STATE_FILE_SITES[(doctor_args[0], name)],
+                       "hook state file " + name, path, "FIFO")
         self.assertNotIn("Traceback", r.stderr)
         self.assertFalse(marker.exists(), "the enumerator ran")
         self.assertEqual(tree_state(self._tmp), before, "a file or directory changed")
@@ -1409,8 +1425,8 @@ class Doctor(Stage2Harness):
         os.mkfifo(path)
         r = self._doctor_bounded("--resume-audit")
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the hook state file resume-barrier.json.unused {} is not a "
-                      "regular file (it is a FIFO)".format(path), r.stdout)
+        assert_refusal(self, r.stdout, "audit_bad.unused", "hook state file resume-barrier.json.unused",
+                       path, "FIFO")
 
     # --- each command checks only what its own hook call path opens --------------------
     def test_fifo_backlog_operand_refuses_preflight_but_not_the_resume_audit(self):
@@ -1430,8 +1446,8 @@ class Doctor(Stage2Harness):
         self.assertFalse(marker.exists(), "the audit ran the enumerator")
         p = self._doctor_bounded("preflight", "stop")
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
-        self.assertIn("cannot evaluate: the declared enumerator.argv[3] {} is not a regular file "
-                      "(it is a FIFO)".format(self.backlog), p.stdout)
+        assert_refusal(self, p.stdout, "ctx.enumerator_operand", "declared enumerator.argv[3]",
+                       self.backlog, "FIFO")
         self.assertFalse(marker.exists(), "the refused preview ran the enumerator")
 
     def test_resume_audit_runs_past_paths_only_the_preview_opens(self):
@@ -1514,8 +1530,7 @@ class Doctor(Stage2Harness):
             with self.subTest(args=args):
                 r = self._doctor_bounded(*args)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-                self.assertIn("cannot evaluate: the registry file {} is not a regular file (it is a "
-                              "FIFO); the hook would not block on it".format(local), r.stdout)
+                assert_refusal(self, r.stdout, "registry.file", "registry file", local, "FIFO")
                 self.assertNotIn("blocking open", r.stdout)
                 self.assertFalse(self.state_dir().exists(), "a hook state write happened")
 
@@ -2119,63 +2134,218 @@ PRECHECK_CASES = [
     ("audit_bad.guard_events", "reach", "case_bad_registry_guard_events"),
 ]
 
-# How the hook opens the path of each pre-check site: (kind, ((hook function, line of the open), ...)).
-# "blocking": a plain open() that waits on a FIFO with no writer; "non-blocking": an os.open with
-# O_NONBLOCK, so the hook would not block there; "enumerator": the hook does not open the path, the
-# enumerator it runs does. DoctorPrecheckSiteProbe checks each line against the hook source and the
-# doctor's SITE_OPEN against this table; every reach case checks the wording of the doctor's refusal.
-# Line numbers cite plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py.
-_SURFACE_READ = ("non-blocking", (("_orch_record_surface_read", 32703),))
-_ANCHOR_READ = ("non-blocking", (("_orch_register_authority", 32968),))
-_REGISTER_READS = ("blocking", (("_orch_chained_rows", 32876), ("_orch_register_authority", 32921)))
+# How the hook opens the path of each pre-check site: (kind, ((hook function, first line, last line of
+# the open), ...)). "blocking": a plain open() that waits on a FIFO with no writer; "non-blocking": an
+# os.open with O_NONBLOCK, so the hook would not block there; "enumerator": the hook does not open the
+# path, the enumerator it runs does. DoctorPrecheckSiteProbe checks each open against the hook source,
+# and the reach case of each site in DoctorPrecheckSites runs the hook call path (OPEN_TRACE_PROG) and
+# requires that the hook function and line at which the hook first opens that site's path, or runs the
+# enumerator that takes it, are one of the opens given here. Line numbers cite
+# plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py.
+_SURFACE_READ = ("non-blocking", (("_orch_record_surface_read", 32703, 32704),))
+_ANCHOR_READ = ("non-blocking", (("_orch_register_authority", 32968, 32969),))
+_REGISTER_READS = ("blocking", (("_orch_chained_rows", 32876, 32876),
+                                ("_orch_register_authority", 32921, 32921)))
 PRECHECK_OPENS = {
-    "registry.file": ("non-blocking", (("_orch_registry", 22096),)),
-    "scope.lease": ("blocking", (("_orch_scope_live", 22640),)),
-    "scope.mode": ("non-blocking", (("_orch_mode_read", 22445),)),
-    "ctx.turn_state": ("blocking", (("_orch_turn_state", 22346),)),
-    "ctx.enumerator_operand": ("enumerator", (("_orch_enumerate", 22833),)),
-    "ctx.ledger": ("blocking", (("_orch_read_jsonl", 22173),)),
+    "registry.file": ("non-blocking", (("_orch_registry", 22096, 22098),)),
+    "scope.lease": ("blocking", (("_orch_scope_live", 22640, 22640),)),
+    "scope.mode": ("non-blocking", (("_orch_mode_read", 22445, 22446),)),
+    "ctx.turn_state": ("blocking", (("_orch_turn_state", 22346, 22346),)),
+    "ctx.enumerator_operand": ("enumerator", (("_orch_enumerate", 22833, 22833),)),
+    "ctx.ledger": ("blocking", (("_orch_read_jsonl", 22173, 22173),)),
     "ctx.pending_decisions": _SURFACE_READ,
-    "ctx.attestation_snapshot": ("blocking", (("_orch_attestation_refs", 22934),)),
+    "ctx.attestation_snapshot": ("blocking", (("_orch_attestation_refs", 22934, 22934),)),
     "ctx.attestations": _REGISTER_READS,
     "ctx.attestations_anchor": _ANCHOR_READ,
-    "ctx.guard_events": ("blocking", (("_orch_read_jsonl", 22173),)),
-    "ctx.checkpoint": ("blocking", (("_orch_checkpoint_union", 23324),)),
+    "ctx.guard_events": ("blocking", (("_orch_read_jsonl", 22173, 22173),)),
+    "ctx.checkpoint": ("blocking", (("_orch_checkpoint_union", 23324, 23324),)),
     "audit.handoff": _SURFACE_READ,
     "audit.findings": _SURFACE_READ,
     "audit.pending_decisions": _SURFACE_READ,
     "audit.attestations": _REGISTER_READS,
     "audit.attestations_anchor": _ANCHOR_READ,
-    "audit.mistakes_register": ("blocking", (("_orch_chained_rows", 32876),)),
-    "audit.guard_events": ("blocking", (("_orch_read_jsonl", 22173), ("_orch_append_jsonl", 22162))),
-    "audit.escape_spoof": ("blocking", (("_orch_pending_artefact_findings", 33212),)),
-    "audit.forced_exit": ("blocking", (("_orch_read_jsonl", 22173),)),
-    "audit.forced_exit_surfaced": ("blocking", (("_orch_forced_exit_findings", 33172),)),
-    "audit_bad.unused": ("blocking", (("_orch_append_jsonl", 22162),)),
-    "audit_bad.guard_events": ("blocking", (("_orch_append_jsonl", 22162),)),
+    "audit.mistakes_register": ("blocking", (("_orch_chained_rows", 32876, 32876),)),
+    "audit.guard_events": ("blocking", (("_orch_read_jsonl", 22173, 22173),
+                                        ("_orch_append_jsonl", 22162, 22162))),
+    "audit.escape_spoof": ("blocking", (("_orch_pending_artefact_findings", 33212, 33212),)),
+    "audit.forced_exit": ("blocking", (("_orch_read_jsonl", 22173, 22173),)),
+    "audit.forced_exit_surfaced": ("blocking", (("_orch_forced_exit_findings", 33172, 33172),)),
+    "audit_bad.unused": ("blocking", (("_orch_append_jsonl", 22162, 22162),)),
+    "audit_bad.guard_events": ("blocking", (("_orch_append_jsonl", 22162, 22162),)),
 }
-# The start of the doctor's wording for each kind, after "(it is a <type>); ".
-OPEN_WORDING = {
-    "blocking": re.compile(r"the hook would open it with a blocking open"),
-    "non-blocking": re.compile(r"the hook(?:'s mode reader)? would not block on it: "),
-    "enumerator": re.compile(r"the hook does not open it: "),
+
+# The doctor's whole account of how the hook opens a path that it does not open with a blocking open,
+# by the hook function that PRECHECK_OPENS names for the site: (exact text, claims). The text must be
+# the doctor's SITE_OPEN text for each such site, and every hook line or range it cites must be the
+# range of 1 claim, and the reverse. A claim is (hook function, first line, last line, check), checked
+# at source by DoctorPrecheckSiteProbe: ("open", flags) is an os.open call in the function whose
+# statements span exactly those lines and whose flags name each of flags; ("if", test, start,
+# constants) is an if statement of the function that starts on the first line, whose test reads test,
+# whose body starts with start, ends on the last line and calls no os.read, and each module constant in
+# constants holds the given value; ("run",) is a subprocess.run call on that line.
+OPEN_ACCOUNTS = {
+    "_orch_registry": (
+        "the hook would not block on it: _orch_registry opens the path with O_NONBLOCK "
+        "(aiqt_hooks.py:22096-22098) and reads a file that is not regular as a bad registry "
+        "(22102-22103), but the doctor refuses it without calling that reader",
+        (("_orch_registry", 22096, 22098, ("open", ("O_NONBLOCK",))),
+         ("_orch_registry", 22102, 22103,
+          ("if", "not stat.S_ISREG(os.fstat(fd).st_mode)", "return ('bad', ", {})))),
+    "_orch_mode_read": (
+        "the hook's mode reader would not block on it: _orch_mode_read opens the path with "
+        "O_NONBLOCK (aiqt_hooks.py:22445-22446) and gives a file that is not regular the status bad, "
+        "without a read (22453-22454), which _orch_mode_detail takes as unattended, fail-closed "
+        "(22529-22530), but the doctor does not model that reader",
+        (("_orch_mode_read", 22445, 22446, ("open", ("O_NONBLOCK",))),
+         ("_orch_mode_read", 22453, 22454,
+          ("if", "not stat.S_ISREG(os.fstat(fd).st_mode)", "result = ('bad', ", {})),
+         ("_orch_mode_detail", 22529, 22530,
+          ("if", "status != 'ok'", "return (_ORCH_MODE_ARMED, ", {"_ORCH_MODE_ARMED": "unattended"})))),
+    "_orch_record_surface_read": (
+        "the hook would not block on it: _orch_record_surface_read opens the path with O_NONBLOCK "
+        "(aiqt_hooks.py:32703-32704) and returns no data for a file that is not regular, without a "
+        "read (32709-32710, 32725-32726), but the doctor refuses it without calling that reader",
+        (("_orch_record_surface_read", 32703, 32704, ("open", ("O_NONBLOCK",))),
+         ("_orch_record_surface_read", 32709, 32710,
+          ("if", "not stat.S_ISREG(os.fstat(fd).st_mode)", "detail = 'not a regular file'", {})),
+         ("_orch_record_surface_read", 32725, 32726,
+          ("if", "detail is not None", "return (None, detail)", {})))),
+    "_orch_register_authority": (
+        "the hook would not block on it: _orch_register_authority opens the path with O_NONBLOCK "
+        "and O_NOFOLLOW (aiqt_hooks.py:32968-32969) and holds on a file that is not regular "
+        "(32975-32976) or a symlink (32971-32972), but the doctor refuses it without calling "
+        "that reader",
+        (("_orch_register_authority", 32968, 32969, ("open", ("O_NONBLOCK", "O_NOFOLLOW"))),
+         ("_orch_register_authority", 32975, 32976,
+          ("if", "not stat.S_ISREG(os.fstat(fd).st_mode)", "return ('hold', ", {})),
+         ("_orch_register_authority", 32971, 32972,
+          ("if", "exc.errno == errno.ELOOP", "return ('hold', ", {})))),
+    "_orch_enumerate": (
+        "the hook does not open it: the declared enumerator, which the hook runs "
+        "(subprocess.run at aiqt_hooks.py:22833), takes it as an operand, and the doctor does not "
+        "model how that program opens it",
+        (("_orch_enumerate", 22833, 22833, ("run",)),)),
 }
+BLOCKING_TEXT = "the hook would open it with a blocking open"
+# What the refusal says was not run: the hook reader that opens the path and any enumerator, or, at a
+# path that no hook reader opens (an enumerator operand), the enumerator alone.
+READER_END = "so the hook reader that opens it was not called and no enumerator ran"
+ENUMERATOR_END = "so no enumerator ran"
+HOOK_CITATION = re.compile(r"(?<![\d-])(\d{5})(?:-(\d{5}))?(?![\d-])")
+
+
+def expected_open_text(site):
+    """The doctor's text for how the hook opens the path of site, as OPEN_ACCOUNTS words it."""
+    kind, opens = PRECHECK_OPENS[site]
+    return BLOCKING_TEXT if kind == "blocking" else OPEN_ACCOUNTS[opens[0][0]][0]
+
+
+def expected_tail(site):
+    """The whole refusal at site after "(it is a <type>); ": how the hook opens the path, then what
+    was not run."""
+    end = ENUMERATOR_END if PRECHECK_OPENS[site][0] == "enumerator" else READER_END
+    return "{}, {}".format(expected_open_text(site), end)
 
 
 def assert_open_wording(case, site, tail):
-    """Assert that tail, the doctor's refusal text after "(it is a <type>); ", says how the hook opens
-    the path of site as PRECHECK_OPENS states: it starts with the wording of that kind, and for a
-    site the hook does not open with a blocking open it names the hook line of each open, the reader
-    for a non-blocking open, and never a blocking open."""
-    kind, opens = PRECHECK_OPENS[site]
-    case.assertIsNotNone(OPEN_WORDING[kind].match(tail), "site {} ({}): {!r}".format(site, kind, tail))
-    if kind == "blocking":
-        return
-    case.assertNotIn("blocking open", tail, "site {}".format(site))
-    for reader, line in opens:
-        case.assertIn("aiqt_hooks.py:{}".format(line), tail, "site {}".format(site))
-        if kind == "non-blocking":
-            case.assertIn(reader + " opens the path with O_NONBLOCK", tail, "site {}".format(site))
+    """Assert that tail, the doctor's refusal text after "(it is a <type>); " to the end of its line,
+    is exactly expected_tail(site): how the hook opens the path of site, in the words of
+    OPEN_ACCOUNTS for a site the hook does not open with a blocking open, then what was not run."""
+    case.assertEqual(tail, expected_tail(site), "site {}".format(site))
+
+
+def assert_refusal(case, stdout, site, label, path, made):
+    """Assert that stdout holds the doctor's whole refusal of the special file at path, of type made,
+    at the pre-check site site: "cannot evaluate: the <label> <path> is not a regular file (it is a
+    <made>); " and then exactly expected_tail(site), to the end of the line. label None accepts any
+    label. Every case in which the doctor refuses a special file at a pre-check site checks it here
+    (DoctorPrecheckSiteProbe.test_every_refusal_check_reads_the_whole_wording)."""
+    found = "{} is not a regular file (it is a {}); ".format(path, made)
+    lead = "cannot evaluate: the " if label is None else "cannot evaluate: the {} ".format(label)
+    lines = [line for line in stdout.split("\n") if line.startswith(lead) and found in line]
+    case.assertEqual(len(lines), 1, "site {}: no single refusal of {} in {!r}".format(site, path, stdout))
+    assert_open_wording(case, site, lines[0].split(found, 1)[1])
+
+
+# Runs in a separate python3 -I process: the hook call path that the command runs (the resume audit,
+# or the preview path of PREVIEW_PATH_PROG), with open, os.open and subprocess.run wrapped. At the first
+# open of the target path, or the first subprocess.run whose argv names it, it prints the hook function
+# and line that made the call and exits at once, so a FIFO there cannot block it; "none" when the call
+# path ends without either.
+OPEN_TRACE_PROG = r"""
+import builtins, importlib.util, json, os, subprocess, sys
+sys.dont_write_bytecode = True
+hook_file, repo, sid, command, target = sys.argv[1:6]
+spec = importlib.util.spec_from_file_location("aiqt_hooks_open_trace", hook_file)
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+hook_code = os.path.realpath(hook_file)
+
+
+def norm(path, base=None):
+    path = os.fsdecode(os.fspath(path))
+    if not os.path.isabs(path):
+        if base is None:
+            return None
+        path = os.path.join(os.fsdecode(os.fspath(base)), path)
+    path = os.path.abspath(path)
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
+want = norm(target)
+
+
+def names_target(path, base=None):
+    try:
+        return norm(path, base) == want
+    except (TypeError, ValueError):
+        return False
+
+
+def found(how):
+    frame = sys._getframe(2)
+    while frame is not None and os.path.realpath(frame.f_code.co_filename) != hook_code:
+        frame = frame.f_back
+    print(json.dumps([how, frame.f_code.co_name if frame else None, frame.f_lineno if frame else None]),
+          flush=True)
+    os._exit(0)
+
+
+real_open, real_os_open, real_run = builtins.open, os.open, subprocess.run
+
+
+def traced_open(file, *args, **kwargs):
+    if not isinstance(file, int) and names_target(file):
+        found("open")
+    return real_open(file, *args, **kwargs)
+
+
+def traced_os_open(path, *args, **kwargs):
+    if kwargs.get("dir_fd") is None and names_target(path):
+        found("os.open")
+    return real_os_open(path, *args, **kwargs)
+
+
+def traced_run(argv, *args, **kwargs):
+    if isinstance(argv, (list, tuple)) and any(names_target(a, kwargs.get("cwd")) for a in argv
+                                               if isinstance(a, (str, bytes, os.PathLike))):
+        found("subprocess.run")
+    return real_run(argv, *args, **kwargs)
+
+
+builtins.open, os.open, subprocess.run = traced_open, traced_os_open, traced_run
+if command == "--resume-audit":
+    hook.orch_resume_audit({"cwd": repo})
+else:
+    root = hook._recovery_toplevel(repo)
+    status, reg = hook._orch_registry(root)
+    if status == "ok" and hook._orch_scope_live(reg, root, sid or None):
+        hook._orch_build_ctx(reg, root, "stop", {"session_id": sid} if sid else {},
+                             record_checkpoint=False)
+print(json.dumps(["none", None, None]), flush=True)
+"""
+# The wrapper that each kind of open goes through in OPEN_TRACE_PROG.
+TRACE_HOW = {"blocking": "open", "non-blocking": "os.open", "enumerator": "subprocess.run"}
 
 
 # Runs in a separate python3 -I process: the hook call path the preflight runs, and nothing else (the
@@ -2483,6 +2653,60 @@ class DoctorPrecheckSites(Stage2Harness):
             self.assertIn("completed", h.stdout)
         return h
 
+    # File content that the doctor does not model (see PRECHECK_SITES) but that the hook needs before it
+    # reaches the open in these reach cases, arranged after the doctor's refusal and before the trace,
+    # with the special file left in place.
+    TRACE_ARRANGE = {
+        "case_ctx_register": "_arrange_fresh_snapshot",
+        "case_ctx_anchor": "_arrange_fresh_snapshot",
+        "case_ctx_guard_events": "_arrange_guard_events_pointer",
+        "case_audit_guard_events": "_arrange_audit_finding",
+    }
+
+    def _arrange_fresh_snapshot(self):
+        # A snapshot that passes the checks before the register is read (aiqt_hooks.py:22938-22945).
+        self.seed_state("attestations-validated.json", {"status": "ok", "refs": [], "ts": _iso()})
+
+    def _arrange_guard_events_pointer(self):
+        # An anchored 1-row register whose row points at guard-events, and a fresh snapshot bound to
+        # its tip (22947-22950), so the derivation resolves the pointer (`_orch_pointer_resolves` at
+        # 33018-33020).
+        at = Path(self._at())
+        lines = chain_lines([{"id": "AT-1", "status": "accepted", "ref": "vendor-x",
+                              "check_ref": "guard-events:trace", "ts": _iso()}])
+        at.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        digest = hashlib.sha256(lines[-1].encode("utf-8")).hexdigest()
+        Path(str(at) + ".anchor").write_text(json.dumps({"seq": len(lines), "digest": digest}),
+                                             encoding="utf-8")
+        self.seed_state("attestations-validated.json",
+                        {"status": "ok", "refs": [], "ts": _iso(), "register": os.path.realpath(at),
+                         "seq": len(lines), "digest": digest})
+
+    def _arrange_audit_finding(self):
+        # No handoff: a declared handoff that cannot be read is a finding (aiqt_hooks.py:32763-32765),
+        # so the audit records a guard event (33333-33334).
+        Path(self._p("session-handoff.md")).unlink(missing_ok=True)
+
+    def _assert_hook_reader(self, site, args, payload, path):
+        # The real hook call path, run to its first open of path (OPEN_TRACE_PROG), must open it by
+        # one of the opens that PRECHECK_OPENS gives for site, in that function and within that
+        # range, and by the kind of call that site's kind names.
+        argv = [sys.executable, "-I", "-c", OPEN_TRACE_PROG, str(HOOK), str(self.repo),
+                payload.get("session_id", ""), args[0], str(path)]
+        try:
+            h = subprocess.run(argv, capture_output=True, text=True, env=self._env(),
+                               timeout=self.SPECIAL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the traced hook call path did not exit within {} s".format(self.SPECIAL_TIMEOUT))
+        self.assertEqual(h.returncode, 0, h.stdout + h.stderr)
+        how, reader, line = json.loads(h.stdout.strip().split("\n")[-1])
+        kind, opens = PRECHECK_OPENS[site]
+        self.assertEqual(how, TRACE_HOW[kind], "site {}: the hook reached {} by {} ({} at {})"
+                         .format(site, path, how, reader, line))
+        self.assertTrue(any(reader == name and first <= line <= last for name, first, last in opens),
+                        "site {}: the hook opens {} in {} at {}, not by an open of PRECHECK_OPENS {}"
+                        .format(site, path, reader, line, opens))
+
     def _run_case(self, site, expect, case):
         path, made, args, payload = getattr(self, case)()
         path = Path(path)
@@ -2496,11 +2720,10 @@ class DoctorPrecheckSites(Stage2Harness):
         self.assertNotIn("Traceback", r.stderr)
         if expect == "reach":
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-            self.assertIn("cannot evaluate: the ", r.stdout)
-            found = "{} is not a regular file (it is a {}); ".format(path, made)
-            self.assertIn(found, r.stdout)
-            tail = r.stdout.split(found, 1)[1].split("\n", 1)[0]
-            assert_open_wording(self, site, tail)
+            assert_refusal(self, r.stdout, site, None, path, made)
+            if case in self.TRACE_ARRANGE:
+                getattr(self, self.TRACE_ARRANGE[case])()
+            self._assert_hook_reader(site, args, payload, path)
             return
         self.assertNotIn("cannot evaluate", r.stdout)
         self.assertIn(r.returncode, (0, 1), r.stdout + r.stderr)
@@ -2588,8 +2811,7 @@ class DoctorScopeMargin(Stage2Harness):
                         "the bound before the check and the case proves nothing".format(elapsed))
         self.assertNotIn("Traceback", r.stderr)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {})"
-                      .format(label, path, kind), r.stdout)
+        assert_refusal(self, r.stdout, site, "declared " + label, path, kind)
 
     def _both_sites(self, bound):
         for site in ("scope.lease", "scope.mode"):
@@ -3411,10 +3633,70 @@ def doctor_precheck_sites(source):
     return ids, stray
 
 
+def hook_claim_problem(functions, constants, hook_lines, func_name, first, last, check):
+    """None when the claim of OPEN_ACCOUNTS holds in the hook source, else what is wrong with it."""
+    func = functions.get(func_name)
+    if func is None:
+        return "no top-level function {}".format(func_name)
+    if not func.lineno <= first <= last <= func.end_lineno:
+        return "the lines are not in {}".format(func_name)
+    if check[0] == "run":
+        if first != last or "subprocess.run(" not in hook_lines[first - 1]:
+            return "no subprocess.run call on the line"
+        return None
+    if check[0] == "open":
+        calls = [node for node in ast.walk(func) if isinstance(node, ast.Call)
+                 and ast.unparse(node.func) == "os.open" and first <= node.lineno <= last]
+        if len(calls) != 1:
+            return "{} os.open calls in the lines".format(len(calls))
+        call = calls[0]
+        flag_nodes = [call]
+        for name in {n.id for arg in call.args for n in ast.walk(arg) if isinstance(n, ast.Name)}:
+            flag_nodes += [node for node in ast.walk(func) if isinstance(node, ast.Assign)
+                           and [ast.unparse(t) for t in node.targets] == [name]
+                           and first <= node.lineno <= last]
+        flags = set()
+        for top in flag_nodes:
+            for node in ast.walk(top):
+                if isinstance(node, ast.Attribute) and ast.unparse(node.value) == "os":
+                    flags.add(node.attr)
+                elif isinstance(node, ast.Call) and ast.unparse(node.func) == "getattr" \
+                        and len(node.args) >= 2 and ast.unparse(node.args[0]) == "os" \
+                        and isinstance(node.args[1], ast.Constant):
+                    flags.add(node.args[1].value)
+        missing = [flag for flag in check[1] if flag not in flags]
+        if missing:
+            return "the open does not carry {}".format(missing)
+        span = (min(node.lineno for node in flag_nodes), max(node.end_lineno for node in flag_nodes))
+        if span != (first, last):
+            return "the open and its flags span {}-{}".format(*span)
+        return None
+    _kind, test, start, needed = check
+    ifs = [node for node in ast.walk(func) if isinstance(node, ast.If) and node.lineno == first]
+    if len(ifs) != 1:
+        return "no if statement starts on the line"
+    node = ifs[0]
+    if ast.unparse(node.test) != test:
+        return "the test reads {!r}".format(ast.unparse(node.test))
+    if not ast.unparse(node.body[0]).startswith(start):
+        return "the body starts {!r}".format(ast.unparse(node.body[0]))
+    if node.body[-1].end_lineno != last:
+        return "the body ends on {}".format(node.body[-1].end_lineno)
+    if any(isinstance(n, ast.Call) and ast.unparse(n.func) == "os.read" for s in node.body
+           for n in ast.walk(s)):
+        return "the body reads the file"
+    for name, value in needed.items():
+        if constants.get(name) != value:
+            return "{} is {!r}, not {!r}".format(name, constants.get(name), value)
+    return None
+
+
 class DoctorPrecheckSiteProbe(unittest.TestCase):
     """Class probe: the reachability table covers every pre-check site in the doctor, every
-    checked path reaches _special_path only through _first_special over _site entries, and every
-    site has a reach case and, where it has an early exit, a contrast case."""
+    checked path reaches _special_path only through _first_special over _site entries, every
+    site has a reach case and, where it has an early exit, a contrast case, each open of
+    PRECHECK_OPENS and each claim of OPEN_ACCOUNTS holds at source, the doctor's refusal texts equal
+    those of OPEN_ACCOUNTS, and every refusal check of this file goes through assert_refusal."""
 
     def test_the_table_covers_every_precheck_site_in_the_doctor(self):
         if not DOCTOR.exists():
@@ -3448,55 +3730,111 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
             self.assertTrue(callable(getattr(DoctorPrecheckSites, case, None)), case)
 
     def test_each_site_open_follows_the_hook(self):
-        # PRECHECK_OPENS covers every site, each cited line is in the named hook function and opens
-        # the path as its kind says, and the doctor's SITE_OPEN words every site that the hook does
-        # not open with a blocking open, naming that line, and no other site.
+        # PRECHECK_OPENS covers every site, each open it gives is in the named hook function and
+        # opens the path as its kind says, every claim of OPEN_ACCOUNTS holds at source, each account
+        # cites exactly the lines of its claims, and the doctor words each site exactly as
+        # OPEN_ACCOUNTS, BLOCKING_TEXT, READER_END and ENUMERATOR_END say.
         self.assertEqual(sorted(PRECHECK_OPENS), sorted(PRECHECK_SITES),
                          "the open table and the reachability table differ")
         hook_source = HOOK.read_text(encoding="utf-8")
         hook_lines = hook_source.split("\n")
-        spans = [(node.lineno, node.end_lineno, node.name) for node in ast.parse(hook_source).body
-                 if isinstance(node, ast.FunctionDef)]
+        hook_tree = ast.parse(hook_source)
+        functions = {node.name: node for node in hook_tree.body if isinstance(node, ast.FunctionDef)}
+        constants = {node.targets[0].id: node.value.value for node in hook_tree.body
+                     if isinstance(node, ast.Assign) and len(node.targets) == 1
+                     and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
         for site, (kind, opens) in PRECHECK_OPENS.items():
-            for reader, line in opens:
-                with self.subTest(site=site, line=line):
-                    self.assertEqual([name for first, last, name in spans if first <= line <= last],
-                                     [reader], "the cited line is not in {}".format(reader))
-                    text = hook_lines[line - 1]
+            for reader, first, last in opens:
+                with self.subTest(site=site, line=first):
                     if kind == "blocking":
-                        self.assertRegex(text, r"\bwith open\(")
-                        self.assertNotIn("O_NONBLOCK", text)
-                    elif kind == "non-blocking":
-                        self.assertIn("O_NONBLOCK", text)
+                        self.assertEqual(first, last, "a blocking open is cited by its line")
+                        self.assertIn(reader, functions)
+                        func = functions[reader]
+                        self.assertTrue(func.lineno <= first <= func.end_lineno,
+                                        "the cited line is not in {}".format(reader))
+                        self.assertRegex(hook_lines[first - 1], r"\bwith open\(")
+                        self.assertNotIn("O_NONBLOCK", hook_lines[first - 1])
                     else:
-                        self.assertIn("subprocess.run(", text)
+                        account = OPEN_ACCOUNTS.get(reader)
+                        self.assertIsNotNone(account, "no account of {}".format(reader))
+                        self.assertEqual(account[1][0][:3], (reader, first, last),
+                                         "the account of {} does not start with this open".format(reader))
+                        self.assertEqual(account[1][0][3][0], "open" if kind == "non-blocking" else "run")
+        for reader, (text, claims) in OPEN_ACCOUNTS.items():
+            with self.subTest(account=reader):
+                cited = {(int(a), int(b or a)) for a, b in HOOK_CITATION.findall(text)}
+                self.assertEqual(cited, {(first, last) for _f, first, last, _c in claims},
+                                 "the account cites a line that no claim checks, or a claim is not cited")
+                self.assertEqual(len(cited), len(claims), "2 claims share a range")
+                for func_name, first, last, check in claims:
+                    problem = hook_claim_problem(functions, constants, hook_lines, func_name, first, last,
+                                                 check)
+                    self.assertIsNone(problem, "{} {}-{}: {}".format(func_name, first, last, problem))
         tree = ast.parse(DOCTOR.read_text(encoding="utf-8"))
-        texts, site_open = {}, None
+        texts, site_open, site_end = {}, None, None
         for node in tree.body:
             if isinstance(node, ast.Assign) and len(node.targets) == 1 \
                     and isinstance(node.targets[0], ast.Name):
                 name, value = node.targets[0].id, node.value
                 if isinstance(value, ast.Constant) and isinstance(value.value, str):
                     texts[name] = value.value
-                elif name == "SITE_OPEN" and isinstance(value, ast.Dict):
-                    site_open = {}
+                elif name in ("SITE_OPEN", "SITE_END") and isinstance(value, ast.Dict):
+                    table = {}
                     for key, item_node in zip(value.keys, value.values):
-                        self.assertIsInstance(key, ast.Constant, "a SITE_OPEN key is not a literal")
+                        self.assertIsInstance(key, ast.Constant, "a {} key is not a literal".format(name))
                         if isinstance(item_node, ast.Name):
-                            self.assertIn(item_node.id, texts, "an unresolved SITE_OPEN value")
-                            site_open[key.value] = texts[item_node.id]
+                            self.assertIn(item_node.id, texts, "an unresolved {} value".format(name))
+                            table[key.value] = texts[item_node.id]
                         else:
-                            self.assertIsInstance(item_node, ast.Constant, "a SITE_OPEN value")
-                            site_open[key.value] = item_node.value
+                            self.assertIsInstance(item_node, ast.Constant, "a {} value".format(name))
+                            table[key.value] = item_node.value
+                    if name == "SITE_OPEN":
+                        site_open = table
+                    else:
+                        site_end = table
         self.assertIsNotNone(site_open, "the doctor defines no SITE_OPEN table")
+        self.assertIsNotNone(site_end, "the doctor defines no SITE_END table")
         self.assertEqual(sorted(site_open),
                          sorted(site for site, (kind, _o) in PRECHECK_OPENS.items() if kind != "blocking"),
                          "SITE_OPEN words a different set of sites than the non-blocking and "
                          "enumerator sites of PRECHECK_OPENS")
-        self.assertEqual(texts.get("BLOCKING_OPEN"), "the hook would open it with a blocking open")
-        for site, text in site_open.items():
+        self.assertEqual(sorted(site_end),
+                         sorted(site for site, (kind, _o) in PRECHECK_OPENS.items() if kind == "enumerator"),
+                         "SITE_END ends the refusal differently at a site that a hook reader opens")
+        self.assertEqual(texts.get("BLOCKING_OPEN"), BLOCKING_TEXT)
+        self.assertEqual(texts.get("REFUSAL_END"), READER_END)
+        for site, (kind, _opens) in PRECHECK_OPENS.items():
             with self.subTest(site=site):
-                assert_open_wording(self, site, text)
+                self.assertEqual(site_open.get(site, texts.get("BLOCKING_OPEN")), expected_open_text(site))
+                self.assertEqual(site_end.get(site, texts.get("REFUSAL_END")),
+                                 ENUMERATOR_END if kind == "enumerator" else READER_END)
+                # No refusal says both that the hook does not open the path and that a hook reader
+                # opens it.
+                tail = expected_tail(site)
+                if kind == "enumerator":
+                    self.assertNotIn("reader that opens it", tail)
+                else:
+                    self.assertNotIn("does not open it", tail)
+
+    def test_every_refusal_check_reads_the_whole_wording(self):
+        # Every string in this file that starts a doctor refusal ("cannot evaluate: ") is inside
+        # assert_refusal (or this probe), so each case that checks a refusal of a special file at a
+        # pre-check site checks the whole wording there, and none checks a part of it alone.
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        allowed = {"assert_refusal", "test_every_refusal_check_reads_the_whole_wording"}
+        outside = []
+
+        def visit(node, chain):
+            for child in ast.iter_child_nodes(node):
+                inner = chain + (child.name,) if isinstance(child, (ast.FunctionDef,
+                                                                   ast.AsyncFunctionDef)) else chain
+                if isinstance(child, ast.Constant) and isinstance(child.value, str) \
+                        and child.value.startswith("cannot evaluate: ") and not allowed & set(chain):
+                    outside.append((chain[-1] if chain else "<module>", child.lineno))
+                visit(child, inner)
+
+        visit(tree, ())
+        self.assertEqual(outside, [], "a refusal checked outside assert_refusal")
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

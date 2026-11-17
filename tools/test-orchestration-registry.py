@@ -1843,18 +1843,28 @@ class ConfigDisclosure(unittest.TestCase):
         # the barrier's mode (tools/test-orch-stage2-hooks.py,
         # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so. A default
         # ACL on the folder overrides the umask for a new file (the stage 2 run under a TMPDIR whose
-        # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone.
+        # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone,
+        # and the modes 0666, 0600 and 0644 may appear in it only in the phrases below, so 0644 is
+        # given only for a folder without such an ACL.
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
-        for phrase in ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
-                       "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
-                       "the mode that the ACL gives a new file",
-                       "Without such an ACL, a barrier restricted to 0600 is 0644 after an audit under "
-                       "umask 022",
-                       "until a re-vendored hook keeps the mode, the permissions of `state_dir` and the "
-                       "directories above it, not those of the barrier file, decide who can read it"):
+        phrases = ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
+                   "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
+                   "the mode that the ACL gives a new file",
+                   "Without such an ACL, a barrier restricted to 0600 is 0644 after an audit under "
+                   "umask 022",
+                   "until a re-vendored hook keeps the mode, the permissions of `state_dir` and the "
+                   "directories above it, not those of the barrier file, decide who can read it")
+        for phrase in phrases:
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, text)
+                self.assertEqual(text.count(phrase), 1)
         self.assertNotIn("the mode of a new file, 0666 less the umask, not the mode", text)
+        rest = text
+        for phrase in phrases:
+            rest = rest.replace(phrase, " ")
+        for mode in ("0666", "0600", "0644"):
+            with self.subTest(mode=mode):
+                self.assertNotRegex(rest, r"(?<![0-9]){}(?![0-9])".format(mode),
+                                    "a barrier mode outside the conditioned phrases")
 
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and
