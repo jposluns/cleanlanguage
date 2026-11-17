@@ -41,19 +41,22 @@ name: Orchestration registry
 # the seeding paragraph, FAILED LEG, the CODEX ROLE LIMIT, the tiers paragraph and VERIFIER
 # DIVERSITY) is not found once or differs from the sha256 that the check holds for it in
 # anything but the white space between its words or after its last word, inside its opening
-# text too. So every edit of those 7 paragraphs that changes more than that white space fails
-# this step. When the paragraph is still found once, the report gives the 1-line update of its
-# sha256 in the check; an edit of its opening text needs the row's opening text and sha256
-# rewritten. It reads words, not meaning: outside the MODE line and the 7 pinned paragraphs,
-# the bare "attended" test is the only test that can fail a line, so a third mode value named
-# there, such as "supervised", passes, and one that holds a bare "attended", such as
-# "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
-# a quotation wrapped from the line above pairs that closing quote with the next opening
-# quote, so a bare "attended" between them passes; a sentence that contradicts the absent
-# rule passes, so does that sentence negated or inside a quotation that rejects it; and the
-# absent rule stated in other words fails. Text outside the 7 paragraphs is not pinned, so
-# an edit there passes. The step after it, tools/test-check-flow-mode.py, runs a case for
-# each of those verdicts.
+# text too; a blank line put inside 1 of them fails too, though it changes only white space.
+# So every edit of those 7 paragraphs that changes more than that white space fails this
+# step. When the paragraph is still found once, the report gives the 1-line update of its
+# sha256 in the check, which clears only that report; an edit of its opening text needs the
+# row's opening text and sha256 rewritten. It reads words, not meaning: outside the 7 pinned
+# paragraphs an edit fails only when a mode test fails, as on a line that starts "- MODE ("
+# or holds a bare "attended", when a paragraph there starts with the opening text of a pinned
+# paragraph, when a pinned paragraph joins the text beside it, or when the text is not UTF-8,
+# so the bullet "- A third mode, supervised, is also read." passes there, and the same bullet
+# naming "attended-only", which holds a bare "attended", fails; only the bare "attended" test
+# skips quoted text; a line that closes a quotation wrapped from the line above pairs that
+# closing quote with the next opening quote, so a bare "attended" between them passes; a
+# sentence that contradicts the absent rule passes, so does that sentence negated or inside a
+# quotation that rejects it; and the absent rule stated in other words fails. Any other edit
+# outside the 7 paragraphs passes. The step after it, tools/test-check-flow-mode.py, runs a
+# case for each of those verdicts.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable

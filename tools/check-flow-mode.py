@@ -41,22 +41,32 @@ fails when any of them is missing:
   white space. Each row of PARAGRAPHS gives a paragraph's name, the text that the paragraph
   starts with, and the sha256 of the paragraph with each run of white space collapsed to 1 space
   and none at either end. A paragraph starts with that text when its text, with each run of
-  white space made 1 space, starts with that text made 1 space in the same way; no opening text
-  starts with white space. So the check fails when no paragraph or more than 1 paragraph starts
-  with that text, so an indent put before that text fails too, and when the paragraph differs in
-  anything other than the amount or kind of white space between its words or after its last
-  word: a character that is not white space added, removed or changed, a letter in another case,
-  2 words joined, a line added to it, or a blank line put inside it. That is the cost of this
-  contract: every edit of these 7 paragraphs that changes more than the white space between
-  their words or after their last word, meant or not, fails this check. When the edited
-  paragraph is still found once, the check fails until the paragraph's sha256 in PARAGRAPHS is
-  updated, and the report gives the paragraph's name, its line range, its new sha256 and the
-  1-line update to PARAGRAPHS that accepts the edit. When no paragraph, or more than 1, starts
-  with the opening text, as after a change of that text, an indent before it, a join to the
-  paragraph before it or a repeat of the paragraph, the report gives the paragraph's name, its
-  opening text and the number of paragraphs found, with no line range and no sha256, and a
-  sha256 update alone never accepts the edit, since the check finds a paragraph by its opening
-  text before it compares a sha256.
+  white space made 1 space, starts with that text made 1 space in the same way, each letter in
+  the same case; no opening text starts with white space. So the check fails when no paragraph
+  or more than 1 paragraph starts with that text, so an indent put before that text fails too,
+  and when the paragraph differs in anything other than the amount or kind of white space
+  between its words or after its last word: a character that is not white space added, removed
+  or changed, a letter in another case, 2 words joined, or a line added to it. A blank line put
+  inside it fails too, though it changes only white space: the white space between 2 words
+  holds a blank line when it holds 2 line ends or more, and that blank line ends the paragraph,
+  so the part that keeps the opening text has another sha256, or, when the blank line is inside
+  the opening text, no paragraph starts with that text. So the white space between 2 words,
+  inside the opening text too, may change in amount and kind only while it holds at least 1
+  character and at most 1 line end. That is the cost of this contract: every edit of these 7
+  paragraphs that changes more than the white space between their words or after their last
+  word, meant or not, fails this check, and so does a blank line put inside 1 of them. When the
+  edited paragraph is still found once, the check reports that it has changed until the
+  paragraph's sha256 in PARAGRAPHS is updated, and the report gives the paragraph's name, its
+  line range, its new sha256 and the 1-line update to PARAGRAPHS that clears that report. The
+  update clears only that report: the mode tests still read the edited paragraph's lines, so an
+  edit that adds a bare "attended" to it still fails. When no paragraph, or more than 1, starts
+  with the opening text, as after a change of any character of that text, an indent before it,
+  a join to the paragraph before it, a repeat of the paragraph or another paragraph that starts
+  with that text, the report gives the paragraph's name, its opening text and the number of
+  paragraphs found, with no line range and no sha256. A sha256 update alone never clears that
+  report, since the check finds a paragraph by its opening text before it compares a sha256,
+  and an update of the row's opening text alone leaves the report that the paragraph has
+  changed; only the 2 updates together clear it.
 
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
@@ -64,14 +74,19 @@ so a copy from another commit can be checked through git show.
 Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
 UTF-8, and when more than 1 argument is given.
 
-Residual: the check reads text literally. Outside the MODE line and the 7 pinned paragraphs, the
-bare "attended" test is the only test that can fail a line for what it holds, so a line there
-fails exactly when it holds a bare "attended" outside the text that this test skips as quoted,
-and passes otherwise, whatever mode value it names: a third value such as "supervised" named
-there passes, and one that holds a bare "attended", such as "attended-only", fails. Named inside
-a pinned paragraph, any mode value fails, as any other edit there does. A line that holds
-"- MODE (" after any other character, such as an indented one, is not a MODE line, so the MODE
-line tests do not read it. Only the bare "attended" test skips quoted text, and only text between
+Residual: the check reads text literally. Text outside the 7 pinned paragraphs is not pinned, and
+an edit there fails only in these ways: a MODE line test fails, as when a line there starts with
+"- MODE (", which makes it a second MODE line; a line there holds a bare "attended" outside the
+text that the bare "attended" test skips as quoted; the absent-rule sentence is no longer in the
+file; a paragraph there starts with the opening text of a pinned paragraph, so that 2 paragraphs
+start with that text; no blank line is left between a pinned paragraph and the text before or
+after it, so that the paragraph joins that text; or the text is no longer UTF-8. Any other edit
+there passes, whatever mode value it names: the line '- A third mode, supervised, is also read.'
+added there passes, and the line '- A third mode, attended-only, is also read.', which holds a
+bare "attended", fails. Named inside a pinned paragraph, any mode value fails, as any other edit
+there does. A line that holds "- MODE (" after any other character, such as an indented one, is
+not a MODE line, so the MODE line tests do not read it. Only the bare "attended" test skips
+quoted text, and only text between
 straight double quotes that it pairs left to right on one line, so a retired default written
 inside such quotes passes, while "attended" inside typographic quotes (U+201C and U+201D) fails.
 Straight double quotes do not show which one opens a quotation and which one closes it, so this
@@ -89,14 +104,17 @@ The check cannot tell whether a sentence states the rule it matches or only ment
 So a sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
 matched sentence itself can be negated and still pass, as in "The session never reads an absent
 mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
-absent rule in other words fails. A pinned paragraph with its words kept and only the white space
-between them or after its last word changed passes, inside its opening text too, and so does a
-mention of its opening text inside another paragraph. Text outside the 7 paragraphs is not
-pinned: an edit there passes, and so does a paragraph elsewhere that contradicts one of them, such
-as one that adds Entry 62 to the entries of the whole-line rule. An edit that leaves the paragraph
-found once passes when it is committed with the paragraph's new sha256 in PARAGRAPHS, and an edit
-of its opening text passes when it is committed with the row's opening text and sha256 both
-rewritten; the changed row in the diff is what shows it to a reviewer.
+absent rule in other words fails. A pinned paragraph with its words kept is still found once with
+its sha256 unchanged when the white space after its last word changes, and when the white space
+between 2 of its words, inside its opening text too, changes in amount or kind and holds at least
+1 character and at most 1 line end; the mode tests read its lines as they read any other line. A
+mention of an opening text inside another paragraph, not at its start, passes. A paragraph
+elsewhere that contradicts one of the 7, such as one that adds Entry 62 to the entries of the
+whole-line rule, passes. An edit that leaves the paragraph found once clears the report that it
+has changed when it is committed with the paragraph's new sha256 in PARAGRAPHS, and an edit of its
+opening text clears its report when it is committed with the row's opening text and sha256 both
+rewritten; either edit passes only when every other test passes too, and the changed row in the
+diff is what shows it to a reviewer.
 tools/test-check-flow-mode.py holds a case for each verdict named in this docstring.
 """
 import hashlib
@@ -127,8 +145,8 @@ WHITE_SPACE = re.compile(r"\s+")
 # The 7 paragraphs of flow.md into which this change writes rule text, outside the mode section,
 # each with the name the report gives it, the text it starts with, and the sha256 of its text
 # with its white space collapsed. flow.md is the only copy of their text. Each sha256
-# stands alone on its line in the form of DIGEST_LINE, so accepting an edit that leaves a
-# paragraph found once is the 1-line update that the report gives.
+# stands alone on its line in the form of DIGEST_LINE, so the update that clears the report of
+# an edit that leaves a paragraph found once is the 1-line update that the report gives.
 PARAGRAPHS = [
     ("the header", "INTERIM. This command's own inlined text",
      "eff52ed68ba81c266e056737cf7fbdeaf8973371d07d8bb43dcc6ff30c95e7ae"),

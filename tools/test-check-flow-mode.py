@@ -3,18 +3,19 @@
 
 Each case runs the check as a separate process, isolated (-I), and asserts its exit status, 0 for
 a pass and 1 for a failure, and for a failure the report line that names the reason, except that
-1 case also runs the check's main in this process with its default path pointed at a changed copy
-of flow.md. Most cases give the check the text on standard input.
+1 case calls the check's findings in this process with the check's table changed for each edit.
+Most cases give the check the text on standard input.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
-their words or after their last word fails the check, and one that leaves the paragraph found
-once fails until the paragraph's sha256 in the check's PARAGRAPHS is updated. The test holds its
-own list, so a check whose table drops, adds or moves a paragraph fails, and it reads the
-paragraph texts only from flow.md.
+their words or after their last word fails the check, and so does a blank line put inside 1 of
+them. The report that a paragraph still found once has changed stays until the paragraph's
+sha256 in the check's PARAGRAPHS is updated. The test holds its own list, so a check whose table
+drops, adds or moves a paragraph fails, and it reads the paragraph texts only from flow.md.
 
 The verdict cases are these. The committed flow.md passes on standard input, as a path argument
-and as the default path, and its pass gives the count of pinned paragraphs. The check's table
+and as the default path; its pass gives the count of pinned paragraphs, and through a path and
+the default path it also names the file read. The check's table
 names the 7 paragraphs of NAMED, in that order and with the same opening texts; each of its
 sha256 values is the one this test computes from flow.md, and each stands alone on 1 line of the
 check in the form that the report gives. The entry list of the whole-line rule, Entries 61, 63,
@@ -27,9 +28,10 @@ word is appended to it, its last character is removed, a character is joined jus
 opening text, a letter changes case, a comma becomes a semicolon, 2 words are joined, a blank
 line or a line of white space is put inside it, a line is added just after it, or the blank line
 after it is removed so that it joins the next paragraph; it fails with the paragraph found 0
-times when its opening text changes, when an indent is put before its opening text, or when the
-blank line before it is removed so that it joins the paragraph before it, and found 2 times when
-it is repeated; and it passes when the white space between 2 of its words is replaced by a line
+times when its opening text changes, when an indent is put before its opening text, when a blank
+line or a line of white space is put inside its opening text, or when the blank line before it
+is removed so that it joins the paragraph before it, and found 2 times when it is repeated; and
+it passes when the white space between 2 of its words is replaced by a line
 break and an indent, a carriage return and a line break, a tab, a no-break space, an em space, an
 ideographic space, a unit separator (U+001F), a line separator (U+2028) or a doubled space, and
 when white space is put after its last word. With every pinned paragraph changed at once, the
@@ -39,20 +41,37 @@ str.isspace() counts as white space; it fails with the report that each paragrap
 when a line that holds only 1 such character, other than a line feed or a carriage return, is put
 inside each paragraph; and it reads the same bytes on standard input and through a path by 1
 rule, under which only a line feed, a carriage return or both end a line: each other white-space
-character doubled between 2 words of each paragraph passes, and 2 line feeds, 2 carriage returns
-or 2 carriage return and line feed pairs there fail with the report that each paragraph has
-changed. With a word appended to each pinned paragraph, the check fails with the report that each
-has changed when it reads the text through a path and through its default path. For each pinned
-paragraph, the report of a change names the paragraph and its line range, gives its new sha256
-and gives the 1-line update to PARAGRAPHS, and a copy of the check with that 1 line updated
-passes the changed text. For each pinned paragraph whose opening text is changed, the report is
-the line that the paragraph was found 0 times, with no sha256; a copy of the check with only the
-paragraph's sha256 updated still fails with that line, and a copy with the row's opening text and
-sha256 both rewritten passes. Each pinned paragraph passes at the start of the file and at the end
-of the file with no final line break, and with its last character removed fails at each of them.
-A mention of an opening text inside another paragraph passes, and a third mode value named inside
-each pinned paragraph fails with the report that each paragraph has changed and no report of a
-bare "attended". The committed flow.md fails with each of these rule changes: Entry 62 put back
+character doubled between 2 words of each paragraph passes, and 2 line feeds, 2 carriage
+returns, 2 carriage return and line feed pairs, or a carriage return, a space and a line feed
+there fail with the report that each paragraph has changed. The MODE line tests and the bare
+"attended" test read lines by the same rule, on standard input and through a path: "- MODE ("
+just after a line feed, a carriage return or both makes a second MODE line, and just after any
+other white-space character it does not; the 2 quotes of a quotation on either side of a line
+end do not pair, so the "attended" inside it is bare, and a closing quote at the start of a line
+pairs with the next quote on that line, while across any other white-space character the quotes
+pair as on 1 line; the absent-record sentence wrapped at any white-space character is found; and
+the committed flow.md with carriage returns, or carriage return and line feed pairs, for its line
+ends passes. The committed flow.md with every test failed at once, by a word appended to each
+pinned paragraph, a third value on the MODE line, a bare "attended" added and the absent-record
+sentence removed, gives the same 10 reports on standard input, through a path and through the
+default path, which a copy of the check with only its DEFAULT line rewritten reads when it runs
+with no argument, as CI runs the check. For each pinned paragraph, the report of a change names
+the paragraph and its line range, gives its new sha256 and gives the 1-line update to
+PARAGRAPHS, and a copy of the check with that 1 line updated passes the changed text. For each
+pinned paragraph whose opening text is changed, the report is the line that the paragraph was
+found 0 times, with no sha256; a copy of the check with only the paragraph's sha256 updated
+still fails with that line, a copy with only the row's opening text rewritten fails with the
+report that the paragraph has changed, and a copy with the row's opening text and sha256 both
+rewritten passes. The check's findings give the same 3 verdicts for those 3 table states after an
+edit of any character of any opening text, a letter put in another case or a character replaced
+by one that is not white space, the trailing space of an opening text included. With a bare
+"attended" or a second MODE line added to a pinned paragraph and only that paragraph's sha256
+updated, the check fails with the report of that line and no report that the paragraph has
+changed. Each pinned paragraph passes at the start of the file and at the end of the file with
+no final line break, and with its last character removed fails at each of them. A mention of an
+opening text inside another paragraph passes, and a third mode value named inside each pinned
+paragraph fails with the report that each paragraph has changed and no report of a bare
+"attended". The committed flow.md fails with each of these rule changes: Entry 62 put back
 in the entry list of the whole-line rule, before, inside or after it, or between it and the
 attribution to Entry 125, and the list's count made 5; the attribution to Entry 125 removed; the
 whole-line test replaced; the found clause reverted to "on its cited line"; the range of a range
@@ -76,10 +95,11 @@ in 'attended-autonomous"x"ly', with a longer word that holds "attended", with
 sentence in its second wording, in capital letters, or wrapped across a line break. A path that
 does not exist, text that is not UTF-8 and 2 arguments each give exit status 1.
 
-The residual cases hold the limits that the check's docstring states: outside the MODE line and
-the 7 pinned paragraphs only the bare "attended" test can fail a line, so a third mode value named
-there, such as "supervised", passes, and one that holds a bare "attended", such as
-"attended-only", fails; an indented line that starts "- MODE (" after its indent is not counted
+The residual cases hold the limits that the check's docstring states: outside the 7 pinned
+paragraphs, the line '- A third mode, supervised, is also read.' passes, and the line
+'- A third mode, attended-only, is also read.', which holds a bare "attended", fails; a paragraph
+there that starts with the opening text of a pinned paragraph fails with that paragraph found 2
+times; an indented line that starts "- MODE (" after its indent is not counted
 and passes, a retired default inside straight double quotes passes, a sentence that contradicts the
 absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
 inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
@@ -87,15 +107,16 @@ English use of "attended" fails, a quoted "attended" whose quotes wrap across a 
 fails, and a bare "attended" passes on a line that closes a quotation wrapped from the line above
 when it stands between that closing quote and the next opening quote. Text outside the 7 pinned
 paragraphs is not pinned: an edit of the keep-ahead buffer paragraph passes, and so does a
-paragraph elsewhere that adds Entry 62 to the entries of the whole-line rule.
+paragraph elsewhere that adds Entry 62 to the entries of the whole-line rule. The other ways in
+which an edit there fails, a MODE line added or changed, the absent-record sentence removed, a
+pinned paragraph joined to the text beside it and text that is not UTF-8, each have a verdict
+case above.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
 """
-import contextlib
 import hashlib
 import importlib.util
-import io
 import re
 import subprocess
 import sys
@@ -138,6 +159,7 @@ NO_ABSENT = "no statement that an absent mode record is read as unattended"
 CHANGED = "{}, a pinned paragraph, has changed: its sha256 is now "
 NOT_ONCE = "expected 1 pinned paragraph, {}, starting {!r}, found {}"
 PINS_PRESENT = "the 7 pinned paragraphs are unchanged"
+SECOND_MODE = "expected 1 MODE line starting \"- MODE (\", found 2"
 # The report line for a changed paragraph, written out here so that a check whose report drops
 # any part of it, or whose 1-line update does not match its table, fails.
 REPORT = ("FAIL: -:{}-{}: {}, a pinned paragraph, has changed: its sha256 is now {}; to accept the"
@@ -242,6 +264,13 @@ def added(line):
     return changed(DECISIONS, line + "\n" + DECISIONS)
 
 
+def replaced(text, old, new):
+    """text with its one occurrence of old replaced by new."""
+    if text.count(old) != 1:
+        raise AssertionError("expected 1 {!r}, found {}".format(old, text.count(old)))
+    return text.replace(old, new)
+
+
 def span(text, opening):
     """The start and end offsets in text of the 1 paragraph that starts a line with opening and
     ends before the next blank line or at the end of text."""
@@ -296,6 +325,36 @@ def check_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def default_copy(folder, default):
+    """A copy of the check in folder whose DEFAULT line alone is rewritten to name default, so
+    that the copy run with no argument reads default, as CI runs the check."""
+    source = CHECK.read_text(encoding="utf-8")
+    copied, count = re.subn(r"(?m)^DEFAULT = .*$",
+                            lambda match: "DEFAULT = Path({!r})".format(str(default)), source)
+    if count != 1:
+        raise AssertionError("expected 1 DEFAULT line in {}, found {}".format(CHECK, count))
+    path = Path(folder) / "check-flow-mode.py"
+    path.write_text(copied, encoding="utf-8")
+    return path
+
+
+def failing_text():
+    """The committed flow.md with every test failed at once: a word appended to each pinned
+    paragraph, a third value on the MODE line, a bare "attended" added and the absent-record
+    sentence removed."""
+    text = with_paragraphs(lambda p, o: p + " x")
+    text = replaced(text, MODE_LINE, "- MODE (attended-autonomous | unattended | supervised)")
+    text = replaced(text, ABSENT_WORDS, "reads the mode record")
+    return replaced(text, DECISIONS, "- Absent = attended (conservative).\n" + DECISIONS)
+
+
+def other_characters(char):
+    """The edits of char that an opening text match must refuse: char in another case, when it
+    has one, and a character that is neither char nor white space."""
+    edits = [char.swapcase()] if len(char.swapcase()) == 1 and char.swapcase() != char else []
+    return edits + ["#" if char != "#" else "%"]
 
 
 def after(paragraph, opening, pattern):
@@ -399,6 +458,13 @@ class Verdicts(unittest.TestCase):
             with self.subTest(paragraph=name, change="indent before its opening"):
                 self.assert_fails(with_paragraph(opening, lambda p: " " + p),
                                   NOT_ONCE.format(name, opening, 0))
+            # A blank line changes only white space, but it ends the paragraph inside its opening
+            # text, so no paragraph starts with that text.
+            for what, blank in (("a blank line", "\n\n"), ("a line of white space", "\n\t\n")):
+                with self.subTest(paragraph=name, change=what + " inside its opening"):
+                    self.assert_fails(with_paragraph(opening, lambda p, b=blank: (
+                        lambda i: p[:i] + b + p[i + 1:])(opening.index(" "))),
+                        NOT_ONCE.format(name, opening, 0))
             with self.subTest(paragraph=name, change="joined to the paragraph before it"):
                 text = committed()
                 start, _ = span(text, opening)
@@ -445,7 +511,8 @@ class Verdicts(unittest.TestCase):
         # bytes by the same rule.
         cases = [(code_point(space), space * 2, True) for space in INLINE_WHITE]
         cases += [("2 line feeds", "\n\n", False), ("2 carriage returns", "\r\r", False),
-                  ("2 carriage return and line feed pairs", "\r\n\r\n", False)]
+                  ("2 carriage return and line feed pairs", "\r\n\r\n", False),
+                  ("a carriage return, a space and a line feed", "\r \n", False)]
         for what, space, passes in cases:
             data = with_paragraphs(lambda p, o, s=space: (lambda i: p[:i] + s + p[i + 1:])(
                 space_at(p, o))).encode("utf-8")
@@ -461,23 +528,74 @@ class Verdicts(unittest.TestCase):
                         else:
                             self.assert_each_changed(status, output)
 
-    def test_each_pinned_paragraph_changed_fails_by_path_and_by_default(self):
-        # CI runs the check with no argument, so a paragraph's verdict must not depend on the
-        # check reading standard input. The default path is pointed at the changed copy inside
-        # this process, so the case needs no copy of the check beside a copy of flow.md.
-        text = with_paragraphs(lambda p, o: p + " x")
+    def test_each_test_reads_lines_by_the_same_rule(self):
+        # The MODE line tests and the bare "attended" test read the lines that the paragraph test
+        # reads: for them only a line feed, a carriage return or both start a new line, and no
+        # other character that str.splitlines() reads as a line end does. The absent-rule test
+        # reads white space, not lines, so its sentence is found wrapped at any white-space
+        # character.
+        ends = [("a line feed", "\n"), ("a carriage return", "\r"),
+                ("a carriage return and a line feed", "\r\n")]
+        cases = [(what, space, True) for what, space in ends]
+        cases += [(code_point(space), space, False) for space in INLINE_WHITE]
+        for what, space, ends_line in cases:
+            # Across a line end the first quotation leaves its "attended" bare and the second
+            # skips it; across any other white space, the reverse.
+            second = "- A record that holds \"x" + space + "\" attended \"y\" value."
+            text = replaced(committed(), DECISIONS,
+                            "- See" + space + MODE_LINE + " above.\n- A record that holds \"the"
+                            " retired" + space + "attended\" value.\n" + second + "\n" + DECISIONS)
+            data = replaced(text, ABSENT_WORDS, ABSENT_WORDS.replace(" record", space + "record")
+                            ).encode("utf-8")
+            bare = "attended\" value." if ends_line else second
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "flow.md"
+                path.write_bytes(data)
+                for read, args, given in (("standard input", ["-"], data), ("path", [str(path)], b"")):
+                    with self.subTest(space=what, read=read):
+                        status, output = run_check(args, given)
+                        # The report quotes the line, which may hold a character that
+                        # str.splitlines() reads as a line end, so the output is split at line
+                        # feeds only.
+                        lines = output.rstrip("\n").split("\n")
+                        self.assertEqual(status, 1, output)
+                        self.assertEqual(lines[-1], "FAIL: {} finding(s)".format(
+                            2 if ends_line else 1), output)
+                        self.assertEqual(sum(SECOND_MODE in line for line in lines),
+                                         1 if ends_line else 0, output)
+                        reports = [line for line in lines if BARE in line]
+                        self.assertEqual(len(reports), 1, output)
+                        self.assertTrue(reports[0].endswith(BARE + ": " + bare), output)
+        for what, end in (("carriage returns", "\r"), ("carriage return and line feed pairs", "\r\n")):
+            data = committed().replace("\n", end).encode("utf-8")
+            with tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / "flow.md"
+                path.write_bytes(data)
+                for read, args, given in (("standard input", ["-"], data), ("path", [str(path)], b"")):
+                    with self.subTest(line_ends=what, read=read):
+                        status, output = run_check(args, given)
+                        self.assertEqual(status, 0, output)
+                        self.assertIn(PINS_PRESENT, output)
+
+    def test_every_test_fails_alike_on_standard_input_by_path_and_by_default(self):
+        # CI runs the check with no argument, so no verdict may depend on how the check gets its
+        # text. A copy of the check with only its DEFAULT line rewritten runs as a separate
+        # process with no argument, as CI runs the check, and reads the changed copy of flow.md.
+        text = failing_text()
+        status, given = verdict(text)
+        self.assertEqual(status, 1, given)
+        self.assertEqual(given.splitlines()[-1], "FAIL: 10 finding(s)", given)
+        for reason in [CHANGED.format(name) for name, _ in NAMED] + [WRONG_MODES, BARE, NO_ABSENT]:
+            self.assertEqual(sum(reason in line for line in given.splitlines()), 1, given)
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "flow.md"
             path.write_text(text, encoding="utf-8")
-            with self.subTest(read="path"):
-                self.assert_each_changed(*run_check([str(path)]))
-            module = check_module()
-            module.DEFAULT = path
-            printed = io.StringIO()
-            with contextlib.redirect_stdout(printed):
-                status = module.main([])
-            with self.subTest(read="default path"):
-                self.assert_each_changed(status, printed.getvalue())
+            copy = default_copy(folder, path)
+            for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                with self.subTest(read=read):
+                    status, output = run_check(args, check=check)
+                    self.assertEqual(status, 1, output)
+                    self.assertEqual(output.replace(str(path), "-"), given)
 
     def test_each_report_of_a_change_gives_the_1_line_update(self):
         table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
@@ -504,13 +622,15 @@ class Verdicts(unittest.TestCase):
 
     def test_an_edit_of_each_opening_text_needs_its_row_rewritten(self):
         # The check finds a paragraph by its opening text before it compares a sha256, so the
-        # report of such an edit gives no sha256, and a sha256 update alone does not accept it.
+        # report of such an edit gives no sha256; a sha256 update alone does not clear it, and an
+        # update of the row's opening text alone leaves the report that the paragraph has changed.
         table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
         source = CHECK.read_text(encoding="utf-8")
         for name, opening in NAMED:
             with self.subTest(paragraph=name):
                 edited = "x" + opening[1:]
                 text = with_paragraph(opening, lambda p: "x" + p[1:])
+                first, last = line_range(text, edited)
                 start, end = span(text, edited)
                 now = own_digest(text[start:end])
                 report = "FAIL: -: " + NOT_ONCE.format(name, opening, 0)
@@ -519,24 +639,87 @@ class Verdicts(unittest.TestCase):
                 self.assertIn(report, output.splitlines())
                 old_line = DIGEST_LINE.format(table[name])
                 old_row = "(\"{}\", \"{}\",".format(name, opening)
+                new_row = "(\"{}\", \"{}\",".format(name, edited)
                 self.assertEqual(source.count(old_line), 1)
                 self.assertEqual(source.count(old_row), 1)
                 digest_only = source.replace(old_line, DIGEST_LINE.format(now))
-                rewritten = digest_only.replace(old_row, "(\"{}\", \"{}\",".format(name, edited))
+                opening_only = source.replace(old_row, new_row)
+                rewritten = digest_only.replace(old_row, new_row)
                 with tempfile.TemporaryDirectory() as folder:
                     updated = Path(folder) / "check-flow-mode.py"
                     updated.write_text(digest_only, encoding="utf-8")
                     status, output = verdict(text, updated)
                     self.assert_status_one(status, output, report)
                     self.assertIn(report, output.splitlines())
+                    updated.write_text(opening_only, encoding="utf-8")
+                    status, output = verdict(text, updated)
+                    self.assertEqual(status, 1, output)
+                    self.assertIn(REPORT.format(first, last, name, now, table[name], now),
+                                  output.splitlines())
                     updated.write_text(rewritten, encoding="utf-8")
                     status, output = verdict(text, updated)
                 self.assertEqual(status, 0, output)
                 self.assertIn(PINS_PRESENT, output)
 
+    def test_an_edit_of_any_character_of_each_opening_text_needs_its_row_rewritten(self):
+        # The check matches every character of an opening text, each letter in its case, so an
+        # edit of any of them, the trailing space of an opening text included, leaves no
+        # paragraph that starts with that text. This case calls the check's findings in this
+        # process with the table changed for each edit, so it needs no copy of the check.
+        module = check_module()
+        table = list(module.PARAGRAPHS)
+        text = committed()
+
+        def findings_with(row, opening, pinned, data):
+            module.PARAGRAPHS = table[:row] + [(table[row][0], opening, pinned)] + table[row + 1:]
+            try:
+                return module.findings(data, "-")
+            finally:
+                module.PARAGRAPHS = table
+
+        for row, (name, opening, pinned) in enumerate(table):
+            start, end = span(text, opening)
+            for index, char in enumerate(opening):
+                for new in other_characters(char):
+                    edited = opening[:index] + new + opening[index + 1:]
+                    with self.subTest(paragraph=name, index=index, character=new):
+                        data = text[:start] + edited + text[start + len(opening):]
+                        now = own_digest(data[start:end])
+                        self.assertEqual(findings_with(row, opening, now, data),
+                                         ["-: " + NOT_ONCE.format(name, opening, 0)])
+                        found = findings_with(row, edited, pinned, data)
+                        self.assertEqual(len(found), 1, found)
+                        self.assertIn(CHANGED.format(name) + now, found[0])
+                        self.assertEqual(findings_with(row, edited, now, data), [])
+
+    def test_a_sha256_update_leaves_the_mode_tests_reading_the_paragraph(self):
+        # The 1-line update clears only the report that the paragraph has changed, so an edit
+        # that the mode tests refuse still fails with the update in place.
+        table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
+        source = CHECK.read_text(encoding="utf-8")
+        additions = [(" It was attended.", BARE),
+                     ("\n" + MODE_LINE + " is repeated.", SECOND_MODE)]
+        for name, opening in NAMED:
+            for addition, reason in additions:
+                with self.subTest(paragraph=name, reason=reason):
+                    text = with_paragraph(opening, lambda p, a=addition: p + a)
+                    start, end = span(text, opening)
+                    now = own_digest(text[start:end])
+                    old_line = DIGEST_LINE.format(table[name])
+                    self.assertEqual(source.count(old_line), 1)
+                    with tempfile.TemporaryDirectory() as folder:
+                        updated = Path(folder) / "check-flow-mode.py"
+                        updated.write_text(source.replace(old_line, DIGEST_LINE.format(now)),
+                                           encoding="utf-8")
+                        status, output = verdict(text, updated)
+                    self.assertEqual(status, 1, output)
+                    self.assertIn(reason, output)
+                    self.assertEqual(output.splitlines()[-1], "FAIL: 1 finding(s)", output)
+                    self.assertNotIn(CHANGED.format(name), output)
+
     def test_a_third_mode_value_named_in_each_pinned_paragraph_fails(self):
-        # Outside the MODE line and the pinned paragraphs only the bare "attended" test can fail a
-        # line, so this sentence passes there; inside a pinned paragraph it changes the paragraph.
+        # This sentence passes outside the pinned paragraphs, since it starts no MODE line and
+        # holds no bare "attended"; inside a pinned paragraph it changes the paragraph.
         status, output = verdict(with_paragraphs(
             lambda p, o: p + "\nA third mode, supervised, is also read."))
         self.assert_each_changed(status, output)
@@ -582,7 +765,8 @@ class Verdicts(unittest.TestCase):
             with self.subTest(args=args):
                 status, output = run_check(args)
                 self.assertEqual(status, 0, output)
-                self.assertTrue(output.startswith("OK: "), output)
+                self.assertTrue(output.startswith("OK: {}: ".format(FLOW)), output)
+                self.assertIn(PINS_PRESENT, output)
 
     def test_the_mode_text_of_main_fails(self):
         status, output = verdict(MAIN_MODE_TEXT)
@@ -721,12 +905,23 @@ class Residual(unittest.TestCase):
         self.assertEqual(status, 0, output)
 
     def test_a_third_value_with_a_bare_attended_outside_the_mode_line_fails(self):
-        # Outside the MODE line and the pinned paragraphs only the bare-word test can fail a line,
-        # so a third value named there fails exactly when it holds a bare "attended", whatever
-        # value it is.
+        # This line, added outside the pinned paragraphs, is no MODE line, starts no paragraph with
+        # a pinned opening text and joins no pinned paragraph, so of the tests that read what a
+        # line holds only the bare "attended" test can fail it, whatever mode value it names.
         status, output = verdict(added("- A third mode, attended-only, is also read."))
         self.assertEqual(status, 1, output)
         self.assertIn(BARE, output)
+
+    def test_a_paragraph_elsewhere_that_starts_with_an_opening_text_fails(self):
+        # Text outside the pinned paragraphs is not pinned, but a paragraph there that starts with
+        # a pinned opening text is a second paragraph of that name.
+        text = committed()
+        self.assertTrue(text.endswith("\n"))
+        for name, opening in NAMED:
+            with self.subTest(paragraph=name):
+                status, output = verdict(text + "\n" + opening + "a note added outside the pins.\n")
+                self.assertEqual(status, 1, output)
+                self.assertIn(NOT_ONCE.format(name, opening, 2), output)
 
     def test_a_quoted_retired_default_passes(self):
         status, output = verdict(added("- Absent = \"attended\" (conservative)."))
