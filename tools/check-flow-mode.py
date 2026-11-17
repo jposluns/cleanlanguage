@@ -73,22 +73,24 @@ PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text f
 so a copy from another commit can be checked through git show.
 Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
 UTF-8, and when more than 1 argument is given.
-Output: each finding is 1 line that starts with "FAIL: " and the name of the text read, which is
+Output: the check prints every line of its output to standard output and nothing to standard
+error. Each finding is 1 line that starts with "FAIL: " and the name of the text read, which is
 PATH as given, the default path when no PATH is given, or "-" for standard input, and a last line,
 "FAIL: " and the number of findings, names no text. The report that the text holds no MODE line
-or more than 1 gives the number found, whatever it is. The report of a MODE line with no closing
+or more than 1 gives the number found. The report of a MODE line with no closing
 parenthesis, and the report of a bare "attended", give the number of its line and the line with
 the white space at either end removed. The report that the MODE line names other values gives the
 text between its parentheses split at each "|", each part with the white space at either end
 removed, in order and joined by " | ", and then the writer's 2 values joined in the same way. The
 report that the absent-record sentence is missing gives nothing more. The report that a pinned
 paragraph is not found once gives the paragraph's name, its opening text as Python's repr()
-writes it and the number found, whatever it is. The report that a paragraph has changed gives
+writes it and the number found. The report that a paragraph has changed gives
 its name, its line range, its new sha256 and the 1-line update to PARAGRAPHS. A pass prints 1
 line, which names the text read in the same way and gives the number of pinned paragraphs. Text
-that cannot be read gives 1 line, which names it in the same way and gives the reason that Python
-gives for the failed read or decode. More than 1 argument gives 1 line, the usage line, which
-names no text and does not start with "FAIL: ".
+that cannot be read, for any reason that Python gives as an OSError, a closed standard input
+included, or that is not UTF-8, gives 1 line, which names it in the same way and gives the reason
+that Python gives for the failed read or decode. More than 1 argument gives 1 line, the usage
+line, which names no text and does not start with "FAIL: ".
 
 Residual: the check reads text literally. Text outside the 7 pinned paragraphs is not pinned, and
 an edit there fails only in these ways: a MODE line test fails, as when a line there starts with
@@ -130,7 +132,10 @@ whole-line rule, passes. An edit that leaves the paragraph found once clears the
 has changed when it is committed with the paragraph's new sha256 in PARAGRAPHS, and an edit of its
 opening text clears its report when it is committed with the row's opening text and sha256 both
 rewritten; either edit passes only when every other test passes too, and the changed row in the
-diff is what shows it to a reviewer.
+diff is what shows it to a reviewer. A report of a number found, and the last line, give the
+length of what the check found, which its code does not bound, but the test holds each number
+only as far as it writes: up to 1000 MODE lines, 1006 paragraphs found and 1008 findings. No
+finite suite can try every number, so a larger number rests on reading the code.
 tools/test-check-flow-mode.py holds a case for each verdict named in this docstring.
 """
 import hashlib
@@ -271,7 +276,10 @@ def main(argv):
     source = argv[0] if argv else str(DEFAULT)
     try:
         if source == "-":
-            text = sys.stdin.buffer.read().decode("utf-8")
+            # File descriptor 0 is read directly, since sys.stdin is None when it is closed; so a
+            # closed standard input fails the read with the error that Python gives for it.
+            with open(0, "rb", closefd=False) as stream:
+                text = stream.read().decode("utf-8")
         else:
             text = Path(source).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:

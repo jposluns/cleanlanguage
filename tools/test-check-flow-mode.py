@@ -7,7 +7,9 @@ cases that start no check process: 1 compares the check's table with the test's 
 with flow.md, 1 calls the check's findings in this process with the check's table changed for
 each edit, and 1 loads a copy of the check whose bytecode cache is stale. Each case that reads
 the check in this process compiles it from its source as it is now, so no bytecode cache stands
-in for that source. Most cases give the check the text on standard input.
+in for that source. Most cases give the check the text on standard input. Each case reads the
+check's standard output alone, and every run of the check must write nothing to standard error,
+so a check that writes a line there, in place of standard output or as well, fails.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
@@ -63,18 +65,21 @@ on standard input and the file's path through a path and through the default pat
 read as built and again after 99999 blank lines, so that each line number and line range that
 the check reports for it has 6 digits. Between them the 3 texts give every kind of report line
 of the check's findings: the committed flow.md with every test failed at once, by a word
-appended to each pinned paragraph, a third value on the MODE line, a bare "attended" added and
-the absent-record sentence removed, gives 10 reports; with the opening text of each pinned
-paragraph changed, its MODE line left unclosed and a second, unclosed MODE line with white space
-at its end added, it gives 10, 1 for each paragraph found 0 times, 1 for 2 MODE lines and 2 for
+appended to each pinned paragraph, a third value on the MODE line, with every kind of white
+space that ends no line at either end of each value, which the report leaves out, a bare
+"attended" added and the absent-record sentence removed, gives 10 reports; with the opening text
+of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
+with every kind of white space that ends no line at its end added, it gives 10, 1 for each
+paragraph found 0 times, 1 for 2 MODE lines and 2 for
 a MODE line with no closing parenthesis, each giving the line without the white space at its
 ends; and with each pinned paragraph repeated and its MODE line renamed, it gives 8, 1 for each
 paragraph found 2 times and 1 for no MODE line. Each report of a number found gives that number
 on each of the 3 reads, which print the whole expected output: with the MODE line written each
 number of times from 2 to 11, and 99, 100, 101 and 1000 times, the opening text of each pinned
 paragraph starting a different number of paragraphs from that number up, so from 2 to 17, 99 to
-107 and 1000 to 1006, and as many lines that hold a bare "attended", each with white space at
-either end, as MODE lines put at the end, the check prints the report of each number found, the
+107 and 1000 to 1006, and as many lines that hold a bare "attended", each with every kind of
+white space that ends no line at either end, as MODE lines put at the end, the check prints the
+report of each number found, the
 report of each bare "attended" with its line number and the line without that white space, and a
 count of findings from 10 to 19, 107 to 109 or 1008. For each pinned paragraph, the report of a
 change names the paragraph and its line
@@ -116,14 +121,20 @@ comes after line 250, when a line holds a longer word that starts with "attended
 such as "attended-autonomously", when a bare "attended" follows a closing quote at once, as in
 'un"stored"attended', since the check reads a quotation as a space and so does not join the text
 on its 2 sides, and when the absent-record sentence is removed. It passes with the MODE values in
-the other order, with a quoted "attended", with a quotation just after "attended-autonomous", as
+the other order, with each kind of white space that ends no line, alone and with every other
+kind, at either end of each MODE value, with a quoted "attended", with a quotation just after
+"attended-autonomous", as
 in 'attended-autonomous"x"ly', with a longer word that holds "attended", with
 "Attended-Autonomous" in capital letters outside the MODE line, and with the absent-record
 sentence in its second wording, in capital letters, or wrapped across a line break. A path that
 does not exist gives exit status 1 and as its whole output the 1 line that it cannot be read,
 which names the path and gives the error that Python gives for reading it, through a path and
 through the default path; text that is not UTF-8 gives the same on standard input, through a path
-and through the default path, with the error that Python gives for decoding it; and 2 or 3
+and through the default path, with the error that Python gives for decoding it; a folder, a path
+through a file, a symbolic link to itself, a name too long and a file with no read permission
+each give the same through a path and through the default path, with the error that Python gives
+for reading it, the last skipped for an account that can read it all the same; a descriptor open
+only for writing and a closed standard input each give the same on standard input; and 2 or 3
 arguments, the path of flow.md or "-" among them, give exit status 1 and as the whole output the
 usage line.
 
@@ -142,7 +153,9 @@ paragraphs is not pinned: an edit of the keep-ahead buffer paragraph passes, and
 paragraph elsewhere that adds Entry 62 to the entries of the whole-line rule. The other ways in
 which an edit there fails, a MODE line added or changed, the absent-record sentence removed, a
 pinned paragraph joined to the text beside it and text that is not UTF-8, each have a verdict
-case above.
+case above. No case writes more than 1000 MODE lines, 1006 paragraphs that start with an opening
+text or 1008 findings, so a check that bounded a count above those numbers would pass; the
+check's docstring states this limit.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
@@ -249,6 +262,10 @@ SPACES = [
 # Every character that str.isspace() counts as white space, and those of them that end no line.
 WHITE = [chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()]
 INLINE_WHITE = [space for space in WHITE if space not in "\n\r"]
+# Every kind of white space that ends no line, run together, put at the ends of the lines and of
+# the MODE values whose white space at either end the check's reports remove: a check that
+# removes only some kinds leaves a kind that it misses in its report.
+PADDING = "".join(INLINE_WHITE)
 
 # Rule changes in the pinned paragraphs, each as the paragraph it is in, a text that flow.md
 # holds once, and its replacement.
@@ -302,10 +319,20 @@ FLOOR_REMOVALS = [
 ]
 
 
-def run_check(args, data=b"", check=CHECK):
-    """The exit status of the check run with args and data on standard input, and its output."""
-    run = subprocess.run([sys.executable, "-I", str(check)] + args, input=data,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
+def run_check(args, data=b"", check=CHECK, stdin=None, closed=False):
+    """The exit status of the check run with args, and its output, which is its standard output
+    alone. Its standard input is data, or the file descriptor stdin when one is given, or none at
+    all when closed is set. The check writes nothing to standard error, so a run that writes
+    anything there fails the case that made it."""
+    if closed:
+        source = {"stdin": subprocess.DEVNULL, "preexec_fn": lambda: os.close(0)}
+    else:
+        source = {"input": data} if stdin is None else {"stdin": stdin}
+    run = subprocess.run([sys.executable, "-I", str(check)] + args, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, timeout=60, check=False, **source)
+    if run.stderr:
+        raise AssertionError("expected nothing on standard error, found {!r}".format(
+            run.stderr.decode("utf-8", "replace")))
     return run.returncode, run.stdout.decode("utf-8", "replace")
 
 
@@ -422,10 +449,13 @@ def default_copy(folder, default):
 
 def failing_text():
     """The committed flow.md with every test failed at once: a word appended to each pinned
-    paragraph, a third value on the MODE line, a bare "attended" added and the absent-record
-    sentence removed."""
+    paragraph, a third value on the MODE line, with PADDING at either end of each value, which the
+    report of those values leaves out, a bare "attended" added and the absent-record sentence
+    removed."""
     text = with_paragraphs(lambda p, o: p + " x")
-    text = replaced(text, MODE_LINE, "- MODE (attended-autonomous | unattended | supervised)")
+    values = ["attended-autonomous", "unattended", "supervised"]
+    text = replaced(text, MODE_LINE, "- MODE ({})".format(
+        "|".join(PADDING + value + PADDING for value in values)))
     text = replaced(text, ABSENT_WORDS, "reads the mode record")
     return replaced(text, DECISIONS, ABSENT_ATTENDED + "\n" + DECISIONS)
 
@@ -442,7 +472,7 @@ def failing_texts(lead=0):
     check must print, in its order, each report line with its counts and line numbers and the last
     line with the number of findings: failing_text(); the committed flow.md with the opening text
     of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
-    with white space at its end added, which the report of that line leaves out; and the committed
+    with PADDING at its end added, which the report of that line leaves out; and the committed
     flow.md with each pinned paragraph repeated and its MODE line renamed so that none is left.
     Each text starts with lead blank lines, which move each line number and line range that the
     check reports for it down by lead. Each sha256 is the one this test computes, so the expected
@@ -459,7 +489,8 @@ def failing_texts(lead=0):
     lost = with_paragraphs(lambda p, o: "x" + p[1:])
     lost = replaced(lost, MODE_LINE, MODE_LINE[:-1])
     lost = "\n" * lead + replaced(lost, DECISIONS,
-                                  "- MODE (supervised is a third mode. \t\n" + DECISIONS)
+                                  "- MODE (supervised is a third mode." + PADDING + "\n"
+                                  + DECISIONS)
     unclosed = sorted([line_of(lost, MODE_LINE[:-1]),
                        line_of(lost, "- MODE (supervised is a third mode.")])
     repeated = with_paragraphs(lambda p, o: p + "\n\n" + p)
@@ -488,7 +519,7 @@ def failing_texts(lead=0):
 def counted_text(times):
     """The committed flow.md with its MODE line written times times, the opening text of the
     pinned paragraph in row r of NAMED starting times + r paragraphs, the copies at the end of
-    the file, and times lines that hold a bare "attended", each with white space at either end,
+    the file, and times lines that hold a bare "attended", each with PADDING at either end,
     after them, with a function that gives, for the name of the text read, the whole output that
     the check must print: the report of the number of MODE lines, the report of each bare
     "attended" with its line number and the line without that white space, the report of the
@@ -500,7 +531,8 @@ def counted_text(times):
         raise AssertionError("expected {} to end with a line feed".format(FLOW))
     copies = [opening + " is copied here."
               for _, opening in NAMED for _ in range(counts[opening] - 1)]
-    text += "\n" + "\n\n".join(copies) + "\n\n" + ("\t " + ABSENT_ATTENDED + " \t\n") * times
+    text += ("\n" + "\n\n".join(copies) + "\n\n"
+             + (PADDING + ABSENT_ATTENDED + PADDING + "\n") * times)
     lines = text.split("\n")
     bare = [number for number, line in enumerate(lines, 1) if line.strip() == ABSENT_ATTENDED]
     if len(bare) != times:
@@ -1053,6 +1085,16 @@ class Verdicts(unittest.TestCase):
     def test_the_mode_values_in_the_other_order_pass(self):
         self.assert_passes(changed(MODE_LINE, "- MODE (unattended | attended-autonomous)"))
 
+    def test_white_space_of_each_kind_around_the_mode_values_passes(self):
+        # The check removes the white space at either end of each MODE value before it compares
+        # the values, so each kind of white space that ends no line passes there, alone and with
+        # every other kind.
+        kinds = [(code_point(space), space) for space in INLINE_WHITE] + [("every kind", PADDING)]
+        for what, space in kinds:
+            with self.subTest(space=what):
+                self.assert_passes(changed(MODE_LINE, "- MODE ({0}attended-autonomous{0}|{0}"
+                                                      "unattended{0})".format(space)))
+
     def test_no_mode_line_fails(self):
         self.assert_fails(changed(MODE_LINE, "- Mode (attended-autonomous | unattended)"),
                           "expected 1 MODE line starting \"- MODE (\", found 0")
@@ -1171,6 +1213,71 @@ class Verdicts(unittest.TestCase):
                 with self.subTest(read=read):
                     status, output = run_check(args, given, check)
                     self.assert_unreadable(status, output, source, error, "can't decode byte 0xff")
+
+    def test_each_kind_of_failed_read_fails(self):
+        # Any error that Python gives for a failed read, not only a missing file, gives the 1
+        # line that the text cannot be read: through a path and through the default path, a
+        # folder, a path through a file, a symbolic link to itself, a name too long and a file
+        # that cannot be read; on standard input, a descriptor open only for writing and a
+        # closed standard input.
+        def a_folder(folder):
+            path = folder / "flow.md"
+            path.mkdir()
+            return path
+
+        def through_a_file(folder):
+            (folder / "file").write_text("x", encoding="utf-8")
+            return folder / "file" / "flow.md"
+
+        def a_loop(folder):
+            path = folder / "flow.md"
+            path.symlink_to(path.name)
+            return path
+
+        def too_long(folder):
+            return folder / ("n" * 300)
+
+        def no_read_permission(folder):
+            path = folder / "flow.md"
+            path.write_bytes(committed().encode("utf-8"))
+            path.chmod(0)
+            return path
+
+        kinds = [("a folder", a_folder, errno.EISDIR),
+                 ("a path through a file", through_a_file, errno.ENOTDIR),
+                 ("a symbolic link to itself", a_loop, errno.ELOOP),
+                 ("a name too long", too_long, errno.ENAMETOOLONG),
+                 ("a file with no read permission", no_read_permission, errno.EACCES)]
+        for what, make, number in kinds:
+            with tempfile.TemporaryDirectory() as name:
+                path = make(Path(name))
+                copy = default_copy(name, path)
+                for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                    with self.subTest(kind=what, read=read):
+                        if number == errno.EACCES and os.access(str(path), os.R_OK):
+                            self.skipTest("this account reads a file that has no read permission")
+                        error = read_error(path.read_bytes)
+                        status, output = run_check(args, check=check)
+                        self.assert_unreadable(status, output, path, error,
+                                               "[Errno {}]".format(number))
+        bad = "[Errno {}]".format(errno.EBADF)
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name) / "flow.md"
+            path.write_bytes(committed().encode("utf-8"))
+            descriptor = os.open(str(path), os.O_WRONLY)
+            try:
+                error = read_error(lambda: os.read(descriptor, 1))
+                with self.subTest(kind="a descriptor open only for writing", read="standard input"):
+                    status, output = run_check(["-"], stdin=descriptor)
+                    self.assert_unreadable(status, output, "-", error, bad)
+            finally:
+                os.close(descriptor)
+        closed = os.open(os.devnull, os.O_RDONLY)
+        os.close(closed)
+        error = read_error(lambda: os.read(closed, 1))
+        with self.subTest(kind="a closed standard input", read="standard input"):
+            status, output = run_check(["-"], closed=True)
+            self.assert_unreadable(status, output, "-", error, bad)
 
     def test_more_than_1_argument_fails(self):
         # The whole output is the usage line, whatever the arguments name.
