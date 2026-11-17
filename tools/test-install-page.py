@@ -10,47 +10,31 @@ user and 1 as root, adding a cached file of it too), swaps 2 family pages, or
 adds a file that Cloudflare Pages may run or read: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
-Pipfile or Gemfile. The copy holds the 3 stylesheets too, which the name
-search of check 7 reads with every other file under site/. For that search,
-cases add a page outside the install pages, a stylesheet, a manifest, an SVG
-document, a binary file, a file under site/assets/, a page or a folder named
-as a source, an unreadable page or stylesheet, a file of each suffix that
-the search reads only as UTF-8 that is not UTF-8, a page, a stylesheet, an
-SVG file or a script that declares an encoding other than UTF-8 or holds an
-escape character, a text file and a binary file under site/install/, a page
-3 folders below site/, a _redirects file below site/, a link, a FIFO, a
-folder set to mode 000 or a folder under site/assets/ that cannot be
-listed, an SVG file whose references make the rounds of the search hold
-exactly the most forms, or characters in all, that the gate reads
-(FORM_LIMIT and FORM_CHARACTERS) or 1 more, a file with no reference that
-holds exactly the most characters or 1 more,
-or copy the whole committed site/ over the copy, or add a line to
-site/_redirects that holds a character other than the line feed at which a
-reading may end a line or a field, and assert that such a line fails, that a source of
-site/_redirects under /assets/ passes only as an exact path whose file name
-no file under site/ but site/_redirects names and that no file occupies or
-lies above, in any letter case, that a rule whose destination the gate
-reads, failing closed, as able to lead to such a source fails, and
-that a header rule for such a path still fails. It runs the gate there as a separate process and asserts
+Pipfile or Gemfile. The copy holds the 3 stylesheets too. For check 7,
+cases add a page or a folder named as a source, a file under site/assets/,
+copy the whole committed site/ over the copy, or add a rule to
+site/_redirects, among them a line that holds a character other than the
+line feed at which a reading may end a line or a field, and assert that such
+a line fails, that a rule whose source lies under /assets/ passes only when
+its source is an exact path that no file occupies or lies above, in any
+letter case, and it sends that source with the status 301 to a file under
+/assets/baseline/logos/ that tools/check-baseline-pin.py pins, with no
+query, fragment or further field, with a case for each of those
+conditions, and that a header rule for such a path still fails; in this
+process it also calls the gate's redirect_break() on 1 character of each
+class that it refuses or allows (BREAK_CHARACTERS), the line feed among
+them, which no run of the gate gives it. It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
 refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
-of the gate alone: the probe loads the copy of the gate, has its
-site_names() read the site while the folder LOCKED_FOLDER can still be
-listed (exiting 4 if it names any input it could not read), replaces the
-gate's site_names with a function that returns that result, so that main()
-lists no folder through site_names() whether or not it is cached, wraps the
-gate's occupied() to record each folder it could not list, sets that
-folder's mode to 000 and runs the gate's main(). It exits 4 unless occupied()
-recorded the refusal that names that folder, and otherwise with main()'s
-code, and the case expects exit 1 and the refusal that names its redirect
-source and that folder. In a plain run site_names() would refuse the folder
-first, in the same words, so the output alone cannot show which refusal was
-given; the stand-in keeps main() off that refusal, and the record of
-occupied() shows that its refusal is the one given. Root lists a folder
-whatever its mode, so under root that case is not run, and main() names it as skipped,
-as it names the 2 mode-000 load cases and the case of MODE_CASES, a plain
-run with a folder set to mode 000 that only site_names() lists. 3 cases put
+of the gate alone: the probe loads the copy of the gate, wraps its
+occupied() to record each folder it could not list, sets the folder
+LOCKED_FOLDER to mode 000 and runs the gate's main(). It exits 4 unless
+occupied() recorded the refusal that names that folder, and otherwise with
+main()'s code, and the case expects exit 1 and the refusal that names its
+redirect source and that folder. Root lists a folder whatever its mode, so
+under root that case is not run, and main() names it as skipped, as it names
+the 2 mode-000 load cases. 3 cases put
 a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
@@ -149,8 +133,8 @@ Gemini step, which the gate passes. And it fails unless
 each of the 2 path lists of .github/workflows/install-page.yml covers every
 file the gate, this test and that workflow read (site_read_paths() among
 them: every file under site/, the path of each committed source of
-site/_redirects, and a new file or entry anywhere under site/, which the
-name search of check 7 reads or lists) and each path of the gate's SERVER_ENTRIES
+site/_redirects, which occupied() of check 7 lists, and a new file or entry
+anywhere under site/) and each path of the gate's SERVER_ENTRIES
 (check 10), as a file and at any depth under a directory, and holds no
 negative pattern (1 that starts with !, which GitHub reads in order as
 excluding what the patterns before it include; this check reads no order, so
@@ -302,9 +286,9 @@ COPILOT = "site/install/copilot/index.html"
 OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
 REDIRECTS = "site/_redirects"
-# The 3 stylesheets are copied too, so that the copy holds the files under site/assets/baseline/ that the pages link.
-# The gate does not read their url(), and a stylesheet that a page links and the copy lacks does not fail it; the name
-# search of check 7 reads each as it reads every file under site/.
+# The 3 stylesheets are copied too, so that the copy holds the files under site/assets/baseline/ that the pages link,
+# and occupied() of check 7 finds them. The gate does not read their url(), and a stylesheet that a page links and the
+# copy lacks does not fail it.
 FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
          "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml",
          "site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
@@ -375,26 +359,17 @@ GIVEN = "which the committed pages do not give"
 HEAD_PINNED = "(HEAD_PIN)"
 REDIRECT = ("which this gate reads, failing closed, as able to match an install page or a file the install pages load; "
             "a rule that matches such a path can send the reader away")
-# The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, whose file name an
-# install page names, whose file name another file under site/ names, that a file of the tree occupies or lies
-# beneath, and that cannot be evaluated; and the 10 release lines of the committed file, before its logo redirects.
+# The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, that a file of the
+# tree occupies or lies beneath, and that cannot be evaluated; for a rule there that does not send its source to a
+# pinned logo with the status 301, before the reason that target_problem() gives; and the 10 release lines of the
+# committed file, before its logo redirects.
 NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
-NAMED_THERE = (REDIRECT + " from the page or serve other content. A file under site/install/, where the install pages "
-               "are, names its file name in some letter case, as written or in another form that the name search "
-               "reads (name_tokens()): site/install/")
-NAMED = ("a file under site/ names in some letter case, as written or in another form that the name search reads "
-         "(name_tokens()): ")
 OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
 UNEVALUATED = "which could not be evaluated: "
+TARGET = (REDIRECT + " from the page or serve other content. Under a loaded segment a rule passes only when it sends "
+          "its source with the status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py "
+          "pins, and ")
 RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:10])
-# The gate's words for a rule of site/_redirects whose destination names the file name of the source that the
-# committed line 11 holds, and for 1 whose destination holds a placeholder or a splat, so that the gate reads each as
-# able to lead to a source that the redirect reading accepts.
-LEADS = ("which names, as written or percent-decoded, the file name of a source that the redirect reading accepts "
-         "under a loaded segment, compared in any letter case, each source given with the first form of the field that "
-         "names it: line 11 (/assets/baseline/logos/aiqt-card.svg)")
-EXPANDS = ("as a placeholder or a splat does; the reading does not expand either, so it reads the destination as able "
-           "to give the path of every source that it accepts")
 # The gate's words for a line of site/_redirects that holds a character other than the line feed at which a reading
 # may end a line or a field, and each such character, named: str.splitlines() ends a line at each of the first 10, and
 # str.split() a field at each but the last 3, which are other control characters and a byte order mark.
@@ -406,25 +381,9 @@ BREAKS = (
     ("U+2028", chr(0x2028)), ("U+2029", chr(0x2029)), ("a tab", "\t"), ("U+001F", "\x1f"), ("a no-break space", "\xa0"),
     ("an ideographic space", chr(0x3000)), ("U+0000", "\x00"), ("U+007F", "\x7f"), ("a byte order mark", chr(0xFEFF)),
 )
-# The suffixes of the files that the name search reads only as UTF-8, written out here and not read from the gate, so
-# that a suffix dropped from the gate's TEXT_SUFFIXES fails its case.
-UTF8_SUFFIXES = (".css", ".htm", ".html", ".js", ".json", ".mjs", ".svg", ".webmanifest", ".xhtml", ".xml")
-# The gate's words for a file that declares an encoding other than UTF-8, and for a text file that holds an escape
-# character; and an ISO-2022-JP escape sequence (ESC ( B, a switch to ASCII), which a decoder of that encoding drops.
-DECLARES = "which could not be evaluated: the {} declares the encoding {!r}, which the name search does not decode"
-ESCAPED = "which could not be evaluated: the file {} holds an escape character (U+001B)"
-TO_ASCII = "\x1b(B"
-# A case whose input makes the forms of the name search, and the work of each of its rounds, grow many times over from
-# round to round unless the gate bounds them, and the seconds in which each case named here must end, so that a gate
-# that does not bound them fails the case and does not stop this test; a case not named here has no such limit.
-FORMS_CASE = "the committed redirects beside an SVG file whose entity and character references multiply the forms"
 # The gate's words for a redirect source whose first segment is favicon.ico, which a browser may request without a link.
 REQUESTED = ("which this gate reads, failing closed, as able to match /favicon.ico, a file that a browser may request "
              "from the site's root without a link for any page")
-# A case with a FIFO under site/, which the name search must name and not read: a gate that opens it as a file waits
-# for a writer that never comes, so the case must end within the seconds that TIMED gives it.
-FIFO_CASE = "the committed redirects beside a FIFO under site/"
-TIMED = {FORMS_CASE: 60, FIFO_CASE: 60}
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
@@ -699,153 +658,23 @@ def write(relative: str, text: str):
 
 
 def whole_site(root: Path) -> None:
-    """Copy the whole committed site/ over the copy's, so that the name search of check 7 reads every file and folder
-    of the committed tree."""
+    """Copy the whole committed site/ over the copy's, so that occupied() of check 7 lists every file and folder of
+    the committed tree."""
     shutil.copytree(REPO_ROOT / "site", root / "site", dirs_exist_ok=True, symlinks=True)
 
 
-def named(body: str, source: str, relative: str = "site/about/index.html", *more):
-    """A new page at relative holding body after the doctype, each further fault of more, and a redirect of source
-    after the committed rules."""
-    return both(create(relative, "<!doctype html>\n" + body + "\n"), *more, append(REDIRECTS, f"{source} /y 301\n"))
-
-
-def leads(destination: str, source: str = "/foo.svg"):
-    """A new page that loads /foo.svg, and a redirect of source to destination after the committed rules."""
-    return both(create("site/about/index.html", '<!doctype html>\n<img alt="" src="/foo.svg">\n'),
-                append(REDIRECTS, f"{source} {destination} 301\n"))
-
-
-def naming(name: str, where: str = "site/about/index.html") -> tuple[int, str]:
-    """The exit code and words of the gate's refusal of a source whose file name is name, named by the file where
-    alone."""
-    return (1, f"whose file name {name} {NAMED}{where};")
-
-
-# Markup inside a file name in the text of a style or script element, which the name search reads without that markup,
-# so that it reads the file name whole: each is the text before the element's statement, the markup inside the file
-# name, the text after the statement and a letter for the file name.
-SPLITS = {
-    "a comment": ("", "<!--x-->", "", "c"),
-    "an empty CDATA section": ("", "<![CDATA[]]>", "", "b"),
-    "the start of a CDATA section": ("", "<![CDATA[", "]]>", "o"),
-    "the end of a CDATA section": ("<![CDATA[", "]]>", "", "e"),
-    "a processing instruction": ("", "<?x y?>", "", "p"),
-    "an empty child element": ("", "<x/>", "", "k"),
-}
-SVG_FILE = '<svg xmlns="http://www.w3.org/2000/svg">{}</svg>\n'
-XHTML_FILE = '<html xmlns="http://www.w3.org/1999/xhtml"><head>{}</head><body/></html>\n'
-# Each place of the element: the file that holds it, a code for its file name, and the file's text around it.
-SPLIT_PLACES = (
-    ("an SVG file", "site/assets/f{}.svg", "v", SVG_FILE),
-    ("an XHTML file", "site/f{}.xhtml", "x", XHTML_FILE),
-    ("an SVG element of a page", "site/about/index.html", "i", "<!doctype html>\n<svg>{}</svg>\n"),
-)
-# The file names of the 4 inputs that first showed the gap, kept for the same element, place and markup.
-FIRST_SPLITS = {
-    ("vs", "c"): ("cm", "tz"), ("vj", "b"): ("cd", "qz"), ("xs", "p"): ("pi", "wz"), ("is", "c"): ("in", "lz"),
-}
-
-
-def markup_cases() -> list[tuple]:
-    """A case for each markup of SPLITS inside a file name in the text of a style and of a script element at each of
-    SPLIT_PLACES: the name search reads the element's text without the markup, so each source fails."""
-    cases = []
-    for place, relative, letter, around in SPLIT_PLACES:
-        for tag, kind, statement in (("style", "s", 'rect{{fill:url("/assets/{}")}}'),
-                                     ("script", "j", 'var u="/assets/{}";')):
-            for split, (head, markup, tail, mark) in SPLITS.items():
-                code = letter + kind + mark
-                left, right = FIRST_SPLITS.get((letter + kind, mark), (f"w{code}", "q"))
-                where = relative.format(code)
-                text = around.format(f"<{tag}>{head}{statement.format(left + markup + right + '.svg')}{tail}</{tag}>")
-                cases.append((f"a {tag} element of {place} whose file name {split} splits",
-                              both(create(where, text), append(REDIRECTS, f"/assets/{left}{right}.svg /y 301\n")),
-                              naming(f"{left}{right}.svg", where)))
-    return cases
+def target(rest: str, source: str = "/assets/baseline/logos/aiqt-zz.svg"):
+    """A rule of source, an exact path that nothing in the copy occupies, followed by rest, after the committed
+    rules."""
+    return append(REDIRECTS, f"{source} {rest}\n")
 
 
 def break_cases() -> list[tuple]:
-    """A case for each character of BREAKS between a source and a destination that names the accepted source of the
-    committed line 11: the gate reads the lines of site/_redirects only at a line feed and refuses the character, so
-    a destination after it cannot go unjudged."""
+    """A case for each character of BREAKS between a source and a destination: the gate reads the lines of
+    site/_redirects only at a line feed and refuses the character, so a destination after it cannot go unjudged."""
     return [(f"a redirect whose source and destination {name} separates",
              append(REDIRECTS, f"/foo{char}/assets/baseline/logos/aiqt-card.svg 301\n"),
              (1, BREAK.format(ord(char[0])))) for name, char in BREAKS]
-
-
-def nesting_cases() -> list[tuple]:
-    """A case for internal entity references nested 15, 16 and 17 deep in an SVG file, beside the committed redirects:
-    each entity's value is a reference to the next, and the last entity's value is a letter, so references nested n
-    deep need n rounds of replacing. The name search expands those nested 15 deep, and fails closed on a file whose
-    references still expand in the last of the 16 rounds that it makes."""
-    cases = []
-    for depth in (15, 16, 17):
-        relative = f"site/assets/nest{depth}.svg"
-        declarations = "".join(f'<!ENTITY e{level} "&e{level + 1};">' for level in range(1, depth))
-        text = f'<!DOCTYPE svg [{declarations}<!ENTITY e{depth} "z">]>' + SVG_FILE.format("<text>&e1;</text>")
-        expected = 0 if depth < 16 else (1, f"{UNEVALUATED}the file {relative} could not be read: its XML entity "
-                                            "references still expand in the last of the 16 rounds that the name "
-                                            "search makes, so they nest 16 deep or deeper")
-        cases.append((f"the committed redirects beside an SVG file whose entity references nest {depth} deep",
-                      create(relative, text), expected))
-    return cases
-
-
-# The labels that the WHATWG Encoding Standard gives UTF-8, written out here and not read from the gate, so that a
-# label dropped from the gate's UTF8_LABELS fails its case.
-UTF8_NAMES = ("unicode-1-1-utf-8", "unicode11utf8", "unicode20utf8", "utf-8", "utf8", "x-unicode20utf8")
-
-
-def label_cases() -> list[tuple]:
-    """A case for each label of UTF8_NAMES, in a meta charset of a page beside the committed redirects: a file under
-    site/ may declare UTF-8 by any of them, so each passes."""
-    return [(f"the committed redirects beside a page that declares UTF-8 by the label {label}",
-             create("site/about/index.html", f'<!doctype html>\n<meta charset="{label}">\n'), 0)
-            for label in UTF8_NAMES]
-
-
-def raw(relative: str, data: bytes):
-    """Write a new file of bytes, and any directory it needs, that the copy does not hold."""
-    def apply(root: Path) -> None:
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-    return apply
-
-
-def utf8_cases() -> list[tuple]:
-    """A case for each suffix of UTF8_SUFFIXES, and for 2 of them in capitals: a file with that suffix that is not
-    UTF-8 cannot be read, so every source under a loaded segment fails and names it."""
-    cases = []
-    for suffix in UTF8_SUFFIXES + (".CSS", ".HTML"):
-        relative = f"site/u8{suffix.strip('.')}{suffix}"
-        kind = "page" if suffix.lower() in (".html", ".htm") else "file"
-        cases.append((f"the committed redirects beside a {suffix} file that is not UTF-8",
-                      raw(relative, b"x \xff\n"), (1, f"{UNEVALUATED}the {kind} {relative} could not be read")))
-    return cases
-
-
-def linked_folder(root: Path) -> None:
-    """A folder outside site/ holding a page that loads /assets/lk.svg, linked as site/ext."""
-    (root / "outside").mkdir()
-    (root / "outside" / "index.html").write_text('<!doctype html>\n<img alt="" src="/assets/lk.svg">\n',
-                                                 encoding="utf-8")
-    os.symlink(root / "outside", root / "site" / "ext")
-
-
-def linked_file(root: Path) -> None:
-    """A file outside site/ that names nothing the redirects send, linked as site/ext.html."""
-    (root / "outside.txt").write_text("nothing here\n", encoding="utf-8")
-    os.symlink(root / "outside.txt", root / "site" / "ext.html")
-
-
-def locked_page(root: Path) -> None:
-    """A folder site/lockdir holding a page that loads /assets/lk.svg, set to mode 000."""
-    folder = root / "site" / "lockdir"
-    folder.mkdir()
-    (folder / "index.html").write_text('<!doctype html>\n<img alt="" src="/assets/lk.svg">\n', encoding="utf-8")
-    os.chmod(folder, 0)
 
 
 def both(*faults):
@@ -1752,9 +1581,10 @@ CASES = [
         append(REDIRECTS, "/images/old.png /images/cleanlanguage-card.png 301\n"), 0),
     ("a Content-Type header on the stylesheets",
         append(HEADERS, "\n/assets/baseline/*.css\n  Content-Type: text/plain\n"), (1, INSTALL_HEADER)),
-    # Under LOADED_SEGMENTS a source of site/_redirects passes only as an exact path whose file name no file under site/
-    # but site/_redirects names, that nothing under site/ occupies and that lies beneath no file, each compared in any
-    # letter case.
+    # Under LOADED_SEGMENTS a rule of site/_redirects passes only when its source is an exact path that nothing under
+    # site/ occupies and that lies beneath no file, compared in any letter case, and it sends that source with the
+    # status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py pins, as written, with no
+    # further field.
     ("1 exact redirect of a dropped logo, after the 10 release lines alone",
         write(REDIRECTS, RELEASE_LINES + "/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
         0),
@@ -1769,341 +1599,68 @@ CASES = [
         append(REDIRECTS, "/assets/baseline/logos/aiqt-*.svg /assets/baseline/logos/aiqt.svg 301\n"), (1, NOT_EXACT)),
     ("a redirect with a splat", append(REDIRECTS, "/assets/baseline/logos/old/* /assets/baseline/logos/:splat 301\n"),
         (1, NOT_EXACT)),
-    ("a redirect of a logo the install pages load",
-        append(REDIRECTS, "/assets/baseline/logos/cleanlanguage.svg /assets/baseline/logos/aiqt.svg 301\n"),
-        (1, "has the source /assets/baseline/logos/cleanlanguage.svg, " + REDIRECT)),
-    ("a redirect of a logo the install pages load, in another letter case",
-        append(REDIRECTS, "/Assets/Baseline/Logos/CleanLanguage.SVG /assets/baseline/logos/aiqt.svg 301\n"),
-        (1, NAMED_THERE)),
+    ("a redirect of a logo the install pages load, beside the whole committed site",
+        both(whole_site,
+             append(REDIRECTS, "/assets/baseline/logos/cleanlanguage.svg /assets/baseline/logos/aiqt.svg 301\n")),
+        (1, "has the source /assets/baseline/logos/cleanlanguage.svg, at or above which "
+            "site/assets/baseline/logos/cleanlanguage.svg exists, " + OCCUPIED)),
+    ("a redirect of a logo the install pages load, in another letter case, beside the whole committed site",
+        both(whole_site,
+             append(REDIRECTS, "/Assets/Baseline/Logos/CleanLanguage.SVG /assets/baseline/logos/aiqt.svg 301\n")),
+        (1, "at or above which site/assets/baseline/logos/cleanlanguage.svg exists, " + OCCUPIED)),
     ("a redirect of baseline.css in capitals", append(REDIRECTS, "/ASSETS/BASELINE/BASELINE.CSS / 302\n"),
-        (1, NAMED_THERE)),
+        (1, TARGET + "its status is 302, not 301")),
+    # 1 case for each condition on what follows the source (target_problem()), each with an exact source that nothing
+    # in the copy occupies, so that only that condition fails the rule.
+    ("a dropped logo sent to another host", target("https://other.example/x.svg 301"),
+        (1, "site/_redirects line 33 has the source /assets/baseline/logos/aiqt-zz.svg, " + TARGET
+            + "its destination https://other.example/x.svg is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo under a full URL",
+        target("https://cleanlanguage.ai/assets/baseline/logos/aiqt.svg 301"),
+        (1, TARGET + "its destination https://cleanlanguage.ai/assets/baseline/logos/aiqt.svg is not a path")),
+    ("a dropped logo sent to a pinned file that is not a logo", target("/assets/baseline/select.js 301"),
+        (1, TARGET + "its destination /assets/baseline/select.js is not under /assets/baseline/logos/")),
+    ("a dropped logo sent to an unpinned logo name", target("/assets/baseline/logos/aiqt-card.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt-card.svg is not 1 of the files that "
+            "tools/check-baseline-pin.py pins")),
+    ("a dropped logo sent to a pinned logo's name in another letter case", target("/assets/baseline/logos/AIQT.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/AIQT.svg is not 1 of the files")),
+    ("a dropped logo sent to a pinned logo with a query", target("/assets/baseline/logos/aiqt.svg?x=1 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt.svg?x=1 is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo with a fragment", target("/assets/baseline/logos/aiqt.svg#top 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt.svg#top is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo through a .. segment",
+        target("/assets/baseline/logos/../logos/aiqt.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/../logos/aiqt.svg is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo with a 4th field", target("/assets/baseline/logos/aiqt.svg 301 x"),
+        (1, TARGET + "the number of its fields after its source is 3, not 2")),
+    ("a dropped logo sent to a pinned logo with no status", target("/assets/baseline/logos/aiqt.svg"),
+        (1, TARGET + "the number of its fields after its source is 1, not 2")),
+    ("a dropped logo sent to a pinned logo with the status 302", target("/assets/baseline/logos/aiqt.svg 302"),
+        (1, TARGET + "its status is 302, not 301")),
+    ("a rewrite of a dropped logo to a pinned logo", target("/assets/baseline/logos/aiqt.svg 200"),
+        (1, TARGET + "its status is 200, not 301")),
+    ("a dropped logo sent to a pinned logo with the status 301", target("/assets/baseline/logos/aiqt.svg 301"), 0),
+    # The check holds no search of the site for the pages that load a source: a page that loads the source of a
+    # passing rule is sent to a pinned logo, so it passes.
     ("a dropped logo that another page of the site loads",
         create("site/about/index.html", '<!doctype html>\n<img src="/assets/baseline/logos/AIQT-CARD.svg" alt="">\n'),
-        (1, f"whose file name aiqt-card.svg {NAMED}site/about/index.html;")),
-    ("a dropped logo that a stylesheet of another page loads",
-        both(create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/about.css">\n'),
-             create("site/assets/about.css", ".x { background: url(baseline/logos/aiqt-mono.svg); }\n")),
-        (1, f"whose file name aiqt-mono.svg {NAMED}site/assets/about.css;")),
-    # Loads that a grammar of loads can miss: each page or file writes the file name of the source in a form that the
-    # name search reads, so each source fails.
-    ("a srcset whose URL and descriptor a tab separates",
-        named('<img alt="" srcset="/assets/t.svg\t2x">', "/assets/t.svg"), naming("t.svg")),
-    ("a srcset whose URL and descriptor a line feed separates",
-        named('<img alt="" srcset="/assets/n1.svg\n1x">', "/assets/n1.svg"), naming("n1.svg")),
-    ("a srcset whose URL and descriptor a form feed separates",
-        named('<img alt="" srcset="/assets/ff.svg\f1x">', "/assets/ff.svg"), naming("ff.svg")),
-    ("an img resolved against a base element",
-        named('<base href="/assets/bb/"><img alt="" src="x.svg">', "/assets/bb/x.svg"), naming("x.svg")),
-    ("an img whose URL names a scheme and no host", named('<img alt="" src="https:assets/hz.svg">', "/assets/hz.svg"),
-        naming("hz.svg")),
-    ("an image preload by imagesrcset",
-        named('<link rel="preload" as="image" imagesrcset="/assets/u.svg 1x">', "/assets/u.svg"), naming("u.svg")),
-    ("a body background attribute", named('<body background="/assets/v.png">', "/assets/v.png"), naming("v.png")),
-    ("a video poster", named('<video poster="/assets/po.png"></video>', "/assets/po.png"), naming("po.png")),
-    ("an object's data", named('<object data="/assets/da.svg"></object>', "/assets/da.svg"), naming("da.svg")),
-    ("an img inside a comment", named('<!-- <img alt="" src="/assets/cm.svg"> -->', "/assets/cm.svg"),
-        naming("cm.svg")),
-    ("an image-set() string of a linked stylesheet",
-        named('<link rel="stylesheet" href="/assets/w.css">', "/assets/w.svg", "site/about/index.html",
-              create("site/assets/w.css", '.w { background-image: image-set("/assets/w.svg" 1x); }\n')),
-        naming("w.svg", "site/assets/w.css")),
-    ("an @import with no space before its string",
-        both(create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/i.css">\n'),
-             create("site/assets/i.css", '@import"/assets/x2.css";\n'),
-             append(REDIRECTS, "/assets/x2.css /x.css 200\n")),
-        (1, f"has the source /assets/x2.css, whose file name x2.css {NAMED}site/assets/i.css;")),
-    ("an @import of a file without the .css suffix, and what that file loads",
-        named('<link rel="stylesheet" href="/assets/qa/q.css">', "/assets/nc.svg", "site/about/index.html",
-              create("site/assets/qa/q.css", '@import "u";\n'),
-              create("site/assets/qa/u", ".y { background: url(/assets/nc.svg); }\n")),
-        naming("nc.svg", "site/assets/qa/u")),
-    ("an icon of a web app manifest",
-        named('<link rel="manifest" href="/app.webmanifest">', "/assets/icon1.png", "site/about/index.html",
-              create("site/app.webmanifest", '{"icons": [{"src": "/assets/icon1.png", "sizes": "192x192"}]}\n')),
-        naming("icon1.png", "site/app.webmanifest")),
-    ("an image of an SVG document that an object loads",
-        named('<object data="/assets/pic.svg"></object>', "/assets/r.png", "site/about/index.html",
-              create("site/assets/pic.svg",
-                     '<svg xmlns="http://www.w3.org/2000/svg"><image href="/assets/r.png"/></svg>\n')),
-        naming("r.png", "site/assets/pic.svg")),
-    ("a url() quoted with character references in a style attribute",
-        named('<div style="background: url(&quot;/assets/q.svg&quot;)"></div>', "/assets/q.svg"), naming("q.svg")),
-    ("an img of an iframe srcdoc whose name is escaped twice",
-        named('<iframe srcdoc="&lt;img src=&quot;/assets/s&amp;#46;svg&quot;&gt;"></iframe>', "/assets/s.svg"),
-        naming("s.svg")),
-    ("an img whose name holds a character reference", named('<img alt="" src="/assets/e1&#46;svg">', "/assets/e1.svg"),
-        naming("e1.svg")),
-    ("a url() whose name holds a CSS escape",
-        named('<link rel="stylesheet" href="/assets/c.css">', "/assets/c1.svg", "site/about/index.html",
-              create("site/assets/c.css", ".c { background: url(/assets/c1\\2e svg); }\n")),
-        naming("c1.svg", "site/assets/c.css")),
-    ("a script string whose name holds a JavaScript escape",
-        named('<script>fetch("/assets/j1\\u002esvg");</script>', "/assets/j1.svg"), naming("j1.svg")),
-    ("an img whose name is percent-encoded", named('<img alt="" src="/assets/p1%2esvg">', "/assets/p1.svg"),
-        naming("p1.svg")),
-    ("an img under a percent-encoded . segment", named('<img alt="" src="/assets/%2e/n.svg">', "/assets/n.svg"),
-        naming("n.svg")),
-    ("an img under a percent-encoded .. segment",
-        named('<img alt="" src="/assets/a/%2e%2e/n2.svg">', "/assets/n2.svg"), naming("n2.svg")),
-    ("an img whose name is in another letter case", named('<img alt="" src="/assets/UP1.SVG">', "/assets/up1.svg"),
-        naming("up1.svg")),
-    ("a file name held in a binary file",
-        both(lambda root: (root / "site" / "blob.bin").write_bytes(b"\x00\xff/assets/bin1.png\x00"),
-             append(REDIRECTS, "/assets/bin1.png /y 301\n")),
-        naming("bin1.png", "site/blob.bin")),
-    ("a stylesheet that is not UTF-8",
-        lambda root: (root / "site" / "bad.css").write_bytes(b".x { content: '\xff'; }\n"),
-        (1, UNEVALUATED + "the file site/bad.css could not be read")),
-    # A tab, a line feed, a carriage return or a line continuation inside a file name, written as it is, as a character
-    # reference or as an escape: the name search reads forms with each removed, after each decoding and before the
-    # percent-decoding, so each source fails.
-    ("an img whose name a tab splits", named('<img alt="" src="/assets/ab\tc.svg">', "/assets/abc.svg"),
-        naming("abc.svg")),
-    ("an img whose name a line feed splits", named('<img alt="" src="/assets/gh\nij.svg">', "/assets/ghij.svg"),
-        naming("ghij.svg")),
-    ("an img whose name a carriage return splits", named('<img alt="" src="/assets/cr\rq.svg">', "/assets/crq.svg"),
-        naming("crq.svg")),
-    ("an img whose name a CR LF splits", named('<img alt="" src="/assets/cl\r\nq.svg">', "/assets/clq.svg"),
-        naming("clq.svg")),
-    ("an img whose name a character reference of a tab splits",
-        named('<img alt="" src="/assets/de&#9;f.svg">', "/assets/def.svg"), naming("def.svg")),
-    ("an img whose name &Tab; splits", named('<img alt="" src="/assets/nt&Tab;a.svg">', "/assets/nta.svg"),
-        naming("nta.svg")),
-    ("an img whose name &NewLine; splits", named('<img alt="" src="/assets/nl&NewLine;a.svg">', "/assets/nla.svg"),
-        naming("nla.svg")),
-    ("an img whose name a hexadecimal reference of a carriage return splits",
-        named('<img alt="" src="/assets/hx&#x0D;a.svg">', "/assets/hxa.svg"), naming("hxa.svg")),
-    ("an img whose percent escape a tab splits", named('<img alt="" src="/assets/pt%2\tesvg">', "/assets/pt.svg"),
-        naming("pt.svg")),
-    ("an img whose URL a backslash, a line feed and a tab split",
-        named('<img alt="" src="/assets/bk\\\nab\t1.svg">', "/assets/bk/ab1.svg"), naming("ab1.svg")),
-    ("a srcset whose file name a tab splits",
-        named('<img alt="" srcset="/assets/sp\tl1.svg 1x, /assets/ow1.svg\t2x">', "/assets/spl1.svg"),
-        naming("spl1.svg")),
-    ("a srcset candidate whose URL and descriptor a tab separates, beside 1 whose file name a tab splits",
-        named('<img alt="" srcset="/assets/sp\tl1.svg 1x, /assets/ow1.svg\t2x">', "/assets/ow1.svg"),
-        naming("ow1.svg")),
-    ("a style string whose name a CSS line continuation splits",
-        named('<style>p{background:url("/assets/kl\\\nmn.svg")}</style>', "/assets/klmn.svg"), naming("klmn.svg")),
-    ("a style string whose name a CSS line continuation at a CR LF splits",
-        named('<style>p{background:url("/assets/kc\\\r\nq.svg")}</style>', "/assets/kcq.svg"), naming("kcq.svg")),
-    ("a style string whose name a CSS line continuation at a carriage return splits",
-        named('<style>p{background:url("/assets/kr\\\rq.svg")}</style>', "/assets/krq.svg"), naming("krq.svg")),
-    ("a style string whose name a CSS line continuation at a form feed splits",
-        named('<style>p{background:url("/assets/kf\\\fq.svg")}</style>', "/assets/kfq.svg"), naming("kfq.svg")),
-    ("a style string whose name a CSS escape of a tab splits",
-        named('<style>p{background:url("/assets/c9\\9 a.svg")}</style>', "/assets/c9a.svg"), naming("c9a.svg")),
-    ("a style string whose name a CSS escape of a line feed splits",
-        named('<style>p{background:url("/assets/ca\\a b.svg")}</style>', "/assets/cab.svg"), naming("cab.svg")),
-    ("a script string whose name a JavaScript escape \\u0009 splits",
-        named('<script>fetch("/assets/ju\\u0009a.svg");</script>', "/assets/jua.svg"), naming("jua.svg")),
-    ("a script string whose name a JavaScript escape \\x0a splits",
-        named('<script>fetch("/assets/jx\\x0aa.svg");</script>', "/assets/jxa.svg"), naming("jxa.svg")),
-    ("a script string whose name a JavaScript escape \\t splits",
-        named('<script>fetch("/assets/jt\\tq.svg");</script>', "/assets/jtq.svg"), naming("jtq.svg")),
-    ("a script string whose name a JavaScript escape \\n splits",
-        named('<script>fetch("/assets/jn\\nq.svg");</script>', "/assets/jnq.svg"), naming("jnq.svg")),
-    ("a script string whose name a JavaScript escape \\r splits",
-        named('<script>fetch("/assets/jr\\rq.svg");</script>', "/assets/jrq.svg"), naming("jrq.svg")),
-    ("a script string whose name a legacy octal escape of a tab splits",
-        named('<script>fetch("/assets/jo\\11q.svg");</script>', "/assets/joq.svg"), naming("joq.svg")),
-    ("a script string whose name holds a legacy octal escape",
-        named('<script>fetch("/assets/j8\\56svg");</script>', "/assets/j8.svg"), naming("j8.svg")),
-    ("a script string whose name holds a backslash before a letter that is no escape",
-        named('<script>fetch("/assets/j\\a1.svg");</script>', "/assets/ja1.svg"), naming("ja1.svg")),
-    ("a script string whose name a JavaScript line continuation splits",
-        named('<script>fetch("/assets/jl\\\nq.svg");</script>', "/assets/jlq.svg"), naming("jlq.svg")),
-    ("a script string whose name a JavaScript line continuation at a carriage return splits",
-        named('<script>fetch("/assets/jc\\\rq.svg");</script>', "/assets/jcq.svg"), naming("jcq.svg")),
-    ("a script string whose name a JavaScript line continuation at U+2028 splits",
-        named('<script>fetch("/assets/js\\\u2028q.svg");</script>', "/assets/jsq.svg"), naming("jsq.svg")),
-    ("a script string whose name a JavaScript line continuation at U+2029 splits",
-        named('<script>fetch("/assets/jp\\\u2029q.svg");</script>', "/assets/jpq.svg"), naming("jpq.svg")),
-    ("an icon of a web app manifest whose name a JSON escape \\t splits",
-        named('<link rel="manifest" href="/app.webmanifest">', "/assets/mtq.png", "site/about/index.html",
-              create("site/app.webmanifest", '{"icons": [{"src": "/assets/mt\\tq.png", "sizes": "192x192"}]}\n')),
-        naming("mtq.png", "site/app.webmanifest")),
-    # Markup in the text of a style or script element, and a reference to an entity that the file declares with a
-    # literal value, inside a file name: the name search reads each element's text without that markup, and each form
-    # with each such reference expanded, so each source fails.
-    *markup_cases(),
-    ("a style element of an SVG file whose file name a child element with text splits",
-        both(create("site/assets/fct.svg",
-                    SVG_FILE.format('<style>rect{fill:url("/assets/wch<x>zz</x>q.svg")}</style>')),
-             append(REDIRECTS, "/assets/wchq.svg /y 301\n")), naming("wchq.svg", "site/assets/fct.svg")),
-    ("a style element of an SVG element of a page whose file name a bogus comment <!...> splits",
-        named('<svg><style>rect{fill:url("/assets/kbo<!x>gq.svg")}</style></svg>', "/assets/kbogq.svg"),
-        naming("kbogq.svg")),
-    ("a script element of an SVG element of a page whose file name a bogus comment <?...> splits",
-        named('<svg><script>var u="/assets/kqm<?x>q.svg";</script></svg>', "/assets/kqmq.svg"), naming("kqmq.svg")),
-    ("a style element of an SVG element of a page whose file name a bogus comment </...> splits",
-        named('<svg><style>rect{fill:url("/assets/ksl</1>q.svg")}</style></svg>', "/assets/kslq.svg"),
-        naming("kslq.svg")),
-    ("a style element of an SVG element of a page whose file name an empty comment <!--> splits",
-        named('<svg><style>rect{fill:url("/assets/kec<!-->q.svg")}</style></svg>', "/assets/kecq.svg"),
-        naming("kecq.svg")),
-    ("a style element of an SVG element of a page whose file name a comment that --!> ends splits",
-        named('<svg><style>rect{fill:url("/assets/kbc<!--x--!>q.svg")}</style></svg>', "/assets/kbcq.svg"),
-        naming("kbcq.svg")),
-    ("a style element of an SVG element of a page whose file name a stray end tag splits",
-        named('<svg><style>rect{fill:url("/assets/kst</x>q.svg")}</style></svg>', "/assets/kstq.svg"),
-        naming("kstq.svg")),
-    ("a style element of an SVG file whose file name an XML comment that starts with > splits",
-        both(create("site/assets/kxg.svg",
-                    SVG_FILE.format('<style>rect{fill:url("/assets/kxg<!-->x-->q.svg")}</style>')),
-             append(REDIRECTS, "/assets/kxgq.svg /y 301\n")), naming("kxgq.svg", "site/assets/kxg.svg")),
-    ("a style element of a page's SVG element after a script that holds a comment marker",
-        named('<script>var s="<!--";</script><svg><style>rect{fill:url("/assets/kre<!--x-->q.svg")}</style></svg>',
-              "/assets/kreq.svg"), naming("kreq.svg")),
-    ("an SVG element of an iframe srcdoc whose style element's file name a comment splits",
-        named('<iframe srcdoc="&lt;svg&gt;&lt;style&gt;p{background:url(/assets/ksd&lt;!--x--&gt;q.svg)}'
-              '&lt;/style&gt;&lt;/svg&gt;"></iframe>', "/assets/ksdq.svg"), naming("ksdq.svg")),
-    ("a style element of an SVG file whose file name a comment and a tab split",
-        both(create("site/assets/kct.svg",
-                    SVG_FILE.format('<style>rect{fill:url("/assets/kct<!--x-->a\tq.svg")}</style>')),
-             append(REDIRECTS, "/assets/kctaq.svg /y 301\n")), naming("kctaq.svg", "site/assets/kct.svg")),
-    ("a style element of an SVG file whose file name a comment and a percent escape split",
-        both(create("site/assets/kcp.svg",
-                    SVG_FILE.format('<style>rect{fill:url("/assets/kcp<!--x-->%71.svg")}</style>')),
-             append(REDIRECTS, "/assets/kcpq.svg /y 301\n")), naming("kcpq.svg", "site/assets/kcp.svg")),
-    ("a style element of an SVG file whose file name a comment and a CSS escape split",
-        both(create("site/assets/kce.svg",
-                    SVG_FILE.format('<style>rect{fill:url("/assets/kce<!--x-->\\71 .svg")}</style>')),
-             append(REDIRECTS, "/assets/kceq.svg /y 301\n")), naming("kceq.svg", "site/assets/kce.svg")),
-    ("a style element of an SVG file whose file name holds a reference to an internal entity",
-        both(create("site/assets/ket.svg", '<!DOCTYPE svg [<!ENTITY e "nt">]>'
-                    + SVG_FILE.format('<style>rect{fill:url("/assets/ke&e;q.svg")}</style>')),
-             append(REDIRECTS, "/assets/kentq.svg /y 301\n")), naming("kentq.svg", "site/assets/ket.svg")),
-    ("an image of an SVG file whose href holds a reference to an internal entity",
-        both(create("site/assets/kea.svg", '<!DOCTYPE svg [<!ENTITY e "na">]>'
-                    + SVG_FILE.format('<image href="/assets/ke&e;q.png"/>')),
-             append(REDIRECTS, "/assets/kenaq.png /y 301\n")), naming("kenaq.png", "site/assets/kea.svg")),
-    ("an image of an SVG file whose href holds an internal entity whose value holds another",
-        both(create("site/assets/ken.svg", '<!DOCTYPE svg [<!ENTITY a "&b;s"><!ENTITY b "ne">]>'
-                    + SVG_FILE.format('<image href="/assets/k&a;q.png"/>')),
-             append(REDIRECTS, "/assets/knesq.png /y 301\n")), naming("knesq.png", "site/assets/ken.svg")),
-    ("a style element of an SVG file whose file name an internal entity holding a comment splits",
-        both(create("site/assets/kem.svg", '<!DOCTYPE svg [<!ENTITY c "<!--x-->">]>'
-                    + SVG_FILE.format('<style>rect{fill:url("/assets/kem&c;q.svg")}</style>')),
-             append(REDIRECTS, "/assets/kemq.svg /y 301\n")), naming("kemq.svg", "site/assets/kem.svg")),
-    ("an img of an XHTML file whose src holds a reference to an internal entity",
-        both(create("site/kxh.xhtml", '<!DOCTYPE html [<!ENTITY e "xh">]><html xmlns="http://www.w3.org/1999/xhtml">'
-                    '<head/><body><img alt="" src="/assets/k&e;q.svg"/></body></html>\n'),
-             append(REDIRECTS, "/assets/kxhq.svg /y 301\n")), naming("kxhq.svg", "site/kxh.xhtml")),
-    ("the committed redirects beside an SVG file whose internal entities expand too far",
-        create("site/assets/lol.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1000 + '"><!ENTITY b "' + "&a;" * 100
-               + '"><!ENTITY c "' + "&b;" * 50 + '">]>' + SVG_FILE.format("<text>&c;</text>")),
-        (1, UNEVALUATED + "the file site/assets/lol.svg could not be read: its XML entity references expand to more")),
-    # The ENTITY_LIMIT boundary, 4194304 characters, written out here and not read from the gate, so that a changed
-    # limit fails 1 of the 2 cases: references that add exactly that many characters pass, and 1 more fails.
-    ("the committed redirects beside an SVG file whose entity references add exactly 4194304 characters",
-        create("site/assets/lim0.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1027 + '">]>'
-               + SVG_FILE.format("<text>" + "&a;" * 4096 + "</text>")), 0),
-    ("the committed redirects beside an SVG file whose entity references add 4194305 characters",
-        create("site/assets/lim1.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1027 + '"><!ENTITY b "yyyy">]>'
-               + SVG_FILE.format("<text>" + "&a;" * 4096 + "&b;</text>")),
-        (1, UNEVALUATED + "the file site/assets/lim1.svg could not be read: its XML entity references expand to more "
-            "than 4194304 further characters")),
-    # An entity declared 16 times, each with its own value, and references to it escaped 0 to 5 times: each round of
-    # the name search adds a form for each declaration of each form that the round before added, so the forms, and the
-    # work of each round, grow many times over from round to round unless the search bounds them; it fails closed, and
-    # soon (TIMED).
-    (FORMS_CASE,
-        create("site/assets/forms.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(16))
-               + "]>" + SVG_FILE.format("<text>" + "".join("&" + "amp;" * depth + "e;" for depth in range(6))
-                                        + "</text>")),
-        (1, UNEVALUATED + "the file site/assets/forms.svg could not be read: its HTML character references and XML "
-            "entity references decode and expand to more than 64 forms")),
-    # The FORM_LIMIT boundary, 64 forms, written out here and not read from the gate, so that a changed limit or
-    # comparison fails 1 of the 2 cases: an entity declared 6 times with references escaped 0 and 3 times makes the
-    # rounds hold exactly 64 forms, which pass, and 1 declared 7 times with references escaped 0 and 1 times makes them
-    # hold 65 (the file, 8 more, 14 more and 42 more), which fail.
-    ("the committed redirects beside an SVG file whose references give exactly 64 forms",
-        create("site/assets/forms64.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(6))
-               + "]>" + SVG_FILE.format("<text>&e;&amp;amp;amp;e;</text>")), 0),
-    ("the committed redirects beside an SVG file whose references give 65 forms",
-        create("site/assets/forms65.svg", "<!DOCTYPE svg [" + "".join(f'<!ENTITY e "v{index}">' for index in range(7))
-               + "]>" + SVG_FILE.format("<text>&e;&amp;e;</text>")),
-        (1, UNEVALUATED + "the file site/assets/forms65.svg could not be read: its HTML character references and XML "
-            "entity references decode and expand to more than 64 forms, or to forms of more than 16777216 characters")),
-    # The FORM_CHARACTERS boundary, 16777216 characters, written out here and not read from the gate, so that a changed
-    # limit or comparison fails 1 of the 2 cases: a file of 6342608 characters with 4000 references to an entity of
-    # 1026 characters, which add 4092000, gives 2 forms of exactly 16777216 characters in all, which pass; 1 more
-    # reference and 514 fewer characters of padding give 16777217, which fail.
-    ("the committed redirects beside an SVG file whose 2 forms hold exactly 16777216 characters",
-        create("site/assets/chars0.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1026 + '">]>'
-               + SVG_FILE.format("<text>" + "&a;" * 4000 + "y" * 6329491 + "</text>")), 0),
-    ("the committed redirects beside an SVG file whose 2 forms hold 16777217 characters",
-        create("site/assets/chars1.svg", '<!DOCTYPE svg [<!ENTITY a "' + "x" * 1026 + '">]>'
-               + SVG_FILE.format("<text>" + "&a;" * 4001 + "y" * 6328977 + "</text>")),
-        (1, UNEVALUATED + "the file site/assets/chars1.svg could not be read: its HTML character references and XML "
-            "entity references decode and expand to more than 64 forms, or to forms of more than 16777216 characters")),
-    # The same bound holds the text as written, before any round adds a form: a file of exactly 16777216 characters
-    # and no reference passes, and 1 of 16777217 fails.
-    ("the committed redirects beside a file of exactly 16777216 characters with no reference",
-        create("site/assets/size0.txt", "y" * 16777216), 0),
-    ("the committed redirects beside a file of 16777217 characters with no reference",
-        create("site/assets/size1.txt", "y" * 16777217),
-        (1, UNEVALUATED + "the file site/assets/size1.txt could not be read: it holds 16777217 characters, more than "
-            "the 16777216 characters in all that the forms of the name search may hold")),
-    ("the committed redirects beside an SVG file whose internal entities name each other",
-        create("site/assets/loop.svg", '<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]>'
-               + SVG_FILE.format("<text>&a;</text>")),
-        (1, UNEVALUATED + "the file site/assets/loop.svg could not be read: its XML entity references still expand")),
-    # An entity whose value, or whose reference, character references write: the name search expands the entities of
-    # each form that a decoding gives, again and again, so a name that such an entity splits is read whole.
-    ("an image of an SVG file whose href holds an entity whose value character references write",
-        both(create("site/probe/qq.svg", '<!DOCTYPE svg [<!ENTITY p1 "qq-n"><!ENTITY p2 "ew.svg">'
-                    '<!ENTITY a "&#38;p1;&#38;p2;">]>' + SVG_FILE.format('<image href="/assets/baseline/logos/&a;"/>')),
-             append(REDIRECTS, "/assets/baseline/logos/qq-new.svg /y 301\n")), naming("qq-new.svg", "site/probe/qq.svg")),
-    ("an image of an SVG file whose href holds entity references that character references write",
-        both(create("site/probe/qr.svg", '<!DOCTYPE svg [<!ENTITY p1 "qr-n"><!ENTITY p2 "ew.svg">]>'
-                    + SVG_FILE.format('<image href="/assets/baseline/logos/&#38;p1;&#38;p2;"/>')),
-             append(REDIRECTS, "/assets/baseline/logos/qr-new.svg /y 301\n")), naming("qr-new.svg", "site/probe/qr.svg")),
-    # References nested 15, 16 and 17 deep: the name search expands entities in at most 15 rounds that replace a
-    # reference, and fails closed on a file whose references still expand in the last of its 16 rounds.
-    *nesting_cases(),
-    # The name search reads the text of a plain style element of a page without a comment in it too, so a name that a
-    # comment marker splits there makes the source fail, whether or not the marker splits the name for the page.
-    ("a plain style element of a page whose url() a comment marker splits",
-        named('<style>p{background:url("/assets/hc<!--x-->tl.svg")}</style>', "/assets/hctl.svg"),
-        naming("hctl.svg")),
-    # A file name names a source only as a whole token, so a longer name that holds it does not.
-    ("the committed redirects beside a page that names longer file names holding 2 of theirs",
-        create("site/about/index.html", '<!doctype html>\n<img alt="" src="/assets/baseline/logos/old-aiqt-card.svg">'
-               '<img alt="" src="/assets/baseline/logos/aiqt-mono.svgz">\n'), 0),
-    # A stylesheet on another host is not read from site/, so the committed redirects pass beside a page that loads 1;
-    # its file name still counts as named.
-    ("the committed redirects beside a page that loads a stylesheet on another host",
-        create("site/about/index.html",
-               '<!doctype html>\n<link rel="stylesheet" href="https://other.example/assets/x.css">\n'), 0),
-    ("a redirect of the path of a stylesheet that a page loads from another host",
-        named('<link rel="stylesheet" href="https://other.example/assets/x.css">', "/assets/x.css"), naming("x.css")),
-    # A link under site/ is not followed or read, so every source under a loaded segment fails and names it.
-    ("a dropped logo that a page in a linked folder loads",
-        both(linked_folder, append(REDIRECTS, "/assets/lk.svg /x.svg 301\n")),
-        (1, "site/_redirects line 33 has the source /assets/lk.svg, " + UNEVALUATED + "site/ext is a link")),
-    ("the committed redirects beside a linked file", linked_file,
-        (1, "site/_redirects line 11 has the source /assets/baseline/logos/aiqt-card.svg, " + UNEVALUATED
-            + "site/ext.html is a link")),
-    # An entry that is neither a file, a folder nor a link, here a FIFO, is not read either, so every source under a
-    # loaded segment fails and names it.
-    (FIFO_CASE, lambda root: os.mkfifo(root / "site" / "pipe"),
-        (1, "site/_redirects line 11 has the source /assets/baseline/logos/aiqt-card.svg, " + UNEVALUATED
-            + "site/pipe is neither a file nor a folder, which the name search does not follow or read")),
+        0),
     # What occupies a source: a page there that Pages serves without its .html or .htm, in any letter case, and a folder
     # at its last segment; and a file above it in another letter case.
-    ("a redirect of a page's address without its .html", both(create("site/assets/qzv.html", "<!doctype html>\n"),
-                                                               append(REDIRECTS, "/assets/qzv /y 301\n")),
+    ("a redirect of a page's address without its .html",
+        both(create("site/assets/qzv.html", "<!doctype html>\n"), target("/assets/baseline/logos/aiqt.svg 301",
+                                                                         "/assets/qzv")),
         (1, "at or above which site/assets/qzv.html exists, " + OCCUPIED)),
-    ("a redirect of a page's address without its .HTM", both(create("site/assets/QZW.HTM", "<!doctype html>\n"),
-                                                              append(REDIRECTS, "/assets/qzw /y 301\n")),
+    ("a redirect of a page's address without its .HTM",
+        both(create("site/assets/QZW.HTM", "<!doctype html>\n"), target("/assets/baseline/logos/aiqt.svg 301",
+                                                                        "/assets/qzw")),
         (1, "at or above which site/assets/QZW.HTM exists, " + OCCUPIED)),
-    ("a redirect of a folder's address", both(create("site/assets/qzf/keep.txt", "x\n"),
-                                              append(REDIRECTS, "/assets/qzf /y 301\n")),
+    ("a redirect of a folder's address",
+        both(create("site/assets/qzf/keep.txt", "x\n"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzf")),
         (1, "at or above which site/assets/qzf exists, " + OCCUPIED)),
     ("a redirect beneath an existing file in another letter case",
-        append(REDIRECTS, "/assets/baseline/BASELINE.CSS/old.svg /x.svg 301\n"),
+        target("/assets/baseline/logos/aiqt.svg 301", "/assets/baseline/BASELINE.CSS/old.svg"),
         (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
     ("a redirect with a backslash", append(REDIRECTS, "/assets/baseline/logos\\aiqt-old.svg /x.svg 301\n"),
         (1, NOT_EXACT)),
@@ -2112,7 +1669,8 @@ CASES = [
     ("a dropped logo that a file occupies in another letter case",
         create("site/assets/baseline/logos/AIQT-Card.svg", "<svg></svg>\n"),
         (1, "at or above which site/assets/baseline/logos/AIQT-Card.svg exists, " + OCCUPIED)),
-    ("a redirect beneath an existing file", append(REDIRECTS, "/assets/baseline/baseline.css/old.svg /x.svg 301\n"),
+    ("a redirect beneath an existing file",
+        target("/assets/baseline/logos/aiqt.svg 301", "/assets/baseline/baseline.css/old.svg"),
         (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
     ("a redirect of a dropped logo under a full URL",
         append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/aiqt-old.svg /x.svg 301\n"),
@@ -2131,92 +1689,8 @@ CASES = [
         (1, NOT_EXACT)),
     ("a redirect with a number sign", append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg#a /x.svg 301\n"),
         (1, NOT_EXACT)),
-    ("a dropped logo that cannot be evaluated, a page being unreadable",
-        lambda root: (root / "site" / "broken.html").write_bytes(b"<!doctype html>\n\xff\n"),
-        (1, "which could not be evaluated: the page site/broken.html could not be read")),
-    ("the committed redirects beside a page that links a stylesheet the tree lacks",
-        create("site/about/index.html", '<!doctype html>\n<link rel="stylesheet" href="/assets/gone.css">\n'), 0),
-    ("a redirect of a stylesheet that a page links and the tree lacks",
-        named('<link rel="stylesheet" href="/assets/gone.css">', "/assets/gone.css"), naming("gone.css")),
-    ("a redirect of a logo path with a tilde that a page loads",
-        named('<img alt="" src="/assets/baseline/logos/q~new.svg">', "/assets/baseline/logos/q~new.svg"),
-        naming("q~new.svg")),
-    ("a header rule for an exact path that the redirect reading accepts",
+    ("a header rule for the source of a committed logo redirect",
         append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
-    # No field of site/_redirects after a source may be one that the gate reads, failing closed, as able to lead to a
-    # source that the redirect reading accepts, so that a page that loads the rule's source does not reach that source
-    # through the rule though no file under site/ names its file name. Each is read
-    # by its tokens, folded, as written and percent-decoded, so the file name stays a token whatever stands around it;
-    # and a : or a * after any http:// or https:// at its start fails.
-    ("a page that loads a path that a redirect sends to an accepted logo source",
-        both(whole_site, edit("site/license/index.html", "</body>", '<img alt="" src="/foo.svg">\n</body>'),
-             append(REDIRECTS, "/foo.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS
-            + " as written")),
-    ("a redirect to an accepted logo source in another letter case", leads("/ASSETS/Baseline/Logos/AIQT-Card.SVG"),
-        (1, "site/_redirects line 33 has the destination /ASSETS/Baseline/Logos/AIQT-Card.SVG, " + LEADS)),
-    ("a redirect to an accepted logo source under a full URL on another host",
-        leads("https://other.example/assets/baseline/logos/aiqt-card.svg"), (1, LEADS)),
-    ("a redirect to an accepted logo source with a query and a fragment",
-        leads("/assets/baseline/logos/aiqt-card.svg?x=1#top"), (1, LEADS)),
-    ("a redirect to an accepted logo source, percent-encoded", leads("/assets/baseline/logos/aiqt%2Dcard%2Esvg"),
-        (1, LEADS)),
-    ("a redirect to an accepted logo source, percent-encoded twice",
-        leads("/assets/baseline/logos/aiqt%252Dcard.svg"), (1, LEADS)),
-    ("a redirect to an accepted logo source through dot segments",
-        leads("/assets/baseline/old/../logos/./aiqt-card.svg"), (1, LEADS)),
-    ("a redirect to an accepted logo source by a relative path", leads("../baseline/logos/aiqt-card.svg"), (1, LEADS)),
-    ("a redirect to an accepted logo source written with backslashes",
-        leads("\\assets\\baseline\\logos\\aiqt-card.svg"), (1, LEADS)),
-    ("a redirect whose destination holds a placeholder", leads("/assets/baseline/logos/:name", "/foo/:name"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/:name, which, as written, holds a : "
-            "after any http:// or https:// at its start, " + EXPANDS)),
-    ("a redirect whose destination holds a splat", leads("/assets/baseline/:splat", "/foo/*"), (1, EXPANDS)),
-    ("a redirect to another host with a port", leads("https://other.example:8443/x.svg"), (1, EXPANDS)),
-    # A : or a * in a destination fails only while the redirect reading accepts a source, so a port passes when the
-    # file holds only the 10 release lines and that rule.
-    ("a redirect to another host with a port, after the 10 release lines alone, with no accepted source",
-        write(REDIRECTS, RELEASE_LINES + "/foo https://other.example:8443/x 302\n"), 0),
-    ("a chain of 2 redirects whose second leads from an accepted source to another",
-        both(leads("/assets/baseline/logos/aiqt-zz.svg"),
-             append(REDIRECTS, "/assets/baseline/logos/aiqt-zz.svg /assets/baseline/logos/aiqt-card.svg 301\n")),
-        (1, "site/_redirects line 34 has the destination /assets/baseline/logos/aiqt-card.svg, " + LEADS)),
-    ("a redirect to a longer file name that holds an accepted one",
-        leads("/assets/baseline/logos/old-aiqt-card.svg"), 0),
-    ("a redirect whose field after the destination names an accepted logo source",
-        append(REDIRECTS, "/alias /other 301 /assets/baseline/logos/aiqt-card.svg\n"),
-        (1, "site/_redirects line 33 has after its destination the field /assets/baseline/logos/aiqt-card.svg, "
-            + LEADS)),
-    ("a redirect whose destination holds a * and no :", leads("/assets/baseline/logos/*"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/*, which, as written, holds a * after "
-            "any http:// or https:// at its start, " + EXPANDS)),
-    ("a redirect to another host whose scheme is in capitals", leads("HTTPS://other.example/x.svg"), 0),
-    ("a redirect to another host whose scheme is in mixed letter case", leads("hTtP://other.example/x.svg"), 0),
-    # Every form of a destination is read: a : or a * that only a percent-decoded form holds fails, and so does the
-    # file name of an accepted source that only the form as written holds, here 1 that the percent-decoding joins to a
-    # further letter, so that a reading of the first form alone, or of the last alone, fails 1 of these cases.
-    ("a redirect whose destination holds a : only once percent-decoded", leads("/assets/x%3Aname"),
-        (1, "site/_redirects line 33 has the destination /assets/x%3Aname, which, once percent-decoded, holds a : "
-            "after any http:// or https:// at its start, " + EXPANDS)),
-    ("a redirect whose destination holds a * only once percent-decoded twice", leads("/assets/x%252A"),
-        (1, "site/_redirects line 33 has the destination /assets/x%252A, which, percent-decoded 2 times, holds a * "
-            "after any http:// or https:// at its start, " + EXPANDS)),
-    # Each refusal of a field names the form of it that fails, so a refusal whose field holds the character or the
-    # file name only in a percent-decoded form does not say that the field as written holds it.
-    ("a redirect from /x whose destination holds a * only once percent-decoded", append(REDIRECTS, "/x /y%2A 301\n"),
-        (1, "site/_redirects line 33 has the destination /y%2A, which, once percent-decoded, holds a * after any "
-            "http:// or https:// at its start, " + EXPANDS)),
-    ("a redirect to an accepted logo source whose file name only the percent-decoded form names",
-        leads("/assets/baseline/logos/aiqt%2Dcard.svg"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt%2Dcard.svg, " + LEADS
-            + " once percent-decoded")),
-    ("a redirect to an accepted logo source whose file name only the form percent-decoded twice names",
-        leads("/assets/baseline/logos/aiqt%252Dcard.svg#top"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt%252Dcard.svg#top, " + LEADS
-            + " percent-decoded 2 times")),
-    ("a redirect to an accepted logo source whose percent-decoding joins a letter to its file name",
-        leads("/assets/baseline/logos/aiqt-card.svg%41"),
-        (1, "site/_redirects line 33 has the destination /assets/baseline/logos/aiqt-card.svg%41, " + LEADS)),
     # site/_redirects ends a line only at a line feed, and a line that holds another character at which a reading may
     # end a line or a field fails, so a destination after such a character cannot go unjudged.
     *break_cases(),
@@ -2226,56 +1700,6 @@ CASES = [
     ("a comment line of site/_redirects that holds U+009F", append(REDIRECTS, "# note\x9f\n"), (1, BREAK.format(0x9F))),
     ("the committed redirects with a space and no other whitespace between fields",
         append(REDIRECTS, "/downloads/old2.md   /downloads/cleanlanguage.md   301\n"), 0),
-    # A file under site/ that declares an encoding other than UTF-8, whose decoder can drop the bytes of an escape
-    # sequence that split a file name, and a text file that holds an escape character, cannot be read, so every source
-    # under a loaded segment fails and names it.
-    ("a page in ISO-2022-JP, by its meta charset, whose escape sequence splits an accepted logo's file name",
-        create("site/about/index.html", '<!doctype html>\n<meta charset="iso-2022-jp">\n<img alt="" '
-               f'src="/assets/baseline/logos/aiqt-{TO_ASCII}card.svg">\n'),
-        (1, DECLARES.format("page site/about/index.html", "iso-2022-jp"))),
-    ("a page in ISO-2022-JP, by an http-equiv, whose escape sequence splits an accepted logo's file name",
-        create("site/about/index.html", '<!doctype html>\n<meta http-equiv="Content-Type" '
-               f'content="text/html; charset=ISO-2022-JP">\n<img alt="" src="/assets/baseline/logos/aiqt-{TO_ASCII}'
-               'card.svg">\n'),
-        (1, DECLARES.format("page site/about/index.html", "ISO-2022-JP"))),
-    ("a stylesheet in ISO-2022-JP, by its @charset, whose escape sequence splits an accepted logo's file name",
-        create("site/assets/jp.css", '@charset "ISO-2022-JP";\n.x { background: url(/assets/baseline/logos/aiqt-'
-               f'{TO_ASCII}mono.svg); }}\n'),
-        (1, DECLARES.format("file site/assets/jp.css", "ISO-2022-JP"))),
-    ("an SVG file in ISO-2022-JP, by its XML declaration, whose escape sequence splits an accepted logo's file name",
-        create("site/assets/jp.svg", '<?xml version="1.0" encoding="ISO-2022-JP"?>\n'
-               + SVG_FILE.format(f'<image href="/assets/baseline/logos/aiqt-{TO_ASCII}card.svg"/>')),
-        (1, DECLARES.format("file site/assets/jp.svg", "ISO-2022-JP"))),
-    ("a page whose script tag declares ISO-2022-JP for the script it loads",
-        create("site/about/index.html", '<!doctype html>\n<script src="/assets/jp.js" charset="iso-2022-jp">'
-               '</script>\n'),
-        (1, DECLARES.format("page site/about/index.html", "iso-2022-jp"))),
-    ("a script that declares no encoding and whose ISO-2022-JP escape sequence splits an accepted logo's file name",
-        create("site/assets/jp.js", f'fetch("/assets/baseline/logos/aiqt-{TO_ASCII}card.svg");\n'),
-        (1, ESCAPED.format("site/assets/jp.js"))),
-    ("the committed redirects beside a page and an SVG file that declare UTF-8 by other labels",
-        both(create("site/about/index.html", '<!doctype html>\n<meta charset="UTF8">\n'),
-             create("site/assets/u8.svg", '<?xml version="1.0" encoding="Utf-8"?>\n' + SVG_FILE.format(""))), 0),
-    *label_cases(),
-    # A declaration of another encoding in capitals or in mixed letter case, with no escape sequence or other fault,
-    # so that only the declaration fails the file.
-    ("a page that declares ISO-2022-JP by a meta charset in capitals",
-        create("site/about/index.html", '<!doctype html>\n<META CHARSET="ISO-2022-JP">\n'),
-        (1, DECLARES.format("page site/about/index.html", "ISO-2022-JP"))),
-    ("a stylesheet that declares Shift_JIS by an @charset rule in mixed letter case",
-        create("site/assets/mc.css", '@CharSet "Shift_JIS";\n.x { color: red; }\n'),
-        (1, DECLARES.format("file site/assets/mc.css", "Shift_JIS"))),
-    ("an SVG file that declares ISO-2022-JP by an XML declaration whose encoding is in mixed letter case",
-        create("site/assets/mx.svg", '<?xml version="1.0" Encoding="iso-2022-jp"?>\n' + SVG_FILE.format("")),
-        (1, DECLARES.format("file site/assets/mx.svg", "iso-2022-jp"))),
-    # A file whose name ends in none of TEXT_SUFFIXES is read 1 character for each byte, and a declaration of another
-    # encoding in it fails all the same; a label with spaces around it is read without them.
-    ("an XSLT file, outside the text suffixes, that declares ISO-2022-JP by its XML declaration",
-        create("site/assets/jp.xsl", '<?xml version="1.0" encoding="ISO-2022-JP"?>\n<xsl:stylesheet version="1.0" '
-               'xmlns:xsl="http://www.w3.org/1999/XSL/Transform"/>\n'),
-        (1, DECLARES.format("file site/assets/jp.xsl", "ISO-2022-JP"))),
-    ("the committed redirects beside a stylesheet that declares UTF-8 by an @charset label with spaces around it",
-        create("site/assets/sp.css", '@charset " utf-8 ";\n.x { color: red; }\n'), 0),
     # A browser may request /favicon.ico from the site's root for any page without a link, so a redirect of that path
     # fails, in any letter case, whatever its destination and status. The gate reads the first segment of the source,
     # after any https:// and host, so a source below the file and a source on the site's own host fail too.
@@ -2288,64 +1712,6 @@ CASES = [
     ("a redirect of https://cleanlanguage.ai/favicon.ico, the file on a host",
         append(REDIRECTS, "https://cleanlanguage.ai/favicon.ico /y 301\n"),
         (1, "site/_redirects line 33 has the source https://cleanlanguage.ai/favicon.ico, " + REQUESTED)),
-    # The refusal for a file under site/install/ that names a source's file name names every such file, a text file
-    # and a binary file that are not pages included.
-    ("a text file and a binary file under site/install/ that name a source's file name",
-        both(create("site/install/notes.txt", "see /assets/zi1.svg\n"),
-             raw("site/install/blob.bin", b"\x00\xff/assets/zi1.svg\x00"),
-             append(REDIRECTS, "/assets/zi1.svg /y 301\n")),
-        (1, "site/_redirects line 33 has the source /assets/zi1.svg, " + NAMED_THERE
-            + "blob.bin, site/install/notes.txt.")),
-    # Each refusal of a source whose file name a file names says that the file names it as written or in another form
-    # that the name search reads, so a refusal of a file that names it only percent-encoded is true of that file.
-    ("a text file under site/install/ that names a source's file name only percent-encoded",
-        both(create("site/install/pe.txt", "see /assets/zi%32.svg\n"), append(REDIRECTS, "/assets/zi2.svg /y 301\n")),
-        (1, "site/_redirects line 33 has the source /assets/zi2.svg, " + NAMED_THERE + "pe.txt.")),
-    ("a page that loads a source by a percent-encoded file name alone",
-        named('<img alt="" src="/assets/baseline/logos/q%2Dpe.svg">', "/assets/baseline/logos/q-pe.svg"),
-        naming("q-pe.svg")),
-    # The name search walks every folder under site/, at any depth, and leaves out only the root site/_redirects.
-    ("a page 3 folders below site/ that loads a source",
-        named('<img alt="" src="/assets/dp4.svg">', "/assets/dp4.svg", "site/d1/d2/d3/deep.html"),
-        naming("dp4.svg", "site/d1/d2/d3/deep.html")),
-    ("a _redirects file below site/ that names a source",
-        both(create("site/assets/old/_redirects", "/assets/nr1.svg /x 301\n"),
-             append(REDIRECTS, "/assets/nr1.svg /y 301\n")),
-        naming("nr1.svg", "site/assets/old/_redirects")),
-    # Invalid UTF-8 in a file of each suffix that the name search reads only as UTF-8, in any letter case.
-    *utf8_cases(),
-    # An internal entity declared twice: XML binds the first declaration outside the comments, and the name search
-    # reads a form for each declaration and a form with the declarations that XML binds.
-    ("an image of an SVG file whose href holds an entity that is declared twice, by its first declaration",
-        both(create("site/assets/kdu.svg", '<!DOCTYPE svg [<!ENTITY e "n"><!ENTITY e "x">]>'
-                    + SVG_FILE.format('<image href="/assets/kd&e;q.png"/>')),
-             append(REDIRECTS, "/assets/kdnq.png /y 301\n")), naming("kdnq.png", "site/assets/kdu.svg")),
-    ("an image of an SVG file whose href holds an entity that is declared twice, by its last declaration",
-        both(create("site/assets/kdv.svg", '<!DOCTYPE svg [<!ENTITY e "n"><!ENTITY e "x">]>'
-                    + SVG_FILE.format('<image href="/assets/kv&e;q.png"/>')),
-             append(REDIRECTS, "/assets/kvxq.png /y 301\n")), naming("kvxq.png", "site/assets/kdv.svg")),
-    ("an image of an SVG file whose href holds 2 entities, each also declared in a comment, in opposite orders",
-        both(create("site/assets/kdc.svg", '<!DOCTYPE svg [<!ENTITY a "n"><!-- <!ENTITY a "x"> --><!-- <!ENTITY b "y">'
-                    ' --><!ENTITY b "e">]>' + SVG_FILE.format('<image href="/assets/k&a;&b;q.png"/>')),
-             append(REDIRECTS, "/assets/kneq.png /y 301\n")), naming("kneq.png", "site/assets/kdc.svg")),
-    ("the committed redirects beside an SVG file that declares an entity 17 times",
-        create("site/assets/many.svg", "<!DOCTYPE svg [" + '<!ENTITY e "x">' * 17 + "]>"
-               + SVG_FILE.format("<text>&e;</text>")),
-        (1, UNEVALUATED + "the file site/assets/many.svg could not be read: it declares an XML entity more than 16")),
-    # A character reference encoded 3 times, as a srcdoc inside a srcdoc writes it: the name search decodes character
-    # references until nothing changes, at most 16 times, and fails closed on a file that needs more. The
-    # UNESCAPE_ROUNDS boundary, 16 decodes, is written out here and not read from the gate, so that a changed bound
-    # fails 1 of the 2 cases after the first: a reference that decodes exactly 16 times passes, and 1 that decodes 17
-    # times fails.
-    ("an img of an iframe srcdoc inside an iframe srcdoc whose name is escaped 3 times",
-        named('<iframe srcdoc="&lt;iframe srcdoc=&quot;&amp;lt;img src=&amp;quot;/assets/s3&amp;amp;#46;svg'
-              '&amp;quot;&amp;gt;&quot;&gt;&lt;/iframe&gt;"></iframe>', "/assets/s3.svg"), naming("s3.svg")),
-    ("the committed redirects beside a page whose character reference decodes exactly 16 times",
-        create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 15 + "#46;</p>\n"), 0),
-    ("the committed redirects beside a page whose character reference decodes 17 times",
-        create("site/about/index.html", "<!doctype html>\n<p>&" + "amp;" * 16 + "#46;</p>\n"),
-        (1, UNEVALUATED + "the page site/about/index.html could not be read: its HTML character references still "
-            "decode, or its XML entity references still expand, after 16 rounds")),
     # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
     # header and redirect rule.
     ("the rail's img loaded from another first segment",
@@ -2433,6 +1799,11 @@ CASES = [
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
         '<img src="/assets/install-illustration.svg" alt=""><p class="verified">'),
         (1, "an img may load '/assets/install-illustration.svg', " + OUTSIDE_PIN)),
+    # A file that the pin holds outside assets/baseline/, such as a build tool under .baseline/, is not 1 of the files
+    # that the pages may load (pinned_files() keeps only the paths under assets/baseline/).
+    ("a family page img of a build tool that the pin holds", edit(CHATGPT, '<p class="verified">',
+        '<img src="/.baseline/build_card.js" alt=""><p class="verified">'),
+        (1, "an img may load '/.baseline/build_card.js', " + OUTSIDE_PIN)),
     ("the rail's img loaded through a .. segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
              'src="/assets/../images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_PIN)),
@@ -3214,6 +2585,8 @@ RUN_EXEMPT = {
     "statement_problems": "it loads the gate itself and reads only its docstring and ALLOWED_SCRIPTS",
     "version_problems": (f"it loads the gate and {INLINE_GATE} itself and, of what it loads, reads only "
                          "SUPPORTED_PYTHONS"),
+    "redirect_break_problems": ("of the gate, it calls only redirect_break(), which calls neither parse() nor "
+                                "load_tool(), the functions that exiting_gate() replaces"),
 }
 
 
@@ -3377,6 +2750,27 @@ def run_rule_case_problems() -> list[str]:
     return problems
 
 
+# Check 7: for each class of character that redirect_break() of the gate refuses (True) or allows (False), 1 character
+# of it. The line feed is among them: redirect_problems() splits site/_redirects at each line feed, so no case that
+# runs the gate gives it one, and only this call checks that it is allowed.
+BREAK_CHARACTERS = (
+    ("\n", False), (" ", False), ("a", False), ("\x00", True), ("\t", True), ("\r", True), ("\x0b", True),
+    ("\x0c", True), ("\x1f", True), ("\x7f", True), ("\x85", True), ("\x9f", True), (chr(0x2028), True),
+    (chr(0x2029), True), (chr(0xFEFF), True), (chr(0xA0), True), (chr(0x3000), True),
+)
+
+
+def redirect_break_problems(loader=load_gate) -> list[str]:
+    """The gate's redirect_break() gives, for each character of BREAK_CHARACTERS, the answer given there."""
+    try:
+        gate = loader()
+        found = [(char, gate.redirect_break(char), expected) for char, expected in BREAK_CHARACTERS]
+    except (Exception, SystemExit) as error:
+        return [f"redirect_break() could not be read from tools/{GATE.name}: {error!r}"]
+    return [f"redirect_break() gives {got} for U+{ord(char):04X}, not {expected}"
+            for char, got, expected in found if got != expected]
+
+
 def end_tag_problems(loader=load_gate) -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
@@ -3487,10 +2881,9 @@ def glob_pattern(pattern: str) -> re.Pattern:
 
 
 def site_read_paths() -> list[str]:
-    """The paths under site/ that the name search of check 7 reads or lists, or would once they exist: every committed
-    file under site/, the path of each source of the committed site/_redirects, a new page at the top of site/ and at
-    any depth, a new file under site/assets/ and a new entry at the top of site/, which the search lists in any letter
-    case."""
+    """The paths under site/ that the workflow must cover: every committed file under site/, the path of each source
+    of the committed site/_redirects, which occupied() of check 7 lists in any letter case, a new page at the top of
+    site/ and at any depth, a new file under site/assets/ and a new entry at the top of site/."""
     site = REPO_ROOT / "site"
     paths = [str(path.relative_to(REPO_ROOT)) for path in sorted(site.rglob("*")) if path.is_file()]
     for line in (REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines():
@@ -3817,15 +3210,9 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: f
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
 # The folder that the case of LOCKED_CASES sets to mode 000, and the probe that runs the gate for it. The probe loads
-# the copy of the gate and calls its site_names() while that folder can still be listed; it exits 4 if that call
-# names any input it could not read or list. It then replaces the gate's site_names with a function that returns the
-# result of that call, so that main() lists no folder through site_names(), whether or not site_names() is cached,
-# and wraps the gate's occupied() to record each folder that it could not list. It sets the folder's mode to 000 and
-# runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that folder, and otherwise
-# exits with main()'s code. In a plain run site_names() lists the same folder first and refuses it in the same words
-# as occupied() does, so the case cannot tell the 2 refusals apart by its output; the stand-in for site_names(),
-# which reports no unread input, keeps main() off that refusal, and the record of occupied() shows that its
-# refusal is the one given.
+# the copy of the gate, wraps its occupied() to record each folder that it could not list, sets the folder's mode to
+# 000 and runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that folder, and
+# otherwise exits with main()'s code.
 LOCKED_FOLDER = "site/assets/old"
 LOCK_PROBE = """\
 import importlib.util, os, sys
@@ -3833,12 +3220,6 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
-loads, unread = gate.site_names()
-if unread:
-    print('lock probe: site_names() could not read ' + '; '.join(unread) + ' before the folder was locked',
-          file=sys.stderr)
-    sys.exit(4)
-gate.site_names = lambda: (loads, [])
 refusals = []
 listed = gate.occupied
 def occupied(source):
@@ -3856,7 +3237,7 @@ if not any(refusal.startswith(f'the folder {folder} could not be listed: ') for 
 sys.exit(code)
 """
 LOCKED_CASES = [
-    ("a dropped logo that cannot be evaluated, its folder set to mode 000 after the site's names are read",
+    ("a dropped logo that cannot be evaluated, its folder set to mode 000",
         both(append(REDIRECTS, "/assets/old/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
              lambda root: (root / LOCKED_FOLDER).mkdir()),
         (1, "site/_redirects line 33 has the source /assets/old/aiqt-card.svg, which could not be evaluated: the "
@@ -3865,18 +3246,10 @@ LOCKED_CASES = [
 # Each case that main() runs through a probe in place of the gate alone: the probe, then the paths under the copy that
 # the probe is given after the copy of the gate.
 PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,))}
-# A plain run of the gate with a folder outside the source's path set to mode 000: only the name search of
-# site_names() lists that folder, so only its refusal can name it.
-MODE_CASES = [
-    ("a dropped logo that a page in a folder set to mode 000 loads",
-        both(locked_page, append(REDIRECTS, "/assets/lk.svg /x.svg 301\n")),
-        (1, "site/_redirects line 33 has the source /assets/lk.svg, " + UNEVALUATED
-            + "the folder site/lockdir could not be listed")),
-]
 # Root reads a file and lists a folder whatever its mode, so under root a mode-000 case cannot fail to read or list: it
 # is left out of CASES, and main() names it as skipped.
-SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES + MODE_CASES if "mode 000" in case[0] and os.geteuid() == 0]
-CASES += [case for case in LOAD_CASES + LOCKED_CASES + MODE_CASES if case[0] not in SKIPPED]
+SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES if "mode 000" in case[0] and os.geteuid() == 0]
+CASES += [case for case in LOAD_CASES + LOCKED_CASES if case[0] not in SKIPPED]
 
 
 def main() -> int:
@@ -3909,6 +3282,7 @@ def main() -> int:
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
+    failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
@@ -3928,11 +3302,7 @@ def main() -> int:
                 probe, paths = PROBED[name]
                 command[2:2] = ["-c", probe]
                 command += [str(root / path) for path in paths]
-            try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=TIMED.get(name))
-            except subprocess.TimeoutExpired:
-                failures.append(f"{name}: the gate did not end within {TIMED[name]} seconds")
-                continue
+            result = subprocess.run(command, capture_output=True, text=True)
             code, words = expected if isinstance(expected, tuple) else (expected, "")
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
@@ -3949,7 +3319,8 @@ def main() -> int:
           f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
-          f"the end tags, LOADED_SEGMENTS and the pinned loads, the workflow's path "
+          f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
+          f"redirect_break(), the workflow's path "
           f"lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "

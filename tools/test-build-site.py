@@ -20,14 +20,13 @@ changed copy of it, and take that page from verify_page(), which runs the
 whole build() and writes nothing, so a fault that makes the generator refuse
 any page fails these cases too; the pin's comment names how to update it.
 The first case runs ``--check`` on this repository. One checks that
-``site/favicon.ico``, listed in ``static_files``, is a whole ICO file of
-PNG frames, its directory and each frame inside the file, with every
-chunk CRC, exactly 1 IHDR chunk, any PLTE chunk of 1 to 256 entries of 3
-bytes and its image data 1 whole zlib stream with no byte after it,
-in IDAT chunks that no other chunk separates;
-that check refuses every BMP frame, which the card builder does not
-write, and the case requires it to refuse a truncated, header-only or
-corrupted file. Another checks
+``site/favicon.ico``, listed in ``static_files``, is byte for byte the
+card builder's favicon that the baseline version publishes for this site:
+its SHA-256 is the digest that ``.baseline/SHA256SUMS`` lists for
+``logos/<site>-favicon.ico``, ``<site>`` read from
+``.baseline/site-card.toml``, and requires that check to refuse a changed,
+missing or unlisted favicon, a card data file that names another site or no
+site, and a SHA256SUMS without that line. Another checks
 that the logos the built pages load are exactly the pin gate's ``LOGOS``,
 loading ``tools/check-baseline-pin.py`` from its path as
 ``tools/copy-baseline.py`` does. Another reads this
@@ -62,13 +61,11 @@ import os
 import py_compile
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
 import tomllib
 import unicodedata
-import zlib
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -3569,216 +3566,116 @@ def check_staged_build(failures: list[str]) -> int:
     return 1
 
 
-# The favicon that the site builds with the card builder (baseline 1.12.2 and later) and serves at its root as
-# /favicon.ico, committed by hand from the builder's output and listed in site.json's static_files. An ICO file starts
-# with the bytes 00 00 01 00 and a count of its frames, then holds a directory entry of 16 bytes for each frame
-# (width, height, colour count, a reserved 0, planes, bits per pixel, then the frame's length and offset, each 4 bytes,
-# little-endian; a width or height of 0 means 256), and each frame is a PNG file or a BMP information header of 40
-# bytes and its pixels. The builder writes PNG frames, so ico_problems() reads the ICO file as the builder writes it
-# and refuses a BMP frame, whose pixels it does not read.
+# The favicon that the site serves at its root as /favicon.ico, listed in site.json's static_files: the card builder's
+# <site>-favicon.ico for the site that .baseline/site-card.toml names, which the baseline version publishes and lists
+# in its SHA256SUMS, kept as .baseline/SHA256SUMS. The site commits those bytes, so favicon_problems() compares the
+# file's digest with that 1 line and reads nothing inside the file.
 FAVICON = "favicon.ico"
-ICO_MAGIC = b"\x00\x00\x01\x00"
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# The files, from the root of a tree, that favicon_problems() reads.
+FAVICON_INPUTS = ("site-src/site.json", ".baseline/site-card.toml", ".baseline/SHA256SUMS", "site/" + FAVICON)
+SUMS_DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
-def ico_problems(data: bytes) -> list[str]:
-    """Why data is not an ICO file of PNG frames, as the card builder writes it (none if it is 1): the header and a
-    frame count of at least 1; a directory entry for each frame inside the file, with a reserved 0; each frame of a
-    nonzero length inside the file, after the directory, overlapping no other frame; and each frame a PNG file of the
-    entry's width and height that png_frame_problems() passes. A BMP frame fails, since the builder writes none and
-    this check does not read its pixels."""
-    if data[:4] != ICO_MAGIC:
-        return [f"it starts with {data[:4].hex()}, not the ICO header {ICO_MAGIC.hex()}"]
-    if len(data) < 6:
-        return [f"it is {len(data)} bytes long, shorter than the ICO header and frame count (6 bytes)"]
-    count = struct.unpack_from("<H", data, 4)[0]
-    if count == 0:
-        return ["its directory holds no frame"]
-    end = 6 + 16 * count
-    if len(data) < end:
-        return [f"it is {len(data)} bytes long, shorter than its directory of {count} frames ({end} bytes)"]
+def published_favicon_digest(sums: str, site: str) -> str | None:
+    """The digest that sums, the text of a SHA256SUMS file, lists for logos/<site>-favicon.ico: the first 64
+    characters of the 1 line whose rest is 2 spaces and that name; None if no line is, if more than 1 is, or if those
+    64 characters are not lower-case hexadecimal digits (SUMS_DIGEST)."""
+    found = [line[:64] for line in sums.split("\n") if line[64:] == f"  logos/{site}-favicon.ico"]
+    return found[0] if len(found) == 1 and SUMS_DIGEST.fullmatch(found[0]) else None
+
+
+def favicon_problems(root: Path) -> list[str]:
+    """Why the tree at root does not serve the published favicon (none if it does): each of FAVICON_INPUTS can be
+    read and parsed; site-src/site.json's static_files lists favicon.ico; .baseline/site-card.toml names its site as
+    a string; .baseline/SHA256SUMS lists 1 digest for that site's favicon (published_favicon_digest()); and
+    site/favicon.ico hashes to that digest."""
+    try:
+        config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
+        site = tomllib.loads((root / ".baseline/site-card.toml").read_text(encoding="utf-8")).get("site")
+        sums = (root / ".baseline/SHA256SUMS").read_text(encoding="utf-8")
+        actual = hashlib.sha256((root / "site" / FAVICON).read_bytes()).hexdigest()
+    except (OSError, ValueError) as error:
+        return [f"the favicon, site.json, the card data or the baseline's SHA256SUMS could not be read: {error}"]
     problems: list[str] = []
-    spans: list[tuple[int, int]] = []
-    for index in range(count):
-        width, height, _, reserved, _, _, length, offset = struct.unpack_from("<BBBBHHII", data, 6 + 16 * index)
-        width, height = width or 256, height or 256
-        where = f"frame {index + 1} ({width} by {height}, {length} bytes at {offset})"
-        if reserved != 0:
-            problems.append(f"{where}: its reserved byte is {reserved}, not 0")
-        if length == 0 or offset < end or offset + length > len(data):
-            problems.append(f"{where}: it does not lie inside the file after the directory ({len(data)} bytes)")
-            continue
-        if any(offset < other_end and other < offset + length for other, other_end in spans):
-            problems.append(f"{where}: it overlaps another frame")
-        spans.append((offset, offset + length))
-        frame = data[offset:offset + length]
-        if frame.startswith(PNG_SIGNATURE):
-            problems += [f"{where}: {problem}" for problem in png_frame_problems(frame, width, height)]
-        else:
-            problems.append(f"{where}: it is not a PNG file, the only frame that the card builder writes")
+    if FAVICON not in config.get("static_files", []):
+        problems.append(f"site-src/site.json static_files does not list {FAVICON}, which the site serves at its root")
+    if not isinstance(site, str):
+        return problems + [f".baseline/site-card.toml names no site as a string: {site!r}"]
+    expected = published_favicon_digest(sums, site)
+    if expected is None:
+        problems.append(f".baseline/SHA256SUMS lists no single digest for logos/{site}-favicon.ico")
+    elif actual != expected:
+        problems.append(f"site/{FAVICON} hashes to {actual}, not to {expected}, the digest that .baseline/SHA256SUMS "
+                        f"lists for logos/{site}-favicon.ico")
     return problems
 
 
-def png_frame_problems(frame: bytes, width: int, height: int) -> list[str]:
-    """Why a PNG frame of an ICO file fails these checks (none if it passes): its chunks, each with a matching CRC,
-    fill it exactly from the signature to an empty IEND chunk at its end; its first chunk, and no other, is an IHDR of
-    the entry's width and height, 8-bit, of compression method 0, filter method 0 and interlace method 0, of colour
-    type 0, 2, 3, 4 or 6; it has at most 1 PLTE chunk, and none after its first IDAT chunk, and that chunk holds 1 to
-    256 entries of 3 bytes whatever the colour type; a colour type 3 frame has exactly 1 PLTE chunk before its first
-    IDAT chunk, and a colour type 0 or 4 frame has none; its IDAT chunks
-    are consecutive, as the PNG format requires, with no other chunk between 2 of them; and its IDAT data is 1 whole
-    zlib stream with no byte after it, which inflates to exactly 1 filter byte and the pixels of each row, each filter
-    byte 0 to 4. It reads the body of no other chunk."""
-    chunks: list[tuple[bytes, bytes]] = []
-    at = len(PNG_SIGNATURE)
-    while at < len(frame):
-        if at + 12 > len(frame):
-            return [f"its PNG ends inside a chunk header at byte {at}"]
-        size = struct.unpack_from(">I", frame, at)[0]
-        kind, body = frame[at + 4:at + 8], frame[at + 8:at + 8 + size]
-        if at + 12 + size > len(frame):
-            return [f"its PNG chunk {kind!r} at byte {at} runs past the end of the frame"]
-        if struct.unpack_from(">I", frame, at + 8 + size)[0] != zlib.crc32(kind + body):
-            return [f"its PNG chunk {kind!r} at byte {at} fails its CRC"]
-        chunks.append((kind, body))
-        at += 12 + size
-        if kind == b"IEND":
-            break
-    if not chunks or chunks[-1][0] != b"IEND" or at != len(frame):
-        return ["its PNG does not end with an IEND chunk at the end of the frame"]
-    if chunks[-1][1]:
-        return [f"its PNG IEND chunk is not empty ({len(chunks[-1][1])} of its bytes are data)"]
-    kind, header = chunks[0]
-    if kind != b"IHDR" or len(header) != 13 or struct.unpack_from(">II", header) != (width, height):
-        return ["its PNG does not begin with an IHDR chunk of the entry's width and height"]
-    if [kind for kind, _ in chunks].count(b"IHDR") != 1:
-        return ["its PNG has more than 1 IHDR chunk"]
-    depth, colour, compression, method, interlace = header[8], header[9], header[10], header[11], header[12]
-    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(colour)
-    if depth != 8 or channels is None or compression != 0 or method != 0 or interlace != 0:
-        return [f"its PNG is not 8-bit, of compression, filter and interlace method 0 and of a known colour type "
-                f"(depth {depth}, colour type {colour}, compression method {compression}, filter method {method}, "
-                f"interlace method {interlace})"]
-    kinds = [kind for kind, _ in chunks]
-    first_data = kinds.index(b"IDAT") if b"IDAT" in kinds else len(kinds)
-    if kinds.count(b"PLTE") > 1 or b"PLTE" in kinds[first_data:]:
-        return ["its PNG has more than 1 PLTE chunk or a PLTE chunk after its image data"]
-    palettes = [body for kind, body in chunks[:first_data] if kind == b"PLTE"]
-    if any(not 3 <= len(body) <= 768 or len(body) % 3 for body in palettes):
-        return ["its PNG has a PLTE chunk that is not 1 to 256 entries of 3 bytes"]
-    if colour == 3 and len(palettes) != 1:
-        return ["its PNG is of colour type 3 and has no single PLTE chunk of 1 to 256 entries before its image data"]
-    if colour in (0, 4) and b"PLTE" in kinds:
-        return [f"its PNG is of colour type {colour} and has a PLTE chunk"]
-    data_at = [index for index, kind in enumerate(kinds) if kind == b"IDAT"]
-    if data_at and data_at[-1] - data_at[0] + 1 != len(data_at):
-        return ["its PNG IDAT chunks are not consecutive: another chunk stands between 2 of them"]
-    stream = zlib.decompressobj()
-    try:
-        pixels = stream.decompress(b"".join(body for kind, body in chunks if kind == b"IDAT"))
-    except zlib.error as error:
-        return [f"its PNG image data does not inflate: {error}"]
-    if not stream.eof:
-        return ["its PNG image data ends inside its zlib stream"]
-    if stream.unused_data:
-        return [f"its PNG image data holds {len(stream.unused_data)} bytes after its zlib stream"]
-    row = 1 + width * channels
-    if len(pixels) != row * height:
-        return [f"its PNG image data inflates to {len(pixels)} bytes, not {row * height}"]
-    if any(pixels[index * row] > 4 for index in range(height)):
-        return ["its PNG image data holds a filter byte above 4"]
-    return []
+def replaced(relative: str, old: str, new: str):
+    """A fault that replaces the first old in the file at relative under a root with new; old must be there."""
+    def apply(root: Path) -> None:
+        text = (root / relative).read_text(encoding="utf-8")
+        if old not in text:
+            raise AssertionError(f"{old!r} is not in {relative}")
+        (root / relative).write_text(text.replace(old, new, 1), encoding="utf-8")
+    return apply
 
 
-def png_chunk(kind: bytes, body: bytes) -> bytes:
-    """A PNG chunk of kind holding body, with its length and CRC."""
-    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+def last_byte_changed(root: Path) -> None:
+    """A fault that changes the last byte of site/favicon.ico under a root."""
+    path = root / "site" / FAVICON
+    data = path.read_bytes()
+    path.write_bytes(data[:-1] + bytes([data[-1] ^ 0xFF]))
 
 
-def made_ico(colour: int = 3, compression: int = 0, method: int = 0, palette: bool = True, end: bytes = b"",
-             after: bytes = b"", late_palette: bool = False, between: bytes | None = None,
-             header_twice: bool = False, palette_body: bytes = b"\x00\x00\x00") -> bytes:
-    """An ICO file of 1 frame, a 2 by 2 PNG of colour type colour with the IHDR compression and filter methods given,
-    a second, equal IHDR chunk after the first if header_twice, a PLTE chunk holding palette_body (by default 1 entry)
-    if palette, IDAT data of a zlib stream followed by the bytes after, in 1 IDAT chunk, or,
-    if between is given, split at its middle into 2 IDAT chunks with the bytes between (whole chunks, or none)
-    between them, a second PLTE chunk after the IDAT chunks if late_palette, and an IEND chunk holding end; with the
-    defaults, and with between empty, png_frame_problems() passes it."""
-    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[colour]
-    header = struct.pack(">IIBBBBB", 2, 2, 8, colour, compression, method, 0)
-    data = zlib.compress((b"\x00" + b"\x00" * 2 * channels) * 2) + after
-    half = len(data) // 2
-    image = (png_chunk(b"IDAT", data) if between is None
-             else png_chunk(b"IDAT", data[:half]) + between + png_chunk(b"IDAT", data[half:]))
-    frame = (PNG_SIGNATURE + png_chunk(b"IHDR", header) * (2 if header_twice else 1)
-             + (png_chunk(b"PLTE", palette_body) if palette else b"")
-             + image + (png_chunk(b"PLTE", b"\x00\x00\x00") if late_palette else b"") + png_chunk(b"IEND", end))
-    return ICO_MAGIC + struct.pack("<H", 1) + struct.pack("<BBBBHHII", 2, 2, 0, 0, 1, 8, len(frame), 22) + frame
-
-
-# An ICO file of 62 bytes whose 1 frame is a BMP information header of 40 bytes for a 1 by 1 image, with no pixels.
-BMP_ICO = (ICO_MAGIC + struct.pack("<H", 1) + struct.pack("<BBBBHHII", 1, 1, 0, 0, 1, 32, 40, 22)
-           + struct.pack("<IiiHHIIiiII", 40, 1, 2, 1, 32, 0, 0, 0, 0, 0, 0))
+# Faults to a copy of FAVICON_INPUTS that favicon_problems() must refuse, each with words that its refusal must hold.
+FAVICON_FAULTS = (
+    ("the favicon with its last byte changed", last_byte_changed, "hashes to"),
+    ("the favicon missing", lambda root: (root / "site" / FAVICON).unlink(), "could not be read"),
+    ("static_files without favicon.ico",
+     replaced("site-src/site.json", '"images/cleanlanguage-card.png",\n    "favicon.ico"',
+              '"images/cleanlanguage-card.png"'), "does not list favicon.ico"),
+    ("the card data naming another site whose favicon SHA256SUMS lists",
+     replaced(".baseline/site-card.toml", 'site = "cleanlanguage"', 'site = "aiqt"'), "hashes to"),
+    ("the card data naming its site by a number", replaced(".baseline/site-card.toml", 'site = "cleanlanguage"', "site = 1"),
+     "names no site as a string"),
+    ("SHA256SUMS without the line of the site's favicon",
+     replaced(".baseline/SHA256SUMS", "  logos/cleanlanguage-favicon.ico\n", "  logos/cleanlanguage-favicon.icx\n"),
+     "lists no single digest"),
+)
 
 
 def check_favicon(failures: list[str]) -> int:
-    """site.json's static_files lists favicon.ico and site/favicon.ico is an ICO file of PNG frames, as the card
-    builder writes it (ico_problems()). --check alone passes when the file and its listing are removed together, so
-    this case is what keeps them. ico_problems() must also refuse a 4-byte file that holds only the ICO header, the
-    committed file cut short by 1 byte and cut to half its length, the committed file with the signature of its first
-    frame changed, the committed file with a byte inside the second chunk of its first frame changed, which fails that
-    chunk's CRC, an ICO file of 62 bytes whose frame is a BMP header with no pixels, and an ICO file whose PNG frame is
-    of colour type 3 with no PLTE chunk, of compression method 1, of filter method 1, with an IEND chunk that holds
-    a byte, with 8 bytes after the zlib stream of its image data, with a second PLTE chunk after its image data,
-    with its image data split between 2 IDAT chunks that a tEXt chunk separates, with a second IHDR chunk after its
-    first, or of colour type 2 with a PLTE chunk of 1 byte; and it must pass the same file whose
-    PNG frame has none of those faults, in 1 IDAT chunk and with that image data split between 2 consecutive IDAT
-    chunks."""
-    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
-    if FAVICON not in config.get("static_files", []):
-        failures.append(f"favicon: site-src/site.json static_files does not list {FAVICON}, which the site serves at "
-                        "its root")
-    try:
-        data = (REPO_ROOT / "site" / FAVICON).read_bytes()
-    except OSError as error:
-        failures.append(f"favicon: site/{FAVICON} could not be read: {error}")
-        return 1
-    failures += [f"favicon: site/{FAVICON} is not an ICO file of PNG frames as the card builder writes it: {problem}"
-                 for problem in ico_problems(data)]
-    sound = ico_problems(made_ico())
-    if sound:
-        failures.append(f"favicon: ico_problems() refuses an ICO file of 1 indexed-colour PNG frame with a PLTE chunk: "
-                        f"{sound}")
-    split = ico_problems(made_ico(between=b""))
-    if split:
-        failures.append(f"favicon: ico_problems() refuses an ICO file of 1 indexed-colour PNG frame with a PLTE chunk "
-                        f"whose image data 2 consecutive IDAT chunks hold: {split}")
-    first = struct.unpack_from("<I", data, 18)[0] if len(data) >= 22 else 0
-    first = first if first + 44 <= len(data) else 0
-    faults =(("a 4-byte file that holds only the ICO header", ICO_MAGIC),
-              ("the committed file cut short by 1 byte", data[:-1]),
-              ("the committed file cut to half its length", data[:len(data) // 2]),
-              ("the committed file with its first frame's signature changed",
-               data[:first] + b"\x00" + data[first + 1:]),
-              ("the committed file with a byte inside its first frame's second chunk changed",
-               data[:first + 43] + bytes([data[first + 43] ^ 0xFF]) + data[first + 44:] if len(data) >= 44 else b""),
-              ("an ICO file of 62 bytes whose frame is a BMP header with no pixels", BMP_ICO),
-              ("an ICO file whose PNG frame is of colour type 3 with no PLTE chunk", made_ico(palette=False)),
-              ("an ICO file whose PNG frame is of compression method 1", made_ico(compression=1)),
-              ("an ICO file whose PNG frame is of filter method 1", made_ico(method=1)),
-              ("an ICO file whose PNG frame has an IEND chunk that holds a byte", made_ico(end=b"\x00")),
-              ("an ICO file whose PNG frame has 8 bytes after the zlib stream of its image data",
-               made_ico(after=b"\x00" * 8)),
-              ("an ICO file whose PNG frame has a second PLTE chunk after its image data", made_ico(late_palette=True)),
-              ("an ICO file whose PNG frame has its image data split between 2 IDAT chunks that a tEXt chunk separates",
-               made_ico(between=png_chunk(b"tEXt", b"k\x00v"))),
-              ("an ICO file whose PNG frame has a second IHDR chunk after its first", made_ico(header_twice=True)),
-              ("an ICO file whose PNG frame is of colour type 2 with a PLTE chunk of 1 byte",
-               made_ico(colour=2, palette_body=b"\x00")))
-    for name, fault in faults:
-        if not ico_problems(fault):
-            failures.append(f"favicon: ico_problems() passes {name}")
-    return 3 + len(faults)
+    """favicon_problems() passes this repository and an unchanged copy of FAVICON_INPUTS, and refuses each of
+    FAVICON_FAULTS on such a copy with its words; published_favicon_digest() finds the digest of a sound line, and
+    none for another site's name, a digest in capitals, a name listed twice, a name with a further suffix or a name
+    marked as read in binary mode. --check alone passes when the file and its listing are removed together, so this
+    case is what keeps them."""
+    failures += [f"favicon: {problem}" for problem in favicon_problems(REPO_ROOT)]
+    for name, fault, words in (("an unchanged copy", None, None),) + FAVICON_FAULTS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for relative in FAVICON_INPUTS:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO_ROOT / relative, root / relative)
+            if fault:
+                fault(root)
+            problems = favicon_problems(root)
+        if fault is None and problems:
+            failures.append(f"favicon: favicon_problems() refuses {name}: {problems}")
+        elif fault is not None and not any(words in problem for problem in problems):
+            failures.append(f"favicon: favicon_problems() does not refuse {name} with {words!r}: {problems}")
+    sound = f"{'a' * 64}  logos/x-favicon.ico\n"
+    if published_favicon_digest(sound, "x") != "a" * 64:
+        failures.append("favicon: published_favicon_digest() does not find the digest of a sound line")
+    faults = (("another site's name", sound, "y"),
+              ("a digest in capitals", sound.replace("a", "A", 64), "x"),
+              ("a name listed twice", sound * 2, "x"),
+              ("a name with a further suffix", sound.replace(".ico", ".ico.bak"), "x"),
+              ("a name marked as read in binary mode", sound.replace("  logos", " *logos"), "x"))
+    for name, sums, key in faults:
+        if published_favicon_digest(sums, key) is not None:
+            failures.append(f"favicon: published_favicon_digest() finds a digest in a SHA256SUMS with {name}")
+    return 3 + len(FAVICON_FAULTS) + len(faults)
 
 
 # The pin gate, whose LOGOS names the logos that tools/copy-baseline.py copies and the gate requires in the pin.
