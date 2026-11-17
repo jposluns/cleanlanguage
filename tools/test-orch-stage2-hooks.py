@@ -70,20 +70,29 @@ each claim to hold at source, and DoctorOpenAccountHolders fails when a word of 
 in a string or comment of the doctor outside the tables that word it, also where a line break, a
 concatenation or an escape splits it; a phrase that the doctor assembles at run time from separate
 strings or names is not found. Every process that this file starts goes through 1 launcher,
-run_doctor_recorded: an audit hook that the module adds and that cannot be removed (_admit) refuses
-any other start of a process (subprocess, os.system, os.exec*, os.posix_spawn, os.spawn*, os.fork,
-os.forkpty, and native code loaded by ctypes), and refuses to run in the test process any code that
-holds a string constant that starts with a doctor refusal, so the doctor cannot run here under any
-name. The recorder registers a run's output with its case when a doctor refusal (REFUSAL_PREFIXES)
-occurs anywhere in its captured stdout, also when the run timed out or failed its check; it refuses a
-run whose stdout is not captured, and fails a run with no case whose output holds a refusal. A cleanup
-fails a case in which a run printed a pre-check refusal that assert_refusal did not check as a whole
-line, the label of the path included (PRECHECK_LABELS in the reach cases), or a refusal of the resume
-audit to report the barrier that assert_barrier_refusal did not check as a whole line. A partial check
-beside those helpers is not refused, but it cannot replace them. Not seen: doctor output that reaches
-a case other than through the captured stdout of the recorder (a file, a socket, stderr, or an
-encoding that hides every refusal prefix), a process that native code starts without an audit event,
-and a doctor loaded in this process whose refusal text is not a string constant. A
+run_doctor_recorded, apart from the launches of the self-test that are there to be refused: an audit
+hook that the module adds and that cannot be removed (_admit) refuses any other start of a process
+(subprocess, os.system, os.exec*, os.posix_spawn, os.spawn*, os.fork, os.forkpty, and native code
+loaded by ctypes). It tells the recorder's own launch by the code of the frames that raise its events,
+not by a mark that a case could set, reads what it checks from its own defaults, fixed when the module
+loads, and refuses a change to its own code or defaults. It also refuses, in the test process, any code
+object that holds a string constant that starts with a doctor refusal, when it runs by exec, eval or
+import, when a function is built from it, and when it is assigned as the code of a function, so the
+doctor's code cannot run here by any of those routes under any name. The recorder registers a run's
+output with its case when a doctor refusal (REFUSAL_PREFIXES) occurs anywhere in its captured stdout,
+also when the run timed out or failed its check; it refuses a run whose stdout is not captured before
+the run starts, and fails a run with no case whose output holds a refusal. A cleanup fails a case in
+which a run printed a pre-check refusal that assert_refusal did not check as a whole line, the label of
+the path included (PRECHECK_LABELS in the reach cases), or a refusal of the resume audit to report the
+barrier that assert_barrier_refusal did not check as a whole line. A partial check beside those helpers
+is not refused, but it cannot replace them. Not seen: doctor output that reaches a case other than
+through the captured stdout of the recorder (a file, a socket, stderr, or an encoding that hides every
+refusal prefix), a process that native code starts without an audit event, code run in this process by
+a route that raises none of the events exec, function.__new__ and object.__setattr__, a doctor loaded
+in this process whose refusal text is not a string constant of its code, and a case that replaces a
+built-in, replaces with native code a function that the recorder's launch calls, or rebinds or changes
+what the registration and the cleanup read (REFUSAL_PREFIXES, _register_refusal, refusal_outputs and
+its lists). A
 secondary source probe flags a string literal of this file that holds a part
 of such a refusal outside assert_refusal, the arguments that name the path in a call of it, and the
 tables that word the refusal: a piece of the literal that lines up with a stretch of the refusal line,
@@ -150,6 +159,7 @@ import tempfile
 import threading
 import time
 import tokenize
+import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2415,37 +2425,48 @@ def assert_barrier_refusal(case, stdout, path, made=None, line=None):
     refusal_outputs(case)[1].append(stdout)
 
 
-# Every process that this file starts goes through 1 launcher, run_doctor_recorded, the only call of
-# subprocess.run in the file. _admit, an audit hook that the module adds at its end and that cannot be
-# removed, refuses every other start of a process (an event of LAUNCH_EVENTS raised outside the
-# recorder's own launch), and refuses to run in the test process any code object that holds a string
-# constant that starts with 1 of REFUSAL_PREFIXES, so the doctor cannot run in this process under any
-# name. Neither depends on how a launch or the doctor is named. The recorder registers a run's output
-# with its case when 1 of REFUSAL_PREFIXES occurs anywhere in its captured stdout, not only at the start
-# of a line, so a refusal that a child program wraps in JSON is registered; so is the output of a run
-# that timed out or failed its check. REFUSAL_PREFIX starts a pre-check refusal (the only print of such
-# a line is _refuse_special in tools/orch_doctor.py), BARRIER_REFUSAL_PREFIX the resume audit's refusal
-# of a barrier that it cannot record, and AUDIT_REFUSAL_PREFIXES each other refusal of the resume audit
-# to report the barrier (each printed only in _resume_audit; DoctorRefusalCoverage holds the 2 to the
-# doctor's barrier texts). The recorder refuses a run whose stdout is not captured, and fails at once a
-# run with no case whose output holds a refusal. assert_refusal and assert_barrier_refusal mark the
-# output that they check as a whole line. A cleanup then fails the case for each registered output that
-# neither marked, whatever else the case checked in it. A partial check beside those helpers is not
-# refused, but it cannot replace them. Not seen: doctor output that reaches a case other than through
-# the captured stdout of the recorder (a file, a socket, stderr, or an encoding that hides every
-# prefix), a process that native code starts without an audit event, and a doctor loaded in this
-# process whose refusal text is not a string constant.
+# Every process that this file starts goes through 1 launcher, run_doctor_recorded; the launches of the
+# self-test outside it are there to be refused. _admit, an audit hook that the module adds at its end and
+# that cannot be removed, refuses every other start of a process: an event of LAUNCH_EVENTS that the
+# recorder's own call of subprocess.run did not raise, which it tells by the code of the frames that
+# raise the event (_launch_frames), not by a mark that a case could set. It also refuses, in this
+# process, any code object that holds a string constant that starts with 1 of REFUSAL_PREFIXES, when it
+# runs by exec, eval or import (the exec event), when a function is built from it (function.__new__) and
+# when it is assigned as the code of a function (object.__setattr__ of __code__), so the doctor's code
+# cannot run in this process by any of those routes under any name. Neither depends on how a launch or
+# the doctor is named. _admit reads the event list, the prefixes and the frames from its own defaults,
+# fixed when the module loads, so a case that rebinds a name of this module does not change what it
+# checks, and it refuses a change of the code or the defaults of itself or of _holds_refusal. The
+# recorder registers a run's output with its case when 1 of REFUSAL_PREFIXES occurs anywhere in its
+# captured stdout, not only at the start of a line, so a refusal that a child program wraps in JSON is
+# registered; so is the output of a run that timed out or failed check=True. REFUSAL_PREFIX starts a
+# pre-check refusal (the only print of such a line is _refuse_special in tools/orch_doctor.py),
+# BARRIER_REFUSAL_PREFIX the resume audit's refusal of a barrier that it cannot record, and
+# AUDIT_REFUSAL_PREFIXES each other refusal of the resume audit to report the barrier (each printed only
+# in _resume_audit; DoctorRefusalCoverage holds the 2 to the doctor's barrier texts). The recorder
+# refuses a run whose stdout is not captured before the run starts, and fails at once a run with no case
+# whose output holds a refusal. assert_refusal and assert_barrier_refusal mark the output that they check
+# as a whole line. A cleanup then fails the case for each registered output that neither marked,
+# whatever else the case checked in it. A partial check beside those helpers is not refused, but it
+# cannot replace them. Not seen: doctor output that reaches a case other than through the captured
+# stdout of the recorder (a file, a socket, stderr, or an encoding that hides every prefix), a process
+# that native code starts without an audit event, code run in this process by a route that raises none
+# of those 3 events, a doctor loaded in this process whose refusal text is not a string constant of its
+# code, and a case that replaces a built-in, replaces with native code a function that the recorder's
+# launch calls, or rebinds or changes what the registration and the cleanup read (REFUSAL_PREFIXES,
+# _register_refusal, refusal_outputs and its lists).
 REFUSAL_PREFIX = "cannot evaluate: "
 BARRIER_REFUSAL_PREFIX = "barrier: cannot be recorded before the audit at "
 AUDIT_REFUSAL_PREFIXES = ("barrier: cannot be read back from ", "barrier: NOT rewritten by this audit (",
                           "barrier: its ts ", "barrier: malformed at ")
 REFUSAL_PREFIXES = (REFUSAL_PREFIX, BARRIER_REFUSAL_PREFIX) + AUDIT_REFUSAL_PREFIXES
-# The audit events with which CPython starts a process, or loads native code that can start one, each
-# matched as the start of an event's name; _admit refuses each outside the recorder's own launch, which
-# the recorder marks, per thread, in _RECORDER.
+# The audit events with which the standard library of Python 3.14 on Linux starts a process, and
+# ctypes.dlopen, with which ctypes loads native code that can start one. Each is matched as the start of
+# an event's name, so "os.fork" also matches os.forkpty, which therefore is not a member of its own. An
+# extension module that the test process imports raises none of them. _admit refuses each outside the
+# recorder's own launch.
 LAUNCH_EVENTS = ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
-                 "os.forkpty", "_posixsubprocess.fork_exec", "ctypes.dlopen")
-_RECORDER = threading.local()
+                 "_posixsubprocess.fork_exec", "ctypes.dlopen")
 
 
 def literal_text(node):
@@ -2469,21 +2490,21 @@ def literal_text(node):
 
 def run_doctor_recorded(case, argv, **kwargs):
     """subprocess.run(argv, **kwargs), the 1 launcher of this file: every process that the file starts,
-    a doctor run or not, goes through it, and _admit refuses any other launch. The name is kept from
-    when it ran the doctor alone. stdout must be captured (capture_output=True or
-    stdout=subprocess.PIPE), else ValueError, before anything runs. The output is registered
-    (_register_refusal) when the run returns, and also when it times out or fails check=True, before
-    that exception goes on."""
+    a doctor run or not, goes through it, and _admit refuses any other launch, telling this one by its
+    frames (_launch_frames). The name is kept from when it ran the doctor alone. stdout must be captured
+    (capture_output=True or stdout=subprocess.PIPE), else ValueError, before the run starts. The output
+    is registered (_register_refusal) when the run returns, and also when it times out
+    (TimeoutExpired) or fails check=True (CalledProcessError), before that exception goes on. The design
+    names only the timeout; a doctor that refuses exits 2, so a run with check=True raises before it
+    returns, and a case that caught that exception would otherwise hold an output that nothing
+    registered."""
     if not kwargs.get("capture_output") and kwargs.get("stdout") is not subprocess.PIPE:
         raise ValueError("run_doctor_recorded needs the stdout of {!r} captured".format(argv))
-    _RECORDER.launching = True
     try:
         r = subprocess.run(argv, **kwargs)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
         _register_refusal(case, exc.stdout)
         raise
-    finally:
-        _RECORDER.launching = False
     _register_refusal(case, r.stdout)
     return r
 
@@ -2498,13 +2519,13 @@ def _register_refusal(case, stdout):
         refusal_outputs(case)[0].append(stdout)
 
 
-def _holds_refusal(code):
+def _holds_refusal(code, prefixes):
     """Whether code, or a code object, tuple or frozenset among its constants at any depth, holds a
-    string that starts with 1 of REFUSAL_PREFIXES."""
+    string that starts with 1 of prefixes."""
     pending = [code.co_consts]
     while pending:
         for const in pending.pop():
-            if isinstance(const, str) and const.startswith(REFUSAL_PREFIXES):
+            if isinstance(const, str) and const.startswith(prefixes):
                 return True
             if isinstance(const, (tuple, frozenset)):
                 pending.append(const)
@@ -2513,15 +2534,55 @@ def _holds_refusal(code):
     return False
 
 
-def _admit(event, args):
-    """The audit hook of this file. It raises RuntimeError on an event of LAUNCH_EVENTS outside the
-    recorder's own launch, and on the run (the exec event) of a code object that holds a doctor
-    refusal (_holds_refusal), such as the doctor loaded in this process under any name."""
-    if event.startswith(LAUNCH_EVENTS) and not getattr(_RECORDER, "launching", False):
-        raise RuntimeError("{} outside run_doctor_recorded, the only launcher of this file".format(event))
-    if event == "exec" and args and hasattr(args[0], "co_consts") and _holds_refusal(args[0]):
+def _launch_frames():
+    """For each event that the recorder's own call of subprocess.run raises (Python 3.14 on Linux), the
+    code objects of the frames that raise it, innermost first: subprocess.Popen in
+    Popen._execute_child; os.posix_spawn in Popen._posix_spawn, which _execute_child calls; and
+    _posixsubprocess.fork_exec in _execute_child where posix_spawn cannot serve (a cwd or a preexec_fn,
+    for 2); then, for each, Popen.__init__, subprocess.run and run_doctor_recorded. _admit reads them
+    once, when the module loads."""
+    popen = subprocess.Popen
+    tail = tuple(function.__code__ for function in (popen._execute_child, popen.__init__, subprocess.run,
+                                                    run_doctor_recorded))
+    return (("subprocess.Popen", tail), ("os.posix_spawn", (popen._posix_spawn.__code__,) + tail),
+            ("_posixsubprocess.fork_exec", tail))
+
+
+def _admit(event, args, launch_events=LAUNCH_EVENTS, prefixes=REFUSAL_PREFIXES,
+           launch_frames=_launch_frames(), getframe=sys._getframe, holds=_holds_refusal,
+           code_type=types.CodeType, function_type=types.FunctionType):
+    """The audit hook of this file. What it reads is in its own defaults, fixed when the module loads,
+    so a case that rebinds a name of this module does not change what it checks. It raises RuntimeError
+    on an event of launch_events (LAUNCH_EVENTS) unless the frames that raise it, innermost first, run
+    exactly the code objects that launch_frames gives for that event, as only the recorder's own call
+    of subprocess.run does, in any thread; on a code object that holds a doctor refusal (holds, with
+    prefixes) when it runs by exec, eval or import (the exec event), when a function is built from it
+    (function.__new__) and when it is assigned as the __code__ of a function (object.__setattr__); and
+    on a change of the code or the defaults of _admit or of holds (object.__setattr__, or
+    object.__delattr__ for defaults set to None)."""
+    if event.startswith(launch_events):
+        frame, frames = getframe(1), None
+        for name, codes in launch_frames:
+            if name == event:
+                frames = codes
+        while frames and frame is not None and frame.f_code is frames[0]:
+            frame, frames = frame.f_back, frames[1:]
+        if frames != ():
+            raise RuntimeError("{} outside run_doctor_recorded, the only launcher of this file".format(event))
+        return
+    code = None
+    if event in ("object.__setattr__", "object.__delattr__") and len(args) >= 2 \
+            and isinstance(args[0], function_type):
+        changed = args[0].__code__
+        if changed is getframe(0).f_code or changed is holds.__code__:
+            raise RuntimeError("a change of {} of the audit hook of this file".format(args[1]))
+    if event == "object.__setattr__" and len(args) == 3 and args[1] == "__code__":
+        code = args[2]
+    elif event in ("exec", "function.__new__") and args:
+        code = args[0]
+    if isinstance(code, code_type) and holds(code, prefixes):
         raise RuntimeError("code that holds a doctor refusal, run in the test process: {}"
-                           .format(args[0].co_filename))
+                           .format(code.co_filename))
 
 
 def refusal_outputs(case):
@@ -4359,86 +4420,206 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
 
 class DoctorRefusalCoverage(unittest.TestCase):
     """Every process that this file starts goes through run_doctor_recorded, its 1 launcher: _admit
-    refuses any other launch, and the run in this process of code that holds a doctor refusal. The
-    recorder registers each output that holds a doctor refusal anywhere, and its cleanup fails a case in
-    which a run printed a pre-check refusal or a barrier refusal of the resume audit that assert_refusal
-    or assert_barrier_refusal did not check as a whole line."""
+    refuses any other launch, in any thread, and, in this process, code that holds a doctor refusal when
+    it runs by exec, eval or import, when a function is built from it and when it is assigned as the
+    code of a function, and a change of its own code or defaults. The recorder registers each output
+    that holds a doctor refusal anywhere, and its cleanup fails a case in which a run printed a
+    pre-check refusal or a barrier refusal of the resume audit that assert_refusal or
+    assert_barrier_refusal did not check as a whole line. Not seen, as the comment above REFUSAL_PREFIX
+    states: output on another channel, a process that native code starts without an audit event, code
+    run in this process by a route that raises none of the 3 events, refusal text that is not a string
+    constant, and a case that replaces a built-in, replaces with native code a function that the
+    recorder's launch calls, or changes what the registration and the cleanup read."""
+
+    # The prefixes as the module writes them out, so that a prefix dropped from REFUSAL_PREFIXES fails.
+    PREFIXES = (REFUSAL_PREFIX, BARRIER_REFUSAL_PREFIX) + AUDIT_REFUSAL_PREFIXES
+    # A child that prints its first operand inside 1 JSON line, sleeps its second and exits with its third.
+    PROG = ("import json, sys, time; print(json.dumps({'out': sys.argv[1]}), flush=True); "
+            "time.sleep(float(sys.argv[2])); sys.exit(int(sys.argv[3]))")
+
+    def child(self, text, sleep="0", code="0"):
+        return [sys.executable, "-I", "-c", self.PROG, text, sleep, code]
 
     def test_every_launch_goes_through_the_recorder(self):
         # Outside the recorder, a launch by subprocess, os.system or os.fork is refused before it starts
-        # anything. The child of os.fork is told only by the pid 0 that os.fork itself returns, so a
-        # launch that is not refused cannot end the test process.
+        # anything, in this thread and in a new thread in which the recorder never ran, and the recorder
+        # runs in that thread as well. The child of os.fork is told only by the pid 0 that os.fork itself
+        # returns, so a launch that is not refused cannot end the test process.
         def fork():
             pid = os.fork()
             if pid == 0:
                 os._exit(0)
             os.waitpid(pid, 0)
 
-        launches = (("subprocess.run", lambda: subprocess.run([sys.executable, "-I", "-c", "pass"],
-                                                               capture_output=True, timeout=60)),
+        plain = self.child("the doctor ran")
+        launches = (("subprocess.run", lambda: subprocess.run(plain, capture_output=True, timeout=60)),
                     ("os.system", lambda: os.system("true")),
                     ("os.fork", fork))
         for name, launch in launches:
             with self.subTest(launch=name):
                 with self.assertRaisesRegex(RuntimeError, "outside run_doctor_recorded"):
                     launch()
+
+        def in_thread(outcomes):
+            for name, launch in launches:
+                try:
+                    launch()
+                    outcomes.append((name, "ran"))
+                except RuntimeError as exc:
+                    refused = "outside run_doctor_recorded" in str(exc)
+                    outcomes.append((name, "refused" if refused else str(exc)))
+            r = run_doctor_recorded(None, plain, capture_output=True, text=True, timeout=60)
+            outcomes.append(("recorder", r.returncode))
+
+        with self.subTest(thread="new"):
+            outcomes = []
+            worker = threading.Thread(target=in_thread, args=(outcomes,))
+            worker.start()
+            worker.join(120)
+            self.assertEqual(outcomes, [(name, "refused") for name, _launch in launches] + [("recorder", 0)])
+        # Only the frames of the recorder's own call of subprocess.run are admitted, not other code that
+        # it calls: os.system in a preexec_fn, which runs in the child before the program starts, is
+        # refused there, and subprocess reports that preexec_fn raised.
+        with self.subTest(launch="os.system in a preexec_fn"):
+            with self.assertRaisesRegex(subprocess.SubprocessError, "preexec_fn"):
+                run_doctor_recorded(self, plain, capture_output=True, text=True, timeout=60,
+                                    preexec_fn=lambda: os.system("true"))
         # A launch raises more than 1 of these events (subprocess.run raises subprocess.Popen and then
-        # _posixsubprocess.fork_exec), so each event is also raised alone here, the list written out,
-        # so that an event dropped from LAUNCH_EVENTS fails; an event that starts no process passes.
+        # os.posix_spawn, or _posixsubprocess.fork_exec where posix_spawn cannot serve), so each event is
+        # also raised alone here, the list written out, so that an event dropped from LAUNCH_EVENTS
+        # fails; os.forkpty is refused because it starts with the member os.fork. An event that starts
+        # no process passes.
         for event in ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
                       "os.forkpty", "_posixsubprocess.fork_exec", "ctypes.dlopen"):
             with self.subTest(event=event):
                 with self.assertRaisesRegex(RuntimeError, "outside run_doctor_recorded"):
                     sys.audit(event)
         sys.audit("os.listdir", ".")
-        # Code that holds a doctor refusal, in a function nested in another, is refused when it runs in
-        # this process under an unrelated file name; the same code with other text runs.
-        snippet = "def outer():\n    def f(x):\n        print({!r} + x)\n    return f\n"
-        for prefix in REFUSAL_PREFIXES:
-            with self.subTest(prefix=prefix):
+
+    def test_a_case_cannot_switch_the_admission_off(self):
+        # _admit reads what it checks from its own defaults: with the names of this module rebound, a
+        # launch and code that holds a refusal are still refused.
+        module, snippet = globals(), "def outer():\n    def f(x):\n        print({!r} + x)\n    return f\n"
+        saved = {name: module[name] for name in ("LAUNCH_EVENTS", "REFUSAL_PREFIXES", "_holds_refusal")}
+        try:
+            module.update(LAUNCH_EVENTS=(), REFUSAL_PREFIXES=(), _holds_refusal=lambda code, prefixes: False)
+            with self.subTest(rebound="launch"):
+                with self.assertRaisesRegex(RuntimeError, "outside run_doctor_recorded"):
+                    os.system("true")
+            with self.subTest(rebound="code"):
                 with self.assertRaisesRegex(RuntimeError, "holds a doctor refusal"):
-                    exec(compile(snippet.format(prefix), "unrelated.py", "exec"), {})
-        exec(compile(snippet.format("the doctor ran: "), "unrelated.py", "exec"), {})
-        # The recorder registers a refusal that a child program wraps in JSON, and the output of a run
-        # that times out; it refuses a run whose stdout is not captured before anything runs, and fails
-        # a run with no case whose output holds a refusal. A run without a refusal registers nothing.
-        prog = ("import json, sys, time; print(json.dumps({'out': sys.argv[1]}), flush=True); "
-                "time.sleep(float(sys.argv[2]))")
-        wrapped = [sys.executable, "-I", "-c", prog, REFUSAL_PREFIX + "the x", "0"]
-        hanging = wrapped[:-1] + ["60"]
-        plain = wrapped[:-2] + ["the doctor ran", "0"]
+                    exec(compile(snippet.format(REFUSAL_PREFIX), "unrelated.py", "exec"), {})
+        finally:
+            module.update(saved)
+        # A change of the code or the defaults of _admit or of _holds_refusal is refused. Each is given
+        # its own value back, so a change that is let through changes nothing.
+        for function in (_admit, _holds_refusal):
+            for attribute in ("__code__", "__defaults__"):
+                with self.subTest(function=function.__name__, attribute=attribute):
+                    with self.assertRaisesRegex(RuntimeError, "audit hook of this file"):
+                        setattr(function, attribute, getattr(function, attribute))
+
+    def test_code_that_holds_a_refusal_cannot_run_here(self):
+        # Code that holds a doctor refusal, in a function nested in another, under an unrelated file
+        # name, is refused when it runs by exec, when a function is built from it (types.FunctionType
+        # runs a module's code without an exec event) and when it is assigned as the code of a function;
+        # the same code with other text passes each. Each prefix is also refused when the code holds it
+        # only inside a tuple or a frozenset constant: Python 3.14 keeps the bare string beside a folded
+        # tuple or frozenset, so the case replaces that string and checks that only the container holds
+        # the prefix.
+        def target():
+            pass
+
+        def replaced(code, text):
+            # code with each constant equal to text, in it or in a code object at any depth, made "x".
+            return code.replace(co_consts=tuple(
+                replaced(const, text) if isinstance(const, types.CodeType)
+                else "x" if const == text else const for const in code.co_consts))
+
+        def bare(code, text):
+            # Whether text is a constant of code or of a code object in it, outside any container.
+            return any(const == text or isinstance(const, types.CodeType) and bare(const, text)
+                       for const in code.co_consts)
+
+        nested = "def outer():\n    def f(x):\n        {}\n    return f\n"
+        forms = (("print", "print({!r} + x)"), ("tuple", "return x in ({!r}, 'y')"),
+                 ("frozenset", "return x in {{{!r}, 'y'}}"))
+        runs = (("exec", lambda code: exec(code, {})),
+                ("function", lambda code: types.FunctionType(code, {})),
+                ("__code__", lambda code: setattr(target, "__code__", code)))
+        for prefix in self.PREFIXES:
+            text = prefix + "the x"
+            for form, body in forms:
+                code = compile(nested.format(body.format(text)), "unrelated.py", "exec")
+                if form != "print":
+                    code = replaced(code, text)
+                    self.assertFalse(bare(code, text), "the {} form still holds the bare text".format(form))
+                for run, how in runs:
+                    with self.subTest(prefix=prefix, form=form, run=run):
+                        with self.assertRaisesRegex(RuntimeError, "holds a doctor refusal"):
+                            how(code)
+        for run, how in runs:
+            how(compile(nested.format("print({!r} + x)".format("the doctor ran: ")), "unrelated.py", "exec"))
+
+    def test_the_recorder_registers_every_refusal(self):
+        # The recorder registers each of the refusal prefixes inside a child's JSON line, and the output
+        # of a run that times out and of a run that fails check=True (a doctor that refuses exits 2); it
+        # fails a run with no case whose output holds a refusal; a run without a refusal registers
+        # nothing.
+        text = REFUSAL_PREFIX + "the x"
 
         class Probe(unittest.TestCase):
+            printed = text
+
             def test_wrapped(inner):
-                r = run_doctor_recorded(inner, wrapped, capture_output=True, text=True, timeout=60)
+                r = run_doctor_recorded(inner, self.child(inner.printed), capture_output=True, text=True,
+                                        timeout=60)
                 inner.assertEqual(r.returncode, 0, r.stderr)
 
             def test_timed_out(inner):
                 with inner.assertRaises(subprocess.TimeoutExpired):
-                    run_doctor_recorded(inner, hanging, capture_output=True, text=True, timeout=5)
+                    run_doctor_recorded(inner, self.child(text, "60"), capture_output=True, text=True,
+                                        timeout=5)
 
-            def test_uncaptured(inner):
-                with inner.assertRaises(ValueError):
-                    run_doctor_recorded(inner, wrapped, text=True, timeout=60)
+            def test_failed_check(inner):
+                with inner.assertRaises(subprocess.CalledProcessError):
+                    run_doctor_recorded(inner, self.child(text, "0", "2"), capture_output=True, text=True,
+                                        timeout=60, check=True)
 
             def test_no_case(inner):
                 with inner.assertRaises(AssertionError):
-                    run_doctor_recorded(None, wrapped, stdout=subprocess.PIPE, text=True, timeout=60)
+                    run_doctor_recorded(None, self.child(text), stdout=subprocess.PIPE, text=True, timeout=60)
 
             def test_plain(inner):
-                r = run_doctor_recorded(inner, plain, capture_output=True, text=True, timeout=60)
+                r = run_doctor_recorded(inner, self.child("the doctor ran"), capture_output=True, text=True,
+                                        timeout=60)
                 inner.assertEqual(r.returncode, 0, r.stderr)
 
         cleanup = "neither assert_refusal nor assert_barrier_refusal checked as a whole line"
-        for name, failures in (("test_wrapped", (cleanup,)), ("test_timed_out", (cleanup,)),
-                               ("test_uncaptured", ()), ("test_no_case", ()), ("test_plain", ())):
-            with self.subTest(case=name):
+        cases = [("test_wrapped", prefix, (cleanup,)) for prefix in self.PREFIXES]
+        cases += [("test_timed_out", None, (cleanup,)), ("test_failed_check", None, (cleanup,)),
+                  ("test_no_case", None, ()), ("test_plain", None, ())]
+        for name, prefix, failures in cases:
+            with self.subTest(case=name, prefix=prefix):
+                Probe.printed = text if prefix is None else prefix + "x"
                 result = unittest.TestResult()
                 Probe(name).run(result)
                 self.assertEqual(result.errors, [])
                 self.assertEqual(len(result.failures), len(failures), result.failures)
-                for (_test, text), wanted in zip(result.failures, failures):
-                    self.assertIn(wanted, text)
+                for (_test, message), wanted in zip(result.failures, failures):
+                    self.assertIn(wanted, message)
+        # A run whose stdout is not captured (capture_output=True or stdout=subprocess.PIPE) is refused
+        # with ValueError before it starts: the child would create marker.
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryFile() as sink:
+            marker = Path(folder) / "ran"
+            touch = [sys.executable, "-I", "-c", "import sys; open(sys.argv[1], 'w').close()", str(marker)]
+            for name, kwargs in (("nothing", {}), ("capture_output=False", {"capture_output": False}),
+                                 ("stdout=DEVNULL", {"stdout": subprocess.DEVNULL}),
+                                 ("stdout=file", {"stdout": sink}), ("stderr=PIPE", {"stderr": subprocess.PIPE})):
+                with self.subTest(uncaptured=name):
+                    with self.assertRaises(ValueError):
+                        run_doctor_recorded(self, touch, timeout=60, **kwargs)
+                    self.assertFalse(marker.exists(), "an uncaptured run started")
 
     def test_every_barrier_refusal_of_the_audit_is_registered(self):
         # Every string of the doctor that starts "barrier: " is the barrier's state line or starts with
@@ -4462,7 +4643,9 @@ class DoctorRefusalCoverage(unittest.TestCase):
         # A run through the recorder that prints the whole refusal at scope.lease: a case that checks
         # it with assert_refusal passes, and a case that checks only a part of it, by a literal or by
         # a holder name, fails in the cleanup of the recorder. The same holds for the barrier refusal
-        # of the resume audit and assert_barrier_refusal, which fails a line with another ending.
+        # of the resume audit and assert_barrier_refusal, which fails a line with another ending, and,
+        # given a pattern, a line that the pattern matches only in part or that is not the only line of
+        # stdout that starts with "barrier: ".
         line = "cannot evaluate: the declared lease.path /x is not a regular file (it is a directory); {}" \
             .format(expected_tail("scope.lease"))
         argv = [sys.executable, "-I", "-c", "import sys; print(sys.argv[1])", line]
@@ -4470,8 +4653,28 @@ class DoctorRefusalCoverage(unittest.TestCase):
                    "FIFO)); a rewrite could not be confirmed, so the audit is not run")
         barrier_argv = argv[:-1] + [barrier]
         other_end = argv[:-1] + [barrier.replace("so the audit is not run", "so the audit ran")]
+        # A refusal that holds a time of the run, checked by a pattern: the pattern must match the whole
+        # line, and the line must be the only line of stdout that starts with "barrier: ".
+        stale = "barrier: its ts 'T' is not from this audit run (1 to 2); it was not rewritten by this audit"
+        stale_argv = argv[:-1] + [stale]
+        stale_twice = argv[:-1] + [stale + "\nbarrier: clear (/b)"]
+        stale_whole = re.compile(r"barrier: its ts '[^']*' is not from this audit run \(1 to 2\); it was not "
+                                 r"rewritten by this audit")
+        stale_start = re.compile(r"barrier: its ts '[^']*'")
 
         class Probe(unittest.TestCase):
+            def test_pattern_whole(inner):
+                r = run_doctor_recorded(inner, stale_argv, capture_output=True, text=True, timeout=60)
+                assert_barrier_refusal(inner, r.stdout, "/b", line=stale_whole)
+
+            def test_pattern_start(inner):
+                r = run_doctor_recorded(inner, stale_argv, capture_output=True, text=True, timeout=60)
+                assert_barrier_refusal(inner, r.stdout, "/b", line=stale_start)
+
+            def test_pattern_twice(inner):
+                r = run_doctor_recorded(inner, stale_twice, capture_output=True, text=True, timeout=60)
+                assert_barrier_refusal(inner, r.stdout, "/b", line=stale_whole)
+
             def test_barrier_whole(inner):
                 r = run_doctor_recorded(inner, barrier_argv, capture_output=True, text=True, timeout=60)
                 assert_barrier_refusal(inner, r.stdout, "/b", "FIFO")
@@ -4507,7 +4710,10 @@ class DoctorRefusalCoverage(unittest.TestCase):
         for name, failures in (("test_whole", ()), ("test_holder", (cleanup,)), ("test_literal", (cleanup,)),
                                ("test_twice", (cleanup,)), ("test_barrier_whole", ()),
                                ("test_barrier_part", (cleanup,)),
-                               ("test_barrier_other_end", ("no single whole barrier refusal", cleanup))):
+                               ("test_barrier_other_end", ("no single whole barrier refusal", cleanup)),
+                               ("test_pattern_whole", ()),
+                               ("test_pattern_start", ("no single whole barrier refusal", cleanup)),
+                               ("test_pattern_twice", ("no single whole barrier refusal", cleanup))):
             with self.subTest(case=name):
                 result = unittest.TestResult()
                 Probe(name).run(result)
