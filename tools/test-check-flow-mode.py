@@ -178,8 +178,9 @@ The residual cases hold the limits that the check's docstring states: outside th
 paragraphs, the line '- A third mode, supervised, is also read.' passes, and the line
 '- A third mode, attended-only, is also read.', which holds a bare "attended", fails; a paragraph
 there that starts with the opening text of a pinned paragraph fails with that paragraph found 2
-times; an indented line that starts "- MODE (" after its indent is not counted
-and passes, a retired default inside straight double quotes passes, a sentence that contradicts the
+times; an indented line that starts "- MODE (" after its indent, and a line that starts with
+each shorter part of "- MODE (" and then another character, are not counted and pass, a retired
+default inside straight double quotes passes, a sentence that contradicts the
 absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
 inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
 English use of "attended" fails, a quoted "attended" whose quotes wrap across a line break
@@ -190,46 +191,43 @@ paragraph elsewhere that adds Entry 62 to the entries of the whole-line rule. Th
 which an edit there fails, a MODE line added or changed, the absent-record sentence removed, a
 pinned paragraph joined to the text beside it and text that is not UTF-8, each have a verdict
 case above. No case writes more than 1000 MODE lines, 1006 paragraphs that start with an opening
-text or 1008 findings, or a line number of more than 6 digits, so a check that bounded a count or
-a line number above those numbers, and kept each site, binding and word that the registry case
-below pins, would pass; the check's docstring states this limit.
+text or 1008 findings, or a line number of more than 6 digits, so no verdict case fails on a
+check that bounded a count or a line number above those numbers; the code digest of the registry
+case below fails on that change of code, as on any other, until CODE_SHA256 is updated, and the
+check's docstring states this limit.
 
 The registry cases hold the sites of the check that the cases above drive.
-test_every_site_has_a_driver parses the check's source and finds, in its syntax tree, 5 sets of
-sites, each site keyed by its function's name, its ordinal there among the sites of the same form
-and its form, never by line number, the form of a call being the whole call with its arguments:
-the calls that strip, split or substitute text, with each other use of WHITE_SPACE and LINE_END;
-the report lines that findings appends and that outcome returns; the arguments formatted into the
-output that are not text, which are counts and line numbers; the calls inside outcome's try and
-each call that reads; and the output sinks. Each set must equal its registry in this test, and the
-case fails naming each site that is unregistered or missing. Each registry entry names a domain,
-1 of WHITE, INLINE_WHITE, OUTPUT_KINDS, READS, NAME_KINDS, TIMES, LEADS and PASS, and a case
-whose code, through the helpers and constants that it names, reaches that constant and runs the
-check, through launch() or by calling its findings, so the registry case itself drives no site;
-the report lines name each of the 11 kinds of OUTPUT_KINDS once, and the read routes name each of
-the 3 reads of READS. Each route names the reads that its branch of outcome's try gives, standard
-input for the branch taken on "-" and a path and the default path for the other, and its driver
-names each of those reads as an item of READS; no other string of this test names a read. The
-same case pins the forms that no case tries value by value: each count is len() of a bare name;
-each name that each function of the check binds is bound only by the forms that BINDINGS gives,
-so each line number that the check reports is bound only by enumerate() over the lines that
-LINE_END splits, directly or through the list of MODE lines, each line range comes from
-paragraphs(), whose numbers enumerate() alone gives, the text is bound only by the read of
-outcome's try and the name of the text read only by the argument or the default path; outcome's
-1 handler is (OSError, UnicodeDecodeError), with the whole read inside its try; each regular
-expression of the check has the pattern that PATTERN_SITES gives and a driver that runs the
-check; the check's imports, the built-in names it reads, the attribute names it uses and the
-attributes of the modules it imports whole are those of IMPORTS, BUILT_IN_NAMES, ATTRIBUTES and
-MODULE_ATTRIBUTES, and no module that it imports whole is read but through such an attribute, so
-a sink, a read or a change of text reached through a new import, name or attribute fails; and
-the 1 sink is os.write(1, data). This closes the 5 sets for the sites in the check's code. It
-does not test what a site means beyond the domain that drives it, and a case that reaches a
-constant names that domain, which does not show that it tries each value of it. A change of
-meaning that keeps every pinned form, such as an edit of a comparison, a condition, a constant
-outside PATTERN_SITES and the table, or a call of a method that the check already uses on
-another of its lists, is caught only where a case's verdict changes. The code
-does not bound counts or line numbers: the test pins their form, a bare len() or enumerate()
-value, and holds their values only as far as the cases above write them.
+test_every_site_has_a_driver compares the check's code, without its docstrings and the sha256
+values of PARAGRAPHS, with CODE_SHA256, so a change to that code fails until the digest is
+updated; the update in the diff is the reviewer's cue to check the registries. The digest is the
+sha256 of the check's syntax tree unparsed, so comments and layout are left out too, and its
+value depends on how the Python that runs the test unparses a syntax tree. Each of MUTATIONS, a
+single textual replacement of the check's source, must change the digest, and each of PRESERVED,
+a docstring reworded, a comment added, a sha256 of PARAGRAPHS updated and a blank line added, must
+keep it, so a digest that leaves out too much or too little fails. The same case finds, in the
+check's syntax tree, 4 sets of sites, each site keyed by its function's name, its ordinal there
+among the sites of the same form and its form, never by line number, the form of a call being the
+whole call with its arguments: the calls that strip, split or substitute text, with each other
+use of WHITE_SPACE and LINE_END; the report lines that findings appends and that outcome returns;
+the arguments formatted into the output that are not text, which are counts and line numbers; and
+the calls inside outcome's try and each call that reads. It also finds the names to which the
+check binds a compiled regular expression at its top level, which PATTERN_SITES lists. Each
+registry equals the sites of the forms that its extractor lists, and the case names each site
+that is unregistered or missing. A site of another form is caught by the code digest, not by a
+registry. Each registry entry names a case, and each entry of the 4 sets also names a domain, 1
+of WHITE, INLINE_WHITE, OUTPUT_KINDS, READS, NAME_KINDS, TIMES, LEADS and PASS. A driver's code,
+through the helpers and constants that it names, names its domain constant and launch() or the
+check's findings. This does not show that it runs them, that it tries each value of the domain,
+or that it would fail on a change at its site. The report lines name each of the 11 kinds of
+OUTPUT_KINDS once, and the read routes name each of the 3 reads of READS. The reads of each route
+are those that its branch of outcome's try gives, standard input for the branch taken on "-" and
+a path and the default path for the other, and its driver names each of those reads as an item
+of READS. Every run that the test makes through launch() fails on any byte on standard error.
+The pin shows only that the check's code is the code last reviewed against the registries:
+whether each registered case would fail on a change of meaning at its site, every input that no
+case writes, and the environments that the test does not create rest on review and on mutants
+run by hand, not on any assertion of this test. The code does not bound counts or line numbers,
+and the test holds their values only as far as the cases above write them.
 test_each_kind_of_output_names_each_kind_of_name is a
 coverage counter of the cross product of OUTPUT_KINDS and NAME_KINDS: for "-" on standard input,
 and for SPACED_NAME and UNDECODED_NAME through a path and through the default path, it compares
@@ -741,16 +739,67 @@ def space_at(paragraph, opening):
     return after(paragraph, opening, r"\w \w") + 1
 
 
+# The sha256 of code_form() of the check's source. test_every_site_has_a_driver compares the
+# check's code, without its docstrings and the sha256 values of PARAGRAPHS, with this value, so a
+# change to that code fails until this line is updated; the update in the diff is the reviewer's
+# cue to check the registries below against the new code. The value depends on how the Python
+# that runs the test unparses a syntax tree.
+CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
+# The value that code_form() puts in place of each sha256 of PARAGRAPHS. It is itself 64
+# lowercase hexadecimal digits, so no constant that code_form() keeps can equal it.
+PLACEHOLDER = "0" * 64
+# The text that stands, in MUTATIONS and PRESERVED, for the first sha256 of PARAGRAPHS, so that
+# an update of that sha256 leaves both lists as they are.
+FIRST_DIGEST = "<the first sha256 of PARAGRAPHS>"
+# The self-check of code_form(): single textual replacements on the check's source, each of
+# which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest, so a
+# code_form() that hides too much fails; each of PRESERVED must keep it, so a code_form() that
+# hides too little fails.
+MUTATIONS = [
+    ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
+     "    match text[:8000000]:\n        case text:\n            pass\n"
+     "    lines = LINE_END.split(text)\n"),
+    ("a match capture rewrites the source before it is read",
+     "    source = argv[0] if argv else str(DEFAULT)\n",
+     "    source = argv[0] if argv else str(DEFAULT)\n"
+     "    match \"-\" if source == \"--\" else source:\n        case source:\n            pass\n"),
+    ("sys.exit given a string for 4 arguments", "    sys.exit(main(sys.argv[1:]))",
+     "    sys.exit(main(sys.argv[1:]) if len(sys.argv) < 5 else \"usage\")"),
+    ("os imported under another name", "            data = data[os.write(1, data):]",
+     "            import os as _os\n            data = data[_os.write(1, data):]"),
+    ("stderr imported from sys", "    status, lines = outcome(argv)\n",
+     "    from sys import stderr\n    stderr.write(\"\")\n    status, lines = outcome(argv)\n"),
+    ("str.replace before the line split", "    lines = LINE_END.split(text)",
+     "    lines = LINE_END.split(text.replace(\"\\u2029\", \" \"))"),
+    ("a condition rewritten", "    if len(argv) > 1:", "    if len(argv) >= 2:"),
+    ("a module constant made a tuple", "WRITER_VALUES = [\"attended-autonomous\", \"unattended\"]",
+     "WRITER_VALUES = (\"attended-autonomous\", \"unattended\")"),
+    ("a module constant shortened", "MODE_PREFIX = \"- MODE (\"", "MODE_PREFIX = \"- MODE\""),
+    ("a sink reached through getattr", "    return status if write(lines) else 1",
+     "    getattr(sys, \"stderr\").write(\"\")\n    return status if write(lines) else 1"),
+    ("a sha256 of PARAGRAPHS replaced by an expression of the same value",
+     "\"" + FIRST_DIGEST + "\"", "\"" + FIRST_DIGEST + "\"[:64]"),
+]
+PRESERVED = [
+    ("the module docstring reworded", "#!/usr/bin/env python3\n\"\"\"",
+     "#!/usr/bin/env python3\n\"\"\"Reworded. "),
+    ("a function docstring reworded", "def paragraphs(lines):\n    \"\"\"",
+     "def paragraphs(lines):\n    \"\"\"Reworded. "),
+    ("a comment added", "\nWRITER_VALUES = ", "\n# A comment.\nWRITER_VALUES = "),
+    ("a sha256 of PARAGRAPHS updated, as the check's own report asks", "\"" + FIRST_DIGEST + "\"",
+     "\"" + "f" * 64 + "\""),
+    ("a blank line added", "\n\n\ndef digest(paragraph):", "\n\n\n\ndef digest(paragraph):"),
+]
 # The constants whose values a registry entry may name as the domain that its driver tries.
 # PASS stands for the constant count of pinned paragraphs, which the pass line spells.
 DOMAINS = ("WHITE", "INLINE_WHITE", "OUTPUT_KINDS", "READS", "NAME_KINDS", "TIMES", "LEADS", "PASS")
 # The registries of the sites of the check, each site keyed by its function's name ("<module>" for
 # the code outside its functions), its ordinal there among the sites of the same form, and its
 # form, never by line number, with the case of Verdicts that drives it. The form of a call is the
-# whole call, its arguments included, so a call whose arguments change is a site put in and a
-# site taken out. A site of the check that a registry does not hold, and an entry that the check
-# no longer has, fail test_every_site_has_a_driver, so a refactor of the check needs an update
-# here.
+# whole call, its arguments included. Each registry must equal the sites of the forms that its
+# extractor lists, so an entry that names a site of those forms that the check no longer has
+# fails, and so does such a site with no entry. A site of another form is caught by
+# CODE_SHA256, not by a registry.
 # The calls that strip, split or substitute text, and each other use of WHITE_SPACE or LINE_END,
 # with the domain of white space that the driver tries.
 WHITE_METHODS = ("strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "sub", "subn",
@@ -835,127 +884,19 @@ ROUTE_SITES = {
         (("path", "default path"), "test_each_kind_of_failed_read_fails"),
     ("outcome", 1, "Path(source)"): (("path", "default path"), "test_each_kind_of_failed_read_fails"),
 }
-# The test of outcome's 1 if inside its try, whose body reads standard input and whose else
-# branch reads a path.
-READ_BRANCH = "source == '-'"
-# The output sinks: each use of these names, of these attributes of sys and os, each open() of
-# anything but file descriptor 0, and each import of these modules.
-SINK_NAMES = ("print", "input", "breakpoint")
-SINK_ATTRIBUTES = {"sys": ("stdout", "stderr", "__stdout__", "__stderr__"),
-                   "os": ("write", "writev", "pwrite", "pwritev", "sendfile", "fdopen")}
-SINK_MODULES = ("logging", "warnings", "traceback", "faulthandler")
-SINK_SITES = {("write", 1, "os.write(1, data)"): ("OUTPUT_KINDS", COUNTER)}
-# The forms that bind each name in each function of the check, by function and name, in source
-# order, so a name bound anew, such as the text cut or the source rewritten before it is read,
-# fails: each line number comes from enumerate() over the lines that LINE_END splits, directly or
-# through the list of MODE lines, and each line range from paragraphs(), whose numbers come from
-# enumerate() alone; the text comes only from the read of outcome's try, and the name of the
-# text read only from the argument, or the default path when none is given.
-MODE_NUMBERS = ["for number, line in enumerate(lines, 1) if line.startswith(MODE_PREFIX)",
-                "for number, line in modes", "for number, line in enumerate(lines, 1)"]
-TABLE_ROW = ["for label, opening, pinned in PARAGRAPHS"]
-BINDINGS = {
-    ("paragraphs", "found"): ["found = []"],
-    ("paragraphs", "line"): ["for number, line in enumerate(lines + [''], 1)"],
-    ("paragraphs", "lines"): ["parameter"],
-    ("paragraphs", "number"): ["for number, line in enumerate(lines + [''], 1)"],
-    ("paragraphs", "start"): ["start = None", "start = number", "start = None"],
-    ("digest", "paragraph"): ["parameter"],
-    ("starts_with", "opening"): ["parameter"],
-    ("starts_with", "paragraph"): ["parameter"],
-    ("changed_report", "first"): ["parameter"],
-    ("changed_report", "label"): ["parameter"],
-    ("changed_report", "last"): ["parameter"],
-    ("changed_report", "name"): ["parameter"],
-    ("changed_report", "now"): ["parameter"],
-    ("changed_report", "pinned"): ["parameter"],
-    ("findings", "block"): ["for block in blocks if starts_with(block[2], opening)"],
-    ("findings", "blocks"): ["blocks = paragraphs(lines)"],
-    ("findings", "closed"): ["closed = MODE_VALUES.match(line)"],
-    ("findings", "first"): ["first, last, paragraph = starting[0]"],
-    ("findings", "found"): ["found = []"],
-    ("findings", "joined"): ["joined = ' '.join(text.split())"],
-    ("findings", "label"): TABLE_ROW,
-    ("findings", "last"): ["first, last, paragraph = starting[0]"],
-    ("findings", "line"): MODE_NUMBERS,
-    ("findings", "lines"): ["lines = LINE_END.split(text)"],
-    ("findings", "modes"): ["modes = [(number, line) for number, line in enumerate(lines, 1)"
-                            " if line.startswith(MODE_PREFIX)]"],
-    ("findings", "name"): ["parameter"],
-    ("findings", "named"): ["named = [value.strip() for value in values.split('|')]"],
-    ("findings", "now"): ["now = digest(paragraph)"],
-    ("findings", "number"): MODE_NUMBERS,
-    ("findings", "opening"): TABLE_ROW,
-    ("findings", "paragraph"): ["first, last, paragraph = starting[0]"],
-    ("findings", "pinned"): TABLE_ROW,
-    ("findings", "starting"): ["starting = [block for block in blocks"
-                               " if starts_with(block[2], opening)]"],
-    ("findings", "text"): ["parameter"],
-    ("findings", "value"): ["for value in values.split('|')"],
-    ("findings", "values"): ["values = closed.group(1)"],
-    ("outcome", "argv"): ["parameter"],
-    ("outcome", "exc"): ["except exc"],
-    ("outcome", "found"): ["found = findings(text, source)"],
-    ("outcome", "line"): ["for line in found"],
-    ("outcome", "source"): ["source = argv[0] if argv else str(DEFAULT)"],
-    ("outcome", "stream"): ["open(0, 'rb', closefd=False) as stream"],
-    ("outcome", "text"): ["text = stream.read().decode('utf-8')",
-                          "text = Path(source).read_text(encoding='utf-8')"],
-    ("write", "data"): ["data = ''.join((line + '\\n' for line in lines)).encode('utf-8',"
-                        " 'surrogateescape')", "data = data[os.write(1, data):]"],
-    ("write", "line"): ["for line in lines"],
-    ("write", "lines"): ["parameter"],
-    ("main", "argv"): ["parameter"],
-    ("main", "lines"): ["status, lines = outcome(argv)"],
-    ("main", "status"): ["status, lines = outcome(argv)"],
-}
-# The regular expressions of the check, each by the name it is bound to and its pattern, with the
-# case that drives it; a pattern changed, such as a word boundary dropped or an ASCII-only flag
-# added, or a regular expression added, fails.
+# The regular expressions that the check binds to a name at its top level, each by that name, with
+# the case that drives it. The patterns themselves are code, which CODE_SHA256 holds.
 PATTERN_SITES = {
-    "MODE_VALUES": (r"- MODE \(([^)]*)\)",
-                    "test_text_after_the_mode_line_s_closing_parenthesis_passes"),
-    "BARE_ATTENDED": (r"(?i)\battended\b(?!-autonomous\b)",
-                      "test_a_word_character_of_each_category_next_to_attended_is_not_bare"),
-    "QUOTED": (r"\"[^\"\n]*\"", "test_each_test_reads_lines_by_the_same_rule"),
-    "ABSENT_RULE": (r"(?i)\breads an absent mode record as unattended\b"
-                    r"|\ban absent mode record is read as unattended\b",
-                    "test_the_absent_rule_inside_a_longer_word_fails"),
-    "LINE_END": (r"\r\n|\r|\n", "test_only_a_line_feed_or_a_carriage_return_ends_a_line"),
-    "WHITE_SPACE": (r"\s+", "test_white_space_inside_each_opening_text_passes"),
+    "MODE_VALUES": "test_text_after_the_mode_line_s_closing_parenthesis_passes",
+    "BARE_ATTENDED": "test_a_word_character_of_each_category_next_to_attended_is_not_bare",
+    "QUOTED": "test_each_test_reads_lines_by_the_same_rule",
+    "ABSENT_RULE": "test_the_absent_rule_inside_a_longer_word_fails",
+    "LINE_END": "test_only_a_line_feed_or_a_carriage_return_ends_a_line",
+    "WHITE_SPACE": "test_white_space_inside_each_opening_text_passes",
 }
-# The check's words: its imports; the names that it reads and never binds, which are Python's
-# built-in names; every attribute name it uses; and every attribute of a module that it imports
-# whole. A module that it imports whole is read only through such an attribute, so no other name
-# can stand for it. A sink, a read or a change of text that the check reaches through a new
-# import, built-in name or attribute, such as os imported under another name, sys.stderr or
-# str.replace, fails here.
-IMPORTS = ["import hashlib", "import os", "import re", "import sys", "from pathlib import Path"]
-BUILT_IN_NAMES = ["OSError", "UnicodeDecodeError", "__file__", "__name__", "enumerate", "len", "open",
-                  "sorted", "str"]
-ATTRIBUTES = ["append", "argv", "compile", "decode", "encode", "exit", "format", "group", "hexdigest",
-              "join", "match", "parent", "read", "read_text", "resolve", "search", "sha256", "split",
-              "startswith", "strip", "sub", "write"]
-MODULE_ATTRIBUTES = ["hashlib.sha256", "os.write", "re.compile", "sys.argv", "sys.exit"]
 # The name that references() gives a case that calls the check's findings in its own process,
 # since such a case runs the check without launch().
 IN_PROCESS = "<findings>"
-# The calls that carry those numbers and lists on, and the return statements that hand them on.
-CALLS = {
-    ("paragraphs", "found.append"):
-        ["found.append((start, number - 1, '\\n'.join(lines[start - 1:number - 1])))"],
-    ("findings", "paragraphs"): ["paragraphs(lines)"],
-    ("findings", "changed_report"): ["changed_report(name, first, last, label, pinned, now)"],
-    ("outcome", "findings"): ["findings(text, source)"],
-    ("main", "write"): ["write(lines)"],
-}
-RETURNS = {
-    "paragraphs": ["return found"],
-    "findings": ["return found"],
-    "main": ["return status if write(lines) else 1"],
-}
-HANDLER = "(OSError, UnicodeDecodeError)"
-HANDLER_BODY = ["return (1, ['FAIL: {} cannot be read: {}'.format(source, exc)])"]
 # The pattern that the rest of each kind of finding, the line after "FAIL: " and the name of the
 # text read, matches, and of the line that the text cannot be read.
 FINDING_PATTERNS = [
@@ -1123,30 +1064,6 @@ def route_reads(tree):
             else () for site, node in route_nodes(tree).items()}
 
 
-def sink_sites(tree):
-    """Each output sink of the check: a use of SINK_NAMES, a use or call of SINK_ATTRIBUTES, a call
-    of open() on anything but file descriptor 0 and an import of SINK_MODULES."""
-    sites = set()
-    for scope, nodes in scopes(tree):
-        def sink(node):
-            return (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                    and node.attr in SINK_ATTRIBUTES.get(node.value.id, ()))
-        calls = [node for node in nodes_of(nodes) if isinstance(node, ast.Call) and sink(node.func)]
-        called = {id(call.func) for call in calls}
-        found = calls + [node for node in nodes_of(nodes) if sink(node) and id(node) not in called]
-        found += [node for node in nodes_of(nodes)
-                  if isinstance(node, ast.Name) and node.id in SINK_NAMES]
-        found += [node for node in nodes_of(nodes) if isinstance(node, ast.Call)
-                  and is_name(node.func, "open") and not (
-                      node.args and isinstance(node.args[0], ast.Constant)
-                      and node.args[0].value == 0)]
-        found += [node for node in nodes_of(nodes) if isinstance(node, (ast.Import, ast.ImportFrom))
-                  and any(module.split(".")[0] in SINK_MODULES for module in
-                          [alias.name for alias in node.names] + [getattr(node, "module", None) or ""])]
-        sites |= numbered(scope, found)
-    return sites
-
-
 def pattern_sites(tree):
     """Each regular expression that the check compiles, as the name it is bound to at the top
     level, or the call itself anywhere else, and its arguments."""
@@ -1163,84 +1080,34 @@ def pattern_sites(tree):
     return sites
 
 
-def vocabulary(tree):
-    """The check's imports, the names that it reads and never binds, every attribute name that
-    it uses, every attribute of a module that it imports whole, and each read of such a module
-    that is not the value of an attribute."""
-    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
-    whole = {(alias.asname or alias.name).split(".")[0]
-             for node in imports if isinstance(node, ast.Import) for alias in node.names}
-    bound = {alias.asname or alias.name.split(".")[0] for node in imports for alias in node.names}
+def code_form(source):
+    """The check's code in source as CODE_SHA256 holds it: source parsed, with each docstring
+    removed, which is the first statement of the module, of a function or of a class when that
+    statement is a string constant, and with the third item of each row of PARAGRAPHS made
+    PLACEHOLDER when that item is a constant of 64 lowercase hexadecimal digits, then unparsed.
+    Comments and layout are not in the syntax tree, so they are left out too."""
+    tree = ast.parse(source)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            bound.add(node.id)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bound.add(node.name)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            bound.add(node.name)
-    attributes = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute)]
-    held = {id(node.value) for node in attributes}
-    return {"imports": sorted(ast.unparse(node) for node in imports),
-            "built-in names": sorted({node.id for node in ast.walk(tree)
-                                      if isinstance(node, ast.Name)} - bound),
-            "attributes": sorted({node.attr for node in attributes}),
-            "module attributes": sorted({ast.unparse(node) for node in attributes
-                                         if is_name(node.value, *whole)}),
-            "bare module reads": sorted(ast.unparse(node) for node in ast.walk(tree)
-                                        if is_name(node, *whole) and id(node) not in held)}
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            first = node.body[0] if node.body else None
+            if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                    and isinstance(first.value.value, str)):
+                node.body = node.body[1:] or [ast.Pass()]
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and is_name(node.targets[0], "PARAGRAPHS") and isinstance(node.value, ast.List)):
+            for row in node.value.elts:
+                if (isinstance(row, ast.Tuple) and len(row.elts) == 3
+                        and isinstance(row.elts[2], ast.Constant)
+                        and isinstance(row.elts[2].value, str)
+                        and re.fullmatch(r"[0-9a-f]{64}", row.elts[2].value)):
+                    row.elts[2] = ast.Constant(PLACEHOLDER)
+    return ast.unparse(tree)
 
 
-def bound_names(function):
-    """Each name that function binds: a parameter, an assignment or loop target, a name in a
-    with item, an except clause or a global, nonlocal or del statement."""
-    names = set()
-    for node in ast.walk(function):
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            names.add(node.id)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            names.update(node.names)
-    return names
-
-
-def bindings(function, name):
-    """The forms that bind name in function, in source order: "parameter", an assignment, or the
-    header of a for loop or a comprehension."""
-    def binds(target):
-        return any(is_name(node, name) for node in ast.walk(target))
-    found = []
-    for node in ast.walk(function):
-        if isinstance(node, ast.arg) and node.arg == name:
-            found.append((position(node), "parameter"))
-        elif isinstance(node, ast.Assign) and any(binds(target) for target in node.targets):
-            found.append((position(node), ast.unparse(node)))
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)) and binds(node.target):
-            found.append((position(node), ast.unparse(node)))
-        elif isinstance(node, (ast.For, ast.AsyncFor)) and binds(node.target):
-            found.append((position(node), ast.unparse(node).split("\n")[0].rstrip(":")))
-        elif isinstance(node, ast.comprehension) and binds(node.target):
-            found.append((position(node.target), ast.unparse(node).strip()))
-        elif isinstance(node, ast.withitem) and node.optional_vars and binds(node.optional_vars):
-            found.append((position(node.optional_vars), ast.unparse(node)))
-        elif isinstance(node, ast.ExceptHandler) and node.name == name:
-            found.append((position(node), "except " + name))
-        elif isinstance(node, (ast.Global, ast.Nonlocal, ast.Delete)) and (
-                name in getattr(node, "names", ()) or any(binds(target) for target in
-                                                          getattr(node, "targets", ()))):
-            found.append((position(node), ast.unparse(node)))
-    return [form for _, form in sorted(found)]
-
-
-def calls_of(function, callee):
-    """The calls of callee in function, in source order."""
-    return [ast.unparse(node) for node in sorted(
-        (node for node in ast.walk(function) if isinstance(node, ast.Call)
-         and ast.unparse(node.func) == callee), key=position)]
+def code_digest(source):
+    """The sha256 of code_form() of source."""
+    return hashlib.sha256(code_form(source).encode("utf-8")).hexdigest()
 
 
 def references(tree):
@@ -2251,32 +2118,46 @@ class Verdicts(unittest.TestCase):
                 os.close(folder)
 
     def test_every_site_has_a_driver(self):
-        # The check's source, parsed, gives 5 sets of sites, and each must equal its registry in
-        # this test, so a site that has no registered driver, or an entry that the check no longer
-        # has, fails here by name. Each entry names a domain of DOMAINS and a case of this class
-        # whose code reaches that domain and runs the check, through launch() or by calling its
-        # findings, so this case, which runs no check, drives no site. The structural pins below
-        # hold the forms that the cases cannot try value by value: each count is len() of a bare
-        # name, each name of each function is bound only as BINDINGS gives, so each line number
-        # and line range comes from enumerate() alone, outcome's 1 handler covers its whole read,
-        # each route names the reads that its branch gives, each regular expression is as
-        # PATTERN_SITES gives, the check's words are as IMPORTS, BUILT_IN_NAMES, ATTRIBUTES and
-        # MODULE_ATTRIBUTES give, and the only sink is os.write(1, data).
-        tree = ast.parse(CHECK.read_bytes(), str(CHECK))
+        # The case compares the check's code, without its docstrings and the sha256 values of
+        # PARAGRAPHS, with CODE_SHA256, so a change to that code fails until the digest is
+        # updated; the update in the diff is the reviewer's cue to check the registries. Each of
+        # MUTATIONS must change that digest and each of PRESERVED must keep it, so a code_form()
+        # that hides too much or too little fails. Each registry equals the sites of the forms
+        # that its extractor lists; a site of another form is caught by the code digest, not by a
+        # registry. A driver's code names its domain constant and launch() or findings(); this
+        # does not show that it runs them, or that it would fail on a change at its site.
+        source = CHECK.read_text(encoding="utf-8")
+        first = re.search(r"\"([0-9a-f]{64})\"", source).group(1)
+        now = code_digest(source)
+        for edits, kept in ((MUTATIONS, True), (PRESERVED, False)):
+            for name, old, new in edits:
+                old, new = old.replace(FIRST_DIGEST, first), new.replace(FIRST_DIGEST, first)
+                with self.subTest(edit=name):
+                    self.assertEqual(source.count(old), 1,
+                                     "expected 1 {!r} in {}".format(old, CHECK))
+                    self.assertEqual(code_digest(source.replace(old, new)) != now, kept,
+                                     "expected code_form() to {} its sha256 for {}".format(
+                                         "change" if kept else "keep", name))
+        with self.subTest(pin="CODE_SHA256"):
+            self.assertEqual(now, CODE_SHA256,
+                             "the check's code has changed: its code_form() sha256 is now {}; once"
+                             " the registries below hold its sites, replace the line 'CODE_SHA256 ="
+                             " \"{}\"' of tools/test-check-flow-mode.py with 'CODE_SHA256 = \"{}\"'"
+                             .format(now, CODE_SHA256, now))
+        tree = ast.parse(source, str(CHECK))
         own = ast.parse(Path(__file__).read_bytes(), __file__)
         graph = references(own)
         cases = {node.name: node for statement in own.body
                  if isinstance(statement, ast.ClassDef) and statement.name == "Verdicts"
                  for node in statement.body if isinstance(node, ast.FunctionDef)}
 
-        def runs_the_check(case):
+        def names_a_runner(case):
             return any(reaches(graph, "Verdicts." + case, runner) for runner in ("launch", IN_PROCESS))
 
         registries = [("white space", white_space_sites, WHITE_SPACE_SITES, None),
                       ("report", report_sites, REPORT_SITES, "OUTPUT_KINDS"),
                       ("number", number_sites, NUMBER_SITES, None),
-                      ("read route", route_sites, ROUTE_SITES, "READS"),
-                      ("output sink", sink_sites, SINK_SITES, None)]
+                      ("read route", route_sites, ROUTE_SITES, "READS")]
         for what, extract, registry, domain in registries:
             with self.subTest(sites=what):
                 found = extract(tree)
@@ -2294,68 +2175,30 @@ class Verdicts(unittest.TestCase):
                     self.assertTrue(reaches(graph, "Verdicts." + case, named),
                                     "{}, the driver of {}, does not reach {}".format(
                                         case, site, named))
-                    self.assertTrue(runs_the_check(case),
-                                    "{}, the driver of {}, runs no check".format(case, site))
+                    self.assertTrue(names_a_runner(case),
+                                    "{}, the driver of {}, names neither launch() nor the check's"
+                                    " findings".format(case, site))
         self.assertEqual(sorted(kind for kind, _ in REPORT_SITES.values() if kind != EACH_FINDING),
                          sorted(OUTPUT_KINDS))
         self.assertEqual(sorted({read for reads, _ in ROUTE_SITES.values() for read in reads}),
                          sorted(READS))
-        # Each route's driver names each read of the route as an item of READS, and no other
-        # string of this test, outside READS and ROUTE_SITES, names a read.
+        # Each route's reads are those that its branch of outcome's try gives, and its driver
+        # names each of them as an item of READS.
+        self.assertEqual(route_reads(tree), {site: reads for site, (reads, _) in ROUTE_SITES.items()})
         for site, (reads, case) in sorted(ROUTE_SITES.items()):
             with self.subTest(route=site):
                 indexes = {part.slice.value for part in ast.walk(cases[case])
                            if isinstance(part, ast.Subscript) and is_name(part.value, "READS")
                            and isinstance(part.slice, ast.Constant)}
                 self.assertLessEqual({READS.index(read) for read in reads}, indexes, case)
-        self.assertEqual([ast.unparse(part) for statement in own.body
-                          if not (isinstance(statement, ast.Assign) and any(
-                              is_name(target, "READS", "ROUTE_SITES") for target in statement.targets))
-                          for part in ast.walk(statement)
-                          if isinstance(part, ast.Constant) and part.value in READS], [])
         with self.subTest(sites="regular expression"):
-            self.assertEqual(pattern_sites(tree),
-                             {name: [pattern] for name, (pattern, _) in PATTERN_SITES.items()})
-            for name, (_, case) in sorted(PATTERN_SITES.items()):
+            self.assertEqual(sorted(pattern_sites(tree)), sorted(PATTERN_SITES))
+            for name, case in sorted(PATTERN_SITES.items()):
                 self.assertTrue(callable(getattr(Verdicts, case, None)),
                                 "{} names no case {}".format(name, case))
-                self.assertTrue(runs_the_check(case), "{}, the driver of {}, runs no check".format(
-                    case, name))
-        with self.subTest(sites="words"):
-            self.assertEqual(vocabulary(tree), {
-                "imports": sorted(IMPORTS), "built-in names": BUILT_IN_NAMES,
-                "attributes": ATTRIBUTES, "module attributes": MODULE_ATTRIBUTES,
-                "bare module reads": []})
-        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
-        for _, _, form in NUMBER_SITES:
-            if form.startswith("len("):
-                self.assertRegex(form, r"^len\([A-Za-z_][A-Za-z_0-9]*\)$")
-        self.assertEqual(sorted((scope, name) for scope, function in functions.items()
-                                for name in bound_names(function)), sorted(BINDINGS))
-        for (scope, name), forms in BINDINGS.items():
-            with self.subTest(binding=name, function=scope):
-                self.assertEqual(bindings(functions[scope], name), forms)
-        for (scope, callee), forms in CALLS.items():
-            with self.subTest(call=callee, function=scope):
-                self.assertEqual(calls_of(functions[scope], callee), forms)
-        for scope, forms in RETURNS.items():
-            with self.subTest(returns=scope):
-                self.assertEqual([ast.unparse(node) for node in sorted(
-                    (node for node in ast.walk(functions[scope]) if isinstance(node, ast.Return)),
-                    key=position)], forms)
-        tries = {scope: [node for node in nodes_of(nodes) if isinstance(node, (ast.Try, ast.TryStar))]
-                 for scope, nodes in scopes(tree)}
-        self.assertEqual(sorted(scope for scope, found in tries.items() if found), ["outcome", "write"])
-        self.assertEqual(len(tries["outcome"]), 1)
-        attempt = tries["outcome"][0]
-        self.assertEqual([type(node).__name__ for node in attempt.body], ["If"])
-        self.assertEqual(ast.unparse(attempt.body[0].test), READ_BRANCH)
-        self.assertEqual(route_reads(tree), {site: reads for site, (reads, _) in ROUTE_SITES.items()})
-        self.assertEqual((attempt.orelse, attempt.finalbody), ([], []))
-        self.assertEqual(len(attempt.handlers), 1)
-        self.assertEqual(ast.unparse(attempt.handlers[0].type), HANDLER)
-        self.assertEqual([ast.unparse(node) for node in attempt.handlers[0].body], HANDLER_BODY)
-        self.assertEqual(sink_sites(tree), {("write", 1, "os.write(1, data)")})
+                self.assertTrue(names_a_runner(case),
+                                "{}, the driver of {}, names neither launch() nor the check's"
+                                " findings".format(case, name))
 
 
 class Residual(unittest.TestCase):
@@ -2389,6 +2232,16 @@ class Residual(unittest.TestCase):
     def test_an_indented_mode_line_is_not_counted(self):
         status, output = verdict(added("  - MODE (supervised) is a nested bullet."))
         self.assertEqual(status, 0, output)
+
+    def test_a_line_that_starts_with_part_of_the_mode_prefix_is_not_counted(self):
+        # A MODE line is a line whose first characters are "- MODE (", so a line that starts with
+        # each shorter part of those characters, followed by another character, is no MODE line.
+        prefix = "- MODE ("
+        for size in range(1, len(prefix)):
+            line = prefix[:size] + "x supervised is a note."
+            with self.subTest(line=line):
+                status, output = verdict(added(line))
+                self.assertEqual(status, 0, output)
 
     def test_the_absent_rule_inside_a_rejecting_quotation_passes(self):
         status, output = verdict(changed(
