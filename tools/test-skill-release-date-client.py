@@ -488,7 +488,17 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual(caught.exception.reason, f"wrote stdout up to the output cap of {cap} bytes")
 
     def test_a_child_that_does_not_end_is_killed_with_its_group(self):
+        # The child forks a sleeper into its group, writes the sleeper's pid
+        # and then its ready file, and both sleep past the timeout. The 1
+        # second timeout starts only once the ready file exists, polled for at
+        # most 60 seconds, so a busy host cannot fire it before the pid file
+        # is written; the bound is measured from then. The wait the client
+        # then makes, its group kill and its reap are the real ones.
+        real_wait = client.wait_child
+        seen = set()
+        ready_at = []
         with tempfile.TemporaryDirectory() as tmp:
+            ready = Path(tmp) / "ready"
             tool = self.stub(tmp, (
                 "import os, time\n"
                 "pid = os.fork()\n"
@@ -496,12 +506,25 @@ class BoundsTest(unittest.TestCase):
                 "    time.sleep(60)\n"
                 "    os._exit(0)\n"
                 "open('sleeper.pid', 'w').write(str(pid))\n"
+                "open('ready', 'w').write('ready')\n"
                 "time.sleep(60)\n"
             ))
-            started = time.monotonic()
-            with self.assertRaises(client.Unavailable) as caught:
-                client.run_extractor("baseline", {}, timeout=1, tool=tool)
-            self.assertLess(time.monotonic() - started, 15)
+
+            def wait_when_ready(proc, timeout):
+                if proc.pid not in seen:
+                    seen.add(proc.pid)
+                    deadline = time.monotonic() + 60
+                    while not ready.exists() and time.monotonic() < deadline:
+                        if real_wait(proc, 0.05):
+                            return True
+                    ready_at.append(time.monotonic())
+                return real_wait(proc, timeout)
+
+            with mock.patch.object(client, "wait_child", wait_when_ready):
+                with self.assertRaises(client.Unavailable) as caught:
+                    client.run_extractor("baseline", {}, timeout=1, tool=tool)
+            self.assertTrue(ready.exists(), "the child did not get ready")
+            self.assertLess(time.monotonic() - ready_at[0], 15)
             self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
             sleeper = int((Path(tmp) / "sleeper.pid").read_text())
             deadline = time.monotonic() + 10
