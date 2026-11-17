@@ -59,18 +59,25 @@ ends passes. Each of 3 texts gives its whole expected output, every report line 
 its counts and line numbers, and the count of findings, on standard input, through a path and
 through the default path, which a copy of the check with only its DEFAULT line rewritten reads
 when it runs with no argument, as CI runs the check; each report line names the text read, "-"
-on standard input and the file's path through a path and through the default path. Between them
-the 3 texts give every kind of report line of the check's findings: the committed flow.md with
-every test failed at once, by a word appended to each pinned paragraph, a third value on the
-MODE line, a bare "attended" added and the absent-record sentence removed, gives 10 reports;
-with the opening text of each pinned paragraph changed, its MODE line left unclosed and a second,
-unclosed MODE line added, it gives 10, 1 for each paragraph found 0 times, 1 for 2 MODE lines
-and 2 for a MODE line with no closing parenthesis; and with each pinned paragraph repeated and
-its MODE line renamed, it gives 8, 1 for each paragraph found 2 times and 1 for no MODE line. A
-report of a number found gives that number, whatever it is: with the MODE line written 2 to 9
-times, and each pinned paragraph written a different number of times from that number up, the
-check prints on standard input only the report of each number found and the count of 8
-findings. For each pinned paragraph, the report of a change names the paragraph and its line
+on standard input and the file's path through a path and through the default path. Each text is
+read as built and again after 99999 blank lines, so that each line number and line range that
+the check reports for it has 6 digits. Between them the 3 texts give every kind of report line
+of the check's findings: the committed flow.md with every test failed at once, by a word
+appended to each pinned paragraph, a third value on the MODE line, a bare "attended" added and
+the absent-record sentence removed, gives 10 reports; with the opening text of each pinned
+paragraph changed, its MODE line left unclosed and a second, unclosed MODE line with white space
+at its end added, it gives 10, 1 for each paragraph found 0 times, 1 for 2 MODE lines and 2 for
+a MODE line with no closing parenthesis, each giving the line without the white space at its
+ends; and with each pinned paragraph repeated and its MODE line renamed, it gives 8, 1 for each
+paragraph found 2 times and 1 for no MODE line. Each report of a number found gives that number
+on each of the 3 reads, which print the whole expected output: with the MODE line written each
+number of times from 2 to 11, and 99, 100, 101 and 1000 times, the opening text of each pinned
+paragraph starting a different number of paragraphs from that number up, so from 2 to 17, 99 to
+107 and 1000 to 1006, and as many lines that hold a bare "attended", each with white space at
+either end, as MODE lines put at the end, the check prints the report of each number found, the
+report of each bare "attended" with its line number and the line without that white space, and a
+count of findings from 10 to 19, 107 to 109 or 1008. For each pinned paragraph, the report of a
+change names the paragraph and its line
 range, gives its new sha256 and gives the 1-line update to PARAGRAPHS as the way to clear that
 report alone, and a copy of the check with that 1 line updated passes the changed text. For each
 pinned paragraph whose opening text is changed, the report is the line that the paragraph was
@@ -113,9 +120,12 @@ the other order, with a quoted "attended", with a quotation just after "attended
 in 'attended-autonomous"x"ly', with a longer word that holds "attended", with
 "Attended-Autonomous" in capital letters outside the MODE line, and with the absent-record
 sentence in its second wording, in capital letters, or wrapped across a line break. A path that
-does not exist gives exit status 1 and the report that it cannot be read, through a path and
+does not exist gives exit status 1 and as its whole output the 1 line that it cannot be read,
+which names the path and gives the error that Python gives for reading it, through a path and
 through the default path; text that is not UTF-8 gives the same on standard input, through a path
-and through the default path; and 2 arguments give exit status 1.
+and through the default path, with the error that Python gives for decoding it; and 2 or 3
+arguments, the path of flow.md or "-" among them, give exit status 1 and as the whole output the
+usage line.
 
 The residual cases hold the limits that the check's docstring states: outside the 7 pinned
 paragraphs, the line '- A third mode, supervised, is also read.' passes, and the line
@@ -194,6 +204,15 @@ MODE_COUNT = "expected 1 MODE line starting \"- MODE (\", found {}"
 SECOND_MODE = MODE_COUNT.format(2)
 NO_MODE = MODE_COUNT.format(0)
 UNREADABLE = "cannot be read: "
+# The whole output when more than 1 argument is given.
+USAGE = "usage: python3 -I tools/check-flow-mode.py [PATH]\n"
+ABSENT_ATTENDED = "- Absent = attended (conservative)."
+# The numbers of MODE lines that the case of each number found writes: each from 2 to 11, so that
+# the count runs from 1 digit to 2, and 99, 100, 101 and 1000, so that it runs to 3 and 4 digits.
+TIMES = list(range(2, 12)) + [99, 100, 101, 1000]
+# The numbers of blank lines put before each of the 3 texts of the case that compares the 3 reads:
+# none, and 99999, so that each line number and line range that the check reports has 6 digits.
+LEADS = [0, 99999]
 # The report line for a changed paragraph, written out here with the name of the text read, so
 # that a check whose report drops any part of it, names another file, or gives a 1-line update
 # that does not match its table, fails.
@@ -408,22 +427,30 @@ def failing_text():
     text = with_paragraphs(lambda p, o: p + " x")
     text = replaced(text, MODE_LINE, "- MODE (attended-autonomous | unattended | supervised)")
     text = replaced(text, ABSENT_WORDS, "reads the mode record")
-    return replaced(text, DECISIONS, "- Absent = attended (conservative).\n" + DECISIONS)
+    return replaced(text, DECISIONS, ABSENT_ATTENDED + "\n" + DECISIONS)
 
 
-def failing_texts():
+def output(lines):
+    """The whole output of a check that reports lines, each line ended by a line feed, and then
+    the line with the number of findings."""
+    return "".join(line + "\n" for line in lines + ["FAIL: {} finding(s)".format(len(lines))])
+
+
+def failing_texts(lead=0):
     """Texts that between them give every kind of report line that the check's findings give,
     each with a function that gives, for the name of the text read, the whole output that the
     check must print, in its order, each report line with its counts and line numbers and the last
     line with the number of findings: failing_text(); the committed flow.md with the opening text
     of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
-    added; and the committed flow.md with each pinned paragraph repeated and its MODE line renamed
-    so that none is left. Each sha256 is the one this test computes, so the expected output owes
-    nothing to the check."""
+    with white space at its end added, which the report of that line leaves out; and the committed
+    flow.md with each pinned paragraph repeated and its MODE line renamed so that none is left.
+    Each text starts with lead blank lines, which move each line number and line range that the
+    check reports for it down by lead. Each sha256 is the one this test computes, so the expected
+    output owes nothing to the check."""
     text = committed()
     pinned = {opening: own_digest(text[slice(*span(text, opening))]) for _, opening in NAMED}
-    failed = failing_text()
-    bare, bare_line = line_of(failed, "- Absent = attended (conservative).")
+    failed = "\n" * lead + failing_text()
+    bare, bare_line = line_of(failed, ABSENT_ATTENDED)
     changes = []
     for name, opening in NAMED:
         first, last = line_range(failed, opening)
@@ -431,14 +458,12 @@ def failing_texts():
         changes.append((first, last, name, now, pinned[opening], now))
     lost = with_paragraphs(lambda p, o: "x" + p[1:])
     lost = replaced(lost, MODE_LINE, MODE_LINE[:-1])
-    lost = replaced(lost, DECISIONS, "- MODE (supervised is a third mode.\n" + DECISIONS)
+    lost = "\n" * lead + replaced(lost, DECISIONS,
+                                  "- MODE (supervised is a third mode. \t\n" + DECISIONS)
     unclosed = sorted([line_of(lost, MODE_LINE[:-1]),
                        line_of(lost, "- MODE (supervised is a third mode.")])
     repeated = with_paragraphs(lambda p, o: p + "\n\n" + p)
-    repeated = replaced(repeated, MODE_LINE, MODE_LINE.replace("MODE", "Mode"))
-
-    def output(lines):
-        return "".join(line + "\n" for line in lines + ["FAIL: {} finding(s)".format(len(lines))])
+    repeated = "\n" * lead + replaced(repeated, MODE_LINE, MODE_LINE.replace("MODE", "Mode"))
 
     return [
         ("every test failed", failed, lambda source: output(
@@ -458,6 +483,43 @@ def failing_texts():
             + ["FAIL: {}: {}".format(source, NOT_ONCE.format(name, opening, 2))
                for name, opening in NAMED])),
     ]
+
+
+def counted_text(times):
+    """The committed flow.md with its MODE line written times times, the opening text of the
+    pinned paragraph in row r of NAMED starting times + r paragraphs, the copies at the end of
+    the file, and times lines that hold a bare "attended", each with white space at either end,
+    after them, with a function that gives, for the name of the text read, the whole output that
+    the check must print: the report of the number of MODE lines, the report of each bare
+    "attended" with its line number and the line without that white space, the report of the
+    number of paragraphs found for each pinned paragraph, and the count of times + 8 findings."""
+    counts = {opening: times + row for row, (_, opening) in enumerate(NAMED)}
+    text = replaced(committed(), DECISIONS,
+                    (MODE_LINE + " is repeated.\n") * (times - 1) + DECISIONS)
+    if not text.endswith("\n"):
+        raise AssertionError("expected {} to end with a line feed".format(FLOW))
+    copies = [opening + " is copied here."
+              for _, opening in NAMED for _ in range(counts[opening] - 1)]
+    text += "\n" + "\n\n".join(copies) + "\n\n" + ("\t " + ABSENT_ATTENDED + " \t\n") * times
+    lines = text.split("\n")
+    bare = [number for number, line in enumerate(lines, 1) if line.strip() == ABSENT_ATTENDED]
+    if len(bare) != times:
+        raise AssertionError("expected {} lines {!r}, found {}".format(
+            times, ABSENT_ATTENDED, len(bare)))
+    return text, lambda source: output(
+        ["FAIL: {}: {}".format(source, MODE_COUNT.format(times))]
+        + ["FAIL: {}:{}: {}: {}".format(source, number, BARE, ABSENT_ATTENDED) for number in bare]
+        + ["FAIL: {}: {}".format(source, NOT_ONCE.format(name, opening, counts[opening]))
+           for name, opening in NAMED])
+
+
+def read_error(read):
+    """The text of the error that read raises, as Python gives it."""
+    try:
+        read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return str(exc)
+    raise AssertionError("expected the read to fail")
 
 
 def other_characters(char):
@@ -741,45 +803,44 @@ class Verdicts(unittest.TestCase):
                         self.assertEqual(status, 0, output)
                         self.assertEqual(output, PASS.format(args[0]))
 
-    def test_every_test_fails_alike_on_standard_input_by_path_and_by_default(self):
+    def assert_fails_alike_on_each_read(self, flow, expected, **names):
         # CI runs the check with no argument, so no verdict may depend on how the check gets its
         # text. A copy of the check with only its DEFAULT line rewritten runs as a separate
         # process with no argument, as CI runs the check, and reads the changed copy of flow.md.
-        # The texts give between them every kind of report line that the check's findings give.
         # Each read must print the whole expected output, each report line naming the text read:
         # "-" on standard input, and the file's path through a path and through the default path.
-        for what, text, expected in failing_texts():
-            with self.subTest(text=what, read="standard input"):
-                status, output = verdict(text)
-                self.assertEqual(status, 1, output)
-                self.assertEqual(output, expected("-"))
-            with tempfile.TemporaryDirectory() as folder:
-                path = Path(folder) / "flow.md"
-                path.write_text(text, encoding="utf-8")
-                copy = default_copy(folder, path)
-                for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
-                    with self.subTest(text=what, read=read):
-                        status, output = run_check(args, check=check)
-                        self.assertEqual(status, 1, output)
-                        self.assertEqual(output, expected(str(path)))
+        with self.subTest(read="standard input", **names):
+            status, output = verdict(flow)
+            self.assertEqual(status, 1, output)
+            self.assertEqual(output, expected("-"))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "flow.md"
+            path.write_text(flow, encoding="utf-8")
+            copy = default_copy(folder, path)
+            for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                with self.subTest(read=read, **names):
+                    status, output = run_check(args, check=check)
+                    self.assertEqual(status, 1, output)
+                    self.assertEqual(output, expected(str(path)))
+
+    def test_every_test_fails_alike_on_standard_input_by_path_and_by_default(self):
+        # The texts give between them every kind of report line that the check's findings give,
+        # each as built and again after 99999 blank lines, so that each line number and line
+        # range that the check reports for it has 6 digits.
+        for lead in LEADS:
+            for what, text, expected in failing_texts(lead):
+                self.assert_fails_alike_on_each_read(text, expected, text=what, lead=lead)
 
     def test_each_report_of_a_number_found_gives_that_number(self):
         # A report that the MODE line or a pinned paragraph is not found once gives the number
-        # found, whatever it is. Here the MODE line is written 2 to 9 times, and in each text
-        # every pinned paragraph is written a different number of times, from that number up.
-        for times in range(2, 10):
-            counts = {opening: times + row for row, (_, opening) in enumerate(NAMED)}
-            text = with_paragraphs(lambda p, o, c=counts: "\n\n".join([p] * c[o]))
-            text = replaced(text, DECISIONS,
-                            (MODE_LINE + " is repeated.\n") * (times - 1) + DECISIONS)
-            expected = (["FAIL: -: " + MODE_COUNT.format(times)]
-                        + ["FAIL: -: " + NOT_ONCE.format(name, opening, counts[opening])
-                           for name, opening in NAMED]
-                        + ["FAIL: 8 finding(s)"])
-            with self.subTest(times=times):
-                status, output = verdict(text)
-                self.assertEqual(status, 1, output)
-                self.assertEqual(output, "".join(line + "\n" for line in expected))
+        # found, on each read. Here the MODE line is written each number of times in TIMES, and
+        # in each text the opening text of every pinned paragraph starts a different number of
+        # paragraphs, from that number up; the lines that hold a bare "attended", as many as the
+        # MODE lines, make the count of findings that number and 8, and come after the copies, so
+        # that their line numbers run to 5 digits.
+        for times in TIMES:
+            text, expected = counted_text(times)
+            self.assert_fails_alike_on_each_read(text, expected, times=times)
 
     def test_each_report_of_a_change_gives_the_1_line_update(self):
         table = {name: pinned for name, _, pinned in check_module().PARAGRAPHS}
@@ -1074,26 +1135,31 @@ class Verdicts(unittest.TestCase):
     def test_the_absent_rule_wrapped_across_a_line_break_passes(self):
         self.assert_passes(changed(ABSENT_WORDS, "reads an absent mode\n  record as unattended"))
 
-    def assert_unreadable(self, status, output, source, reason):
+    def assert_unreadable(self, status, output, source, error, reason):
+        # The whole output is 1 line, which names the text read and gives the error that Python
+        # gives for the failed read, an error that this test gets by its own read and that must
+        # hold reason.
         self.assertEqual(status, 1, output)
-        self.assertEqual(len(output.splitlines()), 1, output)
-        self.assertTrue(output.startswith("FAIL: {} {}".format(source, UNREADABLE)), output)
-        self.assertIn(reason, output)
+        self.assertIn(reason, error)
+        self.assertEqual(output, "FAIL: {} {}{}\n".format(source, UNREADABLE, error))
 
     def test_a_path_that_does_not_exist_fails(self):
         # A missing file fails alike through a path and through the default path, as CI reads it.
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "missing.md"
             copy = default_copy(folder, path)
+            error = read_error(path.read_bytes)
             for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
                 with self.subTest(read=read):
                     status, output = run_check(args, check=check)
-                    self.assert_unreadable(status, output, path, "[Errno {}]".format(errno.ENOENT))
+                    self.assert_unreadable(status, output, path, error,
+                                           "[Errno {}]".format(errno.ENOENT))
 
     def test_text_that_is_not_utf8_fails(self):
         # Text that is not UTF-8 fails alike on standard input, through a path and through the
         # default path, as CI reads it.
         data = committed().encode("utf-8") + b"\xff\n"
+        error = read_error(lambda: data.decode("utf-8"))
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "flow.md"
             path.write_bytes(data)
@@ -1104,11 +1170,15 @@ class Verdicts(unittest.TestCase):
                     ("default path", [], b"", copy, path)):
                 with self.subTest(read=read):
                     status, output = run_check(args, given, check)
-                    self.assert_unreadable(status, output, source, "can't decode byte 0xff")
+                    self.assert_unreadable(status, output, source, error, "can't decode byte 0xff")
 
-    def test_two_arguments_fail(self):
-        status, output = run_check([str(FLOW), str(FLOW)])
-        self.assert_status_one(status, output, "usage:")
+    def test_more_than_1_argument_fails(self):
+        # The whole output is the usage line, whatever the arguments name.
+        for args in ([str(FLOW), str(FLOW)], ["-", "-"], [str(FLOW), "-", str(FLOW)]):
+            with self.subTest(args=args):
+                status, output = run_check(args, FLOW.read_bytes())
+                self.assertEqual(status, 1, output)
+                self.assertEqual(output, USAGE)
 
 
 class Residual(unittest.TestCase):
