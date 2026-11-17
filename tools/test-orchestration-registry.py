@@ -1813,12 +1813,9 @@ BARRIER_MODES = {0o666, 0o600, 0o644}
 # A symbolic mode as chmod takes it: 1 or more clauses, joined by commas, each of 1 or more of u, g, o
 # and a, then =, + or -, then the permissions that the clause sets, adds or takes away.
 SYMBOLIC_MODE = re.compile(r"(?<![\w=+,-])[ugoa]+[=+-][rwxXst]*(?:,[ugoa]+[=+-][rwxXst]*)*(?![\w=+,-])")
-# Words of a statement about a file's mode or who can read it, in each of their forms (mode, umask, ACL,
-# permission, chmod and read, with read as reads, reading, reader, readable, unreadable and reread),
-# and an octal mode of 3 digits in any of the spellings of BARRIER_MODE_TOKEN.
-MODE_WORDS = re.compile(r"(?i)\b(?:modes?|umasks?|acls?|permissions?|chmod(?:s|d?ed|d?ing)?"
-                        r"|(?:un|re-?)?read(?:s|ing|ers?|able|ability)?)\b"
-                        r"|(?<![0-9A-Za-z])(?:0o)?(?:10)?0*[0-7]{3}(?![0-9])")
+# A sentence names the barrier when it holds "barrier" in any letter case, alone or inside a longer
+# word or name such as `resume-barrier.json` or `orch_resume_barrier`.
+BARRIER_WORD = re.compile(r"(?i)barrier")
 
 
 def symbolic_modes(sentence):
@@ -1850,13 +1847,12 @@ def symbolic_modes(sentence):
 
 
 def barrier_mode_sentences(text):
-    """The sentences of text, split after each '.', '!' or '?' that whitespace follows, that state the
-    barrier's mode or who can read it: each sentence that names the barrier and holds a word or mode
-    of MODE_WORDS or a symbolic mode, and each sentence that holds a mode of BARRIER_MODE_TOKEN or a
-    symbolic mode that gives one of BARRIER_MODES, in order."""
+    """The sentences of text, split after each '.', '!' or '?' that whitespace follows, that name the
+    barrier (BARRIER_WORD) or give a mode of BARRIER_MODES, in order: each sentence that holds
+    BARRIER_WORD, whatever else it says, and each other sentence that holds a mode of
+    BARRIER_MODE_TOKEN or a symbolic mode that gives one of BARRIER_MODES."""
     return [sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
-            if (re.search(r"(?i)barrier", sentence)
-                and (MODE_WORDS.search(sentence) or SYMBOLIC_MODE.search(sentence)))
+            if BARRIER_WORD.search(sentence)
             or BARRIER_MODE_TOKEN.search(sentence) or BARRIER_MODES & set(symbolic_modes(sentence))]
 
 
@@ -1900,17 +1896,15 @@ class ConfigDisclosure(unittest.TestCase):
         # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so. A default
         # ACL on the folder overrides the umask for a new file (the stage 2 run under a TMPDIR whose
         # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone.
-        # Every sentence of the config that names the barrier and speaks of a mode, the umask, an ACL,
-        # permissions, chmod or reading, in any form of those words (reads, reading, readable and the
-        # others of MODE_WORDS), or gives a mode in octal or symbolic form, and every sentence that
-        # gives 0666, 0600 or 0644 in any octal spelling (any number of leading zeros, after 0o or 0O
-        # or not, with the type bits 100 or not), as rw-rw-rw-, rw------- or rw-r--r--, or as a
-        # symbolic mode that sets every bit (such as u=rw,go=r) (barrier_mode_sentences), must be 1 of
-        # the 4 whole sentences below, in that order: the 3 that state the barrier mode, so the config
-        # gives 0644 only for a folder without such an ACL, and the 1 that says that the resume audit
-        # reads the registry, which names the barrier and speaks of reading but states no barrier mode.
-        # Beyond this check: a sentence that names neither the barrier nor one of those modes, such as
-        # one that states the mode in decimal (420) or by a symbolic mode that leaves a bit unknown.
+        # Every sentence of the config that holds the word barrier (BARRIER_WORD), whatever its verb,
+        # and every other sentence that gives 0666, 0600 or 0644 in a spelling of BARRIER_MODE_TOKEN or
+        # as a symbolic mode that gives one of them (such as u=rw,go=r) (barrier_mode_sentences), must
+        # be 1 of the 4 whole sentences below, in that order: the 3 that state the barrier mode, so the
+        # config gives 0644 only for a folder without such an ACL, and the 1 that says that the resume
+        # audit reads the registry, which names the barrier but states no barrier mode. Beyond this
+        # check: a sentence that refers to the barrier without that word (by a pronoun or a synonym)
+        # and gives none of those modes in those spellings, such as one that states the mode in
+        # decimal (420) or by a symbolic mode that leaves a bit unknown.
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         phrases = ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
                    "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
@@ -1934,8 +1928,9 @@ class ConfigDisclosure(unittest.TestCase):
             "The writer, `_orch_barrier_write`, is the pack's and is not edited here; " + phrases[2] + "."]
         self.assertEqual(barrier_mode_sentences(text), sentences,
                          "a barrier mode stated outside the conditioned sentences")
-        # The check refuses a stated barrier mode of each kind: each octal spelling, each symbolic form
-        # and each form of the words.
+        # The check refuses each of these added sentences: a stated barrier mode in each octal
+        # spelling and each symbolic form, sentences with the words of a mode or of reading, and a
+        # sentence that names the barrier with none of those words.
         for added in ("A barrier is 0644 after every audit.", "A barrier is 644 after every audit.",
                       "A barrier is 0o644 after every audit.", "The barrier ends as rw-r--r--.",
                       "Every audit leaves the barrier readable by every user, whatever the ACL.",
@@ -1947,7 +1942,8 @@ class ConfigDisclosure(unittest.TestCase):
                       "Every audit leaves it u=rw,go-rwx.", "Each audit gives the barrier o+r.",
                       "Every user reads the barrier after each audit.",
                       "Any process can be reading the barrier after an audit.",
-                      "Every user is a reader of the barrier.", "The barrier is chmodded after an audit."):
+                      "Every user is a reader of the barrier.", "The barrier is chmodded after an audit.",
+                      "Any user can open the barrier after an audit."):
             with self.subTest(added=added):
                 self.assertEqual(len(barrier_mode_sentences(text + " " + added)), 5)
 
