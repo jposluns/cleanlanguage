@@ -1929,8 +1929,9 @@ class ConfigDisclosure(unittest.TestCase):
         self.assertEqual(barrier_mode_sentences(text), sentences,
                          "a barrier mode stated outside the conditioned sentences")
         # The check refuses each of these added sentences: a stated barrier mode in each octal
-        # spelling and each symbolic form, sentences with the words of a mode or of reading, and a
-        # sentence that names the barrier with none of those words.
+        # spelling and each symbolic form, sentences with the words of a mode or of reading, a
+        # sentence that names the barrier with none of those words, and sentences that hold barrier
+        # only inside a longer word or name, with no mode.
         for added in ("A barrier is 0644 after every audit.", "A barrier is 644 after every audit.",
                       "A barrier is 0o644 after every audit.", "The barrier ends as rw-r--r--.",
                       "Every audit leaves the barrier readable by every user, whatever the ACL.",
@@ -1943,7 +1944,10 @@ class ConfigDisclosure(unittest.TestCase):
                       "Every user reads the barrier after each audit.",
                       "Any process can be reading the barrier after an audit.",
                       "Every user is a reader of the barrier.", "The barrier is chmodded after an audit.",
-                      "Any user can open the barrier after an audit."):
+                      "Any user can open the barrier after an audit.",
+                      "`orch_resume_barrier` leaves the file world-readable.",
+                      "Both barriers are world-readable after an audit.",
+                      "A ResumeBarrier file is world-readable."):
             with self.subTest(added=added):
                 self.assertEqual(len(barrier_mode_sentences(text + " " + added)), 5)
 

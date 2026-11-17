@@ -67,12 +67,19 @@ in at least 1 reach case of its site. OPEN_ACCOUNTS gives the exact text of each
 that is not a blocking open, and a claim for each hook line or range it cites; the probe requires
 the doctor's texts to equal those texts, each text to cite exactly the ranges of its claims, and
 each claim to hold at source, and DoctorOpenAccountHolders fails when a word of that account appears
-in the doctor outside the tables that word it. Every doctor run in this file goes through 1
-recorder, run_doctor_recorded. A cleanup fails a case in which a run printed a pre-check refusal that
-assert_refusal did not check as a whole line, the label of the path included (PRECHECK_LABELS in the
-reach cases), and DoctorRefusalCoverage holds each subprocess.run of this file that names the doctor,
-or a copy of it, to that recorder. A partial check beside assert_refusal is not refused, but it cannot
-replace assert_refusal. A secondary source probe flags a string literal of this file that holds a part
+in a string or comment of the doctor outside the tables that word it, also where a line break, a
+concatenation or an escape splits it; a phrase that the doctor assembles at run time from separate
+strings or names is not found. Every doctor run in this file goes through 1 recorder,
+run_doctor_recorded: DoctorRefusalCoverage holds every process launch that the syntax tree of this file
+shows by a module or name that it lists (subprocess, os, runpy, importlib, exec and others) to that
+recorder or to the reviewed table LAUNCHES, none of which may name the doctor, a copy of it or a
+program that loads it; it does not see a launch through a module that it does not list or through a
+name looked up at run time from text, nor the doctor's path passed into a listed launch through a
+parameter, a file or the environment. A cleanup fails a case in which a run printed a pre-check refusal
+that assert_refusal did not check as a whole line, the label of the path included (PRECHECK_LABELS in
+the reach cases), or a barrier refusal of the resume audit that assert_barrier_refusal did not check as
+a whole line. A partial check beside those helpers is not refused, but it cannot replace them. A
+secondary source probe flags a string literal of this file that holds a part
 of such a refusal outside assert_refusal, the arguments that name the path in a call of it, and the
 tables that word the refusal: a piece of the literal that lines up with a stretch of the refusal line,
 the label included, and touches 2 or more of its words, a stretch of 4 or more of its whole words, or
@@ -146,6 +153,9 @@ REPO_ROOT = HERE.parent
 HOOK = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "scripts" / "aiqt_hooks.py"
 DOCTOR = HERE / "orch_doctor.py"
 ZERO64 = "0" * 64
+# The whole line that a preview out of scope or out of the roster prints for what it wrote and ran
+# (tools/orch_doctor.py, _preflight).
+NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator was not run"
 
 # The fixture enumerator: argv[1] is a JSON file holding the items list. It prints one AEI v1 envelope
 # that validate_enumeration accepts (aiqt_hooks.py:22754-22812) and exits 0.
@@ -1604,6 +1614,7 @@ class Doctor(Stage2Harness):
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertIn("scope: not live", r.stdout)
                 self.assertIn("enumeration: not run", r.stdout)
+                self.assertIn(NOT_RUN_WRITES, r.stdout.split("\n"))
                 self.assertIn("effective verdict: ALLOW", r.stdout)
                 self.assertFalse(marker.exists(), "an out-of-scope preflight ran the enumerator")
 
@@ -1621,6 +1632,7 @@ class Doctor(Stage2Harness):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("tool ScheduleWakeup: not in the roster", r.stdout)
         self.assertIn("enumeration: not run", r.stdout)
+        self.assertIn(NOT_RUN_WRITES, r.stdout.split("\n"))
         self.assertIn("effective verdict: ALLOW", r.stdout)
         self.assertFalse(marker.exists(), "an out-of-roster preflight ran the enumerator")
 
@@ -1961,9 +1973,7 @@ class Doctor(Stage2Harness):
     def _assert_barrier_refused(self, kind):
         r = self._audit_bounded()
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("barrier: cannot be recorded before the audit", r.stdout)
-        self.assertIn("{} is not a regular file (it is a {})".format(
-            self.state_dir() / "resume-barrier.json", kind), r.stdout)
+        assert_barrier_refusal(self, r.stdout, self.state_dir() / "resume-barrier.json", kind)
         return r
 
     def _barrier_path(self):
@@ -2311,36 +2321,165 @@ def assert_refusal(case, stdout, site, label, path, made):
     refusal_outputs(case)[1].append(stdout)
 
 
-# Every run of the doctor in this file, or of a copy of it or of a program that loads it, goes through
-# run_doctor_recorded (DoctorRefusalCoverage holds the file to that). A run whose output has a line that
-# starts with REFUSAL_PREFIX, a pre-check refusal (the only print of such a line is _refuse_special in
-# tools/orch_doctor.py), is registered with its case, and assert_refusal marks the output that it checks
-# as a whole line. A cleanup then fails the case for each registered output that assert_refusal did not
-# mark, whatever else the case checked in it. A partial check beside assert_refusal is not refused, but
-# it cannot replace assert_refusal. The barrier refusal that _assert_barrier_refused checks is printed
-# as "barrier: cannot be recorded before the audit ...", with no line that starts with REFUSAL_PREFIX,
-# so it is not registered.
+def assert_barrier_refusal(case, stdout, path, made):
+    """Assert that stdout holds the resume audit's whole refusal of a barrier at path that is not a
+    regular file, of type made, as 1 line: exactly BARRIER_REFUSAL_PREFIX, then "<path> (<path> is not a
+    regular file (it is a <made>)); a rewrite could not be confirmed, so the audit is not run", the line
+    that _resume_audit in tools/orch_doctor.py prints. Once the line holds, stdout is marked as checked,
+    as assert_refusal marks it."""
+    line = ("{}{} ({} is not a regular file (it is a {})); a rewrite could not be confirmed, so the audit "
+            "is not run".format(BARRIER_REFUSAL_PREFIX, path, path, made))
+    lines = [found for found in stdout.split("\n") if found.startswith(BARRIER_REFUSAL_PREFIX)]
+    case.assertEqual(lines, [line], "no single whole barrier refusal of {} in {!r}".format(path, stdout))
+    refusal_outputs(case)[1].append(stdout)
+
+
+# Every launch of a process that the syntax tree of this file shows (process_launches) is the 1 launch of
+# run_doctor_recorded, RECORDER_LAUNCH, or 1 of LAUNCHES, the reviewed launches of this file, none of which
+# may name the doctor, a copy of it or a program that loads it (DoctorRefusalCoverage holds the file to
+# that), so every doctor run of this file goes through run_doctor_recorded. A run whose output has a line
+# that starts with REFUSAL_PREFIX, a pre-check refusal (the only print of such a line is _refuse_special
+# in tools/orch_doctor.py), or with BARRIER_REFUSAL_PREFIX, the resume audit's refusal of a barrier that
+# it cannot record (the only print of such a line is in _resume_audit), is registered with its case.
+# assert_refusal and assert_barrier_refusal mark the output that they check as a whole line. A cleanup
+# then fails the case for each registered output that neither marked, whatever else the case checked in
+# it. A partial check beside those helpers is not refused, but it cannot replace them. The routing check
+# reads the syntax tree only: it does not see a launch through a module that LAUNCH_MODULES does not
+# list or through a name looked up at run time from text (such as getattr(sys, name)), and it does not
+# follow the doctor's path into a listed launch through a function parameter, a file or the environment.
 REFUSAL_PREFIX = "cannot evaluate: "
+BARRIER_REFUSAL_PREFIX = "barrier: cannot be recorded before the audit at "
 DOCTOR_RECORDER = "run_doctor_recorded"
-# The calls that return a path built from their argument, which doctor_runs_outside_recorder follows.
-PATH_CALLS = {"str", "Path", "fspath", "fsdecode", "join", "abspath", "realpath", "resolve", "copy",
-              "copyfile", "copy2"}
+RECORDER_LAUNCH = "subprocess.run(argv, **kwargs)"
+# The process launches of this file other than RECORDER_LAUNCH, each (enclosing class and function, the
+# call as ast.unparse gives it), with what it runs. None runs the doctor.
+LAUNCHES = {
+    ("_git", "subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, check=True)"):
+        "git in the test repository",
+    ("Stage2Harness.setUp", "subprocess.run(['git', 'init', '-b', 'main', str(self.repo)], "
+                            "capture_output=True, text=True, check=True)"):
+        "git init of the test repository",
+    ("Stage2Harness.run_hook", "subprocess.run([sys.executable, '-I', str(HOOK), action], "
+                               "input=json.dumps(payload), capture_output=True, text=True, env=self._env(), "
+                               "timeout=120)"):
+        "the hook script, aiqt_hooks.py",
+    ("Doctor.test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib",
+     "subprocess.run([sys.executable, str(tooldir / 'probe.py')], capture_output=True, text=True, env=env, "
+     "timeout=60)"):
+        "probe.py, which only imports json",
+    ("DoctorPrecheckSites._hook_bounded", "subprocess.run(argv, input=body, capture_output=True, text=True, "
+                                          "env=self._env(), timeout=self.SPECIAL_TIMEOUT)"):
+        "the hook's resume audit, or PREVIEW_PATH_PROG on the hook",
+    ("DoctorPrecheckSites._assert_hook_reader", "subprocess.run(argv, capture_output=True, text=True, "
+                                                "env=self._env(), timeout=self.SPECIAL_TIMEOUT)"):
+        "OPEN_TRACE_PROG on the hook",
+}
+# The names of the subprocess module that start no process; any other name of it is a launch.
+SUBPROCESS_DATA = {"CalledProcessError", "CompletedProcess", "DEVNULL", "PIPE", "STDOUT", "SubprocessError",
+                   "TimeoutExpired"}
+# The modules that can start a process or run code by name: an import of any of them, other than a plain
+# import of subprocess or os, is a launch. OS_LAUNCH matches the names of os that start a process, and
+# DYNAMIC_CODE the built-in functions that run code given as data or look a name up from text.
+LAUNCH_MODULES = {"subprocess", "os", "multiprocessing", "pty", "runpy", "importlib", "asyncio", "concurrent",
+                  "builtins", "ctypes"}
+OS_LAUNCH = re.compile(r"system|popen|startfile|fork\w*|exec\w*|spawn\w*|posix_spawn\w*")
+DYNAMIC_CODE = {"exec", "eval", "compile", "__import__", "globals", "vars", "__builtins__"}
+# A string whose text holds this names the doctor: a path to it, or a program that loads it by name.
+DOCTOR_FILE = "orch_doctor"
+# The methods that put a value into the object that they are called on.
+MUTATORS = {"append", "extend", "insert", "add", "update", "setdefault"}
+
+
+def literal_text(node):
+    """The text of a string expression as Python evaluates it: a str constant (escapes resolved, and
+    adjacent literals joined by the parser), a bytes constant read as latin-1, an f-string with "{}" for
+    each replacement field, and a + of such parts with "{}" for each other operand; None for any other
+    node."""
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return node.value
+        return node.value.decode("latin-1") if isinstance(node.value, bytes) else None
+    if isinstance(node, ast.JoinedStr):
+        return "".join(literal_text(value) if isinstance(value, ast.Constant) else "{}"
+                       for value in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = literal_text(node.left), literal_text(node.right)
+        if left is not None or right is not None:
+            return (left if left is not None else "{}") + (right if right is not None else "{}")
+    return None
+
+
+def _parents(tree):
+    return {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def _qualname(node, parents):
+    # The classes and functions around node, outermost first, joined by ".".
+    names = []
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+    return ".".join(reversed(names)) or "<module>"
+
+
+def _launch_nodes(tree, parents):
+    """(node, shown) for each place in tree that can start a process or run code by name, and shown, the
+    call around it or else node: an import of a module of LAUNCH_MODULES other than a plain import of
+    subprocess or os, an import from os of a name that OS_LAUNCH matches; any name of the subprocess
+    module other than SUBPROCESS_DATA, a name of os that OS_LAUNCH matches, sys.modules, the name
+    subprocess or os other than before such a name (so an alias or a getattr of either module counts),
+    and a name of DYNAMIC_CODE."""
+    found = []
+    for node in ast.walk(tree):
+        parent = parents.get(node)
+        shown = parent if isinstance(parent, ast.Call) and parent.func is node else node
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in LAUNCH_MODULES and (alias.asname or root not in ("subprocess", "os")):
+                    found.append((node, node))
+                    break
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root in LAUNCH_MODULES and (root != "os" or any(
+                    alias.name == "*" or OS_LAUNCH.fullmatch(alias.name) for alias in node.names)):
+                found.append((node, node))
+        elif isinstance(node, ast.Name):
+            if node.id in DYNAMIC_CODE or (node.id in ("subprocess", "os") and not (
+                    isinstance(parent, ast.Attribute) and parent.value is node)):
+                found.append((node, shown))
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if (node.value.id == "subprocess" and node.attr not in SUBPROCESS_DATA) \
+                    or (node.value.id == "os" and OS_LAUNCH.fullmatch(node.attr)) \
+                    or (node.value.id == "sys" and node.attr == "modules"):
+                found.append((node, shown))
+    return found
+
+
+def process_launches(source):
+    """(enclosing class and function, line, text) for each launch of source (_launch_nodes), in order of
+    line, where text is the call around it, or the import, as ast.unparse gives it."""
+    tree = ast.parse(source)
+    parents = _parents(tree)
+    return sorted(((_qualname(node, parents), node.lineno, ast.unparse(shown))
+                   for node, shown in _launch_nodes(tree, parents)), key=lambda found: found[1])
 
 
 def run_doctor_recorded(case, argv, **kwargs):
     """subprocess.run(argv, **kwargs) for a run of the doctor, registering its output with case
-    (refusal_outputs) when a line of it starts with REFUSAL_PREFIX."""
+    (refusal_outputs) when a line of it starts with REFUSAL_PREFIX or BARRIER_REFUSAL_PREFIX."""
     r = subprocess.run(argv, **kwargs)
     out = r.stdout.decode("latin-1") if isinstance(r.stdout, bytes) else (r.stdout or "")
-    if any(line.startswith(REFUSAL_PREFIX) for line in out.split("\n")):
+    if any(line.startswith((REFUSAL_PREFIX, BARRIER_REFUSAL_PREFIX)) for line in out.split("\n")):
         refusal_outputs(case)[0].append(r.stdout)
     return r
 
 
 def refusal_outputs(case):
-    """(registered, checked) for case: the outputs of its doctor runs that hold a pre-check refusal, and
-    the outputs that assert_refusal checked. The first call for a case adds the cleanup that fails it
-    for a registered output that assert_refusal did not check."""
+    """(registered, checked) for case: the outputs of its doctor runs that hold a pre-check refusal or a
+    barrier refusal, and the outputs that assert_refusal or assert_barrier_refusal checked. The first
+    call for a case adds the cleanup that fails it for a registered output that neither checked."""
     found = case.__dict__.get("_refusal_outputs")
     if found is None:
         found = case._refusal_outputs = ([], [])
@@ -2349,8 +2488,8 @@ def refusal_outputs(case):
 
 
 def unchecked_refusals(case):
-    """The registered outputs of case that assert_refusal did not check, each matched by identity, so
-    1 checked output does not stand for another run with the same text."""
+    """The registered outputs of case that neither assert_refusal nor assert_barrier_refusal checked,
+    each matched by identity, so 1 checked output does not stand for another run with the same text."""
     registered, checked = refusal_outputs(case)
     return [out for out in registered if not any(out is seen for seen in checked)]
 
@@ -2359,20 +2498,25 @@ def _fail_unchecked_refusals(case):
     missed = unchecked_refusals(case)
     del case._refusal_outputs
     if missed:
-        case.fail("{} doctor run(s) printed a pre-check refusal that assert_refusal did not check as a "
-                  "whole line: {!r}".format(len(missed), missed))
+        case.fail("{} doctor run(s) printed a refusal that neither assert_refusal nor assert_barrier_refusal "
+                  "checked as a whole line: {!r}".format(len(missed), missed))
 
 
-def doctor_runs_outside_recorder(source):
-    """(enclosing function, line) for every subprocess.run call of source that names the doctor outside
-    DOCTOR_RECORDER. A call names the doctor when a name in it is DOCTOR, or a name assigned in the
-    call's function or a function around it (or at module level) from an expression that holds such a
-    name as a path (such as tooldir / DOCTOR.name, or str(DOCTOR)) or calls a function whose return
-    holds one (such as the copy that _fresh_doctor_root returns, matched by the function's name). A
-    call other than such a function or 1 of PATH_CALLS passes nothing on, so the text that
-    DOCTOR.read_text() returns is not a name of the doctor."""
+def doctor_runs_outside_recorder(source, listed=None):
+    """(enclosing class and function, line, call) for each launch of source (_launch_nodes) other than
+    RECORDER_LAUNCH in DOCTOR_RECORDER that is not 1 of listed (LAUNCHES unless given) or that names the
+    doctor. A launch names the doctor when a part of it is DOCTOR; a string whose text (literal_text)
+    holds DOCTOR_FILE, such as a literal path to the doctor or the text of a program that loads it; a
+    call of a function whose return holds a name of the doctor (such as the copy that _fresh_doctor_root
+    returns, matched by the function's name); or a name, an attribute (such as self.doc) or the object of
+    a subscript that is bound to an expression that holds a name of the doctor, by an assignment of any
+    form, a for, comprehension or with target, or a call of 1 of MUTATORS on it. A name counts in the
+    function that binds it, the functions inside it and, when the module binds it, everywhere; an
+    attribute counts everywhere. Any call in such an expression passes a name of the doctor on, so
+    "{}".format(DOCTOR), DOCTOR.as_posix() and even DOCTOR.read_text() are names of the doctor."""
+    listed = LAUNCHES if listed is None else listed
     tree = ast.parse(source)
-    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    parents = _parents(tree)
 
     def scopes(node):
         # The functions around node, innermost first, and then the module.
@@ -2387,64 +2531,76 @@ def doctor_runs_outside_recorder(source):
         func = node.func
         return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
 
-    def is_run(node):
-        return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run" and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "subprocess")
+    names, attributes, funcs = {tree: {"DOCTOR"}}, set(), set()
 
-    def holds(node, names, funcs, whole):
-        # whole: read every part of node (a subprocess.run call); else read node as a value that is
-        # assigned or returned, in which only PATH_CALLS pass a path on.
-        if isinstance(node, ast.Name) and node.id in names:
-            return True
-        if isinstance(node, ast.Call):
-            if call_name(node) in funcs:
+    def holds(node, at):
+        # True when a part of node is a name of the doctor, as seen from at.
+        seen = set().union(*(names.get(scope, ()) for scope in scopes(at)))
+        for part in ast.walk(node):
+            if isinstance(part, ast.Name) and part.id in seen:
                 return True
-            if not whole and call_name(node) not in PATH_CALLS:
-                return False
-        return any(holds(child, names, funcs, whole) for child in ast.iter_child_nodes(node))
+            if isinstance(part, ast.Attribute) and attributes and ast.unparse(part) in attributes:
+                return True
+            if isinstance(part, ast.Call) and call_name(part) in funcs:
+                return True
+            text = literal_text(part)
+            if text is not None and DOCTOR_FILE in text:
+                return True
+        return False
 
-    names, funcs = {tree: {"DOCTOR"}}, set()
+    def bind(target, at):
+        # Make target a name of the doctor; True when it was not one before.
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any([bind(element, at) for element in target.elts])
+        if isinstance(target, (ast.Starred, ast.Subscript)):
+            return bind(target.value, at)
+        if isinstance(target, ast.Attribute):
+            text = ast.unparse(target)
+            fresh = text not in attributes
+            attributes.add(text)
+            return fresh
+        if isinstance(target, ast.Name):
+            own = names.setdefault(scopes(at)[0], set())
+            fresh = target.id not in own
+            own.add(target.id)
+            return fresh
+        return False
 
-    def visible(node):
-        return set().union(*(names.get(scope, ()) for scope in scopes(node)))
+    def bindings(node):
+        # (targets, values) for each way in which node binds a target to a value.
+        if isinstance(node, ast.Assign):
+            return node.targets, [node.value]
+        if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)) and node.value is not None:
+            return [node.target], [node.value]
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            return [node.target], [node.iter]
+        if isinstance(node, ast.withitem) and node.optional_vars is not None:
+            return [node.optional_vars], [node.context_expr]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in MUTATORS:
+            return [node.func.value], node.args + [keyword.value for keyword in node.keywords]
+        return [], []
 
     changed = True
     while changed:
         changed = False
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None \
-                    and holds(node.value, visible(node), funcs, False):
-                # A bare name, or a name unpacked from a tuple or list, takes the value; an attribute
-                # or a subscript target does not make its object a name of the doctor.
-                own = names.setdefault(scopes(node)[0], set())
-                pending = list(node.targets if isinstance(node, ast.Assign) else [node.target])
-                while pending:
-                    target = pending.pop()
-                    if isinstance(target, (ast.Tuple, ast.List)):
-                        pending.extend(target.elts)
-                    elif isinstance(target, ast.Starred):
-                        pending.append(target.value)
-                    elif isinstance(target, ast.Name) and target.id not in own:
-                        own.add(target.id)
-                        changed = True
+            targets, values = bindings(node)
+            if values and any(holds(value, node) for value in values):
+                for target in targets:
+                    changed = bind(target, node) or changed
             elif isinstance(node, ast.Return) and node.value is not None:
                 func = scopes(node)[0]
-                if func is not tree and func.name not in funcs \
-                        and holds(node.value, visible(node), funcs, False):
+                if func is not tree and func.name not in funcs and holds(node.value, node):
                     funcs.add(func.name)
                     changed = True
     outside = []
-
-    def visit(node, func):
-        for child in ast.iter_child_nodes(node):
-            inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else func
-            if is_run(child) and func != DOCTOR_RECORDER and holds(child, visible(child), funcs, True):
-                outside.append((func, child.lineno))
-            visit(child, inner)
-
-    visit(tree, "<module>")
-    return outside
+    for node, shown in _launch_nodes(tree, parents):
+        qual, text = _qualname(node, parents), ast.unparse(shown)
+        if qual == DOCTOR_RECORDER and text == RECORDER_LAUNCH:
+            continue
+        if (qual, text) not in listed or holds(shown, node):
+            outside.append((qual, node.lineno, text))
+    return sorted(outside, key=lambda found: found[1])
 
 
 # Runs in a separate python3 -I process: the hook call path that the command runs (the resume audit,
@@ -4021,23 +4177,24 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
 
     # Where a string may hold a part of a pre-check refusal: the helper that checks the whole line, the
     # tables that word the refusal (the labels included), the words of the doctor's open account that
-    # DoctorOpenAccountHolders searches for, the recorder's prefix and the self-test of its cleanup,
-    # and this probe.
+    # DoctorOpenAccountHolders searches for and the samples of them in its self-test, the recorder's
+    # prefix and the self-test of its cleanup, and this probe.
     REFUSAL_HOLDERS = {"assert_refusal", "PRECHECK_LABELS", "OPEN_ACCOUNTS", "BLOCKING_TEXT", "READER_END",
                        "ENUMERATOR_END", "OPEN_ACCOUNT_WORDS", "REFUSAL_PREFIX", "REFUSAL_HEAD",
                        "REFUSAL_MIDDLE",
                        "refusal_skeleton", "refusal_pieces", "refusal_reach", "refusal_fragments_outside",
                        "test_every_refusal_check_reads_the_whole_wording",
-                       "test_the_cleanup_fails_a_refusal_that_assert_refusal_did_not_check"}
+                       "test_the_cleanup_fails_a_refusal_that_assert_refusal_did_not_check",
+                       "test_the_open_account_is_worded_only_in_its_tables"}
     # The fragments that open every pre-check refusal ("cannot evaluate: the <label> <path> is not a
     # regular file (it is a <made>); <tail>"), which a string that holds any of them anywhere holds a
     # part of the refusal by, and the words of the line between the path and the type.
-    # _assert_barrier_refused checks the barrier refusal of the resume audit, which is not a pre-check
+    # assert_barrier_refusal checks the barrier refusal of the resume audit, which is not a pre-check
     # refusal but also says "<path> is not a regular file (it is a <made>)", so there only "cannot
     # evaluate" of the fragments counts, and the words of REFUSAL_MIDDLE count for no rule.
     REFUSAL_HEAD = ("cannot evaluate", "is not a regular file", "(it is a ")
     REFUSAL_MIDDLE = " is not a regular file (it is a "
-    BARRIER_HELPER = "_assert_barrier_refused"
+    BARRIER_HELPER = "assert_barrier_refusal"
     # The gaps of the refusal line that the path and the file type fill: the path is any text without
     # white space, and the type any text without ";".
     PATH_GAP = "<path>"
@@ -4253,38 +4410,102 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
 
 
 class DoctorRefusalCoverage(unittest.TestCase):
-    """Every doctor run in this file goes through run_doctor_recorded, and its cleanup fails a case in
-    which a run printed a pre-check refusal that assert_refusal did not check as a whole line."""
+    """Every doctor run in this file goes through run_doctor_recorded: every process launch that the
+    syntax tree of this file shows by a module or name that _launch_nodes lists is that recorder's or 1
+    of LAUNCHES, none of which names the doctor. Its cleanup fails a case in which a run printed a
+    pre-check refusal or a barrier refusal that assert_refusal or assert_barrier_refusal did not check
+    as a whole line."""
 
     def test_every_doctor_run_goes_through_the_recorder(self):
-        self.assertEqual(doctor_runs_outside_recorder(Path(__file__).read_text(encoding="utf-8")), [],
-                         "a doctor run outside run_doctor_recorded")
-        # The routing check flags a direct run of the doctor, of a copy of it named in the same
-        # function or returned by another, and of a program given the doctor's path, and passes a
-        # run through the recorder and a run of the hook.
-        for direct in ('def t(self):\n    subprocess.run([sys.executable, "-I", str(DOCTOR)])\n',
-                       'def t(self):\n    copy = tooldir / DOCTOR.name\n'
-                       '    subprocess.run([sys.executable, str(copy)])\n',
-                       'def make(self):\n    copy = d / DOCTOR.name\n    return d, copy\n\n\n'
-                       'def t(self):\n    _d, c = self.make()\n    subprocess.run([sys.executable, str(c)])\n',
-                       'def t(self):\n    subprocess.run([sys.executable, "-c", PROG, str(DOCTOR)])\n'):
-            with self.subTest(direct=direct):
-                self.assertEqual(len(doctor_runs_outside_recorder(direct)), 1)
-        for fine in ('def run_doctor_recorded(case, argv, **kwargs):\n    return subprocess.run(argv, **kwargs)\n'
-                     '\n\ndef t(self):\n    run_doctor_recorded(self, [sys.executable, str(DOCTOR)])\n',
-                     'def t(self):\n    subprocess.run([sys.executable, "-I", str(HOOK)])\n'):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(doctor_runs_outside_recorder(source), [],
+                         "a launch outside run_doctor_recorded that LAUNCHES does not list, or that names "
+                         "the doctor")
+        launches = {(qual, text) for qual, _line, text in process_launches(source)}
+        self.assertIn((DOCTOR_RECORDER, RECORDER_LAUNCH), launches)
+        self.assertEqual(launches - {(DOCTOR_RECORDER, RECORDER_LAUNCH)}, set(LAUNCHES),
+                         "LAUNCHES and the launches of this file differ")
+        # The routing check flags a launch that the listed set does not hold, in each of these forms, a
+        # changed launch of the recorder included.
+        listed = {("t", "subprocess.run(argv)")}
+        for unlisted in ('def t(self):\n    subprocess.run([sys.executable, "-I", str(DOCTOR)])\n',
+                         'def t(self):\n    subprocess.Popen([sys.executable, str(DOCTOR)])\n',
+                         'def t(self):\n    subprocess.check_output([sys.executable, str(DOCTOR)])\n',
+                         'def t(self):\n    getattr(subprocess, "run")([sys.executable, str(DOCTOR)])\n',
+                         'import subprocess as sp\n\n\ndef t(self):\n    sp.run([sys.executable, str(DOCTOR)])\n',
+                         'from subprocess import run\n\n\ndef t(self):\n    run([sys.executable, str(DOCTOR)])\n',
+                         'def t(self):\n    os.system("python3 tools/orch_doctor.py")\n',
+                         'def t(self):\n    os.execv(sys.executable, [sys.executable, str(DOCTOR)])\n',
+                         'import runpy\n\n\ndef t(self):\n    runpy.run_path(str(DOCTOR))\n',
+                         'def t(self):\n    exec(DOCTOR.read_text())\n',
+                         'def t(self):\n    sys.modules["subprocess"].run([sys.executable, str(DOCTOR)])\n',
+                         'def t(self):\n    globals()["subprocess"].run([sys.executable, str(DOCTOR)])\n',
+                         'import ctypes\n\n\ndef t(self):\n    ctypes.CDLL(None).system(b"python3 x")\n',
+                         'def run_doctor_recorded(case, argv, **kwargs):\n    return subprocess.Popen(argv)\n'):
+            with self.subTest(unlisted=unlisted):
+                self.assertEqual(len(doctor_runs_outside_recorder(unlisted, listed)), 1)
+        # It flags a listed launch that names the doctor, a copy of it or a program that loads it, in
+        # each of these bindings and spellings. It passes a listed launch that names none of them, a
+        # doctor run through the recorder beside a subprocess name that starts no process, and the
+        # recorder's own launch.
+        run = "    subprocess.run(argv)\n"
+        for named in ('def t(self):\n    argv = [sys.executable, "-I", str(DOCTOR)]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, "{}".format(DOCTOR)]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, DOCTOR.as_posix()]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, os.fspath(DOCTOR)]\n' + run,
+                      'def s(self):\n    self.doc = DOCTOR\n\n\ndef t(self):\n    argv = [sys.executable, self.doc]\n'
+                      + run,
+                      'def t(self):\n    argv = [sys.executable, ROOT / "tools" / "orch_doctor.py"]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, "orch_" "doctor.py"]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, "orch_" + "doctor.py"]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, f"{HERE}/orch_doctor.py"]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, "tools/orch\\x5fdoctor.py"]\n' + run,
+                      'def t(self):\n    argv = [sys.executable]\n    argv.append(str(DOCTOR))\n' + run,
+                      'def t(self):\n    argv = [sys.executable, ""]\n    argv[1] = str(DOCTOR)\n' + run,
+                      'def t(self):\n    argv = [sys.executable]\n    argv += [str(DOCTOR)]\n' + run,
+                      'def t(self):\n    for argv in ([sys.executable, str(DOCTOR)],):\n    ' + run,
+                      'def t(self):\n    copy = tooldir / DOCTOR.name\n    argv = [sys.executable, str(copy)]\n'
+                      + run,
+                      'def make(self):\n    copy = d / DOCTOR.name\n    return d, copy\n\n\n'
+                      'def t(self):\n    _d, c = self.make()\n    argv = [sys.executable, str(c)]\n' + run,
+                      'def t(self):\n    argv = [sys.executable, "-c", PROG, str(DOCTOR)]\n' + run,
+                      'PROG = "import runpy; runpy.run_path(\'tools/orch_doctor.py\')"\n\n\n'
+                      'def t(self):\n    argv = [sys.executable, "-c", PROG]\n' + run):
+            with self.subTest(named=named):
+                self.assertEqual(len(doctor_runs_outside_recorder(named, listed)), 1)
+        for fine in ('def t(self):\n    argv = [sys.executable, "-I", str(HOOK)]\n' + run,
+                     'def t(self):\n    try:\n        run_doctor_recorded(self, [sys.executable, str(DOCTOR)])\n'
+                     '    except subprocess.TimeoutExpired:\n        pass\n',
+                     'def run_doctor_recorded(case, argv, **kwargs):\n    return subprocess.run(argv, **kwargs)\n'):
             with self.subTest(fine=fine):
-                self.assertEqual(doctor_runs_outside_recorder(fine), [])
+                self.assertEqual(doctor_runs_outside_recorder(fine, listed), [])
 
     def test_the_cleanup_fails_a_refusal_that_assert_refusal_did_not_check(self):
         # A run through the recorder that prints the whole refusal at scope.lease: a case that checks
         # it with assert_refusal passes, and a case that checks only a part of it, by a literal or by
-        # a holder name, fails in the cleanup of the recorder.
+        # a holder name, fails in the cleanup of the recorder. The same holds for the barrier refusal
+        # of the resume audit and assert_barrier_refusal, which fails a line with another ending.
         line = "cannot evaluate: the declared lease.path /x is not a regular file (it is a directory); {}" \
             .format(expected_tail("scope.lease"))
         argv = [sys.executable, "-I", "-c", "import sys; print(sys.argv[1])", line]
+        barrier = ("barrier: cannot be recorded before the audit at /b (/b is not a regular file (it is a "
+                   "FIFO)); a rewrite could not be confirmed, so the audit is not run")
+        barrier_argv = argv[:-1] + [barrier]
+        other_end = argv[:-1] + [barrier.replace("so the audit is not run", "so the audit ran")]
 
         class Probe(unittest.TestCase):
+            def test_barrier_whole(inner):
+                r = run_doctor_recorded(inner, barrier_argv, capture_output=True, text=True, timeout=60)
+                assert_barrier_refusal(inner, r.stdout, "/b", "FIFO")
+
+            def test_barrier_part(inner):
+                r = run_doctor_recorded(inner, barrier_argv, capture_output=True, text=True, timeout=60)
+                inner.assertIn("barrier: cannot be recorded before the audit at /b", r.stdout)
+
+            def test_barrier_other_end(inner):
+                r = run_doctor_recorded(inner, other_end, capture_output=True, text=True, timeout=60)
+                assert_barrier_refusal(inner, r.stdout, "/b", "FIFO")
+
             def test_whole(inner):
                 r = run_doctor_recorded(inner, argv, capture_output=True, text=True, timeout=60)
                 assert_refusal(inner, r.stdout, "scope.lease", "declared lease.path", "/x", "directory")
@@ -4303,22 +4524,27 @@ class DoctorRefusalCoverage(unittest.TestCase):
                 run_doctor_recorded(inner, argv, capture_output=True, text=True, timeout=60)
                 assert_refusal(inner, first.stdout, "scope.lease", "declared lease.path", "/x", "directory")
 
-        for name, passes in (("test_whole", True), ("test_holder", False), ("test_literal", False),
-                             ("test_twice", False)):
+        # The failures that each case gives, in order, each by a part of its message.
+        cleanup = "neither assert_refusal nor assert_barrier_refusal checked as a whole line"
+        for name, failures in (("test_whole", ()), ("test_holder", (cleanup,)), ("test_literal", (cleanup,)),
+                               ("test_twice", (cleanup,)), ("test_barrier_whole", ()),
+                               ("test_barrier_part", (cleanup,)),
+                               ("test_barrier_other_end", ("no single whole barrier refusal", cleanup))):
             with self.subTest(case=name):
                 result = unittest.TestResult()
                 Probe(name).run(result)
-                self.assertEqual(result.wasSuccessful(), passes, result.failures + result.errors)
-                if not passes:
-                    self.assertEqual(len(result.failures), 1, result.failures + result.errors)
-                    self.assertIn("assert_refusal did not check", result.failures[0][1])
+                self.assertEqual(result.errors, [])
+                self.assertEqual(len(result.failures), len(failures), result.failures)
+                for (_test, text), wanted in zip(result.failures, failures):
+                    self.assertIn(wanted, text)
 
 
 # The words with which the doctor says how the hook opens a pre-check path and what was not run, as 1
-# regular expression in any letter case (the same as the rg -i search that the commit message gives).
-# OPEN_ACCOUNT_HOLDERS are the doctor's tables that word that account: SITE_OPEN
-# with the 2 texts that it gives several sites, BLOCKING_OPEN, REFUSAL_END and SITE_END. A mention of
-# the name of one of them is a pointer to it, not a restatement.
+# regular expression in any letter case. `rg -n -i` with this expression over tools/orch_doctor.py lists
+# the same words line by line; open_account_outside also finds a phrase of them that a line break, a
+# concatenation or an escape splits. OPEN_ACCOUNT_HOLDERS are the doctor's tables that word that
+# account: SITE_OPEN with the 2 texts that it gives several sites, BLOCKING_OPEN, REFUSAL_END and
+# SITE_END. A mention of the name of one of them is a pointer to it, not a restatement.
 OPEN_ACCOUNT_WORDS = re.compile(r"(?i)blocking|O_NONBLOCK|would not block|unattended|not regular|"
                                 r"reader that opens|no enumerator ran|does not open")
 OPEN_ACCOUNT_HOLDERS = ("SITE_OPEN", "_RECORD_SURFACE_OPEN", "_ANCHOR_OPEN", "BLOCKING_OPEN",
@@ -4326,24 +4552,65 @@ OPEN_ACCOUNT_HOLDERS = ("SITE_OPEN", "_RECORD_SURFACE_OPEN", "_ANCHOR_OPEN", "BL
 
 
 def open_account_outside(source):
-    """(line, word) for every match of OPEN_ACCOUNT_WORDS in a string or comment token of source
-    (tokenize) that does not start inside a top-level assignment of OPEN_ACCOUNT_HOLDERS, after the
-    names of OPEN_ACCOUNT_HOLDERS are taken out of the token. Code tokens, such as os.O_NONBLOCK in
-    the doctor's own open, are not read."""
-    inside = set()
-    for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                and isinstance(node.targets[0], ast.Name) and node.targets[0].id in OPEN_ACCOUNT_HOLDERS:
-            inside.update(range(node.lineno, node.end_lineno + 1))
-    names = re.compile(r"\b(?:{})\b".format("|".join(OPEN_ACCOUNT_HOLDERS)))
-    kinds = {tokenize.STRING, tokenize.COMMENT, getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)}
-    found = []
+    """(line, word) for every match of OPEN_ACCOUNT_WORDS in the prose of source outside the tables of
+    OPEN_ACCOUNT_HOLDERS, after the names of those tables are taken out of it and each run of white
+    space, line breaks included, is made 1 space. The prose is each string expression as Python
+    evaluates it (literal_text: escapes resolved, adjacent literals joined, a + of strings joined, an
+    f-string with "{}" for each field), each expression inside an f-string field or beside a string in
+    a + read the same way, and each block of comments on consecutive lines, joined; line is where that
+    string or block starts. The tables are the values of the first top-level assignment of each holder
+    name, so a later binding of that name is read, and a comment is never inside a table. Code tokens,
+    such as os.O_NONBLOCK in the doctor's own open, are not read. A phrase that the doctor assembles at
+    run time from separate strings or names (by format, join or a variable) is not found."""
+    tree = ast.parse(source)
+    inside, assigned = set(), set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and node.targets[0].id in OPEN_ACCOUNT_HOLDERS and node.targets[0].id not in assigned:
+            assigned.add(node.targets[0].id)
+            inside.update(id(part) for part in ast.walk(node.value))
+    units = []
+
+    def visit(node):
+        text = literal_text(node)
+        if text is None:
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+            return
+        if id(node) not in inside:
+            units.append((node.lineno, text))
+        within(node)
+
+    def within(part):
+        # The expressions inside the string expression part that literal_text does not read as text.
+        if isinstance(part, ast.BinOp) and literal_text(part) is not None:
+            within(part.left)
+            within(part.right)
+        elif isinstance(part, ast.JoinedStr):
+            for value in part.values:
+                if isinstance(value, ast.FormattedValue):
+                    visit(value.value)
+                    if value.format_spec is not None:
+                        visit(value.format_spec)
+        elif literal_text(part) is None:
+            visit(part)
+
+    visit(tree)
+    block = []
     for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-        if tok.type not in kinds or tok.start[0] in inside:
+        if tok.type != tokenize.COMMENT:
             continue
-        text = names.sub(" ", tok.string)
-        for match in OPEN_ACCOUNT_WORDS.finditer(text):
-            found.append((tok.start[0] + text.count("\n", 0, match.start()), match.group(0)))
+        if block and tok.start[0] != block[-1][0] + 1:
+            units.append((block[0][0], " ".join(text for _line, text in block)))
+            block = []
+        block.append((tok.start[0], tok.string.lstrip("#")))
+    if block:
+        units.append((block[0][0], " ".join(text for _line, text in block)))
+    names = re.compile(r"\b(?:{})\b".format("|".join(OPEN_ACCOUNT_HOLDERS)))
+    found = []
+    for line, text in sorted(units):
+        flat = " ".join(names.sub(" | ", text).split())
+        found.extend((line, match.group(0)) for match in OPEN_ACCOUNT_WORDS.finditer(flat))
     return found
 
 
@@ -4356,16 +4623,42 @@ class DoctorOpenAccountHolders(unittest.TestCase):
             self.fail("doctor not found: {}".format(DOCTOR))
         self.assertEqual(open_account_outside(DOCTOR.read_text(encoding="utf-8")), [],
                          "the doctor words how the hook opens a path outside its tables")
-        # The check flags a word of the account in a docstring, a comment or another string outside
-        # the tables, and passes it inside a table and a mention of a table's name.
-        for outside in ('def f():\n    """Opened by a blocking reader."""\n',
-                        '# read with O_NONBLOCK\nX = 1\n',
-                        'X = ("a mode file it reads as unattended")\n'):
+        # The check finds each of the 8 terms of OPEN_ACCOUNT_WORDS alone, in a docstring, a comment or
+        # another string outside the tables, so a term dropped from the expression fails here.
+        for term, outside in (("blocking", 'def f():\n    """Opened by a blocking reader."""\n'),
+                              ("O_NONBLOCK", '# read with O_NONBLOCK\nX = 1\n'),
+                              ("would not block", 'X = "the hook would not block on it"\n'),
+                              ("unattended", 'X = ("a mode file it reads as unattended")\n'),
+                              ("not regular", '# a file that is not regular\nX = 1\n'),
+                              ("reader that opens", 'X = f"the {name} reader that opens it"\n'),
+                              ("no enumerator ran", 'def f():\n    """So no enumerator ran."""\n'),
+                              ("does not open", 'X = b"the hook does not open it"\n')):
+            with self.subTest(term=term):
+                self.assertEqual([word.lower() for _line, word in open_account_outside(outside)],
+                                 [term.lower()])
+        # It finds a phrase of the account that a line break, a concatenation or an escape splits, and
+        # a word in a comment beside, or in the value of, a second binding of a table's name.
+        for outside in ('def f():\n    """The hook would not\n    block on it."""\n',
+                        '# the hook would not\n# block on it\nX = 1\n',
+                        'X = ("the hook would not "\n     "block on it")\n',
+                        'X = "the hook would not " + "block on it"\n',
+                        'X = f"the hook would not " + "block on it" + f"{z}"\n',
+                        'def f():\n    """A file that is not\n    regular."""\n',
+                        'X = "a bl\\x6fcking open"\n',
+                        'X = "a bl\\u006fcking open"\n',
+                        'X = "the reader that\\nopens it"\n',
+                        'X = g("so no enumerator ran")\n',
+                        'SITE_END = {"a": "b"}\nSITE_END = dict(SITE_END)  # a blocking open\n',
+                        'SITE_END = {"a": "b"}\nSITE_END = "a blocking open"\n'):
             with self.subTest(outside=outside):
                 self.assertEqual(len(open_account_outside(outside)), 1)
+        # It passes the words inside a table and a mention of a table's name. The last 2 show the
+        # stated residual: a phrase assembled at run time from separate strings is not found.
         for fine in ('BLOCKING_OPEN = "blocking"\nREFUSAL_END = ("unattended"\n               " reader")\n',
                      'def f():\n    """See SITE_OPEN, else BLOCKING_OPEN."""\n',
-                     'X = os.O_NONBLOCK\n'):
+                     'X = os.O_NONBLOCK\n',
+                     'X = "the hook would not"\nY = X + " " + Z\nZ = "block on it"\n',
+                     'X = " ".join(("the hook would not", "block on it"))\n'):
             with self.subTest(fine=fine):
                 self.assertEqual(open_account_outside(fine), [])
 
