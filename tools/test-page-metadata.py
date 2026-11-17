@@ -1878,9 +1878,9 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # of {name} in its output, and the check stops with exit 3 and the
         # message for that fault's check, printed for that row's git call.
         # A fault for the ASCII check must not give the message for output
-        # that the gate cannot use, which a replacing decode gives. Each
-        # subtest fails when the gate drops or weakens that check for that
-        # row alone.
+        # that the gate cannot use, which a replacing decode gives. A subtest
+        # fails when the gate accepts its fault, not when a weakening of the
+        # check still refuses that fault as before.
         for options in (SHA1, SHA256):
             self.start_repository(*options)
             self.change_and_restore_on_branch()
