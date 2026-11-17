@@ -196,15 +196,15 @@ last_line_holds() {
   [[ "${last}" == *"$1"* ]]
 }
 
-expect_fail() { # label fragment [last-fragment]: the last line holds last-fragment, by default fragment
-  local code=0
+expect_fail() { # label fragment: the last line holds last_pin when a case set it, by default fragment; clears last_pin
+  local code=0 last="${last_pin:-$2}"; last_pin=""
   run_gate || code=$?
   if [ "${code}" -eq 0 ]; then
     fail "$1 (expected a failure, the gate passed)"
   elif ! grep -Fq -- "$2" "${gate_out}"; then
     fail "$1 (failed, but not with [$2]: $(cat "${gate_out}"))"
-  elif ! last_line_holds "${3:-$2}"; then
-    fail "$1 (failed, but its last line does not hold [${3:-$2}]: $(cat "${gate_out}"))"
+  elif ! last_line_holds "${last}"; then
+    fail "$1 (failed, but its last line does not hold [${last}]: $(cat "${gate_out}"))"
   else
     pass "$1"
   fi
@@ -356,9 +356,9 @@ done
 for op in baseline extract requires_release_date; do
   undated_fixture 1.0.14
   break_extractor "${op}" exit1
+  last_pin="is unavailable or"
   expect_fail "the client reason is relayed at the ${op} call" \
-    "skill-release-date-client: skill-release-date.py exited 1 in ${op}, so the extractor is unavailable" \
-    "tools/skill-release-date.py is unavailable or"
+    "skill-release-date-client: skill-release-date.py exited 1 in ${op}, so the extractor is unavailable"
 done
 
 # 2d3. Row 89: an exit 0 whose output is not a bare day (which the client
@@ -376,9 +376,9 @@ if sys.argv[1:2] == ["extract-file"]:
 real = os.path.join(os.path.dirname(os.path.abspath(__file__)), "real-client.py")
 os.execv(sys.executable, [sys.executable, "-I", real, *sys.argv[1:]])
 PYCLIENT
+last_pin="noise) for the Released line of ${skill}."
 expect_fail "a value that is not a bare day is not used" \
-  "tools/skill-release-date.py gave an unexpected answer (2026-11-15" \
-  "noise) for the Released line of ${skill}."
+  "tools/skill-release-date.py gave an unexpected answer (2026-11-15"
 
 # 2g. Row 89: with errexit inherited by command substitutions (shopt -s
 #     inherit_errexit, or POSIX mode), the gate gives the same verdicts.
