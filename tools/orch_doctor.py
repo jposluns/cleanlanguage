@@ -553,8 +553,9 @@ def _scope_read_paths(hook, reg, root, session_id):
                   holder mode (holder_is_session_id at 22649-22652). A stat that succeeds on a
                   stale or empty lease, or a failed stat without holder mode, falls through to the
                   mode read. _orch_mode_read opens the path with O_NONBLOCK (22445-22446), so a FIFO
-                  there does not block it, and it reads a file that is not regular as unattended,
-                  fail-closed (22453-22454); the doctor does not model that reader and refuses a
+                  there does not block it, and gives a file that is not regular the status bad,
+                  without a read (22453-22454), which _orch_mode_detail takes as unattended,
+                  fail-closed (22529-22530); the doctor does not model that reader and refuses a
                   special file there as it does at a blocking open, with a message that says so
                   (SITE_OPEN).
     The lease is never opened otherwise (the os.stat at 22617 does not block), so a FIFO there, whose
@@ -798,7 +799,9 @@ def _first_special(entries):
 
 def _refuse_special(found):
     """Report the refusal _first_special words for a special file at a pre-check site, as
-    cannot-evaluate, exit 2."""
+    cannot-evaluate, exit 2. The refusal ends by saying that the hook reader that opens the path was
+    not called and no enumerator ran (REFUSAL_END), or, at an enumerator operand, which no hook reader
+    opens, only that no enumerator ran (SITE_END)."""
     print("cannot evaluate: {}".format(found))
     return 2
 

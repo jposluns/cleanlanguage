@@ -62,12 +62,14 @@ or, at an enumerator operand, only that no enumerator ran. PRECHECK_OPENS gives,
 site, the hook function and lines that open its path; a source probe checks each of those opens at
 source, and the reach case of each site runs the hook call path with open, os.open and
 subprocess.run wrapped and requires that the hook first opens that site's path, or runs the
-enumerator that takes it, by one of those opens. OPEN_ACCOUNTS gives the exact text of each refusal
+enumerator that takes it, by one of those opens, and each open of the table must be that first open
+in at least 1 reach case of its site. OPEN_ACCOUNTS gives the exact text of each refusal
 that is not a blocking open, and a claim for each hook line or range it cites; the probe requires
 the doctor's texts to equal those texts, each text to cite exactly the ranges of its claims, and
 each claim to hold at source. Every case that checks a refusal of a special file at a pre-check site
-checks the whole refusal line through assert_refusal, and a source probe keeps every refusal string
-of this file inside it. Each command checks only what its own
+checks the whole refusal line, the label of the path included (PRECHECK_LABELS in the reach cases),
+through assert_refusal, and a source probe keeps every string literal of this file that holds a part
+of such a refusal inside it or the tables that word the refusal. Each command checks only what its own
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
 an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview.
@@ -2125,6 +2127,7 @@ PRECHECK_CASES = [
     ("audit.attestations_anchor", "skip", "case_audit_anchor_without_register"),
     ("audit.mistakes_register", "reach", "case_audit_mistakes"),
     ("audit.guard_events", "reach", "case_audit_guard_events"),
+    ("audit.guard_events", "reach", "case_audit_guard_events_pointer"),
     ("audit.escape_spoof", "reach", "case_audit_escape_spoof"),
     ("audit.forced_exit", "reach", "case_audit_forced_exit"),
     ("audit.forced_exit_surfaced", "reach", "case_audit_surfaced"),
@@ -2137,15 +2140,15 @@ PRECHECK_CASES = [
 # How the hook opens the path of each pre-check site: (kind, ((hook function, first line, last line of
 # the open), ...)). "blocking": a plain open() that waits on a FIFO with no writer; "non-blocking": an
 # os.open with O_NONBLOCK, so the hook would not block there; "enumerator": the hook does not open the
-# path, the enumerator it runs does. DoctorPrecheckSiteProbe checks each open against the hook source,
-# and the reach case of each site in DoctorPrecheckSites runs the hook call path (OPEN_TRACE_PROG) and
-# requires that the hook function and line at which the hook first opens that site's path, or runs the
-# enumerator that takes it, are one of the opens given here. Line numbers cite
+# path, the enumerator it runs does. The opens given for a site are those by which the hook first opens
+# that site's path, or runs the enumerator that takes it. DoctorPrecheckSiteProbe checks each open
+# against the hook source, and the reach case of each site in DoctorPrecheckSites runs the hook call
+# path (OPEN_TRACE_PROG) and requires that the hook function and line at which the hook first opens that
+# site's path, or runs the enumerator that takes it, are one of the opens given here; every open given
+# here must be that first open in at least 1 reach case of its site. Line numbers cite
 # plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py.
 _SURFACE_READ = ("non-blocking", (("_orch_record_surface_read", 32703, 32704),))
 _ANCHOR_READ = ("non-blocking", (("_orch_register_authority", 32968, 32969),))
-_REGISTER_READS = ("blocking", (("_orch_chained_rows", 32876, 32876),
-                                ("_orch_register_authority", 32921, 32921)))
 PRECHECK_OPENS = {
     "registry.file": ("non-blocking", (("_orch_registry", 22096, 22098),)),
     "scope.lease": ("blocking", (("_orch_scope_live", 22640, 22640),)),
@@ -2155,14 +2158,14 @@ PRECHECK_OPENS = {
     "ctx.ledger": ("blocking", (("_orch_read_jsonl", 22173, 22173),)),
     "ctx.pending_decisions": _SURFACE_READ,
     "ctx.attestation_snapshot": ("blocking", (("_orch_attestation_refs", 22934, 22934),)),
-    "ctx.attestations": _REGISTER_READS,
+    "ctx.attestations": ("blocking", (("_orch_register_authority", 32921, 32921),)),
     "ctx.attestations_anchor": _ANCHOR_READ,
     "ctx.guard_events": ("blocking", (("_orch_read_jsonl", 22173, 22173),)),
     "ctx.checkpoint": ("blocking", (("_orch_checkpoint_union", 23324, 23324),)),
     "audit.handoff": _SURFACE_READ,
     "audit.findings": _SURFACE_READ,
     "audit.pending_decisions": _SURFACE_READ,
-    "audit.attestations": _REGISTER_READS,
+    "audit.attestations": ("blocking", (("_orch_chained_rows", 32876, 32876),)),
     "audit.attestations_anchor": _ANCHOR_READ,
     "audit.mistakes_register": ("blocking", (("_orch_chained_rows", 32876, 32876),)),
     "audit.guard_events": ("blocking", (("_orch_read_jsonl", 22173, 22173),
@@ -2172,6 +2175,36 @@ PRECHECK_OPENS = {
     "audit.forced_exit_surfaced": ("blocking", (("_orch_forced_exit_findings", 33172, 33172),)),
     "audit_bad.unused": ("blocking", (("_orch_append_jsonl", 22162, 22162),)),
     "audit_bad.guard_events": ("blocking", (("_orch_append_jsonl", 22162, 22162),)),
+}
+
+# The words with which the doctor names the path of each pre-check site in its refusal ("cannot
+# evaluate: the <label> <path> ..."), which the reach case of each site checks. An enumerator operand is
+# named by its index in the declared argv, and the fixture enumerator takes the backlog as argv[3].
+PRECHECK_LABELS = {
+    "registry.file": "registry file",
+    "scope.lease": "declared lease.path",
+    "scope.mode": "declared mode.path",
+    "ctx.turn_state": "hook state file turn-state.json",
+    "ctx.enumerator_operand": "declared enumerator.argv[3]",
+    "ctx.ledger": "hook state file dispatch-ledger.jsonl",
+    "ctx.pending_decisions": "declared record.pending_decisions",
+    "ctx.attestation_snapshot": "hook state file attestations-validated.json",
+    "ctx.attestations": "declared attestations",
+    "ctx.attestations_anchor": "declared attestations.anchor",
+    "ctx.guard_events": "hook state file guard-events.jsonl",
+    "ctx.checkpoint": "hook state file backlog-checkpoint.json",
+    "audit.handoff": "declared record.handoff",
+    "audit.findings": "declared record.findings",
+    "audit.pending_decisions": "declared record.pending_decisions",
+    "audit.attestations": "declared attestations",
+    "audit.attestations_anchor": "declared attestations.anchor",
+    "audit.mistakes_register": "declared mistakes_register",
+    "audit.guard_events": "hook state file guard-events.jsonl",
+    "audit.escape_spoof": "hook state file escape-spoof.json",
+    "audit.forced_exit": "hook state file forced-exit.jsonl",
+    "audit.forced_exit_surfaced": "hook state file forced-exit-surfaced.json",
+    "audit_bad.unused": "hook state file resume-barrier.json.unused",
+    "audit_bad.guard_events": "hook state file guard-events.jsonl",
 }
 
 # The doctor's whole account of how the hook opens a path that it does not open with a blocking open,
@@ -2256,15 +2289,15 @@ def assert_open_wording(case, site, tail):
 
 def assert_refusal(case, stdout, site, label, path, made):
     """Assert that stdout holds the doctor's whole refusal of the special file at path, of type made,
-    at the pre-check site site: "cannot evaluate: the <label> <path> is not a regular file (it is a
-    <made>); " and then exactly expected_tail(site), to the end of the line. label None accepts any
-    label. Every case in which the doctor refuses a special file at a pre-check site checks it here
+    at the pre-check site site, as 1 line: exactly "cannot evaluate: the <label> <path> is not a
+    regular file (it is a <made>); " and then exactly expected_tail(site), to the end of the line.
+    label is the doctor's name for the path, which every caller gives. Every case in which the doctor
+    refuses a special file at a pre-check site checks it here
     (DoctorPrecheckSiteProbe.test_every_refusal_check_reads_the_whole_wording)."""
-    found = "{} is not a regular file (it is a {}); ".format(path, made)
-    lead = "cannot evaluate: the " if label is None else "cannot evaluate: the {} ".format(label)
-    lines = [line for line in stdout.split("\n") if line.startswith(lead) and found in line]
+    head = "cannot evaluate: the {} {} is not a regular file (it is a {}); ".format(label, path, made)
+    lines = [line for line in stdout.split("\n") if line.startswith(head)]
     case.assertEqual(len(lines), 1, "site {}: no single refusal of {} in {!r}".format(site, path, stdout))
-    assert_open_wording(case, site, lines[0].split(found, 1)[1])
+    assert_open_wording(case, site, lines[0][len(head):])
 
 
 # Runs in a separate python3 -I process: the hook call path that the command runs (the resume audit,
@@ -2595,6 +2628,13 @@ class DoctorPrecheckSites(Stage2Harness):
         self._reg()
         return self._sd("guard-events.jsonl"), None, self.AUDIT, {}
 
+    def case_audit_guard_events_pointer(self):
+        # The register is absent when the doctor runs and is written before the trace
+        # (TRACE_ARRANGE), so the audit reads guard-events for the register row's pointer
+        # (`_orch_pointer_resolves` at 33018-33020, via 33111) before any guard event is appended.
+        self._reg(attestations=self._at())
+        return self._sd("guard-events.jsonl"), None, self.AUDIT, {}
+
     def case_audit_escape_spoof(self):
         self._reg()
         return self._sd("escape-spoof.json"), None, self.AUDIT, {}
@@ -2661,6 +2701,7 @@ class DoctorPrecheckSites(Stage2Harness):
         "case_ctx_anchor": "_arrange_fresh_snapshot",
         "case_ctx_guard_events": "_arrange_guard_events_pointer",
         "case_audit_guard_events": "_arrange_audit_finding",
+        "case_audit_guard_events_pointer": "_arrange_guard_events_pointer",
     }
 
     def _arrange_fresh_snapshot(self):
@@ -2690,7 +2731,7 @@ class DoctorPrecheckSites(Stage2Harness):
     def _assert_hook_reader(self, site, args, payload, path):
         # The real hook call path, run to its first open of path (OPEN_TRACE_PROG), must open it by
         # one of the opens that PRECHECK_OPENS gives for site, in that function and within that
-        # range, and by the kind of call that site's kind names.
+        # range, and by the kind of call that site's kind names. Returns that open.
         argv = [sys.executable, "-I", "-c", OPEN_TRACE_PROG, str(HOOK), str(self.repo),
                 payload.get("session_id", ""), args[0], str(path)]
         try:
@@ -2703,11 +2744,12 @@ class DoctorPrecheckSites(Stage2Harness):
         kind, opens = PRECHECK_OPENS[site]
         self.assertEqual(how, TRACE_HOW[kind], "site {}: the hook reached {} by {} ({} at {})"
                          .format(site, path, how, reader, line))
-        self.assertTrue(any(reader == name and first <= line <= last for name, first, last in opens),
-                        "site {}: the hook opens {} in {} at {}, not by an open of PRECHECK_OPENS {}"
+        hits = [entry for entry in opens if reader == entry[0] and entry[1] <= line <= entry[2]]
+        self.assertTrue(hits, "site {}: the hook opens {} in {} at {}, not by an open of PRECHECK_OPENS {}"
                         .format(site, path, reader, line, opens))
+        return hits[0]
 
-    def _run_case(self, site, expect, case):
+    def _run_case(self, site, expect, case, reached):
         path, made, args, payload = getattr(self, case)()
         path = Path(path)
         if made is None:
@@ -2720,10 +2762,10 @@ class DoctorPrecheckSites(Stage2Harness):
         self.assertNotIn("Traceback", r.stderr)
         if expect == "reach":
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-            assert_refusal(self, r.stdout, site, None, path, made)
+            assert_refusal(self, r.stdout, site, PRECHECK_LABELS[site], path, made)
             if case in self.TRACE_ARRANGE:
                 getattr(self, self.TRACE_ARRANGE[case])()
-            self._assert_hook_reader(site, args, payload, path)
+            reached.add((site,) + self._assert_hook_reader(site, args, payload, path))
             return
         self.assertNotIn("cannot evaluate", r.stdout)
         self.assertIn(r.returncode, (0, 1), r.stdout + r.stderr)
@@ -2733,11 +2775,20 @@ class DoctorPrecheckSites(Stage2Harness):
             self.assertTrue(path.is_fifo(), "the FIFO was replaced, so the contrast proves nothing")
 
     def test_every_case_against_the_doctor_and_the_hook(self):
+        reached = set()
         for site, expect, case in PRECHECK_CASES:
             with self.subTest(site=site, expect=expect, case=case):
                 self.tearDown()
                 self.setUp()
-                self._run_case(site, expect, case)
+                self._run_case(site, expect, case, reached)
+        # Every open that PRECHECK_OPENS gives for a site is the first open of that site's path in at
+        # least 1 reach case, so no open in the table stands without a run that ties it to the path.
+        for site, (_kind, opens) in PRECHECK_OPENS.items():
+            for entry in opens:
+                with self.subTest(site=site, open=entry):
+                    self.assertIn((site,) + entry, reached,
+                                  "no reach case of site {} first opens its path by {} at {}-{}"
+                                  .format(site, *entry))
 
 
 class DoctorScopeMargin(Stage2Harness):
@@ -3696,7 +3747,8 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
     checked path reaches _special_path only through _first_special over _site entries, every
     site has a reach case and, where it has an early exit, a contrast case, each open of
     PRECHECK_OPENS and each claim of OPEN_ACCOUNTS holds at source, the doctor's refusal texts equal
-    those of OPEN_ACCOUNTS, and every refusal check of this file goes through assert_refusal."""
+    those of OPEN_ACCOUNTS, the label table covers every site, and every string literal of this file
+    that holds a part of a pre-check refusal is in assert_refusal or a table that words the refusal."""
 
     def test_the_table_covers_every_precheck_site_in_the_doctor(self):
         if not DOCTOR.exists():
@@ -3719,6 +3771,8 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                          "_special_path is called outside _first_special, so a path can bypass _site")
 
     def test_every_site_has_its_cases(self):
+        self.assertEqual(sorted(PRECHECK_LABELS), sorted(PRECHECK_SITES),
+                         "the label table and the reachability table differ")
         for site, (_command, early_exit, _condition, citation) in PRECHECK_SITES.items():
             with self.subTest(site=site):
                 expects = {e for s, e, _c in PRECHECK_CASES if s == site}
@@ -3816,25 +3870,83 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                 else:
                     self.assertNotIn("does not open it", tail)
 
-    def test_every_refusal_check_reads_the_whole_wording(self):
-        # Every string in this file that starts a doctor refusal ("cannot evaluate: ") is inside
-        # assert_refusal (or this probe), so each case that checks a refusal of a special file at a
-        # pre-check site checks the whole wording there, and none checks a part of it alone.
-        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-        allowed = {"assert_refusal", "test_every_refusal_check_reads_the_whole_wording"}
+    # Where a string may hold a part of a pre-check refusal: the helper that checks the whole line, the
+    # tables that word the refusal, and this probe.
+    REFUSAL_HOLDERS = {"assert_refusal", "OPEN_ACCOUNTS", "BLOCKING_TEXT", "READER_END", "ENUMERATOR_END",
+                       "REFUSAL_HEAD", "refusal_fragments_outside",
+                       "test_every_refusal_check_reads_the_whole_wording"}
+    # The fragments of the refusal's opening words ("cannot evaluate: the <label> <path> is not a
+    # regular file (it is a <made>); "). _assert_barrier_refused checks the barrier refusal of the
+    # resume audit, which is not a pre-check refusal but also says "is not a regular file (it is a",
+    # so only "cannot evaluate" and the tails count there.
+    REFUSAL_HEAD = ("cannot evaluate", "is not a regular file", "(it is a ")
+    BARRIER_HELPER = "_assert_barrier_refused"
+
+    def refusal_fragments_outside(self, source):
+        """(enclosing name, line, text) for every string literal of source, other than a docstring or
+        what an assertNotIn or assertNotRegex call looks for (a check that a refusal is absent), that
+        holds a part of a pre-check refusal outside REFUSAL_HOLDERS: it contains a fragment of
+        REFUSAL_HEAD, or it has at least 2 words and is part of the tail of the refusal at a site
+        (expected_tail)."""
+        tails = [expected_tail(site) for site in PRECHECK_OPENS]
+        tree = ast.parse(source)
+        exempt = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, str):
+                exempt.add(id(node.value))
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr in ("assertNotIn", "assertNotRegex") and node.args:
+                exempt.update(id(n) for n in ast.walk(node.args[0]))
         outside = []
+
+        def holds(text, chain):
+            if any(fragment in text for fragment in self.REFUSAL_HEAD
+                   if self.BARRIER_HELPER not in chain or fragment == "cannot evaluate"):
+                return True
+            return len(text.split()) >= 2 and any(text.strip() in tail for tail in tails)
 
         def visit(node, chain):
             for child in ast.iter_child_nodes(node):
-                inner = chain + (child.name,) if isinstance(child, (ast.FunctionDef,
-                                                                   ast.AsyncFunctionDef)) else chain
+                inner = chain
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    inner = chain + (child.name,)
+                elif isinstance(child, ast.Assign):
+                    inner = chain + tuple(t.id for t in child.targets if isinstance(t, ast.Name))
                 if isinstance(child, ast.Constant) and isinstance(child.value, str) \
-                        and child.value.startswith("cannot evaluate: ") and not allowed & set(chain):
-                    outside.append((chain[-1] if chain else "<module>", child.lineno))
+                        and id(child) not in exempt and not self.REFUSAL_HOLDERS & set(chain) \
+                        and holds(child.value, chain):
+                    outside.append((chain[-1] if chain else "<module>", child.lineno, child.value))
                 visit(child, inner)
 
         visit(tree, ())
-        self.assertEqual(outside, [], "a refusal checked outside assert_refusal")
+        return outside
+
+    def test_every_refusal_check_reads_the_whole_wording(self):
+        # Every string literal of this file that holds a part of a doctor refusal at a pre-check site
+        # (refusal_fragments_outside) is in assert_refusal, in a table that words the refusal or in
+        # this probe, so each case that checks such a refusal reads the whole line there, and none
+        # checks a part of it alone. A check that builds its text from pieces too short to hold a
+        # fragment is beyond this probe. The probe refuses a partial check of each kind.
+        self.assertEqual(self.refusal_fragments_outside(Path(__file__).read_text(encoding="utf-8")), [],
+                         "a refusal checked outside assert_refusal")
+        tail = expected_tail("scope.lease")
+        for partial in ('self.assertIn("cannot evaluate: the declared lease.path", r.stdout)',
+                        'self.assertIn("is not a regular file (it is a directory)", r.stdout)',
+                        'self.assertIn("(it is a directory); ", r.stdout)',
+                        'self.assertIn({!r}, r.stdout)'.format(tail),
+                        'self.assertIn({!r}, r.stdout)'.format(READER_END),
+                        'self.assertIn("would open it with", r.stdout)',
+                        'self.assertTrue("no enumerator ran" in r.stdout)'):
+            with self.subTest(partial=partial):
+                source = "def test_partial(self, r):\n    {}\n".format(partial)
+                self.assertEqual(len(self.refusal_fragments_outside(source)), 1)
+        for fine in ('self.assertNotIn("cannot evaluate", r.stdout)',
+                     'self.assertNotIn("blocking open", r.stdout)',
+                     'self.assertFalse(marker.exists(), "the enumerator ran")'):
+            with self.subTest(fine=fine):
+                source = "def test_fine(self, r):\n    {}\n".format(fine)
+                self.assertEqual(self.refusal_fragments_outside(source), [])
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

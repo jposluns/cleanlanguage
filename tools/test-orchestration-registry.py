@@ -1804,6 +1804,24 @@ class OptionalKeyClassProbe(unittest.TestCase):
                     self.assertTrue(self._accepts({**payload, key: self._value(key)}))
 
 
+# The barrier modes 0666, 0600 and 0644 in every form the config might give them: with or without the
+# leading 0 or 0o, and as rw-rw-rw-, rw------- and rw-r--r--.
+BARRIER_MODE_TOKEN = re.compile(r"(?<![0-9A-Za-z])(?:0o?)?(?:666|600|644)(?![0-9])"
+                                r"|rw-rw-rw-|rw-------|rw-r--r--")
+# Words of a statement about a file's mode or who can read it, and an octal mode of 3 digits.
+MODE_WORDS = re.compile(r"(?i)\b(?:modes?|umask|acls?|permissions?|readable|unreadable|read|chmod)\b"
+                        r"|(?<![0-9A-Za-z])(?:0o?)?[0-7]{3}(?![0-9])")
+
+
+def barrier_mode_sentences(text):
+    """The sentences of text, split after each '.', '!' or '?' that whitespace follows, that state the
+    barrier's mode or who can read it: each sentence that names the barrier and holds a word or mode
+    of MODE_WORDS, and each sentence that holds a mode of BARRIER_MODE_TOKEN, in order."""
+    return [sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
+            if (re.search(r"(?i)barrier", sentence) and MODE_WORDS.search(sentence))
+            or BARRIER_MODE_TOKEN.search(sentence)]
+
+
 class ConfigDisclosure(unittest.TestCase):
     # The adoption config states every exit of the stop decision, including the loop bound
     # (`_ORCH_LOOP_BOUND` at aiqt_hooks.py:23063-23066) and the fail-open on an unsaved denial counter
@@ -1843,9 +1861,13 @@ class ConfigDisclosure(unittest.TestCase):
         # the barrier's mode (tools/test-orch-stage2-hooks.py,
         # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so. A default
         # ACL on the folder overrides the umask for a new file (the stage 2 run under a TMPDIR whose
-        # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone,
-        # and the modes 0666, 0600 and 0644 may appear in it only in the phrases below, so 0644 is
-        # given only for a folder without such an ACL.
+        # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone.
+        # Every sentence of the config that names the barrier and speaks of a mode, the umask, an ACL,
+        # permissions or reading, and every sentence that gives 0666, 0600 or 0644 in any of their
+        # forms (with or without the leading 0 or 0o, or as rw-rw-rw-, rw------- or rw-r--r--)
+        # (barrier_mode_sentences), must be 1 of the 3 whole sentences below, in that order, so the
+        # config gives 0644 only for a folder without such an ACL. A sentence that names neither the
+        # barrier nor one of those modes is beyond this check.
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         phrases = ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
                    "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
@@ -1858,13 +1880,21 @@ class ConfigDisclosure(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertEqual(text.count(phrase), 1)
         self.assertNotIn("the mode of a new file, 0666 less the umask, not the mode", text)
-        rest = text
-        for phrase in phrases:
-            rest = rest.replace(phrase, " ")
-        for mode in ("0666", "0600", "0644"):
-            with self.subTest(mode=mode):
-                self.assertNotRegex(rest, r"(?<![0-9]){}(?![0-9])".format(mode),
-                                    "a barrier mode outside the conditioned phrases")
+        sentences = [
+            "The refreshed hook writes the barrier to a new temporary file and replaces the old file "
+            "with it, so " + phrases[0] + ".",
+            phrases[1] + ", and so readable by every user who can reach `state_dir`.",
+            "The writer, `_orch_barrier_write`, is the pack's and is not edited here; " + phrases[2] + "."]
+        self.assertEqual(barrier_mode_sentences(text), sentences,
+                         "a barrier mode stated outside the conditioned sentences")
+        # The check refuses a stated barrier mode of each kind.
+        for added in ("A barrier is 0644 after every audit.", "A barrier is 644 after every audit.",
+                      "A barrier is 0o644 after every audit.", "The barrier ends as rw-r--r--.",
+                      "Every audit leaves the barrier readable by every user, whatever the ACL.",
+                      "Its mode is 0600 again after an audit.",
+                      "The barrier keeps the permissions it had."):
+            with self.subTest(added=added):
+                self.assertEqual(len(barrier_mode_sentences(text + " " + added)), 4)
 
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and
