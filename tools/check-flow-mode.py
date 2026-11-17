@@ -71,26 +71,36 @@ fails when any of them is missing:
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
 so a copy from another commit can be checked through git show.
-Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
-UTF-8, and when more than 1 argument is given.
-Output: the check prints every line of its output to standard output and nothing to standard
-error. Each finding is 1 line that starts with "FAIL: " and the name of the text read, which is
-PATH as given, the default path when no PATH is given, or "-" for standard input, and a last line,
-"FAIL: " and the number of findings, names no text. The report that the text holds no MODE line
-or more than 1 gives the number found. The report of a MODE line with no closing
-parenthesis, and the report of a bare "attended", give the number of its line and the line with
-the white space at either end removed. The report that the MODE line names other values gives the
-text between its parentheses split at each "|", each part with the white space at either end
-removed, in order and joined by " | ", and then the writer's 2 values joined in the same way. The
-report that the absent-record sentence is missing gives nothing more. The report that a pinned
-paragraph is not found once gives the paragraph's name, its opening text as Python's repr()
-writes it and the number found. The report that a paragraph has changed gives
-its name, its line range, its new sha256 and the 1-line update to PARAGRAPHS. A pass prints 1
-line, which names the text read in the same way and gives the number of pinned paragraphs. Text
-that cannot be read, for any reason that Python gives as an OSError, a closed standard input
-included, or that is not UTF-8, gives 1 line, which names it in the same way and gives the reason
-that Python gives for the failed read or decode. More than 1 argument gives 1 line, the usage
-line, which names no text and does not start with "FAIL: ".
+Exit status: 0 when every check passes and the pass line is written; 1 on any finding, when the
+text cannot be read or is not UTF-8, when more than 1 argument is given, and when the output
+cannot be written whole.
+Output: the check writes every line of its output to standard output and nothing to standard
+error. It writes the output itself, as UTF-8 bytes on file descriptor 1, whatever the locale's
+encoding, and it writes each byte of a path name that Python's file-system encoding cannot decode
+as that byte. Output that cannot be written whole, as to a closed standard output, a standard
+output open only for reading, a pipe whose reading end is closed or a full device, ends the check
+with exit status 1, and the check writes nothing more on either stream. Only Python itself, not
+the check's code, writes on standard error: when standard input, standard output or standard
+error is a folder, Python stops before the check runs, writes its own fatal error on standard
+error where it can and exits with status 1, and Python reports its own failures there, such as
+memory running out. Each finding is 1 line that starts with "FAIL: " and the name of the text
+read, which is PATH as given, every character kept, the default path when no PATH is given, or
+"-" for standard input, and a last line, "FAIL: " and the number of findings, names no text. The
+report that the text holds no MODE line or more than 1 gives the number found. The report of a
+MODE line with no closing parenthesis, and the report of a bare "attended", give the number of
+its line and the line with the white space at either end removed and every other character, the
+white space between its words included, kept. The report that the MODE line names other values
+gives the text between its parentheses split at each "|", each part with the white space at
+either end removed and every other character kept, in order and joined by " | ", and then the
+writer's 2 values joined in the same way. The report that the absent-record sentence is missing
+gives nothing more. The report that a pinned paragraph is not found once gives the paragraph's
+name, its opening text as Python's repr() writes it and the number found. The report that a
+paragraph has changed gives its name, its line range, its new sha256 and the 1-line update to
+PARAGRAPHS. A pass writes 1 line, which names the text read in the same way and gives the number
+of pinned paragraphs. Text that cannot be read, for any reason that Python gives as an OSError,
+a closed standard input included, or that is not UTF-8, gives 1 line, which names it in the same
+way and gives the reason that Python gives for the failed read or decode. More than 1 argument
+gives 1 line, the usage line, which names no text and does not start with "FAIL: ".
 
 Residual: the check reads text literally. Text outside the 7 pinned paragraphs is not pinned, and
 an edit there fails only in these ways: a MODE line test fails, as when a line there starts with
@@ -139,6 +149,7 @@ finite suite can try every number, so a larger number rests on reading the code.
 tools/test-check-flow-mode.py holds a case for each verdict named in this docstring.
 """
 import hashlib
+import os
 import re
 import sys
 from pathlib import Path
@@ -269,10 +280,10 @@ def findings(text, name):
     return found
 
 
-def main(argv):
+def outcome(argv):
+    """The exit status of the check run with argv, and the lines of its output."""
     if len(argv) > 1:
-        print("usage: python3 -I tools/check-flow-mode.py [PATH]")
-        return 1
+        return 1, ["usage: python3 -I tools/check-flow-mode.py [PATH]"]
     source = argv[0] if argv else str(DEFAULT)
     try:
         if source == "-":
@@ -283,18 +294,35 @@ def main(argv):
         else:
             text = Path(source).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        print("FAIL: {} cannot be read: {}".format(source, exc))
-        return 1
+        return 1, ["FAIL: {} cannot be read: {}".format(source, exc)]
     found = findings(text, source)
-    for line in found:
-        print("FAIL: " + line)
     if found:
-        print("FAIL: {} finding(s)".format(len(found)))
-        return 1
-    print("OK: {}: the MODE line names the writer's 2 modes, no line holds an unquoted bare "
-          "\"attended\", the absent-record sentence is present, and the {} pinned paragraphs are "
-          "unchanged".format(source, len(PARAGRAPHS)))
-    return 0
+        return 1, ["FAIL: " + line for line in found] + ["FAIL: {} finding(s)".format(len(found))]
+    return 0, ["OK: {}: the MODE line names the writer's 2 modes, no line holds an unquoted bare "
+               "\"attended\", the absent-record sentence is present, and the {} pinned paragraphs "
+               "are unchanged".format(source, len(PARAGRAPHS))]
+
+
+def write(lines):
+    """Whether lines, each ended by a line feed, were written whole to file descriptor 1. The
+    check writes them itself, as UTF-8 whatever the locale's encoding, so that no character can
+    fail to encode; surrogateescape writes each byte of a path name that Python's file-system
+    encoding could not decode as that byte. A write that fails, as to a closed standard output, a
+    standard output open only for reading, a pipe whose reading end is closed or a full device,
+    ends the writing, and nothing is written on standard error, since sys.stdout, whose buffer
+    Python would flush at exit and report on there, is never written."""
+    data = "".join(line + "\n" for line in lines).encode("utf-8", "surrogateescape")
+    try:
+        while data:
+            data = data[os.write(1, data):]
+    except OSError:
+        return False
+    return True
+
+
+def main(argv):
+    status, lines = outcome(argv)
+    return status if write(lines) else 1
 
 
 if __name__ == "__main__":

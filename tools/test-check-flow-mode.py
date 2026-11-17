@@ -9,7 +9,9 @@ each edit, and 1 loads a copy of the check whose bytecode cache is stale. Each c
 the check in this process compiles it from its source as it is now, so no bytecode cache stands
 in for that source. Most cases give the check the text on standard input. Each case reads the
 check's standard output alone, and every run of the check must write nothing to standard error,
-so a check that writes a line there, in place of standard output or as well, fails.
+so a check that writes a line there, in place of standard output or as well, fails; the 1
+exception is the case of a folder as a standard stream, in which Python itself stops before the
+check runs and writes its own fatal error there, as the check's docstring states.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
@@ -61,19 +63,24 @@ ends passes. Each of 3 texts gives its whole expected output, every report line 
 its counts and line numbers, and the count of findings, on standard input, through a path and
 through the default path, which a copy of the check with only its DEFAULT line rewritten reads
 when it runs with no argument, as CI runs the check; each report line names the text read, "-"
-on standard input and the file's path through a path and through the default path. Each text is
-read as built and again after 99999 blank lines, so that each line number and line range that
-the check reports for it has 6 digits. Between them the 3 texts give every kind of report line
+on standard input and the file's path through a path and through the default path, a file whose
+name holds every kind of white space that ends no line inside it and at its end, which each
+report gives as it is. Each text is read as built and again after 99999 blank lines, so that each
+line number and line range that the check reports for it has 6 digits. Between them the 3 texts
+give every kind of report line
 of the check's findings: the committed flow.md with every test failed at once, by a word
-appended to each pinned paragraph, a third value on the MODE line, with every kind of white
-space that ends no line at either end of each value, which the report leaves out, a bare
-"attended" added and the absent-record sentence removed, gives 10 reports; with the opening text
-of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
-with every kind of white space that ends no line at its end added, it gives 10, 1 for each
-paragraph found 0 times, 1 for 2 MODE lines and 2 for
-a MODE line with no closing parenthesis, each giving the line without the white space at its
-ends; and with each pinned paragraph repeated and its MODE line renamed, it gives 8, 1 for each
-paragraph found 2 times and 1 for no MODE line. Each report of a number found gives that number
+appended to each pinned paragraph, a third value on the MODE line that holds every kind of
+white space that ends no line between 2 of its letters, with every kind of white space that ends
+no line at either end of each value, which the report leaves out while it keeps the white space
+inside the third value, a bare "attended" added on a line that holds every such kind between 2
+of its words, which its report keeps, and the absent-record sentence removed, gives 10 reports;
+with the opening text of each pinned paragraph changed, its MODE line left unclosed and a
+second, unclosed MODE line with every kind of white space that ends no line between 2 of its
+words and at its end added, it gives 10, 1 for each paragraph found 0 times, 1 for 2 MODE lines
+and 2 for a MODE line with no closing parenthesis, each giving the line without the white space
+at its ends and with the white space between its words kept; and with each pinned paragraph
+repeated and its MODE line renamed, it gives 8, 1 for each paragraph found 2 times and 1 for no
+MODE line. Each report of a number found gives that number
 on each of the 3 reads, which print the whole expected output: with the MODE line written each
 number of times from 2 to 11, and 99, 100, 101 and 1000 times, the opening text of each pinned
 paragraph starting a different number of paragraphs from that number up, so from 2 to 17, 99 to
@@ -136,7 +143,21 @@ each give the same through a path and through the default path, with the error t
 for reading it, the last skipped for an account that can read it all the same; a descriptor open
 only for writing and a closed standard input each give the same on standard input; and 2 or 3
 arguments, the path of flow.md or "-" among them, give exit status 1 and as the whole output the
-usage line.
+usage line. A file whose name holds a byte that is not UTF-8, and a file whose name holds every
+kind of white space that ends no line inside it and at its end, each give, through a path and
+through the default path, of a copy of the check in a folder whose name holds the same bytes, the
+pass line, a finding and the line that the file cannot be read, each naming the file by the
+bytes of its name, under the inherited locale, under C, POSIX, C.UTF-8 and en_US.UTF-8, and with
+a sys.stdout that writes only ASCII, which stands in for a locale whose encoding lacks a
+character that the output holds; with that sys.stdout, the 3 texts
+that give every kind of report line give their whole output on standard input. Output that
+cannot be written whole, to a closed standard output, a standard output open only for reading, a
+pipe whose reading end is closed or a full device, gives exit status 1 and nothing on standard
+error for the usage line, the line that the text cannot be read, a failure and a pass, the full
+device skipped where the system has no /dev/full. A folder as standard input or standard output
+stops Python before the check runs, with exit status 1, nothing on standard output and Python's
+fatal error on standard error, a folder as standard error does the same with nothing on
+standard output, and the check's docstring states that exception.
 
 The residual cases hold the limits that the check's docstring states: outside the 7 pinned
 paragraphs, the line '- A third mode, supervised, is also read.' passes, and the line
@@ -266,6 +287,30 @@ INLINE_WHITE = [space for space in WHITE if space not in "\n\r"]
 # the MODE values whose white space at either end the check's reports remove: a check that
 # removes only some kinds leaves a kind that it misses in its report.
 PADDING = "".join(INLINE_WHITE)
+# Text that holds every kind of white space that ends no line between 2 of its words or letters,
+# which the reports that quote it must keep: a check that collapses or removes white space inside
+# the text that a report quotes changes it. The third MODE value, the line that holds a bare
+# "attended" and the second, unclosed MODE line of failing_texts(), and the name of the file that
+# each case of a whole output reads through a path; that name also ends with that white space.
+THIRD = "super" + PADDING + "vised"
+BARE_LINE = "- Absent =" + PADDING + "attended (conservative)."
+UNCLOSED_LINE = "- MODE (supervised" + PADDING + "is a third mode."
+SPACED_NAME = "flow" + PADDING + ".md" + PADDING
+# The file name that holds a byte that is not UTF-8, as bytes, which a report must give as that
+# byte.
+UNDECODED_NAME = b"flow-\xff.md"
+# The locales under which the check must name a file by the bytes of its name: None keeps the
+# inherited locale. Under en_US.UTF-8, where it is installed, Python's standard output fails on a
+# path name that is not UTF-8; where it is not, Python falls back as it does under C.
+LOCALES = [None, "C", "POSIX", "C.UTF-8", "en_US.UTF-8"]
+# A run of the check in which sys.stdout writes only ASCII and fails on any other character, as
+# Python's standard output does under a locale whose encoding lacks a character that the output
+# holds, whatever locales the system has: a check that wrote through sys.stdout fails on any
+# character outside ASCII, while a check that writes its UTF-8 bytes itself does not.
+ASCII_STDOUT = ("import io, runpy, sys; sys.stdout = io.TextIOWrapper("
+                "io.FileIO(1, 'w', closefd=False), encoding='ascii', errors='strict',"
+                " line_buffering=True); check = sys.argv[1]; sys.argv = sys.argv[1:];"
+                " runpy.run_path(check, run_name='__main__')")
 
 # Rule changes in the pinned paragraphs, each as the paragraph it is in, a text that flow.md
 # holds once, and its replacement.
@@ -319,20 +364,29 @@ FLOOR_REMOVALS = [
 ]
 
 
+def launch(args, check=CHECK, ascii_stdout=False, env=None, **streams):
+    """The finished run of the check with args, each a str or bytes, with the standard streams
+    that streams give, under env, and through ASCII_STDOUT when ascii_stdout is set. The check
+    writes nothing to standard error, so a run that writes anything there fails the case that
+    made it."""
+    wrapper = ["-c", ASCII_STDOUT] if ascii_stdout else []
+    run = subprocess.run([sys.executable, "-I"] + wrapper + [str(check)] + args,
+                         stderr=subprocess.PIPE, timeout=60, check=False, env=env, **streams)
+    if run.stderr:
+        raise AssertionError("expected nothing on standard error, found {!r}".format(
+            run.stderr.decode("utf-8", "replace")))
+    return run
+
+
 def run_check(args, data=b"", check=CHECK, stdin=None, closed=False):
     """The exit status of the check run with args, and its output, which is its standard output
     alone. Its standard input is data, or the file descriptor stdin when one is given, or none at
-    all when closed is set. The check writes nothing to standard error, so a run that writes
-    anything there fails the case that made it."""
+    all when closed is set."""
     if closed:
         source = {"stdin": subprocess.DEVNULL, "preexec_fn": lambda: os.close(0)}
     else:
         source = {"input": data} if stdin is None else {"stdin": stdin}
-    run = subprocess.run([sys.executable, "-I", str(check)] + args, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, timeout=60, check=False, **source)
-    if run.stderr:
-        raise AssertionError("expected nothing on standard error, found {!r}".format(
-            run.stderr.decode("utf-8", "replace")))
+    run = launch(args, check, stdout=subprocess.PIPE, **source)
     return run.returncode, run.stdout.decode("utf-8", "replace")
 
 
@@ -449,15 +503,15 @@ def default_copy(folder, default):
 
 def failing_text():
     """The committed flow.md with every test failed at once: a word appended to each pinned
-    paragraph, a third value on the MODE line, with PADDING at either end of each value, which the
-    report of those values leaves out, a bare "attended" added and the absent-record sentence
-    removed."""
+    paragraph, a third value, THIRD, on the MODE line, with PADDING at either end of each value,
+    which the report of those values leaves out while it keeps the white space inside THIRD, a
+    bare "attended" added on BARE_LINE, and the absent-record sentence removed."""
     text = with_paragraphs(lambda p, o: p + " x")
-    values = ["attended-autonomous", "unattended", "supervised"]
+    values = ["attended-autonomous", "unattended", THIRD]
     text = replaced(text, MODE_LINE, "- MODE ({})".format(
         "|".join(PADDING + value + PADDING for value in values)))
     text = replaced(text, ABSENT_WORDS, "reads the mode record")
-    return replaced(text, DECISIONS, ABSENT_ATTENDED + "\n" + DECISIONS)
+    return replaced(text, DECISIONS, BARE_LINE + "\n" + DECISIONS)
 
 
 def output(lines):
@@ -471,8 +525,9 @@ def failing_texts(lead=0):
     each with a function that gives, for the name of the text read, the whole output that the
     check must print, in its order, each report line with its counts and line numbers and the last
     line with the number of findings: failing_text(); the committed flow.md with the opening text
-    of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line
-    with PADDING at its end added, which the report of that line leaves out; and the committed
+    of each pinned paragraph changed, its MODE line left unclosed and a second, unclosed MODE line,
+    UNCLOSED_LINE, with PADDING at its end added, which the report of that line leaves out while
+    it keeps the white space inside UNCLOSED_LINE; and the committed
     flow.md with each pinned paragraph repeated and its MODE line renamed so that none is left.
     Each text starts with lead blank lines, which move each line number and line range that the
     check reports for it down by lead. Each sha256 is the one this test computes, so the expected
@@ -480,7 +535,7 @@ def failing_texts(lead=0):
     text = committed()
     pinned = {opening: own_digest(text[slice(*span(text, opening))]) for _, opening in NAMED}
     failed = "\n" * lead + failing_text()
-    bare, bare_line = line_of(failed, ABSENT_ATTENDED)
+    bare, bare_line = line_of(failed, BARE_LINE)
     changes = []
     for name, opening in NAMED:
         first, last = line_range(failed, opening)
@@ -488,18 +543,15 @@ def failing_texts(lead=0):
         changes.append((first, last, name, now, pinned[opening], now))
     lost = with_paragraphs(lambda p, o: "x" + p[1:])
     lost = replaced(lost, MODE_LINE, MODE_LINE[:-1])
-    lost = "\n" * lead + replaced(lost, DECISIONS,
-                                  "- MODE (supervised is a third mode." + PADDING + "\n"
-                                  + DECISIONS)
-    unclosed = sorted([line_of(lost, MODE_LINE[:-1]),
-                       line_of(lost, "- MODE (supervised is a third mode.")])
+    lost = "\n" * lead + replaced(lost, DECISIONS, UNCLOSED_LINE + PADDING + "\n" + DECISIONS)
+    unclosed = sorted([line_of(lost, MODE_LINE[:-1]), line_of(lost, UNCLOSED_LINE)])
     repeated = with_paragraphs(lambda p, o: p + "\n\n" + p)
     repeated = "\n" * lead + replaced(repeated, MODE_LINE, MODE_LINE.replace("MODE", "Mode"))
 
     return [
         ("every test failed", failed, lambda source: output(
-            ["FAIL: {}: {} attended-autonomous | unattended | supervised, not exactly"
-             " attended-autonomous | unattended".format(source, WRONG_MODES),
+            ["FAIL: {}: {} attended-autonomous | unattended | {}, not exactly"
+             " attended-autonomous | unattended".format(source, WRONG_MODES, THIRD),
              "FAIL: {}:{}: {}: {}".format(source, bare, BARE, bare_line),
              "FAIL: {}: {}".format(source, NO_ABSENT)]
             + [REPORT.format(source, *change) for change in changes])),
@@ -840,13 +892,14 @@ class Verdicts(unittest.TestCase):
         # text. A copy of the check with only its DEFAULT line rewritten runs as a separate
         # process with no argument, as CI runs the check, and reads the changed copy of flow.md.
         # Each read must print the whole expected output, each report line naming the text read:
-        # "-" on standard input, and the file's path through a path and through the default path.
+        # "-" on standard input, and the file's path through a path and through the default path,
+        # whose name, SPACED_NAME, holds white space that each report must give as it is.
         with self.subTest(read="standard input", **names):
             status, output = verdict(flow)
             self.assertEqual(status, 1, output)
             self.assertEqual(output, expected("-"))
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "flow.md"
+            path = Path(folder) / SPACED_NAME
             path.write_text(flow, encoding="utf-8")
             copy = default_copy(folder, path)
             for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
@@ -1286,6 +1339,131 @@ class Verdicts(unittest.TestCase):
                 status, output = run_check(args, FLOW.read_bytes())
                 self.assertEqual(status, 1, output)
                 self.assertEqual(output, USAGE)
+
+    def test_each_file_is_named_by_the_bytes_of_its_name_in_every_locale(self):
+        # The check writes its output as UTF-8 bytes itself, so the name of the file read reaches
+        # standard output as the bytes it is, whatever the locale: a byte that is not UTF-8, and
+        # white space inside the name and at its end. The pass line, a finding and the line that
+        # the file cannot be read each name the file so, through a path and through the default
+        # path, under each locale of LOCALES and with ASCII_STDOUT. The copy of the check that
+        # reads the default path lies in a folder whose name holds the same bytes, so the check
+        # also resolves its own path through such a name.
+        text = added(ABSENT_ATTENDED)
+        bare, _ = line_of(text, ABSENT_ATTENDED)
+        settings = [(locale, False) for locale in LOCALES] + [("ASCII_STDOUT", True)]
+        for kind, base in (("a byte that is not UTF-8", UNDECODED_NAME),
+                           ("white space", SPACED_NAME.encode("utf-8"))):
+            for report in ("pass", "finding", "cannot be read"):
+                with tempfile.TemporaryDirectory() as name:
+                    path = os.fsencode(name) + b"/" + base
+                    shown = os.fsdecode(path)
+                    if report == "pass":
+                        Path(shown).write_bytes(committed().encode("utf-8"))
+                        status, rest = 0, PASS.format("")[len("OK: "):]
+                        expected = b"OK: " + path + rest.encode("utf-8")
+                    elif report == "finding":
+                        Path(shown).write_bytes(text.encode("utf-8"))
+                        status, rest = 1, ":{}: {}: {}\nFAIL: 1 finding(s)\n".format(
+                            bare, BARE, ABSENT_ATTENDED)
+                        expected = b"FAIL: " + path + rest.encode("utf-8")
+                    else:
+                        error = read_error(Path(shown).read_bytes)
+                        self.assertIn("[Errno {}]".format(errno.ENOENT), error)
+                        status, rest = 1, " {}{}\n".format(UNREADABLE, error)
+                        expected = b"FAIL: " + path + rest.encode("utf-8")
+                    holder = os.fsdecode(os.fsencode(name) + b"/check-" + base)
+                    os.mkdir(holder)
+                    copy = default_copy(holder, shown)
+                    for read, args, check in (("path", [path], CHECK), ("default path", [], copy)):
+                        for setting, wrapped in settings:
+                            with self.subTest(name=kind, report=report, read=read, setting=setting):
+                                environment = (None if wrapped or setting is None
+                                               else dict(os.environ, LC_ALL=setting))
+                                run = launch(args, check, ascii_stdout=wrapped, env=environment,
+                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+                                self.assertEqual(run.returncode, status, run.stdout)
+                                self.assertEqual(run.stdout, expected)
+
+    def test_every_report_kind_is_written_whatever_the_locale_encodes(self):
+        # With a sys.stdout that writes only ASCII, the 3 texts that give every kind of report
+        # line give their whole output on standard input. The reports of the MODE values, of a
+        # bare "attended" and of an unclosed MODE line quote characters outside ASCII, so a check
+        # that wrote any of them through sys.stdout fails here.
+        for what, text, expected in failing_texts():
+            with self.subTest(text=what):
+                run = launch(["-"], ascii_stdout=True, input=text.encode("utf-8"),
+                             stdout=subprocess.PIPE)
+                self.assertEqual(run.returncode, 1, run.stdout)
+                self.assertEqual(run.stdout, expected("-").encode("utf-8"))
+
+    def test_output_that_cannot_be_written_gives_status_1_and_nothing_on_standard_error(self):
+        # The check writes its whole output itself, so a write that fails ends the check with exit
+        # status 1, a pass included, and Python is left no buffer of sys.stdout to flush at exit
+        # and to report on standard error: for the usage line, the line that the text cannot be
+        # read, a failure and a pass.
+        reports = [("the usage line", ["-", "-"], b""),
+                   ("the line that the text cannot be read", ["-"], b"\xff\n"),
+                   ("a failure", ["-"], b"x\n"),
+                   ("a pass", ["-"], committed().encode("utf-8"))]
+
+        def broken_pipe():
+            read, write = os.pipe()
+            os.close(read)
+            return write
+
+        def read_only():
+            return os.open(os.devnull, os.O_RDONLY)
+
+        def full_device():
+            return os.open("/dev/full", os.O_WRONLY)
+
+        targets = [("a pipe whose reading end is closed", broken_pipe),
+                   ("a standard output open only for reading", read_only),
+                   ("a full device", full_device)]
+        for what, make in targets:
+            for report, args, data in reports:
+                with self.subTest(stdout=what, report=report):
+                    if make is full_device and not os.path.exists("/dev/full"):
+                        self.skipTest("this system has no /dev/full")
+                    descriptor = make()
+                    try:
+                        run = launch(args, stdout=descriptor, input=data)
+                    finally:
+                        os.close(descriptor)
+                    self.assertEqual(run.returncode, 1)
+        for report, args, data in reports:
+            with self.subTest(stdout="a closed standard output", report=report):
+                run = launch(args, stdout=subprocess.DEVNULL, input=data,
+                             preexec_fn=lambda: os.close(1))
+                self.assertEqual(run.returncode, 1)
+
+    def test_a_folder_as_a_standard_stream_stops_python_before_the_check(self):
+        # Python opens the 3 standard streams before it runs any code of the check, and it stops
+        # with exit status 1 when any of them is a folder, so no code of the check can give its
+        # line or keep standard error empty there. This case holds that exception, which the
+        # check's docstring states, and Python's fatal error, so that a Python that ran the check
+        # with such a stream fails it and calls for the docstring to be revisited.
+        stated = " ".join(check_module().__doc__.split())
+        self.assertIn("when standard input, standard output or standard error is a folder, Python"
+                      " stops before the check runs", stated)
+        fatal = b"Fatal Python error: init_sys_streams"
+        with tempfile.TemporaryDirectory() as name:
+            folder = os.open(name, os.O_RDONLY)
+            try:
+                for stream in ("stdin", "stdout", "stderr"):
+                    with self.subTest(stream=stream):
+                        streams = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE,
+                                   "stderr": subprocess.PIPE}
+                        streams[stream] = folder
+                        run = subprocess.run([sys.executable, "-I", str(CHECK), "-"], timeout=60,
+                                             check=False, **streams)
+                        self.assertEqual(run.returncode, 1, run.stderr)
+                        if stream != "stdout":
+                            self.assertEqual(run.stdout, b"")
+                        if stream != "stderr":
+                            self.assertTrue(run.stderr.startswith(fatal), run.stderr)
+            finally:
+                os.close(folder)
 
 
 class Residual(unittest.TestCase):
