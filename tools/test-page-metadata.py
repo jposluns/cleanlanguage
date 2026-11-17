@@ -1886,14 +1886,25 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 self.assertIn(words, stderr)
 
     def test_byte_that_is_not_ascii_in_an_object_name_exits_3(self):
-        # The byte 0xff before the object name on the protected refname's
-        # line of the ref listing, or before the object name in the tree
-        # entry at HEAD, stops the check with exit 3 and the message that
-        # names a byte that is not ASCII, not the message for output that
-        # the gate cannot use.
+        # The byte 0xff before an object name stops the check with exit 3
+        # and the message that names a byte that is not ASCII, not the
+        # message for output that the gate cannot use, in each reading of
+        # an object name: the protected refname's line of the ref listing,
+        # a line below it listed first, the merge base, the blob entry at
+        # HEAD, the blob entry at the merge base, a tree and a gitlink
+        # entry at HEAD, and the git hash-object result. Each subtest fails
+        # when its reading alone decodes the object name with a replacing
+        # decode, which keeps exit 3 but gives the other message.
         entry = b"100644 blob {blob}\tsite/index.html\0"
         for prefix, output in ((("for-each-ref",), b"refs/remotes/origin/main \xff{main}\n"),
-                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"\xff{blob}"))):
+                               (("for-each-ref",),
+                                b"refs/remotes/origin/main/x \xff{main}\nrefs/remotes/origin/main {main}\n"),
+                               (("merge-base",), b"\xff{main}\n"),
+                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"\xff{blob}")),
+                               (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", b"\xff{blob}")),
+                               (("ls-tree", "-z", "HEAD"), b"040000 tree \xff{blob}\tsite/index.html\0"),
+                               (("ls-tree", "-z", "HEAD"), b"160000 commit \xff{blob}\tsite/index.html\0"),
+                               (("hash-object",), b"\xff{blob}\n")):
             with self.subTest(prefix=prefix, output=output):
                 problems, stderr = self.check_with_fake_git(prefix, output)
                 self.assertIsNone(problems, stderr)
