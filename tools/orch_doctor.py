@@ -102,9 +102,11 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          :23641-23663); it never changes the verdict, so it needs no input. The test
                          suite scans the hook source for every event field these paths read and
                          holds each to a reviewed table, so a new field fails the suite.
-                         Before each hook reader is called, the doctor checks every path that
-                         reader would open with a plain blocking open, and mode.path, which the
-                         hook opens without blocking (see below), each resolved as the hook
+                         Before each hook reader is called, the doctor checks the paths that
+                         reader would open, most with a plain blocking open; the hook opens the
+                         registry files, mode.path, record.pending_decisions and the attestations
+                         anchor without blocking (see below), and the enumerator, not the hook,
+                         opens its operands. Each path is resolved as the hook
                          resolves it (_orch_path, aiqt_hooks.py:22125-22130; the state directory by
                          _orch_state_dir_for_root, :22149-22154), and a path is checked only when
                          the hook call path would reach its open, each earlier exit the hook takes
@@ -141,17 +143,22 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          `return ("hold"` at :32924, so the reader returns at :22948-22950 on
                          `astatus != "ok"`). Each is checked with os.stat only, never opened. One
                          that exists
-                         and is not a regular file (a FIFO, which would block the hook open
+                         and is not a regular file (a FIFO, which would block a blocking open
                          indefinitely; a directory; a device; or a symlink to one of these) is
                          reported as cannot-evaluate, exit 2, naming the path and its type, and the
-                         hook reader that would open it is not called and no enumerator runs; for
-                         mode.path the report says that the hook's reader would not block on it,
-                         and that the doctor does not model that reader. An
+                         hook reader that would open it is not called and no enumerator runs. The
+                         report then says how the hook would open that path: for the registry
+                         files, mode.path, record.pending_decisions and the attestations anchor,
+                         that the hook would not block on it, naming the reader that opens it with
+                         O_NONBLOCK and what that reader makes of a file that is not regular; for
+                         an enumerator operand, that the hook does not open it; and for every
+                         other path, that the hook would open it with a blocking open. An
                          absent path is left to the hook, whose open raises rather than blocks. The
                          paths only the resume audit opens (the handoff and findings records,
                          mistakes_register and the audit state files) are not checked here, since
-                         the preview never opens them, and the escape sentinel is opened
-                         non-blocking (os.open at :22670) and needs no check.
+                         the preview never opens them, and the escape sentinel, which the hook
+                         opens non-blocking (os.open at :22670) and judges on the open descriptor,
+                         is not checked.
 
   --resume-audit         Run the resume audit on demand. It delegates to orch_resume_audit in the
                          vendored hook (aiqt_hooks.py:33270-33354), so the probes (_orch_resume_probes,
@@ -159,8 +166,9 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          _orch_validate_attestations at :32820), the resume-barrier.json write
                          (:33323-33325), and the findings guard event are exactly those of the hook.
                          The same kind of special-file check runs first, over the paths the audit
-                         opens with a blocking open, each checked only when the audit would reach
-                         its open: record.handoff (_orch_record_surface_read at :32760),
+                         opens, each checked only when the audit would reach its open; it opens
+                         the record surfaces and the anchor without blocking, the others with a
+                         blocking open: record.handoff (_orch_record_surface_read at :32760),
                          record.findings (:32790 and _orch_record_surface_read at :32837),
                          record.pending_decisions (:32790), when declared (at_path at :33094) the
                          attestations register (`open` at :32876 via _orch_chained_rows at :33096,
@@ -249,8 +257,8 @@ control of this tool. The quiet-duration check is not previewed (see above). The
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
 rewrites the file inside the same run. The special-file check is a point-in-time os.stat: a path
 replaced by a FIFO between the check and the hook open can still block. It covers, per command, the
-declared paths and the fixed state files that the hook call path opens with a plain blocking open,
-and mode.path, as listed above. It models every earlier exit that a stat or the registry content decides (an
+registry files, the declared paths and the fixed state files that the hook call path opens, with a
+blocking open or without blocking, and the enumerator operands, as listed above. It models every earlier exit that a stat or the registry content decides (an
 absent or unstattable file, a file size, a lease age, a declared key, an enumerator argv that cannot
 run). A condition that only an open or a program run can decide is not modelled, and the path is
 checked whenever the call could reach its open: an enumeration that succeeds, the content of a
@@ -584,8 +592,10 @@ def _enumerator_runs(reg):
 
 
 def _ctx_read_paths(hook, reg, root):
-    """The paths _orch_build_ctx (aiqt_hooks.py:23412-23475) opens with a plain blocking open for
-    reading, traced through every reader it calls, each only when the call reaches it:
+    """The paths _orch_build_ctx (aiqt_hooks.py:23412-23475) opens for reading, traced through every
+    reader it calls, each only when the call reaches it. Each is opened with a plain blocking open,
+    except record.pending_decisions and attestations.anchor, which the hook opens without blocking,
+    and the enumerator operands, which the enumerator opens, not the hook (SITE_OPEN):
       turn-state.json              _orch_turn_state, lexists then open at 22344-22346 (via 23420), always
       enumerator argv[2] on        opened by the enumerator, run with cwd = the root (22833, via 23431),
                                    only when the enumerator runs (_enumerator_runs)
@@ -607,9 +617,9 @@ def _ctx_read_paths(hook, reg, root):
     whenever the enumerator runs, since only running it decides whether it succeeds. Not modelled, so
     checked conservatively: the snapshot content (22937-22945), whether git tracks the register
     (`ls-files` at 32930-32961), and a guard-events pointer in a register row (pointer.startswith at
-    33018). Not opened for reading with a blocking open, so not checked here: the checkpoint-init
-    marker (read by os.path.lexists at 23335 and 23387 only) and the escape sentinel (opened
-    non-blocking by os.open at 22670-22671, via _orch_escape_active at 23465). The writes
+    33018). Not checked here: the checkpoint-init marker (read by os.path.lexists at 23335 and 23387
+    only, never opened) and the escape sentinel (opened non-blocking by os.open at 22670-22671, via
+    _orch_escape_active at 23465, and judged on the open descriptor). The writes
     (_orch_write_json_atomic at 23372-23399) are modelled by _build_ctx_previewed and
     _atomic_write_outcome instead."""
     out = [_site("ctx.turn_state", "hook state file turn-state.json",
@@ -653,9 +663,11 @@ def _forced_exit_may_have_rows(log):
 
 
 def _audit_read_paths(hook, reg, root):
-    """The paths orch_resume_audit (aiqt_hooks.py:33270-33354) opens with a plain blocking open on a
-    readable registry, traced through _orch_resume_probes (32738-32822) and every reader it calls,
-    each only when the audit reaches it:
+    """The paths orch_resume_audit (aiqt_hooks.py:33270-33354) opens on a readable registry, traced
+    through _orch_resume_probes (32738-32822) and every reader it calls, each only when the audit
+    reaches it. Each is opened with a plain blocking open, except record.handoff, record.findings,
+    record.pending_decisions and attestations.anchor, which the hook opens without blocking
+    (SITE_OPEN):
       record.handoff                  opened at 32760-32768, when declared
       record.findings                 opened at 32790, and at 32837-32842 (via 32819), when declared
       record.pending_decisions        opened at 32790, when declared
@@ -727,11 +739,32 @@ def _audit_bad_registry_paths(hook, root):
 
 
 # How the hook opens the path of a pre-check site, where that is not a plain blocking open; every other
-# site is opened with one.
+# site is opened with one. tools/test-orch-stage2-hooks.py holds each site to the hook's open line
+# (PRECHECK_OPENS) and checks the wording of each refusal.
+_RECORD_SURFACE_OPEN = ("the hook would not block on it: _orch_record_surface_read opens the path with "
+                        "O_NONBLOCK (aiqt_hooks.py:32703-32704) and reads a file that is not regular as "
+                        "unreadable, without a read (32709-32710), but the doctor refuses it without "
+                        "calling that reader")
+_ANCHOR_OPEN = ("the hook would not block on it: _orch_register_authority opens the path with O_NONBLOCK "
+                "and O_NOFOLLOW (aiqt_hooks.py:32968-32969) and holds on a file that is not regular "
+                "(32975-32976) or a symlink (32971-32972), but the doctor refuses it without calling "
+                "that reader")
 SITE_OPEN = {
+    "registry.file": ("the hook would not block on it: _orch_registry opens the path with O_NONBLOCK "
+                      "(aiqt_hooks.py:22096-22098) and reads a file that is not regular as a bad registry "
+                      "(22102-22103), but the doctor refuses it without calling that reader"),
     "scope.mode": ("the hook's mode reader would not block on it: _orch_mode_read opens the path with "
                    "O_NONBLOCK (aiqt_hooks.py:22445-22446) and reads a file that is not regular as "
                    "unattended, fail-closed (22453-22454), but the doctor does not model that reader"),
+    "ctx.enumerator_operand": ("the hook does not open it: the declared enumerator, which the hook runs "
+                               "(subprocess.run at aiqt_hooks.py:22833), takes it as an operand, and the "
+                               "doctor does not model how that program opens it"),
+    "ctx.pending_decisions": _RECORD_SURFACE_OPEN,
+    "ctx.attestations_anchor": _ANCHOR_OPEN,
+    "audit.handoff": _RECORD_SURFACE_OPEN,
+    "audit.findings": _RECORD_SURFACE_OPEN,
+    "audit.pending_decisions": _RECORD_SURFACE_OPEN,
+    "audit.attestations_anchor": _ANCHOR_OPEN,
 }
 BLOCKING_OPEN = "the hook would open it with a blocking open"
 
@@ -871,8 +904,9 @@ def _preflight(hook, root, kind_name, data):
                       "quiet-duration claim, so the check does not fire")
     special = _first_special(_ctx_read_paths(hook, reg, root))
     if special is not None:
-        # _orch_build_ctx opens these with a plain blocking open (see _ctx_read_paths), so a FIFO
-        # there would hang the preview; the context is not built and no enumerator runs.
+        # _orch_build_ctx opens most of these with a plain blocking open (see _ctx_read_paths), so a
+        # FIFO there would hang the preview; a special file at any of them is refused, the context
+        # is not built and no enumerator runs.
         return _refuse_special(special)
     # The context as each handler builds it: a Stop passes no wake text (_orch_build_ctx at
     # aiqt_hooks.py:23580), a scheduling call the joined tool_input text (:23694); both pass the
@@ -1017,8 +1051,8 @@ def _resume_audit(hook, root):
     if status == "absent":
         print("registry: absent; the orchestration suite is inert here, nothing to audit")
         return 2
-    # The audit opens these with a plain blocking open (see _audit_read_paths), so a FIFO there would
-    # hang it; the audit is not run.
+    # The audit opens most of these with a plain blocking open (see _audit_read_paths), so a FIFO
+    # there would hang it; a special file at any of them is refused, and the audit is not run.
     if status == "ok":
         special = _first_special(_audit_read_paths(hook, reg, root))
     else:

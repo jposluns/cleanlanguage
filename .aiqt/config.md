@@ -264,9 +264,10 @@ SessionStart and writes `resume-barrier.json` under `state_dir`, arming the barr
 it finds divergence; while a barrier is armed, `orch_resume_barrier` surfaces a one-time
 warning on a mutation outside the record surfaces and blocks nothing. The refreshed hook writes
 the barrier to a new temporary file and replaces the old file with it, so each audit gives the
-barrier the mode of a new file, 0666 less the umask, not the mode of the file it replaces: a
-barrier restricted to 0600 is 0644 after an audit under umask 022, and so readable by every user
-who can reach `state_dir`. The writer, `_orch_barrier_write`, is the
+barrier the mode of a new file in `state_dir`, not the mode of the file it replaces: 0666 less the
+umask, or, where `state_dir` has a default ACL, the mode that the ACL gives a new file. Without
+such an ACL, a barrier restricted to 0600 is 0644 after an audit under umask 022, and so readable
+by every user who can reach `state_dir`. The writer, `_orch_barrier_write`, is the
 pack's and is not edited here; until a re-vendored hook keeps the mode, the permissions of
 `state_dir` and the directories above it, not those of the barrier file, decide who can read it.
 

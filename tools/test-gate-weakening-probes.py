@@ -33,8 +33,10 @@ keeps its rules. SHAPE_RULES lists rules of the check, each with a form that the
 an edit of the check's source that removes or loosens the rule. 1 case fails when the check accepts
 a listed form. Another fails when a listed edit does not match the check's source exactly once, or
 when the check with the edit applied still rejects the form. A form pins only the loosening that it
-exercises: a loosening of a listed rule in a direction that no listed form exercises passes those 2
-cases and fails only the source pin, and a rule that is not listed is pinned by the source pin alone.
+exercises. Only the source pin is sure to fail on a loosening of a listed rule in a direction that no
+listed form exercises, or on a change to a rule that is not listed. Such a change can fail the second
+of those 2 cases as well, for example when it alters the text that a listed edit must match, as a
+character added to the look-behind of the flag does.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
 is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
@@ -133,7 +135,8 @@ SHAPE_SHA256 = "11055a4c604ed905d56b3391637d9017b775a9f3d20b3c2a81c5b7410453136c
 # The check must reject the form; the edit's old text must occur exactly once in the check's source,
 # and the check with the edit applied must accept the form. A form pins only the loosening that it
 # exercises: a loosening of a listed rule in a direction that its form does not exercise passes the
-# 2 cases that read this table, and only the source pin above fails on it.
+# case that reads the forms, and is sure to fail only the source pin above; it fails the case that
+# matches the edits as well when it alters the text that a listed edit must match.
 W = "cat > /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
 RUN = "bash /tmp/probe-s.sh"
 # Every printable ASCII character that may not stand next to the flag: all but whitespace and ".

@@ -699,8 +699,9 @@ class StopFamilySurface(HookHarness):
 # =====================================================================================================
 class WholeFunctionCitations(unittest.TestCase):
     """A line range A-B in a tools/*.py file whose B is the last line of a top-level function of the
-    vendored hook, and whose A is that function's def line or the first line of its body after any
-    docstring, is a whole-function citation, whatever words stand around it. WHOLE holds, for each
+    vendored hook, and whose A is any line from that function's def line to the first line of its body
+    after any docstring (the def line, a line of the signature or the docstring, or the body's first
+    line), is a whole-function citation, whatever words stand around it. WHOLE holds, for each
     tools file and hook function, how many such ranges the file holds. The case counts, in each tools
     file, the A-B tokens equal to either current range of each hook function and compares the counts
     with WHOLE. A re-pin that moves or lengthens a cited function lowers its count, and a new
@@ -711,6 +712,7 @@ class WholeFunctionCitations(unittest.TestCase):
     and a nested function are not checked."""
 
     WHOLE = {
+        ("check-orchestration-registry.py", "_orch_path"): 2,
         ("check-orchestration-registry.py", "_orch_root"): 1,
         ("check-orchestration-registry.py", "_orch_scope_live"): 1,
         ("check-orchestration-registry.py", "_schema_staleness"): 6,
@@ -774,6 +776,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage2-hooks.py", "orch_teammate_idle"): 1,
         ("test-orch-stage2-hooks.py", "orch_yield_tool"): 1,
         ("test-orch-stage2-hooks.py", "validate_enumeration"): 1,
+        ("test-orchestration-registry.py", "_orch_path"): 1,
         ("test-orchestration-registry.py", "_orch_root"): 1,
         ("test-orchestration-registry.py", "_schema_staleness"): 3,
         ("test-orchestration-registry.py", "_state_dir_from_registry"): 1,
@@ -792,9 +795,10 @@ class WholeFunctionCitations(unittest.TestCase):
         ("a shortened range lowers a count", "f at 1-3", {("a.py", "f"): 1}, [("a.py", "f", 0, 1)]),
         ("a range from the first line of the body after the docstring counts", "k at 9-10, 7-10",
          {("a.py", "k"): 2}, []),
+        ("a range from a docstring line counts", "k at 8-10", {("a.py", "k"): 1}, []),
         ("a shortened body range lowers a count", "k at 9-9", {("a.py", "k"): 1}, [("a.py", "k", 0, 1)]),
-        ("only the def line or the body's first line to the last line counts",
-         "f at 1-1, h at 5-5, f at 4-4, k at 8-10, k at 7-9", {}, []),
+        ("only a range from the def line to the body's first line, to the last line, counts",
+         "f at 1-1, h at 5-5, f at 4-4, f at 3-4, k at 10-10, k at 7-9", {}, []),
         ("only top-level functions count", "g at 2-3", {}, []),
         ("a range over more than 1 function counts for none", "f and h at 1-6", {}, []),
         ("no letter, digit or dot before the range", "v1-4, x.1-4, 11-4", {}, []),
@@ -803,8 +807,8 @@ class WholeFunctionCitations(unittest.TestCase):
 
     @staticmethod
     def functions(source):
-        """{(first line, last line): name} for each top-level function of the source, with 2 first
-        lines each: the def line, and the first line of the body after any docstring."""
+        """{(first line, last line): name} for each top-level function of the source, with every
+        line from the def line to the first line of the body after any docstring as a first line."""
         spans = {}
         for node in ast.parse(source).body:
             if isinstance(node, ast.FunctionDef):
@@ -812,8 +816,8 @@ class WholeFunctionCitations(unittest.TestCase):
                 docstring = (isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
                              and isinstance(body[0].value.value, str))
                 first = body[1] if docstring and len(body) > 1 else body[0]
-                spans[(node.lineno, node.end_lineno)] = node.name
-                spans[(first.lineno, node.end_lineno)] = node.name
+                for start in range(node.lineno, first.lineno + 1):
+                    spans[(start, node.end_lineno)] = node.name
         return spans
 
     @classmethod

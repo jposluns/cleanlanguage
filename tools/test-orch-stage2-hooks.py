@@ -54,8 +54,11 @@ bytecode file appears anywhere under it. The fixed hook state files each command
 with a plain blocking open are checked the same way before the reader that opens them: for preflight
 turn-state.json, dispatch-ledger.jsonl, backlog-checkpoint.json and, with attestations declared,
 attestations-validated.json and guard-events.jsonl; for the resume audit guard-events.jsonl,
-escape-spoof.json, the forced-exit files and the attestation snapshot temporary file, and with an
-unreadable registry resume-barrier.json.unused. Each command checks only what its own
+escape-spoof.json and the forced-exit files, and with an unreadable registry
+resume-barrier.json.unused. Each refusal says how the hook would open the path: with a blocking
+open, without blocking (naming the reader that opens it with O_NONBLOCK), or not at all, for an
+enumerator operand; PRECHECK_OPENS holds each pre-check site to the hook line that opens it, and a
+source probe checks that line. Each command checks only what its own
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
 an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview.
@@ -109,6 +112,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1215,9 +1219,9 @@ class Doctor(Stage2Harness):
         os.symlink(target, path)
         return "FIFO"
 
-    def _assert_special_refused(self, label, path, kind, *doctor_args,
-                                opened="the hook would open it with a blocking open"):
-        # opened is how the report must say that the hook opens the path.
+    def _assert_special_refused(self, label, path, kind, *doctor_args, opened):
+        # opened is how the report must say that the hook opens the path; each caller gives it, as
+        # the hook opens these paths in different ways (PRECHECK_OPENS).
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(reg)
         self.set_items([item("42")])
@@ -1275,15 +1279,19 @@ class Doctor(Stage2Harness):
                                      opened="the hook's mode reader would not block on it")
 
     def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
+        # The hook runs the enumerator (`subprocess.run` at aiqt_hooks.py:22833), which takes the
+        # backlog as an operand; the hook itself never opens it.
         self._assert_special_refused("enumerator.argv[3]", str(self.backlog), "fifo",
-                                     "preflight", "stop")
+                                     "preflight", "stop", opened="the hook does not open it")
 
     def test_resume_audit_special_handoff_is_cannot_evaluate(self):
         # The resume probes read the declared handoff
-        # (`_orch_record_surface_read` at aiqt_hooks.py:32758-32760); the doctor
-        # refuses a FIFO there as cannot-evaluate.
+        # (`_orch_record_surface_read` at aiqt_hooks.py:32758-32760), which opens it with
+        # O_NONBLOCK (32703); the doctor refuses a FIFO there as cannot-evaluate, and its report says
+        # that the hook would not block on it, never that it would open it with a blocking open.
         self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
-                                     "--resume-audit")
+                                     "--resume-audit", opened="the hook would not block on it")
+        self.assertNotIn("blocking open", self._doctor_bounded("--resume-audit").stdout)
 
     # --- the fixed hook state files are checked too, per command -----------------------
     # The state files _orch_build_ctx opens with a plain blocking open (turn-state.json at
@@ -1495,8 +1503,10 @@ class Doctor(Stage2Harness):
                 self.assertFalse(marker.exists())
 
     def test_special_registry_file_is_cannot_evaluate(self):
-        # The hook reads the registry with a plain blocking open (aiqt_hooks.py:22084-22115), the
-        # machine-local file first (`_ORCH_REGISTRY_FILES` at aiqt_hooks.py:21652).
+        # The hook reads the registry with a non-blocking open (O_NONBLOCK at aiqt_hooks.py:22096,
+        # `os.open` at 22098, in `_orch_registry` at 22084-22121) and reads a file that is not regular
+        # as a bad registry (22102-22103), the machine-local file first (`_ORCH_REGISTRY_FILES` at
+        # aiqt_hooks.py:21652); the doctor refuses a special file there before it calls that reader.
         self.write_registry(self.stage2())
         local = self.repo / ".aiqt" / "orchestration.local.json"
         os.mkfifo(local)
@@ -1505,7 +1515,8 @@ class Doctor(Stage2Harness):
                 r = self._doctor_bounded(*args)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
                 self.assertIn("cannot evaluate: the registry file {} is not a regular file (it is a "
-                              "FIFO)".format(local), r.stdout)
+                              "FIFO); the hook would not block on it".format(local), r.stdout)
+                self.assertNotIn("blocking open", r.stdout)
                 self.assertFalse(self.state_dir().exists(), "a hook state write happened")
 
     def test_absent_declared_paths_are_left_to_the_hook(self):
@@ -1658,10 +1669,11 @@ class Doctor(Stage2Harness):
     def test_resume_audit_rewrite_takes_a_new_file_mode_today(self):
         # The vendored barrier writer creates a temporary file and replaces the barrier with it
         # (`open(tmp, "x"` at aiqt_hooks.py:33251, `os.replace` at 33256), so the barrier takes the
-        # mode of a new file, 0o666 less the umask, not the mode of the file it replaces: a barrier
-        # restricted to 0o600 is 0o644 after an audit under umask 0o022, as .aiqt/config.md states.
-        # A default ACL on the temporary folder, which the host's TMPDIR can pass down, overrides the
-        # umask for a new file, so this case expects the mode of a fresh file that it creates the
+        # mode of a new file in the state folder, not the mode of the file it replaces: 0o666 less
+        # the umask, or, where the folder has a default ACL, the mode that the ACL gives a new file,
+        # as .aiqt/config.md states. Without such an ACL, a barrier restricted to 0o600 is 0o644
+        # after an audit under umask 0o022. The host's TMPDIR can pass a default ACL down to the
+        # temporary folder, so this case expects the mode of a fresh file that it creates the
         # same way in the same folder under the same umask, not a literal mode. It restricts the
         # barrier to 0o600, or to 0o400 where a fresh file is 0o600, so the 2 modes always differ.
         # This case goes red once a re-vendored hook keeps the mode; .aiqt/config.md and this case
@@ -2107,6 +2119,64 @@ PRECHECK_CASES = [
     ("audit_bad.guard_events", "reach", "case_bad_registry_guard_events"),
 ]
 
+# How the hook opens the path of each pre-check site: (kind, ((hook function, line of the open), ...)).
+# "blocking": a plain open() that waits on a FIFO with no writer; "non-blocking": an os.open with
+# O_NONBLOCK, so the hook would not block there; "enumerator": the hook does not open the path, the
+# enumerator it runs does. DoctorPrecheckSiteProbe checks each line against the hook source and the
+# doctor's SITE_OPEN against this table; every reach case checks the wording of the doctor's refusal.
+# Line numbers cite plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py.
+_SURFACE_READ = ("non-blocking", (("_orch_record_surface_read", 32703),))
+_ANCHOR_READ = ("non-blocking", (("_orch_register_authority", 32968),))
+_REGISTER_READS = ("blocking", (("_orch_chained_rows", 32876), ("_orch_register_authority", 32921)))
+PRECHECK_OPENS = {
+    "registry.file": ("non-blocking", (("_orch_registry", 22096),)),
+    "scope.lease": ("blocking", (("_orch_scope_live", 22640),)),
+    "scope.mode": ("non-blocking", (("_orch_mode_read", 22445),)),
+    "ctx.turn_state": ("blocking", (("_orch_turn_state", 22346),)),
+    "ctx.enumerator_operand": ("enumerator", (("_orch_enumerate", 22833),)),
+    "ctx.ledger": ("blocking", (("_orch_read_jsonl", 22173),)),
+    "ctx.pending_decisions": _SURFACE_READ,
+    "ctx.attestation_snapshot": ("blocking", (("_orch_attestation_refs", 22934),)),
+    "ctx.attestations": _REGISTER_READS,
+    "ctx.attestations_anchor": _ANCHOR_READ,
+    "ctx.guard_events": ("blocking", (("_orch_read_jsonl", 22173),)),
+    "ctx.checkpoint": ("blocking", (("_orch_checkpoint_union", 23324),)),
+    "audit.handoff": _SURFACE_READ,
+    "audit.findings": _SURFACE_READ,
+    "audit.pending_decisions": _SURFACE_READ,
+    "audit.attestations": _REGISTER_READS,
+    "audit.attestations_anchor": _ANCHOR_READ,
+    "audit.mistakes_register": ("blocking", (("_orch_chained_rows", 32876),)),
+    "audit.guard_events": ("blocking", (("_orch_read_jsonl", 22173), ("_orch_append_jsonl", 22162))),
+    "audit.escape_spoof": ("blocking", (("_orch_pending_artefact_findings", 33212),)),
+    "audit.forced_exit": ("blocking", (("_orch_read_jsonl", 22173),)),
+    "audit.forced_exit_surfaced": ("blocking", (("_orch_forced_exit_findings", 33172),)),
+    "audit_bad.unused": ("blocking", (("_orch_append_jsonl", 22162),)),
+    "audit_bad.guard_events": ("blocking", (("_orch_append_jsonl", 22162),)),
+}
+# The start of the doctor's wording for each kind, after "(it is a <type>); ".
+OPEN_WORDING = {
+    "blocking": re.compile(r"the hook would open it with a blocking open"),
+    "non-blocking": re.compile(r"the hook(?:'s mode reader)? would not block on it: "),
+    "enumerator": re.compile(r"the hook does not open it: "),
+}
+
+
+def assert_open_wording(case, site, tail):
+    """Assert that tail, the doctor's refusal text after "(it is a <type>); ", says how the hook opens
+    the path of site as PRECHECK_OPENS states: it starts with the wording of that kind, and for a
+    site the hook does not open with a blocking open it names the hook line of each open, the reader
+    for a non-blocking open, and never a blocking open."""
+    kind, opens = PRECHECK_OPENS[site]
+    case.assertIsNotNone(OPEN_WORDING[kind].match(tail), "site {} ({}): {!r}".format(site, kind, tail))
+    if kind == "blocking":
+        return
+    case.assertNotIn("blocking open", tail, "site {}".format(site))
+    for reader, line in opens:
+        case.assertIn("aiqt_hooks.py:{}".format(line), tail, "site {}".format(site))
+        if kind == "non-blocking":
+            case.assertIn(reader + " opens the path with O_NONBLOCK", tail, "site {}".format(site))
+
 
 # Runs in a separate python3 -I process: the hook call path the preflight runs, and nothing else (the
 # registry, the scope test, then _orch_build_ctx in the preview posture, aiqt_hooks.py:23412 and
@@ -2413,7 +2483,7 @@ class DoctorPrecheckSites(Stage2Harness):
             self.assertIn("completed", h.stdout)
         return h
 
-    def _run_case(self, expect, case):
+    def _run_case(self, site, expect, case):
         path, made, args, payload = getattr(self, case)()
         path = Path(path)
         if made is None:
@@ -2427,7 +2497,10 @@ class DoctorPrecheckSites(Stage2Harness):
         if expect == "reach":
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
             self.assertIn("cannot evaluate: the ", r.stdout)
-            self.assertIn("{} is not a regular file (it is a {})".format(path, made), r.stdout)
+            found = "{} is not a regular file (it is a {}); ".format(path, made)
+            self.assertIn(found, r.stdout)
+            tail = r.stdout.split(found, 1)[1].split("\n", 1)[0]
+            assert_open_wording(self, site, tail)
             return
         self.assertNotIn("cannot evaluate", r.stdout)
         self.assertIn(r.returncode, (0, 1), r.stdout + r.stderr)
@@ -2441,7 +2514,7 @@ class DoctorPrecheckSites(Stage2Harness):
             with self.subTest(site=site, expect=expect, case=case):
                 self.tearDown()
                 self.setUp()
-                self._run_case(expect, case)
+                self._run_case(site, expect, case)
 
 
 class DoctorScopeMargin(Stage2Harness):
@@ -3373,6 +3446,57 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                 self.assertTrue(citation, "no hook citation")
         for _site_id, _expect, case in PRECHECK_CASES:
             self.assertTrue(callable(getattr(DoctorPrecheckSites, case, None)), case)
+
+    def test_each_site_open_follows_the_hook(self):
+        # PRECHECK_OPENS covers every site, each cited line is in the named hook function and opens
+        # the path as its kind says, and the doctor's SITE_OPEN words every site that the hook does
+        # not open with a blocking open, naming that line, and no other site.
+        self.assertEqual(sorted(PRECHECK_OPENS), sorted(PRECHECK_SITES),
+                         "the open table and the reachability table differ")
+        hook_source = HOOK.read_text(encoding="utf-8")
+        hook_lines = hook_source.split("\n")
+        spans = [(node.lineno, node.end_lineno, node.name) for node in ast.parse(hook_source).body
+                 if isinstance(node, ast.FunctionDef)]
+        for site, (kind, opens) in PRECHECK_OPENS.items():
+            for reader, line in opens:
+                with self.subTest(site=site, line=line):
+                    self.assertEqual([name for first, last, name in spans if first <= line <= last],
+                                     [reader], "the cited line is not in {}".format(reader))
+                    text = hook_lines[line - 1]
+                    if kind == "blocking":
+                        self.assertRegex(text, r"\bwith open\(")
+                        self.assertNotIn("O_NONBLOCK", text)
+                    elif kind == "non-blocking":
+                        self.assertIn("O_NONBLOCK", text)
+                    else:
+                        self.assertIn("subprocess.run(", text)
+        tree = ast.parse(DOCTOR.read_text(encoding="utf-8"))
+        texts, site_open = {}, None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name):
+                name, value = node.targets[0].id, node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    texts[name] = value.value
+                elif name == "SITE_OPEN" and isinstance(value, ast.Dict):
+                    site_open = {}
+                    for key, item_node in zip(value.keys, value.values):
+                        self.assertIsInstance(key, ast.Constant, "a SITE_OPEN key is not a literal")
+                        if isinstance(item_node, ast.Name):
+                            self.assertIn(item_node.id, texts, "an unresolved SITE_OPEN value")
+                            site_open[key.value] = texts[item_node.id]
+                        else:
+                            self.assertIsInstance(item_node, ast.Constant, "a SITE_OPEN value")
+                            site_open[key.value] = item_node.value
+        self.assertIsNotNone(site_open, "the doctor defines no SITE_OPEN table")
+        self.assertEqual(sorted(site_open),
+                         sorted(site for site, (kind, _o) in PRECHECK_OPENS.items() if kind != "blocking"),
+                         "SITE_OPEN words a different set of sites than the non-blocking and "
+                         "enumerator sites of PRECHECK_OPENS")
+        self.assertEqual(texts.get("BLOCKING_OPEN"), "the hook would open it with a blocking open")
+        for site, text in site_open.items():
+            with self.subTest(site=site):
+                assert_open_wording(self, site, text)
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

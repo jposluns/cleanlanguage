@@ -1841,14 +1841,20 @@ class ConfigDisclosure(unittest.TestCase):
     def test_barrier_mode_residual_is_disclosed(self):
         # The vendored barrier writer replaces the barrier with a new file, so an audit does not keep
         # the barrier's mode (tools/test-orch-stage2-hooks.py,
-        # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so.
+        # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so. A default
+        # ACL on the folder overrides the umask for a new file (the stage 2 run under a TMPDIR whose
+        # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone.
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
-        for phrase in ("each audit gives the barrier the mode of a new file, 0666 less the umask, not the mode "
-                       "of the file it replaces",
+        for phrase in ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
+                       "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
+                       "the mode that the ACL gives a new file",
+                       "Without such an ACL, a barrier restricted to 0600 is 0644 after an audit under "
+                       "umask 022",
                        "until a re-vendored hook keeps the mode, the permissions of `state_dir` and the "
                        "directories above it, not those of the barrier file, decide who can read it"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+        self.assertNotIn("the mode of a new file, 0666 less the umask, not the mode", text)
 
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and
