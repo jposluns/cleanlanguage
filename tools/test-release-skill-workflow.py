@@ -84,12 +84,12 @@ import inspect
 import json
 import os
 import re
-import select
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -574,7 +574,9 @@ CALL_FORMS = (
                       "--generate-notes"), "create"),
 )
 # The slots of the templates. No slot pattern matches a text that starts
-# with -, so no slot takes an option.
+# with -, so no slot takes an option. Each character that a pattern names,
+# such as the v and the dots of a tag, matches only itself; the values of
+# SLOT_NEAR_MISSES pin both rules and the class and count of each part.
 SLOTS = {
     "<TAG>": r"v[0-9]+\.[0-9]+\.[0-9]+",
     "<VERSION>": r"[0-9]+\.[0-9]+\.[0-9]+",
@@ -650,9 +652,10 @@ FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes", "unmodelled")
 # that hangs, or that leaves a process holding its output, cannot hang the
 # suite (see run_step). A case may lower it through step_run_limit.
 STEP_RUN_LIMIT = 60
-# The seconds a step run then waits in all, after the step exits, for the
-# processes that still hold the pipe the step inherited to exit before the
-# run fails its test. Bytes written to the pipe do not end the wait; only
+# The seconds a step run allows, counted from the moment the step itself
+# exits, for the processes that still hold the pipe the step inherited to
+# exit before the run fails its test, however long another process holds the
+# output of the step. Bytes written to the pipe do not end the wait; only
 # its end of file does. A process that closes the descriptors it inherited
 # no longer holds the pipe, so it is not waited for, and a change it makes
 # after the step exits is missed (see run_step). A case may lower it through
@@ -947,29 +950,58 @@ class WorkflowStepTest(unittest.TestCase):
         # once that process exits.
         done_read, done_write = os.pipe()
         try:
-            try:
-                proc = subprocess.run(
-                    ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
-                    cwd=self.work, env=env, capture_output=True, text=True, pass_fds=(done_write,),
-                    timeout=self.step_run_limit,
-                )
-            except subprocess.TimeoutExpired:
-                raise self.failureException(
-                    f"step {name!r}, or a process it left holding its output, was still running"
-                    f" {self.step_run_limit} s after the step started") from None
-            os.close(done_write)
-            done_write = None
-            deadline = time.monotonic() + self.step_process_wait
-            while True:
-                left = deadline - time.monotonic()
-                ready = select.select([done_read], [], [], left)[0] if left > 0 else []
-                self.assertTrue(ready, f"step {name!r} left a process running {self.step_process_wait} s after it exited")
-                if not os.read(done_read, 4096):
-                    break
-        finally:
+            proc = subprocess.Popen(
+                ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
+                cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                pass_fds=(done_write,),
+            )
+        except BaseException:
             os.close(done_read)
-            if done_write is not None:
-                os.close(done_write)
+            raise
+        finally:
+            # Only the step and its processes hold the write end from here on.
+            os.close(done_write)
+        # 2 threads note the moment the step itself exits and the moment the
+        # pipe reaches its end of file, while communicate reads the output.
+        # So the wait after the step exits counts from that exit, not from
+        # the end of the output, which another process the step left may
+        # hold for longer. The thread that reads the pipe owns its read end
+        # and closes it at the end of file, so a run that fails while a
+        # process still holds the pipe leaves that thread waiting for it.
+        moments = {}
+
+        def note_exit():
+            proc.wait()
+            moments["exit"] = time.monotonic()
+
+        def read_to_end():
+            try:
+                while os.read(done_read, 4096):
+                    pass
+                moments["end"] = time.monotonic()
+            finally:
+                os.close(done_read)
+
+        exit_thread = threading.Thread(target=note_exit, daemon=True)
+        end_thread = threading.Thread(target=read_to_end, daemon=True)
+        exit_thread.start()
+        end_thread.start()
+        try:
+            stdout, stderr = proc.communicate(timeout=self.step_run_limit)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            exit_thread.join()
+            proc.stdout.close()
+            proc.stderr.close()
+            raise self.failureException(
+                f"step {name!r}, or a process it left holding its output, was still running"
+                f" {self.step_run_limit} s after the step started") from None
+        exit_thread.join()
+        deadline = moments["exit"] + self.step_process_wait
+        end_thread.join(max(deadline - time.monotonic(), 0))
+        end = moments.get("end")
+        self.assertTrue(end is not None and end <= deadline,
+                        f"step {name!r} left a process running {self.step_process_wait} s after it exited")
         # An unknown call is never harmless: a call off the table, recorded by
         # the fake that refused it, fails the run unless the case opted out.
         unmodelled = self.fake_write_state()["unmodelled"]
@@ -977,7 +1009,7 @@ class WorkflowStepTest(unittest.TestCase):
             raise self.failureException(f"step {name!r} made a call off the table CALL_FORMS: {unmodelled}")
         if proc.returncode == 0:
             self.carried.update(self.env_values())
-        return proc.returncode, proc.stdout, proc.stderr
+        return proc.returncode, stdout, stderr
 
     def calls(self):
         path = self.state / "calls.log"
@@ -1129,6 +1161,28 @@ PREDICATE_ROWS = (
 # A value for each slot of SLOTS, from which the call of each row is built.
 SLOT_SAMPLES = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
                 "<REPO>": "jposluns/cleanlanguage", "<DIR>": "/d"}
+# For each slot, values that its pattern must not match, each 1 change from
+# its value in SLOT_SAMPLES, or an option: the option -x; the value led by
+# -; each character that the pattern names (the v and the dots of a tag,
+# the dots of a version, the slash of a repository and the leading slash of
+# a directory) replaced by X (the v by Y) and dropped, and the v also in its
+# other case; a character of each class replaced by one outside it; each
+# repeated part emptied; and a character added where the pattern allows
+# none. They are written out here, not derived from SLOTS, so a slot pattern
+# that matches more than it should fails
+# test_each_predicate_reads_only_the_calls_of_its_rows.
+SLOT_NEAR_MISSES = {
+    "<TAG>": ("-x", "-v1.0.15", "Y1.0.15", "1.0.15", "V1.0.15", "v1X0.15", "v10.15", "v1.0X15", "v1.015",
+              "vX.0.15", "v1.X.15", "v1.0.1X", "v.0.15", "v1..15", "v1.0.", "v1.0.15X"),
+    "<VERSION>": ("-x", "-1.0.15", "1X0.15", "10.15", "1.0X15", "1.015", "X.0.15", "1.X.15", "1.0.1X",
+                  ".0.15", "1..15", "1.0.", "v1.0.15", "1.0.15X"),
+    "<COMMIT>": ("-x", "-" + COMMIT[1:], "-" + COMMIT, "g" + COMMIT[1:], "C" + COMMIT[1:], COMMIT[1:],
+                 COMMIT + "c"),
+    "<REPO>": ("-x", "-jposluns/cleanlanguage", "jposlunsXcleanlanguage", "jposlunscleanlanguage",
+               "jpos luns/cleanlanguage", "jposluns/clean language", "/cleanlanguage", "jposluns/",
+               "jposluns/clean/language"),
+    "<DIR>": ("-x", "-/d", "Xd", "d", "/d\nx"),
+}
 
 
 def row_call(template):
@@ -1143,8 +1197,8 @@ def near_misses(program, template):
     before them, the last argument dropped, the arguments given to the other
     program of the table, each character of the template outside its slots
     replaced by X (or Y in place of an X) and each letter there by its other
-    case, and the option -x in place of each slot. None of them matches a
-    row."""
+    case, and each value of SLOT_NEAR_MISSES for a slot in place of that
+    slot. None of them matches a row."""
     args = row_call(template)
     other = [name for name in TABLE_PROGRAMS if name != program][0]
     calls = [("an argument added", [program, [*args, "x"]]),
@@ -1155,9 +1209,10 @@ def near_misses(program, template):
         parts = re.split(r"(<[A-Z]+>)", piece)
         for part_index, part in enumerate(parts):
             if part in SLOTS:
-                changed = row_call(["".join(parts[:part_index] + ["-x"] + parts[part_index + 1:])])[0]
-                calls.append((f"-x in place of {part} in argument {index}",
-                              [program, [*args[:index], changed, *args[index + 1:]]]))
+                for value in SLOT_NEAR_MISSES[part]:
+                    changed = row_call(["".join(parts[:part_index] + [value] + parts[part_index + 1:])])[0]
+                    calls.append((f"{value!r} in place of {part} in argument {index}",
+                                  [program, [*args[:index], changed, *args[index + 1:]]]))
                 continue
             for char_index, char in enumerate(part):
                 for other_char in sorted({"Y" if char == "X" else "X", char.swapcase()} - {char}):
@@ -1350,9 +1405,10 @@ class HarnessTest(WorkflowStepTest):
         # each row (near_misses) matches no row and has no kind; every
         # predicate reads it as false except is_mutation, which counts it as
         # a change. So a predicate that reads a call by its first or last
-        # words, or a character of a template that matches more than itself,
-        # fails here.
+        # words, a character of a template that matches more than itself, or
+        # a slot pattern that matches a value of SLOT_NEAR_MISSES, fails here.
         self.assertEqual(set(SLOT_SAMPLES), set(SLOTS))
+        self.assertEqual(set(SLOT_NEAR_MISSES), set(SLOTS))
         for name, program, template, _kind in CALL_FORMS:
             call = [program, row_call(template)]
             with self.subTest(row=name):
@@ -1432,6 +1488,28 @@ class HarnessTest(WorkflowStepTest):
             self.run_step(PUBLISH, script)
         self.assertLess(time.monotonic() - start, 2.5)
         self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
+
+    def test_the_wait_after_the_step_exits_counts_from_its_exit(self):
+        # With the wait lowered to 1 s, a step exits at once and leaves 2
+        # background processes: a Python child that closes every descriptor
+        # from 3 to 254, so it holds the output of the step but not the
+        # pipe, for 2 s, and a sleep whose output goes to /dev/null, so it
+        # holds the pipe but not the output. With the sleep holding the pipe
+        # for 1.5 s, the run fails its test with the message naming the step:
+        # the pipe reaches its end of file after the wait, though before the
+        # output ends, so a wait that counted from the end of the output, or
+        # that took any end of file before the output ends as in time, would
+        # pass. With the sleep holding it for 0.3 s, the pipe reaches its end
+        # of file within the wait, so the run passes, though the output ends
+        # after the wait.
+        self.step_process_wait = 1
+        holder = "\"" + sys.executable + "\" -I -c 'import os, time; os.closerange(3, 255); time.sleep(2)' &\n"
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, holder + "sleep 1.5 >/dev/null 2>&1 &\nexit 0\n")
+        self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
+        start = time.monotonic()
+        self.assertEqual(self.run_step(PUBLISH, holder + "sleep 0.3 >/dev/null 2>&1 &\nexit 0\n"), (0, "", ""))
+        self.assertGreater(time.monotonic() - start, 1.9)
 
     def test_an_opt_out_without_a_reason_is_refused(self):
         # off_table opts a run out of the off-table check only with a reason.
@@ -2398,6 +2476,51 @@ class ImmutableReleaseTest(WorkflowStepTest):
                                  {"local_tag": COMMIT, "remote_tag": OTHER_COMMIT, "gh_writes": None,
                                   "unmodelled": recorded})
                 self.assertEqual((row_of_call([program, args]), is_mutation([program, args])), (None, True))
+                with self.assertRaises(AssertionError):
+                    self.assert_no_mutation([])
+
+    def test_each_change_alone_fails_the_no_change_assertion(self):
+        # For each row of CALL_FORMS whose kind is a change, and for a call
+        # off the table, a step makes that 1 call from a state in which it
+        # changes exactly 1 file of FAKE_WRITE_STATE: a tag moves the local
+        # tag, a push moves the tag on origin to the local tag, a creation is
+        # appended to gh_writes, which already holds the record of the same
+        # creation, and the call off the table is appended to unmodelled,
+        # which already holds the record of the same call. Run without the
+        # opt-out, the call off the table fails its run. Each run must leave
+        # the other 3 files as they were and that file as stated, a record
+        # appended once more, and assert_no_mutation must fail when given an
+        # empty call log, so on that file alone. So a no-change assertion
+        # that leaves out any of the 4 files, or a fake that writes its
+        # record over the file in place of appending it, so that a repeated
+        # change leaves the file as it was, fails here.
+        changes = [(name, program, row_call(template), kind)
+                   for name, program, template, kind in CALL_FORMS if kind != "read"]
+        changes.append(("a release deletion, off the table", "gh", ["release", "delete", "v1.0.15", "--yes"], "off"))
+        files = {"tag": "local_tag", "push": "remote_tag", "create": "gh_writes", "off": "unmodelled"}
+        self.assertEqual(sorted(files.values()), sorted(FAKE_WRITE_STATE))
+        self.assertEqual(sorted(kind for _name, _program, _args, kind in changes),
+                         ["create", "off", "push", "push", "tag", "tag"])
+        reason = "the case makes this call on purpose, to show that the fake appends its record"
+        for name, program, args, kind in changes:
+            record = json.dumps(args if kind == "create" else [program, args]) + "\n"
+            script = shlex.join([program, *args]) + "\n"
+            with self.subTest(row=name):
+                self.tag_push_mismatch(True, OTHER_COMMIT)
+                self.set_state(local_tag=OTHER_COMMIT if kind == "tag" else COMMIT,
+                               gh_writes=record if kind == "create" else None,
+                               unmodelled=record if kind == "off" else None)
+                expected = self.fake_write_state()
+                expected[files[kind]] = COMMIT if kind in ("tag", "push") else record + record
+                if kind == "off":
+                    with self.assertRaises(self.failureException) as raised:
+                        self.run_step(PUBLISH, script)
+                    self.assertEqual(str(raised.exception),
+                                     f"step {PUBLISH!r} made a call off the table CALL_FORMS: {record + record}")
+                    self.set_state(unmodelled=record)
+                code, _out, err = self.run_step(PUBLISH, script, off_table=reason if kind == "off" else None)
+                self.assertEqual(code, 97 if kind == "off" else 0, err)
+                self.assertEqual(self.fake_write_state(), expected, self.calls())
                 with self.assertRaises(AssertionError):
                     self.assert_no_mutation([])
 
