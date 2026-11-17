@@ -37,7 +37,7 @@
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Lays out the package from git archive in a source folder under TMPDIR,
+#   5. Lays out the package from git archive in src/ of its work folder,
 #      removes both plugin manifests, which ship through the marketplace
 #      rather than the zip, adds LICENSE and
 #      NOTICE.md, restores SKILL.md and references/ from skills/cleanlanguage/
@@ -51,76 +51,55 @@
 #      archived file's bytes against its git blob, so a git attribute such as
 #      export-subst cannot change the shipped bytes unnoticed.
 #   7. Moves the 2 verified zips into dist/, then their .sha256 files. Steps 5
-#      and 6 build and verify the outputs in a staging folder inside dist/
-#      (dist/.release-package.XXXXXX), so no unverified output ever sits
-#      under an output name in dist/.
+#      and 6 run in 1 work folder that the build makes in dist/ with mktemp
+#      (dist/.release-package.XXXXXX, mode 0700), so no unverified output
+#      ever sits under an output name in dist/.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
-# .sha256 beside each, only after every check passes. Its first check
-# refuses a dist that is a symbolic link, or that exists and is not a
-# folder, before it removes or writes anything; it records the device and
-# inode of that folder, or of the one it makes later, and ends with exit 1
-# and a message, having removed nothing, if it cannot read them or reads
-# an answer that is not 2 numbers. It refuses with exit 1 if dist is no
-# longer that folder after it makes dist/, after it makes its staging
-# folder there, or just before the moves, and with exit 1 and a message of
-# its own if it cannot enter dist/ before its exit trap runs; in the exit
-# trap, a dist that it cannot enter leaves the exit code as it was. It
-# reaches dist/, its staging folder
-# and its source folder only by entering each folder and checking the
-# device and inode of the folder it entered (see enter_dist), and then
-# works by names relative to that folder. Its exit trap removes the
-# staging folder and the source folder each by its name in the folder that
-# holds it, and only after a check that the name still holds the folder
-# that the build recorded; if the build ended after it made a work folder
-# and before it recorded that folder's device and inode, the trap removes
-# that name only while it holds an empty folder (rmdir). A failed read of
-# the device and inode of a work folder ends the build with the exit code
-# of stat, and the build records nothing from it. So a folder
-# replaced after its check does not receive the removals, writes or moves
-# of the build, apart from the windows that the comment on enter_dist
-# lists. A staging or source folder that is not the folder it recorded
-# when the build next enters it ends the build with exit 1; 1 replaced
-# after the build's last entry into it leaves the exit code as it was, 0
-# for a good build, and the exit trap keeps it.
-# Directly after that first check it sets its exit trap, and then, before
-# the argument and git tree checks, it removes the outputs that an earlier
-# build left, chosen by name and type, not by who wrote them: each regular
-# file named
-# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip, or the .sha256 of either,
-# where X, Y and Z are ASCII digits, and each folder named
-# .release-package. followed by 6 ASCII letters or digits, together with
-# everything that folder holds. The name tests list each of these
-# characters, so the locale does not change what they match. It keeps
-# every other entry of dist/: a file or folder of any other name, a symbolic
-# link or file that carries a staging name, and a symbolic link, folder,
-# FIFO or other special file that carries an output name. The move into
-# dist/ is a rename, which would replace an object of the last kind, so
-# once the version is known the build refuses with exit 1 if 1 of the 4
-# names it writes is held by anything other than a regular file.
-# That refusal comes after the removal of the earlier outputs, so it leaves
-# no stale output, and before the build writes anything to dist/, so the
-# object stays as it was. From just before the first removal, the exit
-# trap removes the outputs again on a failed exit, so a build ended during
-# that removal does not leave the rest of an earlier build's outputs; of
-# the folders with a staging name, the trap removes only the 1 that the
-# build made. A
-# SIGHUP, SIGINT or SIGTERM ends the build with exit 129, 130 or 143, once
+# .sha256 beside each, only after every check passes.
+#
+# What it removes. Recursively, it removes only its own work folder, by the
+# path that mktemp gave in this run; it never removes recursively a folder
+# that it did not make in this run. Non-recursively, it removes each regular
+# file in dist/ named cleanlanguage.zip or cleanlanguage-X.Y.Z.zip (X, Y and
+# Z each 1 or more ASCII digits) or the .sha256 of either, before every
+# check but the refusal of a linked or non-folder dist, and again on a
+# failed exit, so that a refused build leaves no zip and no .sha256 that a
+# reader could take for its own. It keeps every other entry of dist/,
+# among them a folder with a work-folder name (.release-package. and 6
+# characters) that an earlier build left: it removes such a folder only
+# when this run made it. It makes dist/ before it lays out the package, so a
+# build that fails after that point and started with no dist/ leaves an
+# empty dist/.
+#
+# What it refuses, each with exit 1 and a message: a dist that is a
+# symbolic link or that exists and is not a folder, before it removes
+# anything; a removal at the start that fails; an object other than a
+# regular file at 1 of the 4 names it writes, once it knows the version
+# and before it makes dist/ or its work folder; and a dist that is a
+# symbolic link after it makes dist/. It moves each output from its work
+# folder to the folder that holds the work folder, so the outputs land
+# beside the folder that this run made; if that folder is no longer at the
+# path that mktemp gave, the move fails, and so does the build.
+#
+# What it does not defend against, by decision: another process of the
+# same user that renames or replaces dist/, the work folder or an entry of
+# either while the build runs. Such a process can write to dist/ directly,
+# and bash cannot hold a folder open across commands, so the packager
+# makes no claim for that case.
+#
+# A SIGHUP, SIGINT or SIGTERM ends the build with exit 129, 130 or 143, once
 # the command in progress has ended, and counts as a failed exit, unless
 # the signal was ignored when the build started (as SIGHUP is under
 # nohup): bash cannot trap such a signal, so it does not end the build.
 # The exit trap ignores the 3 signals while it runs, so 1 that arrives
-# then leaves the exit code as it was. A
-# signal that arrives before the exit trap is set, when the build has
-# removed and written nothing, leaves dist/ as it was. So a
-# refused build leaves in dist/ no zip and no .sha256 that a build wrote,
-# unless a removal itself fails, the first read of the identity of dist
-# fails, the build cannot enter dist/, or dist was replaced while it ran:
-# the build then still fails, an output that it could not remove stays,
-# and through a dist that it cannot enter or that was replaced it removes
-# nothing. A SIGKILL runs no trap, so it can leave
-# a zip without its .sha256, a .sha256 without its zip, or a staging
-# folder, which the next build removes.
+# then leaves the exit code as it was. A signal that arrives before the
+# exit trap is set, when the build has removed and written nothing, leaves
+# dist/ as it was. A refused build therefore leaves in dist/ no zip and no
+# .sha256, unless a removal itself fails: the build then still fails, and
+# an output that it could not remove stays. A SIGKILL runs no trap, so it
+# can leave the work folder in dist/ and, during the moves, a zip without
+# its .sha256; the next build removes such outputs and keeps the folder.
 # It never tags, pushes, or talks to the network.
 #
 # Usage:
@@ -146,15 +125,15 @@ set -euo pipefail
 # Glob and match options can come from the environment (BASHOPTS or
 # SHELLOPTS) or from a file that BASH_ENV names: failglob would end the
 # removal below at a glob that matches nothing, noglob would hide the
-# entries of dist/ from it, and nocasematch would let its name tests match
+# entries of dist/ from it, and nocasematch would let its name test match
 # a name in another letter case. A GLOBIGNORE that the shell assigns drops
 # the names it matches from what a glob gives. Bash 5.3.9 does not apply a
 # GLOBIGNORE taken from the environment, but it does apply one that a
 # BASH_ENV file assigns. So GLOBIGNORE is unset and these options are set
 # here: the glob * in dist/ gives the entries of dist/, names that start
-# with a dot included, and the name tests alone choose what is removed. With
-# no entry in dist/, the glob gives the word * itself, which matches
-# neither name test and is neither a file nor a folder, so the removal
+# with a dot included, and the name test alone chooses what is removed. With
+# no entry in dist/, the glob gives the word * itself, which the name test
+# does not match and which is not a file, so the removal
 # does nothing, as it would with nullglob. CDPATH is unset as well, so that
 # cd enters the folder that its relative name gives here, not 1 that CDPATH
 # gives.
@@ -187,231 +166,60 @@ if [ -L dist ]; then
 elif [ -e dist ] && [ ! -d dist ]; then
   fail "dist exists and is not a folder"
 fi
-# The device and inode of the dist/ folder that passed the refusal above, or
-# of the one the build makes. A dist renamed, or replaced by a symbolic link,
-# while the build runs would send the outputs and the removals elsewhere, so
-# the build checks dist by name with same_dist after it makes dist/ and
-# just before the moves, and reaches the folder itself only through
-# enter_dist below. If this first read fails, or gives an answer that is
-# not 2 numbers separated by a colon, the build ends here with exit
-# 1, before it sets its exit trap: it has removed nothing, so any output of
-# an earlier build is still in dist/. The read after the build makes dist/
-# is checked in the same way.
-DIST_ID_FAILED="could not read the device and inode of dist; the build has removed nothing from dist/, and any earlier output is still there"
-dist_id=""
-if [ -d dist ]; then
-  dist_id="$(stat -c '%d:%i' -- dist)" || fail "${DIST_ID_FAILED}"
-  [[ "${dist_id}" =~ ^[0123456789]+:[0123456789]+$ ]] || fail "${DIST_ID_FAILED}"
-fi
-same_dist() {
-  [ -n "${dist_id}" ] && [ ! -L dist ] && [ -d dist ] \
-    && [ "$(stat -c '%d:%i' -- dist 2>/dev/null)" = "${dist_id}" ]
-}
-DIST_REPLACED="dist was replaced while the build ran; the packager writes only into the dist/ folder it checked at the start"
-DIST_UNREACHABLE="could not enter dist/; the packager writes only into the dist/ folder it checked at the start"
-WORK_REPLACED="a work folder was replaced while the build ran; the packager writes only into the folders it made"
 
-# A check of a folder by its name and a use of that name later can reach 2
-# different folders, since a process of the same user can rename or replace
-# the folder between them. So the build reaches each of its 3 folders by
-# entering it once, with cd -P, and checking the device and inode of . (the
-# folder it entered) against those it recorded; after that, the names it
-# uses are relative to that folder, which a rename of the folder or a
-# replacement of its name does not change. Each of these functions changes
-# the working directory, so the build calls each only in a subshell, which
-# leaves the working directory of the build at the root of the checkout.
-# enter_dist enters the dist/ folder that the build recorded; enter_staging,
-# called in that folder, enters the staging folder that the build made
-# there (the folder whose name is in out); enter_source enters the source
-# folder under TMPDIR (the folder whose name is in source_dir). Each
-# returns 1, and enters nothing that it could not check, if the name is a
-# symbolic link or the folder it reaches is not the recorded one;
-# enter_dist returns 3 instead if cd cannot enter dist, so that the build
-# does not report a dist that it could not enter as replaced.
-# These windows remain, since each command involved takes a name and bash
-# cannot give it the object that was checked: the time between mkdir or
-# mktemp making a folder, or the refusal of a linked dist, and the read of
-# that folder's device and inode; the time between a test of an entry of
-# an entered folder and the rm, write or mv of that entry by its name; the
-# time between the check that .. of the staging folder is the recorded
-# dist/ folder and the moves to ..; and the time between the check, in
-# the exit trap, that the name of a work folder still holds the recorded
-# folder, or with no identity recorded that it is not a symbolic link,
-# and the rm -rf or rmdir of that name. The exit trap enters the folder that
-# holds the source folder (TMPDIR) by its path, which it has not recorded;
-# if that path then reaches another folder, the check of the source
-# folder's identity fails and the source folder stays. The subfolders that
-# tar makes in the source folder, such as cleanlanguage/, are reached by
-# relative names and are not recorded; the source folder is made by mktemp
-# with mode 0700, so only the same user, or root, can replace them. The
-# checks of dist by name (the refusal of a linked or non-folder dist,
-# same_dist and the refusal of an object at an output name) only decide
-# whether to refuse, and a dist replaced after 1 of them is refused at the
-# next entry into dist/, before anything is written there. rm removes a
-# symbolic link put at a name without following it.
-enter_dist() {
-  { [ -n "${dist_id}" ] && [ ! -L dist ]; } || return 1
-  cd -P -- ./dist 2>/dev/null || return 3
-  [ "$(stat -c '%d:%i' -- . 2>/dev/null)" = "${dist_id}" ]
-}
-enter_staging() {
-  [ -n "${out_id}" ] && [ ! -L "./${out}" ] && cd -P -- "./${out}" 2>/dev/null \
-    && [ "$(stat -c '%d:%i' -- . 2>/dev/null)" = "${out_id}" ]
-}
-enter_source() {
-  [ -n "${source_id}" ] && [ ! -L "${source_dir}" ] && cd -P -- "${source_dir}" 2>/dev/null \
-    && [ "$(stat -c '%d:%i' -- . 2>/dev/null)" = "${source_id}" ]
-}
-# Enter dist/, or the staging folder through dist/, or end the subshell
-# with exit 1 and the message that names the folder that failed its check,
-# or that says that dist/ could not be entered.
-to_dist() {
-  local rc=0
-  enter_dist || rc=$?
-  case "${rc}" in
-    0) ;;
-    3) fail "${DIST_UNREACHABLE}" ;;
-    *) fail "${DIST_REPLACED}" ;;
-  esac
-}
-to_staging() {
-  to_dist
-  enter_staging || fail "${WORK_REPLACED}"
-}
-to_source() {
-  enter_source || fail "${WORK_REPLACED}"
-}
-
-# The packager's outputs in dist/ and its staging folders there, matched by
-# exact name and type, not by who wrote them: a regular file named
+# Remove each regular file in dist/ with an output name, and nothing else: no
+# folder, no symbolic link and no entry of any other name, so a folder with
+# a work-folder name that an earlier build left stays. An output name is
 # cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256 of either, where
-# X, Y and Z are 1 or more ASCII digits, and a folder named .release-package.
-# followed by 6 ASCII letters or digits, the characters that mktemp gives,
-# which is removed with everything it holds. The name tests list each of
-# these characters, not a range such as [0-9] or [A-Z]: a range in a bash
-# =~ test follows the locale, and under LC_ALL=en_US.UTF-8 it also takes
-# letters and digits outside ASCII, such as an accented capital letter or an
-# Arabic-Indic digit. A symbolic link is neither, so it is kept, as is an
-# entry of any other name or type. The removal runs in a subshell that has
-# entered the recorded dist/ folder (enter_dist) and removes each entry by
-# its name in that folder, so a dist renamed or replaced during the removal
-# does not change the folder that it removes from. It removes the folders
-# with a staging name only when its first argument is with-staging, as at
-# the start of the build; the exit trap calls it without, so that on a
-# failed exit it removes no staging folder but the 1 that the build made,
-# which the trap removes through remove_staging. Each
-# removal is tried, so a failed removal does not stop the others; the
-# return status is 1 if 1 or more failed, 2 if dist is not the folder
-# recorded above, and 3 if cd cannot enter dist; with 2 or 3 it removes
-# nothing. With no dist recorded,
-# the build has written nothing to dist/, so there is nothing to remove.
+# X, Y and Z are 1 or more ASCII digits. The name test lists each digit, not
+# a range such as [0-9]: a range in a bash =~ test follows the locale, and
+# under LC_ALL=en_US.UTF-8 it also takes digits outside ASCII, such as an
+# Arabic-Indic digit. The removal enters dist/ once, in a subshell, and
+# removes each entry by its name there; rm -f removes a symbolic link put at
+# that name in between without following it. Each removal is tried, so a
+# failed removal does not stop the others; the status is 1 if 1 or more
+# failed or cd cannot enter dist/. With no dist/ folder there is nothing to
+# remove.
 remove_outputs() {
   local output_name='^cleanlanguage(-[0123456789]+\.[0123456789]+\.[0123456789]+)?\.zip(\.sha256)?$'
-  local staging_name='^\.release-package\.[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]{6}$'
-  local with_staging="${1:-}"
-  [ -n "${dist_id}" ] || return 0
+  { [ -d dist ] && [ ! -L dist ]; } || return 0
   (
-    enter_rc=0
-    enter_dist || enter_rc=$?
-    case "${enter_rc}" in
-      0) ;;
-      3) exit 3 ;;
-      *) exit 2 ;;
-    esac
+    cd -P -- ./dist || exit 1
     rc=0
     for name in *; do
-      if [[ "${name}" =~ ${output_name} ]]; then
-        if [ -f "./${name}" ] && [ ! -L "./${name}" ]; then
-          rm -f -- "./${name}" || rc=1
-        fi
-      elif [ "${with_staging}" = with-staging ] && [[ "${name}" =~ ${staging_name} ]]; then
-        if [ -d "./${name}" ] && [ ! -L "./${name}" ]; then
-          rm -rf -- "./${name}" || rc=1
-        fi
+      if [[ "${name}" =~ ${output_name} ]] && [ -f "./${name}" ] && [ ! -L "./${name}" ]; then
+        rm -f -- "./${name}" || rc=1
       fi
     done
     exit "${rc}"
   )
 }
 
-# The 2 work folders: source_dir holds the path of the source folder under
-# TMPDIR, in which the build lays out the files to zip, and out holds the
-# name, in dist/, of the staging folder, in which it builds and verifies
-# the outputs; source_id and out_id hold the device and inode of each, and
-# source_parent and source_name hold the path of the folder that holds the
-# source folder and the name of the source folder in it. Each
-# is empty until the build makes its folder.
-source_dir=""
-source_id=""
-source_parent=""
-source_name=""
-out=""
-out_id=""
-# Remove the source folder by its name in the folder that holds it, and
-# only while that name is not a symbolic link and holds the folder whose
-# device and inode the build recorded; otherwise remove nothing. If mktemp
-# made the folder but the build recorded no identity for it (a failed
-# read, a name that was a symbolic link at the check after mktemp, or a
-# signal in between), it removes that name with rmdir, after the same
-# check that it is not a symbolic link; rmdir removes only an empty
-# folder, so it removes no file that anyone wrote.
-remove_source() {
-  [ -n "${source_name}" ] || return 0
-  (
-    cd -P -- "${source_parent}" 2>/dev/null && [ ! -L "./${source_name}" ] || exit 1
-    if [ -n "${source_id}" ]; then
-      [ "$(stat -c '%d:%i' -- "./${source_name}" 2>/dev/null)" = "${source_id}" ] \
-        && rm -rf -- "./${source_name}"
-    else
-      rmdir -- "./${source_name}" 2>/dev/null
-    fi
-  )
-}
-# Remove the staging folder in the same way, by its name in the recorded
-# dist/ folder (enter_dist), so through a dist that is no longer that
-# folder it removes nothing.
-remove_staging() {
-  [ -n "${out}" ] || return 0
-  (
-    enter_dist && [ ! -L "./${out}" ] || exit 1
-    if [ -n "${out_id}" ]; then
-      [ "$(stat -c '%d:%i' -- "./${out}" 2>/dev/null)" = "${out_id}" ] \
-        && rm -rf -- "./${out}"
-    else
-      rmdir -- "./${out}" 2>/dev/null
-    fi
-  )
-}
-# On each exit that runs this trap, which a SIGKILL does not, try to
-# remove each work folder that the build made (remove_source and
-# remove_staging): each only while its name still holds the folder that
-# the build recorded, or, with no identity recorded, only while that name
-# holds an empty folder; so a folder put in place of a work folder after
-# the build recorded its identity stays.
-# On a failed exit, which includes an exit through 1 of the
-# signal traps above, also remove any output in dist/, so a failure during
-# the first removal below, or during or after the move, leaves no zip and
-# no .sha256 there, unless a removal fails or dist is no longer the folder
-# recorded above. On a failed exit it removes no folder with a staging
-# name but the staging folder of this build. Through a dist that is no
-# longer that folder it removes nothing in dist/, not even the staging
-# folder. Each
-# removal runs whatever an earlier one returned, since a failed command
-# would otherwise end the trap under set -e; an output or work folder that
-# a failed removal leaves stays, and the build keeps its exit code, 0
-# included. The trap ignores SIGHUP, SIGINT and
-# SIGTERM while it runs, so 1 of them cannot cut its removals short, and it
-# ends with the build's own exit code. It is set before the first removal,
-# so a signal that ends that removal half done still has the rest of the
-# outputs removed.
+# The path of the 1 work folder of this run, as mktemp gave it; empty until
+# mktemp has made it.
+work=""
+# On each exit that runs this trap (a SIGKILL does not): on a failed exit,
+# which includes an exit through 1 of the signal traps above, remove the
+# outputs in dist/ again, so that a failure during the first removal below
+# or during the moves leaves none, unless a removal fails; then, on any
+# exit, remove the work folder of this run by the path that mktemp gave.
+# This rm -rf is the only recursive removal of the packager. Each removal
+# runs whatever the one before it returned, since a failed command would
+# otherwise end the trap under set -e; what a failed removal leaves stays,
+# and the build keeps its exit code, 0 included. The trap ignores SIGHUP,
+# SIGINT and SIGTERM while it runs, so 1 of them cannot cut its removals
+# short, and it ends with the build's own exit code. It is set before the
+# first removal, so a signal that ends that removal half done still has the
+# rest of the outputs removed.
 cleanup() {
   local rc=$?
   trap '' HUP INT TERM
   if [ "${rc}" -ne 0 ]; then
     remove_outputs || true
   fi
-  remove_source || true
-  remove_staging || true
+  if [ -n "${work}" ]; then
+    rm -rf -- "${work}" || true
+  fi
   exit "${rc}"
 }
 trap cleanup EXIT
@@ -420,18 +228,9 @@ trap cleanup EXIT
 # non-folder dist and before every other check, so a build refused at a
 # later check does not leave them in dist/ for a reader to take for its
 # own. A failed removal ends the build here; the exit trap then tries the
-# removal of each output once more, and what neither could remove stays. A
-# dist that is not the recorded folder ends the build with the message for
-# a replaced dist, and a dist that cd cannot enter with the message for
-# that; then nothing has been removed.
-removal_rc=0
-remove_outputs with-staging || removal_rc=$?
-case "${removal_rc}" in
-  0) ;;
-  2) fail "${DIST_REPLACED}" ;;
-  3) fail "${DIST_UNREACHABLE}" ;;
-  *) fail "could not remove every earlier output from dist/; any it could not remove is still there" ;;
-esac
+# removal of each output once more, and what neither could remove stays.
+remove_outputs \
+  || fail "could not remove every earlier output from dist/; any it could not remove is still there"
 
 tag=""
 release_date=""
@@ -502,8 +301,8 @@ fi
 # so an object still at an output name is one that the packager does not
 # write: a symbolic link (followed or not), folder, FIFO or other special
 # file at 1 of the 4 names this build writes is refused here, before the
-# build makes its first work folder or writes anything to dist/, and is left
-# as it is.
+# build makes dist/ or its work folder or writes anything to dist/, and is
+# left as it is.
 for path in dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip" \
   dist/cleanlanguage.zip.sha256 "dist/cleanlanguage-${version}.zip.sha256"; do
   if [ -L "${path}" ] || { [ -e "${path}" ] && [ ! -f "${path}" ]; }; then
@@ -644,7 +443,7 @@ grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
 # inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
 # root so a marketplace install copies only the skill tree. The plugin
 # manifest therefore sits inside the tree this script archives, and the
-# layout step in the source folder below deliberately keeps it out of the
+# layout step in the work folder below deliberately keeps it out of the
 # zip: the zip is the skill artefact, and the plugin ships through the
 # marketplace. The version, name, and source checks run here because this
 # is the script that runs at release time. A version that disagrees with SKILL.md is exactly what would
@@ -744,55 +543,41 @@ sys.exit(1 if bad else 0)
 ' || exit 1
 fi
 
-# The source folder under TMPDIR. mktemp gives its name, not a handle on it,
-# so the build reads its device and inode by that name directly after
-# mktemp makes it, and from then on reaches it only through enter_source
-# (to_source), with git writing to a pipe that a subshell in that folder
-# reads. The exit trap removes it by its name in the folder that holds it
-# (remove_source).
-source_dir="$(mktemp -d)"
-case "${source_dir}" in
-  */*)
-    source_parent="${source_dir%/*}"
-    source_parent="${source_parent:-/}"
-    ;;
-  *) source_parent=. ;;
-esac
-source_name="${source_dir##*/}"
-[ ! -L "${source_dir}" ] || fail "${WORK_REPLACED}"
-# A failed read ends the build here under set -e, with the exit code of
-# stat, before source_id is assigned, so no output of a failed stat is
-# recorded as the identity.
-source_read="$(stat -c '%d:%i' -- "${source_dir}")"
-source_id="${source_read}"
-git archive --format=tar HEAD cleanlanguage | (
-  to_source
-  tar -xf -
-  # Keep the downloadable skill zip free of plugin metadata: the Claude
-  # manifest (.claude-plugin/plugin.json) and the Agent Plugins manifest (the
-  # root plugin.json) both ship through the marketplace install, never
-  # through the zip. rmdir, not rm -rf, so an unexpected extra file under
-  # .claude-plugin/ fails the build loudly instead of being discarded.
-  rm cleanlanguage/plugin.json
-  rm cleanlanguage/.claude-plugin/plugin.json
-  rmdir cleanlanguage/.claude-plugin
-  # The source keeps SKILL.md and references/ under skills/cleanlanguage/ for
-  # Agent Plugins discovery; Claude, ChatGPT, and Copilot Studio load the zip
-  # only with SKILL.md at the archive root, so restore the root layout here.
-  # rmdir, not rm -rf, so an unexpected extra entry under skills/ fails loudly.
-  mv cleanlanguage/skills/cleanlanguage/SKILL.md cleanlanguage/SKILL.md
-  mv cleanlanguage/skills/cleanlanguage/references cleanlanguage/references
-  rmdir cleanlanguage/skills/cleanlanguage
-  rmdir cleanlanguage/skills
-)
-git show HEAD:LICENSE | (to_source; cat > cleanlanguage/LICENSE)
-git show HEAD:NOTICE.md | (to_source; cat > cleanlanguage/NOTICE.md)
+# The work folder: 1 folder that this run makes in dist/ with mktemp, mode
+# 0700, on the filesystem of dist/, so that each move into dist/ is a
+# rename. dist/ is made here, before the layout, and a dist that is a
+# symbolic link at this point is refused before mktemp runs. The layout
+# goes in src/ of the work folder and the outputs beside src/. The exit
+# trap removes the work folder by the path that mktemp gave.
+mkdir -p dist
+[ ! -L dist ] || fail "dist is a symbolic link; the packager writes only into a real dist/ folder"
+work="$(mktemp -d "${PWD}/dist/.release-package.XXXXXX")"
+mkdir "${work}/src"
+git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${work}/src"
+# Keep the downloadable skill zip free of plugin metadata: the Claude
+# manifest (.claude-plugin/plugin.json) and the Agent Plugins manifest (the
+# root plugin.json) both ship through the marketplace install, never
+# through the zip. rmdir, not rm -rf, so an unexpected extra file under
+# .claude-plugin/ fails the build loudly instead of being discarded.
+rm "${work}/src/cleanlanguage/plugin.json"
+rm "${work}/src/cleanlanguage/.claude-plugin/plugin.json"
+rmdir "${work}/src/cleanlanguage/.claude-plugin"
+# The source keeps SKILL.md and references/ under skills/cleanlanguage/ for
+# Agent Plugins discovery; Claude, ChatGPT, and Copilot Studio load the zip
+# only with SKILL.md at the archive root, so restore the root layout here.
+# rmdir, not rm -rf, so an unexpected extra entry under skills/ fails loudly.
+mv "${work}/src/cleanlanguage/skills/cleanlanguage/SKILL.md" "${work}/src/cleanlanguage/SKILL.md"
+mv "${work}/src/cleanlanguage/skills/cleanlanguage/references" "${work}/src/cleanlanguage/references"
+rmdir "${work}/src/cleanlanguage/skills/cleanlanguage"
+rmdir "${work}/src/cleanlanguage/skills"
+git show HEAD:LICENSE > "${work}/src/cleanlanguage/LICENSE"
+git show HEAD:NOTICE.md > "${work}/src/cleanlanguage/NOTICE.md"
 
-# A byte-reproducible archive: stamp every path in the source folder with the
+# A byte-reproducible archive: stamp every path in src/ with the
 # commit's own timestamp, order the entries, and read the DOS times in UTC,
 # so the same commit always yields the same zip and therefore the same
 # checksum, on any machine and at any clock time. Without this the licence
-# files written to the source folder would carry the build clock, so a
+# files written to src/ would carry the build clock, so a
 # later rebuild of the same commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
@@ -801,55 +586,28 @@ commit_epoch="$(git show -s --format=%ct HEAD)"
 # records the Unix mode in each entry, so without this an ambient umask would
 # change the central-directory bytes and the checksum for the same commit.
 (
-  to_source
+  cd -- "${work}/src"
   chmod 644 cleanlanguage/LICENSE cleanlanguage/NOTICE.md
   find . -type d -exec chmod 755 {} +
   find . -type f -exec chmod 644 {} +
   find . -exec touch -h -d "@${commit_epoch}" {} +
 )
 
-mkdir -p dist
-if [ -z "${dist_id}" ] && [ ! -L dist ]; then
-  dist_id="$(stat -c '%d:%i' -- dist)" || fail "${DIST_ID_FAILED}"
-  [[ "${dist_id}" =~ ^[0123456789]+:[0123456789]+$ ]] || fail "${DIST_ID_FAILED}"
-fi
-# Checked after the build makes dist/, so that a dist replaced before then
-# ends the build with this message.
-same_dist || fail "${DIST_REPLACED}"
-# Build and verify in a staging folder inside dist/, on the same filesystem,
-# so the move after the checks is a rename and no unverified output ever sits
-# under an output name in dist/. mktemp runs in the recorded dist/ folder,
-# with a template relative to it, and gives the name of the folder that it
-# made there; the build reads the device and inode of that name in the same
-# folder directly after, and refuses a name that is then a symbolic link.
-# As for the source folder, a failed read ends the build before out_id is
-# assigned.
-out="$(to_dist; mktemp -d .release-package.XXXXXX)"
-out_read="$(
-  to_dist
-  { [ -d "./${out}" ] && [ ! -L "./${out}" ]; } || fail "${WORK_REPLACED}"
-  stat -c '%d:%i' -- "./${out}"
-)"
-out_id="${out_read}"
 # Clear ZIP and ZIPOPT so an ambient option (for example ZIPOPT=-0) cannot
 # change the archive bytes; -D omits directory records (whose modes and order
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
-# bytes at any clock time and umask, given the same zip binary. zip writes
-# the archive in the source folder, beside the files it zips, since it
-# cannot both read names relative to 1 folder and write into another that
-# the build has entered; a subshell in the source folder then gives its
-# bytes through a pipe to a subshell in the staging folder, which writes
-# them there. The checks below read only that staged copy.
+# bytes at any clock time and umask, given the same zip binary. zip reads
+# the files in src/cleanlanguage/ and writes the archive beside src/ in the
+# work folder, where the build also makes the version-named copy and both
+# .sha256 files; the checks below read that staged zip.
 (
-  to_source
-  cd ./cleanlanguage
+  cd -- "${work}/src/cleanlanguage"
   find . -type f -printf '%P\n' | LC_ALL=C sort \
-    | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ ../cleanlanguage.zip
+    | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${work}/cleanlanguage.zip"
 )
-(to_source; cat cleanlanguage.zip) | (to_staging; cat > cleanlanguage.zip)
 (
-  to_staging
+  cd -- "${work}"
   cp cleanlanguage.zip "cleanlanguage-${version}.zip"
   sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256
   sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256"
@@ -865,7 +623,7 @@ expected="$(
     printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
-actual="$( (to_staging; unzip -Z1 cleanlanguage.zip) | grep -v '/$' | LC_ALL=C sort)"
+actual="$(unzip -Z1 "${work}/cleanlanguage.zip" | grep -v '/$' | LC_ALL=C sort)"
 if [ "${expected}" != "${actual}" ]; then
   echo "release-package: the archive entry list does not match the git tree:" >&2
   diff <(printf '%s\n' "${expected}") <(printf '%s\n' "${actual}") >&2 || true
@@ -886,7 +644,7 @@ grep -qx 'SKILL.md' <<< "${actual}" \
   || fail "SKILL.md is not at the archive root"
 
 # The source nests the skill under skills/cleanlanguage/; the layout step in
-# the source folder above re-roots it, so a surviving skills/ entry means
+# the work folder above re-roots it, so a surviving skills/ entry means
 # that re-root was dropped.
 if grep -q '^skills/' <<< "${actual}"; then
   echo "release-package: the archive must not carry a skills/ subtree" >&2
@@ -894,7 +652,7 @@ if grep -q '^skills/' <<< "${actual}"; then
 fi
 
 # The entry-list check above already excludes the plugin manifest, but a
-# coordinated revert of the rm in the source folder and the expected-list
+# coordinated revert of the rm in the work folder and the expected-list
 # filter would put the manifest in both lists and slip past it, the same
 # shape the root-layout check above guards for its own pair of lines. This
 # proves the shipped zip itself carries no plugin metadata.
@@ -919,7 +677,7 @@ while IFS= read -r entry; do
     references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;
   esac
-  if ! cmp -s <(to_staging; unzip -p cleanlanguage.zip "${entry}") <(git cat-file blob "${blob}"); then
+  if ! cmp -s <(unzip -p "${work}/cleanlanguage.zip" "${entry}") <(git cat-file blob "${blob}"); then
     echo "release-package: archived ${entry} differs from its git blob (${blob})" >&2
     exit 1
   fi
@@ -931,18 +689,16 @@ EOF_ENTRIES
 # .sha256 that a build moved into dist/ has its zip beside it, unless a
 # removal, at the start of a later build or in an exit trap, removed that
 # zip and then failed to remove the .sha256, or a SIGKILL ended a later
-# build during its first removal. The moves run in the staging folder,
-# entered through the recorded dist/ folder, and name their target as ..,
-# the folder that holds the staging folder, after a check that .. is the
-# recorded dist/ folder; so a dist renamed or replaced after these checks
-# does not change where the outputs go.
-same_dist || fail "${DIST_REPLACED}"
-(
-  to_staging
-  [ "$(stat -c '%d:%i' -- ..)" = "${dist_id}" ] || fail "${WORK_REPLACED}"
-  mv -f cleanlanguage.zip "cleanlanguage-${version}.zip" ..
-  mv -f cleanlanguage.zip.sha256 "cleanlanguage-${version}.zip.sha256" ..
-)
+# build during its first removal. Each of the 4 moves is a rename from the
+# work folder to the folder that holds it, named as .. of the work folder,
+# so the outputs land beside the work folder of this run; if that folder is
+# no longer at the path that mktemp gave, the move fails. -T makes mv treat
+# the target as a name, never as a folder to move into, so a folder put at
+# an output name after the refusal above makes the move fail.
+for name in cleanlanguage.zip "cleanlanguage-${version}.zip" \
+  cleanlanguage.zip.sha256 "cleanlanguage-${version}.zip.sha256"; do
+  mv -fT -- "${work}/${name}" "${work}/../${name}"
+done
 
 echo "release-package: dist/cleanlanguage-${version}.zip built and verified for version ${version}."
 printf '%s\n' "${actual}" | sed 's/^/  /'
