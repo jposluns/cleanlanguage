@@ -17,6 +17,7 @@ directory.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import datetime as dt
 import importlib.util
@@ -24,12 +25,14 @@ import io
 import itertools
 import os
 import py_compile
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable, NamedTuple
 from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-page-metadata.py"
@@ -1749,12 +1752,18 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     def check_with_fake_git(self, prefix: tuple[str, ...], output: bytes,
                             *options: str) -> tuple[list[str] | None, str]:
         # A new repository, made with git init and options, holds a page
-        # restored exactly with the protected ref. With fake_git() set for
-        # prefix and output, the gate checks its history and the page. The
-        # return value is the page's problems, or None when the check stops
-        # with exit 3, and the gate's stderr.
+        # restored exactly with the protected ref, and run_with_fake_git()
+        # checks it.
         self.start_repository(*options)
         self.change_and_restore_on_branch()
+        return self.run_with_fake_git(prefix, output)
+
+    def run_with_fake_git(self, prefix: tuple[str, ...], output: bytes) -> tuple[list[str] | None, str]:
+        # With fake_git() set for prefix and output, the gate checks the
+        # current repository's history and the page, which it only reads,
+        # so 1 repository can serve many calls. The return value is the
+        # page's problems, or None when the check stops with exit 3, and the
+        # gate's stderr.
         stderr = io.StringIO()
         with mock.patch.dict(os.environ), contextlib.redirect_stderr(stderr):
             self.fake_git(prefix, output)
@@ -1771,30 +1780,18 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # output that the gate cannot use.
         entry = b"100644 blob {blob}\tsite/index.html\0"
         cases = [(("rev-parse",), b"yes\n"),
-                 (("for-each-ref",), b"refs/remotes/origin/main HEAD\n"),
                  (("for-each-ref",), b" {main}\n"),
-                 (("for-each-ref",), b"refs/remotes/origin/main/x zz\nrefs/remotes/origin/main {main}\n"),
                  (("for-each-ref",), b"refs/remotes/origin/main {main}"),
                  (("for-each-ref",), b"refs/remotes/origin/main {main}\n" * 2),
-                 *[(("for-each-ref",), b"refs/remotes/origin/main/x " + name + b"\n")
-                   for name in (b"0" * 39, b"0" * 41, b"0" * 63, b"0" * 65)],
-                 (("merge-base",), b"HEAD\n"),
-                 (("merge-base",), b"{main}\nHEAD\n"),
                  (("ls-tree",), entry.replace(b" blob ", b" blub ")),
                  (("ls-tree",), entry.replace(b"100644", b"100648")),
                  (("ls-tree",), entry.replace(b"100644", b"10064")),
-                 (("ls-tree",), entry.replace(b"{blob}", b"{blob}0")),
                  (("ls-tree",), entry.replace(b"index", b"other")),
                  (("ls-tree",), entry.replace(b"\t", b" x\t")),
                  (("ls-tree",), entry * 2),
                  (("ls-tree",), entry[:-1]),
                  (("ls-tree",), entry.replace(b"100644", b"10064/")),
                  (("ls-tree",), entry.replace(b"100644", b"1006440")),
-                 (("hash-object",), b"zz\n"),
-                 *[(("hash-object",), name + b"\n")
-                   for name in (b"0" * 39, b"0" * 41, b"0" * 63, b"0" * 65, b"/" * 40, b":" * 40, b"`" * 40,
-                                b"g" * 40, b"0" * 40 + b"/" * 24, b"0" * 40 + b":" * 24,
-                                b"0" * 40 + b"`" * 24, b"0" * 40 + b"g" * 24)],
                  (("log", "--diff-filter=A"), b"yesterday\n"),
                  (("log", "--diff-filter=A"), b"2026-02-30\n"),
                  (("log", "-1"), b"yesterday\n"),
@@ -1808,15 +1805,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # each other or not, the first or the last of them, a merge base
         # line whose object name differs in length from main's tip, first,
         # in the middle or last, or merge base output that does not end
-        # with a line feed; an object name of 64 digits beside main's tip
-        # of 40 in a blob entry of mode 100644, 100755 or 120000 at HEAD or
-        # at the merge base, or from git hash-object; a tree entry whose
-        # mode and type are not a pair that git prints, whose fields are
-        # joined by other than 1 space, or which has no object name; a line
-        # that git prints with leading or trailing whitespace, with a CR or
-        # with a blank line, or with no line feed at its end; an object
-        # name in upper case or of 88 or 104 digits; and shallow status or
-        # git hash-object output with no line.
+        # with a line feed; a tree entry whose mode and type are not a pair
+        # that git prints, whose fields are joined by other than 1 space, or
+        # which has no object name; a line that git prints with leading or
+        # trailing whitespace, with a CR or with a blank line, or with no
+        # line feed at its end; and shallow status or git hash-object output
+        # with no line. The faults in an object name that READINGS and
+        # FAULTS declare are given by
+        # test_each_reading_in_the_table_refuses_each_fault.
         cases += [(("for-each-ref",), b"refs/remotes/origin/mainx {main}\nrefs/remotes/origin/main {main}\n"),
                   (("for-each-ref",), b"refs/heads/main {main}\n"),
                   (("for-each-ref",), b"refs/remotes/origin/main\x0b{main}\n"),
@@ -1829,18 +1825,13 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("merge-base",), b"{main}\n{main}\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n{main}\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n" + b"2" * 40 + b"\n" + b"1" * 40 + b"\n"),
-                  (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n"),
                   (("merge-base",), b"{main}\n{main}" + b"0" * 24 + b"\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n" + b"2" * 40 + b"\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 40 + b"\n" + b"2" * 64 + b"\n"),
                   (("merge-base",), b"{main}\n" + b"1" * 64 + b"\n" + b"2" * 64 + b"\n"),
                   (("merge-base",), b"1" * 64 + b"\n{main}\n" + b"2" * 40 + b"\n"),
                   (("merge-base",), b"{main}\n{main}\n" + b"1" * 40 + b"\n"),
-                  (("merge-base",), b"1" * 64 + b"\n"),
                   (("merge-base",), b"1" * 64 + b"\n" + b"2" * 64 + b"\n"),
-                  *[(("ls-tree", "-z", revision), entry.replace(b"100644", mode).replace(b"{blob}", b"01234567" * 8))
-                    for revision in ("HEAD", "{main}") for mode in (b"100644", b"100755", b"120000")],
-                  (("hash-object",), b"0123456789abcdef" * 4 + b"\n"),
                   *[(("ls-tree",), entry.replace(b"100644 blob", pair))
                     for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
                                  b"040000 blob", b"040000 commit", b"160000 blob", b"160000 tree",
@@ -1857,8 +1848,6 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("hash-object",), b"{blob}\n\n"),
                   (("hash-object",), b"{blob}\r\n"),
                   (("hash-object",), b""),
-                  *[(("hash-object",), name + b"\n")
-                    for name in (b"A" * 40, b"0" * 40 + b"A" * 24, b"0" * 88, b"0" * 104)],
                   (("log", "--diff-filter=A"), b"2026-01-01"),
                   (("log", "--diff-filter=A"), b"2026-01-01 \n"),
                   (("log", "--diff-filter=A"), b"\n2026-01-01\n"),
@@ -1873,49 +1862,69 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_git_output_exit_3_messages(self):
-        # A shallow clone, a merge base list with no line and a byte that
-        # is not ASCII in the shallow status, in the added date or in the
-        # last-change date each stop the check with exit 3 and their own
-        # message.
+        # A shallow clone and a merge base list with no line each stop the
+        # check with exit 3 and their own message.
         cases = [(("rev-parse",), b"true\n", "the repository is a shallow clone"),
-                 (("merge-base",), b"", "printed no merge base"),
-                 (("rev-parse",), b"\xfffalse\n", "printed a byte that is not ASCII"),
-                 (("log", "--diff-filter=A"), b"\xff2026-01-01\n", "printed a byte that is not ASCII"),
-                 (("log", "-1"), b"\xff2026-02-02\n", "printed a byte that is not ASCII")]
+                 (("merge-base",), b"", "printed no merge base")]
         for prefix, output, words in cases:
             with self.subTest(prefix=prefix, output=output):
                 problems, stderr = self.check_with_fake_git(prefix, output)
                 self.assertIsNone(problems, stderr)
                 self.assertIn(words, stderr)
 
-    def test_byte_that_is_not_ascii_in_an_object_name_exits_3(self):
-        # The byte 0xff before an object name stops the check with exit 3
-        # and the message that names a byte that is not ASCII, not the
-        # message for output that the gate cannot use, in each reading of
-        # an object name: a ref listing line, the protected refname's or
-        # one below it, listed first or after another line; the merge base;
-        # a tree entry of each mode and type pair that git prints, at HEAD
-        # and at the merge base; and the git hash-object result. Each
-        # subtest fails when its reading alone decodes the object name with
-        # a replacing decode, which keeps exit 3 but gives the other
-        # message.
-        protected = b"refs/remotes/origin/main "
-        below = b"refs/remotes/origin/main/x "
-        cases = [*[(("for-each-ref",), listing)
-                   for listing in (protected + b"\xff{main}\n", below + b"\xff{main}\n" + protected + b"{main}\n",
-                                   protected + b"{main}\n" + below + b"\xff{main}\n",
-                                   below + b"{main}\n" + protected + b"\xff{main}\n")],
-                 (("merge-base",), b"\xff{main}\n"),
-                 *[(("ls-tree", "-z", revision), pair + b" \xff{blob}\tsite/index.html\0")
-                   for revision in ("HEAD", "{main}")
-                   for pair in (b"100644 blob", b"100755 blob", b"120000 blob", b"040000 tree", b"160000 commit")],
-                 (("hash-object",), b"\xff{blob}\n")]
-        for prefix, output in cases:
-            with self.subTest(prefix=prefix, output=output):
-                problems, stderr = self.check_with_fake_git(prefix, output)
-                self.assertIsNone(problems, stderr)
-                self.assertIn("printed a byte that is not ASCII", stderr)
-                self.assertNotIn("printed output that the gate cannot use", stderr)
+    def test_each_reading_in_the_table_refuses_each_fault(self):
+        # Each row of READINGS, in a repository of each object format it
+        # names, is given each fault of FAULTS that applies to it in place
+        # of {name} in its output, and the check stops with exit 3 and the
+        # message for that fault's check, printed for that row's git call.
+        # A fault for the ASCII check must not give the message for output
+        # that the gate cannot use, which a replacing decode gives. Each
+        # subtest fails when the gate drops or weakens that check for that
+        # row alone.
+        for options in (SHA1, SHA256):
+            self.start_repository(*options)
+            self.change_and_restore_on_branch()
+            main = self.git("rev-parse", "main").strip()
+            digits = len(main)
+            for reading in READINGS:
+                if options not in reading.formats:
+                    continue
+                command = "check-page-metadata: git " + " ".join(reading.prefix).replace("{main}", main) + " "
+                for fault in FAULTS:
+                    if fault.check not in reading.checks or (fault.no_length and "length" in reading.checks):
+                        continue
+                    output = reading.template.replace(b"{name}", fault.make(reading.valid, digits))
+                    with self.subTest(reading=reading.id, options=options, fault=fault.id):
+                        problems, stderr = self.run_with_fake_git(reading.prefix, output)
+                        self.assertIsNone(problems, stderr)
+                        words = REFUSALS[fault.check]
+                        self.assertTrue(any(line.startswith(command) and words in line
+                                            for line in stderr.splitlines()), stderr)
+                        if fault.check == "ascii":
+                            self.assertNotIn(REFUSALS["form"], stderr)
+
+    def test_gate_calls_match_the_table(self):
+        # The sites that gate_sites() finds in the gate's source are the
+        # keys of SITES, each line that SEARCHES find outside a docstring or
+        # a comment holds a site, and each check that SITES gives a site is
+        # driven by a row of READINGS that reaches the site and has that
+        # check, save the sites in NO_ROW. A site added, removed or moved
+        # to another function fails this case until the table names it.
+        sites = gate_sites()
+        self.assertEqual(sorted(site[:3] for site in sites), sorted(SITES))
+        site_lines = {site[3] for site in sites}
+        self.assertEqual(sorted(set(search_lines()) - site_lines), [])
+        self.assertEqual({site for site, checks in SITES.items() if not checks}, set(NO_ROW))
+        for reading in READINGS:
+            with self.subTest(reading=reading.id):
+                self.assertLessEqual(set(reading.sites), set(SITES))
+                applied = {check for site in reached(reading.sites) for check in SITES[site]}
+                self.assertLessEqual(set(reading.checks), applied)
+        for site, checks in SITES.items():
+            for check in checks:
+                with self.subTest(site=site, check=check):
+                    self.assertTrue(any(check in reading.checks and site in reached(reading.sites)
+                                        for reading in READINGS))
 
     def test_usable_git_output_is_read(self):
         # Output of the form that git prints is read: a tree or a gitlink
@@ -1937,22 +1946,6 @@ class ProtectedLineHistoryTest(unittest.TestCase):
             problems, stderr = self.check_with_fake_git(("hash-object",), b"0123456789abcdef" * 2 + b"01234567\n")
             self.assertIsNotNone(problems, stderr)
             self.assert_stamp_problem(problems, "2026-02-02")
-
-    def test_shorter_object_name_in_sha256_repository_exits_3(self):
-        # In a repository whose object names have 64 digits, an object name
-        # of 40 digits as the merge base, in the tree entry at HEAD or at
-        # the merge base, or from git hash-object stops the check with exit
-        # 3, as a longer one does beside a tip of 40 digits.
-        name = b"0123456789abcdef" * 2 + b"01234567"
-        entry = b"100644 blob {blob}\tsite/index.html\0"
-        for prefix, output in ((("merge-base",), name + b"\n"),
-                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", name)),
-                               (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", name)),
-                               (("hash-object",), name + b"\n")):
-            with self.subTest(prefix=prefix, output=output):
-                problems, stderr = self.check_with_fake_git(prefix, output, "--object-format=sha256")
-                self.assertIsNone(problems, stderr)
-                self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_restored_page_in_sha256_repository_passes(self):
         # In a repository whose object names have 64 digits, as under
@@ -2051,56 +2044,6 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 problems, stderr = self.check_with_fake_git(("for-each-ref",), listing)
                 self.assertEqual(problems, [], stderr)
 
-    def test_listing_line_of_other_length_exits_3(self):
-        # A ref listing line whose object name differs in length from that
-        # of the listing's first line stops the check with exit 3: the
-        # protected refname's line, with main's tip of 40 digits, after a
-        # line below it of 64; a line below the protected refname of 64
-        # digits after the protected refname's line of 40, or after another
-        # line below it of 40 with no protected refname listed; and a line
-        # below it of 40 digits after a tip of 64 in a SHA-256 repository.
-        other = b"0123456789abcdef" * 4
-        protected = b"refs/remotes/origin/main {main}\n"
-        below = b"refs/remotes/origin/main/x "
-        for listing, options in ((below + other + b"\n" + protected, ()),
-                                 (protected + below + other + b"\n", ()),
-                                 (below + b"{main}\nrefs/remotes/origin/main/y " + other + b"\n", ()),
-                                 (protected + below + other[:40] + b"\n", ("--object-format=sha256",))):
-            with self.subTest(listing=listing, options=options):
-                problems, stderr = self.check_with_fake_git(("for-each-ref",), listing, *options)
-                self.assertIsNone(problems, stderr)
-                self.assertIn("printed output that the gate cannot use", stderr)
-
-    def test_tree_entry_of_other_length_exits_3(self):
-        # A tree entry, which is no blob, at the page's path at HEAD or at
-        # the merge base whose object name differs in length from the merge
-        # base's stops the check with exit 3 rather than reading the page
-        # at HEAD: 64 digits beside a merge base of 40, and 40 beside one
-        # of 64.
-        for revision in ("HEAD", "{main}"):
-            for name, options in ((b"0123456789abcdef" * 4, ()),
-                                  (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
-                with self.subTest(revision=revision, name=name, options=options):
-                    entry = b"040000 tree " + name + b"\tsite/index.html\0"
-                    problems, stderr = self.check_with_fake_git(("ls-tree", "-z", revision), entry, *options)
-                    self.assertIsNone(problems, stderr)
-                    self.assertIn("printed output that the gate cannot use", stderr)
-
-    def test_gitlink_entry_of_other_length_exits_3(self):
-        # A gitlink entry, which is no blob, at the page's path at HEAD or
-        # at the merge base whose object name differs in length from the
-        # merge base's stops the check with exit 3 rather than reading the
-        # page at HEAD: 64 digits beside a merge base of 40, and 40 beside
-        # one of 64.
-        for revision in ("HEAD", "{main}"):
-            for name, options in ((b"0123456789abcdef" * 4, ()),
-                                  (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
-                with self.subTest(revision=revision, name=name, options=options):
-                    entry = b"160000 commit " + name + b"\tsite/index.html\0"
-                    problems, stderr = self.check_with_fake_git(("ls-tree", "-z", revision), entry, *options)
-                    self.assertIsNone(problems, stderr)
-                    self.assertIn("printed output that the gate cannot use", stderr)
-
     def test_tree_entry_with_empty_name_exits_3(self):
         # A tree entry whose name after the tab is empty is not the page's
         # path, so the check stops with exit 3 rather than reading its blob.
@@ -2108,6 +2051,229 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         problems, stderr = self.check_with_fake_git(("ls-tree",), entry)
         self.assertIsNone(problems, stderr)
         self.assertIn("printed output that the gate cannot use", stderr)
+
+
+# The table that test_each_reading_in_the_table_refuses_each_fault and
+# test_gate_calls_match_the_table drive. Its scope is the readings and
+# checks declared here: a weakening limited to an input that the table does
+# not vary, such as a listing's fourth line, passes it, and
+# test_gate_calls_match_the_table reads the gate's sites, not its data flow.
+#
+# A site is a place in the gate's source that reads or checks git's output:
+# a use of a name in WATCHED, a definition of 1 of those names, or a
+# .decode attribute, keyed by its enclosing function ("<module>" outside
+# one), the name and its place, from 1, in source order among that
+# function's sites of that name. SITES gives each site the checks that
+# apply to what is read through it: "ascii", the decode as ASCII; "form",
+# the OBJECT_NAME pattern; and "length", the length that object_name() is
+# given. A row that reaches a site that uses a name also reaches each site
+# in the function of that name and the name's definition.
+WATCHED = frozenset({"git", "ascii_output", "output_lines", "object_name", "blob_at", "commit_dates",
+                     "OBJECT_NAME", "length"})
+ASCII = ("ascii",)
+FORM = ("form",)
+LENGTH = ("length",)
+NAME = ("form", "length")
+ALL = ("ascii", "form", "length")
+SITES = {
+    ("<module>", "git", 1): ALL,
+    ("<module>", "ascii_output", 1): ASCII,
+    ("ascii_output", "decode", 1): ASCII,
+    ("<module>", "OBJECT_NAME", 1): FORM,
+    ("<module>", "object_name", 1): NAME,
+    ("object_name", "length", 1): LENGTH,
+    ("object_name", "OBJECT_NAME", 1): FORM,
+    ("object_name", "length", 2): LENGTH,
+    ("object_name", "length", 3): LENGTH,
+    ("<module>", "output_lines", 1): ASCII,
+    ("output_lines", "ascii_output", 1): ASCII,
+    ("<module>", "commit_dates", 1): ASCII,
+    ("commit_dates", "git", 1): ASCII,
+    ("commit_dates", "output_lines", 1): ASCII,
+    ("require_full_history", "git", 1): ASCII,
+    ("require_full_history", "output_lines", 1): ASCII,
+    ("added_date", "commit_dates", 1): ASCII,
+    ("protected_base", "git", 1): ALL,
+    ("protected_base", "length", 1): LENGTH,
+    ("protected_base", "object_name", 1): NAME,
+    ("protected_base", "ascii_output", 1): ASCII,
+    ("protected_base", "length", 2): LENGTH,
+    ("protected_base", "length", 3): LENGTH,
+    ("protected_base", "git", 2): ALL,
+    ("protected_base", "output_lines", 1): ASCII,
+    ("protected_base", "object_name", 2): NAME,
+    ("<module>", "blob_at", 1): ALL,
+    ("blob_at", "length", 1): LENGTH,
+    ("blob_at", "git", 1): ALL,
+    ("blob_at", "object_name", 1): NAME,
+    ("blob_at", "ascii_output", 1): ASCII,
+    ("blob_at", "length", 2): LENGTH,
+    ("blob_at", "decode", 1): (),
+    ("last_change_date", "blob_at", 1): ALL,
+    ("last_change_date", "blob_at", 2): ALL,
+    ("last_change_date", "git", 1): ALL,
+    ("last_change_date", "output_lines", 1): ASCII,
+    ("last_change_date", "object_name", 1): NAME,
+    ("last_change_date", "commit_dates", 1): ASCII,
+}
+# The sites that no row drives, and why.
+NO_ROW = {
+    ("blob_at", "decode", 1): "it decodes a mode only after TREE_ENTRIES admits the entry's mode and type, "
+                              "and each mode there is ASCII digits",
+}
+# Searches of the gate's source for the places that read an object name or
+# git's output, run line by line. Each line they find outside a docstring
+# or a comment must hold a site.
+SEARCHES = (re.compile(r"\b(ascii_output|output_lines|object_name|blob_at|commit_dates)\(|\.decode\(|OBJECT_NAME"
+                       r"|\blength\b"),
+            re.compile(r"= git\(|\bgit\(\*"))
+# The message of each check's refusal.
+REFUSALS = {"ascii": "printed a byte that is not ASCII",
+            "form": "printed output that the gate cannot use",
+            "length": "printed output that the gate cannot use"}
+SHA1 = ()
+SHA256 = ("--object-format=sha256",)
+
+
+class Reading(NamedTuple):
+    """A reading of git's output: the git call that fake_git() answers,
+    the output with {name} where a fault goes and what {name} holds in
+    output that git prints, the checks that the gate applies to {name}, the
+    sites that the reading passes through and the git init options of the
+    repositories it runs in."""
+    id: str
+    prefix: tuple[str, ...]
+    template: bytes
+    valid: bytes
+    checks: tuple[str, ...]
+    sites: tuple[tuple[str, str, int], ...]
+    formats: tuple[tuple[str, ...], ...]
+
+
+class Fault(NamedTuple):
+    """A fault for 1 check: make(valid, digits) gives what {name} holds,
+    where valid is the reading's valid text and digits the length of the
+    repository's object names. A fault with no_length applies only where
+    no length applies."""
+    id: str
+    check: str
+    no_length: bool
+    make: Callable[[bytes, int], bytes]
+
+
+LISTING = (("protected_base", "git", 1), ("protected_base", "length", 1), ("protected_base", "object_name", 1),
+           ("protected_base", "ascii_output", 1), ("protected_base", "length", 2),
+           ("protected_base", "length", 3))
+MERGE_BASE = (("protected_base", "git", 2), ("protected_base", "output_lines", 1),
+              ("protected_base", "object_name", 2))
+PROTECTED_LINE = b"refs/remotes/origin/main "
+TREE_PAIRS = (b"100644 blob", b"100755 blob", b"120000 blob", b"040000 tree", b"160000 commit")
+READINGS = (
+    # A ref listing line, the protected refname's or 1 below it, first,
+    # second or third. The first line has no length to match, and each
+    # listing names the protected refname at most once.
+    Reading("listing, protected, line 1", ("for-each-ref",), PROTECTED_LINE + b"{name}\n", b"{main}",
+            ("ascii", "form"), LISTING, (SHA1, SHA256)),
+    Reading("listing, below, line 1", ("for-each-ref",), b"refs/remotes/origin/main/x {name}\n", b"{main}",
+            ("ascii", "form"), LISTING, (SHA1, SHA256)),
+    Reading("listing, protected, line 2", ("for-each-ref",),
+            b"refs/remotes/origin/main/y {main}\n" + PROTECTED_LINE + b"{name}\n", b"{main}",
+            ALL, LISTING, (SHA1, SHA256)),
+    Reading("listing, below, line 2", ("for-each-ref",),
+            b"refs/remotes/origin/main/y {main}\nrefs/remotes/origin/main/x {name}\n", b"{main}",
+            ALL, LISTING, (SHA1, SHA256)),
+    Reading("listing, protected, line 3", ("for-each-ref",),
+            b"refs/remotes/origin/main/y {main}\nrefs/remotes/origin/main/z {main}\n" + PROTECTED_LINE
+            + b"{name}\n", b"{main}", ALL, LISTING, (SHA1, SHA256)),
+    Reading("listing, below, line 3", ("for-each-ref",),
+            PROTECTED_LINE + b"{main}\nrefs/remotes/origin/main/y {main}\nrefs/remotes/origin/main/x {name}\n",
+            b"{main}", ALL, LISTING, (SHA1, SHA256)),
+    # A merge base line, first or second.
+    Reading("merge base, line 1", ("merge-base",), b"{name}\n", b"{main}", ALL, MERGE_BASE, (SHA1, SHA256)),
+    Reading("merge base, line 2", ("merge-base",), b"{main}\n{name}\n", b"{main}", ALL, MERGE_BASE,
+            (SHA1, SHA256)),
+    # A tree entry of each mode and type pair, at HEAD and at the merge base.
+    *[Reading(f"tree entry {pair.decode('ascii')}, {where}", ("ls-tree", "-z", revision),
+              pair + b" {name}\tsite/index.html\0", b"{blob}", ALL, (("last_change_date", "blob_at", place),),
+              (SHA1, SHA256))
+      for where, revision, place in (("HEAD", "HEAD", 1), ("merge base", "{main}", 2))
+      for pair in TREE_PAIRS],
+    Reading("git hash-object result", ("hash-object",), b"{name}\n", b"{blob}", ALL,
+            (("last_change_date", "git", 1), ("last_change_date", "output_lines", 1),
+             ("last_change_date", "object_name", 1)), (SHA1, SHA256)),
+    # The readings with an ASCII check and no object name.
+    Reading("shallow status", ("rev-parse",), b"{name}\n", b"false", ASCII,
+            (("require_full_history", "git", 1), ("require_full_history", "output_lines", 1)), (SHA1,)),
+    Reading("added date", ("log", "--diff-filter=A"), b"{name}\n", b"2026-01-01", ASCII,
+            (("added_date", "commit_dates", 1),), (SHA1,)),
+    Reading("last-change date", ("log", "-1"), b"{name}\n", b"2026-02-02", ASCII,
+            (("last_change_date", "commit_dates", 1),), (SHA1,)),
+)
+# The faults: the byte 0xff before the valid text; at the repository's
+# length, a last digit just outside 0 to 9 and a to f, or in upper case;
+# the other object format's length; and, where no length applies, lengths
+# that neither format has.
+FAULTS = (
+    Fault("byte 0xff first", "ascii", False, lambda valid, digits: b"\xff" + valid),
+    *[Fault(f"last digit {char.decode('ascii')}", "form", False,
+            lambda valid, digits, char=char: b"0" * (digits - 1) + char)
+      for char in (b"/", b":", b"`", b"g", b"A")],
+    Fault("other format's length", "length", False, lambda valid, digits: b"1" * {40: 64, 64: 40}[digits]),
+    *[Fault(f"{count} digits", "form", True, lambda valid, digits, count=count: b"0" * count)
+      for count in (39, 41, 63, 65, 88, 104)],
+)
+
+
+def gate_sites() -> list[tuple[str, str, int, int]]:
+    """Each site in the gate's source, as its key in SITES and its line."""
+    uses: list[tuple[str, str, int, int]] = []
+
+    def visit(node: ast.AST, function: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if child.name in WATCHED:
+                    uses.append((function, child.name, child.lineno, child.col_offset))
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Name) and child.id in WATCHED:
+                uses.append((function, child.id, child.lineno, child.col_offset))
+            elif isinstance(child, ast.arg) and child.arg in WATCHED:
+                uses.append((function, child.arg, child.lineno, child.col_offset))
+            elif isinstance(child, ast.Attribute) and child.attr == "decode":
+                uses.append((function, "decode", child.lineno, child.col_offset))
+            visit(child, function)
+
+    visit(ast.parse(MODULE_PATH.read_text(encoding="utf-8")), "<module>")
+    places: dict[tuple[str, str], int] = {}
+    sites = []
+    for function, name, line, _column in sorted(uses, key=lambda use: (use[2], use[3])):
+        places[function, name] = places.get((function, name), 0) + 1
+        sites.append((function, name, places[function, name], line))
+    return sites
+
+
+def search_lines() -> list[int]:
+    """The numbers of the gate's lines that SEARCHES find, save those in a
+    docstring or a comment."""
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    prose = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            prose.update(range(node.lineno, node.end_lineno + 1))
+    return [number for number, line in enumerate(source.splitlines(), 1)
+            if number not in prose and not line.lstrip().startswith("#")
+            and any(search.search(line) for search in SEARCHES)]
+
+
+def reached(sites: tuple[tuple[str, str, int], ...]) -> set[tuple[str, str, int]]:
+    """sites with each site that they reach, as SITES says."""
+    found = set(sites)
+    while True:
+        names = {name for _function, name, _place in found}
+        more = {site for site in SITES if site[0] in names or (site[0] == "<module>" and site[1] in names)}
+        if more <= found:
+            return found
+        found |= more
 
 
 class EmptyValueTest(_PatchedGateTest):
