@@ -17,9 +17,11 @@ fails when any of them is missing:
   another separator or a value inside quotes fails, and so do no MODE line, 2 MODE lines and a
   MODE line with no closing parenthesis;
 - no line may hold an unquoted bare "attended": the word "attended", in any letter case, with no
-  letter, digit or underscore just before or just after it, so "unattended" and "attendedness"
-  are not bare; that is not followed at once by "-autonomous", in any letter case, with no
-  letter, digit or underscore just after that, so "attended-autonomous" and "Attended-Autonomous"
+  word character just before or just after it, a word character being what Python's re reads as
+  one: an underscore or a character for which str.isalnum() is true, which takes in the letters
+  and digits of every script and numeric characters such as U+00BD, so "unattended" and
+  "attendedness" are not bare; that is not followed at once by "-autonomous", in any letter case,
+  with no word character just after that, so "attended-autonomous" and "Attended-Autonomous"
   are not bare while "attended-autonomously" is; and that is not between a pair of straight double
   quotes (") that the check pairs left to right on the same line. The test reads each such
   quotation, its quotes included, as 1 space, so the text on its 2 sides stays apart, as it is
@@ -143,9 +145,11 @@ has changed when it is committed with the paragraph's new sha256 in PARAGRAPHS, 
 opening text clears its report when it is committed with the row's opening text and sha256 both
 rewritten; either edit passes only when every other test passes too, and the changed row in the
 diff is what shows it to a reviewer. A report of a number found, and the last line, give the
-length of what the check found, which its code does not bound, but the test holds each number
-only as far as it writes: up to 1000 MODE lines, 1006 paragraphs found and 1008 findings. No
-finite suite can try every number, so a larger number rests on reading the code.
+length of what the check found, and a report of a line gives its line number or line range; the
+check's code bounds none of these numbers, but the test holds each only as far as it writes: up
+to 1000 MODE lines, 1006 paragraphs found and 1008 findings, and line numbers and line ranges of
+up to 6 digits. No finite suite can try every number, so a larger number rests on reading the
+code.
 tools/test-check-flow-mode.py holds a case for each verdict named in this docstring.
 """
 import hashlib
