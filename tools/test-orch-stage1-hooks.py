@@ -698,20 +698,22 @@ class StopFamilySurface(HookHarness):
 # 10. Citations of a whole hook function in the tools files
 # =====================================================================================================
 class WholeFunctionCitations(unittest.TestCase):
-    """A line range A-B in a tools/*.py file whose 2 numbers are the def line and the last line of a
-    top-level function of the vendored hook is a whole-function citation, whatever words stand around
-    it. WHOLE holds, for each tools file and hook function, how many such ranges the file holds. The
-    case counts, in each tools file, the A-B tokens equal to the current range of each hook function and
-    compares the counts with WHOLE. A re-pin that moves or lengthens a cited function lowers its count,
-    and a new whole-function citation raises one, so either fails here until the citations and WHOLE
-    follow. The case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range
-    written A-B with a hyphen is read; a range that covers part of a function, a range over more than
-    1 whole function (such as A, the def line of 1 function, to B, the last line of a later one), a
-    single line and a nested function are not checked."""
+    """A line range A-B in a tools/*.py file whose B is the last line of a top-level function of the
+    vendored hook, and whose A is that function's def line or the first line of its body after any
+    docstring, is a whole-function citation, whatever words stand around it. WHOLE holds, for each
+    tools file and hook function, how many such ranges the file holds. The case counts, in each tools
+    file, the A-B tokens equal to either current range of each hook function and compares the counts
+    with WHOLE. A re-pin that moves or lengthens a cited function lowers its count, and a new
+    whole-function citation raises one, so either fails here until the citations and WHOLE follow. The
+    case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range written A-B
+    with a hyphen is read; a range that covers part of a function, a range over more than 1 whole
+    function (such as A, the def line of 1 function, to B, the last line of a later one), a single line
+    and a nested function are not checked."""
 
     WHOLE = {
         ("check-orchestration-registry.py", "_orch_root"): 1,
-        ("check-orchestration-registry.py", "_schema_staleness"): 1,
+        ("check-orchestration-registry.py", "_orch_scope_live"): 1,
+        ("check-orchestration-registry.py", "_schema_staleness"): 6,
         ("check-orchestration-registry.py", "_state_dir_from_registry"): 2,
         ("check-orchestration-registry.py", "_v_finite_pos"): 3,
         ("orch-enumerate-backlog.py", "_orch_enumerate"): 1,
@@ -732,6 +734,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("orch_doctor.py", "_orch_write_json_at"): 1,
         ("orch_doctor.py", "_orch_write_json_atomic"): 1,
         ("orch_doctor.py", "orch_resume_audit"): 2,
+        ("orch_doctor.py", "orch_yield_tool"): 1,
         ("test-no-qa-labels.py", "_orch_attestation_refs"): 1,
         ("test-no-qa-labels.py", "_orch_checkpoint_union"): 1,
         ("test-no-qa-labels.py", "_orch_escape_active"): 1,
@@ -749,6 +752,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"): 1,
         ("test-orch-stage1-hooks.py", "_orch_root"): 1,
         ("test-orch-stage1-hooks.py", "_orch_scope_live"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_state_dir_for_root"): 1,
         ("test-orch-stage1-hooks.py", "orch_dispatch_ledger"): 1,
         ("test-orch-stage1-hooks.py", "orch_prompt_stamp"): 1,
         ("test-orch-stage1-hooks.py", "orch_resume_audit"): 1,
@@ -771,19 +775,26 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage2-hooks.py", "orch_yield_tool"): 1,
         ("test-orch-stage2-hooks.py", "validate_enumeration"): 1,
         ("test-orchestration-registry.py", "_orch_root"): 1,
+        ("test-orchestration-registry.py", "_schema_staleness"): 3,
         ("test-orchestration-registry.py", "_state_dir_from_registry"): 1,
     }
     RANGE = re.compile(r"(?<![\w.])(\d+)-(\d+)(?![\w.])")
     # 1 entry per rule of the count: (rule, the text of a fixture file a.py, a fixture WHOLE, the
     # mismatches the count must give against FIXTURE_HOOK). FIXTURE_HOOK defines f on its lines 1 to 4,
-    # g nested in f on lines 2 and 3, and h on lines 5 and 6.
-    FIXTURE_HOOK = "def f():\n    def g():\n        pass\n    return g\ndef h():\n    pass\n"
+    # g nested in f on lines 2 and 3, h on lines 5 and 6, and k on lines 7 to 10, with its docstring on
+    # line 8 and its body on lines 9 and 10.
+    FIXTURE_HOOK = ("def f():\n    def g():\n        pass\n    return g\ndef h():\n    pass\n"
+                    "def k():\n    \"\"\"Doc.\"\"\"\n    x = 1\n    return x\n")
     RANGE_FORMS = (
         ("a range in any words is read", "`f` at 1-4; f (aiqt_hooks.py:1-4); lines 1-4 of h",
          {("a.py", "f"): 3}, []),
         ("an unlisted range raises a count", "f, 1-4", {}, [("a.py", "f", 1, 0)]),
         ("a shortened range lowers a count", "f at 1-3", {("a.py", "f"): 1}, [("a.py", "f", 0, 1)]),
-        ("only the def line to the last line counts", "f at 1-1, h at 5-5, f at 4-4", {}, []),
+        ("a range from the first line of the body after the docstring counts", "k at 9-10, 7-10",
+         {("a.py", "k"): 2}, []),
+        ("a shortened body range lowers a count", "k at 9-9", {("a.py", "k"): 1}, [("a.py", "k", 0, 1)]),
+        ("only the def line or the body's first line to the last line counts",
+         "f at 1-1, h at 5-5, f at 4-4, k at 8-10, k at 7-9", {}, []),
         ("only top-level functions count", "g at 2-3", {}, []),
         ("a range over more than 1 function counts for none", "f and h at 1-6", {}, []),
         ("no letter, digit or dot before the range", "v1-4, x.1-4, 11-4", {}, []),
@@ -792,9 +803,18 @@ class WholeFunctionCitations(unittest.TestCase):
 
     @staticmethod
     def functions(source):
-        """{(def line, last line): name} for each top-level function of the source."""
-        return {(node.lineno, node.end_lineno): node.name for node in ast.parse(source).body
-                if isinstance(node, ast.FunctionDef)}
+        """{(first line, last line): name} for each top-level function of the source, with 2 first
+        lines each: the def line, and the first line of the body after any docstring."""
+        spans = {}
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef):
+                body = node.body
+                docstring = (isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                             and isinstance(body[0].value.value, str))
+                first = body[1] if docstring and len(body) > 1 else body[0]
+                spans[(node.lineno, node.end_lineno)] = node.name
+                spans[(first.lineno, node.end_lineno)] = node.name
+        return spans
 
     @classmethod
     def mismatches(cls, functions, texts, whole):

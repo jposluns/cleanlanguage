@@ -27,11 +27,14 @@ check reads text only; it makes no claim about how a shell runs a command. It re
 for 1 or more writes, each alone on its line and each to a path not written before, and then, as
 the last line, a run with bash, sh or python3 of a written path, where 1 line of the text written
 to that path holds the words git and commit, in that order, and --no-verify or -n as a whole word.
-SHAPE_RULES lists rules of the check, each with a form that the check rejects and an edit of the
-check's source that removes or loosens the rule. 1 case fails when the check accepts a listed form.
-Another fails when a listed edit does not match the check's source exactly once, or when the check
-with the edit applied still rejects the form. Only the rules listed in SHAPE_RULES are pinned this
-way; a rule that is not listed is not pinned.
+SHAPE_SHA256 pins the sha256 of the check's source, so any edit of the check fails a named case
+until the pin is updated with it; the pin shows that the source changed, not that the changed check
+keeps its rules. SHAPE_RULES lists rules of the check, each with a form that the check rejects and
+an edit of the check's source that removes or loosens the rule. 1 case fails when the check accepts
+a listed form. Another fails when a listed edit does not match the check's source exactly once, or
+when the check with the edit applied still rejects the form. A form pins only the loosening that it
+exercises: a loosening of a listed rule in a direction that no listed form exercises passes those 2
+cases and fails only the source pin, and a rule that is not listed is pinned by the source pin alone.
 
 The hook before this pull request (the 2eb6812c hooks on main) allowed all 5 probes, so this test
 is red on it, with 5 failures; --hook PATH runs the same cases against another copy of the hook to
@@ -121,12 +124,20 @@ def write_then_run(command):
     return None
 # The shape check: end
 
-# The rules of the shape check that the test pins, 1 entry each: (rule, a form that the check rejects,
-# and an edit (old, new) of the shape check's source that removes or loosens the rule). The check must
-# reject the form; the edit's old text must occur exactly once in the check's source, and the check
-# with the edit applied must accept the form. A rule that is not listed here is not pinned.
+# The sha256 of the shape check's source, the lines between SHAPE_BEGIN and SHAPE_END joined with \n.
+# Any edit of the check fails test_shape_check_matches_its_pinned_sha256 until this pin is updated
+# with it. The pin shows that the source changed, not that the changed check still keeps its rules.
+SHAPE_SHA256 = "11055a4c604ed905d56b3391637d9017b775a9f3d20b3c2a81c5b7410453136c"
+# The rules of the shape check that the test pins by behaviour, 1 entry each: (rule, a form that the
+# check rejects, and an edit (old, new) of the shape check's source that removes or loosens the rule).
+# The check must reject the form; the edit's old text must occur exactly once in the check's source,
+# and the check with the edit applied must accept the form. A form pins only the loosening that it
+# exercises: a loosening of a listed rule in a direction that its form does not exercise passes the
+# 2 cases that read this table, and only the source pin above fails on it.
 W = "cat > /tmp/probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\n"
 RUN = "bash /tmp/probe-s.sh"
+# Every printable ASCII character that may not stand next to the flag: all but whitespace and ".
+WORD_EDGES = [chr(n) for n in range(33, 127) if chr(n) != '"']
 SHAPE_RULES = (
     ("the path is absolute",
      "cat > probe-s.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash probe-s.sh",
@@ -210,11 +221,34 @@ SHAPE_RULES = (
      "cat > /tmp/probe-s.sh <<'EOF'\ngit log -n 1\nEOF\n" + RUN,
      (r'r"\bgit\b.*\bcommit\b"', r'r"\bgit\b"')),
     ("the flag starts a word",
-     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -m probe-n\nEOF\n" + RUN,
+     "cat > /tmp/probe-s.sh <<'EOF'\n" + "".join("git commit -m x{0}-n\ngit commit x{0}--no-verify\n".format(c)
+                                                 for c in WORD_EDGES) + "EOF\n" + RUN,
      (r'(?<![^\s\"])(?:--no-verify|-n)', '(?:--no-verify|-n)')),
     ("the flag ends a word",
-     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -nx -m probe\nEOF\n" + RUN,
+     "cat > /tmp/probe-s.sh <<'EOF'\n" + "".join("git commit -n{0} -m x\ngit commit --no-verify{0} -m x\n".format(c)
+                                                 for c in WORD_EDGES) + "EOF\n" + RUN,
      (r'(?:--no-verify|-n)(?![^\s\"])', '(?:--no-verify|-n)')),
+    ("the flag is in lower case",
+     "cat > /tmp/probe-s.sh <<'EOF'\ngit commit --NO-VERIFY -m probe\ngit commit -N -m probe\nEOF\n" + RUN,
+     (r'(?![^\s\"])")', r'(?![^\s\"])", re.I)')),
+    ("the commit words are in lower case",
+     "cat > /tmp/probe-s.sh <<'EOF'\nGIT COMMIT --no-verify -m probe\nEOF\n" + RUN,
+     (r'\bcommit\b")', r'\bcommit\b", re.I)')),
+    ("the commit words are in the order git, commit",
+     "cat > /tmp/probe-s.sh <<'EOF'\ncommit --no-verify -m git\nEOF\n" + RUN,
+     (r'r"\bgit\b.*\bcommit\b")', r'r"\bgit\b.*\bcommit\b|\bcommit\b.*\bgit\b")')),
+    ("the run line's only suffix is the echo of its status",
+     W + "bash /tmp/probe-s.sh; true",
+     (r'\$\?\")?")', r'\$\?\")?(?:; true)?")')),
+    ("the run line has nothing before the run",
+     W + "   " + RUN,
+     ("RUN_LINE.fullmatch(lines[-1])", "RUN_LINE.fullmatch(lines[-1].lstrip())")),
+    ("a here-document write line has nothing after its delimiter",
+     "cat > /tmp/probe-s.sh <<'EOF'\r\ngit commit --no-verify -m probe\nEOF\n" + RUN,
+     ("HEREDOC_WRITE.fullmatch(lines[i])", "HEREDOC_WRITE.fullmatch(lines[i].rstrip())")),
+    ("a printf write line has nothing after its path",
+     "printf 'git commit --no-verify -m probe\\n' > /tmp/probe-s.sh \n" + RUN,
+     ("PRINTF_WRITE.fullmatch(lines[i])", "PRINTF_WRITE.fullmatch(lines[i].rstrip())")),
     ("the commit words and the flag are on 1 line",
      "cat > /tmp/probe-s.sh <<'EOF'\ngit commit -m probe\necho --no-verify\nEOF\n" + RUN,
      ('any(COMMIT_WORDS.search(line) and SKIP_FLAG.search(line) for line in written.get(run["path"], ()))',
@@ -291,6 +325,11 @@ class GateWeakeningProbes(unittest.TestCase):
                 self.assertIsNotNone(write_then_run(command),
                                      "probe {} is not a write-then-run commit form: {!r}"
                                      .format(name, command[:200]))
+
+    def test_shape_check_matches_its_pinned_sha256(self):
+        digest = hashlib.sha256(shape_source().encode("utf-8")).hexdigest()
+        self.assertEqual(digest, SHAPE_SHA256, "the shape check changed: give each rule it adds, removes or "
+                         "loosens an entry in SHAPE_RULES whose form exercises it, then update SHAPE_SHA256")
 
     def test_shape_check_rejects_the_form_of_each_rule(self):
         for rule, rejected, _edit in SHAPE_RULES:

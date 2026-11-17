@@ -262,10 +262,22 @@ append a fail-open audit event, an append that is best effort; otherwise it retu
 logging. `orch_resume_audit` reads the registry at every
 SessionStart and writes `resume-barrier.json` under `state_dir`, arming the barrier only when
 it finds divergence; while a barrier is armed, `orch_resume_barrier` surfaces a one-time
-warning on a mutation outside the record surfaces and blocks nothing.
+warning on a mutation outside the record surfaces and blocks nothing. The refreshed hook writes
+the barrier to a new temporary file and replaces the old file with it, so each audit gives the
+barrier the mode of a new file, 0666 less the umask, not the mode of the file it replaces: a
+barrier restricted to 0600 is 0644 after an audit under umask 022, and so readable by every user
+who can reach `state_dir`. The writer, `_orch_barrier_write`, is the
+pack's and is not edited here; until a re-vendored hook keeps the mode, the permissions of
+`state_dir` and the directories above it, not those of the barrier file, decide who can read it.
 
-The host's operating-mode file is JSON, which `orch_ask_guard` cannot read, so this repository
-adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, registered in
+The host's operating-mode file is JSON. The refreshed `orch_ask_guard` can read a JSON mode
+record of that form, an object whose keys are `mode` and, optionally, `phase`, `set_by` and
+`set_at` (`_orch_mode_object_ok` in the vendored hook; `tools/test-orch-stage2-hooks.py` tests it on
+a file in a temporary tree), but this repository's registry declares no `mode` record, so the hook
+never reads the host's file, and this repository adds its own guard for AskUserQuestion. The
+docstring of the vendored `orch_ask_guard` still says that a JSON marker must hold `mode` alone;
+its reader accepts the record above, and the docstring is upstream's to correct, since the
+vendored hook is not edited here. `.claude/hooks/ask_mode_guard.py`, registered in
 `.claude/settings.json`, reads `/opt/orch-operator/operating-mode`, a JSON object whose `"mode"`
 member holds 1 mode for the whole host. The guard takes 2 values from the file's only writer,
 the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
@@ -297,9 +309,9 @@ Orchestration registry workflow, tests it against files and directories that it 
 temporary directory, with 2 exceptions: the device case puts the mode file below `/dev/null`,
 and the 2 owner rename cases have the guard open a readable file that another uid owns, the first
 suitable one among `/etc/passwd`, `/etc/group`, `/etc/hosts` and the Python interpreter, or, run
-as root, a file that they create and give to uid 65534. The guard stays as a second layer after
-an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file, under the adopted
-defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in sessions
+as root, a file that they create and give to uid 65534. The guard stays as a second layer if the
+registry later declares a `mode` record that points `orch_ask_guard` at the host's file, under the
+adopted defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in sessions
 that load this checkout's `.claude/settings.json`; it does not cover other checkouts,
 other repositories, or non-Claude worker families; a session that can edit the guard or
 `.claude/settings.json` can disarm it, and the edit shows in review only once it is committed; a
@@ -329,9 +341,10 @@ outcomes are what the contract says, not something the tests observe; the legacy
 on every question while a usable record holds `"attended"`, since the guard keeps no state and
 writes no file, and a session without root cannot rewrite the root-owned record; the operator runs
 `orchmod aa` to rewrite it as `"attended-autonomous"`; the tests check only the warning the guard
-prints, not whether Claude Code shows it to the user or to the model; and until the upstream fix
-is re-vendored, `orch_ask_guard` allows every question and, when it can resolve the repository
-and read a usable registry, tries to append a fail-open audit event, an append that is best effort.
+prints, not whether Claude Code shows it to the user or to the model; and while the registry
+declares no `mode` record, `orch_ask_guard` allows every question and, when it can resolve the
+repository and read a usable registry, tries to append a fail-open audit event, an append that is
+best effort.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

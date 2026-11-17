@@ -860,6 +860,35 @@ class T09AskGuard(Stage2Harness):
         rows = self.read_jsonl("pending-asks.jsonl")
         self.assertEqual([row["key"] for row in rows], ["s1::tu1"])
 
+    def test_json_mode_record_reads_as_attended(self):
+        # The contrast of the case above. A reader that refused the structured record (its phase, set_by
+        # and set_at keys, `_ORCH_MODE_RECORD_KEYS` at aiqt_hooks.py:22403) would fail it closed to
+        # unattended, and the case above would still pass; the same record that says attended-autonomous
+        # is read as attended only when the record is read, so the question is allowed with no pending row.
+        self.write_registry(self.stage2())
+        Path(self._p("operating-mode.md")).write_text(
+            '{"mode": "attended-autonomous", "phase": "dispatch", "set_by": "orch-operator", '
+            '"set_at": "2026-11-07T00:00:00Z"}\n', encoding="utf-8")
+        r = self._ask()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+        self.assertIsNone(self.read_jsonl("pending-asks.jsonl"))
+
+    def test_json_mode_record_with_another_key_fails_closed(self):
+        # The same attended-autonomous record with 1 key outside `_ORCH_MODE_RECORD_KEYS` (aiqt_hooks.py:
+        # 22403) is not an accepted mode object, so the reader fails it closed to unattended: deny, and the
+        # question is recorded as pending. A reader that took any keys would allow it.
+        self.write_registry(self.stage2())
+        Path(self._p("operating-mode.md")).write_text(
+            '{"mode": "attended-autonomous", "phase": "dispatch", "set_by": "orch-operator", '
+            '"set_at": "2026-11-07T00:00:00Z", "note": "x"}\n', encoding="utf-8")
+        r = self._ask()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = self.verdict_json(r)
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+        rows = self.read_jsonl("pending-asks.jsonl")
+        self.assertEqual([row["key"] for row in rows], ["s1::tu1"])
+
 
 # =====================================================================================================
 # T10. Scope by mode record when the lease is stale (`_orch_scope_live` aiqt_hooks.py:22596-22656)
@@ -1186,7 +1215,9 @@ class Doctor(Stage2Harness):
         os.symlink(target, path)
         return "FIFO"
 
-    def _assert_special_refused(self, label, path, kind, *doctor_args):
+    def _assert_special_refused(self, label, path, kind, *doctor_args,
+                                opened="the hook would open it with a blocking open"):
+        # opened is how the report must say that the hook opens the path.
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(reg)
         self.set_items([item("42")])
@@ -1194,8 +1225,8 @@ class Doctor(Stage2Harness):
         before = tree_state(self._tmp)
         r = self._doctor_bounded(*doctor_args)
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {})"
-                      .format(label, path, named), r.stdout)
+        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {}); {}"
+                      .format(label, path, named, opened), r.stdout)
         self.assertIn("the hook reader that opens it was not called and no enumerator ran", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
         self.assertFalse(marker.exists(), "the enumerator ran")
@@ -1204,14 +1235,18 @@ class Doctor(Stage2Harness):
 
     def test_preflight_special_mode_path_is_cannot_evaluate(self):
         # No lease, so scope falls through to the mode read (`_orch_mode` at
-        # aiqt_hooks.py:22654, then `os.open` at 22445); the doctor refuses each
-        # special file there as cannot-evaluate.
+        # aiqt_hooks.py:22654, then `os.open` with O_NONBLOCK at 22445); the doctor refuses each
+        # special file there as cannot-evaluate, and its report says that the hook's reader would
+        # not block on it, never that the hook would open it with a blocking open.
         for kind in ("fifo", "directory", "symlink-to-fifo"):
             with self.subTest(kind=kind):
                 self.tearDown()
                 self.setUp()
                 self._assert_special_refused("mode.path", self._p("operating-mode.md"), kind,
-                                             "preflight", "stop")
+                                             "preflight", "stop",
+                                             opened="the hook's mode reader would not block on it")
+                r = self._doctor_bounded("preflight", "stop")
+                self.assertNotIn("blocking open", r.stdout)
 
     def test_preflight_special_lease_path_is_cannot_evaluate(self):
         # The hook opens the lease only for holder scoping, on a lease that os.stat reaches, that is
@@ -1236,7 +1271,8 @@ class Doctor(Stage2Harness):
 
     def test_preflight_idle_special_mode_path_is_cannot_evaluate(self):
         self._assert_special_refused("mode.path", self._p("operating-mode.md"), "fifo",
-                                     "preflight", "idle")
+                                     "preflight", "idle",
+                                     opened="the hook's mode reader would not block on it")
 
     def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
         self._assert_special_refused("enumerator.argv[3]", str(self.backlog), "fifo",
@@ -1618,6 +1654,40 @@ class Doctor(Stage2Harness):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("some-other-branch", r.stdout)
         self.assertTrue(self.state_json("resume-barrier.json")["active"])
+
+    def test_resume_audit_rewrite_takes_a_new_file_mode_today(self):
+        # The vendored barrier writer creates a temporary file and replaces the barrier with it
+        # (`open(tmp, "x"` at aiqt_hooks.py:33251, `os.replace` at 33256), so the barrier takes the
+        # mode of a new file, 0o666 less the umask, not the mode of the file it replaces: a barrier
+        # restricted to 0o600 is 0o644 after an audit under umask 0o022, as .aiqt/config.md states.
+        # A default ACL on the temporary folder, which the host's TMPDIR can pass down, overrides the
+        # umask for a new file, so this case expects the mode of a fresh file that it creates the
+        # same way in the same folder under the same umask, not a literal mode. It restricts the
+        # barrier to 0o600, or to 0o400 where a fresh file is 0o600, so the 2 modes always differ.
+        # This case goes red once a re-vendored hook keeps the mode; .aiqt/config.md and this case
+        # then change with it.
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.seed_state("resume-barrier.json", {"active": True, "findings": ["seeded"],
+                                                "ts": _iso(), "warned": False})
+        barrier = self.state_dir() / "resume-barrier.json"
+        probe = self.state_dir() / "fresh-file-mode-probe"
+        old = os.umask(0o022)
+        try:
+            with open(probe, "x", encoding="utf-8"):
+                pass
+            fresh = os.stat(probe).st_mode & 0o777
+            probe.unlink()
+            restricted = 0o400 if fresh == 0o600 else 0o600
+            os.chmod(barrier, restricted)
+            self.assertEqual(os.stat(barrier).st_mode & 0o777, restricted, "precondition: a restricted barrier")
+            r = self.run_hook("orch_resume_audit", {})
+        finally:
+            os.umask(old)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(self.state_json("resume-barrier.json")["active"], "the audit rewrote the barrier")
+        self.assertEqual(os.stat(barrier).st_mode & 0o777, fresh,
+                         "the barrier keeps mode {:o}, not the mode of a new file".format(restricted))
 
     def test_usage_error(self):
         r = subprocess.run([sys.executable, "-I", str(DOCTOR)], capture_output=True, text=True,

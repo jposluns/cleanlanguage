@@ -1814,6 +1814,42 @@ class ConfigDisclosure(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
 
+    def test_json_mode_record_is_stated_as_readable_but_not_declared(self):
+        # The refreshed reader accepts a structured JSON mode record (`_ORCH_MODE_RECORD_KEYS` in the
+        # vendored hook, read here from its source), so the config must not say that orch_ask_guard
+        # cannot read the host's JSON file or that an upstream fix is still to come; it must say that
+        # the hook can read the record and that the registry declares no mode record.
+        tree = ast.parse(HOOK_PY.read_text(encoding="utf-8"))
+        keys = [node.value for node in tree.body if isinstance(node, ast.Assign)
+                and [getattr(t, "id", None) for t in node.targets] == ["_ORCH_MODE_RECORD_KEYS"]]
+        self.assertEqual(len(keys), 1, "aiqt_hooks.py must assign _ORCH_MODE_RECORD_KEYS exactly once")
+        self.assertEqual(set(ast.literal_eval(keys[0].args[0])), {"mode", "phase", "set_by", "set_at"})
+        self.assertNotIn("mode", json.loads(REAL_REGISTRY.read_text(encoding="utf-8")),
+                         "the committed registry declares a mode record, which the config says it does not")
+        text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
+        for stale in ("which `orch_ask_guard` cannot read", "until the upstream fix is re-vendored",
+                      "after an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, text)
+        for phrase in ("The refreshed `orch_ask_guard` can read a JSON mode record of that form, an object "
+                       "whose keys are `mode` and, optionally, `phase`, `set_by` and `set_at`",
+                       "this repository's registry declares no `mode` record, so the hook never reads the "
+                       "host's file"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_barrier_mode_residual_is_disclosed(self):
+        # The vendored barrier writer replaces the barrier with a new file, so an audit does not keep
+        # the barrier's mode (tools/test-orch-stage2-hooks.py,
+        # test_resume_audit_rewrite_takes_a_new_file_mode_today); the config must say so.
+        text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
+        for phrase in ("each audit gives the barrier the mode of a new file, 0666 less the umask, not the mode "
+                       "of the file it replaces",
+                       "until a re-vendored hook keeps the mode, the permissions of `state_dir` and the "
+                       "directories above it, not those of the barrier file, decide who can read it"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and
         # fresh (aiqt_hooks.py:22632, st.st_size > 0).

@@ -173,7 +173,7 @@ ESCAPE_KEYS = {"path"}
 # The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:32752-32793,
 # `orch_resume_barrier` at 33580-33592).
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
-# The lease shape `_orch_scope_live` (aiqt_hooks.py:22611-22654) and `_orch_resume_probes` (32794-32817) read.
+# The lease shape `_orch_scope_live` (aiqt_hooks.py:22611-22656) and `_orch_resume_probes` (32794-32817) read.
 # Both keys are REQUIRED. With `max_age_hours` absent, _orch_scope_live keeps `fresh = True`
 # (aiqt_hooks.py:22618-22630) and the resume audit raises no stale-lease finding (aiqt_hooks.py:32797-32809),
 # so a lease file left behind by a dead orchestrator keeps scope live forever. The committed registry
