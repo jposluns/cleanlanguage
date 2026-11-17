@@ -182,6 +182,32 @@ def manifest(name: str = "cleanlanguage", version: str = VERSION) -> dict:
     return {"name": name, "version": version, "description": "d"}
 
 
+def key_reads(source: str) -> list:
+    """Each place the Python source reads a key written as a string constant, as (function, object, key):
+    a call of get, a subscript, or an in or not in test, with the top-level function or class that holds
+    it ("<module>" for none) and the object read as ast.unparse writes it."""
+    tree = ast.parse(source)
+    owner = {}
+    for top in tree.body:
+        name = top.name if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else "<module>"
+        for node in ast.walk(top):
+            owner[id(node)] = name
+
+    def text(node) -> str | None:
+        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+    reads = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                and node.args and text(node.args[0]) is not None):
+            reads.append((owner[id(node)], ast.unparse(node.func.value), text(node.args[0])))
+        elif isinstance(node, ast.Subscript) and text(node.slice) is not None:
+            reads.append((owner[id(node)], ast.unparse(node.value), text(node.slice)))
+        elif (isinstance(node, ast.Compare) and text(node.left) is not None
+              and isinstance(node.ops[0], (ast.In, ast.NotIn))):
+            reads.append((owner[id(node)], ast.unparse(node.comparators[0]), text(node.left)))
+    return reads
+
+
 class FoldingOs:
     """The os module as the gate meets it on a file system that folds letter case, as macOS does by
     default: os.lstat, os.open and os.listdir find a path whose names are missing as spelled under
@@ -427,49 +453,142 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_text(gate.AGENT_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Version": "2"}\n')
         self.expect(0, "OK: D1 to D4 hold")
 
-    def test_keys_in_another_letter_case_are_not_read(self):
-        # Each key the gate reads, in each file and plugin entry where it reads it, written in another
-        # letter case. The gate reads a key exactly as written, so a key it requires is missing, and a
-        # key it reads only where present, given a value that fails when read, is not read.
+    def key_setups(self) -> list:
+        """The setups of test_keys_in_another_letter_case_are_not_read, each (reads, rel, change, lines):
+        the places the gate reads a JSON key, as key_reads names them, at which a read of the key written
+        in another letter case would change the gate's output in this setup; the file the setup changes
+        and how; and the FAIL lines the gate gives, each without its "FAIL " (none: exit 0)."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
-        reach = "{}{} plugins[0].name is {!r}, but the manifest its source reaches, {}, is named {!r}"
-        for rel, entry, key, value, lines in (
-                (root, False, "name", None, [f"D1: {root} name is None, not 'cleanlanguage'",
-                                             f"D1: {root} name is None, not a name"]),
-                (root, False, "plugins", None, [f"D1: {root} lists no plugins, not exactly 1",
-                                                f"D2: {root} has no plugins list"]),
-                (root, True, "name", None, [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'",
-                                            f"D1: {root} plugins[0].name is None, not a name",
-                                            reach.format("D1: ", root, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
-                (root, True, "source", None, [f"D2: {root} plugins[0] has no source"]),
-                (root, True, "version", "9.9.9", []),
-                (root, True, "dependencies", ["no-such-plugin"], []),
-                (vend, False, "name", None, [f"D1: {vend} name is None, not a name"]),
-                (vend, False, "plugins", None, [f"D2: {vend} has no plugins list"]),
-                (vend, True, "name", None, [f"D1: {vend} plugins[0].name is None, not a name",
-                                            reach.format("D1: ", vend, None, hooks, "aiqt-guardrails-hooks")]),
-                (vend, True, "source", None, [f"D2: {vend} plugins[0] has no source"]),
-                (vend, True, "dependencies", ["no-such-plugin"], []),
-                (gate.CLAUDE_MANIFEST, False, "name", None,
-                 [f"D1: {gate.CLAUDE_MANIFEST} name is None, not 'cleanlanguage'",
-                  reach.format("D1: ", root, "cleanlanguage", gate.CLAUDE_MANIFEST, None)]),
-                (gate.CLAUDE_MANIFEST, False, "version", None,
-                 [f"D3: {gate.CLAUDE_MANIFEST} version is None, not a version"]),
-                (gate.CLAUDE_MANIFEST, False, "dependencies", ["no-such-plugin"], []),
-                (gate.AGENT_MANIFEST, False, "name", None, [f"D1: {gate.AGENT_MANIFEST} name is None, not 'cleanlanguage'"]),
-                (gate.AGENT_MANIFEST, False, "version", None,
-                 [f"D3: {gate.AGENT_MANIFEST} version is None, not a version"]),
-                (gate.SITE_JSON, False, "site_key", None, [f"D1: {gate.SITE_JSON} site_key is None, not 'cleanlanguage'"]),
-                (hooks, False, "name", None, [reach.format("D1: ", vend, "aiqt-guardrails-hooks", hooks, None)]),
-                (hooks, False, "dependencies", ["no-such-plugin"], [])):
-            other = key.title()
 
-            def change(data, key=key, value=value, other=other):
+        def reach(rel, index, name, manifest_rel, reached):
+            return (f"D1: {rel} plugins[{index}].name is {name!r}, but the manifest its source reaches, "
+                    f"{manifest_rel}, is named {reached!r}")
+
+        def other(key, value=None, entry=False):
+            """The key written in another letter case in the JSON object, or in its first plugin entry:
+            renamed with its value kept when value is None, else added with value."""
+            def change(data):
                 held = data["plugins"][0] if entry else data
-                # None: the key renamed, its value kept; else the key added in another letter case only.
-                held[other] = held.pop(key) if value is None else value
-            with self.subTest(rel=rel, entry=entry, key=other):
+                held[key.title()] = held.pop(key) if value is None else value
+            return change
+
+        def plugins_other(**values):
+            """The plugins list held under Plugins, its first entry with the values given."""
+            def change(data):
+                data["Plugins"] = data.pop("plugins")
+                data["Plugins"][0].update(values)
+            return change
+
+        def name_other(index, dependency, added=None):
+            """The marketplace's name held under Name, and a dependency of plugins[index], added first
+            when given."""
+            def change(data):
+                data["Name"] = data.pop("name")
+                if added is not None:
+                    data["plugins"].append(added)
+                data["plugins"][index]["dependencies"] = [dependency]
+            return change
+
+        def entry_other(added=None, dependency=None):
+            """An entry whose name is held under Name: plugins[0], or the entry added; a dependency of
+            plugins[0], when given."""
+            def change(data):
+                if added is None:
+                    data["plugins"][0]["Name"] = data["plugins"][0].pop("name")
+                else:
+                    data["plugins"].append(added)
+                if dependency is not None:
+                    data["plugins"][0]["dependencies"] = [dependency]
+            return change
+
+        names = ("check_names", "data", "name")
+        sources = ("check_sources", "entry", "source")
+        reaches = ("check_reach", "entry", "name")
+        manifest_name = ("check_reach", "load_json(manifest)", "name")
+        entry_deps = ("check_dependencies", "entry", "dependencies")
+        manifest_deps = ("check_dependencies", "reached", "dependencies")
+        plugin_reads = [("check_names", "data", "plugins"), ("check_dependencies", "data", "plugins")]
+        return [
+            # Each key, in each file and plugin entry where the gate reads it.
+            ([("check_names", "root", "name"), names], root, other("name"),
+             [f"D1: {root} name is None, not 'cleanlanguage'", f"D1: {root} name is None, not a name"]),
+            ([("check_names", "root", "plugins"), ("plugin_entries", "data", "plugins")], root, other("plugins"),
+             [f"D1: {root} lists no plugins, not exactly 1", f"D2: {root} has no plugins list"]),
+            ([("check_names", "first", "name"), ("check_names", "entry", "name"), reaches], root,
+             other("name", entry=True),
+             [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'", f"D1: {root} plugins[0].name is None, not a name",
+              reach(root, 0, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
+            ([sources], root, other("source", entry=True), [f"D2: {root} plugins[0] has no source"]),
+            ([("check_versions", "entry", "version")], root, other("version", "9.9.9", True), []),
+            ([entry_deps], root, other("dependencies", ["no-such-plugin"], True), []),
+            ([names], vend, other("name"), [f"D1: {vend} name is None, not a name"]),
+            ([("plugin_entries", "data", "plugins")], vend, other("plugins"), [f"D2: {vend} has no plugins list"]),
+            ([("check_names", "entry", "name"), reaches], vend, other("name", entry=True),
+             [f"D1: {vend} plugins[0].name is None, not a name", reach(vend, 0, None, hooks, "aiqt-guardrails-hooks")]),
+            ([sources], vend, other("source", entry=True), [f"D2: {vend} plugins[0] has no source"]),
+            ([entry_deps], vend, other("dependencies", ["no-such-plugin"], True), []),
+            ([("check_names", "claude", "name"), manifest_name], gate.CLAUDE_MANIFEST, other("name"),
+             [f"D1: {gate.CLAUDE_MANIFEST} name is None, not 'cleanlanguage'",
+              reach(root, 0, "cleanlanguage", gate.CLAUDE_MANIFEST, None)]),
+            ([("check_versions", "claude", "version")], gate.CLAUDE_MANIFEST, other("version"),
+             [f"D3: {gate.CLAUDE_MANIFEST} version is None, not a version"]),
+            ([manifest_deps], gate.CLAUDE_MANIFEST, other("dependencies", ["no-such-plugin"]), []),
+            ([("check_names", "agent", "name")], gate.AGENT_MANIFEST, other("name"),
+             [f"D1: {gate.AGENT_MANIFEST} name is None, not 'cleanlanguage'"]),
+            ([("check_versions", "agent", "version")], gate.AGENT_MANIFEST, other("version"),
+             [f"D3: {gate.AGENT_MANIFEST} version is None, not a version"]),
+            ([("check_names", "site", "site_key")], gate.SITE_JSON, other("site_key"),
+             [f"D1: {gate.SITE_JSON} site_key is None, not 'cleanlanguage'"]),
+            ([manifest_name], hooks, other("name"), [reach(vend, 0, "aiqt-guardrails-hooks", hooks, None)]),
+            ([manifest_deps], hooks, other("dependencies", ["no-such-plugin"]), []),
+            # Each place that reads a key the setups above change, but whose output those setups leave
+            # alone: the plugins list as the names, versions and dependencies checks read it; the
+            # marketplace name as a dependency's marketplace; and an entry's name as a dependency names
+            # it and as the plugin a list belongs to.
+            ([*plugin_reads, ("check_versions", "root", "plugins")], root,
+             plugins_other(name="claude-x", version="9.9.9", dependencies=["no-such-plugin"]),
+             [f"D1: {root} lists no plugins, not exactly 1", f"D2: {root} has no plugins list"]),
+            (plugin_reads, vend, plugins_other(name="claude-x", dependencies=["no-such-plugin"]),
+             [f"D2: {vend} has no plugins list"]),
+            ([("check_dependencies", "data", "name")], root, name_other(0, "cleanlanguage@cleanlanguage"),
+             [f"D1: {root} name is None, not 'cleanlanguage'", f"D1: {root} name is None, not a name",
+              f"D4: {root} plugins[0] dependency 'cleanlanguage@cleanlanguage' names no plugin of the marketplace "
+              f"None in {root}"]),
+            ([("check_dependencies", "data", "name")], vend,
+             name_other(1, "aiqt-guardrails-hooks@aiqt-guardrails", {"name": "aiqt-skill", "source": "./aiqt-skill"}),
+             [f"D1: {vend} name is None, not a name",
+              f"D4: {vend} plugins[1] dependency 'aiqt-guardrails-hooks@aiqt-guardrails' names no plugin of the "
+              f"marketplace None in {vend}"]),
+            ([("check_dependencies", "e", "name")], root, entry_other(dependency="cleanlanguage"),
+             [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'", f"D1: {root} plugins[0].name is None, not a name",
+              reach(root, 0, None, gate.CLAUDE_MANIFEST, "cleanlanguage"),
+              f"D4: {root} plugins[0] dependency 'cleanlanguage' names no plugin of the marketplace 'cleanlanguage' "
+              f"in {root}"]),
+            ([("check_dependencies", "e", "name")], vend,
+             entry_other({"Name": "aiqt-skill", "source": "./aiqt-skill"}, "aiqt-skill"),
+             [f"D1: {vend} plugins[1].name is None, not a name",
+              reach(vend, 1, None, "plugin/aiqt-skill/.claude-plugin/plugin.json", "aiqt-skill"),
+              f"D4: {vend} plugins[0] dependency 'aiqt-skill' names no plugin of the marketplace 'aiqt-guardrails' "
+              f"in {vend}"]),
+            ([("check_dependencies", "entry", "name")], root,
+             entry_other({"Name": "cleanlanguage", "source": "./cleanlanguage", "dependencies": ["cleanlanguage"]}),
+             [f"D1: {root} lists 2 plugins, not exactly 1", f"D1: {root} plugins[1].name is None, not a name",
+              reach(root, 1, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
+            ([("check_dependencies", "entry", "name")], vend,
+             entry_other({"Name": "aiqt-guardrails-hooks", "source": "./aiqt-guardrails-hooks",
+                          "dependencies": ["aiqt-guardrails-hooks"]}),
+             [f"D1: {vend} plugins[1].name is None, not a name", reach(vend, 1, None, hooks, "aiqt-guardrails-hooks")]),
+        ]
+
+    def test_keys_in_another_letter_case_are_not_read(self):
+        # Each place the gate reads a JSON key, with the key written in another letter case in a setup
+        # whose output that place would change if it read the key. The gate reads a key exactly as
+        # written, so a key it requires is missing, and a key it reads only where present, given a value
+        # that fails when read, is not read. The manifest of a vendored entry that only 2 setups list.
+        self.write_json("plugin/aiqt-skill/.claude-plugin/plugin.json", manifest("aiqt-skill", "0.4.0"))
+        for reads, rel, change, lines in self.key_setups():
+            with self.subTest(rel=rel, reads=reads):
                 saved = (self.root / rel).read_bytes()
                 self.edit_json(rel, change)
                 try:
@@ -480,6 +599,16 @@ class PluginDistributionTest(unittest.TestCase):
                         self.expect(0, "0 dependencies read")
                 finally:
                     (self.root / rel).write_bytes(saved)
+
+    def test_each_place_the_gate_reads_a_key_has_a_setup(self):
+        # Each place the gate reads a JSON key, as key_reads finds it, is read once, so a setup that
+        # reaches the place reaches its only read; and the setups of
+        # test_keys_in_another_letter_case_are_not_read name exactly those places. A read added, moved,
+        # or made twice fails here until a setup names it.
+        reads = key_reads(MODULE_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(sorted({read for read in reads if reads.count(read) > 1}), [])
+        named = {read for setup_reads, _, _, _ in self.key_setups() for read in setup_reads}
+        self.assertEqual((sorted(set(reads) - named), sorted(named - set(reads))), ([], []))
 
     def test_unreadable_file_exits_3(self):
         (self.root / gate.SITE_JSON).unlink()
@@ -528,6 +657,18 @@ class PluginDistributionTest(unittest.TestCase):
                 try:
                     self.expect(1, f"FAIL D2: {rel} plugins[0].source {{'source': 'github', 'repo': 'someone/else'}} is "
                                    "not a string, so this gate cannot read where it leads", "1 relative source resolved")
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
+    def test_null_source_fails_d2(self):
+        # An explicit JSON null is a source that is not a string, not a missing source.
+        for rel in (gate.MARKETPLACE, gate.VENDORED_MARKETPLACE):
+            with self.subTest(rel=rel):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, lambda d: d["plugins"][0].update(source=None))
+                try:
+                    self.expect(1, f"FAIL D2: {rel} plugins[0].source None is not a string, so this gate cannot read "
+                                   "where it leads", "1 relative source resolved", count=1)
                 finally:
                     (self.root / rel).write_bytes(saved)
 

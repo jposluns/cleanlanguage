@@ -42,6 +42,10 @@ component at a time with os.lstat, none a symlink, each spelled as os.listdir
 of its folder lists it. The hosted catalog and the release zips are not
 checked here.
 
+Keys: the gate reads each key of a JSON object exactly as written, so a key
+written in another letter case is not read, and 2 keys of 1 object that
+differ only in letter case are 2 keys, not 1 key repeated.
+
 Output and exit status:
   0: every check holds; a line of counts, then a last line that starts "OK:".
   1: an inconsistency; 1 line "FAIL <tag>: ..." for each, a line of counts,
@@ -381,7 +385,8 @@ def check_names(markets: dict, claude: dict, agent: dict, site: dict, failures: 
         # The index of the first entry with each plugin name after case folding, so that a second is refused.
         listed: dict = {}
         repeats = []
-        for index, entry in enumerate(data.get("plugins") if isinstance(data.get("plugins"), list) else []):
+        held = data.get("plugins")
+        for index, entry in enumerate(held if isinstance(held, list) else []):
             if isinstance(entry, dict):
                 name = entry.get("name")
                 names.append((f"{rel} plugins[{index}].name", name))
@@ -451,36 +456,37 @@ def resolve_source(rel: str, index: int, source, failures: list):
 
 
 def check_sources(markets: dict, failures: list) -> dict:
-    """The sources check: the folders by (marketplace, entry index)."""
+    """The sources check: by (marketplace, entry index), the folder each source resolves to, with its
+    entry and source."""
     folders = {}
     for rel, data in markets.items():
         for index, entry in plugin_entries(rel, data, failures, "D2"):
-            if "source" not in entry:
+            source = entry.get("source", ABSENT)
+            if source is ABSENT:
                 failures.append(f"D2: {rel} plugins[{index}] has no source")
                 continue
-            source = entry["source"]
             if not isinstance(source, str):
                 failures.append(f"D2: {rel} plugins[{index}].source {source!r} is not a string, so this gate "
                                 "cannot read where it leads")
                 continue
             folder = resolve_source(rel, index, source, failures)
             if folder is not None:
-                folders[(rel, index)] = folder
+                folders[(rel, index)] = (folder, entry, source)
     return folders
 
 
-def check_reach(markets: dict, folders: dict, failures: list) -> None:
+def check_reach(folders: dict, failures: list) -> None:
     """Each resolved entry has the name of the manifest it reaches (names check), and the entry of
     MARKETPLACE reaches CLAUDE_MANIFEST (sources check)."""
-    for (rel, index), folder in folders.items():
-        entry = markets[rel]["plugins"][index]
+    for (rel, index), (folder, entry, source) in folders.items():
         manifest = f"{folder}/.claude-plugin/plugin.json"
         if rel == MARKETPLACE and manifest != CLAUDE_MANIFEST:
-            failures.append(f"D2: {rel} plugins[{index}].source {entry['source']!r} reaches {manifest}, "
+            failures.append(f"D2: {rel} plugins[{index}].source {source!r} reaches {manifest}, "
                             f"not {CLAUDE_MANIFEST}")
         reached = load_json(manifest).get("name")
-        if reached != entry.get("name"):
-            failures.append(f"D1: {rel} plugins[{index}].name is {entry.get('name')!r}, but the manifest its "
+        name = entry.get("name")
+        if reached != name:
+            failures.append(f"D1: {rel} plugins[{index}].name is {name!r}, but the manifest its "
                             f"source reaches, {manifest}, is named {reached!r}")
 
 
@@ -490,9 +496,11 @@ def check_versions(markets: dict, claude: dict, agent: dict, version, failures: 
              (f"{AGENT_MANIFEST} version", agent.get("version")),
              (f"{SKILL_MD} Version: line", version)]
     root = markets[MARKETPLACE]
-    for index, entry in enumerate(root.get("plugins") if isinstance(root.get("plugins"), list) else []):
-        if isinstance(entry, dict) and "version" in entry:
-            found.append((f"{MARKETPLACE} plugins[{index}].version", entry["version"]))
+    held = root.get("plugins")
+    for index, entry in enumerate(held if isinstance(held, list) else []):
+        value = entry.get("version", ABSENT) if isinstance(entry, dict) else ABSENT
+        if value is not ABSENT:
+            found.append((f"{MARKETPLACE} plugins[{index}].version", value))
     for label, value in found:
         if not isinstance(value, str) or not value:
             failures.append(f"D3: {label} is {value!r}, not a version")
@@ -507,21 +515,24 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
     count = 0
     for rel, data in markets.items():
         market = data.get("name")
-        entries = data.get("plugins") if isinstance(data.get("plugins"), list) else []
+        held = data.get("plugins")
+        entries = held if isinstance(held, list) else []
         # Only a string name can be named by a dependency; the names check reports any other, and a
         # name listed twice.
-        names = {e["name"] for e in entries if isinstance(e, dict) and isinstance(e.get("name"), str)}
+        names = {name for name in (e.get("name") for e in entries if isinstance(e, dict)) if isinstance(name, str)}
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
-            lists = [(f"{rel} plugins[{index}]", entry.get("name"), entry.get("dependencies", ABSENT))]
+            # The plugin each list of this entry belongs to. The manifest's list belongs to the entry whose
+            # source reaches it, whatever the manifest is named; the names check reports a manifest named
+            # unlike its entry.
+            own = entry.get("name")
+            lists = [(f"{rel} plugins[{index}]", entry.get("dependencies", ABSENT))]
             if (rel, index) in folders:
-                manifest = f"{folders[(rel, index)]}/.claude-plugin/plugin.json"
+                manifest = f"{folders[(rel, index)][0]}/.claude-plugin/plugin.json"
                 reached = load_json(manifest)
-                # The manifest's list belongs to the entry whose source reaches it, whatever the manifest
-                # is named; the names check reports a manifest named unlike its entry.
-                lists.append((manifest, entry.get("name"), reached.get("dependencies", ABSENT)))
-            for label, own, deps in lists:
+                lists.append((manifest, reached.get("dependencies", ABSENT)))
+            for label, deps in lists:
                 # Only a missing key is no list; an explicit JSON null is refused below as not a list.
                 if deps is ABSENT:
                     continue
@@ -564,7 +575,7 @@ def run() -> int:
     version = skill_version()
     check_names(markets, claude, agent, site, failures)
     folders = check_sources(markets, failures)
-    check_reach(markets, folders, failures)
+    check_reach(folders, failures)
     check_versions(markets, claude, agent, version, failures)
     count = check_dependencies(markets, folders, failures)
     for failure in failures:
