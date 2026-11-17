@@ -15,10 +15,11 @@ renders for it (the verify page fixtures carry that block), the refusal of a pag
 that mixes them, hides or moves the block, and the writer's round trip from the
 placeholder to a published checksum. They also pin that each rule of the
 committed ``site/_redirects`` that stays on this site names a file under site/
-that is not an HTML file and that no rule's source matches, that each rule to
-another host names a target the writer documents, and that no scanned file
-names an old name of a portable instructions file outside the redirect rule
-that answers for it. They run
+that is not an HTML file, is not the source of a rule and does not start with a
+splat source (a source ending in *) without its *, that each rule to another
+host names a target the writer documents, and that no scanned file names an old
+name of a portable instructions file outside the redirect rule that answers for
+it. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -1034,17 +1035,23 @@ class WriterTest(unittest.TestCase):
 
 class RedirectHopTest(unittest.TestCase):
     """Each rule of the committed site/_redirects that stays on this site names a file under site/ that is not an
-    HTML file and that no rule's source matches, and each rule to another host names a target the writer documents.
+    HTML file, is not the source of a rule and does not start with a splat source without its *, and each rule to
+    another host names a target the writer documents.
 
     A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
     with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
-    committed tree is the tree the site serves. A destination that is the source of another rule, or that a splat
-    source (ending in *) matches, would send the reader through a second hop and fails, as does a destination with
-    no file. A destination that names an HTML file, such as /install/index.html, fails too: the site serves each
-    page at its folder path, and the host may answer a path that names the HTML file with a redirect of its own. A
-    destination on another host passes only when it is 1 of the targets the writer documents: the release zip and
-    its checksum for the version in site-src/release.json, and the privacy page. The test does not follow a
-    destination on another host, so it does not count the hops that host takes.
+    committed tree is the tree the site serves. A destination that is the source of a rule, or that starts with a
+    splat source (a source ending in *) without its *, would send the reader through a second hop and fails, as
+    does a destination with no file. The test reads sources only in those 2 forms: a source with a placeholder
+    (:name), or with a * before its end, is not treated, so a destination that only such a source matches passes
+    unseen. A destination with an empty or . segment, such as /downloads//file.md, fails, since the file the test
+    finds under site/ is not the path as written, and so does one with a .. segment. A destination that names an
+    HTML file, such as /install/index.html, fails too: the site serves each page at its folder path, and the host
+    may answer a path that names the HTML file with a redirect of its own. A destination on another host passes
+    only when it is 1 of the targets the writer documents: the release zip and its checksum for the version in
+    site-src/release.json, and the privacy page. The test does not follow a destination on another host, so it does
+    not count the hops that host takes. A line that is neither blank nor a comment fails unless it holds 3 fields,
+    and a file with no rule fails.
     """
 
     REPO = Path(__file__).resolve().parent.parent
@@ -1087,6 +1094,8 @@ class RedirectHopTest(unittest.TestCase):
                 found.append(f"{where}, the source of another rule: 2 hops")
             elif splat is not None:
                 found.append(f"{where}, which the splat source {splat}* matches: 2 hops")
+            elif "." in destination[1:].split("/") or "" in destination[1:].split("/")[:-1]:
+                found.append(f"{where}, which has an empty or . segment, so it does not name its file as written")
             elif ".." in parts:
                 found.append(f"{where}, which leaves site/")
             elif not destination.endswith("/") and parts[-1].lower().endswith((".html", ".htm")):
@@ -1112,6 +1121,76 @@ class RedirectHopTest(unittest.TestCase):
                 f"site/_redirects line 2: /old-about redirects to /about.html, {reason}",
                 f"site/_redirects line 3: /older-about redirects to /About.HTM, {reason}",
             ])
+
+    def failures_on(self, redirects: str, files: tuple[str, ...]) -> list[str]:
+        """failures() on a site under $TMPDIR with ``redirects`` as its _redirects and a file at each of ``files``,
+        each a path relative to the site folder, which sits 1 folder below the temporary folder."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        site = Path(tmp.name) / "site"
+        site.mkdir()
+        for name in files:
+            (site / name).parent.mkdir(parents=True, exist_ok=True)
+            (site / name).write_text("file\n", encoding="utf-8")
+        (site / "_redirects").write_text(redirects, encoding="utf-8")
+        return self.failures(site)
+
+    def test_a_line_without_3_fields_fails(self):
+        self.assertEqual(self.failures_on("/a /a.md\n/b /b.md 301 extra\n# a comment line\n\n/c /c.md 301\n",
+                                          ("a.md", "b.md", "c.md")), [
+            "site/_redirects line 1 is not 'source destination status'",
+            "site/_redirects line 2 is not 'source destination status'",
+        ])
+
+    def test_a_file_with_no_rule_fails(self):
+        self.assertEqual(self.failures_on("# a comment line\n\n", ()), ["site/_redirects holds no rule"])
+
+    def test_a_destination_on_an_undocumented_host_fails(self):
+        zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
+        rules = (f"/privacy https://posluns.ca/privacy/ 301\n/download {zip_url} 302\n"
+                 f"/download/checksum {zip_url}.sha256 302\n/elsewhere https://example.com/privacy/ 301\n")
+        self.assertEqual(self.failures_on(rules, ()), [
+            "site/_redirects line 4: /elsewhere redirects to https://example.com/privacy/, "
+            "a host other than this site's that is not a documented target",
+        ])
+
+    def test_a_destination_without_a_leading_slash_fails(self):
+        self.assertEqual(self.failures_on("/a downloads/a.md 301\n", ("downloads/a.md",)), [
+            "site/_redirects line 1: /a redirects to downloads/a.md, which is not a path on this site",
+        ])
+
+    def test_a_destination_that_is_the_source_of_a_rule_fails(self):
+        self.assertEqual(self.failures_on("/a /b.md 301\n/b.md /c.md 301\n", ("b.md", "c.md")), [
+            "site/_redirects line 1: /a redirects to /b.md, the source of another rule: 2 hops",
+        ])
+
+    def test_a_destination_that_a_splat_source_matches_fails(self):
+        self.assertEqual(self.failures_on("/a /old/file.md 301\n/old/* /new.md 301\n/b /older.md 301\n",
+                                          ("old/file.md", "new.md", "older.md")), [
+            "site/_redirects line 1: /a redirects to /old/file.md, which the splat source /old/* matches: 2 hops",
+        ])
+
+    def test_a_destination_with_an_empty_or_dot_segment_fails(self):
+        reason = "which has an empty or . segment, so it does not name its file as written"
+        self.assertEqual(self.failures_on("/a /downloads//a.md 301\n/b /downloads/./a.md 301\n"
+                                          "/c //downloads/a.md 301\n/d /downloads/a.md 301\n/e / 301\n",
+                                          ("downloads/a.md", "index.html")), [
+            f"site/_redirects line 1: /a redirects to /downloads//a.md, {reason}",
+            f"site/_redirects line 2: /b redirects to /downloads/./a.md, {reason}",
+            f"site/_redirects line 3: /c redirects to //downloads/a.md, {reason}",
+        ])
+
+    def test_a_destination_that_leaves_the_site_fails(self):
+        self.assertEqual(self.failures_on("/a /../outside.md 301\n", ("../outside.md",)), [
+            "site/_redirects line 1: /a redirects to /../outside.md, which leaves site/",
+        ])
+
+    def test_a_destination_with_no_file_fails(self):
+        self.assertEqual(self.failures_on("/a /missing.md 301\n/b /folder/ 301\n/c /page/ 301\n",
+                                          ("folder/other.md", "page/index.html")), [
+            "site/_redirects line 1: /a redirects to /missing.md, which is not a file under site/",
+            "site/_redirects line 2: /b redirects to /folder/, which is not a file under site/",
+        ])
 
 
 class OldNameTest(unittest.TestCase):
@@ -1231,6 +1310,23 @@ class OldNameTest(unittest.TestCase):
         root = self.fixture({})
         shutil.rmtree(root / "site-src")
         self.assertEqual(self.references(root), ["site-src: missing"])
+
+    def test_a_name_counts_only_at_a_name_boundary(self):
+        whole = self.old()["cleanlanguage-instructions.md"]
+        lines = [
+            (f"Download {whole}.", True), (f"<a href=\"/downloads/{whole}?v=1\">", True), (whole, True),
+            (f"x{whole}", False), (f"1{whole}", False), (f"_{whole}", False), (f".{whole}", False), (f"-{whole}", False),
+            (f"{whole}x", False), (f"{whole}1", False), (f"{whole}_", False), (f"{whole}-", False),
+        ]
+        root = self.fixture({"INSTALL.md": "".join(text + "\n" for text, _ in lines)})
+        self.assertEqual(self.references(root),
+                         [f"INSTALL.md:{number}: {whole}" for number, (_, counts) in enumerate(lines, 1) if counts])
+
+    def test_a_pycache_folder_is_not_scanned(self):
+        n11 = self.old()["cleanlanguage-instructions-11k.md"]
+        root = self.fixture({"tools/__pycache__/writer.cpython-312.pyc": f"/downloads/{n11}\n",
+                             "tools/writer.py": f"/downloads/{n11}\n"})
+        self.assertEqual(self.references(root), [f"tools/writer.py:1: {n11}"])
 
 
 class WholePageTest(unittest.TestCase):
