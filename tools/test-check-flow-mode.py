@@ -9,10 +9,12 @@ each edit of an opening text and for each character of WHITE in it, 1 loads a co
 whose bytecode cache is stale, and 1 parses the check's source to find its sites. Each case that
 reads the check in this process compiles or parses it from its source as it is now, so no
 bytecode cache stands in for that source. Most cases give the check the text on standard input.
-Each case reads the check's standard output alone, and every run of the check must write nothing
-to standard error, so a check that writes a line there, in place of standard output or as well,
-fails; the 1 exception is the case of a folder as a standard stream, in which Python itself stops
-before the check runs and writes its own fatal error there, as the check's docstring states.
+Each case that starts the check reads its standard output alone, and each run that it starts
+through launch() must write nothing to standard error, so a check that writes a line there, in
+place of standard output or as well, fails; the case of a folder as a standard stream starts the
+check without launch(), since Python itself stops before the check runs and writes its own fatal
+error there, as the check's docstring states. A case that loads the check or calls its findings
+in this process does not read standard error.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
@@ -193,18 +195,29 @@ pinned paragraph joined to the text beside it and text that is not UTF-8, each h
 case above. No case writes more than 1000 MODE lines, 1006 paragraphs that start with an opening
 text or 1008 findings, or a line number of more than 6 digits, so no verdict case fails on a
 check that bounded a count or a line number above those numbers; the code digest of the registry
-case below fails on that change of code, as on any other, until CODE_SHA256 is updated, and the
-check's docstring states this limit.
+case below fails on that change of code until CODE_SHA256 is updated, and the check's docstring
+states this limit.
 
 The registry cases hold the sites of the check that the cases above drive.
 test_every_site_has_a_driver compares the check's code, without its docstrings and the sha256
 values of PARAGRAPHS, with CODE_SHA256, so a change to that code fails until the digest is
 updated; the update in the diff is the reviewer's cue to check the registries. The digest is the
-sha256 of the check's syntax tree unparsed, so comments and layout are left out too, and its
-value depends on how the Python that runs the test unparses a syntax tree. Each of MUTATIONS, a
-single textual replacement of the check's source, must change the digest, and each of PRESERVED,
-a docstring reworded, a comment added, a sha256 of PARAGRAPHS updated and a blank line added, must
-keep it, so a digest that leaves out too much or too little fails. The same case finds, in the
+sha256 of the syntax tree that the check's bytes parse to, unparsed, so comments and layout are
+left out too, and its value depends on how the Python that runs the test unparses a syntax tree.
+The case also requires the encoding that tokenize.detect_encoding finds for those bytes to be
+UTF-8. When Python runs a file, it reads the line that holds an encoding declaration, and any
+line before it, before it applies the declaration, while compile() of the bytes applies it to
+every line, so under a declaration of another encoding the code that Python runs can differ from
+the tree that the digest holds; under UTF-8 the bytes, their text and the file that Python runs
+read alike. Each of MUTATIONS, a single textual replacement of the check's source, must change
+the digest, and each of PRESERVED, the module docstring or a function docstring reworded, a
+comment reworded, the first or the last sha256 of PARAGRAPHS updated and a blank line added, must
+keep it. FORM_PAIRS holds pairs of sources in forms that the check does not hold: code_form()
+must make 2 sources equal that differ only in the docstring of a class or of an async function,
+and keep apart 2 that differ only in the third item of a row of a PARAGRAPHS bound together with
+a second name or bound to a tuple. So a code_form() that fails 1 of those rows fails the case.
+Each row is evidence for its own edit only: a code_form() that hides or keeps only what no row
+edits passes. The same case finds, in the
 check's syntax tree, 4 sets of sites, each site keyed by its function's name, its ordinal there
 among the sites of the same form and its form, never by line number, the form of a call being the
 whole call with its arguments: the calls that strip, split or substitute text, with each other
@@ -244,12 +257,14 @@ import ast
 import errno
 import hashlib
 import importlib.util
+import io
 import os
 import py_compile
 import re
 import subprocess
 import sys
 import tempfile
+import tokenize
 import types
 import unicodedata
 import unittest
@@ -739,22 +754,24 @@ def space_at(paragraph, opening):
     return after(paragraph, opening, r"\w \w") + 1
 
 
-# The sha256 of code_form() of the check's source. test_every_site_has_a_driver compares the
+# The sha256 of code_form() of the check's bytes. test_every_site_has_a_driver compares the
 # check's code, without its docstrings and the sha256 values of PARAGRAPHS, with this value, so a
 # change to that code fails until this line is updated; the update in the diff is the reviewer's
 # cue to check the registries below against the new code. The value depends on how the Python
 # that runs the test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS. It is itself 64
-# lowercase hexadecimal digits, so no constant that code_form() keeps can equal it.
+# lowercase hexadecimal digits, so the third item of a row that code_form() keeps, which is never
+# such a value, cannot equal it; a constant elsewhere in the check can.
 PLACEHOLDER = "0" * 64
-# The text that stands, in MUTATIONS and PRESERVED, for the first sha256 of PARAGRAPHS, so that
-# an update of that sha256 leaves both lists as they are.
+# The texts that stand, in MUTATIONS and PRESERVED, for the first and the last sha256 of
+# PARAGRAPHS, so that an update of either leaves both lists as they are.
 FIRST_DIGEST = "<the first sha256 of PARAGRAPHS>"
+LAST_DIGEST = "<the last sha256 of PARAGRAPHS>"
 # The self-check of code_form(): single textual replacements on the check's source, each of
-# which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest, so a
-# code_form() that hides too much fails; each of PRESERVED must keep it, so a code_form() that
-# hides too little fails.
+# which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest and
+# each of PRESERVED must keep it, so a code_form() that keeps the digest for 1 of those mutations,
+# or changes it for 1 of those edits, fails. Each row is evidence for its own edit only.
 MUTATIONS = [
     ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
      "    match text[:8000000]:\n        case text:\n            pass\n"
@@ -779,16 +796,39 @@ MUTATIONS = [
      "    getattr(sys, \"stderr\").write(\"\")\n    return status if write(lines) else 1"),
     ("a sha256 of PARAGRAPHS replaced by an expression of the same value",
      "\"" + FIRST_DIGEST + "\"", "\"" + FIRST_DIGEST + "\"[:64]"),
+    ("a sha256 of PARAGRAPHS replaced by 64 hexadecimal digits that are not lower case",
+     "\"" + FIRST_DIGEST + "\"", "\"" + "F" * 64 + "\""),
+    ("a text inside a function changed", "[PATH]\"]", "[FILE]\"]"),
 ]
 PRESERVED = [
     ("the module docstring reworded", "#!/usr/bin/env python3\n\"\"\"",
      "#!/usr/bin/env python3\n\"\"\"Reworded. "),
     ("a function docstring reworded", "def paragraphs(lines):\n    \"\"\"",
      "def paragraphs(lines):\n    \"\"\"Reworded. "),
-    ("a comment added", "\nWRITER_VALUES = ", "\n# A comment.\nWRITER_VALUES = "),
-    ("a sha256 of PARAGRAPHS updated, as the check's own report asks", "\"" + FIRST_DIGEST + "\"",
-     "\"" + "f" * 64 + "\""),
+    ("a comment reworded", "# The 2 values orch-set-mode writes,",
+     "# The values that orch-set-mode writes,"),
+    ("the first sha256 of PARAGRAPHS updated, as the check's own report asks",
+     "\"" + FIRST_DIGEST + "\"", "\"" + "f" * 64 + "\""),
+    ("the last sha256 of PARAGRAPHS updated, as the check's own report asks",
+     "\"" + LAST_DIGEST + "\"", "\"" + "e" * 64 + "\""),
     ("a blank line added", "\n\n\ndef digest(paragraph):", "\n\n\n\ndef digest(paragraph):"),
+]
+# The self-check of code_form() on forms that the check does not hold, so that no replacement of
+# its source can try them: pairs of sources, with True for a pair that code_form() must make
+# equal, since its 2 sources differ only in a docstring, and False for a pair that it must keep
+# apart, since its 2 sources differ only in a sha256 of a PARAGRAPHS that is not bound to a list
+# by an assignment to that name alone.
+FORM_PAIRS = [
+    ("a class docstring reworded", b"class Note:\n    \"\"\"A.\"\"\"\n",
+     b"class Note:\n    \"\"\"B.\"\"\"\n", True),
+    ("an async function docstring reworded", b"async def note():\n    \"\"\"A.\"\"\"\n",
+     b"async def note():\n    \"\"\"B.\"\"\"\n", True),
+    ("a sha256 of a PARAGRAPHS bound together with a second name changed",
+     b"PARAGRAPHS = TABLE = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"PARAGRAPHS = TABLE = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a PARAGRAPHS bound to a tuple changed",
+     b"PARAGRAPHS = ((\"a\", \"b\", \"" + b"1" * 64 + b"\"),)\n",
+     b"PARAGRAPHS = ((\"a\", \"b\", \"" + b"2" * 64 + b"\"),)\n", False),
 ]
 # The constants whose values a registry entry may name as the domain that its driver tries.
 # PASS stands for the constant count of pinned paragraphs, which the pass line spells.
@@ -1081,11 +1121,12 @@ def pattern_sites(tree):
 
 
 def code_form(source):
-    """The check's code in source as CODE_SHA256 holds it: source parsed, with each docstring
-    removed, which is the first statement of the module, of a function or of a class when that
-    statement is a string constant, and with the third item of each row of PARAGRAPHS made
-    PLACEHOLDER when that item is a constant of 64 lowercase hexadecimal digits, then unparsed.
-    Comments and layout are not in the syntax tree, so they are left out too."""
+    """The code in source, the bytes of a module, as CODE_SHA256 holds the check's: source parsed
+    as compile() parses bytes, with each docstring removed, which is the first statement of the
+    module, of a function or of a class when that statement is a string constant, and with the
+    third item of each row of PARAGRAPHS made PLACEHOLDER when that item is a constant of 64
+    lowercase hexadecimal digits, then unparsed. Comments and layout are not in the syntax tree,
+    so they are left out too."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -2118,26 +2159,42 @@ class Verdicts(unittest.TestCase):
                 os.close(folder)
 
     def test_every_site_has_a_driver(self):
-        # The case compares the check's code, without its docstrings and the sha256 values of
-        # PARAGRAPHS, with CODE_SHA256, so a change to that code fails until the digest is
-        # updated; the update in the diff is the reviewer's cue to check the registries. Each of
-        # MUTATIONS must change that digest and each of PRESERVED must keep it, so a code_form()
-        # that hides too much or too little fails. Each registry equals the sites of the forms
-        # that its extractor lists; a site of another form is caught by the code digest, not by a
-        # registry. A driver's code names its domain constant and launch() or findings(); this
-        # does not show that it runs them, or that it would fail on a change at its site.
-        source = CHECK.read_text(encoding="utf-8")
-        first = re.search(r"\"([0-9a-f]{64})\"", source).group(1)
+        # The case compares the check's code, parsed from its bytes, without its docstrings and
+        # the sha256 values of PARAGRAPHS, with CODE_SHA256, so a change to that code fails until
+        # the digest is updated; the update in the diff is the reviewer's cue to check the
+        # registries. It requires the encoding that Python finds for those bytes to be UTF-8, so
+        # that the code that Python runs from the file is the code that the bytes parse to. Each of
+        # MUTATIONS must change that digest, each of PRESERVED must keep it, and each pair of
+        # FORM_PAIRS must give equal or different digests as it states, so a code_form() that
+        # fails 1 of those rows fails; each row is evidence for its own edit only. Each registry
+        # equals the sites of the forms that its extractor lists; a site of another form is caught
+        # by the code digest, not by a registry. A driver's code names its domain constant and
+        # launch() or findings(); this does not show that it runs them, or that it would fail on
+        # a change at its site.
+        source = CHECK.read_bytes()
+        digests = [found.decode("ascii") for found in re.findall(rb"\"([0-9a-f]{64})\"", source)]
         now = code_digest(source)
         for edits, kept in ((MUTATIONS, True), (PRESERVED, False)):
             for name, old, new in edits:
-                old, new = old.replace(FIRST_DIGEST, first), new.replace(FIRST_DIGEST, first)
+                old, new = (text.replace(FIRST_DIGEST, digests[0]).replace(LAST_DIGEST, digests[-1])
+                            .encode("utf-8") for text in (old, new))
                 with self.subTest(edit=name):
                     self.assertEqual(source.count(old), 1,
                                      "expected 1 {!r} in {}".format(old, CHECK))
                     self.assertEqual(code_digest(source.replace(old, new)) != now, kept,
                                      "expected code_form() to {} its sha256 for {}".format(
                                          "change" if kept else "keep", name))
+        for name, one, other, same in FORM_PAIRS:
+            with self.subTest(form=name):
+                self.assertEqual(code_digest(one) == code_digest(other), same,
+                                 "expected code_form() to {} the 2 sources of {}".format(
+                                     "make equal" if same else "keep apart", name))
+        with self.subTest(pin="encoding"):
+            found = tokenize.detect_encoding(io.BytesIO(source).readline)[0]
+            self.assertEqual(found, "utf-8",
+                             "Python reads {} as {}, not UTF-8, so the code that it runs from the"
+                             " file can differ from the tree that CODE_SHA256 holds".format(
+                                 CHECK, found))
         with self.subTest(pin="CODE_SHA256"):
             self.assertEqual(now, CODE_SHA256,
                              "the check's code has changed: its code_form() sha256 is now {}; once"
