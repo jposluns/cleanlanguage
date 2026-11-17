@@ -40,29 +40,37 @@ GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0 variables of each such build's
 environment, never by a git config command. Each build runs with TMPDIR set
 to a folder of the temporary folder, and without the BASHOPTS, SHELLOPTS,
 GLOBIGNORE, BASH_ENV and CDPATH of the test's own environment; the cases of
-inherited shell options set 1 of the first 4, and case 23 sets CDPATH.
-Each stand-in command but kill is a short sh script that the test writes
-into its temporary folder and puts first on the PATH of 1 build. The script
-gives each path that it uses as 1 shell word, quoted by shlex.quote, and the
-test writes it in the encoding of the file system, so that a path with an
-apostrophe, white space or a character outside ASCII reaches it unchanged.
-The stand-in kill of case 24 is a bash function that the environment of 1
-build exports as BASH_FUNC_kill%%, since kill is a builtin of bash, which
-no entry of PATH replaces; it gives the path of its log as 1 shell word,
-quoted by shlex.quote. Some stand-ins record their calls and others record
-nothing. A stand-in that records its calls writes to its log, for each
-call, the number of its fields and then each field, each ended by a NUL
-byte, so that a field may hold a tab or a newline. The name of the
-temporary folder starts with TEMP_PREFIX, which holds a space, an
-apostrophe and a letter outside ASCII, so that every case runs with such a
-path; a temporary folder whose path holds a colon, which no entry of PATH
-can hold, ends the set-up with an error. A build that the test starts and
-then signals writes its error output to a file of the temporary folder,
-not to a pipe, and its standard output is discarded, so it cannot block on
-a full pipe while the test waits for its stand-in. Such a build runs in a
-session of its own, and once its bash has ended the test ends with SIGKILL
-any process of that session that still runs, so that none changes dist/
-while the test reads it. The signal of the exit trap cases of case 14 goes
+inherited shell options set 1 of the first 4, case 26 sets BASHOPTS, and
+case 23 sets CDPATH. Each stand-in command but kill, shopt and trap is a
+short sh script that the test writes into its temporary folder and puts
+first on the PATH of 1 build. The script gives each path that it uses as 1
+shell word, quoted by shlex.quote, and the test writes it in the encoding
+of the file system, so that a path with an apostrophe, white space or a
+character outside ASCII reaches it unchanged. The stand-ins kill, shopt and
+trap of cases 24 and 26 are bash functions that the environment of 1 build
+exports as BASH_FUNC_<name>%%, since each is a builtin of bash, which no
+entry of PATH replaces; each gives the path of its log as 1 shell word,
+quoted by shlex.quote. Some stand-ins record their calls in a log. The
+others write no log; some of them write a file that the test or the
+stand-in itself reads, such as the running count of calls of the stand-in
+cmp of cases 20 and 21, a file that tells the test that a stand-in holds a
+call, or the file that the stand-in mkdir of case 19 writes when it links
+dist. A stand-in that records its calls writes to its log, for each call,
+the number of its fields and then each field, each ended by a NUL byte, so
+that a field may hold a tab or a newline. The name of the temporary folder
+starts with TEMP_PREFIX, which holds a space, an apostrophe and a letter
+outside ASCII, so that every case runs with such a path; a temporary folder
+whose path holds a colon, which no entry of PATH can hold, ends the set-up
+with an error. A build that the test starts and then signals writes its
+error output to a file of the temporary folder, not to a pipe, and its
+standard output is discarded, so it cannot block on a full pipe while the
+test waits for its stand-in. Every build runs in a session of its own. Once
+the bash of a build that the test signals has ended, the test ends with
+SIGKILL any process of that session that still runs, so that none changes
+dist/ while the test reads it; and when any build outlasts BUILD_TIMEOUT,
+the test ends every process of its session with SIGKILL and reaps its bash
+before it reports the timeout, so that none changes dist/ during a later
+case. The signal of the exit trap cases of case 14 goes
 to every process of the build's process group; the other signal cases
 send theirs to its bash only. In such a build each signal of
 TRAPPED_SIGNALS has its default action and is not blocked, since bash
@@ -198,22 +206,32 @@ that clone:
     outputs of version 11111111111.0.0.
 16. The packager's code, with its comment lines and the Python programs
     that it passes to python3 -c set aside, and with each line that ends
-    in a backslash joined to the next, holds exactly 1 rm with a recursive
-    option, `rm -rf -- "${work}" || true`, no rmdir in a for, while or
-    until loop, no rmdir with its parents option, no find -delete, and the
-    line that sets work from mktemp -d with a template in dist/. The scan
-    sets aside the quotes and backslashes of each line and starts a new
-    command at each (, ), backquote, {, }, ;, & and | outside a ${...}, so
-    it reads the commands of a subshell, a command substitution or a group
-    too. A word names rm or rmdir whatever folder path, quotes or backslash
-    it carries (/usr/bin/rm, \\rm, 'rm'), wherever it stands in its
-    command, such as after `command` or find -exec, and each option word,
-    quoted or not, up to the end of that command counts, before or after an
-    operand; an option is recursive when it is a group of short options
-    that holds r or R, or --recursive or an abbreviation of it from --r
-    on. A removal whose command name or option is made at run time, such
-    as from a variable or by eval of a variable, or that another program,
-    such as a Python program, makes, is not seen.
+    in a backslash joined to the next with nothing between them, as bash
+    joins them, holds exactly 1 rm with a recursive option,
+    `rm -rf -- "${work}" || true`, no rmdir in a for, while or until loop,
+    no rmdir with its parents option, no find -delete, and the line that
+    sets work from mktemp -d with a template in dist/. The scan decodes
+    each $'...' string as bash does, reads each $"..." as "...", reads each
+    ${...} as its parameter, its operator and its word, expands each brace
+    list or sequence in a word, such as -{r,f} or {a..c}, sets aside the
+    quotes and backslashes of each line, and starts a new command at each
+    (, ), backquote, {, }, ;, & and |, so it reads the commands of a
+    subshell, a command substitution, backquotes or a group too, in the
+    word of a ${...} as well. A word names rm or rmdir whatever folder
+    path, quotes or backslash it carries (/usr/bin/rm, \\rm, 'rm'),
+    wherever it stands in its command, such as after `command` or find
+    -exec, and each option word up to the end of that command counts,
+    before or after an operand; an option is recursive when it is a group
+    of short options that holds r or R, or --recursive or an abbreviation
+    of it from --r on. When it counts loops, it sets aside each quoted
+    string that holds no command substitution. The scan reads quotes by
+    their characters, not as bash pairs them, and makes no expansion that
+    depends on the run, so it does not see a removal whose command name or
+    option comes from a variable, eval of a variable, an alias, a function,
+    pathname expansion or another program, such as a Python program, nor a
+    loop whose words sit in a quoted string with no command substitution or
+    a line that it takes for part of a Python program; and it counts a
+    removal that a quoted message only names.
 17. A stand-in rm, found through the PATH, records each call and a
     stand-in mktemp the work folder: a good build, a build refused by the
     blob check under core.autocrlf=true, and a build whose stand-in mv
@@ -247,20 +265,37 @@ that clone:
     the clone, with CDPATH naming a folder outside the clone that holds
     tools/ and dist/cleanlanguage.zip, exits 0 and writes the 4 outputs in
     the dist/ of the clone; the outside folder is unchanged.
-24. With a stand-in kill that, at `kill -l NAME`, records the call and
-    fails as bash does for a name that it does not know, for 1 of the 24
-    names of SIGNAL_NAMES, which the packager asks its shell for, at a
-    time, and then for STKFLT, PWR, RTMIN and RTMAX together, a good
-    build exits 0, writes the 4 outputs and keeps the planted paths, and
-    the stand-in recorded that the build asked it for a name of those and
-    for no other. With the 4 together, a build that receives SIGSYS while
-    a stand-in mv holds the move of the .sha256 files exits 159 and leaves
-    no zip and no .sha256 in dist/, so the names after an unknown 1 are
-    still trapped.
+24. With a stand-in trap that records each call and passes it to the
+    builtin, a good build traps each signal of TRAPPED_SIGNALS once, with
+    the action exit 128 plus its number, and no other, and its exit trap
+    ignores the same signals. With a stand-in kill as well that records
+    each call and, at `kill -l NAME`, fails as bash does for a name that it
+    does not know, for 1 of the 24 names of SIGNAL_NAMES, which the
+    packager asks its shell for, at a time, and then for STKFLT, PWR, RTMIN
+    and RTMAX together, a good build exits 0, writes the 4 outputs and
+    keeps the planted paths; each call of the stand-in kill was
+    `kill -l NAME` for a NAME of SIGNAL_NAMES, and 1 or more of them for a
+    name that it does not know; and the build traps, and its exit trap
+    ignores, each signal of TRAPPED_SIGNALS but that of a name that the
+    stand-in does not know and, when RTMIN or RTMAX is among those names,
+    the real-time range, so an unknown name makes the build drop no signal
+    whose name it knows. With the 4 together, a build that receives SIGSYS
+    while a stand-in mv holds the move of the .sha256 files exits 159 and
+    leaves no zip and no .sha256 in dist/.
 25. The scan of case 16 finds 1 more removal of its kind in the packager's
     text with each line of SECOND_REMOVALS added at its end than without:
     a recursive rm, an rmdir with its parents option, a find -delete or an
     rmdir in a loop, in each form that case 16 names.
+26. For each glob or match option of SHELL_OPTIONS_OFF, which the packager
+    turns off, with a stand-in shopt that records each call and fails as
+    bash does for an option that it does not know at each call that names
+    that option, with the other 4 turned on through BASHOPTS, and with the
+    stand-in trap of case 24, which also records the shell options that
+    BASHOPTS lists at each call, a good build exits 0, writes the 4 outputs
+    and keeps the planted paths; the build asked the stand-in shopt about
+    that option; and at each trap that it set, its shell options held
+    dotglob and none of the 5, so an option that the shell does not know
+    neither ends the build nor leaves another option turned on.
 
 Each case starts with no dist/ in the clone.
 
@@ -386,16 +421,35 @@ SIGNAL_NAMES = ("HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "USR1
                 "RTMIN", "RTMAX")
 # Names that a platform other than Linux may lack together.
 NON_LINUX_NAMES = ("STKFLT", "PWR", "RTMIN", "RTMAX")
+# The glob and match options that the packager turns off when its shell
+# knows them.
+SHELL_OPTIONS_OFF = ("extglob", "failglob", "globstar", "nocaseglob", "nocasematch")
 # Words that end a shell command on a line of the packager.
 COMMAND_ENDS = {"||", "&&", "|", ";", ";;", "&", ")", "}", "then", "do", "done", "else", "fi", "esac"}
-# A ${...} expansion, which the removal scan reads as 1 word, and the
-# characters at which it starts a new command: a subshell or command
+# A ${...} expansion with no brace inside, which the removal scan reads as
+# its parameter, its operator and its word, so that a command substitution
+# or an option in its word is read too; the parts of its text; and the
+# characters at which the scan starts a new command: a subshell or command
 # substitution, a backquote, a group, a list or a pipe.
-PARAMETER = re.compile(r"\$\{[^{}]*\}")
+PARAMETER = re.compile(r"\$\{([^{}]*)\}")
+PARAMETER_PARTS = re.compile(r"([#!]?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-*@#?$!])(?:\[[^]]*\])?)"
+                             r"(:?[-+=?]|##?|%%?|/[/#%]?|\^\^?|,,?|:|@)?(.*)", re.S)
 COMMAND_STARTS = re.compile(r"[()`{};&|]")
-# A quoted string of a shell line, which the scan sets aside when it counts
-# loops.
-QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+# An ANSI-C quoted string, $'...', the escapes in it that bash decodes, and
+# the 1-letter ones among them.
+ANSI_C = re.compile(r"\$'((?:\\.|[^'\\])*)'", re.S)
+ANSI_C_ESCAPE = re.compile(r"\\(?:([abeEfnrtv\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})"
+                           r"|U([0-9A-Fa-f]{1,8})|c(.))", re.S)
+ANSI_C_LETTERS = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
+                  "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+# A pair of braces with no white space and no brace in it, which bash
+# expands as a brace expansion when it holds a list, such as {r,f}, or a
+# sequence, such as {a..c} or {1..9..2}.
+BRACES = re.compile(r"\{([^\s{}]*)\}")
+BRACE_SEQUENCE = re.compile(r"(-?[0-9]+|[A-Za-z])\.\.(-?[0-9]+|[A-Za-z])(?:\.\.(-?[0-9]+))?")
+# A quoted string of a shell line that holds no command substitution, which
+# the scan sets aside when it counts loops.
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|\$(?!\()|[^\"\\$`])*\"")
 # A second removal in each form that the scan of the structural case must
 # see, as lines added at the end of the packager's text, with the list of
 # removal_scan that it adds to: recursive rm, looped rmdir or other.
@@ -423,15 +477,29 @@ SECOND_REMOVALS = (
     ("recursive", 'if true; then rm -r -- "${work}/src"; fi'),
     ("recursive", 'command rm -r -- "${work}/src"'),
     ("recursive", 'find "${work}/src" -exec rm -r {} +'),
+    ("recursive", "rm $'-r' -- \"${work}/src\""),
+    ("recursive", "/usr/bin/rm $'\\x2drf' -- \"${work}/src\""),
+    ("recursive", 'rm $"-r" -- "${work}/src"'),
+    ("recursive", '/usr/bin/r\\\nm -rf -- "${work}/src"'),
+    ("recursive", 'rm -\\\nrf -- "${work}/src"'),
+    ("recursive", ': "${unset_name:-$(/usr/bin/rm -rf -- "$work/src")}"'),
+    ("recursive", ': "${unset_name:-`rm -r -- "$work/src"`}"'),
+    ("recursive", 'rm ${unset_name:--r} -- "${work}/src"'),
+    ("recursive", 'rm -f{,r} -- "${work}/src"'),
     ("other", 'rmdir -p "${work}/src/a"'),
     ("other", 'rmdir "-p" "${work}/src/a"'),
     ("other", '(rmdir --parents "${work}/src/a")'),
     ("other", '/usr/bin/rmdir \\\n  -p "${work}/src/a"'),
     ("other", 'find "${work}" -delete'),
     ("other", 'find "${work}" "-delete"'),
+    ("other", "rmdir $'-p' \"${work}/src/a\""),
+    ("other", 'rmdir -{p..p} "${work}/src/a"'),
+    ("other", "find \"${work}\" $'-delete'"),
+    ("other", 'find "${work}" -del\\\nete'),
     ("looped", 'for d in a b; do rmdir "${work}/$d"; done'),
     ("looped", '(for d in a b; do rmdir "${work}/$d"; done)'),
     ("looped", 'while false; do\n  rmdir "${work}/src"\ndone'),
+    ("looped", 'gone="$(for d in a b; do rmdir "${work}/$d"; done)"'),
 )
 
 
@@ -521,6 +589,30 @@ def signal_label(number: int) -> str:
         return "SIGRTMIN+%d" % (number - signal.SIGRTMIN)
 
 
+def trapped_without(names: tuple) -> list:
+    """The numbers of TRAPPED_SIGNALS, sorted, that the packager traps when
+    the kill -l of its shell does not know the names of SIGNAL_NAMES in
+    names: each but that of a name in names, and none of the real-time
+    range when RTMIN or RTMAX is in names."""
+    left = set(TRAPPED_SIGNALS)
+    for name in names:
+        if name in ("RTMIN", "RTMAX"):
+            left -= set(range(signal.SIGRTMIN, signal.SIGRTMAX + 1))
+        else:
+            left.discard(getattr(signal, "SIG" + name))
+    return sorted(left)
+
+
+def end_session(proc: subprocess.Popen):
+    """End with SIGKILL every process of the session that proc leads that
+    still runs, and reap proc."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
 def sh_word(value) -> str:
     """value, a path or a string, as 1 sh word that sh reads back unchanged."""
     return shlex.quote(str(value))
@@ -590,12 +682,14 @@ def code_lines(text: str) -> list:
 
 def logical_lines(text: str) -> list:
     """(number, line) for each line of code_lines(text), with each line that
-    ends in a backslash joined to the next by a space, numbered by its
-    first line."""
+    ends in a backslash joined to the next with nothing between them, as
+    bash removes a backslash and the newline after it, so that a word split
+    there, such as r and m, is read as 1 word; each is numbered by its first
+    line."""
     found, pending = [], None
     for n, line in code_lines(text):
         if pending is not None:
-            n, line = pending[0], pending[1] + " " + line
+            n, line = pending[0], pending[1] + line
         if line.endswith("\\"):
             pending = (n, line[:-1])
         else:
@@ -606,12 +700,82 @@ def logical_lines(text: str) -> list:
     return found
 
 
+def ansi_c(text: str) -> str:
+    """The text of a $'...' string, without its quotes, as bash decodes
+    its escapes."""
+    def escape(match) -> str:
+        letter, octal, hexadecimal, short, long, control = match.groups()
+        if letter:
+            return ANSI_C_LETTERS[letter]
+        if control:
+            return chr(ord(control) & 0x1F)
+        value = int(octal, 8) if octal else int(hexadecimal or short or long, 16)
+        return chr(min(value, 0x10FFFF))
+    return ANSI_C_ESCAPE.sub(escape, text)
+
+
+def parameter_words(match) -> str:
+    """The text of 1 ${...} with no brace inside, read as its parameter, its
+    operator and its word, separated by spaces, with the first / of the
+    word of a pattern substitution read as a space as well, so that each of
+    them is read as a word."""
+    parts = PARAMETER_PARTS.fullmatch(match.group(1))
+    if parts is None:
+        return "$" + match.group(1)
+    name, operator, word = parts.groups()
+    if operator and operator.startswith("/"):
+        word = word.replace("/", " ", 1)
+    return " ".join(part for part in ("$" + name, operator, word) if part)
+
+
+def brace_items(text: str):
+    """The items that bash gives for the text between a pair of braces: the
+    parts of a list split at each comma, or each item of a sequence; None
+    when the text is neither."""
+    sequence = BRACE_SEQUENCE.fullmatch(text)
+    if sequence:
+        first, last, step = sequence.groups()
+        step = abs(int(step or 1)) or 1
+        if first.isalpha() != last.isalpha():
+            return None
+        start, end = (ord(first), ord(last)) if first.isalpha() else (int(first), int(last))
+        numbers = range(start, end + 1, step) if start <= end else range(start, end - 1, -step)
+        return [chr(n) for n in numbers] if first.isalpha() else [str(n) for n in numbers]
+    return text.split(",") if "," in text else None
+
+
+def brace_expand(line: str) -> str:
+    """line with each brace expansion in a word replaced by the words that
+    bash gives for it; braces that hold neither a list nor a sequence stay."""
+    start = 0
+    while True:
+        match = BRACES.search(line, start)
+        if match is None:
+            return line
+        items = brace_items(match.group(1))
+        if items is None:
+            start = match.end()
+            continue
+        before = re.search(r"\S*\Z", line[:match.start()]).start()
+        after = match.end() + re.match(r"\S*", line[match.end():]).end()
+        prefix, suffix = line[before:match.start()], line[match.end():after]
+        line = line[:before] + " ".join(prefix + item + suffix for item in items) + line[after:]
+        start = before
+
+
 def commands(line: str) -> list:
-    """The words of each command of a logical line, with each ${...} made 1
-    word and the quotes and backslashes of the line set aside; a command
-    starts at each character of COMMAND_STARTS, so the commands of a
-    subshell, a command substitution or a group are read as well."""
-    line = PARAMETER.sub("PARAMETER", line)
+    """The words of each command of a logical line, read as bash reads them
+    in these respects: each $'...' string decoded, each $"..." read as
+    "...", each ${...} read as its parameter, its operator and its word,
+    each brace expansion expanded, and the quotes and backslashes of the
+    line set aside. A command starts at each character of COMMAND_STARTS,
+    so the commands of a subshell, a command substitution, backquotes or a
+    group are read as well, in the word of a ${...} too."""
+    line = ANSI_C.sub(lambda match: ansi_c(match.group(1)), line)
+    line = line.replace('$"', '"')
+    while PARAMETER.search(line):
+        line = PARAMETER.sub(parameter_words, line)
+    line = brace_expand(line)
     line = line.replace("\\", "").replace("'", "").replace('"', "")
     return [part.split() for part in COMMAND_STARTS.split(line) if part.split()]
 
@@ -719,11 +883,22 @@ class DistTests(unittest.TestCase):
     @classmethod
     def run_packager(cls, script: Path, *args: str, autocrlf: bool = False, path_prefix: str = "",
                      extra: dict = None):
-        proc = subprocess.run(["bash", str(script), *args], cwd=str(cls.clone),
+        """Run script with bash in the clone and return its exit code and
+        error output. The build runs in a session of its own, so that a
+        build that outlasts BUILD_TIMEOUT has every process of that session
+        ended with SIGKILL, and its bash reaped, before the timeout is
+        raised, and none of them can change dist/ during a later case."""
+        with subprocess.Popen(["bash", str(script), *args], cwd=str(cls.clone),
                               env=cls.packager_env(autocrlf, path_prefix, extra),
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=BUILD_TIMEOUT)
-        return proc.returncode, proc.stderr
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, start_new_session=True) as proc:
+            try:
+                _, stderr = proc.communicate(timeout=BUILD_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                end_session(proc)
+                proc.communicate()
+                raise
+        return proc.returncode, stderr
 
     def build(self, *args: str, autocrlf: bool = False, path_prefix: str = "", extra: dict = None):
         return self.run_packager(self.clone / "tools" / "release-package.sh", *args, autocrlf=autocrlf,
@@ -1138,10 +1313,13 @@ class DistTests(unittest.TestCase):
         """Wait until the stand-in of proc has written held, send sig to the
         build's bash, or with group to every process of its process group,
         as a terminal or a CI runner does, then write go so that the
-        stand-in goes on; once the build's bash has ended, end with SIGKILL
-        every process of its session that still runs, such as a stand-in
-        that a build ended at once left behind, so that none changes dist/
-        after this returns; return the build's stderr."""
+        stand-in goes on; once the build's bash has ended, or once
+        BUILD_TIMEOUT has passed without its end, end with SIGKILL every
+        process of its session that still runs, such as a stand-in that a
+        build ended at once left behind, reap the bash and close its error
+        output, so that none changes dist/ after this returns or raises;
+        raise the timeout if there was one, and return the build's stderr
+        otherwise."""
         try:
             deadline = time.monotonic() + BUILD_TIMEOUT
             while not held.exists() and proc.poll() is None and time.monotonic() < deadline:
@@ -1154,14 +1332,13 @@ class DistTests(unittest.TestCase):
             time.sleep(0.2)
         finally:
             go.write_bytes(b"")
-            proc.wait(timeout=BUILD_TIMEOUT)
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.output.seek(0)
-            stderr = proc.output.read().decode("utf-8", "replace")
-            proc.output.close()
+                proc.wait(timeout=BUILD_TIMEOUT)
+            finally:
+                end_session(proc)
+                proc.output.seek(0)
+                stderr = proc.output.read().decode("utf-8", "replace")
+                proc.output.close()
         return stderr
 
     def popen_build(self, *args: str, path_prefix: str, extra: dict = None) -> subprocess.Popen:
@@ -1511,8 +1688,9 @@ class DistTests(unittest.TestCase):
         while loop, no rmdir with its parents option, and no find -delete.
         Each command of a line counts, in a subshell, a command substitution
         or a group too; a word names rm or rmdir whatever folder path,
-        quotes or backslash it carries, and each option word, quoted or
-        not, up to the end of its command counts."""
+        quotes or backslash it carries, and each option word up to the end
+        of its command counts, read as case 16 of the module's docstring
+        says."""
         text = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
         found = removal_scan(text)
         self.assertEqual([line for _, line in found["recursive"]], ['rm -rf -- "${work}" || true'],
@@ -1694,45 +1872,136 @@ class DistTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertEqual(outputs(self.dist), self.names)
 
-    def kill_not_knowing(self, names: tuple) -> tuple:
-        """A stand-in kill, as an environment entry that exports to the
-        build's bash a function named kill, which bash runs in place of its
-        builtin: at `kill -l NAME` for a NAME of names it writes 1 record of
-        its arguments to its log and fails with a message, as bash does for
-        a name that it does not know; it passes every other call to the
-        builtin. Return the entry and the log."""
-        log = Path(self.tmp.name) / "kill-calls.log"
+    def builtin_stand_in(self, name: str, body: str) -> tuple:
+        """A stand-in for the bash builtin name, as an environment entry that
+        exports to the build's bash a function of that name, which bash runs
+        in place of its builtin; body is the text of the function, in which
+        %(log)s gives the path of its log as 1 shell word. Return the entry
+        and the log, which does not exist yet."""
+        log = Path(self.tmp.name) / ("%s-calls.log" % name)
         if log.exists():
             log.unlink()
-        body = ("() { if [ \"$1\" = -l ]; then case \"$2\" in %s) "
-                "printf '%%s\\000' \"$#\" \"$@\" >> %s; "
-                "printf 'kill: %%s: invalid signal specification\\n' \"$2\" >&2; return 1 ;; esac; fi; "
-                "builtin kill \"$@\"; }" % ("|".join(names), sh_word(log)))
-        return {"BASH_FUNC_kill%%": body}, log
+        return {"BASH_FUNC_%s%%%%" % name: body % {"log": sh_word(log)}}, log
+
+    def kill_not_knowing(self, names: tuple) -> tuple:
+        """A stand-in kill that writes 1 record of the arguments of each call
+        to its log; at `kill -l NAME` for a NAME of names it then fails with
+        a message, as bash does for a name that it does not know, and it
+        passes every other call to the builtin. Return the entry and the
+        log."""
+        return self.builtin_stand_in("kill", (
+            "() { printf '%%s\\000' \"$#\" \"$@\" >> %(log)s; "
+            "if [ \"$1\" = -l ]; then case \"$2\" in " + "|".join(names) + ") "
+            "printf 'kill: %%s: invalid signal specification\\n' \"$2\" >&2; return 1 ;; esac; fi; "
+            "builtin kill \"$@\"; }"))
+
+    def recording_trap(self) -> tuple:
+        """A stand-in trap that writes 1 record of each call to its log, the
+        shell options that BASHOPTS lists at that call and then each
+        argument, and passes the call to the builtin. Return the entry and
+        the log."""
+        return self.builtin_stand_in("trap", (
+            "() { printf '%%s\\000' \"$(($# + 1))\" \"$BASHOPTS\" \"$@\" >> %(log)s; "
+            "builtin trap \"$@\"; }"))
+
+    def shopt_not_knowing(self, name: str) -> tuple:
+        """A stand-in shopt that writes 1 record of the arguments of each call
+        to its log; at a call that names the option name it then fails with
+        a message, as bash does for an option that it does not know, once it
+        has passed the call without that name to the builtin when the call
+        names another option, and it passes every other call to the builtin.
+        Return the entry and the log."""
+        return self.builtin_stand_in("shopt", (
+            "() { printf '%%s\\000' \"$#\" \"$@\" >> %(log)s; "
+            "local a named= rest=(); "
+            "for a in \"$@\"; do case \"$a\" in " + name + ") ;; -*) rest+=(\"$a\") ;; "
+            "*) rest+=(\"$a\"); named=1 ;; esac; done; "
+            "if [ \"${#rest[@]}\" -lt \"$#\" ]; then "
+            "printf 'shopt: %%s: invalid shell option name\\n' " + name + " >&2; "
+            "if [ -n \"$named\" ]; then builtin shopt \"${rest[@]}\"; fi; return 1; fi; "
+            "builtin shopt \"$@\"; }"))
+
+    def assert_traps(self, log: Path, expected: list):
+        """Assert that the build, through the stand-in trap whose log is
+        given, trapped each signal number of expected, and no other, once
+        with the action exit 128 plus that number, and that its exit trap
+        then ignored exactly those numbers."""
+        calls = [fields[1:] for fields in self.records(log)]
+        exits = [args for args in calls if args and args[0].startswith("exit ")]
+        for args in exits:
+            self.assertEqual(len(args), 2, "the build set the trap %r" % args)
+            self.assertEqual(args[0], "exit %d" % (128 + int(args[1])), "the build set the trap %r" % args)
+        self.assertEqual(sorted(int(args[1]) for args in exits), expected,
+                         "the build trapped %r" % [args[1] for args in exits])
+        ignored = [sorted(int(n) for n in args[1:]) for args in calls if args and args[0] == ""]
+        self.assertEqual(ignored, [expected], "the exit trap ignored %r" % ignored)
 
     def test_unknown_signal_names_skipped(self):
-        """With a stand-in kill that does not know 1 name of SIGNAL_NAMES
-        at a time, and then the names of NON_LINUX_NAMES together, a good
-        build exits 0, writes the 4 outputs and keeps the plants, and the
-        stand-in recorded that the build asked it only for names that it
-        does not know. With NON_LINUX_NAMES unknown, SIGSYS, which comes
-        after STKFLT in the packager's list, still ends a build with 159
-        while a stand-in mv holds the move of the .sha256 files, and the
-        build leaves no output."""
+        """With a stand-in trap that records each call, a good build traps
+        each signal of TRAPPED_SIGNALS with exit 128 plus its number, and its
+        exit trap ignores the same signals. With a stand-in kill as well that
+        records each call and does not know 1 name of SIGNAL_NAMES at a time,
+        and then the names of NON_LINUX_NAMES together, a good build exits 0,
+        writes the 4 outputs and keeps the plants; each call of the stand-in
+        kill was `kill -l NAME` for a NAME of SIGNAL_NAMES, and 1 or more of
+        them for a name that it does not know; and the build traps, and its
+        exit trap ignores, each signal of TRAPPED_SIGNALS but that of a name
+        that it does not know and, when RTMIN or RTMAX is among those names,
+        the real-time range, so an unknown name makes the build drop no other
+        signal. With NON_LINUX_NAMES unknown, SIGSYS, which comes after
+        STKFLT in the packager's list, still ends a build with 159 while a
+        stand-in mv holds the move of the .sha256 files, and the build leaves
+        no output."""
+        with self.subTest(unknown="none"):
+            self.setUp()
+            extra, trap_log = self.recording_trap()
+            self.good_build(extra=extra)
+            self.assert_traps(trap_log, sorted(TRAPPED_SIGNALS))
         for names in [(name,) for name in SIGNAL_NAMES] + [NON_LINUX_NAMES]:
             with self.subTest(unknown=" ".join(names)):
                 self.setUp()
                 extra, log = self.kill_not_knowing(names)
+                trap_entry, trap_log = self.recording_trap()
+                extra.update(trap_entry)
                 self.good_build(extra=extra)
                 asked = self.records(log)
-                self.assertTrue(asked, "the build never asked the stand-in kill for %s" % ", ".join(names))
-                self.assertTrue(all(len(a) == 2 and a[0] == "-l" and a[1] in names for a in asked),
+                self.assertTrue(all(len(a) == 2 and a[0] == "-l" and a[1] in SIGNAL_NAMES for a in asked),
                                 "the stand-in kill recorded %r" % asked)
+                self.assertTrue(any(a[1] in names for a in asked),
+                                "the build never asked the stand-in kill for %s: %r" % (", ".join(names), asked))
+                self.assert_traps(trap_log, trapped_without(names))
         with self.subTest(unknown=" ".join(NON_LINUX_NAMES), signal="SIGSYS"):
             self.setUp()
             extra, log = self.kill_not_knowing(NON_LINUX_NAMES)
             self.assert_signal_ends_build(signal.SIGSYS, 128 + signal.SIGSYS, extra=extra)
             self.assertTrue(self.records(log), "the build never asked the stand-in kill for an unknown name")
+
+    def test_unknown_shell_options_skipped(self):
+        """For each option of SHELL_OPTIONS_OFF, with a stand-in shopt that
+        records each call and does not know that option, with the other 4
+        turned on through BASHOPTS, and with a stand-in trap that records the
+        shell options at each call, a good build exits 0, writes the 4
+        outputs and keeps the plants; the build asked the stand-in shopt
+        about that option; and at each trap that it set, its shell options
+        held dotglob and none of SHELL_OPTIONS_OFF, so an option that the
+        shell does not know leaves no other turned on."""
+        for name in SHELL_OPTIONS_OFF:
+            with self.subTest(unknown=name):
+                self.setUp()
+                extra, log = self.shopt_not_knowing(name)
+                trap_entry, trap_log = self.recording_trap()
+                extra.update(trap_entry)
+                extra["BASHOPTS"] = ":".join(o for o in SHELL_OPTIONS_OFF if o != name)
+                self.good_build(extra=extra)
+                asked = self.records(log)
+                self.assertTrue(any(name in args for args in asked),
+                                "the build never asked the stand-in shopt about %s: %r" % (name, asked))
+                options = [fields[0] for fields in self.records(trap_log)]
+                self.assertTrue(options, "the build set no trap")
+                for held in options:
+                    self.assertIn("dotglob", held.split(":"), "a trap was set with the options %s" % held)
+                    self.assertEqual(set(held.split(":")) & set(SHELL_OPTIONS_OFF), set(),
+                                     "a trap was set with the options %s" % held)
 
 
 if __name__ == "__main__":

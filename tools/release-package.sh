@@ -147,10 +147,17 @@ set -euo pipefail
 # does not match and which is not a file, so the removal
 # does nothing, as it would with nullglob. CDPATH is unset as well, so that
 # cd enters the folder that its relative name gives here, not 1 that CDPATH
-# gives.
+# gives. An option that the running shell does not know cannot be on, so it
+# is left alone rather than ending the build under set -e, as a signal name
+# that the shell does not know is below; shopt -p prints a line only for an
+# option that the shell knows, and each such option is turned off.
 unset GLOBIGNORE CDPATH
 set +f
-shopt -u extglob failglob globstar nocaseglob nocasematch
+for shell_option in extglob failglob globstar nocaseglob nocasematch; do
+  if [ -n "$(shopt -p "${shell_option}" 2>/dev/null)" ]; then
+    shopt -u "${shell_option}"
+  fi
+done
 shopt -s dotglob
 
 # Without a trap, bash meets a signal whose default action ends a process
