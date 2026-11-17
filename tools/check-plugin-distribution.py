@@ -31,10 +31,11 @@ vendored one; "both marketplaces" means these 2.
       vendored entries are not read.
   Dependencies resolve: a dependencies key, in a plugin entry of either
       marketplace or in the manifest its source reaches, holds a list; each
-      item is a nonempty string that names, exactly as written, another
-      plugin entry of the same marketplace, as NAME or NAME@<marketplace
-      name>; and no list names 1 plugin twice. The count of items read is
-      printed.
+      item is a nonempty string that names, exactly as written, a plugin
+      entry of the same marketplace, as NAME or NAME@<marketplace name>,
+      other than the entry that holds the list or whose source reaches the
+      manifest that holds it, whatever that manifest is named; and no list
+      names 1 plugin twice. The count of items read is printed.
 
 Walk rules: every path the gate reads, and every source, is reached 1
 component at a time with os.lstat, none a symlink, each spelled as os.listdir
@@ -63,21 +64,26 @@ Output and exit status:
   its message or the strerror of an OSError, the gate makes each into a str
   of its own type, with what that writes to sys.stdout or sys.stderr
   dropped; a name, message or strerror whose making raises an exception of
-  any class, or a name that is not a str, is shown by a stand-in. What the
-  extractor writes to sys.stdout or sys.stderr while it loads is dropped.
+  any class, or a name that is not a str, is shown by a stand-in. The errno
+  of an OSError, which tells a name too long for the operating system from
+  other faults, is read the same way, as an int of its own type; an errno
+  whose reading raises an exception of any class, or that is not an int, is
+  read as no errno. What the extractor writes to sys.stdout or sys.stderr
+  while it loads is dropped.
 
 Residual: the gate does not ask git which files are tracked and does not run
 the Claude Code CLI. The extractor, and the code that makes an exception's
-name, message or strerror, are code the gate runs in its own process, and
-only what that code writes to sys.stdout or sys.stderr while it runs is
-dropped. Nothing else it does is confined, among it a write to a file
-descriptor or to sys.__stdout__, a change to the interpreter or to the
-gate, and code it leaves to run later, such as an atexit handler or a
-thread, whose output can come after the last line stated above. A file
-swapped between the walk and the open is met by O_NOFOLLOW, O_NONBLOCK and
-the check after the open; O_NOFOLLOW covers only the last component, so a
-folder on the path swapped for a symlink in that time is followed. An
-exception raised while the gate writes to standard error is not caught.
+name, message or strerror or reads the errno of an OSError, are code the
+gate runs in its own process, and only what that code writes to sys.stdout
+or sys.stderr while it runs is dropped. Nothing else it does is confined,
+among it a write to a file descriptor or to sys.__stdout__, a change to the
+interpreter or to the gate, and code it leaves to run later, such as an
+atexit handler or a thread, whose output can come after the last line
+stated above. A file swapped between the walk and the open is met by
+O_NOFOLLOW, O_NONBLOCK and the check after the open; O_NOFOLLOW covers only
+the last component, so a folder on the path swapped for a symlink in that
+time is followed. An exception raised while the gate writes to standard
+error is not caught.
 
 Usage: python3 -I tools/check-plugin-distribution.py
 """
@@ -161,14 +167,27 @@ def emit(line: str, stream=None) -> None:
     print(one_line(line), file=stream)
 
 
+def guarded(make, kind, stand_in):
+    """kind(make()), with what make writes to sys.stdout and sys.stderr dropped; or stand_in when make
+    or kind raises an exception of any class. kind is str.__str__ or int.__index__, which give a value
+    of their own type and run no code of the value's class."""
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return kind(make())
+    except BaseException:
+        return stand_in
+
+
 def plain(make, stand_in: str) -> str:
     """What make returns, as a str of its own type, with what make writes to sys.stdout and sys.stderr
     dropped; or stand_in when make raises an exception of any class or returns no str."""
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return str.__str__(make())
-    except BaseException:
-        return stand_in
+    return guarded(make, str.__str__, stand_in)
+
+
+def error_number(error: OSError) -> int | None:
+    """The errno of the OSError, as an int of its own type, with what reading it writes to sys.stdout
+    and sys.stderr dropped; or None when reading it raises an exception of any class or gives no int."""
+    return guarded(lambda: error.errno, int.__index__, None)
 
 
 def shown(error: BaseException) -> str:
@@ -406,7 +425,7 @@ def resolve_source(rel: str, index: int, source, failures: list):
             failures.append(f"{label} does not resolve: {current.relative_to(REPO_ROOT)} is missing")
             return None
         except OSError as error:
-            if error.errno == errno.ENAMETOOLONG:
+            if error_number(error) == errno.ENAMETOOLONG:
                 # A fault of the source text, not of the tree, so a failure of this check.
                 failures.append(f"{label} is not a path the operating system accepts: {reason(error)}")
                 return None
@@ -499,7 +518,9 @@ def check_dependencies(markets: dict, folders: dict, failures: list) -> int:
             if (rel, index) in folders:
                 manifest = f"{folders[(rel, index)]}/.claude-plugin/plugin.json"
                 reached = load_json(manifest)
-                lists.append((manifest, reached.get("name"), reached.get("dependencies", ABSENT)))
+                # The manifest's list belongs to the entry whose source reaches it, whatever the manifest
+                # is named; the names check reports a manifest named unlike its entry.
+                lists.append((manifest, entry.get("name"), reached.get("dependencies", ABSENT)))
             for label, own, deps in lists:
                 # Only a missing key is no list; an explicit JSON null is refused below as not a list.
                 if deps is ABSENT:

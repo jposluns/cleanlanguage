@@ -427,6 +427,60 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_text(gate.AGENT_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Version": "2"}\n')
         self.expect(0, "OK: D1 to D4 hold")
 
+    def test_keys_in_another_letter_case_are_not_read(self):
+        # Each key the gate reads, in each file and plugin entry where it reads it, written in another
+        # letter case. The gate reads a key exactly as written, so a key it requires is missing, and a
+        # key it reads only where present, given a value that fails when read, is not read.
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
+        reach = "{}{} plugins[0].name is {!r}, but the manifest its source reaches, {}, is named {!r}"
+        for rel, entry, key, value, lines in (
+                (root, False, "name", None, [f"D1: {root} name is None, not 'cleanlanguage'",
+                                             f"D1: {root} name is None, not a name"]),
+                (root, False, "plugins", None, [f"D1: {root} lists no plugins, not exactly 1",
+                                                f"D2: {root} has no plugins list"]),
+                (root, True, "name", None, [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'",
+                                            f"D1: {root} plugins[0].name is None, not a name",
+                                            reach.format("D1: ", root, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
+                (root, True, "source", None, [f"D2: {root} plugins[0] has no source"]),
+                (root, True, "version", "9.9.9", []),
+                (root, True, "dependencies", ["no-such-plugin"], []),
+                (vend, False, "name", None, [f"D1: {vend} name is None, not a name"]),
+                (vend, False, "plugins", None, [f"D2: {vend} has no plugins list"]),
+                (vend, True, "name", None, [f"D1: {vend} plugins[0].name is None, not a name",
+                                            reach.format("D1: ", vend, None, hooks, "aiqt-guardrails-hooks")]),
+                (vend, True, "source", None, [f"D2: {vend} plugins[0] has no source"]),
+                (vend, True, "dependencies", ["no-such-plugin"], []),
+                (gate.CLAUDE_MANIFEST, False, "name", None,
+                 [f"D1: {gate.CLAUDE_MANIFEST} name is None, not 'cleanlanguage'",
+                  reach.format("D1: ", root, "cleanlanguage", gate.CLAUDE_MANIFEST, None)]),
+                (gate.CLAUDE_MANIFEST, False, "version", None,
+                 [f"D3: {gate.CLAUDE_MANIFEST} version is None, not a version"]),
+                (gate.CLAUDE_MANIFEST, False, "dependencies", ["no-such-plugin"], []),
+                (gate.AGENT_MANIFEST, False, "name", None, [f"D1: {gate.AGENT_MANIFEST} name is None, not 'cleanlanguage'"]),
+                (gate.AGENT_MANIFEST, False, "version", None,
+                 [f"D3: {gate.AGENT_MANIFEST} version is None, not a version"]),
+                (gate.SITE_JSON, False, "site_key", None, [f"D1: {gate.SITE_JSON} site_key is None, not 'cleanlanguage'"]),
+                (hooks, False, "name", None, [reach.format("D1: ", vend, "aiqt-guardrails-hooks", hooks, None)]),
+                (hooks, False, "dependencies", ["no-such-plugin"], [])):
+            other = key.title()
+
+            def change(data, key=key, value=value, other=other):
+                held = data["plugins"][0] if entry else data
+                # None: the key renamed, its value kept; else the key added in another letter case only.
+                held[other] = held.pop(key) if value is None else value
+            with self.subTest(rel=rel, entry=entry, key=other):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, change)
+                try:
+                    if lines:
+                        output = self.expect(1, count=len(lines))
+                        self.assertEqual(output.splitlines()[:-2], [f"FAIL {line}" for line in lines], output)
+                    else:
+                        self.expect(0, "0 dependencies read")
+                finally:
+                    (self.root / rel).write_bytes(saved)
+
     def test_unreadable_file_exits_3(self):
         (self.root / gate.SITE_JSON).unlink()
         (self.root / gate.SITE_JSON).mkdir()
@@ -1318,7 +1372,8 @@ class PluginDistributionTest(unittest.TestCase):
 
     def test_os_error_whose_strerror_or_message_misbehaves_is_shown_guarded(self):
         # At each place the gate shows an OSError, in a refusal or in a FAIL line: a strerror made by code
-        # that prints, a strerror whose own methods raise, a message made by code that prints, and a
+        # that prints, a strerror whose own methods raise, a strerror whose making, through its str or
+        # its truth value, raises an exception of each class, a message made by code that prints, and a
         # message whose making raises an exception of each class.
         loud_text = type("LoudText", (str,), {"__str__": loud("loud")})
         for name, marker, number, code, line in (
@@ -1345,6 +1400,12 @@ class PluginDistributionTest(unittest.TestCase):
                      ("loud message", with_message(loud("loud")), "loud")]
             kinds += [(f"message raising {raised.__name__}", with_message(raising(raised)), UNSHOWN_MESSAGE)
                       for raised in RAISED]
+            for method in ("__str__", "__bool__"):
+                # A strerror that is no str, whose str or whose truth value raises.
+                kinds += [(f"strerror whose {method} raises {raised.__name__}",
+                           lambda number=number, method=method, raised=raised: OSError(
+                               number, type("Unshowable", (), {method: raising(raised)})()), UNSHOWN_MESSAGE)
+                          for raised in RAISED]
             for kind, make, shown in kinds:
                 with self.subTest(name=name, marker=marker, number=number, kind=kind):
                     with mock.patch.object(gate, "os", FaultyOs(name, marker, error=make)):
@@ -1352,6 +1413,60 @@ class PluginDistributionTest(unittest.TestCase):
                             output = self.expect(3, f"check-plugin-distribution: {line}{shown}\nUNREADABLE: exit 3\n")
                         else:
                             output = self.expect(1, f"{line}{shown}\n", count=1)
+                    self.assertNotIn("D9", output)
+
+    def test_os_error_whose_errno_misbehaves_is_read_guarded(self):
+        # At each place the gate meets an OSError: an errno read by code that prints, an errno that is an
+        # int subclass whose own methods print and raise, an errno whose reading raises an exception of
+        # each class, and an errno that is not an int. The first 2 are read as their int; the others are
+        # no errno, so a source name too long for the operating system then stops the gate as any other
+        # fault of a source folder does.
+        def shout(*args):
+            print("FAIL D9: forged")
+            print("UNREADABLE: exit 3", file=sys.stderr)
+            raise SystemExit(0)
+
+        class LoudNumber(int):
+            __eq__ = __ne__ = __index__ = __int__ = shout
+            __hash__ = int.__hash__
+
+        def numbered(read):
+            # An OSError subclass with the strerror x, whose errno is read through read.
+            return lambda: type("Numbered", (OSError,), {"errno": property(read)})(None, "x")
+
+        def loud_number(value):
+            def read(self):
+                print("FAIL D9: forged")
+                print("UNREADABLE: exit 3", file=sys.stderr)
+                return value
+            return read
+
+        too_long = ("FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source './aiqt-guardrails-hooks' is "
+                    "not a path the operating system accepts: x")
+        for name, marker, number, line in (
+                ("lstat", "site-src", errno.EIO, "site-src/site.json could not be read: x"),
+                ("listdir", "site-src", errno.EIO, "site-src/site.json could not be read: x"),
+                ("open", "site-src", errno.EIO, "site-src/site.json could not be read: x"),
+                ("fstat", None, errno.EIO, ".claude-plugin/marketplace.json could not be read: x"),
+                ("read", None, errno.EIO, ".claude-plugin/marketplace.json could not be read: x"),
+                ("lstat", "aiqt-guardrails-hooks", errno.EIO, "plugin/aiqt-guardrails-hooks could not be read: x"),
+                ("listdir", "aiqt-guardrails-hooks", errno.EIO, "plugin/aiqt-guardrails-hooks could not be listed: x"),
+                ("lstat", "aiqt-guardrails-hooks", errno.ENAMETOOLONG,
+                 "plugin/aiqt-guardrails-hooks could not be read: x")):
+            # What an errno read as its int gives: the FAIL line of a name too long, or the refusal.
+            read_as_int = (1, too_long) if number == errno.ENAMETOOLONG else (3, line)
+            kinds = [("errno read by code that prints", numbered(loud_number(number)), read_as_int),
+                     ("errno an int subclass whose methods print and raise",
+                      numbered(lambda self, number=number: LoudNumber(number)), read_as_int),
+                     ("errno that is not an int", numbered(lambda self, number=number: float(number)), (3, line))]
+            kinds += [(f"errno raising {raised.__name__}", numbered(raising(raised)), (3, line)) for raised in RAISED]
+            for kind, make, (code, shown) in kinds:
+                with self.subTest(name=name, marker=marker, number=number, kind=kind):
+                    with mock.patch.object(gate, "os", FaultyOs(name, marker, error=make)):
+                        if code == 3:
+                            output = self.expect(3, f"check-plugin-distribution: {shown}\nUNREADABLE: exit 3\n")
+                        else:
+                            output = self.expect(1, f"{shown}\n", count=1)
                     self.assertNotIn("D9", output)
 
     def test_decoding_error_whose_message_misbehaves_is_shown_guarded(self):
@@ -1743,25 +1858,71 @@ class PluginDistributionTest(unittest.TestCase):
                     (self.root / rel).write_bytes(saved)
 
     def test_dependency_on_its_own_name_in_another_letter_case_is_not_the_plugin_itself(self):
-        # A list whose owner is named like the plugin entry its dependency names, but for letter case: an
-        # entry and the manifest its source reaches, in each marketplace. The names check counts the
-        # failures each setup has of its own; no dependency fails.
-        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        # A list whose entry is named like the plugin entry its dependency names, but for letter case: the
+        # list of that entry and of the manifest its source reaches, in each marketplace. The names check
+        # counts the failures each setup has of its own; no dependency fails.
+        upper = "plugin/aiqt-skill-upper/.claude-plugin/plugin.json"
         self.add_vendored("aiqt-skill")
-        self.write_json("plugin/aiqt-skill-upper/.claude-plugin/plugin.json", manifest("AIQT-SKILL", "0.4.0"))
-        for rel, change, count in (
-                (gate.VENDORED_MARKETPLACE, lambda d: d["plugins"].append(
-                    {"name": "AIQT-SKILL", "source": "./aiqt-skill-upper", "dependencies": ["aiqt-skill"]}), 1),
-                (hooks, lambda d: d.update(name="AIQT-Guardrails-Hooks", dependencies=["aiqt-guardrails-hooks"]), 1),
-                (gate.MARKETPLACE, lambda d: d["plugins"].append(
-                    {"name": "CleanLanguage", "source": "./cleanlanguage", "dependencies": ["cleanlanguage"]}), 3),
-                (gate.CLAUDE_MANIFEST, lambda d: d.update(name="CleanLanguage", dependencies=["cleanlanguage"]), 2)):
-            with self.subTest(rel=rel):
-                saved = (self.root / rel).read_bytes()
-                self.edit_json(rel, change)
+        self.write_json(upper, manifest("AIQT-SKILL", "0.4.0"))
+        self.write_json("cleanlanguage-upper/.claude-plugin/plugin.json", manifest("CleanLanguage"))
+        for changes, count in (
+                ([(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"].append(
+                    {"name": "AIQT-SKILL", "source": "./aiqt-skill-upper", "dependencies": ["aiqt-skill"]}))], 1),
+                ([(gate.VENDORED_MARKETPLACE, lambda d: d["plugins"].append(
+                    {"name": "AIQT-SKILL", "source": "./aiqt-skill-upper"})),
+                  (upper, lambda d: d.update(dependencies=["aiqt-skill"]))], 1),
+                ([(gate.MARKETPLACE, lambda d: d["plugins"].append(
+                    {"name": "CleanLanguage", "source": "./cleanlanguage", "dependencies": ["cleanlanguage"]}))], 3),
+                # The second entry reaches a manifest other than the plugin's, which the sources check counts.
+                ([(gate.MARKETPLACE, lambda d: d["plugins"].append(
+                    {"name": "CleanLanguage", "source": "./cleanlanguage-upper"})),
+                  ("cleanlanguage-upper/.claude-plugin/plugin.json", lambda d: d.update(dependencies=["cleanlanguage"]))],
+                 3)):
+            with self.subTest(rels=[rel for rel, _ in changes]):
+                saved = {rel: (self.root / rel).read_bytes() for rel, _ in changes}
+                for rel, change in changes:
+                    self.edit_json(rel, change)
                 try:
                     output = self.expect(1, "1 dependency read", count=count)
                     self.assertNotIn("FAIL D4", output)
+                finally:
+                    for rel, data in saved.items():
+                        (self.root / rel).write_bytes(data)
+
+    def test_manifest_list_belongs_to_the_entry_its_source_reaches(self):
+        # The manifest a source reaches, named unlike its entry, in each marketplace: a dependency on that
+        # entry, by its name alone and with the marketplace, names the plugin itself; a dependency on the
+        # manifest's own name, which is another plugin entry, does not. The names check reports each
+        # manifest named unlike its entry.
+        hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+        claude = gate.CLAUDE_MANIFEST
+        self.add_vendored("aiqt-skill")
+        self.write_json("helper/.claude-plugin/plugin.json", manifest("helper"))
+        self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"].append({"name": "helper", "source": "./helper"}))
+        # The setup's own failures: 2 repository entries, and the second reaching another manifest.
+        setup = 2
+        for rel, name, dep, entry, itself in (
+                (hooks, "AIQT-Guardrails-Hooks", "aiqt-guardrails-hooks", "aiqt-guardrails-hooks", True),
+                (hooks, "other-name", "aiqt-guardrails-hooks@aiqt-guardrails", "aiqt-guardrails-hooks", True),
+                (hooks, "aiqt-skill", "aiqt-skill", "aiqt-guardrails-hooks", False),
+                (claude, "CleanLanguage", "cleanlanguage", "cleanlanguage", True),
+                (claude, "other-name", "cleanlanguage@cleanlanguage", "cleanlanguage", True),
+                (claude, "helper", "helper", "cleanlanguage", False)):
+            with self.subTest(rel=rel, name=name, dep=dep):
+                saved = (self.root / rel).read_bytes()
+                self.edit_json(rel, lambda d: d.update(name=name, dependencies=[dep]))
+                market = gate.MARKETPLACE if rel == claude else gate.VENDORED_MARKETPLACE
+                # The manifest named unlike its entry, and for the plugin's own manifest, unlike the project.
+                count = setup + 1 + (rel == claude) + itself
+                try:
+                    output = self.expect(1, f"FAIL D1: {market} plugins[0].name is {entry!r}, but the manifest its "
+                                            f"source reaches, {rel}, is named {name!r}", "1 dependency read",
+                                         count=count)
+                    line = f"FAIL D4: {rel} dependency {dep!r} names the plugin itself, which this gate refuses"
+                    if itself:
+                        self.assertIn(line, output)
+                    else:
+                        self.assertNotIn("FAIL D4", output)
                 finally:
                     (self.root / rel).write_bytes(saved)
 
