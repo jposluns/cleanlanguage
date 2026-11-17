@@ -1804,22 +1804,60 @@ class OptionalKeyClassProbe(unittest.TestCase):
                     self.assertTrue(self._accepts({**payload, key: self._value(key)}))
 
 
-# The barrier modes 0666, 0600 and 0644 in every form the config might give them: with or without the
-# leading 0 or 0o, and as rw-rw-rw-, rw------- and rw-r--r--.
-BARRIER_MODE_TOKEN = re.compile(r"(?<![0-9A-Za-z])(?:0o?)?(?:666|600|644)(?![0-9])"
+# The barrier modes 0666, 0600 and 0644 in every octal spelling the config might give them: with any
+# number of leading zeros, after 0o or 0O or not, with the regular-file type bits (100644) or not; and
+# as rw-rw-rw-, rw------- and rw-r--r--. BARRIER_MODES gives them as numbers, for a symbolic mode.
+BARRIER_MODE_TOKEN = re.compile(r"(?<![0-9A-Za-z])(?:0[oO])?(?:10)?0*(?:666|600|644)(?![0-9])"
                                 r"|rw-rw-rw-|rw-------|rw-r--r--")
-# Words of a statement about a file's mode or who can read it, and an octal mode of 3 digits.
-MODE_WORDS = re.compile(r"(?i)\b(?:modes?|umask|acls?|permissions?|readable|unreadable|read|chmod)\b"
-                        r"|(?<![0-9A-Za-z])(?:0o?)?[0-7]{3}(?![0-9])")
+BARRIER_MODES = {0o666, 0o600, 0o644}
+# A symbolic mode as chmod takes it: 1 or more clauses, joined by commas, each of 1 or more of u, g, o
+# and a, then =, + or -, then the permissions that the clause sets, adds or takes away.
+SYMBOLIC_MODE = re.compile(r"(?<![\w=+,-])[ugoa]+[=+-][rwxXst]*(?:,[ugoa]+[=+-][rwxXst]*)*(?![\w=+,-])")
+# Words of a statement about a file's mode or who can read it, in each of their forms (mode, umask, ACL,
+# permission, chmod and read, with read as reads, reading, reader, readable, unreadable and reread),
+# and an octal mode of 3 digits in any of the spellings of BARRIER_MODE_TOKEN.
+MODE_WORDS = re.compile(r"(?i)\b(?:modes?|umasks?|acls?|permissions?|chmod(?:s|d?ed|d?ing)?"
+                        r"|(?:un|re-?)?read(?:s|ing|ers?|able|ability)?)\b"
+                        r"|(?<![0-9A-Za-z])(?:0o)?(?:10)?0*[0-7]{3}(?![0-9])")
+
+
+def symbolic_modes(sentence):
+    """The mode that each symbolic mode of sentence (SYMBOLIC_MODE) gives, in order: its clauses applied
+    in turn to a mode whose 9 permission bits are all unknown, each = setting every bit of its classes,
+    each + setting and each - clearing the bits that it names; None where a bit stays unknown, or where
+    the mode holds X, s or t, which no mode of BARRIER_MODES holds."""
+    bits = {"r": 4, "w": 2, "x": 1}
+    shift = {"u": 6, "g": 3, "o": 0}
+    modes = []
+    for match in SYMBOLIC_MODE.finditer(sentence):
+        known = {(cls, bit): None for cls in shift for bit in bits.values()}
+        special = False
+        for clause in match.group(0).split(","):
+            who, op, perms = re.fullmatch(r"([ugoa]+)([=+-])(.*)", clause).groups()
+            special = special or bool(set(perms) - set(bits))
+            named = {bits[p] for p in perms if p in bits}
+            for cls in ("ugo" if "a" in who else who):
+                for bit in bits.values():
+                    if op == "=":
+                        known[cls, bit] = bit in named
+                    elif bit in named:
+                        known[cls, bit] = op == "+"
+        if special or None in known.values():
+            modes.append(None)
+        else:
+            modes.append(sum(bit << shift[cls] for (cls, bit), on in known.items() if on))
+    return modes
 
 
 def barrier_mode_sentences(text):
     """The sentences of text, split after each '.', '!' or '?' that whitespace follows, that state the
     barrier's mode or who can read it: each sentence that names the barrier and holds a word or mode
-    of MODE_WORDS, and each sentence that holds a mode of BARRIER_MODE_TOKEN, in order."""
+    of MODE_WORDS or a symbolic mode, and each sentence that holds a mode of BARRIER_MODE_TOKEN or a
+    symbolic mode that gives one of BARRIER_MODES, in order."""
     return [sentence for sentence in re.split(r"(?<=[.!?])\s+", text)
-            if (re.search(r"(?i)barrier", sentence) and MODE_WORDS.search(sentence))
-            or BARRIER_MODE_TOKEN.search(sentence)]
+            if (re.search(r"(?i)barrier", sentence)
+                and (MODE_WORDS.search(sentence) or SYMBOLIC_MODE.search(sentence)))
+            or BARRIER_MODE_TOKEN.search(sentence) or BARRIER_MODES & set(symbolic_modes(sentence))]
 
 
 class ConfigDisclosure(unittest.TestCase):
@@ -1863,11 +1901,16 @@ class ConfigDisclosure(unittest.TestCase):
         # ACL on the folder overrides the umask for a new file (the stage 2 run under a TMPDIR whose
         # default ACL has the mask r-x gave 0640), so the config must not give the umask rule alone.
         # Every sentence of the config that names the barrier and speaks of a mode, the umask, an ACL,
-        # permissions or reading, and every sentence that gives 0666, 0600 or 0644 in any of their
-        # forms (with or without the leading 0 or 0o, or as rw-rw-rw-, rw------- or rw-r--r--)
-        # (barrier_mode_sentences), must be 1 of the 3 whole sentences below, in that order, so the
-        # config gives 0644 only for a folder without such an ACL. A sentence that names neither the
-        # barrier nor one of those modes is beyond this check.
+        # permissions, chmod or reading, in any form of those words (reads, reading, readable and the
+        # others of MODE_WORDS), or gives a mode in octal or symbolic form, and every sentence that
+        # gives 0666, 0600 or 0644 in any octal spelling (any number of leading zeros, after 0o or 0O
+        # or not, with the type bits 100 or not), as rw-rw-rw-, rw------- or rw-r--r--, or as a
+        # symbolic mode that sets every bit (such as u=rw,go=r) (barrier_mode_sentences), must be 1 of
+        # the 4 whole sentences below, in that order: the 3 that state the barrier mode, so the config
+        # gives 0644 only for a folder without such an ACL, and the 1 that says that the resume audit
+        # reads the registry, which names the barrier and speaks of reading but states no barrier mode.
+        # Beyond this check: a sentence that names neither the barrier nor one of those modes, such as
+        # one that states the mode in decimal (420) or by a symbolic mode that leaves a bit unknown.
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         phrases = ("each audit gives the barrier the mode of a new file in `state_dir`, not the mode of "
                    "the file it replaces: 0666 less the umask, or, where `state_dir` has a default ACL, "
@@ -1881,20 +1924,32 @@ class ConfigDisclosure(unittest.TestCase):
                 self.assertEqual(text.count(phrase), 1)
         self.assertNotIn("the mode of a new file, 0666 less the umask, not the mode", text)
         sentences = [
+            "`orch_resume_audit` reads the registry at every SessionStart and writes `resume-barrier.json` "
+            "under `state_dir`, arming the barrier only when it finds divergence; while a barrier is armed, "
+            "`orch_resume_barrier` surfaces a one-time warning on a mutation outside the record surfaces "
+            "and blocks nothing.",
             "The refreshed hook writes the barrier to a new temporary file and replaces the old file "
             "with it, so " + phrases[0] + ".",
             phrases[1] + ", and so readable by every user who can reach `state_dir`.",
             "The writer, `_orch_barrier_write`, is the pack's and is not edited here; " + phrases[2] + "."]
         self.assertEqual(barrier_mode_sentences(text), sentences,
                          "a barrier mode stated outside the conditioned sentences")
-        # The check refuses a stated barrier mode of each kind.
+        # The check refuses a stated barrier mode of each kind: each octal spelling, each symbolic form
+        # and each form of the words.
         for added in ("A barrier is 0644 after every audit.", "A barrier is 644 after every audit.",
                       "A barrier is 0o644 after every audit.", "The barrier ends as rw-r--r--.",
                       "Every audit leaves the barrier readable by every user, whatever the ACL.",
                       "Its mode is 0600 again after an audit.",
-                      "The barrier keeps the permissions it had."):
+                      "The barrier keeps the permissions it had.",
+                      "The barrier is 00644 after every audit.", "An audit leaves 0O600 on it.",
+                      "A barrier is 0o0644 after every audit.", "Its file is 100644 after every audit.",
+                      "After every audit the barrier is u=rw,go=r.", "Every audit leaves it a=rw.",
+                      "Every audit leaves it u=rw,go-rwx.", "Each audit gives the barrier o+r.",
+                      "Every user reads the barrier after each audit.",
+                      "Any process can be reading the barrier after an audit.",
+                      "Every user is a reader of the barrier.", "The barrier is chmodded after an audit."):
             with self.subTest(added=added):
-                self.assertEqual(len(barrier_mode_sentences(text + " " + added)), 4)
+                self.assertEqual(len(barrier_mode_sentences(text + " " + added)), 5)
 
     def test_lease_liveness_states_the_non_empty_condition(self):
         # The lease makes scope live only when its file is non-empty as well as present and

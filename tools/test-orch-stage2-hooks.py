@@ -69,7 +69,10 @@ the doctor's texts to equal those texts, each text to cite exactly the ranges of
 each claim to hold at source. Every case that checks a refusal of a special file at a pre-check site
 checks the whole refusal line, the label of the path included (PRECHECK_LABELS in the reach cases),
 through assert_refusal, and a source probe keeps every string literal of this file that holds a part
-of such a refusal inside it or the tables that word the refusal. Each command checks only what its own
+of such a refusal inside it, the arguments that name the path in a call of it, or the tables that word
+the refusal: a piece of the literal that lines up with any stretch of the refusal line, the label
+included, and touches 2 or more of its words, a stretch of 4 or more of its whole words, or 1 of its
+opening fragments. Each command checks only what its own
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
 an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview.
@@ -3871,40 +3874,160 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                     self.assertNotIn("does not open it", tail)
 
     # Where a string may hold a part of a pre-check refusal: the helper that checks the whole line, the
-    # tables that word the refusal, and this probe.
-    REFUSAL_HOLDERS = {"assert_refusal", "OPEN_ACCOUNTS", "BLOCKING_TEXT", "READER_END", "ENUMERATOR_END",
-                       "REFUSAL_HEAD", "refusal_fragments_outside",
+    # tables that word the refusal (the labels included), and this probe.
+    REFUSAL_HOLDERS = {"assert_refusal", "PRECHECK_LABELS", "OPEN_ACCOUNTS", "BLOCKING_TEXT", "READER_END",
+                       "ENUMERATOR_END", "REFUSAL_HEAD", "REFUSAL_MIDDLE", "refusal_skeleton",
+                       "refusal_pieces", "refusal_reach", "refusal_fragments_outside",
                        "test_every_refusal_check_reads_the_whole_wording"}
-    # The fragments of the refusal's opening words ("cannot evaluate: the <label> <path> is not a
-    # regular file (it is a <made>); "). _assert_barrier_refused checks the barrier refusal of the
-    # resume audit, which is not a pre-check refusal but also says "is not a regular file (it is a",
-    # so only "cannot evaluate" and the tails count there.
+    # The fragments that open every pre-check refusal ("cannot evaluate: the <label> <path> is not a
+    # regular file (it is a <made>); <tail>"), which a string that holds any of them anywhere holds a
+    # part of the refusal by, and the words of the line between the path and the type.
+    # _assert_barrier_refused checks the barrier refusal of the resume audit, which is not a pre-check
+    # refusal but also says "<path> is not a regular file (it is a <made>)", so there only "cannot
+    # evaluate" of the fragments counts, and the words of REFUSAL_MIDDLE count for no rule.
     REFUSAL_HEAD = ("cannot evaluate", "is not a regular file", "(it is a ")
+    REFUSAL_MIDDLE = " is not a regular file (it is a "
     BARRIER_HELPER = "_assert_barrier_refused"
+    # The gaps of the refusal line that the path and the file type fill: the path is any text without
+    # white space, and the type any text without ";".
+    PATH_GAP = "<path>"
+    TYPE_GAP = "<made>"
+    # A piece of a string (refusal_pieces) holds a part of the refusal at a site when, as a whole, it
+    # lines up with a stretch of the refusal line and touches PIECE_WORDS or more of the line's words, or
+    # when a stretch of it lines up with SPAN_WORDS or more whole words of the line (refusal_reach).
+    PIECE_WORDS = 2
+    SPAN_WORDS = 4
+
+    def refusal_skeleton(self, site, barrier):
+        """The refusal line at site as a tuple of (char, word): char is a character of its fixed text, in
+        lower case, or PATH_GAP or TYPE_GAP for the gap that the path or the file type fills; word numbers
+        each run of the fixed text without white space that holds a letter or a digit, and is None for
+        white space, a gap, a run without a letter or a digit, and, with barrier (in BARRIER_HELPER), the
+        words of REFUSAL_MIDDLE."""
+        parts = (("cannot evaluate: the " + PRECHECK_LABELS[site] + " ", True), (self.PATH_GAP, None),
+                 (self.REFUSAL_MIDDLE, not barrier), (self.TYPE_GAP, None),
+                 ("); " + expected_tail(site), True))
+        skeleton, words = [], 0
+        for text, counted in parts:
+            if counted is None:
+                skeleton.append((text, None))
+                continue
+            for run in re.findall(r"\s+|\S+", text.lower()):
+                word = None
+                if counted and not run.isspace() and any(ch.isalnum() for ch in run):
+                    words += 1
+                    word = words
+                skeleton.extend((ch, word) for ch in run)
+        return tuple(skeleton)
+
+    @staticmethod
+    def refusal_pieces(text):
+        """The pieces of text, each in lower case with each run of white space made 1 space: text split at
+        each line break and at each regular-expression anchor (^ or $), alternation (|), inline group
+        ("(?" to ")"), wildcard (".*", ".+" or ".?") and escape of a letter or a digit, other than "\\s",
+        "\\s+" and "\\s*", which stand for a space; any other escaped character stands for itself."""
+        def token(match):
+            found = match.group(0)
+            if re.fullmatch(r"\\s[*+?]?", found):
+                return " "
+            if re.fullmatch(r"\\[^0-9A-Za-z]", found):
+                return found[1]
+            return "\n"
+        flat = re.sub(r"\\s[*+?]?|\\[0-9A-Za-z][*+?]?|\\.|\.[*+?]|\(\?[^)]*\)|[\^$|]", token, text)
+        return [" ".join(piece.split()).lower() for piece in flat.splitlines() if piece.strip()]
+
+    def refusal_reach(self, piece, skeleton):
+        """(whole, span) for piece against skeleton (refusal_skeleton). whole is the most words of the
+        line that piece touches at a letter or a digit when the whole of piece lines up with a stretch of
+        the line, and 0 when it does not; span is the most whole words of the line that a stretch of piece
+        lines up with, from the start of a word of the line to the end of one."""
+        size = len(skeleton)
+        gaps = [k for k, (char, _word) in enumerate(skeleton) if char in (self.PATH_GAP, self.TYPE_GAP)]
+        starts = [k for k, (_char, word) in enumerate(skeleton)
+                  if word is not None and (k == 0 or skeleton[k - 1][1] != word)]
+        ends = {k + 1 for k, (_char, word) in enumerate(skeleton)
+                if word is not None and (k + 1 == size or skeleton[k + 1][1] != word)}
+
+        def keep(states, k, value):
+            if k not in states or states[k][0] < value[0]:
+                states[k] = value
+
+        def advance(states, ch):
+            # states maps a position of the line to (words touched, last word touched).
+            for k in gaps:
+                if k in states:   # a gap may hold no text
+                    keep(states, k + 1, states[k])
+            after = {}
+            for k, (count, last) in states.items():
+                if k == size:
+                    continue
+                char, word = skeleton[k]
+                if char == self.PATH_GAP:
+                    if not ch.isspace():
+                        keep(after, k, (count, last))
+                elif char == self.TYPE_GAP:
+                    if ch != ";":
+                        keep(after, k, (count, last))
+                elif char == ch:
+                    touches = word is not None and word != last and ch.isalnum()
+                    keep(after, k + 1, (count + 1, word) if touches else (count, last))
+            return after
+
+        whole = {k: (0, None) for k in range(size + 1)}
+        spans, span = {}, 0
+        for ch in piece:
+            whole = advance(whole, ch)
+            for k in starts:
+                keep(spans, k, (0, None))
+            spans = advance(spans, ch)
+            span = max([span] + [count for k, (count, _last) in spans.items() if k in ends])
+        return (max([count for count, _last in whole.values()], default=0), span)
 
     def refusal_fragments_outside(self, source):
-        """(enclosing name, line, text) for every string literal of source, other than a docstring or
-        what an assertNotIn or assertNotRegex call looks for (a check that a refusal is absent), that
-        holds a part of a pre-check refusal outside REFUSAL_HOLDERS: it contains a fragment of
-        REFUSAL_HEAD, or it has at least 2 words and is part of the tail of the refusal at a site
-        (expected_tail)."""
-        tails = [expected_tail(site) for site in PRECHECK_OPENS]
+        """(enclosing name, line, text) for every string or bytes literal of source that holds a part of a
+        pre-check refusal outside REFUSAL_HOLDERS, other than a docstring, what an assertNotIn call
+        (its member) or an assertNotRegex call (its unexpected_regex) looks for, a check that a refusal
+        is absent, and the label, path and type given to assert_refusal, which checks the whole line
+        with them. A literal holds a part of a pre-check refusal when it holds a fragment of
+        REFUSAL_HEAD, or when a piece of it (refusal_pieces) reaches PIECE_WORDS as a whole or
+        SPAN_WORDS in a stretch (refusal_reach) against the refusal line at any site
+        (refusal_skeleton), the label and the tail of the site included."""
         tree = ast.parse(source)
+        looked_for = {"assertNotIn": (0, "member"), "assertNotRegex": (1, "unexpected_regex")}
         exempt = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) \
                     and isinstance(node.value.value, str):
                 exempt.add(id(node.value))
-            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                    and node.func.attr in ("assertNotIn", "assertNotRegex") and node.args:
-                exempt.update(id(n) for n in ast.walk(node.args[0]))
+            elif isinstance(node, ast.Call):
+                kept = []
+                if isinstance(node.func, ast.Attribute) and node.func.attr in looked_for:
+                    index, name = looked_for[node.func.attr]
+                    kept = node.args[index:index + 1] + [k.value for k in node.keywords if k.arg == name]
+                elif isinstance(node.func, ast.Name) and node.func.id == "assert_refusal":
+                    kept = node.args[3:] + [k.value for k in node.keywords
+                                            if k.arg in ("label", "path", "made")]
+                for arg in kept:
+                    exempt.update(id(n) for n in ast.walk(arg))
+        skeletons = {barrier: {self.refusal_skeleton(site, barrier) for site in PRECHECK_OPENS}
+                     for barrier in (False, True)}
         outside = []
 
         def holds(text, chain):
-            if any(fragment in text for fragment in self.REFUSAL_HEAD
-                   if self.BARRIER_HELPER not in chain or fragment == "cannot evaluate"):
+            barrier = self.BARRIER_HELPER in chain
+            pieces = self.refusal_pieces(text)
+            if any(fragment in candidate for fragment in self.REFUSAL_HEAD
+                   if not barrier or fragment == "cannot evaluate"
+                   for candidate in [" ".join(text.lower().split())] + pieces):
                 return True
-            return len(text.split()) >= 2 and any(text.strip() in tail for tail in tails)
+            for piece in pieces:
+                if " " not in piece:   # neither rule can hold without a space
+                    continue
+                for skeleton in skeletons[barrier]:
+                    whole, span = self.refusal_reach(piece, skeleton)
+                    if whole >= self.PIECE_WORDS or span >= self.SPAN_WORDS:
+                        return True
+            return False
 
         def visit(node, chain):
             for child in ast.iter_child_nodes(node):
@@ -3913,10 +4036,11 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                     inner = chain + (child.name,)
                 elif isinstance(child, ast.Assign):
                     inner = chain + tuple(t.id for t in child.targets if isinstance(t, ast.Name))
-                if isinstance(child, ast.Constant) and isinstance(child.value, str) \
-                        and id(child) not in exempt and not self.REFUSAL_HOLDERS & set(chain) \
-                        and holds(child.value, chain):
-                    outside.append((chain[-1] if chain else "<module>", child.lineno, child.value))
+                if isinstance(child, ast.Constant) and isinstance(child.value, (str, bytes)) \
+                        and id(child) not in exempt and not self.REFUSAL_HOLDERS & set(chain):
+                    text = child.value if isinstance(child.value, str) else child.value.decode("latin-1")
+                    if holds(text, chain):
+                        outside.append((chain[-1] if chain else "<module>", child.lineno, child.value))
                 visit(child, inner)
 
         visit(tree, ())
@@ -3924,10 +4048,13 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
 
     def test_every_refusal_check_reads_the_whole_wording(self):
         # Every string literal of this file that holds a part of a doctor refusal at a pre-check site
-        # (refusal_fragments_outside) is in assert_refusal, in a table that words the refusal or in
-        # this probe, so each case that checks such a refusal reads the whole line there, and none
-        # checks a part of it alone. A check that builds its text from pieces too short to hold a
-        # fragment is beyond this probe. The probe refuses a partial check of each kind.
+        # (refusal_fragments_outside) is in assert_refusal, among the label, path and type given to it,
+        # in a table that words the refusal or in this probe, so each case that checks such a refusal
+        # reads the whole line there, and none checks a part of it alone. Beyond this probe: a check
+        # that builds its text from pieces that each hold less than a part, such as 1 word of the line,
+        # or 2 or 3 of its words beside other text, and a regular expression that spells the words with
+        # other constructs than those that refusal_pieces reads. The probe refuses a partial check of
+        # each kind, and passes a check that a refusal is absent, whichever argument it gives the text.
         self.assertEqual(self.refusal_fragments_outside(Path(__file__).read_text(encoding="utf-8")), [],
                          "a refusal checked outside assert_refusal")
         tail = expected_tail("scope.lease")
@@ -3937,16 +4064,39 @@ class DoctorPrecheckSiteProbe(unittest.TestCase):
                         'self.assertIn({!r}, r.stdout)'.format(tail),
                         'self.assertIn({!r}, r.stdout)'.format(READER_END),
                         'self.assertIn("would open it with", r.stdout)',
-                        'self.assertTrue("no enumerator ran" in r.stdout)'):
+                        'self.assertTrue("no enumerator ran" in r.stdout)',
+                        # Parts with none of the fragments of REFUSAL_HEAD: the middle, the label, the
+                        # middle with the type, the type with the start of the tail, a bytes literal, a
+                        # regular expression, a part inside other text, and the text and the pattern of
+                        # an assertNotRegex call swapped.
+                        'self.assertIn("not a regular file", r.stdout)',
+                        'self.assertIn("the declared lease.path", r.stdout)',
+                        'self.assertIn("a regular file (it is", r.stdout)',
+                        'self.assertIn("it is a directory); the hook", r.stdout)',
+                        'self.assertIn(b"declared lease.path", r.stdout)',
+                        'self.assertRegex(r.stdout, r"^the declared lease\\.path\\s+\\S+ is")',
+                        'self.assertIn("error: the declared lease.path /x is not a", r.stdout)',
+                        'self.assertNotRegex("cannot evaluate", r.stdout)'):
             with self.subTest(partial=partial):
                 source = "def test_partial(self, r):\n    {}\n".format(partial)
                 self.assertEqual(len(self.refusal_fragments_outside(source)), 1)
         for fine in ('self.assertNotIn("cannot evaluate", r.stdout)',
                      'self.assertNotIn("blocking open", r.stdout)',
-                     'self.assertFalse(marker.exists(), "the enumerator ran")'):
+                     'self.assertFalse(marker.exists(), "the enumerator ran")',
+                     'self.assertNotRegex(r.stdout, "cannot evaluate")',
+                     'self.assertNotIn(member="cannot evaluate", container=r.stdout)',
+                     'self.assertNotRegex(r.stdout, unexpected_regex="cannot evaluate")',
+                     'assert_refusal(self, r.stdout, "scope.lease", "declared lease.path", lease, "directory")',
+                     'self.assertIn("is not a decision id", r.stdout)'):
             with self.subTest(fine=fine):
                 source = "def test_fine(self, r):\n    {}\n".format(fine)
                 self.assertEqual(self.refusal_fragments_outside(source), [])
+        # The barrier helper may hold the words of REFUSAL_MIDDLE, and nothing else of the refusal.
+        helper = "def {}(self, r):\n    self.assertIn({!r}, r.stdout)\n"
+        self.assertEqual(self.refusal_fragments_outside(
+            helper.format(self.BARRIER_HELPER, "{} is not a regular file (it is a {})")), [])
+        self.assertEqual(len(self.refusal_fragments_outside(
+            helper.format(self.BARRIER_HELPER, "cannot evaluate: the {}"))), 1)
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,
