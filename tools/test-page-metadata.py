@@ -1891,7 +1891,8 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                     continue
                 command = "check-page-metadata: git " + " ".join(reading.prefix).replace("{main}", main) + " "
                 for fault in FAULTS:
-                    if fault.check not in reading.checks or (fault.no_length and "length" in reading.checks):
+                    if fault.check not in reading.checks or (fault.readings is not None
+                                                             and reading.id not in fault.readings):
                         continue
                     output = reading.template.replace(b"{name}", fault.make(reading.valid, digits))
                     with self.subTest(reading=reading.id, options=options, fault=fault.id):
@@ -1906,20 +1907,32 @@ class ProtectedLineHistoryTest(unittest.TestCase):
     def test_gate_calls_match_the_table(self):
         # The sites that gate_sites() finds in the gate's source are the
         # keys of SITES, each line that SEARCHES find outside a docstring or
-        # a comment holds a site, and each check that SITES gives a site is
-        # driven by a row of READINGS that reaches the site and has that
-        # check, save the sites in NO_ROW. A site added, removed or moved
-        # to another function fails this case until the table names it.
+        # a comment holds a site, each check that a row of READINGS has is
+        # applied, at the site that APPLIED_AT names, among the sites that
+        # the row reaches, each fault limited to some rows names rows that
+        # have its check, and each check that SITES gives a site is driven
+        # by a row that reaches the site and has that check, save the sites
+        # in NO_ROW. A site added, removed or moved to another function
+        # fails this case until the table names it.
         sites = gate_sites()
         self.assertEqual(sorted(site[:3] for site in sites), sorted(SITES))
         site_lines = {site[3] for site in sites}
         self.assertEqual(sorted(set(search_lines()) - site_lines), [])
         self.assertEqual({site for site, checks in SITES.items() if not checks}, set(NO_ROW))
+        for check, site in APPLIED_AT.items():
+            self.assertIn(check, SITES[site])
         for reading in READINGS:
             with self.subTest(reading=reading.id):
                 self.assertLessEqual(set(reading.sites), set(SITES))
-                applied = {check for site in reached(reading.sites) for check in SITES[site]}
+                reach = reached(reading.sites)
+                applied = {check for check, site in APPLIED_AT.items() if site in reach}
                 self.assertLessEqual(set(reading.checks), applied)
+        rows = {reading.id: reading for reading in READINGS}
+        for fault in FAULTS:
+            with self.subTest(fault=fault.id):
+                for row in fault.readings or ():
+                    self.assertIn(row, rows)
+                    self.assertIn(fault.check, rows[row].checks)
         for site, checks in SITES.items():
             for check in checks:
                 with self.subTest(site=site, check=check):
@@ -2121,6 +2134,12 @@ NO_ROW = {
     ("blob_at", "decode", 1): "it decodes a mode only after TREE_ENTRIES admits the entry's mode and type, "
                               "and each mode there is ASCII digits",
 }
+# The site at which the gate applies each check: the decode in
+# ascii_output(), the OBJECT_NAME match in object_name() and its comparison
+# with length.
+APPLIED_AT = {"ascii": ("ascii_output", "decode", 1),
+              "form": ("object_name", "OBJECT_NAME", 1),
+              "length": ("object_name", "length", 3)}
 # Searches of the gate's source for the places that read an object name or
 # git's output, run line by line. Each line they find outside a docstring
 # or a comment must hold a site.
@@ -2138,9 +2157,11 @@ SHA256 = ("--object-format=sha256",)
 class Reading(NamedTuple):
     """A reading of git's output: the git call that fake_git() answers,
     the output with {name} where a fault goes and what {name} holds in
-    output that git prints, the checks that the gate applies to {name}, the
+    output that git prints, the checks that refuse a fault in {name}, the
     sites that the reading passes through and the git init options of the
-    repositories it runs in."""
+    repositories it runs in. The length check refuses a listing's first
+    line of the wrong length through the line after it, whose length must
+    equal the first line's."""
     id: str
     prefix: tuple[str, ...]
     template: bytes
@@ -2153,12 +2174,12 @@ class Reading(NamedTuple):
 class Fault(NamedTuple):
     """A fault for 1 check: make(valid, digits) gives what {name} holds,
     where valid is the reading's valid text and digits the length of the
-    repository's object names. A fault with no_length applies only where
-    no length applies."""
+    repository's object names. A fault applies to each row that has its
+    check, or, when readings is given, only to the rows that it names."""
     id: str
     check: str
-    no_length: bool
     make: Callable[[bytes, int], bytes]
+    readings: tuple[str, ...] | None = None
 
 
 LISTING = (("protected_base", "git", 1), ("protected_base", "length", 1), ("protected_base", "object_name", 1),
@@ -2170,17 +2191,24 @@ PROTECTED_LINE = b"refs/remotes/origin/main "
 TREE_PAIRS = (b"100644 blob", b"100755 blob", b"120000 blob", b"040000 tree", b"160000 commit")
 READINGS = (
     # A ref listing line, the protected refname's or 1 below it, first,
-    # second or third. The first line has no length to match, and each
-    # listing names the protected refname at most once.
+    # second or third, after or before the protected refname's line. A
+    # first line alone has no length to match, and each listing names the
+    # protected refname at most once.
     Reading("listing, protected, line 1", ("for-each-ref",), PROTECTED_LINE + b"{name}\n", b"{main}",
             ("ascii", "form"), LISTING, (SHA1, SHA256)),
     Reading("listing, below, line 1", ("for-each-ref",), b"refs/remotes/origin/main/x {name}\n", b"{main}",
             ("ascii", "form"), LISTING, (SHA1, SHA256)),
+    Reading("listing, below, line 1, then protected", ("for-each-ref",),
+            b"refs/remotes/origin/main/x {name}\n" + PROTECTED_LINE + b"{main}\n", b"{main}",
+            ALL, LISTING, (SHA1, SHA256)),
     Reading("listing, protected, line 2", ("for-each-ref",),
-            b"refs/remotes/origin/main/y {main}\n" + PROTECTED_LINE + b"{name}\n", b"{main}",
+            b"refs/remotes/origin/main/x {main}\n" + PROTECTED_LINE + b"{name}\n", b"{main}",
             ALL, LISTING, (SHA1, SHA256)),
     Reading("listing, below, line 2", ("for-each-ref",),
-            b"refs/remotes/origin/main/y {main}\nrefs/remotes/origin/main/x {name}\n", b"{main}",
+            b"refs/remotes/origin/main/x {main}\nrefs/remotes/origin/main/y {name}\n", b"{main}",
+            ALL, LISTING, (SHA1, SHA256)),
+    Reading("listing, below, line 2, after protected", ("for-each-ref",),
+            PROTECTED_LINE + b"{main}\nrefs/remotes/origin/main/x {name}\n", b"{main}",
             ALL, LISTING, (SHA1, SHA256)),
     Reading("listing, protected, line 3", ("for-each-ref",),
             b"refs/remotes/origin/main/y {main}\nrefs/remotes/origin/main/z {main}\n" + PROTECTED_LINE
@@ -2209,18 +2237,45 @@ READINGS = (
     Reading("last-change date", ("log", "-1"), b"{name}\n", b"2026-02-02", ASCII,
             (("last_change_date", "commit_dates", 1),), (SHA1,)),
 )
-# The faults: the byte 0xff before the valid text; at the repository's
-# length, a last digit just outside 0 to 9 and a to f, or in upper case;
-# the other object format's length; and, where no length applies, lengths
-# that neither format has.
+BAD_DIGITS = (b"/", b":", b"`", b"g", b"A")
+OTHER_LENGTH = {40: 64, 64: 40}
+HASH_OBJECT = "git hash-object result"
+# Each row that has a fault's check is given these faults: the byte 0xff
+# before the valid text; at the repository's length, a last digit just
+# outside 0 to 9 and a to f, or in upper case; and the other object
+# format's length, in 1s and in the digits 0 to f. The rest are the inputs
+# that the per-site cases this table replaced gave, each given to the rows
+# that it names: lengths that neither format has, where no length applies
+# and to the git hash-object result; the names HEAD and zz; 1 digit more
+# than a blob's name; to the git hash-object result, every digit bad, and
+# 40 good digits then 24 bad; and, to the blob entries, the other format's
+# length in the digits 0 to 7.
 FAULTS = (
-    Fault("byte 0xff first", "ascii", False, lambda valid, digits: b"\xff" + valid),
-    *[Fault(f"last digit {char.decode('ascii')}", "form", False,
+    Fault("byte 0xff first", "ascii", lambda valid, digits: b"\xff" + valid),
+    *[Fault(f"last digit {char.decode('ascii')}", "form",
             lambda valid, digits, char=char: b"0" * (digits - 1) + char)
-      for char in (b"/", b":", b"`", b"g", b"A")],
-    Fault("other format's length", "length", False, lambda valid, digits: b"1" * {40: 64, 64: 40}[digits]),
-    *[Fault(f"{count} digits", "form", True, lambda valid, digits, count=count: b"0" * count)
+      for char in BAD_DIGITS],
+    Fault("other format's length in 1s", "length", lambda valid, digits: b"1" * OTHER_LENGTH[digits]),
+    Fault("other format's length in 0 to f", "length",
+          lambda valid, digits: (b"0123456789abcdef" * 4)[:OTHER_LENGTH[digits]]),
+    *[Fault(f"{count} digits", "form", lambda valid, digits, count=count: b"0" * count,
+            tuple(reading.id for reading in READINGS if "form" in reading.checks and "length" not in reading.checks)
+            + (HASH_OBJECT,))
       for count in (39, 41, 63, 65, 88, 104)],
+    Fault("HEAD", "form", lambda valid, digits: b"HEAD",
+          ("listing, protected, line 1", "merge base, line 1", "merge base, line 2")),
+    Fault("zz", "form", lambda valid, digits: b"zz", ("listing, below, line 1, then protected", HASH_OBJECT)),
+    Fault("1 digit more", "form", lambda valid, digits: valid + b"0", ("tree entry 100644 blob, HEAD",)),
+    *[Fault(f"every digit {char.decode('ascii')}", "form", lambda valid, digits, char=char: char * digits,
+            (HASH_OBJECT,))
+      for char in BAD_DIGITS],
+    *[Fault(f"40 digits, then 24 {char.decode('ascii')}", "form",
+            lambda valid, digits, char=char: b"0" * 40 + char * 24, (HASH_OBJECT,))
+      for char in BAD_DIGITS],
+    Fault("other format's length in 0 to 7", "length",
+          lambda valid, digits: (b"01234567" * 8)[:OTHER_LENGTH[digits]],
+          tuple(f"tree entry {pair.decode('ascii')}, {where}" for where in ("HEAD", "merge base")
+                for pair in TREE_PAIRS[:3])),
 )
 
 
