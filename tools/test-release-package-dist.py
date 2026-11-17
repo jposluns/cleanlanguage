@@ -41,28 +41,34 @@ environment, never by a git config command. Each build runs with TMPDIR set
 to a folder of the temporary folder, and without the BASHOPTS, SHELLOPTS,
 GLOBIGNORE, BASH_ENV and CDPATH of the test's own environment; the cases of
 inherited shell options set 1 of the first 4, and case 23 sets CDPATH.
-Each stand-in command is a short sh script that the test writes into its
-temporary folder and puts first on the PATH of 1 build. The script gives
-each path that it uses as 1 shell word, quoted by shlex.quote, and the test
-writes it in the encoding of the file system, so that a path with an
+Each stand-in command but kill is a short sh script that the test writes
+into its temporary folder and puts first on the PATH of 1 build. The script
+gives each path that it uses as 1 shell word, quoted by shlex.quote, and the
+test writes it in the encoding of the file system, so that a path with an
 apostrophe, white space or a character outside ASCII reaches it unchanged.
-A stand-in that records its calls writes to its log, for each call, the
-number of its fields and then each field, each ended by a NUL byte, so that
-a field may hold a tab or a newline. The name of the temporary folder
-starts with TEMP_PREFIX, which holds a space, an apostrophe and a letter
-outside ASCII, so that every case runs with such a path; a temporary
-folder whose path holds a colon, which no entry of PATH can hold, ends the
-set-up with an error. A build that the test starts and then signals writes
-its error output to a file of the temporary folder, not to a pipe, and its
-standard output is discarded, so it cannot block on a full pipe while the
-test waits for its stand-in. Such a build runs in a session of its own,
-and once its bash has ended the test ends with SIGKILL any process of that
-session that still runs, so that none changes dist/ while the test reads
-it. In such a build each signal of TRAPPED_SIGNALS has its default action
-and is not blocked, since bash cannot trap a signal that was ignored when
-it started, and the limit on the size of a core file is 1 byte, so that a
-build that a signal ends, when the packager does not trap it, dumps no
-core.
+The stand-in kill of case 24 is a bash function that the environment of 1
+build exports as BASH_FUNC_kill%%, since kill is a builtin of bash, which
+no entry of PATH replaces; it gives the path of its log as 1 shell word,
+quoted by shlex.quote. Some stand-ins record their calls and others record
+nothing. A stand-in that records its calls writes to its log, for each
+call, the number of its fields and then each field, each ended by a NUL
+byte, so that a field may hold a tab or a newline. The name of the
+temporary folder starts with TEMP_PREFIX, which holds a space, an
+apostrophe and a letter outside ASCII, so that every case runs with such a
+path; a temporary folder whose path holds a colon, which no entry of PATH
+can hold, ends the set-up with an error. A build that the test starts and
+then signals writes its error output to a file of the temporary folder,
+not to a pipe, and its standard output is discarded, so it cannot block on
+a full pipe while the test waits for its stand-in. Such a build runs in a
+session of its own, and once its bash has ended the test ends with SIGKILL
+any process of that session that still runs, so that none changes dist/
+while the test reads it. The signal of the exit trap cases of case 14 goes
+to every process of the build's process group; the other signal cases
+send theirs to its bash only. In such a build each signal of
+TRAPPED_SIGNALS has its default action and is not blocked, since bash
+cannot trap a signal that was ignored when it started, and the limit on
+the size of a core file is 1 byte, so that a build that a signal ends,
+when the packager does not trap it, dumps no core.
 
 The near-miss plants are generated, not picked by hand (near_misses): from
 each of the 4 output names of the version at HEAD and from the 2 output
@@ -179,25 +185,35 @@ that clone:
     a stand-in rm that fails at the work folder leaves it in place, and the
     build still exits 7 with no output in dist/. In a good build, a
     stand-in rm that fails at the work folder leaves it in place, and the
-    build still exits 0 with its 4 outputs. A build with that mv that
-    receives any signal of TRAPPED_SIGNALS while a stand-in rm holds the
-    first removal of its exit trap still exits 7, leaves no zip and no
-    .sha256 in dist/, and leaves no work folder.
+    build still exits 0 with its 4 outputs. A build with that mv whose
+    process group receives any signal of TRAPPED_SIGNALS while a stand-in
+    rm holds the first removal of its exit trap still exits 7, leaves no
+    zip and no .sha256 in dist/, and leaves no work folder. The signal
+    reaches the subshell of that removal and the stand-in rm as well, so
+    an exit trap that caught the signal with a handler, which those
+    processes do not inherit, instead of ignoring it would let the signal
+    end that removal, and the case would fail.
 15. After a good build, a build refused by --bogus keeps the planted
     paths, among them the near miss Cleanlanguage.zip, and removes the
     outputs of version 11111111111.0.0.
 16. The packager's code, with its comment lines and the Python programs
-    that it passes to python3 -c set aside, holds exactly 1 rm with a
-    recursive option, `rm -rf -- "${work}" || true`, no rmdir in a for,
-    while or until loop, no rmdir with its parents option, no find -delete,
-    and the line that sets work from mktemp -d with a template in dist/. A
-    word names rm or rmdir whatever folder path, quotes or backslash it
-    carries (/usr/bin/rm, \\rm, 'rm'), and each option word up to the end
-    of that command counts, before or after an operand; an option is
-    recursive when it is a group of short options that holds r or R, or
-    --recursive or an abbreviation of it from --r on. A removal through a
-    command that a variable or eval names, or through another program,
-    such as a Python program, is not seen.
+    that it passes to python3 -c set aside, and with each line that ends
+    in a backslash joined to the next, holds exactly 1 rm with a recursive
+    option, `rm -rf -- "${work}" || true`, no rmdir in a for, while or
+    until loop, no rmdir with its parents option, no find -delete, and the
+    line that sets work from mktemp -d with a template in dist/. The scan
+    sets aside the quotes and backslashes of each line and starts a new
+    command at each (, ), backquote, {, }, ;, & and | outside a ${...}, so
+    it reads the commands of a subshell, a command substitution or a group
+    too. A word names rm or rmdir whatever folder path, quotes or backslash
+    it carries (/usr/bin/rm, \\rm, 'rm'), wherever it stands in its
+    command, such as after `command` or find -exec, and each option word,
+    quoted or not, up to the end of that command counts, before or after an
+    operand; an option is recursive when it is a group of short options
+    that holds r or R, or --recursive or an abbreviation of it from --r
+    on. A removal whose command name or option is made at run time, such
+    as from a variable or by eval of a variable, or that another program,
+    such as a Python program, makes, is not seen.
 17. A stand-in rm, found through the PATH, records each call and a
     stand-in mktemp the work folder: a good build, a build refused by the
     blob check under core.autocrlf=true, and a build whose stand-in mv
@@ -231,6 +247,20 @@ that clone:
     the clone, with CDPATH naming a folder outside the clone that holds
     tools/ and dist/cleanlanguage.zip, exits 0 and writes the 4 outputs in
     the dist/ of the clone; the outside folder is unchanged.
+24. With a stand-in kill that, at `kill -l NAME`, records the call and
+    fails as bash does for a name that it does not know, for 1 of the 24
+    names of SIGNAL_NAMES, which the packager asks its shell for, at a
+    time, and then for STKFLT, PWR, RTMIN and RTMAX together, a good
+    build exits 0, writes the 4 outputs and keeps the planted paths, and
+    the stand-in recorded that the build asked it for a name of those and
+    for no other. With the 4 together, a build that receives SIGSYS while
+    a stand-in mv holds the move of the .sha256 files exits 159 and leaves
+    no zip and no .sha256 in dist/, so the names after an unknown 1 are
+    still trapped.
+25. The scan of case 16 finds 1 more removal of its kind in the packager's
+    text with each line of SECOND_REMOVALS added at its end than without:
+    a recursive rm, an rmdir with its parents option, a find -delete or an
+    rmdir in a loop, in each form that case 16 names.
 
 Each case starts with no dist/ in the clone.
 
@@ -332,9 +362,9 @@ SHELL_VARIABLES = ("BASHOPTS", "SHELLOPTS", "GLOBIGNORE", "BASH_ENV", "CDPATH")
 BUILD_TIMEOUT = 300
 # The exit code of the stand-in mv that refuses a move with a code other than 1.
 MOVE_EXIT = 7
-# The start of the name of the test's temporary folder: a space, an
-# apostrophe and a letter outside ASCII, so that every stand-in, log and
-# build runs with such a path.
+# The start of the name of the test's temporary folder. It starts with
+# ASCII letters and holds a space, an apostrophe and a letter outside
+# ASCII, so that every stand-in, log and build runs with such a path.
 TEMP_PREFIX = "release-package-dist it's %s " % chr(0xE9)
 # The signals whose default action ends a process and that bash can trap,
 # from 1 to SIGRTMAX: all but SIGKILL, which no process can trap; SIGSTOP,
@@ -349,8 +379,60 @@ TRAPPED_SIGNALS = tuple(n for n in range(1, signal.SIGRTMAX + 1)
 # The signals of TRAPPED_SIGNALS that cases of their own name, and the others.
 NAMED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 OTHER_SIGNALS = tuple(n for n in TRAPPED_SIGNALS if n not in NAMED_SIGNALS)
+# The signal names that the packager asks the kill -l of its shell for: the
+# 22 names that it traps by name, then the 2 bounds of the real-time range.
+SIGNAL_NAMES = ("HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "USR1", "SEGV", "USR2", "PIPE",
+                "ALRM", "TERM", "STKFLT", "XCPU", "XFSZ", "VTALRM", "PROF", "IO", "PWR", "SYS",
+                "RTMIN", "RTMAX")
+# Names that a platform other than Linux may lack together.
+NON_LINUX_NAMES = ("STKFLT", "PWR", "RTMIN", "RTMAX")
 # Words that end a shell command on a line of the packager.
 COMMAND_ENDS = {"||", "&&", "|", ";", ";;", "&", ")", "}", "then", "do", "done", "else", "fi", "esac"}
+# A ${...} expansion, which the removal scan reads as 1 word, and the
+# characters at which it starts a new command: a subshell or command
+# substitution, a backquote, a group, a list or a pipe.
+PARAMETER = re.compile(r"\$\{[^{}]*\}")
+COMMAND_STARTS = re.compile(r"[()`{};&|]")
+# A quoted string of a shell line, which the scan sets aside when it counts
+# loops.
+QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
+# A second removal in each form that the scan of the structural case must
+# see, as lines added at the end of the packager's text, with the list of
+# removal_scan that it adds to: recursive rm, looped rmdir or other.
+SECOND_REMOVALS = (
+    ("recursive", 'rm -rf -- "${work}/src"'),
+    ("recursive", '/usr/bin/rm -rf -- "${work}/src"'),
+    ("recursive", '\\rm -r -- "${work}/src"'),
+    ("recursive", "'rm' -R -- \"${work}/src\""),
+    ("recursive", 'r"m" --recursive -- "${work}/src"'),
+    ("recursive", 'rm --rec -- "${work}/src"'),
+    ("recursive", 'rm "${work}/src" -r'),
+    ("recursive", '/bin/rm "-rf" -- "${work}/src"'),
+    ("recursive", "rm '-r' -- \"${work}/src\""),
+    ("recursive", '(rm -rf -- "${work}/src")'),
+    ("recursive", 'gone="$(\\rm -r -- "${work}/src")"'),
+    ("recursive", 'gone=`rm -r -- "${work}/src"`'),
+    ("recursive", '/usr/bin/rm -f \\\n  -r -- "${work}/src"'),
+    ("recursive", '/bin/rm \\\n  -rf -- "${work}/src"'),
+    ("recursive", 'rm -f "${work}/a" \\\n  "${work}/src" -r'),
+    ("recursive", 'true; rm -r -- "${work}/src"'),
+    ("recursive", 'true && rm -r -- "${work}/src"'),
+    ("recursive", 'true || rm -r -- "${work}/src"'),
+    ("recursive", 'true | rm -r -- "${work}/src"'),
+    ("recursive", '{ rm -r -- "${work}/src"; }'),
+    ("recursive", 'if true; then rm -r -- "${work}/src"; fi'),
+    ("recursive", 'command rm -r -- "${work}/src"'),
+    ("recursive", 'find "${work}/src" -exec rm -r {} +'),
+    ("other", 'rmdir -p "${work}/src/a"'),
+    ("other", 'rmdir "-p" "${work}/src/a"'),
+    ("other", '(rmdir --parents "${work}/src/a")'),
+    ("other", '/usr/bin/rmdir \\\n  -p "${work}/src/a"'),
+    ("other", 'find "${work}" -delete'),
+    ("other", 'find "${work}" "-delete"'),
+    ("looped", 'for d in a b; do rmdir "${work}/$d"; done'),
+    ("looped", '(for d in a b; do rmdir "${work}/$d"; done)'),
+    ("looped", 'while false; do\n  rmdir "${work}/src"\ndone'),
+)
 
 
 def git(*args: str) -> bytes:
@@ -503,6 +585,69 @@ def code_lines(text: str) -> list:
             in_python = True
         if line.strip() and not line.lstrip().startswith("#"):
             found.append((n, line))
+    return found
+
+
+def logical_lines(text: str) -> list:
+    """(number, line) for each line of code_lines(text), with each line that
+    ends in a backslash joined to the next by a space, numbered by its
+    first line."""
+    found, pending = [], None
+    for n, line in code_lines(text):
+        if pending is not None:
+            n, line = pending[0], pending[1] + " " + line
+        if line.endswith("\\"):
+            pending = (n, line[:-1])
+        else:
+            pending = None
+            found.append((n, line))
+    if pending is not None:
+        found.append(pending)
+    return found
+
+
+def commands(line: str) -> list:
+    """The words of each command of a logical line, with each ${...} made 1
+    word and the quotes and backslashes of the line set aside; a command
+    starts at each character of COMMAND_STARTS, so the commands of a
+    subshell, a command substitution or a group are read as well."""
+    line = PARAMETER.sub("PARAMETER", line)
+    line = line.replace("\\", "").replace("'", "").replace('"', "")
+    return [part.split() for part in COMMAND_STARTS.split(line) if part.split()]
+
+
+def loop_counts(line: str) -> tuple:
+    """The number of for, while and until loops that a logical line opens
+    and the number of done words that close 1, read from its commands with
+    its quoted strings set aside, so that a word of a message is not
+    taken for either."""
+    words = [w[0] for w in commands(QUOTED.sub("''", line))]
+    return sum(w in ("for", "while", "until") for w in words), words.count("done")
+
+
+def removal_scan(text: str) -> dict:
+    """The removals of a shell script that the structural case refuses, each
+    as (number, line): "recursive", each rm with a recursive option;
+    "looped", each rmdir on a line that is in a for, while or until loop or
+    opens 1; and "other", each rmdir with its parents option and each find
+    -delete."""
+    found = {"recursive": [], "looped": [], "other": []}
+    depth = 0
+    for number, line in logical_lines(text):
+        opens, closes = loop_counts(line)
+        for words in commands(line):
+            for index, word in enumerate(words):
+                name = command_name(word)
+                if name == "rm" and any(recursive_option(o) for o in command_options(words[index + 1:])):
+                    found["recursive"].append((number, line.strip()))
+                if name == "rmdir":
+                    if depth + opens:
+                        found["looped"].append((number, line.strip()))
+                    if any(parents_option(o) for o in command_options(words[index + 1:])):
+                        found["other"].append((number, line.strip()))
+                if word == "-delete":
+                    found["other"].append((number, line.strip()))
+        depth = max(depth + opens - closes, 0)
     return found
 
 
@@ -988,19 +1133,24 @@ class DistTests(unittest.TestCase):
     def test_fifo_at_output_name_refused_with_failed_move(self):
         self.assert_object_refused("fifo", "cleanlanguage-%s.zip" % self.version, failed_move=True)
 
-    def held_signal(self, proc: subprocess.Popen, held: Path, go: Path, sig: int, what: str) -> str:
-        """Wait until the stand-in of proc has written held, send sig, then
-        write go so that the stand-in goes on; once the build's bash has
-        ended, end with SIGKILL every process of its session that still
-        runs, such as a stand-in that a build ended at once left behind, so
-        that none changes dist/ after this returns; return the build's
-        stderr."""
+    def held_signal(self, proc: subprocess.Popen, held: Path, go: Path, sig: int, what: str,
+                    group: bool = False) -> str:
+        """Wait until the stand-in of proc has written held, send sig to the
+        build's bash, or with group to every process of its process group,
+        as a terminal or a CI runner does, then write go so that the
+        stand-in goes on; once the build's bash has ended, end with SIGKILL
+        every process of its session that still runs, such as a stand-in
+        that a build ended at once left behind, so that none changes dist/
+        after this returns; return the build's stderr."""
         try:
             deadline = time.monotonic() + BUILD_TIMEOUT
             while not held.exists() and proc.poll() is None and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.assertTrue(held.exists(), what)
-            proc.send_signal(sig)
+            if group:
+                os.killpg(proc.pid, sig)
+            else:
+                proc.send_signal(sig)
             time.sleep(0.2)
         finally:
             go.write_bytes(b"")
@@ -1014,16 +1164,16 @@ class DistTests(unittest.TestCase):
             proc.output.close()
         return stderr
 
-    def popen_build(self, *args: str, path_prefix: str) -> subprocess.Popen:
+    def popen_build(self, *args: str, path_prefix: str, extra: dict = None) -> subprocess.Popen:
         """Start a build that the test signals. Its error output goes to a
         file of the temporary folder, never to a pipe that the test does not
         read while it waits, and its standard output is discarded, so a
         build that writes more than a pipe holds does not block until the
         wait ends; held_signal reads the file. The build runs in a session
-        of its own, whose processes held_signal can end together."""
+        of its own, whose processes held_signal can signal and end together."""
         output = tempfile.TemporaryFile(dir=self.tmp.name)
         proc = subprocess.Popen(["bash", str(self.clone / "tools" / "release-package.sh"), *args],
-                                cwd=str(self.clone), env=self.packager_env(path_prefix=path_prefix),
+                                cwd=str(self.clone), env=self.packager_env(path_prefix=path_prefix, extra=extra),
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=output,
                                 preexec_fn=default_signals, start_new_session=True)
         proc.output = output
@@ -1055,10 +1205,11 @@ class DistTests(unittest.TestCase):
                              sh_word(self.real("rm"))))
         return held, go
 
-    def assert_signal_ends_build(self, sig: int, code: int):
+    def assert_signal_ends_build(self, sig: int, code: int, extra: dict = None):
         """A stand-in mv holds each move of a .sha256 file until the test
-        has sent sig to the build, then runs the real mv; the build must exit
-        with code and leave no zip and no .sha256 in dist/."""
+        has sent sig to the build, with extra in its environment, then runs
+        the real mv; the build must exit with code and leave no zip and no
+        .sha256 in dist/."""
         bin_dir = self.bin_dir("holding-mv")
         held, go = bin_dir / "held", bin_dir / "go"
         self.write_script(bin_dir / "mv",
@@ -1072,7 +1223,7 @@ class DistTests(unittest.TestCase):
                           "done\n"
                           "exec %s \"$@\"\n" % (sh_word(held), sh_word(go), sh_word(self.real("mv"))))
         self.plant()
-        proc = self.popen_build(path_prefix=str(bin_dir))
+        proc = self.popen_build(path_prefix=str(bin_dir), extra=extra)
         stderr = self.held_signal(proc, held, go, sig, "the build never moved a .sha256 file")
         self.assertEqual(proc.returncode, code, stderr)
         self.assertEqual(outputs(self.dist), [], "a build ended by a signal left output in dist/")
@@ -1301,13 +1452,18 @@ class DistTests(unittest.TestCase):
     def assert_signal_during_trap(self, sig: int):
         """A build whose stand-in mv refuses each move of a .sha256 file with
         MOVE_EXIT, and whose stand-in rm holds the first removal of the exit
-        trap until the test has sent sig to the build, must still complete
-        the removals of the trap and exit with MOVE_EXIT. Nothing is planted,
-        so the trap makes the first removal in dist/ of the build."""
+        trap until the test has sent sig to every process of the build's
+        process group, must still complete the removals of the trap and exit
+        with MOVE_EXIT. Nothing is planted, so the trap makes the first
+        removal in dist/ of the build. The subshell of that removal and the
+        stand-in rm receive sig too: they keep a signal that the trap
+        ignores ignored, but take the default action for 1 that it catches
+        with a handler, so such a trap lets sig end the removal."""
         bin_dir, log = self.trap_stand_ins(MOVE_EXIT)
         held, go = self.holding_rm(Path(bin_dir))
         proc = self.popen_build(path_prefix=bin_dir)
-        stderr = self.held_signal(proc, held, go, sig, "the exit trap never removed an output from dist/")
+        stderr = self.held_signal(proc, held, go, sig, "the exit trap never removed an output from dist/",
+                                  group=True)
         self.assertEqual(proc.returncode, MOVE_EXIT, stderr)
         self.assertIn("mv: refused by the test", stderr)
         self.assertEqual(outputs(self.dist), [], "a signal cut the removals of the exit trap short")
@@ -1349,39 +1505,34 @@ class DistTests(unittest.TestCase):
         self.assert_plants_kept()
 
     def test_only_recursive_removal_is_work_folder(self):
-        """The packager's code, comment lines set aside, holds exactly 1 rm
-        with a recursive option, the removal of the work folder by the path
-        that mktemp gave; no rmdir in a for or while loop, no rmdir with its
-        parents option, and no find -delete. A word names rm or rmdir
-        whatever folder path, quotes or backslash it carries, and each
-        option word up to the end of its command counts."""
+        """The packager's code, comment lines set aside and continued lines
+        joined, holds exactly 1 rm with a recursive option, the removal of
+        the work folder by the path that mktemp gave; no rmdir in a for or
+        while loop, no rmdir with its parents option, and no find -delete.
+        Each command of a line counts, in a subshell, a command substitution
+        or a group too; a word names rm or rmdir whatever folder path,
+        quotes or backslash it carries, and each option word, quoted or
+        not, up to the end of its command counts."""
         text = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
-        recursive, looped_rmdir, other = [], [], []
-        depth = 0
-        for number, line in code_lines(text):
-            words = line.split()
-            if words[0] in ("for", "while", "until"):
-                depth += 1
-            for index, word in enumerate(words):
-                name = command_name(word)
-                if name == "rm":
-                    if any(recursive_option(o) for o in command_options(words[index + 1:])):
-                        recursive.append((number, line.strip()))
-                if name == "rmdir":
-                    if depth:
-                        looped_rmdir.append((number, line.strip()))
-                    if any(parents_option(o) for o in command_options(words[index + 1:])):
-                        other.append((number, line.strip()))
-                if word == "-delete":
-                    other.append((number, line.strip()))
-            if words[0] == "done" or words[-1] == "done":
-                depth = max(depth - 1, 0)
-        self.assertEqual([line for _, line in recursive], ['rm -rf -- "${work}" || true'],
-                         "the recursive removals are %r" % recursive)
-        self.assertEqual(looped_rmdir, [], "rmdir runs in a loop at %r" % looped_rmdir)
-        self.assertEqual(other, [], "other recursive or repeated removals: %r" % other)
+        found = removal_scan(text)
+        self.assertEqual([line for _, line in found["recursive"]], ['rm -rf -- "${work}" || true'],
+                         "the recursive removals are %r" % found["recursive"])
+        self.assertEqual(found["looped"], [], "rmdir runs in a loop at %r" % found["looped"])
+        self.assertEqual(found["other"], [], "other recursive or repeated removals: %r" % found["other"])
         self.assertIn('work="$(mktemp -d "${PWD}/dist/.release-package.XXXXXX")"',
                       [line.strip() for _, line in code_lines(text)])
+
+    def test_structural_scan_sees_second_removal(self):
+        """The scan of the structural case finds 1 more removal of its kind
+        in the packager's text with each line of SECOND_REMOVALS added at
+        its end than in the text alone."""
+        text = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
+        before = removal_scan(text)
+        for kind, added in SECOND_REMOVALS:
+            with self.subTest(added):
+                after = removal_scan(text.rstrip("\n") + "\n" + added + "\n")
+                self.assertEqual(len(after[kind]), len(before[kind]) + 1,
+                                 "the scan did not see %r: %r" % (added, after[kind]))
 
     def recording_rm(self, bin_dir: Path) -> Path:
         """Write into bin_dir a stand-in rm that writes each call's arguments
@@ -1542,6 +1693,46 @@ class DistTests(unittest.TestCase):
         self.assertEqual(snapshot(decoy), before, "the build changed the folder that CDPATH names")
         self.assertEqual(code, 0, stderr)
         self.assertEqual(outputs(self.dist), self.names)
+
+    def kill_not_knowing(self, names: tuple) -> tuple:
+        """A stand-in kill, as an environment entry that exports to the
+        build's bash a function named kill, which bash runs in place of its
+        builtin: at `kill -l NAME` for a NAME of names it writes 1 record of
+        its arguments to its log and fails with a message, as bash does for
+        a name that it does not know; it passes every other call to the
+        builtin. Return the entry and the log."""
+        log = Path(self.tmp.name) / "kill-calls.log"
+        if log.exists():
+            log.unlink()
+        body = ("() { if [ \"$1\" = -l ]; then case \"$2\" in %s) "
+                "printf '%%s\\000' \"$#\" \"$@\" >> %s; "
+                "printf 'kill: %%s: invalid signal specification\\n' \"$2\" >&2; return 1 ;; esac; fi; "
+                "builtin kill \"$@\"; }" % ("|".join(names), sh_word(log)))
+        return {"BASH_FUNC_kill%%": body}, log
+
+    def test_unknown_signal_names_skipped(self):
+        """With a stand-in kill that does not know 1 name of SIGNAL_NAMES
+        at a time, and then the names of NON_LINUX_NAMES together, a good
+        build exits 0, writes the 4 outputs and keeps the plants, and the
+        stand-in recorded that the build asked it only for names that it
+        does not know. With NON_LINUX_NAMES unknown, SIGSYS, which comes
+        after STKFLT in the packager's list, still ends a build with 159
+        while a stand-in mv holds the move of the .sha256 files, and the
+        build leaves no output."""
+        for names in [(name,) for name in SIGNAL_NAMES] + [NON_LINUX_NAMES]:
+            with self.subTest(unknown=" ".join(names)):
+                self.setUp()
+                extra, log = self.kill_not_knowing(names)
+                self.good_build(extra=extra)
+                asked = self.records(log)
+                self.assertTrue(asked, "the build never asked the stand-in kill for %s" % ", ".join(names))
+                self.assertTrue(all(len(a) == 2 and a[0] == "-l" and a[1] in names for a in asked),
+                                "the stand-in kill recorded %r" % asked)
+        with self.subTest(unknown=" ".join(NON_LINUX_NAMES), signal="SIGSYS"):
+            self.setUp()
+            extra, log = self.kill_not_knowing(NON_LINUX_NAMES)
+            self.assert_signal_ends_build(signal.SIGSYS, 128 + signal.SIGSYS, extra=extra)
+            self.assertTrue(self.records(log), "the build never asked the stand-in kill for an unknown name")
 
 
 if __name__ == "__main__":

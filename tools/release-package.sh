@@ -95,10 +95,14 @@
 # SIGTERM, once the command in progress has ended, and counts as a failed
 # exit, unless the signal was ignored when the build started (as SIGHUP is
 # under nohup): bash cannot trap such a signal, so it does not end the
-# build. The exit trap ignores these signals while it runs, so 1 that
-# arrives then leaves the exit code as it was. A signal that arrives before
-# the exit trap is set, when the build has removed and written nothing,
-# leaves dist/ as it was. A refused build therefore leaves in dist/ no zip
+# build. A signal whose name the kill -l of the running shell does not
+# know is left out of the traps, rather than ending the build at its
+# start (see the traps below). The exit trap ignores the trapped signals
+# while it runs, so 1 that arrives then leaves the exit code as it was,
+# and its own commands inherit that, so 1 sent to the whole process group
+# cannot end them either. A signal that arrives before the exit trap is
+# set, when the build has removed and written nothing, leaves dist/ as it
+# was. A refused build therefore leaves in dist/ no zip
 # and no .sha256, unless a removal itself fails: the build then still
 # fails, and an output that it could not remove stays. 3 signals that end
 # a process run no trap: SIGKILL, which no process can trap, and signals 32
@@ -162,16 +166,25 @@ shopt -s dotglob
 # process can trap; SIGSTOP, SIGTSTP, SIGTTIN and SIGTTOU, which stop a
 # process; SIGCHLD, SIGCONT, SIGURG and SIGWINCH, which do not end one; and
 # signals 32 and 33, for which a trap does not take effect. The exit trap
-# ignores the signals of signal_numbers while it runs.
+# ignores the signals of signal_numbers while it runs. The numbers come
+# from the kill -l of the running shell, and a name that it does not know
+# is left out rather than ending the build under set -e: not every
+# platform has SIGSTKFLT, SIGPWR or the real-time signals, whose range is
+# left out unless the shell knows both SIGRTMIN and SIGRTMAX. POSIX
+# requires every shell to know SIGHUP, SIGINT and SIGTERM, so the list is
+# never empty.
 signal_numbers=()
 for signal_name in HUP INT QUIT ILL TRAP ABRT BUS FPE USR1 SEGV USR2 PIPE \
   ALRM TERM STKFLT XCPU XFSZ VTALRM PROF IO PWR SYS; do
-  signal_numbers+=("$(kill -l "${signal_name}")")
+  if signal_number="$(kill -l "${signal_name}" 2>/dev/null)"; then
+    signal_numbers+=("${signal_number}")
+  fi
 done
-last_signal="$(kill -l RTMAX)"
-for ((signal_number = $(kill -l RTMIN); signal_number <= last_signal; signal_number++)); do
-  signal_numbers+=("${signal_number}")
-done
+if first_signal="$(kill -l RTMIN 2>/dev/null)" && last_signal="$(kill -l RTMAX 2>/dev/null)"; then
+  for ((signal_number = first_signal; signal_number <= last_signal; signal_number++)); do
+    signal_numbers+=("${signal_number}")
+  done
+fi
 for signal_number in "${signal_numbers[@]}"; do
   trap "exit $((128 + signal_number))" "${signal_number}"
 done
@@ -234,9 +247,12 @@ work=""
 # failed command would otherwise end the trap under set -e; what a failed
 # removal leaves stays, and the build keeps its exit code, 0 included. The
 # trap ignores the signals that the traps above catch while it runs, so 1
-# of them cannot cut its removals short, and it ends with the build's own
-# exit code. It is set before the first removal, so a signal that ends that
-# removal half done still has the rest of the outputs removed.
+# of them cannot cut its removals short: the subshell and the rm of each
+# removal inherit an ignored signal, while a handler, even 1 that does
+# nothing, would be reset to the default action in them, and a signal
+# sent to the whole process group would end them. It ends with the build's
+# own exit code. It is set before the first removal, so a signal that ends
+# that removal half done still has the rest of the outputs removed.
 cleanup() {
   local rc=$?
   trap '' "${signal_numbers[@]}"
