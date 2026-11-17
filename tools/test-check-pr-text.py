@@ -6,7 +6,7 @@ its exit status and its output; some cases, such as the static ones, run no gate
 starts every child through run_child(), which sets a memory limit, a CPU limit and, where a case
 asks, a stack limit in the child before it runs the gate or the suite, and enforces a wall
 timeout on the child from the process that started it, so a gate that never ends stops at a
-limit. One process that code of the suite starts does not go through run_child(): the
+limit. Only 1 process that code of the suite starts does not go through run_child(): the
 grandchild that UNDECODABLE_PARENT, run as a child through run_child(), starts with
 subprocess.Popen in that child's process group, under the limits it inherits. When run_child()
 leaves its wait on a child of the top suite process, on its wall timeout, on any other
@@ -395,6 +395,134 @@ def run_child(args, *, memory, timeout, cwd, stack=None, cpu=GATE_CPU, **options
     return done
 
 
+# The functions that start a process, which test_every_child_runs_under_its_limits looks for:
+# those of subprocess by name, and those of os by the start of their name.
+SUBPROCESS_LAUNCHES = ("run", "Popen", "call", "check_call", "check_output", "getoutput",
+                       "getstatusoutput")
+OS_LAUNCHES = ("exec", "spawn", "system", "popen", "fork", "posix_spawn")
+# The names of the functions and methods that remove a file or folder, on any object, which
+# test_every_removal_runs_whatever_the_case_does looks for.
+REMOVALS = ("rmtree", "unlink", "remove", "rmdir", "removedirs")
+
+
+def starts_a_process(module, name):
+    """Whether the function name of module, a module name or None, starts a process."""
+    return (module == "subprocess" and name in SUBPROCESS_LAUNCHES
+            or module == "os" and name.startswith(OS_LAUNCHES))
+
+
+def removes(module, name):
+    """Whether a function or method called name removes a file or folder, whatever module is."""
+    return name in REMOVALS
+
+
+def code_texts(tree):
+    """{label: set of texts} for each text of code that tree, the suite's source, holds.
+
+    A text is a string constant, or a sum of string constants joined with +, at any depth of
+    tree; its label is the name of the innermost function that holds it, or "module". Each
+    string that the suite module binds is a text too, labelled with the name that binds it,
+    which also labels a constant or a sum equal to it. A text built otherwise, such as by a
+    call, a format or a join, is not read.
+    """
+    bound = {value: name for name, value in globals().items() if isinstance(value, str)}
+    texts = collections.defaultdict(set)
+    for value, name in bound.items():
+        texts[name].add(value)
+
+    def joined(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = joined(node.left), joined(node.right)
+            if left is not None and right is not None:
+                return left + right
+        return None
+
+    def visit(node, owner):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = node.name
+        text = joined(node)
+        if text is not None:
+            texts[bound.get(text, owner)].add(text)
+        for child in ast.iter_child_nodes(node):
+            visit(child, owner)
+
+    visit(tree, "module")
+    return texts
+
+
+def reached(tree, accepts):
+    """(node, (module, name)) for each place in tree that names a function that accepts takes.
+
+    accepts(module, name) is given 2 kinds of place, a call or any other reference alike, so a
+    reference that binds the function to another name is found as well as a call: an attribute
+    read, x.name, where module is the module that x names, which is the name x when no import
+    binds x, or the module that import binds to it, such as subprocess for sp after import
+    subprocess as sp, and None when x is not a name; and a name read that from module import
+    binds, such as run after from subprocess import run. A function reached otherwise is not
+    found, such as through getattr, importlib, or a module bound to another name by assignment.
+    The pair is returned, not a dotted name, so the cases that compare it hold no text that
+    reads as such a place.
+    """
+    modules, names = {}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                modules[alias.asname or top] = alias.name if alias.asname else top
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                names[alias.asname or alias.name] = (node.module, alias.name)
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            module = (modules.get(node.value.id, node.value.id)
+                      if isinstance(node.value, ast.Name) else None)
+            if accepts(module, node.attr):
+                found.append((node, (module, node.attr)))
+        elif (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+              and node.id in names and accepts(*names[node.id])):
+            found.append((node, names[node.id]))
+    return found
+
+
+def embedded_places(tree, accepts, guarded=None):
+    """{label: (module, name) pairs} of the places reached() finds in each text of code_texts().
+
+    A text that does not parse as Python is passed over; with guarded, a place whose node is
+    in guarded(text tree) is left out. A label with no place is left out.
+    """
+    embedded = {}
+    for label, texts in code_texts(tree).items():
+        for text in sorted(texts):
+            try:
+                code = ast.parse(text)
+            except (SyntaxError, ValueError):
+                continue
+            skip = guarded(code) if guarded else set()
+            found = [name for node, name in reached(code, accepts) if id(node) not in skip]
+            if found:
+                embedded.setdefault(label, []).extend(found)
+    return embedded
+
+
+def run_on_every_path(tree):
+    """The ids of the nodes of tree that run on every path out of their block.
+
+    Those are each node in a finally clause, and each node in the arguments of a call of
+    addCleanup, which registers a cleanup that runs on every path out of the case.
+    """
+    ids = set()
+    for node in ast.walk(tree):
+        parts = list(getattr(node, "finalbody", []))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "addCleanup"):
+            parts += list(node.args) + [keyword.value for keyword in node.keywords]
+        ids.update(id(inner) for part in parts for inner in ast.walk(part))
+    return ids
+
+
 class GateCase(unittest.TestCase):
     """Helpers that write inputs and run the gate, each run a child under run_child()."""
 
@@ -723,6 +851,22 @@ class DefectClasses(GateCase):
                                  (1, ["squash: the text is empty",
                                       "pr-text: subject binding not checked",
                                       "pr-text: 1 defect(s)"]))
+
+    def test_blank_bound_squash_file_is_reported_only_as_empty(self):
+        # A blank squash file that a number binds, by --number, by its name in a squash folder
+        # or by the payload of an event, is reported as empty and nothing else: no binding
+        # line, since its number is known, and no subject defect, since it has no subject.
+        folder = self.tmp / "other" / ".github" / "squash"
+        folder.mkdir(parents=True)
+        (folder / "5.txt").write_text("<!-- a comment -->\n", encoding="utf-8")
+        blank = self.write("blank.txt", "")
+        gate = self.tree(squash=chr(0x200b) + "\n")
+        for name, args in (("--number", ("--squash", blank, "--number", 5)),
+                           ("5.txt", ("--squash", folder / "5.txt")),
+                           ("--event", ("--event", self.event("A body.")))):
+            with self.subTest(name=name):
+                self.assertEqual(self.run_gate(*args, gate=gate if name == "--event" else GATE),
+                                 (1, ["squash: the text is empty", "pr-text: 1 defect(s)"]))
 
     def test_binding_not_checked_line_is_not_a_defect(self):
         result = self.run_gate("--squash", self.write("message.txt", CLEAN_SQUASH))
@@ -1809,46 +1953,33 @@ class OutputAndHonestTexts(GateCase):
                         "decode".format(ORPHAN_BOUND))
 
     def test_every_child_runs_under_its_limits(self):
-        # The only call in the suite's own code that starts a process is in run_child(): it
-        # starts LIMIT_LAUNCH, an outermost call in a new session, waits with a timeout, and
-        # calls end_group(), which kills the child's group, on each path out of the wait;
-        # run_child() takes its memory limit and timeout with no default, and LIMIT_LAUNCH sets
-        # the memory and CPU limits and the mark of a nested call. The code that the suite runs
-        # in a child holds 2 more such calls: UNDECODABLE_PARENT, which a case runs through
-        # run_child(), starts STARTED_SPIN with subprocess.Popen in its own process group, under
-        # the limits it inherits, and LIMIT_LAUNCH replaces its own process with os.execv. The
-        # check reads the suite's source and each text of code in it, every string constant of
-        # the source and every string the module binds, so a new call that starts a process in
-        # either fails it.
-        def starts_a_process(node):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and isinstance(node.func.value, ast.Name)):
-                return False
-            module, name = node.func.value.id, node.func.attr
-            return (module == "subprocess" and name in (
-                "run", "Popen", "call", "check_call", "check_output", "getoutput",
-                "getstatusoutput") or module == "os" and name.startswith(
-                    ("exec", "spawn", "system", "popen", "fork", "posix_spawn")))
+        # The only place in the suite's own code that names a function that starts a process is
+        # the call in run_child(): it starts LIMIT_LAUNCH, an outermost call in a new session,
+        # waits with a timeout, and calls end_group(), which kills the child's group, on each
+        # path out of the wait; run_child() takes its memory limit and timeout with no default,
+        # and LIMIT_LAUNCH sets the memory and CPU limits and the mark of a nested call. The
+        # code that the suite runs in a child names 2 more: UNDECODABLE_PARENT, which a case
+        # runs through run_child(), starts STARTED_SPIN with subprocess.Popen in its own process
+        # group, under the limits it inherits, and LIMIT_LAUNCH replaces its own process with
+        # os.execv. The check reads the suite's source and each text of code that code_texts()
+        # finds in it, and fails on any other place that reached() finds there naming a
+        # function of subprocess or os that starts_a_process() accepts: a call or any other
+        # reference, through the module's name, a name that import binds to the module or a
+        # name that from ... import binds to the function. A process started otherwise is not
+        # seen, such as through getattr, importlib, a module bound to another name by
+        # assignment or a module outside subprocess and os, such as asyncio, multiprocessing or
+        # pty, or from a text of code built otherwise than code_texts() reads.
         tree = ast.parse(SUITE.read_text(encoding="utf-8"))
-        calls = [node for node in ast.walk(tree) if starts_a_process(node)]
-        self.assertEqual([ast.unparse(node.func) for node in calls], ["subprocess.Popen"])
-        bound = {value: name for name, value in globals().items() if isinstance(value, str)}
-        texts = set(bound) | {node.value for node in ast.walk(tree)
-                              if isinstance(node, ast.Constant) and isinstance(node.value, str)}
-        embedded = {}
-        for text in texts:
-            try:
-                code = ast.parse(text)
-            except (SyntaxError, ValueError):
-                continue
-            found = [ast.unparse(node.func) for node in ast.walk(code) if starts_a_process(node)]
-            if found:
-                embedded[bound.get(text, text)] = found
-        self.assertEqual(embedded, {"LIMIT_LAUNCH": ["os.execv"],
-                                    "UNDECODABLE_PARENT": ["subprocess.Popen"]})
+        self.assertEqual([name for node, name in reached(tree, starts_a_process)],
+                         [("subprocess", "Popen")])
+        self.assertEqual(embedded_places(tree, starts_a_process),
+                         {"LIMIT_LAUNCH": [("os", "execv")],
+                          "UNDECODABLE_PARENT": [("subprocess", "Popen")]})
         child = next(node for node in ast.walk(tree)
                      if isinstance(node, ast.FunctionDef) and node.name == "run_child")
-        call = next(node for node in ast.walk(child) if starts_a_process(node))
+        places = [place for place, name in reached(child, starts_a_process)]
+        call = next(node for node in ast.walk(child) if isinstance(node, ast.Call)
+                    and any(node.func is place for place in places))
         self.assertIn(("start_new_session", "outermost"),
                       [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords])
         self.assertEqual(ast.unparse(call.args[0]), "command")
@@ -1872,20 +2003,27 @@ class OutputAndHonestTexts(GateCase):
         self.assertIn("os.environ['" + CHILD_MARK + "'] = '1'", LIMIT_LAUNCH)
 
     def test_every_removal_runs_whatever_the_case_does(self):
-        # A file or folder that a case removes by a call after other statements stays when one
-        # of them fails, so a later subtest that makes it again stops on FileExistsError before
-        # it runs the gate. Each call in the suite that removes a file or folder is in a finally
-        # clause; a cleanup that addCleanup registers runs on every path too, and is a reference
-        # to shutil.rmtree, not a call.
-        def removes(node):
-            return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("rmtree", "unlink", "remove", "rmdir", "removedirs"))
+        # A file or folder that a case removes after other statements stays when one of them
+        # fails, so a later subtest that makes it again stops on FileExistsError before it runs
+        # the gate. So each place in the suite's own code that names a function or method that
+        # removes a file or folder, one of REMOVALS on any object or one that from ... import
+        # binds, a call or any other reference, such as one that binds it to another name, is
+        # in a finally clause or is given to addCleanup, whose cleanup runs on every path. The
+        # code that the suite runs in a child names 1 more, outside a finally clause: the child
+        # of test_removed_working_directory_exits_2 removes the folder it has just made its
+        # working directory, which is what that case checks; that folder is in the case's
+        # temporary folder, which the cleanup of setUp removes on every path. The check reads
+        # the suite's source and each text of code that code_texts() finds in it, through
+        # reached(), so any other such place in either fails it. A removal reached otherwise is
+        # not seen, such as through getattr, a function whose name is not in REMOVALS, or a
+        # text of code built otherwise than code_texts() reads.
         tree = ast.parse(SUITE.read_text(encoding="utf-8"))
-        guarded = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.Try)
-                   for statement in node.finalbody for inner in ast.walk(statement)}
+        guarded = run_on_every_path(tree)
         self.assertEqual(["{}: {}".format(node.lineno, ast.unparse(node))
-                          for node in ast.walk(tree) if removes(node) and id(node) not in guarded],
+                          for node, name in reached(tree, removes) if id(node) not in guarded],
                          [])
+        self.assertEqual(embedded_places(tree, removes, run_on_every_path),
+                         {"test_removed_working_directory_exits_2": [("os", "rmdir")]})
 
     def test_workflow_job_has_a_time_limit(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -2382,9 +2520,13 @@ def generate_sites(source):
     body = list(tree.body)
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
-    body = [node for node in body if not (
-        isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")]
+
+    def is_main_block(node):
+        return (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__")
+
+    main_blocks = [node for node in body if is_main_block(node)]
+    body = [node for node in body if not is_main_block(node)]
     pattern_names = set()
     pattern_calls = []
 
@@ -2518,6 +2660,20 @@ def generate_sites(source):
             where, head), [(first, last, indent + "raise\n")])
 
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def refuse_definitions(node):
+        """Raise UnknownConstruct on a function or class defined at any depth under node."""
+        for inner in ast.walk(node):
+            if isinstance(inner, functions + (ast.ClassDef,)):
+                raise UnknownConstruct("a definition under a module-level statement: "
+                                       + line_of(inner))
+
+    # The "if __name__" block is left out, and any other module-level statement that is not a
+    # definition is read for its expressions alone, so a function or class defined under one,
+    # at any depth, such as in the body of an if or a try or in that block, would get none of
+    # the statement sites of its body; it raises, and is never passed over.
+    for node in main_blocks:
+        refuse_definitions(node)
     for node in body:
         if isinstance(node, functions):
             stack = [node.name + "()"]
@@ -2532,13 +2688,7 @@ def generate_sites(source):
                 elif not (isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant)):
                     raise UnknownConstruct("a class body statement: " + line_of(item))
         else:
-            # A module-level statement is read for its expressions alone, so a function or class
-            # defined under one, such as in the body of an if or a try, would get none of the
-            # statement sites of its body; it raises, and is never passed over.
-            for inner in ast.walk(node):
-                if isinstance(inner, functions + (ast.ClassDef,)):
-                    raise UnknownConstruct("a definition under a module-level statement: "
-                                           + line_of(inner))
+            refuse_definitions(node)
             name = None
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
@@ -4735,7 +4885,8 @@ class MutantSweep(unittest.TestCase):
     """The mutant sweep: a site generated from the gate source, or a hand row, per guard.
 
     generate_sites() reads tools/check-pr-text.py, leaves out its docstrings and its
-    "if __name__" block, and yields every site of a closed set of operators, OPERATORS. In the
+    "if __name__" block, under which it refuses a definition as under any other module-level
+    statement, and yields every site of a closed set of operators, OPERATORS. In the
     Python code, from its ast: each statement of the body of a function or async function
     deleted, a nested function or class, each statement in its body, and each statement in a
     case of a match statement included, or replaced by pass when it is the only statement of
@@ -4756,10 +4907,11 @@ class MutantSweep(unittest.TestCase):
     pattern_pieces() on a pattern expression other than string literals, their concatenation
     with + and a string's join of a name, and generate_sites() on a call written re.<name> for
     any other function of re, such as re.findall, re.sub or re.split, on a decorated nested
-    definition, and on a function or class defined under a module-level statement, such as an
-    if or a try, whose body it would otherwise not walk, so a new construct, a pattern given to
-    such a call or such a definition fails the adequacy test by name. A pattern given to a function
-    of re reached by another name, such as one imported with from re import, is not seen.
+    definition, and on a function or class defined at any depth under a module-level statement,
+    such as an if, a try or the "if __name__" block, whose body it would otherwise not walk, so
+    a new construct, a pattern given to such a call or such a definition fails the adequacy
+    test by name. A pattern given to a function of re reached by another name, such as one
+    imported with from re import, is not seen.
     Each site is named in words, from where it is, the operator and the text it changes, and its
     occurrence, with its exact old text, whole lines, its new text and the number of times its
     old text occurs.
@@ -5156,21 +5308,43 @@ class MutantSweep(unittest.TestCase):
         self.assertEqual(str(caught.exception), "a decorated definition: def inner():")
 
     def test_definition_under_a_module_level_statement_fails_by_name(self):
-        # A gate copy with a function or a class defined under a module-level if or try holds a
-        # body that the generator does not walk, so the generator, and with it setUp and the
-        # adequacy test, raises UnknownConstruct naming that definition.
+        # A gate copy with a function or a class defined under a module-level if or try, at any
+        # depth, or in the "if __name__" block, holds a body that the generator does not walk,
+        # so the generator, and with it setUp and the adequacy test, raises UnknownConstruct
+        # naming that definition. The nested variants put the definition 2 statements deep, so
+        # a check of the direct children of the statement alone passes them over.
         source = GATE.read_text(encoding="utf-8")
         old = "def blank(text):\n"
         self.assertEqual(source.count(old), 1)
-        function = "    def spare():\n        hidden = 1\n        return hidden\n"
-        method = "    class Spare:\n        def spare(self):\n            return 1\n"
+        main_end = '    sys.exit(main(sys.argv[1:]))\n'
+        self.assertTrue(source.endswith('if __name__ == "__main__":\n' + main_end))
+
+        def indented(text, levels):
+            return "".join("    " * levels + line + "\n" for line in text.splitlines())
+
+        function = "def spare():\n    hidden = 1\n    return hidden\n"
+        method = "class Spare:\n    def spare(self):\n        return 1\n"
         for name, block, named in (
-                ("if", "if WIDTH:\n" + function, "def spare():"),
-                ("try", "try:\n" + function + "except ValueError:\n    pass\n", "def spare():"),
-                ("class", "if WIDTH:\n" + method, "class Spare:")):
+                ("if", "if WIDTH:\n" + indented(function, 1), "def spare():"),
+                ("try", "try:\n" + indented(function, 1) + "except ValueError:\n    pass\n",
+                 "def spare():"),
+                ("class", "if WIDTH:\n" + indented(method, 1), "class Spare:"),
+                ("nested if", "if WIDTH:\n    if WIDTH:\n" + indented(function, 2),
+                 "def spare():"),
+                ("if in try", "try:\n    if WIDTH:\n" + indented(method, 2)
+                 + "except ValueError:\n    pass\n", "class Spare:")):
             with self.subTest(variant=name):
                 with self.assertRaises(UnknownConstruct) as caught:
                     generate_sites(source.replace(old, block + "\n\n" + old, 1))
+                self.assertEqual(str(caught.exception),
+                                 "a definition under a module-level statement: " + named)
+        for name, block, named in (
+                ("main function", indented(function, 1), "def spare():"),
+                ("main class", indented(method, 1), "class Spare:"),
+                ("main nested", "    if WIDTH:\n" + indented(function, 2), "def spare():")):
+            with self.subTest(variant=name):
+                with self.assertRaises(UnknownConstruct) as caught:
+                    generate_sites(source + block)
                 self.assertEqual(str(caught.exception),
                                  "a definition under a module-level statement: " + named)
 

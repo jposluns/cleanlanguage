@@ -180,16 +180,19 @@ output is lint code that changes the state of the process, outside the precondit
 The precondition of the contract: it holds when all code of the label lint that runs in the
 gate process, which is trusted repository code, returns without changing the state of that
 process, for example by ending it, as with os._exit, or by writing to, closing or replacing
-standard output. Lint code runs while the lint loads and in each scan call, and also in the
-objects that the lint hands to the gate: while the gate reads the hits that a scan returns,
-slices or writes out a hit, or formats an error that the lint raised, and when such an object
-is freed. Outside it as well are a standard output that cannot be written, an
-input that never ends, such as a FIFO given as the squash file, which the job's time limit ends,
-and a payload nested so deeply that its parse uses up memory on a stack with no limit: the JSON
-reader recurses once for each level, and under a stack limit it stops with a RecursionError,
-reported as "not JSON", once the stack is full, but on a stack with no limit it can grow until
-memory runs out and the process ends by a signal. A run outside the precondition can end with
-another status, with no count line or with a line that has no prefix.
+standard output. Lint code runs wherever the gate process calls it, which includes these
+places: while the lint loads; in each scan call; in the objects that the lint hands to the
+gate, while the gate reads the hits that a scan returns, slices or writes out a hit, or formats
+an error that the lint raised, and when such an object is freed; and in each hook that lint
+code installs, whenever the process calls it, such as an exit hook that atexit registers,
+which runs after the count line, or a signal handler. Outside it as well are a standard output
+that cannot be written, an input that never ends, such as a FIFO given as the squash file,
+which the job's time limit ends, and a payload nested so deeply that its parse uses up memory
+on a stack with no limit: the JSON reader recurses once for each level, and under a stack
+limit it stops with a RecursionError, reported as "not JSON", once the stack is full, but on a
+stack with no limit it can grow until memory runs out and the process ends by a signal. A run
+outside the precondition can end with another status, with no count line or with a line that
+has no prefix.
 """
 import importlib.util
 import json
