@@ -1060,48 +1060,109 @@ HEARTBEAT_ENUMERATOR = (
     "        time.sleep(1)\n"
 )
 
-# Runs in a separate python3 -I process: argv[1] is the hook file, argv[2] the hook action and argv[3]
-# the report file. It makes itself the child subreaper (Linux prctl PR_SET_CHILD_SUBREAPER), so a
-# process that the hook starts and leaves running becomes its child when the hook exits; the kernel
-# moves such a process to it before it reports the hook's exit, so the reading below does not depend
-# on timing. It runs the unchanged hook in a new session with this process's stdin and waits for the
-# hook to exit. It then writes "left running" to the report file if a process that the hook started is
-# still alive, or "none" if not, kills and reaps what is left of that session, so no process outlives
-# the test, and passes on the hook's stdout, stderr and exit status.
-SUBREAPER_HOOK_PROG = """
-import ctypes, os, signal, subprocess, sys, tempfile
+# Runs in a separate python3 -I process: argv[1] is the report file, argv[2] the hook bound and argv[3]
+# the cleanup bound, both in seconds, and argv[4:] the command that runs the hook. It makes itself the
+# child subreaper (Linux prctl PR_SET_CHILD_SUBREAPER), so every process that the hook starts stays
+# its descendant: a process whose parent exits becomes its child, and the kernel makes that move
+# before it reports the parent's exit, so the reading below does not depend on timing. It runs the
+# command in a new session with this process's stdin and waits up to the hook bound for it to exit,
+# and kills it with SIGKILL if it has not. It then notes whether a process that the hook started is
+# still alive. To clean up, it reads its own children from /proc/self/task/*/children, sends each
+# SIGKILL, reaps each that has ended, and repeats until it has no child left: once a process ends,
+# its children become children of this process and are killed in the next pass. It signals only its
+# own children, and a child keeps its process id until it is reaped, so no signal can reach an
+# unrelated process. It stops early only if the cleanup bound passes with a child still alive, which
+# needs a process that outlasts SIGKILL that long, such as one in uninterruptible sleep, and then
+# lists it in the report. It writes the report as JSON: "exited" (the hook exited within its bound),
+# "left_running" (a process that the hook started was alive once the hook had ended) and
+# "not_reaped" (the process ids still alive when cleanup stopped), and then passes on the hook's
+# stdout, stderr and exit status. A process that the hook gets some other program to start, such as
+# a service manager, is not its descendant, and the wrapper does not reach it.
+REAPER_PROG = """
+import ctypes, glob, json, os, signal, subprocess, sys, tempfile, time
 
-hook, action, report = sys.argv[1:4]
+report, hook_bound, cleanup_bound = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
 libc = ctypes.CDLL(None, use_errno=True)
 if libc.prctl(36, 1, 0, 0, 0) != 0:
     sys.exit("prctl PR_SET_CHILD_SUBREAPER failed, errno {}".format(ctypes.get_errno()))
-with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-    proc = subprocess.Popen([sys.executable, "-I", hook, action], stdout=out, stderr=err,
-                            start_new_session=True)
-    proc.wait()
-    left = False
-    while not left:
+if not os.path.exists("/proc/self/task/{}/children".format(os.getpid())):
+    sys.exit("/proc/self/task/{}/children is missing".format(os.getpid()))
+
+
+def children():
+    pids = set()
+    for path in glob.glob("/proc/self/task/*/children"):
+        with open(path, encoding="ascii") as fh:
+            pids.update(int(pid) for pid in fh.read().split())
+    return sorted(pids)
+
+
+def reap():
+    # Reaps every child that has ended; returns False once no child is left.
+    while True:
         try:
-            left = os.waitpid(-1, os.WNOHANG)[0] == 0
+            pid = os.waitpid(-1, os.WNOHANG)[0]
         except ChildProcessError:
-            break
-    with open(report, "w", encoding="utf-8") as fh:
-        fh.write("left running\\n" if left else "none\\n")
-    if left:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        while True:
+            return False
+        if pid == 0:
+            return True
+
+
+with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    proc = subprocess.Popen(sys.argv[4:], stdout=out, stderr=err, start_new_session=True)
+    try:
+        proc.wait(timeout=hook_bound)
+        exited = True
+    except subprocess.TimeoutExpired:
+        exited = False
+        proc.kill()
+        proc.wait()
+    left = alive = reap()
+    deadline = time.monotonic() + cleanup_bound
+    while alive and time.monotonic() < deadline:
+        for pid in children():
             try:
-                os.waitpid(-1, 0)
-            except ChildProcessError:
-                break
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.01)
+        alive = reap()
+    with open(report, "w", encoding="utf-8") as fh:
+        json.dump({"exited": exited, "left_running": left,
+                   "not_reaped": children() if alive else []}, fh)
     out.seek(0)
     err.seek(0)
     sys.stdout.buffer.write(out.read())
     sys.stderr.buffer.write(err.read())
 sys.exit(proc.returncode)
+"""
+
+# A stand-in hook for the wrapper's own tests: argv[1] is a lock file, argv[2] a ready file and argv[3]
+# "exit" or "hang". It takes a shared flock on the lock file and starts a child that calls setsid,
+# so the child is in another session and process group, and that child starts a grandchild; the
+# child and the grandchild inherit the lock and sleep 90 s. Once the grandchild has started, the
+# stand-in writes "ready" to the ready file, and then it exits at once ("exit") or sleeps 90 s
+# ("hang"). The lock stays taken while any of the 3 processes is alive, so a test that can take it
+# exclusively knows that none is.
+STANDIN_HOOK = """
+import fcntl, os, sys, time
+
+lock, ready, mode = sys.argv[1:4]
+fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_SH)
+r, w = os.pipe()
+if os.fork() == 0:
+    os.setsid()
+    if os.fork() == 0:
+        os.write(w, b"x")
+    time.sleep(90)
+    os._exit(0)
+os.close(w)
+os.read(r, 1)
+with open(ready, "w", encoding="utf-8") as fh:
+    fh.write("ready\\n")
+if mode == "hang":
+    time.sleep(90)
 """
 
 # Runs in a separate python3 -I process: argv[1] is the hook file, argv[2] the record file and argv[3]
@@ -1132,71 +1193,165 @@ runpy.run_path(hook, run_name="__main__")
 
 class T15EnumeratorTimeout(Stage2Harness):
     HEARTBEATS_MAX = 5
+    HOOK_BOUND = 120
+    CLEANUP_BOUND = 30
     WALL_CLOCK_BOUND = 240
+    STANDIN_HOOK_BOUND = 10
+    STANDIN_WALL_CLOCK_BOUND = 60
     DECLARED_TIMEOUTS = (0.001, 1, 7.5, 600)
+
+    def run_reaped(self, cmd, report, hook_bound=None, wall_clock_bound=None):
+        """Run cmd through REAPER_PROG with the JSON stdin payload and return (the completed wrapper,
+        or None if it reached the wall-clock bound, and the report, or None if the wrapper wrote
+        none). The hook bound defaults to HOOK_BOUND and the wall-clock bound to WALL_CLOCK_BOUND,
+        which leaves the wrapper 90 s beyond its 2 bounds; the wall-clock bound kills only the
+        wrapper."""
+        hook_bound = self.HOOK_BOUND if hook_bound is None else hook_bound
+        try:
+            r = subprocess.run([sys.executable, "-I", "-c", REAPER_PROG, str(report), str(hook_bound),
+                                str(self.CLEANUP_BOUND), *cmd],
+                               input=json.dumps({"cwd": str(self.repo)}), capture_output=True,
+                               text=True, env=self._env(),
+                               timeout=wall_clock_bound or self.WALL_CLOCK_BOUND)
+        except subprocess.TimeoutExpired:
+            r = None
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.exists() else None
+        return r, rep
+
+    def assert_reaped(self, r, rep, hook_bound=None):
+        """The wrapper ended within the wall-clock bound, wrote its report, left no process alive,
+        and the hook exited within its bound."""
+        if r is None:
+            self.fail("the wrapper hit the {} s wall-clock bound".format(self.WALL_CLOCK_BOUND))
+        if rep is None:
+            self.fail("the wrapper wrote no report; exit {}, stderr: {}".format(r.returncode,
+                                                                                 r.stderr))
+        self.assertEqual(rep["not_reaped"], [], "processes that the hook started outlasted SIGKILL "
+                         "for {} s".format(self.CLEANUP_BOUND))
+        self.assertTrue(rep["exited"], "the hook did not exit within {} s and was killed".format(
+            self.HOOK_BOUND if hook_bound is None else hook_bound))
+
+    def assert_lock_free(self, lock):
+        import fcntl
+        fd = os.open(str(lock), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.fail("a process that the stand-in hook started outlived the wrapper")
+        finally:
+            os.close(fd)
+
+    def run_standin(self, mode):
+        lock = self._tmp / "standin.lock"
+        ready = self._tmp / "standin.ready"
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", STANDIN_HOOK, str(lock), str(ready),
+                                  mode], self._tmp / "standin-report.json",
+                                 hook_bound=self.STANDIN_HOOK_BOUND,
+                                 wall_clock_bound=self.STANDIN_WALL_CLOCK_BOUND)
+        self.assertEqual(ready.read_text(encoding="utf-8") if ready.exists() else "", "ready\n",
+                         "precondition: the stand-in hook started its child and grandchild")
+        self.assert_lock_free(lock)
+        return r, rep
+
+    def test_wrapper_kills_processes_in_another_session(self):
+        # Catches: the stand-in hook exits at once and leaves a child in another session and process
+        # group, and that child's child, both alive. Once the wrapper has returned, the test requires
+        # that it can take the stand-in's lock exclusively, so none of the 3 processes is alive, and
+        # then a report with "left_running" true, "exited" true and "not_reaped" empty. A wrapper
+        # that kills only the hook's process group, as the earlier one did, misses both processes
+        # and then waits for them to end; the 60 s wall-clock bound kills it, and the lock check
+        # fails. A wrapper that kills its children once and does not repeat misses the grandchild.
+        r, rep = self.run_standin("exit")
+        self.assertIsNotNone(r, "the wrapper hit the {} s wall-clock bound".format(
+            self.STANDIN_WALL_CLOCK_BOUND))
+        self.assertEqual(rep, {"exited": True, "left_running": True, "not_reaped": []})
+
+    def test_wrapper_kills_a_hook_that_does_not_exit(self):
+        # Catches: the stand-in hook leaves the same 2 processes and then sleeps 90 s itself, past
+        # the 10 s hook bound. Once the wrapper has returned, the test requires that it can take the
+        # lock exclusively and then a report with "exited" false and "not_reaped" empty. A wrapper
+        # that waits for the hook without a bound, as the earlier one did, is killed by the 60 s
+        # wall-clock bound while the hook and its 2 processes are alive, and the lock check fails.
+        r, rep = self.run_standin("hang")
+        self.assertIsNotNone(r, "the wrapper hit the {} s wall-clock bound".format(
+            self.STANDIN_WALL_CLOCK_BOUND))
+        self.assertEqual(rep, {"exited": False, "left_running": True, "not_reaped": []})
 
     def test_sleeping_enumerator_times_out_and_denies(self):
         # Catches: the heartbeat enumerator runs under a declared timeout of 1 s, and the hook runs
-        # through SUBREAPER_HOOK_PROG. Once the hook call ends, the test requires fewer than 5
-        # heartbeat lines and no process that the hook started still running, then exit 2,
-        # ENUMERATOR_ERROR and 'failed to run' in stderr. The first line is written at start and 1
-        # more each second, so 5 lines need the enumerator alive for about 4 s: a hook that stops it
-        # at a fixed 20 s, at max(timeout, 30), at its 60 s fallback, or only when it ends after its
-        # 90 lines, as with no timeout, fails the count. A hook that returns while the enumerator
-        # still runs, such as one that waits the declared 1 s and never kills it, fails the second
-        # check, however few lines were written by then. The count depends on how long the
-        # enumerator lived and the second check on whether it was still alive, not on how long the
-        # hook call took; a hook call that reaches the 240 s bound fails with its own message.
-        # Misses: a hook whose effective timeout is not the declared 1 s but at most about 4 s, such
-        # as 1 s whatever is declared, timeout * 2 or timeout * 3, passes, as does a hook that stops
-        # the enumerator sooner than declared; test_declared_timeout_reaches_the_enumerator_call
-        # catches each of these that passes subprocess.run a timeout other than the declared value.
-        # This test declares only 1 s, so it does not exercise the hook's check of the declared
-        # value (a number, above 0, at most 600).
+        # through REAPER_PROG. Once the hook call ends, the test requires that the hook exited
+        # within 120 s and that no process it started survived cleanup, then fewer than 5
+        # heartbeat lines and no process that the hook started still running when it ended, then
+        # exit 2, ENUMERATOR_ERROR and 'failed to run' in stderr. The first line is written at start
+        # and 1 more each second, so 5 lines need the enumerator alive for about 4 s: a hook that
+        # stops it at a fixed 20 s, at max(timeout, 30), at its 60 s fallback, or only when it ends
+        # after its 90 lines, as with no timeout, fails the count. A hook that returns while the
+        # enumerator still runs, such as one that waits the declared 1 s and never kills it, fails
+        # the "left_running" check, however few lines were written by then. A hook that does not
+        # exit within 120 s is killed and fails with its own message. The count depends on how long
+        # the enumerator lived and the "left_running" check on whether it was still alive, not on
+        # how long the hook call took. The wrapper kills every process that the hook started and
+        # left running, so none outlives the test (REAPER_PROG states the limits).
+        # Misses: a hook under which the enumerator lives at most about 4 s in all passes, longer
+        # on a loaded host where the enumerator starts slowly. These include a hook whose effective
+        # timeout is not the declared 1 s but at most about 4 s, such as 1 s whatever is declared,
+        # timeout * 2 or timeout * 3, a hook that stops the enumerator sooner than declared, and a
+        # hook that passes the declared 1 s but runs the enumerator again after a timeout, up to 4
+        # runs in all. test_declared_timeout_reaches_the_enumerator_call catches each of these that
+        # passes subprocess.run a timeout other than the declared value, but not the rerun. The
+        # heartbeat enumerator is 1 process, so this test does not check what a hook does with a
+        # process that the enumerator starts: the unchanged hook kills only the enumerator's own
+        # process, so an enumerator that wrote its heartbeats from a child process would fail the
+        # unchanged hook here, on "left_running", and a hook that also kills such children is not
+        # told apart from one that does not. This test declares only 1 s, so it does not exercise
+        # the hook's check of the declared value (a number, above 0, at most 600).
         beats = self._tmp / "heartbeats.txt"
-        report = self._tmp / "left-running.txt"
         self.write_registry(self.stage2(enumerator={
             "argv": [sys.executable, "-I", "-c", HEARTBEAT_ENUMERATOR, str(beats)], "timeout": 1}))
         self.arm_lease()
         started = time.monotonic()
-        try:
-            r = subprocess.run([sys.executable, "-I", "-c", SUBREAPER_HOOK_PROG, str(HOOK),
-                                "orch_stop_guard", str(report)],
-                               input=json.dumps({"cwd": str(self.repo)}), capture_output=True,
-                               text=True, env=self._env(), timeout=self.WALL_CLOCK_BOUND)
-        except subprocess.TimeoutExpired:
-            self.fail("the hook call hit the {} s wall-clock bound".format(self.WALL_CLOCK_BOUND))
+        r, rep = self.run_reaped([sys.executable, "-I", str(HOOK), "orch_stop_guard"],
+                                 self._tmp / "reaper-report.json")
         elapsed = time.monotonic() - started
+        self.assert_reaped(r, rep)
         count = beats.read_text(encoding="utf-8").count("\n") if beats.exists() else 0
         self.assertLess(count, self.HEARTBEATS_MAX,
                         "{} heartbeats in a {:.1f} s hook call: the declared 1 s timeout was not "
                         "enforced".format(count, elapsed))
-        left = report.read_text(encoding="utf-8") if report.exists() else ""
-        self.assertEqual(left, "none\n", "a process that the hook started was still running when "
-                         "the hook call ended, so the declared 1 s timeout did not stop the "
+        self.assertFalse(rep["left_running"], "a process that the hook started was still running "
+                         "when the hook call ended, so the declared 1 s timeout did not stop the "
                          "enumerator; exit {}, stderr: {}".format(r.returncode, r.stderr))
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
 
     def test_declared_timeout_reaches_the_enumerator_call(self):
-        # The unchanged hook runs through RECORDING_HOOK_PROG once for each value in
-        # DECLARED_TIMEOUTS, with the writing fixture as the enumerator under that declared timeout.
-        # For each value the test requires that the calls whose argv is the declared enumerator argv
-        # passed exactly that value: 1 call, with the timeout argument equal to the declared value.
-        # No 2 of the 4 values are equal, so a hook that passes the same timeout whatever is
-        # declared, such as a fixed 1 s, 20 s or 60 s, fails for at least 3 of them, and a hook that
-        # passes timeout * 2, timeout * 3 or no timeout argument fails for all 4. The value 0.001
-        # fails a floor above it, such as max(timeout, 1) or max(timeout, 30), 600 fails a cap below
-        # it, and 7.5 fails rounding to a whole number. The recorder makes the real call without the
-        # timeout, so the fixture always runs to its end and the test measures no elapsed time; the
-        # fixture's mark file must then hold 'ran\n', so the recorded call ran the real enumerator
-        # and nothing else ran it. Residuals: the test does not check that the timeout is enforced
-        # (test_sleeping_enumerator_times_out_and_denies checks the kill) or the hook's verdict; a
-        # hook that starts the enumerator other than through subprocess.run records no call and
-        # fails here even if it enforces the declared value; a floor of 0.001 or below is not
-        # caught; and no declared value is one that the hook's check rejects (not a number, 0 or
-        # below, or above 600), so the 60 s fallback for such a value is not tested.
+        # The unchanged hook runs through RECORDING_HOOK_PROG, itself run through REAPER_PROG, once
+        # for each value in DECLARED_TIMEOUTS, with the writing fixture as the enumerator under that
+        # declared timeout. For each value the test requires that the hook exited within 120 s and
+        # that no process it started survived cleanup, then that the calls whose argv is the
+        # declared enumerator argv passed exactly that value: 1 call, with the timeout argument equal
+        # to the declared value. No 2 of the 4 values are equal, so a hook that passes the same
+        # timeout whatever is declared, such as a fixed 1 s, 20 s or 60 s, fails for at least 3 of
+        # them, and a hook that passes timeout * 2, timeout * 3 or no timeout argument fails for all
+        # 4. The value 0.001 fails a floor above it, such as max(timeout, 1) or max(timeout, 30), 600
+        # fails a cap below it, and 7.5 fails rounding to a whole number. The recorder makes the real
+        # call without the timeout, so the fixture always runs to its end and the test measures no
+        # elapsed time; the fixture's mark file must then hold 'ran\n', so the recorded call ran the
+        # real enumerator and nothing else ran it. Residuals: the test does not check that the
+        # timeout is enforced (test_sleeping_enumerator_times_out_and_denies checks the kill) or the
+        # hook's verdict; a hook that starts the enumerator other than through subprocess.run
+        # records no call and fails here even if it enforces the declared value. It passes a hook
+        # that passes each declared value unchanged and changes others, so it misses: a floor of
+        # 0.001 or below, such as max(timeout, 0.001); a cap of 600 or above, such as
+        # min(timeout, 600), which changes nothing, as the hook's check already rejects a value
+        # above 600; rounding to 3 or more decimal places, such as round(timeout, 3); a change to a
+        # value that the test does not declare, such as 60 s
+        # for any value from 10 to 599; and a hook that runs the enumerator again after a timeout,
+        # as no call here times out. No declared value is one that the hook's check rejects (not a
+        # number, 0 or below, or above 600), so it also misses a change to the 60 s fallback for
+        # such a value, such as 30 s, or to which values the check rejects, such as one that rejects
+        # JSON true, which the unchanged hook takes as 1 s.
         script = self._tmp / "writing_enum_fixture.py"
         script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         for declared in self.DECLARED_TIMEOUTS:
@@ -1206,15 +1361,10 @@ class T15EnumeratorTimeout(Stage2Harness):
                 argv = [sys.executable, "-I", str(script), str(self.backlog), str(mark)]
                 self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": declared}))
                 self.arm_lease()
-                try:
-                    r = subprocess.run([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
-                                        str(record), "orch_stop_guard"],
-                                       input=json.dumps({"cwd": str(self.repo)}),
-                                       capture_output=True, text=True, env=self._env(),
-                                       timeout=self.WALL_CLOCK_BOUND)
-                except subprocess.TimeoutExpired:
-                    self.fail("the hook call hit the {} s wall-clock bound".format(
-                        self.WALL_CLOCK_BOUND))
+                r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG,
+                                          str(HOOK), str(record), "orch_stop_guard"],
+                                         self._tmp / "reaper-report-{}.json".format(declared))
+                self.assert_reaped(r, rep)
                 rows = [json.loads(line) for line in
                         (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
                 timeouts = [row["timeout"] for row in rows if row["argv"] == argv]
