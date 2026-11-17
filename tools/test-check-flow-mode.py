@@ -2,16 +2,17 @@
 """Tests for tools/check-flow-mode.py: its verdict on the flow.md texts it must pass or fail.
 
 Each case runs the check as a separate process, isolated (-I), and asserts its exit status, 0 for
-a pass and 1 for a failure, and for a failure the report line that names the reason, except 3
+a pass and 1 for a failure, and for a failure the report line that names the reason, except 5
 cases that start no check process: 1 compares the check's table with the test's own list and
-with flow.md, 1 calls the check's findings in this process with the check's table changed for
-each edit, and 1 loads a copy of the check whose bytecode cache is stale. Each case that reads
-the check in this process compiles it from its source as it is now, so no bytecode cache stands
-in for that source. Most cases give the check the text on standard input. Each case reads the
-check's standard output alone, and every run of the check must write nothing to standard error,
-so a check that writes a line there, in place of standard output or as well, fails; the 1
-exception is the case of a folder as a standard stream, in which Python itself stops before the
-check runs and writes its own fatal error there, as the check's docstring states.
+with flow.md, 2 call the check's findings in this process with the check's table changed, for
+each edit of an opening text and for each character of WHITE in it, 1 loads a copy of the check
+whose bytecode cache is stale, and 1 parses the check's source to find its sites. Each case that
+reads the check in this process compiles or parses it from its source as it is now, so no
+bytecode cache stands in for that source. Most cases give the check the text on standard input.
+Each case reads the check's standard output alone, and every run of the check must write nothing
+to standard error, so a check that writes a line there, in place of standard output or as well,
+fails; the 1 exception is the case of a folder as a standard stream, in which Python itself stops
+before the check runs and writes its own fatal error there, as the check's docstring states.
 
 The check pins the 7 paragraphs of .claude/commands/flow.md that NAMED below lists, by name and
 opening text; every edit of those 7 paragraphs that changes more than the white space between
@@ -175,12 +176,43 @@ paragraph elsewhere that adds Entry 62 to the entries of the whole-line rule. Th
 which an edit there fails, a MODE line added or changed, the absent-record sentence removed, a
 pinned paragraph joined to the text beside it and text that is not UTF-8, each have a verdict
 case above. No case writes more than 1000 MODE lines, 1006 paragraphs that start with an opening
-text or 1008 findings, so a check that bounded a count above those numbers would pass; the
-check's docstring states this limit.
+text or 1008 findings, so a check that bounded a count above those numbers, and kept each site
+and binding that the registry case below pins, would pass; the check's docstring states this
+limit.
+
+The registry cases hold the sites of the check that the cases above drive.
+test_every_site_has_a_driver parses the check's source and finds, in its syntax tree, 5 sets of
+sites, each site keyed by its function's name, its ordinal there among the sites of the same form
+and its form, never by line number: the calls that strip, split or substitute text, with each
+other use of WHITE_SPACE and LINE_END; the report lines that findings appends and that outcome
+returns; the arguments formatted into the output that are not text, which are counts and line
+numbers; the calls inside outcome's try and each call that reads; and the output sinks. Each set
+must equal its registry in this test, and the case fails naming each site that is unregistered or
+missing. Each registry entry names a domain, 1 of WHITE, INLINE_WHITE, OUTPUT_KINDS, READS,
+NAME_KINDS, TIMES, LEADS and PASS, and a case whose code, through the helpers and constants that
+it names, reaches that constant; the report lines name each of the 11 kinds of OUTPUT_KINDS once,
+and the read routes name each of the 3 reads of READS. The same case pins the forms that no case
+tries value by value: each count is len() of a bare name; each line number that the check reports
+is bound only by enumerate() over the lines that LINE_END splits, directly or through the list of
+MODE lines, and each line range comes from paragraphs(), whose numbers enumerate() alone gives;
+outcome's 1 handler is (OSError, UnicodeDecodeError), with the whole read inside its try; and the
+1 sink is os.write(1, data). This closes the 5 sets for the sites in the check's code. It does not
+test what a site means beyond the domain that drives it, and a case that reaches a constant names
+that domain, which does not show that it tries each value of it. The code does not bound counts or
+line numbers: the test pins their form, a bare len() or enumerate() value, and holds their values
+only as far as the cases above write them. test_each_kind_of_output_names_each_kind_of_name is a
+coverage counter of the cross product of OUTPUT_KINDS and NAME_KINDS: for "-" on standard input,
+and for SPACED_NAME and UNDECODED_NAME through a path and through the default path, it compares
+the whole output of the 3 texts of failing_texts(), the committed flow.md, text that cannot be
+read and 2 arguments, counts the cell of each line's kind and that kind of name, and fails when a
+cell of the 33 is not counted. test_white_space_of_each_kind_inside_each_row_opening_text_passes
+calls the check's findings with each character of WHITE in place of the first space of each row's
+opening text, and each such row still finds its paragraph unchanged.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
 """
+import ast
 import errno
 import hashlib
 import importlib.util
@@ -299,6 +331,16 @@ SPACED_NAME = "flow" + PADDING + ".md" + PADDING
 # The file name that holds a byte that is not UTF-8, as bytes, which a report must give as that
 # byte.
 UNDECODED_NAME = b"flow-\xff.md"
+# The 3 reads of the text that the check makes, by the name each case gives it.
+READS = ["standard input", "path", "default path"]
+# The 3 kinds of name that the check gives the text read: "-" for standard input, and the 2 file
+# names that a path and the default path name.
+NAME_KINDS = ["-", SPACED_NAME, UNDECODED_NAME]
+# The 11 kinds of line that the check writes: the 7 kinds of finding, the count of findings, the
+# usage line, the line that the text cannot be read and the pass line.
+OUTPUT_KINDS = ["MODE lines found", "MODE line unclosed", "MODE values", "bare attended",
+                "absent-record sentence missing", "pinned paragraph not found once",
+                "pinned paragraph changed", "count of findings", "usage", "cannot be read", "pass"]
 # The locales under which the check must name a file by the bytes of its name: None keeps the
 # inherited locale. Under en_US.UTF-8, where it is installed, Python's standard output fails on a
 # path name that is not UTF-8; where it is not, Python falls back as it does under C.
@@ -650,6 +692,399 @@ def after(paragraph, opening, pattern):
 def space_at(paragraph, opening):
     """The offset of the first space between 2 words of paragraph after its opening text."""
     return after(paragraph, opening, r"\w \w") + 1
+
+
+# The constants whose values a registry entry may name as the domain that its driver tries.
+# PASS stands for the constant count of pinned paragraphs, which the pass line spells.
+DOMAINS = ("WHITE", "INLINE_WHITE", "OUTPUT_KINDS", "READS", "NAME_KINDS", "TIMES", "LEADS", "PASS")
+# The registries of the sites of the check, each site keyed by its function's name ("<module>" for
+# the code outside its functions), its ordinal there among the sites of the same form, and its
+# form, never by line number, with the case of Verdicts that drives it. A site of the check that a
+# registry does not hold, and an entry that the check no longer has, fail
+# test_every_site_has_a_driver, so a refactor of the check needs an update here.
+# The calls that strip, split or substitute text, and each other use of WHITE_SPACE or LINE_END,
+# with the domain of white space that the driver tries.
+WHITE_METHODS = ("strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "sub", "subn",
+                 "isspace")
+WHITE_SPACE_SITES = {
+    ("paragraphs", 1, "line.strip"):
+        ("INLINE_WHITE", "test_a_line_of_each_kind_of_white_space_inside_each_paragraph_fails"),
+    ("digest", 1, "paragraph.split"): ("WHITE", "test_white_space_inside_each_opening_text_passes"),
+    ("starts_with", 1, "WHITE_SPACE.sub"):
+        ("WHITE", "test_white_space_inside_each_opening_text_passes"),
+    ("starts_with", 2, "WHITE_SPACE.sub"):
+        ("WHITE", "test_white_space_of_each_kind_inside_each_row_opening_text_passes"),
+    ("findings", 1, "LINE_END.split"):
+        ("INLINE_WHITE", "test_only_a_line_feed_or_a_carriage_return_ends_a_line"),
+    ("findings", 1, "line.strip"):
+        ("INLINE_WHITE", "test_every_test_fails_alike_on_standard_input_by_path_and_by_default"),
+    ("findings", 1, "value.strip"):
+        ("INLINE_WHITE", "test_white_space_of_each_kind_around_the_mode_values_passes"),
+    ("findings", 1, "values.split"):
+        ("INLINE_WHITE", "test_white_space_of_each_kind_around_the_mode_values_passes"),
+    ("findings", 1, "QUOTED.sub"): ("INLINE_WHITE", "test_each_test_reads_lines_by_the_same_rule"),
+    ("findings", 2, "line.strip"):
+        ("INLINE_WHITE", "test_each_report_of_a_number_found_gives_that_number"),
+    ("findings", 1, "text.split"): ("INLINE_WHITE", "test_each_test_reads_lines_by_the_same_rule"),
+}
+# The report lines: each line that findings appends to the list that it returns, and each line of
+# the lists that outcome returns, by the first 4 words of its template or the function that makes
+# it, with the kind of OUTPUT_KINDS that it writes. EACH_FINDING is the "FAIL: " prefix that
+# outcome puts before each line of findings.
+EACH_FINDING = "each finding"
+COUNTER = "test_each_kind_of_output_names_each_kind_of_name"
+REPORT_SITES = {
+    ("findings", 1, "expected 1 MODE line"): ("MODE lines found", COUNTER),
+    ("findings", 1, "the MODE line has"): ("MODE line unclosed", COUNTER),
+    ("findings", 1, "the MODE line names"): ("MODE values", COUNTER),
+    ("findings", 1, "unquoted bare attended"): ("bare attended", COUNTER),
+    ("findings", 1, "no statement that an"): ("absent-record sentence missing", COUNTER),
+    ("findings", 1, "expected 1 pinned paragraph"): ("pinned paragraph not found once", COUNTER),
+    ("findings", 1, "changed_report"): ("pinned paragraph changed", COUNTER),
+    ("outcome", 1, "usage python3 I tools"): ("usage", COUNTER),
+    ("outcome", 1, "FAIL cannot be read"): ("cannot be read", COUNTER),
+    ("outcome", 1, "FAIL"): (EACH_FINDING, COUNTER),
+    ("outcome", 1, "FAIL finding s"): ("count of findings", COUNTER),
+    ("outcome", 1, "OK the MODE line"): ("pass", COUNTER),
+}
+# The numbers in the output: each argument of a format call, an f-string or a % format that is not
+# 1 of these text names or a call of 1 of these text methods, with the domain of numbers that the
+# driver tries.
+TEXT_ARGUMENTS = ("name", "label", "opening", "now", "pinned", "source", "exc", "TABLE_FILE")
+TEXT_METHODS = ("strip", "join", "format")
+NUMBER_SITES = {
+    ("findings", 1, "len(modes)"): ("TIMES", "test_each_report_of_a_number_found_gives_that_number"),
+    ("findings", 1, "number"):
+        ("LEADS", "test_every_test_fails_alike_on_standard_input_by_path_and_by_default"),
+    ("findings", 2, "number"):
+        ("LEADS", "test_every_test_fails_alike_on_standard_input_by_path_and_by_default"),
+    ("findings", 1, "len(starting)"):
+        ("TIMES", "test_each_report_of_a_number_found_gives_that_number"),
+    ("changed_report", 1, "first"):
+        ("LEADS", "test_every_test_fails_alike_on_standard_input_by_path_and_by_default"),
+    ("changed_report", 1, "last"):
+        ("LEADS", "test_every_test_fails_alike_on_standard_input_by_path_and_by_default"),
+    ("outcome", 1, "len(found)"): ("TIMES", "test_each_report_of_a_number_found_gives_that_number"),
+    ("outcome", 1, "len(PARAGRAPHS)"): ("PASS", "test_the_committed_flow_passes"),
+}
+# The routes to the line that the text cannot be read: each call inside outcome's try, and each
+# call anywhere that reads, with the reads of READS that reach it.
+READ_NAMES = ("open", "input")
+READ_ATTRIBUTES = ("read", "read_text", "read_bytes", "readline", "readlines", "readinto",
+                   "decode", "open", "fdopen")
+ROUTE_SITES = {
+    ("outcome", 1, "open"): (("standard input",), "test_each_kind_of_failed_read_fails"),
+    ("outcome", 1, "stream.read().decode"): (("standard input",), "test_text_that_is_not_utf8_fails"),
+    ("outcome", 1, "stream.read"): (("standard input",), "test_each_kind_of_failed_read_fails"),
+    ("outcome", 1, "Path(source).read_text"):
+        (("path", "default path"), "test_each_kind_of_failed_read_fails"),
+    ("outcome", 1, "Path"): (("path", "default path"), "test_each_kind_of_failed_read_fails"),
+}
+# The output sinks: each use of these names, of these attributes of sys and os, each open() of
+# anything but file descriptor 0, and each import of these modules.
+SINK_NAMES = ("print", "input", "breakpoint")
+SINK_ATTRIBUTES = {"sys": ("stdout", "stderr", "__stdout__", "__stderr__"),
+                   "os": ("write", "writev", "pwrite", "pwritev", "sendfile", "fdopen")}
+SINK_MODULES = ("logging", "warnings", "traceback", "faulthandler")
+SINK_SITES = {("write", 1, "os.write(1, data)"): ("OUTPUT_KINDS", COUNTER)}
+# The forms that bind the names of the numbers and lists that reach the output, by function and
+# name, in source order: each line number comes from enumerate() over the lines that LINE_END
+# splits, directly or through the list of MODE lines, and each line range from paragraphs(), whose
+# numbers come from enumerate() alone.
+BINDINGS = {
+    ("paragraphs", "lines"): ["parameter"],
+    ("paragraphs", "number"): ["for number, line in enumerate(lines + [''], 1)"],
+    ("paragraphs", "start"): ["start = None", "start = number", "start = None"],
+    ("changed_report", "first"): ["parameter"],
+    ("changed_report", "last"): ["parameter"],
+    ("findings", "found"): ["found = []"],
+    ("findings", "lines"): ["lines = LINE_END.split(text)"],
+    ("findings", "modes"): ["modes = [(number, line) for number, line in enumerate(lines, 1)"
+                            " if line.startswith(MODE_PREFIX)]"],
+    ("findings", "number"): ["for number, line in enumerate(lines, 1)"
+                             " if line.startswith(MODE_PREFIX)",
+                             "for number, line in modes", "for number, line in enumerate(lines, 1)"],
+    ("findings", "blocks"): ["blocks = paragraphs(lines)"],
+    ("findings", "starting"): ["starting = [block for block in blocks"
+                               " if starts_with(block[2], opening)]"],
+    ("findings", "first"): ["first, last, paragraph = starting[0]"],
+    ("findings", "last"): ["first, last, paragraph = starting[0]"],
+    ("outcome", "found"): ["found = findings(text, source)"],
+    ("main", "lines"): ["status, lines = outcome(argv)"],
+}
+# The calls that carry those numbers and lists on, and the return statements that hand them on.
+CALLS = {
+    ("paragraphs", "found.append"):
+        ["found.append((start, number - 1, '\\n'.join(lines[start - 1:number - 1])))"],
+    ("findings", "paragraphs"): ["paragraphs(lines)"],
+    ("findings", "changed_report"): ["changed_report(name, first, last, label, pinned, now)"],
+    ("outcome", "findings"): ["findings(text, source)"],
+    ("main", "write"): ["write(lines)"],
+}
+RETURNS = {
+    "paragraphs": ["return found"],
+    "findings": ["return found"],
+    "main": ["return status if write(lines) else 1"],
+}
+HANDLER = "(OSError, UnicodeDecodeError)"
+HANDLER_BODY = ["return (1, ['FAIL: {} cannot be read: {}'.format(source, exc)])"]
+# The pattern that the rest of each kind of finding, the line after "FAIL: " and the name of the
+# text read, matches, and of the line that the text cannot be read.
+FINDING_PATTERNS = [
+    ("MODE lines found", ": " + re.escape(MODE_COUNT.format("")) + "[0-9]+$"),
+    ("MODE line unclosed", ":[0-9]+: " + re.escape(UNCLOSED) + ": "),
+    ("MODE values", ": " + re.escape(WRONG_MODES) + " "),
+    ("bare attended", ":[0-9]+: " + re.escape(BARE) + ": "),
+    ("absent-record sentence missing", ": " + re.escape(NO_ABSENT) + "$"),
+    ("pinned paragraph not found once", ": " + re.escape(NOT_ONCE.split("{}")[0])),
+    ("pinned paragraph changed", ":[0-9]+-[0-9]+: .*, a pinned paragraph, has changed: "),
+    ("cannot be read", " " + re.escape(UNREADABLE)),
+]
+
+
+def scopes(tree):
+    """Each scope of a module's syntax tree, as its name and its nodes: "<module>" for the
+    statements outside its functions and classes, and each function or class by its name."""
+    defined = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    yield "<module>", [node for node in tree.body if not isinstance(node, defined)]
+    for node in tree.body:
+        if isinstance(node, defined):
+            yield node.name, [node]
+
+
+def nodes_of(nodes):
+    """Each node of the syntax trees of nodes."""
+    for node in nodes:
+        yield from ast.walk(node)
+
+
+def position(node):
+    """The place of node in the source, outer nodes before the nodes that they hold."""
+    return node.lineno, node.col_offset, -node.end_lineno, -node.end_col_offset
+
+
+def numbered(scope, nodes, form=ast.unparse):
+    """The sites of nodes in scope, each as the scope, its ordinal in source order among the
+    sites of the same form there, and its form, so a site put in or taken out is the site
+    reported."""
+    sites, counts = set(), {}
+    for node in sorted(nodes, key=position):
+        text = form(node)
+        counts[text] = counts.get(text, 0) + 1
+        sites.add((scope, counts[text], text))
+    return sites
+
+
+def report_form(node):
+    """The form of a report line: the first 4 words of its template, or the function that makes
+    it."""
+    for part in ast.walk(node):
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            return " ".join(re.findall(r"[A-Za-z0-9_]+", part.value)[:4])
+    return ast.unparse(node.func if isinstance(node, ast.Call) else node)
+
+
+def is_name(node, *names):
+    """Whether node is a name among names."""
+    return isinstance(node, ast.Name) and node.id in names
+
+
+def white_space_sites(tree):
+    """The calls of the check that strip, split or substitute text, and each other use of
+    WHITE_SPACE or LINE_END."""
+    sites = set()
+    for scope, nodes in scopes(tree):
+        calls = [node for node in nodes_of(nodes) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr in WHITE_METHODS]
+        receivers = {id(call.func.value) for call in calls}
+        uses = [node for node in nodes_of(nodes) if is_name(node, "WHITE_SPACE", "LINE_END")
+                and isinstance(node.ctx, ast.Load) and id(node) not in receivers]
+        sites |= numbered(scope, [call.func for call in calls] + uses)
+    return sites
+
+
+def report_sites(tree):
+    """Each line that the check's findings appends to the list that it returns, each other call on
+    that list, and each line of the lists that its outcome returns, each keyed by report_form."""
+    sites = set()
+    for scope, nodes in scopes(tree):
+        lines = []
+        if scope == "findings":
+            calls = [node for node in nodes_of(nodes) if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute) and is_name(node.func.value, "found")]
+            lines += [node.args[0] if node.func.attr == "append" and len(node.args) == 1
+                      and not node.keywords else node.func for node in calls]
+        if scope == "outcome":
+            for node in nodes_of(nodes):
+                if isinstance(node, ast.Return) and node.value is not None:
+                    for part in ast.walk(node.value):
+                        if isinstance(part, ast.List):
+                            lines += part.elts
+                        elif isinstance(part, ast.ListComp):
+                            lines.append(part.elt)
+        sites |= numbered(scope, lines, report_form)
+    return sites
+
+
+def format_arguments(node):
+    """The arguments that node formats into text, when it is a format call, an f-string or a %
+    format of a string."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"):
+        return node.args + [keyword.value for keyword in node.keywords]
+    if isinstance(node, ast.JoinedStr):
+        return [value.value for value in node.values if isinstance(value, ast.FormattedValue)]
+    if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod)
+            and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str)):
+        return node.right.elts if isinstance(node.right, ast.Tuple) else [node.right]
+    return []
+
+
+def is_text(node):
+    """Whether node is a text argument: a name of TEXT_ARGUMENTS or a call of TEXT_METHODS."""
+    return is_name(node, *TEXT_ARGUMENTS) or (
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in TEXT_METHODS)
+
+
+def number_sites(tree):
+    """Each argument that the check formats into its output that is not a text argument."""
+    sites = set()
+    for scope, nodes in scopes(tree):
+        sites |= numbered(scope, [argument for node in nodes_of(nodes)
+                                  for argument in format_arguments(node) if not is_text(argument)])
+    return sites
+
+
+def route_sites(tree):
+    """Each call inside a try of the check's outcome, and each call of the check that reads."""
+    sites = set()
+    for scope, nodes in scopes(tree):
+        inside = [part for node in nodes_of(nodes) if scope == "outcome" and isinstance(node, ast.Try)
+                  for statement in node.body for part in ast.walk(statement)]
+        reads = [node for node in nodes_of(nodes) if isinstance(node, ast.Call) and (
+            is_name(node.func, *READ_NAMES) or (isinstance(node.func, ast.Attribute)
+                                                and node.func.attr in READ_ATTRIBUTES))]
+        calls = {id(node): node for node in inside + reads if isinstance(node, ast.Call)}
+        sites |= numbered(scope, [call.func for call in calls.values()])
+    return sites
+
+
+def sink_sites(tree):
+    """Each output sink of the check: a use of SINK_NAMES, a use or call of SINK_ATTRIBUTES, a call
+    of open() on anything but file descriptor 0 and an import of SINK_MODULES."""
+    sites = set()
+    for scope, nodes in scopes(tree):
+        def sink(node):
+            return (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.attr in SINK_ATTRIBUTES.get(node.value.id, ()))
+        calls = [node for node in nodes_of(nodes) if isinstance(node, ast.Call) and sink(node.func)]
+        called = {id(call.func) for call in calls}
+        found = calls + [node for node in nodes_of(nodes) if sink(node) and id(node) not in called]
+        found += [node for node in nodes_of(nodes)
+                  if isinstance(node, ast.Name) and node.id in SINK_NAMES]
+        found += [node for node in nodes_of(nodes) if isinstance(node, ast.Call)
+                  and is_name(node.func, "open") and not (
+                      node.args and isinstance(node.args[0], ast.Constant)
+                      and node.args[0].value == 0)]
+        found += [node for node in nodes_of(nodes) if isinstance(node, (ast.Import, ast.ImportFrom))
+                  and any(module.split(".")[0] in SINK_MODULES for module in
+                          [alias.name for alias in node.names] + [getattr(node, "module", None) or ""])]
+        sites |= numbered(scope, found)
+    return sites
+
+
+def bindings(function, name):
+    """The forms that bind name in function, in source order: "parameter", an assignment, or the
+    header of a for loop or a comprehension."""
+    def binds(target):
+        return any(is_name(node, name) for node in ast.walk(target))
+    found = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.arg) and node.arg == name:
+            found.append((position(node), "parameter"))
+        elif isinstance(node, ast.Assign) and any(binds(target) for target in node.targets):
+            found.append((position(node), ast.unparse(node)))
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)) and binds(node.target):
+            found.append((position(node), ast.unparse(node)))
+        elif isinstance(node, (ast.For, ast.AsyncFor)) and binds(node.target):
+            found.append((position(node), ast.unparse(node).split("\n")[0].rstrip(":")))
+        elif isinstance(node, ast.comprehension) and binds(node.target):
+            found.append((position(node.target), ast.unparse(node).strip()))
+        elif isinstance(node, ast.withitem) and node.optional_vars and binds(node.optional_vars):
+            found.append((position(node.optional_vars), ast.unparse(node)))
+        elif isinstance(node, ast.ExceptHandler) and node.name == name:
+            found.append((position(node), "except " + name))
+        elif isinstance(node, (ast.Global, ast.Nonlocal, ast.Delete)) and (
+                name in getattr(node, "names", ()) or any(binds(target) for target in
+                                                          getattr(node, "targets", ()))):
+            found.append((position(node), ast.unparse(node)))
+    return [form for _, form in sorted(found)]
+
+
+def calls_of(function, callee):
+    """The calls of callee in function, in source order."""
+    return [ast.unparse(node) for node in sorted(
+        (node for node in ast.walk(function) if isinstance(node, ast.Call)
+         and ast.unparse(node.func) == callee), key=position)]
+
+
+def references(tree):
+    """For each function, method and constant at the top level of a module, the names of the
+    others that its code names, a method of a class by the class and its name."""
+    def named(node, owner):
+        found = {part.id for part in ast.walk(node)
+                 if isinstance(part, ast.Name) and isinstance(part.ctx, ast.Load)}
+        if owner:
+            found |= {owner + "." + part.attr for part in ast.walk(node)
+                      if isinstance(part, ast.Attribute) and is_name(part.value, "self")}
+        return found
+    graph = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            graph[node.name] = named(node, None)
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef):
+                    graph[node.name + "." + item.name] = named(item, node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for part in ast.walk(target):
+                    if isinstance(part, ast.Name):
+                        graph[part.id] = named(node.value, None)
+    return graph
+
+
+def reaches(graph, start, domain):
+    """Whether the code of start, through the functions, methods and constants that it names,
+    names domain. The search goes no further into a constant of DOMAINS, so a case that names only
+    INLINE_WHITE does not reach WHITE, from which INLINE_WHITE is made."""
+    seen, todo = set(), [start]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name not in DOMAINS:
+            todo += [other for other in graph.get(name, ()) if other in graph]
+    return domain in seen
+
+
+def kind_of(line, source):
+    """The kind of OUTPUT_KINDS of line, a line of the check's output, for source, the name of the
+    text read."""
+    if line + "\n" == USAGE:
+        return "usage"
+    if re.fullmatch(r"FAIL: [0-9]+ finding\(s\)", line):
+        return "count of findings"
+    if line + "\n" == PASS.format(source):
+        return "pass"
+    prefix = "FAIL: {}".format(source)
+    kinds = [kind for kind, pattern in FINDING_PATTERNS
+             if line.startswith(prefix) and re.match(pattern, line[len(prefix):], re.S)]
+    if len(kinds) != 1:
+        raise AssertionError("expected 1 kind of line for {!r}, found {}".format(line, kinds))
+    return kinds[0]
 
 
 class Verdicts(unittest.TestCase):
@@ -1022,6 +1457,26 @@ class Verdicts(unittest.TestCase):
                     self.assertIn(CHANGED.format(name) + now, found[0])
                     self.assertEqual(findings_with(row, edited, now, data), [])
 
+    def test_white_space_of_each_kind_inside_each_row_opening_text_passes(self):
+        # The check makes each run of white space in a row's opening text 1 space, as it does in
+        # the paragraph, so a row whose opening text holds a character of WHITE in place of its
+        # first space still finds its paragraph, unchanged. This case calls the check's findings
+        # in this process with the table changed for each character, so it needs no copy of the
+        # check.
+        module = check_module()
+        table = list(module.PARAGRAPHS)
+        text = committed()
+        for row, (name, opening, pinned) in enumerate(table):
+            self.assertIn(" ", opening)
+            for space in WHITE:
+                with self.subTest(paragraph=name, space=code_point(space)):
+                    module.PARAGRAPHS = (table[:row] + [(name, opening.replace(" ", space, 1), pinned)]
+                                         + table[row + 1:])
+                    try:
+                        self.assertEqual(module.findings(text, "-"), [])
+                    finally:
+                        module.PARAGRAPHS = table
+
     def test_a_sha256_update_leaves_the_mode_tests_reading_the_paragraph(self):
         # The 1-line update clears only the report that the paragraph has changed, so an edit
         # that the mode tests refuse still fails with the update in place.
@@ -1260,9 +1715,9 @@ class Verdicts(unittest.TestCase):
             path.write_bytes(data)
             copy = default_copy(folder, path)
             for read, args, given, check, source in (
-                    ("standard input", ["-"], data, CHECK, "-"),
-                    ("path", [str(path)], b"", CHECK, path),
-                    ("default path", [], b"", copy, path)):
+                    (READS[0], ["-"], data, CHECK, "-"),
+                    (READS[1], [str(path)], b"", CHECK, path),
+                    (READS[2], [], b"", copy, path)):
                 with self.subTest(read=read):
                     status, output = run_check(args, given, check)
                     self.assert_unreadable(status, output, source, error, "can't decode byte 0xff")
@@ -1305,7 +1760,7 @@ class Verdicts(unittest.TestCase):
             with tempfile.TemporaryDirectory() as name:
                 path = make(Path(name))
                 copy = default_copy(name, path)
-                for read, args, check in (("path", [str(path)], CHECK), ("default path", [], copy)):
+                for read, args, check in ((READS[1], [str(path)], CHECK), (READS[2], [], copy)):
                     with self.subTest(kind=what, read=read):
                         if number == errno.EACCES and os.access(str(path), os.R_OK):
                             self.skipTest("this account reads a file that has no read permission")
@@ -1320,7 +1775,7 @@ class Verdicts(unittest.TestCase):
             descriptor = os.open(str(path), os.O_WRONLY)
             try:
                 error = read_error(lambda: os.read(descriptor, 1))
-                with self.subTest(kind="a descriptor open only for writing", read="standard input"):
+                with self.subTest(kind="a descriptor open only for writing", read=READS[0]):
                     status, output = run_check(["-"], stdin=descriptor)
                     self.assert_unreadable(status, output, "-", error, bad)
             finally:
@@ -1328,7 +1783,7 @@ class Verdicts(unittest.TestCase):
         closed = os.open(os.devnull, os.O_RDONLY)
         os.close(closed)
         error = read_error(lambda: os.read(closed, 1))
-        with self.subTest(kind="a closed standard input", read="standard input"):
+        with self.subTest(kind="a closed standard input", read=READS[0]):
             status, output = run_check(["-"], closed=True)
             self.assert_unreadable(status, output, "-", error, bad)
 
@@ -1395,6 +1850,56 @@ class Verdicts(unittest.TestCase):
                              stdout=subprocess.PIPE)
                 self.assertEqual(run.returncode, 1, run.stdout)
                 self.assertEqual(run.stdout, expected("-").encode("utf-8"))
+
+    def test_each_kind_of_output_names_each_kind_of_name(self):
+        # The coverage counter of the cross product of OUTPUT_KINDS and NAME_KINDS. For each kind
+        # of name, on each read that gives it, the whole output of each text below is compared
+        # byte for byte, and each line of that output counts the cell of its kind and that kind of
+        # name: "-" on standard input, and each file name through a path and through the default
+        # path. The texts are the 3 of failing_texts(), the committed flow.md, text that cannot be
+        # read and 2 arguments of that kind of name. The case fails when a cell is not counted.
+        cells = set()
+        for index, name in enumerate(NAME_KINDS):
+            with tempfile.TemporaryDirectory() as folder:
+                if name == "-":
+                    path = None
+                    error = read_error(lambda: b"\xff\n".decode("utf-8"))
+                    reads = [(READS[0], ["-"], CHECK, "-")]
+                else:
+                    path = os.fsencode(folder) + b"/" + (
+                        name if isinstance(name, bytes) else name.encode("utf-8"))
+                    shown = os.fsdecode(path)
+                    error = read_error(Path(shown).read_bytes)
+                    reads = [(READS[1], [path], CHECK, shown),
+                             (READS[2], [], default_copy(folder, shown), shown)]
+                texts = [(what, text.encode("utf-8"), 1, expected)
+                         for what, text, expected in failing_texts()]
+                texts += [("a pass", committed().encode("utf-8"), 0, PASS.format),
+                          ("text that cannot be read", b"\xff\n" if path is None else None, 1,
+                           lambda source: "FAIL: {} {}{}\n".format(source, UNREADABLE, error))]
+                for what, data, status, expected in texts:
+                    if path is not None and data is not None:
+                        Path(shown).write_bytes(data)
+                    elif path is not None and os.path.exists(shown):
+                        os.unlink(shown)
+                    for read, args, check, source in reads:
+                        with self.subTest(name=index, read=read, text=what):
+                            streams = ({"input": data} if path is None
+                                       else {"stdin": subprocess.DEVNULL})
+                            run = launch(args, check, stdout=subprocess.PIPE, **streams)
+                            wanted = expected(source)
+                            self.assertEqual(run.returncode, status, run.stdout)
+                            self.assertEqual(run.stdout, wanted.encode("utf-8", "surrogateescape"))
+                            cells |= {(kind_of(line, source), index)
+                                      for line in wanted.split("\n")[:-1]}
+                with self.subTest(name=index, text="2 arguments"):
+                    args = ["-", "-"] if path is None else [path, path]
+                    run = launch(args, stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                    self.assertEqual(run.returncode, 1, run.stdout)
+                    self.assertEqual(run.stdout, USAGE.encode("utf-8"))
+                    cells.add((kind_of(USAGE[:-1], None), index))
+        self.assertEqual(sorted(cells), sorted((kind, index) for kind in OUTPUT_KINDS
+                                               for index in range(len(NAME_KINDS))))
 
     def test_output_that_cannot_be_written_gives_status_1_and_nothing_on_standard_error(self):
         # The check writes its whole output itself, so a write that fails ends the check with exit
@@ -1464,6 +1969,69 @@ class Verdicts(unittest.TestCase):
                             self.assertTrue(run.stderr.startswith(fatal), run.stderr)
             finally:
                 os.close(folder)
+
+    def test_every_site_has_a_driver(self):
+        # The check's source, parsed, gives 5 sets of sites, and each must equal its registry in
+        # this test, so a site that has no registered driver, or an entry that the check no longer
+        # has, fails here by name. Each entry names a domain of DOMAINS and a case of this class
+        # whose code reaches that domain. The structural pins below hold the forms that the cases
+        # cannot try value by value: each count is len() of a bare name, each line number and line
+        # range comes from enumerate() alone, outcome's 1 handler covers its whole read, and the
+        # only sink is os.write(1, data).
+        tree = ast.parse(CHECK.read_bytes(), str(CHECK))
+        graph = references(ast.parse(Path(__file__).read_bytes(), __file__))
+        registries = [("white space", white_space_sites, WHITE_SPACE_SITES, None),
+                      ("report", report_sites, REPORT_SITES, "OUTPUT_KINDS"),
+                      ("number", number_sites, NUMBER_SITES, None),
+                      ("read route", route_sites, ROUTE_SITES, "READS"),
+                      ("output sink", sink_sites, SINK_SITES, None)]
+        for what, extract, registry, domain in registries:
+            with self.subTest(sites=what):
+                found = extract(tree)
+                self.assertEqual(
+                    {"unregistered": sorted(found - set(registry)),
+                     "missing": sorted(set(registry) - found)},
+                    {"unregistered": [], "missing": []},
+                    "{} sites of the check with no registered driver, and registered {} sites"
+                    " that the check no longer has".format(what, what))
+                for site, (detail, case) in sorted(registry.items()):
+                    named = domain or detail
+                    self.assertIn(named, DOMAINS, site)
+                    self.assertTrue(callable(getattr(Verdicts, case, None)),
+                                    "{} names no case {}".format(site, case))
+                    self.assertTrue(reaches(graph, "Verdicts." + case, named),
+                                    "{}, the driver of {}, does not reach {}".format(
+                                        case, site, named))
+        self.assertEqual(sorted(kind for kind, _ in REPORT_SITES.values() if kind != EACH_FINDING),
+                         sorted(OUTPUT_KINDS))
+        self.assertEqual(sorted({read for reads, _ in ROUTE_SITES.values() for read in reads}),
+                         sorted(READS))
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        for _, _, form in NUMBER_SITES:
+            if form.startswith("len("):
+                self.assertRegex(form, r"^len\([A-Za-z_][A-Za-z_0-9]*\)$")
+        for (scope, name), forms in BINDINGS.items():
+            with self.subTest(binding=name, function=scope):
+                self.assertEqual(bindings(functions[scope], name), forms)
+        for (scope, callee), forms in CALLS.items():
+            with self.subTest(call=callee, function=scope):
+                self.assertEqual(calls_of(functions[scope], callee), forms)
+        for scope, forms in RETURNS.items():
+            with self.subTest(returns=scope):
+                self.assertEqual([ast.unparse(node) for node in sorted(
+                    (node for node in ast.walk(functions[scope]) if isinstance(node, ast.Return)),
+                    key=position)], forms)
+        tries = {scope: [node for node in nodes_of(nodes) if isinstance(node, (ast.Try, ast.TryStar))]
+                 for scope, nodes in scopes(tree)}
+        self.assertEqual(sorted(scope for scope, found in tries.items() if found), ["outcome", "write"])
+        self.assertEqual(len(tries["outcome"]), 1)
+        attempt = tries["outcome"][0]
+        self.assertEqual([type(node).__name__ for node in attempt.body], ["If"])
+        self.assertEqual((attempt.orelse, attempt.finalbody), ([], []))
+        self.assertEqual(len(attempt.handlers), 1)
+        self.assertEqual(ast.unparse(attempt.handlers[0].type), HANDLER)
+        self.assertEqual([ast.unparse(node) for node in attempt.handlers[0].body], HANDLER_BODY)
+        self.assertEqual(sink_sites(tree), {("write", 1, "os.write(1, data)")})
 
 
 class Residual(unittest.TestCase):
