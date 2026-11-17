@@ -1809,14 +1809,14 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # line whose object name differs in length from main's tip, first,
         # in the middle or last, or merge base output that does not end
         # with a line feed; an object name of 64 digits beside main's tip
-        # of 40 in the tree entry at HEAD or at the merge base, or from git
-        # hash-object; a tree entry whose mode and type are not a pair that
-        # git prints, whose fields are joined by other than 1 space, or
-        # which has no object name; a line that git prints with leading or
-        # trailing whitespace, with a CR or with a blank line, or with no
-        # line feed at its end; an object name in upper case or of 88 or
-        # 104 digits; and shallow status or git hash-object output with no
-        # line.
+        # of 40 in a blob entry of mode 100644, 100755 or 120000 at HEAD or
+        # at the merge base, or from git hash-object; a tree entry whose
+        # mode and type are not a pair that git prints, whose fields are
+        # joined by other than 1 space, or which has no object name; a line
+        # that git prints with leading or trailing whitespace, with a CR or
+        # with a blank line, or with no line feed at its end; an object
+        # name in upper case or of 88 or 104 digits; and shallow status or
+        # git hash-object output with no line.
         cases += [(("for-each-ref",), b"refs/remotes/origin/mainx {main}\nrefs/remotes/origin/main {main}\n"),
                   (("for-each-ref",), b"refs/heads/main {main}\n"),
                   (("for-each-ref",), b"refs/remotes/origin/main\x0b{main}\n"),
@@ -1838,8 +1838,8 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                   (("merge-base",), b"{main}\n{main}\n" + b"1" * 40 + b"\n"),
                   (("merge-base",), b"1" * 64 + b"\n"),
                   (("merge-base",), b"1" * 64 + b"\n" + b"2" * 64 + b"\n"),
-                  (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"0123456789abcdef" * 4)),
-                  (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", b"0123456789abcdef" * 4)),
+                  *[(("ls-tree", "-z", revision), entry.replace(b"100644", mode).replace(b"{blob}", b"01234567" * 8))
+                    for revision in ("HEAD", "{main}") for mode in (b"100644", b"100755", b"120000")],
                   (("hash-object",), b"0123456789abcdef" * 4 + b"\n"),
                   *[(("ls-tree",), entry.replace(b"100644 blob", pair))
                     for pair in (b"100644 tree", b"100644 commit", b"100755 tree", b"120000 commit",
@@ -1873,12 +1873,15 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_git_output_exit_3_messages(self):
-        # A shallow clone, a merge base list with no line and a byte that is
-        # not ASCII in a date each stop the check with exit 3 and their own
+        # A shallow clone, a merge base list with no line and a byte that
+        # is not ASCII in the shallow status, in the added date or in the
+        # last-change date each stop the check with exit 3 and their own
         # message.
         cases = [(("rev-parse",), b"true\n", "the repository is a shallow clone"),
                  (("merge-base",), b"", "printed no merge base"),
-                 (("log", "--diff-filter=A"), b"\xff2026-01-01\n", "printed a byte that is not ASCII")]
+                 (("rev-parse",), b"\xfffalse\n", "printed a byte that is not ASCII"),
+                 (("log", "--diff-filter=A"), b"\xff2026-01-01\n", "printed a byte that is not ASCII"),
+                 (("log", "-1"), b"\xff2026-02-02\n", "printed a byte that is not ASCII")]
         for prefix, output, words in cases:
             with self.subTest(prefix=prefix, output=output):
                 problems, stderr = self.check_with_fake_git(prefix, output)
@@ -1889,22 +1892,25 @@ class ProtectedLineHistoryTest(unittest.TestCase):
         # The byte 0xff before an object name stops the check with exit 3
         # and the message that names a byte that is not ASCII, not the
         # message for output that the gate cannot use, in each reading of
-        # an object name: the protected refname's line of the ref listing,
-        # a line below it listed first, the merge base, the blob entry at
-        # HEAD, the blob entry at the merge base, a tree and a gitlink
-        # entry at HEAD, and the git hash-object result. Each subtest fails
-        # when its reading alone decodes the object name with a replacing
-        # decode, which keeps exit 3 but gives the other message.
-        entry = b"100644 blob {blob}\tsite/index.html\0"
-        for prefix, output in ((("for-each-ref",), b"refs/remotes/origin/main \xff{main}\n"),
-                               (("for-each-ref",),
-                                b"refs/remotes/origin/main/x \xff{main}\nrefs/remotes/origin/main {main}\n"),
-                               (("merge-base",), b"\xff{main}\n"),
-                               (("ls-tree", "-z", "HEAD"), entry.replace(b"{blob}", b"\xff{blob}")),
-                               (("ls-tree", "-z", "{main}"), entry.replace(b"{blob}", b"\xff{blob}")),
-                               (("ls-tree", "-z", "HEAD"), b"040000 tree \xff{blob}\tsite/index.html\0"),
-                               (("ls-tree", "-z", "HEAD"), b"160000 commit \xff{blob}\tsite/index.html\0"),
-                               (("hash-object",), b"\xff{blob}\n")):
+        # an object name: a ref listing line, the protected refname's or
+        # one below it, listed first or after another line; the merge base;
+        # a tree entry of each mode and type pair that git prints, at HEAD
+        # and at the merge base; and the git hash-object result. Each
+        # subtest fails when its reading alone decodes the object name with
+        # a replacing decode, which keeps exit 3 but gives the other
+        # message.
+        protected = b"refs/remotes/origin/main "
+        below = b"refs/remotes/origin/main/x "
+        cases = [*[(("for-each-ref",), listing)
+                   for listing in (protected + b"\xff{main}\n", below + b"\xff{main}\n" + protected + b"{main}\n",
+                                   protected + b"{main}\n" + below + b"\xff{main}\n",
+                                   below + b"{main}\n" + protected + b"\xff{main}\n")],
+                 (("merge-base",), b"\xff{main}\n"),
+                 *[(("ls-tree", "-z", revision), pair + b" \xff{blob}\tsite/index.html\0")
+                   for revision in ("HEAD", "{main}")
+                   for pair in (b"100644 blob", b"100755 blob", b"120000 blob", b"040000 tree", b"160000 commit")],
+                 (("hash-object",), b"\xff{blob}\n")]
+        for prefix, output in cases:
             with self.subTest(prefix=prefix, output=output):
                 problems, stderr = self.check_with_fake_git(prefix, output)
                 self.assertIsNone(problems, stderr)
@@ -2066,30 +2072,34 @@ class ProtectedLineHistoryTest(unittest.TestCase):
                 self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_tree_entry_of_other_length_exits_3(self):
-        # A tree entry, which is no blob, at the page's path at HEAD whose
-        # object name differs in length from the merge base's stops the
-        # check with exit 3 rather than reading the page at HEAD: 64 digits
-        # beside a merge base of 40, and 40 beside one of 64.
-        for name, options in ((b"0123456789abcdef" * 4, ()),
-                              (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
-            with self.subTest(name=name, options=options):
-                entry = b"040000 tree " + name + b"\tsite/index.html\0"
-                problems, stderr = self.check_with_fake_git(("ls-tree", "-z", "HEAD"), entry, *options)
-                self.assertIsNone(problems, stderr)
-                self.assertIn("printed output that the gate cannot use", stderr)
+        # A tree entry, which is no blob, at the page's path at HEAD or at
+        # the merge base whose object name differs in length from the merge
+        # base's stops the check with exit 3 rather than reading the page
+        # at HEAD: 64 digits beside a merge base of 40, and 40 beside one
+        # of 64.
+        for revision in ("HEAD", "{main}"):
+            for name, options in ((b"0123456789abcdef" * 4, ()),
+                                  (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
+                with self.subTest(revision=revision, name=name, options=options):
+                    entry = b"040000 tree " + name + b"\tsite/index.html\0"
+                    problems, stderr = self.check_with_fake_git(("ls-tree", "-z", revision), entry, *options)
+                    self.assertIsNone(problems, stderr)
+                    self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_gitlink_entry_of_other_length_exits_3(self):
-        # A gitlink entry, which is no blob, at the page's path at HEAD
-        # whose object name differs in length from the merge base's stops
-        # the check with exit 3 rather than reading the page at HEAD: 64
-        # digits beside a merge base of 40, and 40 beside one of 64.
-        for name, options in ((b"0123456789abcdef" * 4, ()),
-                              (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
-            with self.subTest(name=name, options=options):
-                entry = b"160000 commit " + name + b"\tsite/index.html\0"
-                problems, stderr = self.check_with_fake_git(("ls-tree", "-z", "HEAD"), entry, *options)
-                self.assertIsNone(problems, stderr)
-                self.assertIn("printed output that the gate cannot use", stderr)
+        # A gitlink entry, which is no blob, at the page's path at HEAD or
+        # at the merge base whose object name differs in length from the
+        # merge base's stops the check with exit 3 rather than reading the
+        # page at HEAD: 64 digits beside a merge base of 40, and 40 beside
+        # one of 64.
+        for revision in ("HEAD", "{main}"):
+            for name, options in ((b"0123456789abcdef" * 4, ()),
+                                  (b"0123456789abcdef" * 2 + b"01234567", ("--object-format=sha256",))):
+                with self.subTest(revision=revision, name=name, options=options):
+                    entry = b"160000 commit " + name + b"\tsite/index.html\0"
+                    problems, stderr = self.check_with_fake_git(("ls-tree", "-z", revision), entry, *options)
+                    self.assertIsNone(problems, stderr)
+                    self.assertIn("printed output that the gate cannot use", stderr)
 
     def test_tree_entry_with_empty_name_exits_3(self):
         # A tree entry whose name after the tab is empty is not the page's
