@@ -85,21 +85,27 @@
 # What it does not defend against, by decision: another process of the
 # same user that renames or replaces dist/, the work folder or an entry of
 # either while the build runs. Such a process can write to dist/ directly,
-# and bash cannot hold a folder open across commands, so the packager
-# makes no claim for that case.
+# and the packager reaches dist/ and its work folder by their paths, which
+# such a process can change between 2 uses, so a use can reach another
+# folder than the one that a check just before saw. The packager makes no
+# claim for that case.
 #
-# A SIGHUP, SIGINT or SIGTERM ends the build with exit 129, 130 or 143, once
-# the command in progress has ended, and counts as a failed exit, unless
-# the signal was ignored when the build started (as SIGHUP is under
-# nohup): bash cannot trap such a signal, so it does not end the build.
-# The exit trap ignores the 3 signals while it runs, so 1 that arrives
-# then leaves the exit code as it was. A signal that arrives before the
-# exit trap is set, when the build has removed and written nothing, leaves
-# dist/ as it was. A refused build therefore leaves in dist/ no zip and no
-# .sha256, unless a removal itself fails: the build then still fails, and
-# an output that it could not remove stays. A SIGKILL runs no trap, so it
-# can leave the work folder in dist/ and, during the moves, a zip without
-# its .sha256; the next build removes such outputs and keeps the folder.
+# A signal whose default action ends a process ends the build with exit 128
+# plus the signal's number, such as 129, 130 or 143 for SIGHUP, SIGINT or
+# SIGTERM, once the command in progress has ended, and counts as a failed
+# exit, unless the signal was ignored when the build started (as SIGHUP is
+# under nohup): bash cannot trap such a signal, so it does not end the
+# build. The exit trap ignores these signals while it runs, so 1 that
+# arrives then leaves the exit code as it was. A signal that arrives before
+# the exit trap is set, when the build has removed and written nothing,
+# leaves dist/ as it was. A refused build therefore leaves in dist/ no zip
+# and no .sha256, unless a removal itself fails: the build then still
+# fails, and an output that it could not remove stays. 3 signals that end
+# a process run no trap: SIGKILL, which no process can trap, and signals 32
+# and 33, which the C library keeps for its own use, so that a trap that
+# bash sets for them does not take effect. Such a signal can leave the work
+# folder in dist/ and, during the moves, a zip without its .sha256; the
+# next build removes such outputs and keeps the folder.
 # It never tags, pushes, or talks to the network.
 #
 # Usage:
@@ -113,12 +119,13 @@
 # Exit codes:
 #   0  built and verified
 #   1  a validation or layout check failed
-#   129, 130, 143  ended by SIGHUP, SIGINT or SIGTERM, unless that signal
-#                was ignored when the build started
+#   128 + n      ended by the signal numbered n, from 129 to 192, such as
+#                129, 130 and 143 for SIGHUP, SIGINT and SIGTERM, unless
+#                that signal was ignored when the build started
 #   other codes  the exit code of a command that failed, such as zip, mv
 #                or git, which set -e passes through unchanged and the
-#                exit trap keeps; such a command can also give 1, 129,
-#                130 or 143
+#                exit trap keeps; such a command can also give 1 or 1 of
+#                the codes from 129 to 192
 
 set -euo pipefail
 
@@ -142,13 +149,32 @@ set +f
 shopt -u extglob failglob globstar nocaseglob nocasematch
 shopt -s dotglob
 
-# A signal would otherwise end bash with the status of the last command,
-# which the exit trap below would read as a good exit, so each of these
-# exits with 128 plus the signal's number. Bash runs such a trap once the
-# command in progress has ended.
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+# Without a trap, bash meets a signal whose default action ends a process
+# in 1 of 3 ways, none of them a failed exit that the exit trap below can
+# rely on: it ends at once and runs no exit trap; it runs the exit trap at
+# once, with the status of the last command, which is 0 after a command
+# that succeeded, so that the trap reads a good exit, while a command in
+# progress, such as a move into dist/, still runs; or, for SIGINT and
+# SIGQUIT that arrive while a command runs, it can go on with the build. So
+# each such signal that bash can trap exits with 128 plus its number; bash
+# runs such a trap once the command in progress has ended. They are the
+# signals from 1 to the last real-time signal, except SIGKILL, which no
+# process can trap; SIGSTOP, SIGTSTP, SIGTTIN and SIGTTOU, which stop a
+# process; SIGCHLD, SIGCONT, SIGURG and SIGWINCH, which do not end one; and
+# signals 32 and 33, for which a trap does not take effect. The exit trap
+# ignores the signals of signal_numbers while it runs.
+signal_numbers=()
+for signal_name in HUP INT QUIT ILL TRAP ABRT BUS FPE USR1 SEGV USR2 PIPE \
+  ALRM TERM STKFLT XCPU XFSZ VTALRM PROF IO PWR SYS; do
+  signal_numbers+=("$(kill -l "${signal_name}")")
+done
+last_signal="$(kill -l RTMAX)"
+for ((signal_number = $(kill -l RTMIN); signal_number <= last_signal; signal_number++)); do
+  signal_numbers+=("${signal_number}")
+done
+for signal_number in "${signal_numbers[@]}"; do
+  trap "exit $((128 + signal_number))" "${signal_number}"
+done
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -198,22 +224,22 @@ remove_outputs() {
 # The path of the 1 work folder of this run, as mktemp gave it; empty until
 # mktemp has made it.
 work=""
-# On each exit that runs this trap (a SIGKILL does not): on a failed exit,
-# which includes an exit through 1 of the signal traps above, remove the
-# outputs in dist/ again, so that a failure during the first removal below
-# or during the moves leaves none, unless a removal fails; then, on any
-# exit, remove the work folder of this run by the path that mktemp gave.
-# This rm -rf is the only recursive removal of the packager. Each removal
-# runs whatever the one before it returned, since a failed command would
-# otherwise end the trap under set -e; what a failed removal leaves stays,
-# and the build keeps its exit code, 0 included. The trap ignores SIGHUP,
-# SIGINT and SIGTERM while it runs, so 1 of them cannot cut its removals
-# short, and it ends with the build's own exit code. It is set before the
-# first removal, so a signal that ends that removal half done still has the
-# rest of the outputs removed.
+# On each exit that runs this trap (SIGKILL and signals 32 and 33 do not):
+# on a failed exit, which includes an exit through 1 of the signal traps
+# above, remove the outputs in dist/ again, so that a failure during the
+# first removal below or during the moves leaves none, unless a removal
+# fails; then, on any exit, remove the work folder of this run by the path
+# that mktemp gave. This rm -rf is the only recursive removal of the
+# packager. Each removal runs whatever the one before it returned, since a
+# failed command would otherwise end the trap under set -e; what a failed
+# removal leaves stays, and the build keeps its exit code, 0 included. The
+# trap ignores the signals that the traps above catch while it runs, so 1
+# of them cannot cut its removals short, and it ends with the build's own
+# exit code. It is set before the first removal, so a signal that ends that
+# removal half done still has the rest of the outputs removed.
 cleanup() {
   local rc=$?
-  trap '' HUP INT TERM
+  trap '' "${signal_numbers[@]}"
   if [ "${rc}" -ne 0 ]; then
     remove_outputs || true
   fi
@@ -688,9 +714,10 @@ EOF_ENTRIES
 # Every check passed. Move the 2 zips into dist/, then their .sha256 files, so a
 # .sha256 that a build moved into dist/ has its zip beside it, unless a
 # removal, at the start of a later build or in an exit trap, removed that
-# zip and then failed to remove the .sha256, or a SIGKILL ended a later
-# build during its first removal. Each of the 4 moves is a rename from the
-# work folder to the folder that holds it, named as .. of the work folder,
+# zip and then failed to remove the .sha256, or a signal that runs no trap
+# (SIGKILL, or signal 32 or 33) ended a later build during its first
+# removal. Each of the 4 moves is a rename from the work folder to the
+# folder that holds it, named as .. of the work folder,
 # so the outputs land beside the work folder of this run; if that folder is
 # no longer at the path that mktemp gave, the move fails. -T makes mv treat
 # the target as a name, never as a folder to move into, so a folder put at
