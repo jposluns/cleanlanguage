@@ -575,8 +575,12 @@ CALL_FORMS = (
 )
 # The slots of the templates. No slot pattern matches a text that starts
 # with -, so no slot takes an option. Each character that a pattern names,
-# such as the v and the dots of a tag, matches only itself; the values of
-# SLOT_NEAR_MISSES pin both rules and the class and count of each part.
+# such as the v and the dots of a tag, matches only itself, and each class
+# matches only its own characters. SLOT_RULES states each pattern again in
+# plain Python, and test_each_slot_matches_exactly_the_values_its_rule_allows
+# requires the pattern and the rule to agree on every value 1 character
+# from the sample of the slot. test_each_predicate_reads_only_the_calls_of_its_rows
+# puts each value of SLOT_NEAR_MISSES in place of each slot of each row.
 SLOTS = {
     "<TAG>": r"v[0-9]+\.[0-9]+\.[0-9]+",
     "<VERSION>": r"[0-9]+\.[0-9]+\.[0-9]+",
@@ -1162,15 +1166,16 @@ PREDICATE_ROWS = (
 SLOT_SAMPLES = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
                 "<REPO>": "jposluns/cleanlanguage", "<DIR>": "/d"}
 # For each slot, values that its pattern must not match, each 1 change from
-# its value in SLOT_SAMPLES, or an option: the option -x; the value led by
-# -; each character that the pattern names (the v and the dots of a tag,
-# the dots of a version, the slash of a repository and the leading slash of
-# a directory) replaced by X (the v by Y) and dropped, and the v also in its
-# other case; a character of each class replaced by one outside it; each
-# repeated part emptied; and a character added where the pattern allows
-# none. They are written out here, not derived from SLOTS, so a slot pattern
-# that matches more than it should fails
-# test_each_predicate_reads_only_the_calls_of_its_rows.
+# its value in SLOT_SAMPLES, or an option, where a change is a character
+# replaced, added or dropped, or a repeated part emptied: the option -x;
+# the value led by -; each character that the pattern names (the v and the
+# dots of a tag, the dots of a version, the slash of a repository and the
+# leading slash of a directory) replaced by X (the v by Y) and dropped, and
+# the v also in its other case; a character of each class replaced by one
+# outside it; each repeated part emptied; and a character added where the
+# pattern allows none. They are written out here, not derived from SLOTS,
+# and test_each_predicate_reads_only_the_calls_of_its_rows puts each in
+# place of its slot in each row.
 SLOT_NEAR_MISSES = {
     "<TAG>": ("-x", "-v1.0.15", "Y1.0.15", "1.0.15", "V1.0.15", "v1X0.15", "v10.15", "v1.0X15", "v1.015",
               "vX.0.15", "v1.X.15", "v1.0.1X", "v.0.15", "v1..15", "v1.0.", "v1.0.15X"),
@@ -1181,8 +1186,49 @@ SLOT_NEAR_MISSES = {
     "<REPO>": ("-x", "-jposluns/cleanlanguage", "jposlunsXcleanlanguage", "jposlunscleanlanguage",
                "jpos luns/cleanlanguage", "jposluns/clean language", "/cleanlanguage", "jposluns/",
                "jposluns/clean/language"),
-    "<DIR>": ("-x", "-/d", "Xd", "d", "/d\nx"),
+    "<DIR>": ("-x", "-/d", "Xd", "d", "/d\n"),
 }
+# Each slot pattern of SLOTS stated again in plain Python, written out here,
+# not derived from SLOTS: the values each slot must match, and no other.
+DIGITS = "0123456789"
+NAME_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" + DIGITS + "_."
+
+
+def version_rule(value):
+    parts = value.split(".")
+    return len(parts) == 3 and all(part and all(char in DIGITS for char in part) for part in parts)
+
+
+def repo_rule(value):
+    parts = value.split("/")
+    return len(parts) == 2 and all(part and all(char in NAME_CHARACTERS for char in part) for part in parts)
+
+
+SLOT_RULES = {
+    "<TAG>": lambda value: value[:1] == "v" and version_rule(value[1:]),
+    "<VERSION>": version_rule,
+    "<COMMIT>": lambda value: len(value) == 40 and all(char in "0123456789abcdef" for char in value),
+    "<REPO>": repo_rule,
+    "<DIR>": lambda value: value[:1] == "/" and "\n" not in value,
+}
+# The characters each value 1 character from a sample is built with: every
+# printable ASCII character, the ASCII white space and line breaks, the
+# null character, and 3 others that a wider pattern may take: a letter
+# outside ASCII, an Arabic-Indic digit, which \d matches, and a no-break
+# space, which \s matches.
+PROBE_CHARACTERS = "".join(map(chr, range(0x20, 0x7F))) + "\t\n\r\x0b\x0c\x00" + "".join(map(chr, (0xE9, 0x661, 0xA0)))
+
+
+def one_character_changes(sample):
+    """Every value 1 character from sample: each character dropped, each
+    replaced by each character of PROBE_CHARACTERS, and each character of
+    PROBE_CHARACTERS added at each place, the start and the end included."""
+    values = {sample[:index] + sample[index + 1:] for index in range(len(sample))}
+    for char in PROBE_CHARACTERS:
+        values.update(sample[:index] + char + sample[index + 1:] for index in range(len(sample)))
+        values.update(sample[:index] + char + sample[index:] for index in range(len(sample) + 1))
+    values.discard(sample)
+    return sorted(values)
 
 
 def row_call(template):
@@ -1195,16 +1241,21 @@ def near_misses(program, template):
     """The calls that differ from the call of a row by 1 change each, as a
     label and the call: 1 argument added after the others, 1 option added
     before them, the last argument dropped, the arguments given to the other
-    program of the table, each character of the template outside its slots
-    replaced by X (or Y in place of an X) and each letter there by its other
-    case, and each value of SLOT_NEAR_MISSES for a slot in place of that
-    slot. None of them matches a row."""
+    program of the table, a line break added before and after each argument,
+    each character of the template outside its slots replaced by X (or Y in
+    place of an X) and each letter there by its other case, and each value
+    of SLOT_NEAR_MISSES for a slot in place of that slot. None of them
+    matches a row."""
     args = row_call(template)
     other = [name for name in TABLE_PROGRAMS if name != program][0]
     calls = [("an argument added", [program, [*args, "x"]]),
              ("an option before the arguments", [program, ["--x", *args]]),
              ("the last argument dropped", [program, args[:-1]]),
              ("the arguments given to " + other, [other, args])]
+    for index, arg in enumerate(args):
+        for label, changed in (("before", "\n" + arg), ("after", arg + "\n")):
+            calls.append((f"a line break added {label} argument {index}",
+                          [program, [*args[:index], changed, *args[index + 1:]]]))
     for index, piece in enumerate(template):
         parts = re.split(r"(<[A-Z]+>)", piece)
         for part_index, part in enumerate(parts):
@@ -1405,7 +1456,8 @@ class HarnessTest(WorkflowStepTest):
         # each row (near_misses) matches no row and has no kind; every
         # predicate reads it as false except is_mutation, which counts it as
         # a change. So a predicate that reads a call by its first or last
-        # words, a character of a template that matches more than itself, or
+        # words, a character of a template that matches more than itself, a
+        # matcher that takes an argument followed or led by a line break, or
         # a slot pattern that matches a value of SLOT_NEAR_MISSES, fails here.
         self.assertEqual(set(SLOT_SAMPLES), set(SLOTS))
         self.assertEqual(set(SLOT_NEAR_MISSES), set(SLOTS))
@@ -1421,6 +1473,26 @@ class HarnessTest(WorkflowStepTest):
                     self.assertIsNone(kind_of(miss), miss)
                     self.assertEqual({label for label, predicate, _rows in PREDICATE_ROWS if predicate(miss)},
                                      {"is_mutation"}, miss)
+
+    def test_each_slot_matches_exactly_the_values_its_rule_allows(self):
+        # For each slot, every value 1 character from its sample in
+        # SLOT_SAMPLES (one_character_changes) must match the slot, through
+        # token_matches, the matcher of the rows, exactly when SLOT_RULES
+        # allows it. So a slot pattern that reads a named character, such as
+        # the v or a dot of a tag, as any letter or punctuation, that widens
+        # or narrows a class, such as digits read as hexadecimal or a
+        # repository name that takes - or :, or a matcher that takes a value
+        # followed by a line break, fails here.
+        self.assertEqual(set(SLOT_RULES), set(SLOTS))
+        for slot, sample in SLOT_SAMPLES.items():
+            with self.subTest(slot=slot):
+                self.assertTrue(SLOT_RULES[slot](sample))
+                self.assertTrue(token_matches(slot, sample))
+                values = one_character_changes(sample)
+                self.assertTrue(any(SLOT_RULES[slot](value) for value in values))
+                self.assertTrue(any(not SLOT_RULES[slot](value) for value in values))
+                wrong = [value for value in values if token_matches(slot, value) != SLOT_RULES[slot](value)]
+                self.assertEqual(wrong, [])
 
     def test_every_row_of_the_table_is_a_call_the_workflow_makes(self):
         # The runs below take the paths on which the workflow makes its git
@@ -1501,7 +1573,11 @@ class HarnessTest(WorkflowStepTest):
         # that took any end of file before the output ends as in time, would
         # pass. With the sleep holding it for 0.3 s, the pipe reaches its end
         # of file within the wait, so the run passes, though the output ends
-        # after the wait.
+        # after the wait. Last, a step runs for 1.5 s before it exits and
+        # leaves the sleep holding the pipe for 0.3 s: the pipe reaches its
+        # end of file 0.3 s after the step exits but about 1.8 s after it
+        # started, so the run passes, and a wait counted from the start of
+        # the step would fail it.
         self.step_process_wait = 1
         holder = "\"" + sys.executable + "\" -I -c 'import os, time; os.closerange(3, 255); time.sleep(2)' &\n"
         with self.assertRaises(self.failureException) as raised:
@@ -1510,6 +1586,9 @@ class HarnessTest(WorkflowStepTest):
         start = time.monotonic()
         self.assertEqual(self.run_step(PUBLISH, holder + "sleep 0.3 >/dev/null 2>&1 &\nexit 0\n"), (0, "", ""))
         self.assertGreater(time.monotonic() - start, 1.9)
+        start = time.monotonic()
+        self.assertEqual(self.run_step(PUBLISH, "sleep 1.5\nsleep 0.3 >/dev/null 2>&1 &\nexit 0\n"), (0, "", ""))
+        self.assertGreater(time.monotonic() - start, 1.5)
 
     def test_an_opt_out_without_a_reason_is_refused(self):
         # off_table opts a run out of the off-table check only with a reason.
