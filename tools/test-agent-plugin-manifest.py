@@ -9,8 +9,8 @@ folder. The cases name the 2 files in COPIED_FILES below, not in the gate's own
 list.
 
 The licence-copy cases check outcomes only: the exit code, the message, that
-the gate ends and, for a FIFO, whether anything opened it. They state no rule
-about how the gate reads a file:
+the gate ends and, for a FIFO, whether anything opened it for reading. They
+state no rule about how the gate reads a file:
 
 - The edit sweep makes every copy that differs from its root file by 1 byte
   inserted (a space, a CR or an LF), 1 byte deleted, or 1 byte replaced (a
@@ -30,9 +30,11 @@ about how the gate reads a file:
   missing copy or for a folder.
 
 No case catches a gate that, before refusing a copy, reads through a symlink
-to a regular file, lists a folder, or tries to read a missing copy or a
-folder and ignores the error: each leaves the exit code and the message the
-same.
+to a regular file, lists a folder, tries to read a missing copy or a folder
+and ignores the error, or opens a FIFO neither for reading nor with blocking,
+such as with O_PATH: each leaves the exit code and the message the same. No
+case makes a symlink to a device, such as /dev/zero, so a gate that reads
+through one before refusing it is untested too.
 """
 from __future__ import annotations
 
@@ -224,7 +226,8 @@ class AgentPluginManifestTest(unittest.TestCase):
 
     def expect_fifo_refusal(self, fifo: Path, needle):
         """Require the bounded refusal with ``needle`` while a FifoWitness
-        watches ``fifo``, and require that nothing opened ``fifo``."""
+        watches ``fifo``, and require that nothing opened ``fifo`` for
+        reading."""
         witness = FifoWitness(fifo)
         try:
             self.expect_bounded_refusal(needle)
@@ -424,15 +427,17 @@ class AgentPluginManifestTest(unittest.TestCase):
                 os.mkfifo(fifo)
                 copy.symlink_to(fifo)
                 try:
-                    # A gate that opens the FIFO through the link before
-                    # refusing the link fails, with or without blocking.
+                    # A gate that opens the FIFO for reading through the link
+                    # before refusing the link fails, with or without
+                    # blocking.
                     self.expect_fifo_refusal(fifo, f"cleanlanguage/{name} is a symlink")
                 finally:
                     fifo.unlink()
 
     def test_licence_copy_fifo_fails(self):
         # A FifoWitness waits to open the FIFO for writing, so a gate that
-        # opens the FIFO before refusing it fails, with or without blocking.
+        # opens the FIFO for reading before refusing it fails, with or without
+        # blocking.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):

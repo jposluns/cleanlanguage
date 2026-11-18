@@ -36,9 +36,10 @@
 #      skills/cleanlanguage/references/ is allowed, while a new directory, a
 #      script extension, or any other nested path fails. Then requires
 #      cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to exist at HEAD with
-#      the same git blob as the root LICENSE and NOTICE.md, so the skill zip
-#      and the plugin, which installs the cleanlanguage/ tree, carry the root
-#      licence files unchanged.
+#      the same git blob as the root LICENSE and NOTICE.md, so the copies that
+#      the skill zip and the plugin, which installs the cleanlanguage/ tree,
+#      take from that tree hold the root files' bytes at HEAD; step 6 checks
+#      the zip's own LICENSE and NOTICE.md against those blobs.
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
@@ -411,7 +412,11 @@ mv "${staging}/cleanlanguage/skills/cleanlanguage/references" "${staging}/cleanl
 rmdir "${staging}/cleanlanguage/skills/cleanlanguage"
 rmdir "${staging}/cleanlanguage/skills"
 # LICENSE and NOTICE.md need no step here: git archive staged them from
-# cleanlanguage/, as the copies of the root files that the check above proved.
+# cleanlanguage/. It applies export attributes, so a staged copy can differ
+# from the blob that the licence-copy check above proved equal to the root
+# file (an eol=crlf attribute writes CR LF, for example). The byte check below
+# compares each zip entry with its cleanlanguage/ blob and fails the build when
+# they differ.
 
 # A byte-reproducible archive: stamp every staged path with the commit's own
 # timestamp, order the entries, and read the DOS times in UTC, so the same
