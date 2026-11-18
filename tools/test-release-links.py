@@ -39,6 +39,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+import urllib.parse
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-release-links.py"
@@ -1038,10 +1039,17 @@ class RedirectHopTest(unittest.TestCase):
     HTML file, is not the source of a rule and does not start with a splat source without its *, and each rule to
     another origin names a target the writer documents.
 
-    A destination stays on this site when it is a path, such as /downloads/file.md, or an absolute URL on the
-    origin that site-src/site.json gives, such as https://cleanlanguage.ai/downloads/file.md, which the test reads as
-    its path. A URL is on that origin when its text up to the first /, ? or # after its :// is the origin, ignoring
-    letter case, so a URL that adds a port or user details to the origin is read as on another origin.
+    The test reads a destination as RFC 3986 parses it, with urllib.parse.urlsplit. A destination is a URL when it
+    has a scheme, such as https://cleanlanguage.ai/downloads/file.md, or starts with //, such as
+    //cleanlanguage.ai/downloads/file.md, which takes the scheme of the origin it answers on; any other destination
+    is a path. A query or fragment is not part of the path, so /downloads/file.md?from=x and /downloads/file.md#top
+    name the file /downloads/file.md, and a :// in a query or fragment does not make a path a URL. A URL is on the
+    origin that site-src/site.json gives when its scheme and its authority, the text after its // up to the first
+    /, ? or #, are the origin's, ignoring letter case. So a URL that adds a port or user details to the origin is
+    read as on another origin, and so is //downloads/file.md, whose authority is the host downloads. A destination
+    stays on this site when it is a path or a URL on the origin, which the test reads as its path, or as / when its
+    path is empty, as in https://cleanlanguage.ai?x=1, and holds to the same checks as a path. A destination that
+    urlsplit cannot read, such as http://[x/file.md, fails.
     A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
     with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
     committed tree is the tree the site serves. A destination that is the source of a rule, or that starts with a
@@ -1084,18 +1092,26 @@ class RedirectHopTest(unittest.TestCase):
             found.append("site/_redirects holds no rule")
         sources = {source for _, source, _ in rules}
         splats = [source[:-1] for source in sources if source.endswith("*")]
-        off_site, origin = self.off_site_targets(), self.origin().lower()
+        off_site, origin = self.off_site_targets(), urllib.parse.urlsplit(self.origin())
         for number, source, destination in rules:
             where = f"site/_redirects line {number}: {source} redirects to {destination}"
-            url = re.fullmatch(r"([^/?#]*://[^/?#]*)(.*)", destination)
-            on_origin = url is not None and url.group(1).lower() == origin
-            path = "/" + url.group(2).removeprefix("/") if on_origin else destination
+            try:
+                url = urllib.parse.urlsplit(destination)
+            except ValueError:
+                found.append(f"{where}, which urllib.parse cannot read as a URL")
+                continue
+            # urlsplit gives an empty netloc both for no authority and for an empty one, so a destination that
+            # starts with // is a URL by its own text.
+            is_url = bool(url.scheme) or destination.startswith("//")
+            on_origin = is_url and ((url.scheme or origin.scheme).lower(), url.netloc.lower()) == (
+                origin.scheme.lower(), origin.netloc.lower())
+            path = (url.path or "/") if on_origin else url.path
             parts = path.strip("/").split("/")
             splat = next((prefix for prefix in splats if path.startswith(prefix)), None)
             target = site.joinpath(*parts)
             if path.endswith("/"):
                 target = target / "index.html"
-            if "://" in destination and not on_origin:
+            if is_url and not on_origin:
                 if destination not in off_site:
                     found.append(f"{where}, on an origin other than this site's and not a documented target")
             elif not path.startswith("/"):
@@ -1159,23 +1175,47 @@ class RedirectHopTest(unittest.TestCase):
         zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
         origin = self.origin()
         plain = origin.replace("https://", "http://", 1)
+        user = origin.replace("://", "://user@", 1)
         rules = (f"/privacy https://posluns.ca/privacy/ 301\n/download {zip_url} 302\n"
                  f"/download/checksum {zip_url}.sha256 302\n/elsewhere https://example.com/privacy/ 301\n"
-                 f"/plain {plain}/a.md 301\n/lookalike {origin}.example.com/a.md 301\n/port {origin}:8443/a.md 301\n")
+                 f"/plain {plain}/a.md 301\n/lookalike {origin}.example.com/a.md 301\n/port {origin}:8443/a.md 301\n"
+                 f"/user {user}/a.md 301\n/network //downloads/a.md 301\n/other //example.com/a.md 301\n")
         reason = "on an origin other than this site's and not a documented target"
         self.assertEqual(self.failures_on(rules, ("a.md",)), [
             f"site/_redirects line 4: /elsewhere redirects to https://example.com/privacy/, {reason}",
             f"site/_redirects line 5: /plain redirects to {plain}/a.md, {reason}",
             f"site/_redirects line 6: /lookalike redirects to {origin}.example.com/a.md, {reason}",
             f"site/_redirects line 7: /port redirects to {origin}:8443/a.md, {reason}",
+            f"site/_redirects line 8: /user redirects to {user}/a.md, {reason}",
+            f"site/_redirects line 9: /network redirects to //downloads/a.md, {reason}",
+            f"site/_redirects line 10: /other redirects to //example.com/a.md, {reason}",
         ])
 
     def test_a_destination_on_this_sites_origin_is_read_as_its_path(self):
-        # A URL on this site's origin that reaches its file in 1 hop passes, as its path does.
+        # A URL on this site's origin that reaches its file in 1 hop passes, as its path does: with its scheme
+        # and host in any letter case, with no path or a query or fragment straight after its host, which the test
+        # reads as /, and without a scheme, which it takes from the origin.
         origin = self.origin()
+        network = origin.partition(":")[2]
         rules = (f"/a {origin}/downloads/a.md 302\n/b {origin.upper()}/downloads/a.md 302\n"
-                 f"/c {origin}/page/ 301\n/d {origin} 301\n")
+                 f"/c {origin}/page/ 301\n/d {origin} 301\n/e {origin}?x=1 301\n/f {origin}#top 301\n"
+                 f"/g {origin}/downloads/a.md?x=1#top 302\n/h {network}/downloads/a.md 302\n")
         self.assertEqual(self.failures_on(rules, ("downloads/a.md", "page/index.html", "index.html")), [])
+
+    def test_a_query_or_fragment_is_not_part_of_the_path(self):
+        # A path with a query or fragment names the file of its path, a :// in either does not make it a URL, and
+        # its path is still held to the checks, such as the one for the source of a rule.
+        origin = self.origin()
+        rules = (f"/a /downloads/a.md?x=1 302\n/b /downloads/a.md#top 302\n/c /downloads/a.md?from={origin} 302\n"
+                 f"/d /downloads/a.md#{origin} 302\n/e /?x=1 301\n/f /b.md?x=1 301\n/b.md /downloads/a.md 301\n")
+        self.assertEqual(self.failures_on(rules, ("downloads/a.md", "index.html")), [
+            "site/_redirects line 6: /f redirects to /b.md?x=1, the source of another rule: 2 hops",
+        ])
+
+    def test_a_destination_that_urlsplit_cannot_read_fails(self):
+        self.assertEqual(self.failures_on("/a http://[x/a.md 301\n/b /a.md 301\n", ("a.md",)), [
+            "site/_redirects line 1: /a redirects to http://[x/a.md, which urllib.parse cannot read as a URL",
+        ])
 
     def test_a_destination_without_a_leading_slash_fails(self):
         self.assertEqual(self.failures_on("/a downloads/a.md 301\n", ("downloads/a.md",)), [
@@ -1191,19 +1231,26 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_a_destination_that_a_splat_source_matches_fails(self):
-        self.assertEqual(self.failures_on("/a /old/file.md 301\n/old/* /new.md 301\n/b /older.md 301\n",
+        origin = self.origin()
+        self.assertEqual(self.failures_on(f"/a /old/file.md 301\n/old/* /new.md 301\n/b /older.md 301\n"
+                                          f"/c {origin}/old/file.md 301\n",
                                           ("old/file.md", "new.md", "older.md")), [
             "site/_redirects line 1: /a redirects to /old/file.md, which the splat source /old/* matches: 2 hops",
+            f"site/_redirects line 4: /c redirects to {origin}/old/file.md, which the splat source /old/* matches: "
+            "2 hops",
         ])
 
     def test_a_destination_with_an_empty_or_dot_segment_fails(self):
+        # A path that starts with // is a URL to another host, so its case is the one for another origin; on the
+        # origin, a // after the host is an empty segment.
+        origin = self.origin()
         reason = "which has an empty or . segment, so it does not name its file as written"
-        self.assertEqual(self.failures_on("/a /downloads//a.md 301\n/b /downloads/./a.md 301\n"
-                                          "/c //downloads/a.md 301\n/d /downloads/a.md 301\n/e / 301\n",
+        self.assertEqual(self.failures_on(f"/a /downloads//a.md 301\n/b /downloads/./a.md 301\n"
+                                          f"/c {origin}//downloads/a.md 301\n/d /downloads/a.md 301\n/e / 301\n",
                                           ("downloads/a.md", "index.html")), [
             f"site/_redirects line 1: /a redirects to /downloads//a.md, {reason}",
             f"site/_redirects line 2: /b redirects to /downloads/./a.md, {reason}",
-            f"site/_redirects line 3: /c redirects to //downloads/a.md, {reason}",
+            f"site/_redirects line 3: /c redirects to {origin}//downloads/a.md, {reason}",
         ])
 
     def test_a_destination_that_leaves_the_site_fails(self):
