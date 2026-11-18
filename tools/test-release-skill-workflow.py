@@ -20,6 +20,17 @@ all, though its readback still requires the release to be immutable (item
 57). The fake ``date`` refuses any call without ``-u``, so a clock read in
 local time goes red.
 
+The fakes of ``git`` and ``gh`` answer only the calls listed in
+``CALL_FORMS``, a table of the exact call shapes the workflow makes, each
+with its kind (a read, or the change it makes). The fakes and the call
+predicates find the row of a call through the same function, ``row_of``.
+A call that matches no row is recorded by the fake that refused it, and the
+run that made it fails, whatever the exit code of the step, unless the case
+opts out and gives its reason as a text that is not empty or white space, so
+an unknown call is never counted as harmless.
+The table lists call shapes; it does not model how ``git`` or ``gh`` read
+their options.
+
 The workflow is parsed with ``yaml.safe_load`` (PyYAML, the same dependency
 the release packager already relies on in the same CI job), so the step names,
 the keys of each step and every ``env:`` mapping are read as the runner reads
@@ -69,13 +80,17 @@ They run offline: nothing reaches GitHub or any network.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -518,8 +533,89 @@ def script_reads(script: str) -> set[str]:
     return read - assigned
 
 
+# CALL_FORMS: every git and gh call the release workflow makes, by its
+# exact shape, as 1 row each: the row name, the program, the arguments after
+# the program, and the kind of the call. The kind is "read" for a call that
+# changes neither a tag nor a release, and otherwise names the change: "tag"
+# for a local tag, "push" for a push of the tag to origin, "create" for a
+# release creation. Each argument is a template: its text matches only
+# itself, and each slot of SLOTS in it matches the slot's pattern. A call
+# matches a row only when it names the row's program and has exactly as many
+# arguments as the row, each matching its template in full, so a call that
+# adds an argument to a row, drops one or joins 2 does not match that row.
+# The fakes of git and gh answer a call by the row it matches, and the call
+# predicates below read a recorded call by the same row, so the routing is
+# written once, here. A call that matches no row is off the table: the fake
+# records it in the state file "unmodelled", gives no answer and exits 97,
+# and run_step fails the run that made it, whatever the exit code of the
+# step, unless the case opts out with a reason. The
+# table states the call shapes of the workflow only; it does not model how
+# git or gh read their options.
+CALL_FORMS = (
+    ("fetch", "git", ("fetch", "--quiet", "origin", "main"), "read"),
+    ("show", "git", ("show", "FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md"), "read"),
+    ("status", "gh", ("api", "--include", "--silent", "repos/<REPO>/releases/tags/<TAG>"), "read"),
+    ("published_at", "gh", ("api", "repos/<REPO>/releases/tags/<TAG>", "--jq", ".published_at"), "read"),
+    ("lookup", "git", ("ls-remote", "origin", "refs/tags/<TAG>^{}", "refs/tags/<TAG>"), "read"),
+    ("immutable", "gh", ("api", "repos/<REPO>/releases/tags/<TAG>", "--jq", ".immutable"), "read"),
+    ("rev-parse", "git", ("rev-parse", "<COMMIT>^{commit}"), "read"),
+    ("view", "gh", ("release", "view", "<TAG>", "--json", "assets", "--jq", ".assets[].name"), "read"),
+    ("download", "gh", ("release", "download", "<TAG>", "--dir", "<DIR>", "--clobber",
+                        "--pattern", "cleanlanguage.zip", "--pattern", "cleanlanguage.zip.sha256",
+                        "--pattern", "cleanlanguage-<VERSION>.zip", "--pattern", "cleanlanguage-<VERSION>.zip.sha256"),
+     "read"),
+    ("tag", "git", ("tag", "<TAG>", "<COMMIT>"), "tag"),
+    ("push", "git", ("push", "origin", "refs/tags/<TAG>"), "push"),
+    ("tag-force", "git", ("tag", "-f", "<TAG>", "<COMMIT>"), "tag"),
+    ("push-force", "git", ("push", "--force", "origin", "refs/tags/<TAG>"), "push"),
+    ("create", "gh", ("release", "create", "<TAG>", "--verify-tag", "dist/cleanlanguage.zip",
+                      "dist/cleanlanguage.zip.sha256", "dist/cleanlanguage-<VERSION>.zip",
+                      "dist/cleanlanguage-<VERSION>.zip.sha256", "--title", "Clean Language <TAG>",
+                      "--generate-notes"), "create"),
+)
+# The slots of the templates. No slot pattern matches a text that starts
+# with -, so no slot takes an option. Each character that a pattern names,
+# such as the v and the dots of a tag, matches only itself, and each class
+# matches only its own characters. SLOT_RULES states each pattern again in
+# plain Python, and test_each_slot_matches_exactly_the_values_its_rule_allows
+# requires the pattern and the rule to agree on every value 1 character
+# from the sample of the slot. test_each_predicate_reads_only_the_calls_of_its_rows
+# puts each value of SLOT_NEAR_MISSES in place of each slot of each row.
+SLOTS = {
+    "<TAG>": r"v[0-9]+\.[0-9]+\.[0-9]+",
+    "<VERSION>": r"[0-9]+\.[0-9]+\.[0-9]+",
+    "<COMMIT>": r"[0-9a-f]{40}",
+    "<REPO>": r"[A-Za-z0-9_.]+/[A-Za-z0-9_.]+",
+    "<DIR>": r"/[^\n]*",
+}
+# The kind of each row, and the programs whose calls the table covers.
+ROW_KINDS = {name: kind for name, _program, _template, kind in CALL_FORMS}
+TABLE_PROGRAMS = ("git", "gh")
+
+
+def token_matches(template, arg):
+    """Whether arg matches the argument template in full: each slot by its
+    pattern in SLOTS, and every other character as itself."""
+    pattern = "".join(SLOTS.get(piece, re.escape(piece)) for piece in re.split(r"(<[A-Z]+>)", template))
+    return re.fullmatch(pattern, arg) is not None
+
+
+def row_of(program, args):
+    """The name of the row of CALL_FORMS that the call of program with args
+    matches, or None when it matches no row."""
+    for name, row_program, template, _kind in CALL_FORMS:
+        if row_program != program:
+            continue
+        if len(template) != len(args):
+            continue
+        if all(token_matches(piece, arg) for piece, arg in zip(template, args)):
+            return name
+    return None
+
+
+# Every fake records its call in calls.log and reads its state files.
 FAKE_COMMON = """
-import hashlib, json, os, sys
+import hashlib, json, os, re, sys
 STATE = os.environ["FAKE_STATE"]
 NAME = os.path.basename(sys.argv[0])
 ARGS = sys.argv[1:]
@@ -533,30 +629,65 @@ def read(name, default=""):
         return handle.read()
 """
 
-FAKE_GH = FAKE_COMMON + """
-if ARGS[:1] == ["api"]:
-    # Row 59: every API path is answered from one shared state, so the exact
-    # path each call names is logged for ApiPathTest to pin.
-    paths = [arg for index, arg in enumerate(ARGS[1:]) if not arg.startswith("-") and ARGS[index] != "--jq"]
-    kind = ARGS[ARGS.index("--jq") + 1] if "--jq" in ARGS else "status"
+# The fakes of git and gh then find the row of their call with the same
+# CALL_FORMS, SLOTS and functions the predicates use. Each fake matches by
+# the program it stands for, not by its file name, so a copy of the fake gh
+# under another name answers as gh. A call that matches no row is recorded in
+# "unmodelled" and refused with exit 97, with no answer and no other change.
+FAKE_TABLE = """
+CALL_FORMS = """ + repr(CALL_FORMS) + """
+SLOTS = """ + repr(SLOTS) + "\n" + "".join(inspect.getsource(function) for function in (token_matches, row_of)) + """
+ROW = row_of(PROGRAM, ARGS)
+if ROW is None:
+    with open(os.path.join(STATE, "unmodelled"), "a", encoding="utf-8") as handle:
+        handle.write(json.dumps([NAME, ARGS]) + "\\n")
+    print("fake " + PROGRAM + ": call off the table CALL_FORMS: " + json.dumps(ARGS), file=sys.stderr)
+    sys.exit(97)
+"""
+
+# The state files through which the fakes model a change: the local tag, the
+# tag on origin, every release creation, which the fake gh appends to
+# gh_writes, and every call off CALL_FORMS, which the fakes of git and gh
+# append to unmodelled. A step that changed nothing and made no call off the
+# table leaves all 4 as they were.
+FAKE_WRITE_STATE = ("local_tag", "remote_tag", "gh_writes", "unmodelled")
+# The seconds a step run allows the step, and every process that still holds
+# the output of the step, to exit before the run fails its test, so a step
+# that hangs, or that leaves a process holding its output, cannot hang the
+# suite (see run_step). A case may lower it through step_run_limit.
+STEP_RUN_LIMIT = 60
+# The seconds a step run allows, counted from the moment the step itself
+# exits, for the processes that still hold the pipe the step inherited to
+# exit before the run fails its test, however long another process holds the
+# output of the step. Bytes written to the pipe do not end the wait; only
+# its end of file does. A process that closes the descriptors it inherited
+# no longer holds the pipe, so it is not waited for, and a change it makes
+# after the step exits is missed (see run_step). A case may lower it through
+# step_process_wait.
+STEP_PROCESS_WAIT = 60
+
+FAKE_GH = FAKE_COMMON + "PROGRAM = \"gh\"\n" + FAKE_TABLE + """
+# Each API row is answered from the same state, so the exact path each call
+# names is logged for ApiPathTest to pin: the status probe prints its status
+# line, and a field read prints the value of its field.
+if ROW == "status":
     with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
-        log.write(json.dumps([kind, paths]) + "\\n")
-if ARGS[:1] == ["release"]:
-    # Every release subcommand is logged with all its arguments, so the tag
-    # each release read and the create call name is pinned by ApiPathTest.
-    with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
-        log.write(json.dumps([ARGS[1] if len(ARGS) > 1 else "", ARGS[2:]]) + "\\n")
-if ARGS[:1] == ["api"] and "--include" in ARGS:
+        log.write(json.dumps(["status", [ARGS[-1]]]) + "\\n")
     status = read("status", "404")
     print("HTTP/2.0 " + status + " Fake")
     sys.exit(0 if status == "200" else 1)
-if ARGS[:1] == ["api"] and "--jq" in ARGS:
-    field = ARGS[ARGS.index("--jq") + 1].lstrip(".")
-    value = read(field, "null")
+if ROW in ("published_at", "immutable"):
+    with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
+        log.write(json.dumps(["." + ROW, [ARGS[1]]]) + "\\n")
+    value = read(ROW, "null")
     if value == "FAIL":
         sys.exit(1)
     print(value)
     sys.exit(0)
+# Every release row is logged with its arguments after the subcommand, so the
+# tag each release read and the create call name is pinned by ApiPathTest.
+with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
+    log.write(json.dumps([ARGS[1], ARGS[2:]]) + "\\n")
 VERSION = os.environ.get("VERSION", "")
 ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
           "cleanlanguage-" + VERSION + ".zip", "cleanlanguage-" + VERSION + ".zip.sha256"]
@@ -572,10 +703,10 @@ MISSING = read("missing").split()
 EXTRA = ["extra-asset-%04d-" % index + "x" * 180 + ".txt" for index in range(int(read("extra", "0")))]
 CORRUPT = read("corrupt").split()
 DIFFER = read("differ").split()
-if ARGS[:2] == ["release", "view"]:
+if ROW == "view":
     print("\\n".join([asset for asset in ASSETS if asset not in MISSING] + EXTRA))
     sys.exit(0)
-if ARGS[:2] == ["release", "download"]:
+if ROW == "download":
     target = ARGS[ARGS.index("--dir") + 1]
     for asset in ASSETS:
         zip_name = asset[: -len(".sha256")] if asset.endswith(".sha256") else asset
@@ -586,25 +717,34 @@ if ARGS[:2] == ["release", "download"]:
             else:
                 handle.write(data + (b" altered" if asset in CORRUPT else b""))
     sys.exit(0)
+if ROW == "create":
+    # The release creation is appended to gh_writes, whatever the call log
+    # holds, so a no-change assertion can read the fake's own state.
+    with open(os.path.join(STATE, "gh_writes"), "a", encoding="utf-8") as writes:
+        writes.write(json.dumps(ARGS) + "\\n")
 sys.exit(0)
 """
 
-FAKE_VCS = FAKE_COMMON + """
-if ARGS[:1] == ["rev-parse"]:
-    print(read("commit"))
-elif ARGS[:1] == ["ls-remote"]:
+FAKE_VCS = FAKE_COMMON + "PROGRAM = \"git\"\n" + FAKE_TABLE + """
+# The fetch row has no answer and no effect.
+if ROW == "show":
+    # The state file "main_skill" is the SKILL.md of main.
+    print(read("main_skill"), end="")
+elif ROW == "lookup":
     # The state file "ls_remote" set to FAIL makes the lookup itself fail.
     if read("ls_remote") == "FAIL":
         sys.exit(128)
     tag = read("remote_tag")
     if tag:
-        print(tag + "\\trefs/tags/" + os.environ["RELEASE_TAG"])
-elif ARGS[:1] == ["tag"]:
+        print(tag + "\\t" + ARGS[-1])
+elif ROW == "rev-parse":
+    print(read("commit"))
+elif ROW in ("tag", "tag-force"):
     # The local tag points at the commit named last.
     with open(os.path.join(STATE, "local_tag"), "w", encoding="utf-8") as handle:
         handle.write(ARGS[-1])
-elif ARGS[:1] == ["push"] and ARGS[-1] == "refs/tags/" + os.environ["RELEASE_TAG"]:
-    # A tag push moves the remote tag to the local one, so a later run reads
+elif ROW in ("push", "push-force"):
+    # The push moves the tag on origin to the local tag, so a later run reads
     # the tag where an earlier run left it.
     with open(os.path.join(STATE, "remote_tag"), "w", encoding="utf-8") as handle:
         handle.write(read("local_tag"))
@@ -672,6 +812,9 @@ VERDICT_TEXTS = ("is malformed", "Could not read", "rejected the version", "unex
 
 
 class WorkflowStepTest(unittest.TestCase):
+    step_run_limit = STEP_RUN_LIMIT
+    step_process_wait = STEP_PROCESS_WAIT
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
@@ -773,18 +916,104 @@ class WorkflowStepTest(unittest.TestCase):
         env.update({key: value for key, value in self.carried.items() if key in written})
         return env
 
-    def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = ()):
+    def fake_write_state(self):
+        """The fakes' tag, write and off-table state (FAKE_WRITE_STATE), each
+        file's text or None."""
+        return {name: (self.state / name).read_text(encoding="utf-8") if (self.state / name).exists() else None
+                for name in FAKE_WRITE_STATE}
+
+    def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = (),
+                 off_table: str | None = None):
+        """Run the step name, or script_text in its place, and return its exit
+        code, output and error output. A run in which the fake git or gh
+        records a call off CALL_FORMS fails its test, whatever the step's exit
+        code, unless the case opts out by giving off_table, the reason it
+        makes such a call on purpose. An off_table that is not a text with a
+        character other than white space raises ValueError before the step
+        runs, so an empty reason cannot opt out."""
+        if off_table is not None and (not isinstance(off_table, str) or not off_table.strip()):
+            raise ValueError(f"run_step: off_table must be a reason with text, not {off_table!r}")
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
+        # The fake state as the run found it, for a later no-change assertion.
+        self.state_before_run = self.fake_write_state()
         script = self.state / "step.sh"
         script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
-        proc = subprocess.run(
-            ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
-            cwd=self.work, env=env, capture_output=True, text=True,
-        )
+        # The step and the processes it starts inherit the write end of this
+        # pipe, so its read end reaches end of file only when every process
+        # holding that end has exited: a change that such a process, left
+        # running in the background, makes after the step exits is in the
+        # state a later assertion reads. Such a process may also write to
+        # the pipe, so the wait reads the pipe until its end of file: a byte
+        # that makes it readable does not end the wait. A process that
+        # closes the descriptors it inherited no longer holds the pipe, so
+        # this wait does not cover it, and a change it makes after the step
+        # exits is missed. The run itself ends at step_run_limit: a step that
+        # is still running then, or that has left a process still holding
+        # its output, fails the test rather than hanging the suite or passing
+        # once that process exits.
+        done_read, done_write = os.pipe()
+        try:
+            proc = subprocess.Popen(
+                ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
+                cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                pass_fds=(done_write,),
+            )
+        except BaseException:
+            os.close(done_read)
+            raise
+        finally:
+            # Only the step and its processes hold the write end from here on.
+            os.close(done_write)
+        # 2 threads note the moment the step itself exits and the moment the
+        # pipe reaches its end of file, while communicate reads the output.
+        # So the wait after the step exits counts from that exit, not from
+        # the end of the output, which another process the step left may
+        # hold for longer. The thread that reads the pipe owns its read end
+        # and closes it at the end of file, so a run that fails while a
+        # process still holds the pipe leaves that thread waiting for it.
+        moments = {}
+
+        def note_exit():
+            proc.wait()
+            moments["exit"] = time.monotonic()
+
+        def read_to_end():
+            try:
+                while os.read(done_read, 4096):
+                    pass
+                moments["end"] = time.monotonic()
+            finally:
+                os.close(done_read)
+
+        exit_thread = threading.Thread(target=note_exit, daemon=True)
+        end_thread = threading.Thread(target=read_to_end, daemon=True)
+        exit_thread.start()
+        end_thread.start()
+        try:
+            stdout, stderr = proc.communicate(timeout=self.step_run_limit)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            exit_thread.join()
+            proc.stdout.close()
+            proc.stderr.close()
+            raise self.failureException(
+                f"step {name!r}, or a process it left holding its output, was still running"
+                f" {self.step_run_limit} s after the step started") from None
+        exit_thread.join()
+        deadline = moments["exit"] + self.step_process_wait
+        end_thread.join(max(deadline - time.monotonic(), 0))
+        end = moments.get("end")
+        self.assertTrue(end is not None and end <= deadline,
+                        f"step {name!r} left a process running {self.step_process_wait} s after it exited")
+        # An unknown call is never harmless: a call off the table, recorded by
+        # the fake that refused it, fails the run unless the case opted out.
+        unmodelled = self.fake_write_state()["unmodelled"]
+        if unmodelled != self.state_before_run["unmodelled"] and off_table is None:
+            raise self.failureException(f"step {name!r} made a call off the table CALL_FORMS: {unmodelled}")
         if proc.returncode == 0:
             self.carried.update(self.env_values())
-        return proc.returncode, proc.stdout, proc.stderr
+        return proc.returncode, stdout, stderr
 
     def calls(self):
         path = self.state / "calls.log"
@@ -869,24 +1098,39 @@ def ignore_lookup_failure(script: str) -> str:
     return script.replace(lookup[0], lookup[0] + " || true", 1)
 
 
+# Each predicate of a git or gh call reads a recorded call by the row of
+# CALL_FORMS it matches, through row_of, the function the fakes use, so a
+# call off the table is no tag, push, create, lookup or field read. is_date
+# reads only the command name, since the table does not cover date.
+def row_of_call(call):
+    return row_of(call[0], call[1])
+
+
+def kind_of(call):
+    """The kind of the row of a recorded call, or None for a call off the table."""
+    return ROW_KINDS.get(row_of_call(call))
+
+
 def is_push(call):
-    return call[0] == VCS and call[1][:1] == ["push"]
+    return kind_of(call) == "push"
 
 
 def is_create(call):
-    return call[0] == "gh" and call[1][:2] == ["release", "create"]
-
-
-def is_upload(call):
-    return call[0] == "gh" and call[1][:2] == ["release", "upload"]
+    return kind_of(call) == "create"
 
 
 def is_tag(call):
-    return call[0] == VCS and call[1][:1] == ["tag"]
+    return kind_of(call) == "tag"
+
+
+def is_lookup(call):
+    return row_of_call(call) == "lookup"
 
 
 def is_mutation(call):
-    return is_push(call) or is_tag(call) or is_create(call) or is_upload(call)
+    """A git or gh call that is not a read of the table: a change, or a call
+    off the table, which is never counted as harmless."""
+    return call[0] in TABLE_PROGRAMS and kind_of(call) != "read"
 
 
 def is_date(call):
@@ -894,11 +1138,145 @@ def is_date(call):
 
 
 def is_field_read(field):
-    return lambda call: call[0] == "gh" and call[1][:1] == ["api"] and "--jq" in call[1] and call[1][-1] == "." + field
+    """A gh api call of the row that reads field (published_at or immutable)."""
+    def reads(call):
+        return row_of_call(call) == field
+    return reads
 
 
 def is_tag_operation(call):
-    return call[0] == VCS and call[1][:1] in (["tag"], ["push"])
+    return is_tag(call) or is_push(call)
+
+
+# Each predicate that reads a call through the table, by name, and the rows
+# whose calls it reads as true. The rows are written out here, not taken
+# from the kinds of CALL_FORMS, so a predicate that reads a row it should
+# not, or misses one, fails test_each_predicate_reads_only_the_calls_of_its_rows.
+PREDICATE_ROWS = (
+    ("is_tag", is_tag, {"tag", "tag-force"}),
+    ("is_push", is_push, {"push", "push-force"}),
+    ("is_create", is_create, {"create"}),
+    ("is_lookup", is_lookup, {"lookup"}),
+    ("is_field_read published_at", is_field_read("published_at"), {"published_at"}),
+    ("is_field_read immutable", is_field_read("immutable"), {"immutable"}),
+    ("is_tag_operation", is_tag_operation, {"tag", "tag-force", "push", "push-force"}),
+    ("is_mutation", is_mutation, {"tag", "tag-force", "push", "push-force", "create"}),
+)
+# A value for each slot of SLOTS, from which the call of each row is built.
+SLOT_SAMPLES = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
+                "<REPO>": "jposluns/cleanlanguage", "<DIR>": "/d"}
+# For each slot, values that its pattern must not match, each 1 change from
+# its value in SLOT_SAMPLES, or an option, where a change is a character
+# replaced, added or dropped, or a repeated part emptied: the option -x;
+# the value with - added before it; each character that the pattern names
+# (the v and the dots of a tag, the dots of a version, the slash of a
+# repository and the leading slash of a directory) replaced by X (the v by
+# Y) and dropped, and the v also in its other case; a digit of each part of
+# a tag or a version replaced by X, and the first character of the commit
+# replaced by -, g and C and dropped; each part of a tag, a version or a
+# repository emptied; and a character added that the pattern does not take
+# where it stands. No value replaces a character of a repository or a
+# directory by one outside its class;
+# test_each_slot_matches_exactly_the_values_its_rule_allows checks the
+# classes of every slot (see SLOTS). The values are written out here, not
+# derived from SLOTS, and test_each_predicate_reads_only_the_calls_of_its_rows
+# puts each in place of its slot in each row.
+SLOT_NEAR_MISSES = {
+    "<TAG>": ("-x", "-v1.0.15", "Y1.0.15", "1.0.15", "V1.0.15", "v1X0.15", "v10.15", "v1.0X15", "v1.015",
+              "vX.0.15", "v1.X.15", "v1.0.1X", "v.0.15", "v1..15", "v1.0.", "v1.0.15X"),
+    "<VERSION>": ("-x", "-1.0.15", "1X0.15", "10.15", "1.0X15", "1.015", "X.0.15", "1.X.15", "1.0.1X",
+                  ".0.15", "1..15", "1.0.", "v1.0.15", "1.0.15X"),
+    "<COMMIT>": ("-x", "-" + COMMIT[1:], "-" + COMMIT, "g" + COMMIT[1:], "C" + COMMIT[1:], COMMIT[1:],
+                 COMMIT + "c"),
+    "<REPO>": ("-x", "-jposluns/cleanlanguage", "jposlunsXcleanlanguage", "jposlunscleanlanguage",
+               "jpos luns/cleanlanguage", "jposluns/clean language", "/cleanlanguage", "jposluns/",
+               "jposluns/clean/language"),
+    "<DIR>": ("-x", "-/d", "Xd", "d", "/d\n"),
+}
+# Each slot pattern of SLOTS stated again in plain Python, written out here,
+# not derived from SLOTS: the values each slot must match, and no other.
+DIGITS = "0123456789"
+NAME_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" + DIGITS + "_."
+
+
+def version_rule(value):
+    parts = value.split(".")
+    return len(parts) == 3 and all(part and all(char in DIGITS for char in part) for part in parts)
+
+
+def repo_rule(value):
+    parts = value.split("/")
+    return len(parts) == 2 and all(part and all(char in NAME_CHARACTERS for char in part) for part in parts)
+
+
+SLOT_RULES = {
+    "<TAG>": lambda value: value[:1] == "v" and version_rule(value[1:]),
+    "<VERSION>": version_rule,
+    "<COMMIT>": lambda value: len(value) == 40 and all(char in "0123456789abcdef" for char in value),
+    "<REPO>": repo_rule,
+    "<DIR>": lambda value: value[:1] == "/" and "\n" not in value,
+}
+# The characters each value 1 character from a sample is built with: every
+# printable ASCII character, the ASCII white space and line breaks, the
+# null character, and 3 others that a wider pattern may take: a letter
+# outside ASCII, an Arabic-Indic digit, which \d matches, and a no-break
+# space, which \s matches.
+PROBE_CHARACTERS = "".join(map(chr, range(0x20, 0x7F))) + "\t\n\r\x0b\x0c\x00" + "".join(map(chr, (0xE9, 0x661, 0xA0)))
+
+
+def one_character_changes(sample):
+    """Every value 1 character from sample: each character dropped, each
+    replaced by each character of PROBE_CHARACTERS, and each character of
+    PROBE_CHARACTERS added at each place, the start and the end included."""
+    values = {sample[:index] + sample[index + 1:] for index in range(len(sample))}
+    for char in PROBE_CHARACTERS:
+        values.update(sample[:index] + char + sample[index + 1:] for index in range(len(sample)))
+        values.update(sample[:index] + char + sample[index:] for index in range(len(sample) + 1))
+    values.discard(sample)
+    return sorted(values)
+
+
+def row_call(template):
+    """The arguments of the call built from template, each slot replaced by
+    its value in SLOT_SAMPLES."""
+    return [re.sub(r"<[A-Z]+>", lambda slot: SLOT_SAMPLES[slot.group(0)], piece) for piece in template]
+
+
+def near_misses(program, template):
+    """The calls that differ from the call of a row by 1 change each, as a
+    label and the call: 1 argument added after the others, 1 option added
+    before them, the last argument dropped, the arguments given to the other
+    program of the table, a line break added before and after each argument,
+    each character of the template outside its slots replaced by X (or Y in
+    place of an X) and each letter there by its other case, and each value
+    of SLOT_NEAR_MISSES for a slot in place of that slot. None of them
+    matches a row."""
+    args = row_call(template)
+    other = [name for name in TABLE_PROGRAMS if name != program][0]
+    calls = [("an argument added", [program, [*args, "x"]]),
+             ("an option before the arguments", [program, ["--x", *args]]),
+             ("the last argument dropped", [program, args[:-1]]),
+             ("the arguments given to " + other, [other, args])]
+    for index, arg in enumerate(args):
+        for label, changed in (("before", "\n" + arg), ("after", arg + "\n")):
+            calls.append((f"a line break added {label} argument {index}",
+                          [program, [*args[:index], changed, *args[index + 1:]]]))
+    for index, piece in enumerate(template):
+        parts = re.split(r"(<[A-Z]+>)", piece)
+        for part_index, part in enumerate(parts):
+            if part in SLOTS:
+                for value in SLOT_NEAR_MISSES[part]:
+                    changed = row_call(["".join(parts[:part_index] + [value] + parts[part_index + 1:])])[0]
+                    calls.append((f"{value!r} in place of {part} in argument {index}",
+                                  [program, [*args[:index], changed, *args[index + 1:]]]))
+                continue
+            for char_index, char in enumerate(part):
+                for other_char in sorted({"Y" if char == "X" else "X", char.swapcase()} - {char}):
+                    changed_part = part[:char_index] + other_char + part[char_index + 1:]
+                    changed = row_call(["".join(parts[:part_index] + [changed_part] + parts[part_index + 1:])])[0]
+                    calls.append((f"character {char_index} of {part!r} in argument {index} replaced by {other_char!r}",
+                                  [program, [*args[:index], changed, *args[index + 1:]]]))
+    return calls
 
 
 # Extractors that cannot run at all: the interpreter fails before main, on a
@@ -1049,6 +1427,192 @@ class HarnessTest(WorkflowStepTest):
                               capture_output=True, text=True)
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("without -u", proc.stderr)
+
+    def test_each_row_changes_the_fake_state_exactly_when_its_kind_is_a_change(self):
+        # The fakes answer a call by its row, and the predicates count it by
+        # the kind of that row. For each row, a call built from its template
+        # matches that row, and the fake changes the tag or write state for
+        # it exactly when the kind of the row is not read, as is_mutation
+        # counts it, so a change labelled as a read, or a read labelled as a
+        # change, fails here. No call of this case is off the table.
+        target = self.root / "download"
+        target.mkdir()
+        sample = {"<TAG>": "v1.0.15", "<VERSION>": "1.0.15", "<COMMIT>": COMMIT,
+                  "<REPO>": "jposluns/cleanlanguage", "<DIR>": str(target)}
+        self.assertEqual(set(sample), set(SLOTS))
+        for name, program, template, kind in CALL_FORMS:
+            with self.subTest(row=name):
+                args = [re.sub(r"<[A-Z]+>", lambda slot: sample[slot.group(0)], piece) for piece in template]
+                self.assertEqual(row_of(program, args), name)
+                self.set_state(local_tag=None, remote_tag=OTHER_COMMIT, gh_writes=None, unmodelled=None,
+                               status="200")
+                before = self.fake_write_state()
+                subprocess.run([str(self.bin / program), *args],
+                               env={"FAKE_STATE": str(self.state), "VERSION": "1.0.15"},
+                               capture_output=True, text=True)
+                after = self.fake_write_state()
+                self.assertIsNone(after["unmodelled"], after)
+                self.assertEqual(after != before, kind != "read", (before, after))
+                self.assertEqual(is_mutation([program, args]), kind != "read")
+
+    def test_each_predicate_reads_only_the_calls_of_its_rows(self):
+        # Each predicate of PREDICATE_ROWS is true on the call of each row in
+        # its set and false on the call of every other row. Each near miss of
+        # each row (near_misses) matches no row and has no kind; every
+        # predicate reads it as false except is_mutation, which counts it as
+        # a change. So a predicate that reads a call by its first or last
+        # words, a character of a template that matches more than itself, a
+        # matcher that takes an argument followed or led by a line break, or
+        # a slot pattern that matches a value of SLOT_NEAR_MISSES, fails here.
+        self.assertEqual(set(SLOT_SAMPLES), set(SLOTS))
+        self.assertEqual(set(SLOT_NEAR_MISSES), set(SLOTS))
+        for name, program, template, _kind in CALL_FORMS:
+            call = [program, row_call(template)]
+            with self.subTest(row=name):
+                self.assertEqual(row_of_call(call), name)
+                self.assertEqual({label for label, predicate, _rows in PREDICATE_ROWS if predicate(call)},
+                                 {label for label, _predicate, rows in PREDICATE_ROWS if name in rows})
+            for change, miss in near_misses(program, template):
+                with self.subTest(row=name, near_miss=change):
+                    self.assertIsNone(row_of_call(miss), miss)
+                    self.assertIsNone(kind_of(miss), miss)
+                    self.assertEqual({label for label, predicate, _rows in PREDICATE_ROWS if predicate(miss)},
+                                     {"is_mutation"}, miss)
+
+    def test_each_slot_matches_exactly_the_values_its_rule_allows(self):
+        # For each slot, every value 1 character from its sample in
+        # SLOT_SAMPLES (one_character_changes) must match the slot, through
+        # token_matches, the matcher of the rows, exactly when SLOT_RULES
+        # allows it. So a slot pattern that reads a named character, such as
+        # the v or a dot of a tag, as any letter or punctuation, that widens
+        # or narrows a class, such as digits read as hexadecimal or a
+        # repository name that takes - or :, or a matcher that takes a value
+        # followed by a line break, fails here.
+        self.assertEqual(set(SLOT_RULES), set(SLOTS))
+        for slot, sample in SLOT_SAMPLES.items():
+            with self.subTest(slot=slot):
+                self.assertTrue(SLOT_RULES[slot](sample))
+                self.assertTrue(token_matches(slot, sample))
+                values = one_character_changes(sample)
+                self.assertTrue(any(SLOT_RULES[slot](value) for value in values))
+                self.assertTrue(any(not SLOT_RULES[slot](value) for value in values))
+                wrong = [value for value in values if token_matches(slot, value) != SLOT_RULES[slot](value)]
+                self.assertEqual(wrong, [])
+
+    def test_every_row_of_the_table_is_a_call_the_workflow_makes(self):
+        # The runs below take the paths on which the workflow makes its git
+        # and gh calls: the validate step, the determine step on a published
+        # release, and the publish step on a first publication by dispatch,
+        # on a forced move of the tag of an unpublished release and on a
+        # re-run. Each run fails if a call it makes is off the table, and the
+        # rows its calls match, together, are exactly the rows of CALL_FORMS,
+        # so a row that no run reaches fails here.
+        shutil.copy2(REPO / "tools" / "skill-version.py", self.work / "tools" / "skill-version.py")
+        self.set_state(main_skill="Version: 1.0.15  \n")
+        runs = (
+            (VALIDATE, {}, "false"),
+            (DETERMINE, {"status": "200"}, "false"),
+            (PUBLISH, {"status": "404", "remote_tag": None}, "false"),
+            (PUBLISH, {"status": "404", "remote_tag": OTHER_COMMIT}, "true"),
+            (PUBLISH, {"status": "200", "remote_tag": COMMIT}, "false"),
+        )
+        rows = set()
+        for name, state, force in runs:
+            self.reset_calls()
+            self.set_state(**state)
+            self.inputs["force"] = force
+            code, _out, err = self.run_step(name)
+            self.assertEqual(code, 0, err)
+            rows |= {row_of_call(call) for call in self.calls() if call[0] in TABLE_PROGRAMS}
+        self.assertEqual(rows, set(ROW_KINDS))
+
+    def test_a_step_still_running_at_the_limit_fails_its_test(self):
+        # With the limit lowered to 1 s, a step that runs for 5 s fails its
+        # test at the limit with a message naming the step. The step is the
+        # sleep itself, through exec, so the run stops it and leaves no
+        # process behind.
+        self.step_run_limit = 1
+        start = time.monotonic()
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, "exec sleep 5\n")
+        self.assertLess(time.monotonic() - start, 4)
+        self.assertEqual(str(raised.exception),
+                         f"step {PUBLISH!r}, or a process it left holding its output, was still running"
+                         " 1 s after the step started")
+
+    def test_a_process_still_holding_the_pipe_after_the_wait_fails_its_test(self):
+        # With the wait lowered to 1 s, a step that exits at once but leaves
+        # a background process holding the pipe for about 3 s fails its test
+        # once that 1 s has passed in all, with a message naming the step.
+        # The process is a Python child that writes 1 byte to each descriptor
+        # from 3 to 254 that it can write, every 0.3 s, so the pipe becomes
+        # readable many times during the wait: a wait that restarts its limit
+        # on each read, or that has no limit, would pass once the process
+        # exits. Its output goes to /dev/null, so it does not hold the output
+        # of the step, and the step limit does not apply.
+        self.step_process_wait = 1
+        writer = ("import os, time\n"
+                  "for _ in range(10):\n"
+                  "    for fd in range(3, 255):\n"
+                  "        try:\n"
+                  "            os.write(fd, b\"x\")\n"
+                  "        except OSError:\n"
+                  "            pass\n"
+                  "    time.sleep(0.3)\n")
+        script = "\"" + sys.executable + "\" -I -c '" + writer + "' >/dev/null 2>&1 &\nexit 0\n"
+        start = time.monotonic()
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, script)
+        self.assertLess(time.monotonic() - start, 2.5)
+        self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
+
+    def test_the_wait_after_the_step_exits_counts_from_its_exit(self):
+        # With the wait lowered to 1 s, a step exits at once and leaves 2
+        # background processes: a Python child that closes every descriptor
+        # from 3 to 254, so it holds the output of the step but not the
+        # pipe, for 2 s, and a sleep whose output goes to /dev/null, so it
+        # holds the pipe but not the output. With the sleep holding the pipe
+        # for 1.5 s, the run fails its test with the message naming the step:
+        # the pipe reaches its end of file after the wait, though before the
+        # output ends, so a wait that counted from the end of the output, or
+        # that took any end of file before the output ends as in time, would
+        # pass. With the sleep holding it for 0.3 s, the pipe reaches its end
+        # of file within the wait, so the run passes, though the output ends
+        # after the wait. Last, a step runs for 1.5 s before it exits and
+        # leaves the sleep holding the pipe for 0.3 s: the pipe reaches its
+        # end of file 0.3 s after the step exits but about 1.8 s after it
+        # started, so the run passes, and a wait counted from the start of
+        # the step would fail it.
+        self.step_process_wait = 1
+        holder = "\"" + sys.executable + "\" -I -c 'import os, time; os.closerange(3, 255); time.sleep(2)' &\n"
+        with self.assertRaises(self.failureException) as raised:
+            self.run_step(PUBLISH, holder + "sleep 1.5 >/dev/null 2>&1 &\nexit 0\n")
+        self.assertIn(f"step {PUBLISH!r} left a process running 1 s after it exited", str(raised.exception))
+        start = time.monotonic()
+        self.assertEqual(self.run_step(PUBLISH, holder + "sleep 0.3 >/dev/null 2>&1 &\nexit 0\n"), (0, "", ""))
+        self.assertGreater(time.monotonic() - start, 1.9)
+        start = time.monotonic()
+        self.assertEqual(self.run_step(PUBLISH, "sleep 1.5\nsleep 0.3 >/dev/null 2>&1 &\nexit 0\n"), (0, "", ""))
+        self.assertGreater(time.monotonic() - start, 1.5)
+
+    def test_an_opt_out_without_a_reason_is_refused(self):
+        # off_table opts a run out of the off-table check only with a reason.
+        # An empty text, a text of white space only, or a value that is not a
+        # text raises ValueError before the step runs, so the step makes no
+        # call, here a release deletion, and the state of the fakes is
+        # unchanged.
+        for reason in ("", " ", "\t\n", True, b"on purpose"):
+            with self.subTest(reason=reason):
+                self.reset_calls()
+                self.set_state(status="404", remote_tag=OTHER_COMMIT, local_tag=None, gh_writes=None,
+                               unmodelled=None)
+                before = self.fake_write_state()
+                with self.assertRaises(ValueError) as raised:
+                    self.run_step(PUBLISH, "gh release delete v1.0.15 --yes\n", off_table=reason)
+                self.assertEqual(str(raised.exception),
+                                 f"run_step: off_table must be a reason with text, not {reason!r}")
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.fake_write_state(), before)
 
     def test_every_variable_a_step_reads_is_declared(self):
         for name in (VALIDATE, DETERMINE, PACKAGE, PUBLISH):
@@ -1405,7 +1969,7 @@ class RerunTest(WorkflowStepTest):
                 code, out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 0, err)
                 calls = self.calls()
-                self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                self.assertFalse(any(is_mutation(c) for c in calls), calls)
                 assert_readback_ran(self, calls, out)
                 self.assertIn("kept its assets", out)
 
@@ -1440,7 +2004,7 @@ class RerunTest(WorkflowStepTest):
                     self.assertNotIn("not a usable UTC instant", err)
                     self.assertNotIn("kept its assets", out)
                     calls = self.calls()
-                    self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                    self.assertFalse(any(is_mutation(c) for c in calls), calls)
                     self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
     def test_undated_rerun_reads_back_immutability_only(self):
@@ -1467,6 +2031,55 @@ class RerunTest(WorkflowStepTest):
                         self.assertNotIn("kept its assets", out)
 
 
+# The tag check of the push branch of the publish step, each line stripped of
+# its indentation, as the witness that replaces it requires it to read.
+TAG_PUSH_CHECK = (
+    "if [ \"${remote_tag_sha}\" != \"${built_commit}\" ]; then",
+    "echo \"Tag ${RELEASE_TAG} resolves to ${remote_tag_sha:-nothing} on origin, not the built commit"
+    " ${built_commit}; refusing to publish mismatched bytes.\" >" + chr(38) + "2",
+    "exit 1",
+    "fi",
+)
+
+# Calls that match no row of CALL_FORMS, each as a label, its program and its
+# arguments: an option before the subcommand, a method or body option that
+# the table does not hold, a release deletion or upload, a ref update, a row
+# with 1 argument more or fewer, a push with an option after the ref or of
+# the bare tag, the arguments of a git row given to gh, an option in each
+# slot, and a slot with text after its pattern.
+RELEASES_PATH = "repos/jposluns/cleanlanguage/releases"
+DOWNLOAD_PATTERNS = ["--pattern", "cleanlanguage.zip", "--pattern", "cleanlanguage.zip.sha256",
+                     "--pattern", "cleanlanguage-1.0.15.zip", "--pattern", "cleanlanguage-1.0.15.zip.sha256"]
+OFF_TABLE_CALLS = (
+    ("a git option before tag", VCS, ["-c", "user.name=x", "tag", "v1.0.15", COMMIT]),
+    ("git --attr-source before tag", VCS, ["--attr-source", "HEAD", "tag", "v1.0.15", COMMIT]),
+    ("gh -R before release create", "gh", ["-R", "jposluns/cleanlanguage", "release", "create", "v1.0.15"]),
+    ("a method before api", "gh", ["-X", "POST", "api", RELEASES_PATH]),
+    ("a joined method", "gh", ["api", "-XPOST", RELEASES_PATH]),
+    ("a method after =", "gh", ["api", "--method=POST", RELEASES_PATH]),
+    ("a long body option", "gh", ["api", "--field", "tag_name=v1.0.15", RELEASES_PATH]),
+    ("an include with nothing after =", "gh",
+     ["api", "--include=", "--silent", RELEASES_PATH + "/tags/v1.0.15"]),
+    ("a release deletion", "gh", ["release", "delete", "v1.0.15", "--yes"]),
+    ("a release upload", "gh", ["release", "upload", "v1.0.15", "dist/cleanlanguage.zip", "--clobber"]),
+    ("a ref update", VCS, ["update-ref", "refs/tags/v1.0.15", COMMIT]),
+    ("a row with 1 more argument", VCS, ["tag", "v1.0.15", COMMIT, "HEAD"]),
+    ("a row with 1 argument fewer", VCS, ["tag", "v1.0.15"]),
+    ("a push with an option after the ref", VCS, ["push", "origin", "refs/tags/v1.0.15", "--force"]),
+    ("a push of the bare tag", VCS, ["push", "origin", "v1.0.15"]),
+    ("a git row given to gh", "gh", ["tag", "v1.0.15", COMMIT]),
+    ("an option in the tag slot", VCS, ["tag", "-x", COMMIT]),
+    ("an option in the commit slot", VCS, ["tag", "v1.0.15", "-x"]),
+    ("an option in the repository slot", "gh", ["api", "repos/-x/y/releases/tags/v1.0.15", "--jq", ".immutable"]),
+    ("an option in the directory slot", "gh",
+     ["release", "download", "v1.0.15", "--dir", "-x", "--clobber", *DOWNLOAD_PATTERNS]),
+    ("an option in the version slot", "gh",
+     ["release", "download", "v1.0.15", "--dir", "/d", "--clobber", *DOWNLOAD_PATTERNS[:5],
+      "cleanlanguage--x.zip", *DOWNLOAD_PATTERNS[6:]]),
+    ("text after the tag slot", VCS, ["tag", "v1.0.15-x", COMMIT]),
+)
+
+
 class ImmutableReleaseTest(WorkflowStepTest):
     """Item 57: this workflow never republishes a published release. The force
     input is refused against a published release and only moves the tag of a release that is not
@@ -1480,7 +2093,12 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.set_state(status="200", remote_tag=remote_tag)
 
     def assert_no_mutation(self, calls):
+        # No git or gh call in the log is a change or off the table.
         self.assertFalse([c for c in calls if is_mutation(c)], calls)
+        # The fakes' own state as well as the call log, so a change or an
+        # off-table call that the log does not show still fails this
+        # assertion.
+        self.assertEqual(self.fake_write_state(), self.state_before_run, calls)
 
     def test_force_against_a_published_release_is_refused(self):
         # The same commit, force set.
@@ -1753,7 +2371,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertLess(move, push)
         self.assertLess(push, create)
         self.assertLess(create, self.index_of(calls, is_field_read("immutable")))
-        self.assertFalse(any(is_upload(c) for c in calls), calls)
+        self.assertEqual([row_of_call(c) for c in calls if is_mutation(c)], ["tag-force", "push-force", "create"], calls)
         self.assertIn("First-publication readback", out)
 
     def test_moved_tag_of_an_unpublished_release_needs_the_force_input(self):
@@ -1771,8 +2389,256 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(code, 0, err)
         calls = self.calls()
         self.assertTrue(any(is_create(c) for c in calls), calls)
-        self.assertFalse(any(is_upload(c) or is_push(c) for c in calls), calls)
+        self.assertEqual([row_of_call(c) for c in calls if is_mutation(c)], ["create"], calls)
         self.assertIn("First-publication readback", out)
+
+    # The tag-push runs of an unpublished release whose tag on origin is not
+    # the built commit: dated and undated, with the tag at another commit and
+    # with no tag, each with the value the refusal names for that tag.
+    TAG_PUSH_MISMATCHES = tuple((dated, remote_tag, shown) for dated in (True, False)
+                                for remote_tag, shown in ((OTHER_COMMIT, OTHER_COMMIT), ("", "nothing")))
+
+    def tag_push_mismatch(self, dated, remote_tag):
+        self.reset_calls()
+        self.runner["GITHUB_EVENT_NAME"] = "push"
+        self.carried["RELEASE_DATED"] = "1" if dated else "0"
+        self.carried["RELEASE_DATE"] = "2026-11-15" if dated else ""
+        self.set_state(status="404", remote_tag=remote_tag, local_tag=None, gh_writes=None, unmodelled=None)
+
+    def test_tag_push_of_an_unpublished_release_refuses_mismatched_bytes(self):
+        # A tag-triggered run publishes only the commit that its tag names on
+        # origin. With the tag at another commit or gone when the step reads
+        # it, the run refuses before any tag operation or create call, on a
+        # dated release (past the early window check) and an undated one.
+        for dated, remote_tag, shown in self.TAG_PUSH_MISMATCHES:
+            with self.subTest(dated=dated, remote_tag=shown):
+                self.tag_push_mismatch(dated, remote_tag)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Tag v1.0.15 resolves to " + shown + " on origin, not the built commit "
+                              + COMMIT, err)
+                self.assertIn("refusing to publish mismatched bytes", err)
+                self.assertNotIn("Refusing to publish v1.0.15", err)
+                # No release is published, so no text names a corrective
+                # version: neither the superseded-release advice nor any line
+                # holding the word corrective or the words new version.
+                self.assert_superseded_advice(out + err, 0)
+                for marker in ("corrective", "new version"):
+                    self.assertNotIn(marker, (out + err).lower())
+                calls = self.calls()
+                # The fakes' tag and write state is the state this case set,
+                # whatever the call log shows. It is compared with that state
+                # as written here, before assert_no_mutation compares it with
+                # the copy run_step took, so a hidden change fails here naming
+                # the expected state, and so does a reading of the state that
+                # drops 1 of its files, which the comparison of 2 readings by
+                # the same function cannot see.
+                self.assertEqual(self.fake_write_state(),
+                                 {"local_tag": None, "remote_tag": remote_tag, "gh_writes": None, "unmodelled": None},
+                                 calls)
+                self.assert_no_mutation(calls)
+                self.assertEqual(len([c for c in calls if is_lookup(c)]), 1, calls)
+                # Only the early window check reads the clock; the binding
+                # check before the create call is never reached.
+                self.assertEqual(len([c for c in calls if is_date(c)]), 1 if dated else 0, calls)
+                self.assertFalse(any(is_field_read("immutable")(c) for c in calls), calls)
+
+    def test_without_its_tag_check_a_tag_push_publishes_mismatched_bytes(self):
+        # The witness for the case above: with the tag check of the push
+        # branch replaced by the no-op :, each of the 4 runs of that case
+        # exits 0 and creates the release, which shows that the case above
+        # fails whenever the check is dropped. The check is found by its
+        # refusal line, which must occur on exactly 1 line, and each of its
+        # 4 lines, stripped of indentation, must equal TAG_PUSH_CHECK, so a
+        # changed check fails this test rather than letting it pass on a
+        # script it no longer changes.
+        lines = step_script(PUBLISH).splitlines(keepends=True)
+        hits = [i for i, line in enumerate(lines) if "refusing to publish mismatched bytes" in line]
+        self.assertEqual(len(hits), 1, hits)
+        start = hits[0] - 1
+        block = [line.strip() for line in lines[start:start + 4]]
+        self.assertEqual(block, list(TAG_PUSH_CHECK), block)
+        mutant = "".join(lines[:start]) + ":\n" + "".join(lines[start + 4:])
+        for dated, remote_tag, shown in self.TAG_PUSH_MISMATCHES:
+            with self.subTest(dated=dated, remote_tag=shown):
+                self.tag_push_mismatch(dated, remote_tag)
+                code, _out, err = self.run_step(PUBLISH, mutant)
+                self.assertEqual(code, 0, err)
+                self.assertNotIn("mismatched bytes", err)
+                calls = self.calls()
+                self.assertEqual(len([c for c in calls if is_create(c)]), 1, calls)
+                writes = [json.loads(line)[:3] for line in (self.fake_write_state()["gh_writes"] or "").splitlines()]
+                self.assertEqual(writes, [["release", "create", "v1.0.15"]], calls)
+
+    def test_a_tag_written_in_the_background_after_the_step_exits_is_seen(self):
+        # A step run waits for every process that still holds the pipe it
+        # inherited from the step, so a tag that such a background process
+        # writes after the step has exited is in the call log and the state
+        # that assert_no_mutation reads. A process that closes the
+        # descriptors it inherited is not waited for (see run_step).
+        self.tag_push_mismatch(True, OTHER_COMMIT)
+        script = "( sleep 1; " + VCS + " tag v1.0.15 " + COMMIT + " ) >/dev/null 2>&1 &\nexit 1\n"
+        code, _out, err = self.run_step(PUBLISH, script)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
+        self.assertEqual(len([c for c in self.calls() if is_tag(c)]), 1, self.calls())
+        with self.assertRaises(AssertionError):
+            self.assert_no_mutation(self.calls())
+
+    def test_a_byte_written_to_the_pipe_does_not_end_the_wait(self):
+        # A background process that writes to the pipe it inherited makes
+        # the pipe readable while it still holds it. The step run reads the
+        # pipe until its end of file, so a tag that such a process writes
+        # 1 s later is still in the call log and the state that
+        # assert_no_mutation reads. The bytes are written by a Python child
+        # of that process, which inherits no descriptor that bash keeps for
+        # itself, so the pipe is the only one from 3 up that it can write;
+        # it counts the descriptors it wrote to, and exactly 1 shows that
+        # the byte reached the pipe.
+        self.tag_push_mismatch(True, OTHER_COMMIT)
+        writer = ("import os\n"
+                  "count = 0\n"
+                  "for fd in range(3, 255):\n"
+                  "    try:\n"
+                  "        os.write(fd, b\"x\")\n"
+                  "        count += 1\n"
+                  "    except OSError:\n"
+                  "        pass\n"
+                  "with open(os.path.join(os.environ[\"FAKE_STATE\"], \"pipe_writes\"), \"w\") as handle:\n"
+                  "    handle.write(str(count))\n")
+        script = ("( \"" + sys.executable + "\" -I -c '" + writer + "'; sleep 1; "
+                  + VCS + " tag v1.0.15 " + COMMIT + " ) >/dev/null 2>&1 &\nexit 1\n")
+        code, _out, err = self.run_step(PUBLISH, script)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.fake_write_state()["local_tag"], COMMIT)
+        self.assertEqual(len([c for c in self.calls() if is_tag(c)]), 1, self.calls())
+        with self.assertRaises(AssertionError):
+            self.assert_no_mutation(self.calls())
+        self.assertEqual((self.state / "pipe_writes").read_text(encoding="utf-8"), "1")
+
+    # The ends of the step scripts of test_a_call_off_the_table_fails_the_run,
+    # each after the call: exit 0, exit 1 as the refusals of the workflow do,
+    # or no further command, so that bash -e exits with the exit code of the
+    # call itself.
+    OFF_TABLE_STEP_ENDS = (
+        ("exit 0", " || true\nexit 0\n"),
+        ("exit 1", " || true\nexit 1\n"),
+        ("the exit code of the call", "\n"),
+    )
+
+    def test_a_call_off_the_table_fails_the_run(self):
+        # Each call of OFF_TABLE_CALLS matches no row of CALL_FORMS. A step
+        # that makes it fails its run, whatever the step's exit code: 0 or 1
+        # after the call, or the exit code of the call itself. Run again with
+        # the opt-out, a step that ends with the exit code of the call exits
+        # 97 with no output and only the message of the fake on its error
+        # output, so the fake refused the call with exit 97 and gave no
+        # answer; it recorded the call in unmodelled and changed nothing
+        # else; the predicates read the call as no row and as a change; and
+        # assert_no_mutation fails on the state of the fakes alone, given an
+        # empty call log.
+        for label, program, args in OFF_TABLE_CALLS:
+            call = shlex.join([program, *args])
+            recorded = json.dumps([program, args]) + "\n"
+            for ends, end in self.OFF_TABLE_STEP_ENDS:
+                with self.subTest(label, step_ends_with=ends):
+                    self.tag_push_mismatch(True, OTHER_COMMIT)
+                    self.set_state(local_tag=COMMIT)
+                    with self.assertRaises(self.failureException) as raised:
+                        self.run_step(PUBLISH, call + end)
+                    self.assertEqual(str(raised.exception),
+                                     f"step {PUBLISH!r} made a call off the table CALL_FORMS: {recorded}")
+            with self.subTest(label, step_ends_with="the exit code of the call, opted out"):
+                self.tag_push_mismatch(True, OTHER_COMMIT)
+                self.set_state(local_tag=COMMIT)
+                result = self.run_step(
+                    PUBLISH, call + "\n",
+                    off_table="the case makes this call on purpose, to show that the fake refuses and records it")
+                refusal = "fake " + program + ": call off the table CALL_FORMS: " + json.dumps(args) + "\n"
+                self.assertEqual(result, (97, "", refusal))
+                self.assertEqual(self.fake_write_state(),
+                                 {"local_tag": COMMIT, "remote_tag": OTHER_COMMIT, "gh_writes": None,
+                                  "unmodelled": recorded})
+                self.assertEqual((row_of_call([program, args]), is_mutation([program, args])), (None, True))
+                with self.assertRaises(AssertionError):
+                    self.assert_no_mutation([])
+
+    def test_each_change_alone_fails_the_no_change_assertion(self):
+        # For each row of CALL_FORMS whose kind is a change, and for a call
+        # off the table, a step makes that 1 call from a state in which it
+        # changes exactly 1 file of FAKE_WRITE_STATE: a tag moves the local
+        # tag, a push moves the tag on origin to the local tag, a creation is
+        # appended to gh_writes, which already holds the record of the same
+        # creation, and the call off the table is appended to unmodelled,
+        # which already holds the record of the same call. Run without the
+        # opt-out, the call off the table fails its run. Each run must leave
+        # the other 3 files as they were and that file as stated, a record
+        # appended once more, and assert_no_mutation must fail when given an
+        # empty call log, so on that file alone. So a no-change assertion
+        # that leaves out any of the 4 files, or a fake that writes its
+        # record over the file in place of appending it, so that a repeated
+        # change leaves the file as it was, fails here.
+        changes = [(name, program, row_call(template), kind)
+                   for name, program, template, kind in CALL_FORMS if kind != "read"]
+        changes.append(("a release deletion, off the table", "gh", ["release", "delete", "v1.0.15", "--yes"], "off"))
+        files = {"tag": "local_tag", "push": "remote_tag", "create": "gh_writes", "off": "unmodelled"}
+        self.assertEqual(sorted(files.values()), sorted(FAKE_WRITE_STATE))
+        self.assertEqual(sorted(kind for _name, _program, _args, kind in changes),
+                         ["create", "off", "push", "push", "tag", "tag"])
+        reason = "the case makes this call on purpose, to show that the fake appends its record"
+        for name, program, args, kind in changes:
+            record = json.dumps(args if kind == "create" else [program, args]) + "\n"
+            script = shlex.join([program, *args]) + "\n"
+            with self.subTest(row=name):
+                self.tag_push_mismatch(True, OTHER_COMMIT)
+                self.set_state(local_tag=OTHER_COMMIT if kind == "tag" else COMMIT,
+                               gh_writes=record if kind == "create" else None,
+                               unmodelled=record if kind == "off" else None)
+                expected = self.fake_write_state()
+                expected[files[kind]] = COMMIT if kind in ("tag", "push") else record + record
+                if kind == "off":
+                    with self.assertRaises(self.failureException) as raised:
+                        self.run_step(PUBLISH, script)
+                    self.assertEqual(str(raised.exception),
+                                     f"step {PUBLISH!r} made a call off the table CALL_FORMS: {record + record}")
+                    self.set_state(unmodelled=record)
+                code, _out, err = self.run_step(PUBLISH, script, off_table=reason if kind == "off" else None)
+                self.assertEqual(code, 97 if kind == "off" else 0, err)
+                self.assertEqual(self.fake_write_state(), expected, self.calls())
+                with self.assertRaises(AssertionError):
+                    self.assert_no_mutation([])
+
+    def test_every_gh_call_of_the_publish_step_reaches_the_fake_gh(self):
+        # The pin counts the text gh api, the text gh release and the word gh
+        # in the publish step, so a gh call added in those forms fails it. A
+        # call that bash runs as gh but that is written otherwise, such as g\h
+        # or "g"h, escapes the pin; the runs below catch it on the paths they
+        # take. Each renames every gh word of the step gh-text, a copy of the
+        # fake gh, which matches its calls as gh, so each call written as the
+        # word gh reaches the fake by that name, and a call that bash still
+        # runs as gh reaches it as gh and fails here. This holds on the 3
+        # paths these runs take (a re-run, a first publication, and the
+        # refusal of a tag push at another commit), not on a path none of
+        # them reaches.
+        script = step_script(PUBLISH)
+        self.assertEqual((script.count("gh api "), script.count("gh release "), len(re.findall(r"\bgh\b", script))),
+                         (3, 3, 6))
+        self.write_exec(self.bin / "gh-text", FAKE_GH)
+        renamed = re.sub(r"\bgh\b", "gh-text", script)
+        for path in ("200", "404", "push"):
+            with self.subTest(renamed=path):
+                if path == "push":
+                    self.tag_push_mismatch(True, OTHER_COMMIT)
+                else:
+                    self.reset_calls()
+                    self.set_state(status=path, remote_tag=COMMIT, local_tag=None, gh_writes=None)
+                code, _out, err = self.run_step(PUBLISH, renamed)
+                self.assertEqual(code, 1 if path == "push" else 0, err)
+                if path == "push":
+                    self.assertIn("refusing to publish mismatched bytes", err)
+                names = [call[0] for call in self.calls()]
+                self.assertIn("gh-text", names, self.calls())
+                self.assertNotIn("gh", names, self.calls())
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
         for force in ("false", "true"):
@@ -2058,6 +2924,16 @@ class ValidateStepTest(WorkflowStepTest):
                       " See the description of the force input of this workflow.", err)
         self.assert_superseded_advice(err, 0)
         self.assertFalse(any(c[0] == "gh" for c in self.calls()), self.calls())
+
+    def test_a_release_ahead_of_main_is_refused(self):
+        # The step reads the version on main through the fetch and show rows
+        # of CALL_FORMS, and refuses a release whose version main lacks.
+        shutil.copy2(REPO / "tools" / "skill-version.py", self.work / "tools" / "skill-version.py")
+        self.set_state(main_skill="Version: 1.0.14  \n")
+        code, _out, err = self.run_step(VALIDATE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("main names version 1.0.14, older than the release 1.0.15.", err)
+        self.assertEqual([row_of_call(c) for c in self.calls() if c[0] == VCS], ["fetch", "show"], self.calls())
 
 
 class DetermineStepTest(WorkflowStepTest):
@@ -2648,7 +3524,7 @@ class ApiPathTest(WorkflowStepTest):
             with self.subTest(subcommand=sub):
                 self.assertEqual(rest[:1], [PINNED_TAG], calls)
                 self.assertEqual([arg for arg in rest if TAG_LIKE.fullmatch(arg)], [PINNED_TAG], calls)
-                self.assertEqual([arg for arg in rest if arg == "-R" or arg.startswith("--repo")], [], calls)
+                self.assertEqual([arg for arg in rest if arg.startswith(("-R", "--repo"))], [], calls)
 
     def test_determine_probe_and_published_at_read_name_the_release_tag(self):
         self.set_state(status="200")
