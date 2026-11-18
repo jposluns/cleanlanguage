@@ -11,8 +11,9 @@ adds a file that Cloudflare Pages may run or read: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
 Pipfile or Gemfile. The copy holds the 3 stylesheets too. For check 7,
-cases add a page or a folder named as a source, a file under site/assets/,
-copy the whole committed site/ over the copy, or add a rule to
+cases add a page or a folder named as a source, a file, a folder or a link
+under site/assets/, copy the whole committed site/ over the copy, or add a
+rule to
 site/_redirects, among them a line that holds a character other than the
 line feed at which a reading may end a line or a field, and assert that such
 a line fails, that a rule whose source lies under /assets/ passes only when
@@ -34,7 +35,14 @@ occupied() recorded the refusal that names that folder, and otherwise with
 main()'s code, and the case expects exit 1 and the refusal that names its
 redirect source and that folder. Root lists a folder whatever its mode, so
 under root that case is not run, and main() names it as skipped, as it names
-the 2 mode-000 load cases. 3 cases put
+the 2 mode-000 load cases. 2 cases, of CASE_FOLDER_CASES, run the gate
+through SORTED_PROBE, which loads the copy of the gate, wraps its
+list_folder() to give the entries of each folder sorted by name, so that
+site/assets/QZM is listed before site/assets/qzm on any file system, and
+exits with main()'s code; the file that occupies their source lies in the
+folder listed last in 1 case and in the folder listed first in the other, so
+occupied() must enter each folder whose name matches a segment in any letter
+case. 3 cases put
 a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
@@ -654,6 +662,15 @@ def write(relative: str, text: str):
     """Replace a file of the copy with text."""
     def apply(root: Path) -> None:
         (root / relative).write_text(text, encoding="utf-8")
+    return apply
+
+
+def link(relative: str, to: str):
+    """Make a link at relative in the copy that points to to, which need not exist, and any folder it needs."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(to)
     return apply
 
 
@@ -1672,6 +1689,25 @@ CASES = [
     ("a redirect beneath an existing file",
         target("/assets/baseline/logos/aiqt.svg 301", "/assets/baseline/baseline.css/old.svg"),
         (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
+    # A link occupies a source: at its path, whatever it points to, and at a leading part of its path, which the check
+    # does not follow, even when it points to a folder that holds nothing at the rest of the path.
+    ("a redirect beneath a link to a folder",
+        both(link("site/assets/qzl", "baseline"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzl/old.svg")),
+        (1, "at or above which site/assets/qzl exists, " + OCCUPIED)),
+    ("a redirect beneath a link that points to nothing",
+        both(link("site/assets/qzn", "nothing"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzn/old.svg")),
+        (1, "at or above which site/assets/qzn exists, " + OCCUPIED)),
+    ("a redirect of a link's address in another letter case, the link pointing to nothing",
+        both(link("site/assets/qzd.svg", "nothing.svg"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/QZD.svg")),
+        (1, "at or above which site/assets/qzd.svg exists, " + OCCUPIED)),
+    # An exact source may hold each character that the check allows in a segment: a capital, a digit, _ and ~.
+    ("a dropped logo whose source holds capitals", target("/assets/baseline/logos/aiqt.svg 301", "/assets/QZ-OLD.svg"),
+        0),
+    ("a dropped logo whose source holds a digit", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz-old2.svg"),
+        0),
+    ("a dropped logo whose source holds _", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz_old.svg"), 0),
+    ("a dropped logo whose source holds ~", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz~old.svg"), 0),
     ("a redirect of a dropped logo under a full URL",
         append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/aiqt-old.svg /x.svg 301\n"),
         (1, "it does not start with /, so it can carry a scheme and a host")),
@@ -3240,12 +3276,38 @@ LOCKED_CASES = [
     ("a dropped logo that cannot be evaluated, its folder set to mode 000",
         both(append(REDIRECTS, "/assets/old/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
              lambda root: (root / LOCKED_FOLDER).mkdir()),
-        (1, "site/_redirects line 33 has the source /assets/old/aiqt-card.svg, which could not be evaluated: the "
-            f"folder {LOCKED_FOLDER} could not be listed")),
+        (1, "site/_redirects line 33 has the source /assets/old/aiqt-card.svg, " + UNEVALUATED
+            + f"the folder {LOCKED_FOLDER} could not be listed")),
 ]
+# The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate, wraps its
+# list_folder() to give the entries of each folder sorted by name, so that site/assets/QZM is listed before
+# site/assets/qzm on any file system, and exits with main()'s code.
+SORTED_PROBE = """\
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+listed = gate.list_folder
+gate.list_folder = lambda folder: sorted(listed(folder), key=lambda entry: entry.name)
+sys.exit(gate.main())
+"""
+# 2 folders whose names differ only in letter case match the segment qzm of a source, and occupied() must enter each:
+# the file that occupies the source lies in the folder listed last, then in the folder listed first.
+CASE_FOLDER_CASES = [
+    ("a redirect of a file in the last listed of 2 folders whose names differ only in letter case",
+        both(create("site/assets/QZM/keep.txt", "x\n"), create("site/assets/qzm/old.svg", "<svg></svg>\n"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzm/old.svg")),
+        (1, "at or above which site/assets/qzm/old.svg exists, " + OCCUPIED)),
+    ("a redirect of a file in the first listed of 2 folders whose names differ only in letter case",
+        both(create("site/assets/QZM/old.svg", "<svg></svg>\n"), create("site/assets/qzm/keep.txt", "x\n"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzm/old.svg")),
+        (1, "at or above which site/assets/QZM/old.svg exists, " + OCCUPIED)),
+]
+CASES += CASE_FOLDER_CASES
 # Each case that main() runs through a probe in place of the gate alone: the probe, then the paths under the copy that
 # the probe is given after the copy of the gate.
-PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,))}
+PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,)),
+          **{case[0]: (SORTED_PROBE, ()) for case in CASE_FOLDER_CASES}}
 # Root reads a file and lists a folder whatever its mode, so under root a mode-000 case cannot fail to read or list: it
 # is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES if "mode 000" in case[0] and os.geteuid() == 0]

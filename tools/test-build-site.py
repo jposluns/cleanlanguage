@@ -26,10 +26,13 @@ its SHA-256 is the digest that ``.baseline/SHA256SUMS`` lists for
 ``logos/<site>-favicon.ico``, ``<site>`` read from
 ``.baseline/site-card.toml``, and requires that check to refuse a changed,
 missing or unlisted favicon, a card data file that names another site or no
-site, and a SHA256SUMS without that line. Another checks
+site, and a SHA256SUMS without that line or with that name starting
+elsewhere in its line. Another checks
 that the logos the built pages load are exactly the pin gate's ``LOGOS``,
 loading ``tools/check-baseline-pin.py`` from its path as
-``tools/copy-baseline.py`` does. Another reads this
+``tools/copy-baseline.py`` does, and that its comparison refuses a name
+added to ``LOGOS`` or dropped from it and a page that starts or stops
+loading a logo. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
 version as BASELINE, read by the generator's load_pin(). Another reads the
@@ -3647,9 +3650,10 @@ FAVICON_FAULTS = (
 def check_favicon(failures: list[str]) -> int:
     """favicon_problems() passes this repository and an unchanged copy of FAVICON_INPUTS, and refuses each of
     FAVICON_FAULTS on such a copy with its words; published_favicon_digest() finds the digest of a sound line, and
-    none for another site's name, a digest in capitals, a name listed twice, a name with a further suffix or a name
-    marked as read in binary mode. --check alone passes when the file and its listing are removed together, so this
-    case is what keeps them."""
+    none for another site's name, a digest in capitals, a name listed twice, a name with a further suffix, a name
+    marked as read in binary mode, or a name that does not start at the 67th character of its line: after a 65th
+    digit, after a further character or a 3rd space between the digest and the name, or under a further folder.
+    --check alone passes when the file and its listing are removed together, so this case is what keeps them."""
     failures += [f"favicon: {problem}" for problem in favicon_problems(REPO_ROOT)]
     for name, fault, words in (("an unchanged copy", None, None),) + FAVICON_FAULTS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -3671,7 +3675,11 @@ def check_favicon(failures: list[str]) -> int:
               ("a digest in capitals", sound.replace("a", "A", 64), "x"),
               ("a name listed twice", sound * 2, "x"),
               ("a name with a further suffix", sound.replace(".ico", ".ico.bak"), "x"),
-              ("a name marked as read in binary mode", sound.replace("  logos", " *logos"), "x"))
+              ("a name marked as read in binary mode", sound.replace("  logos", " *logos"), "x"),
+              ("a 65th digit before the name", sound.replace("  logos", "a  logos"), "x"),
+              ("a further character between the digest and the name", sound.replace("  logos", "z  logos"), "x"),
+              ("a 3rd space between the digest and the name", sound.replace("  logos", "   logos"), "x"),
+              ("a name under a further folder", sound.replace("  logos", "  x/logos"), "x"))
     for name, sums, key in faults:
         if published_favicon_digest(sums, key) is not None:
             failures.append(f"favicon: published_favicon_digest() finds a digest in a SHA256SUMS with {name}")
@@ -3692,10 +3700,19 @@ def load_pin_gate():
     return module
 
 
+def logo_set_problem(loaded: set[str], logos: set[str]) -> str | None:
+    """Why loaded, the names of the logos that the built pages load, is not exactly logos, the pin gate's LOGOS (None
+    if it is)."""
+    if loaded != logos:
+        return (f"the built pages load {sorted(loaded)}, but the pin gate's LOGOS is {sorted(logos)}; only in the "
+                f"pages: {sorted(loaded - logos)}, only in LOGOS: {sorted(logos - loaded)}")
+    return None
+
+
 def check_logo_set(failures: list[str]) -> int:
     """The logos that the built pages load, the names of their assets/baseline/logos/ paths, are exactly the pin
     gate's LOGOS, so a name added to the list or dropped from it, or a page that starts or stops loading a logo,
-    fails here."""
+    fails here; logo_set_problem() refuses each of those 4 changes made to what this build gives."""
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         out = Path(scratch) / "out"
@@ -3707,11 +3724,21 @@ def check_logo_set(failures: list[str]) -> int:
         for page in out.rglob("*.html"):
             loaded.update(LOGO_PATH.findall(page.read_text(encoding="utf-8")))
     logos = set(load_pin_gate().LOGOS)
-    if loaded != logos:
-        failures.append(f"logo set: the built pages load {sorted(loaded)}, but the pin gate's LOGOS is "
-                        f"{sorted(logos)}; only in the pages: {sorted(loaded - logos)}, only in LOGOS: "
-                        f"{sorted(logos - loaded)}")
-    return 1
+    problem = logo_set_problem(loaded, logos)
+    if problem:
+        failures.append(f"logo set: {problem}")
+    if not loaded or not logos:
+        failures.append(f"logo set: the built pages load {sorted(loaded)} and the pin gate's LOGOS is {sorted(logos)}, "
+                        "so a logo cannot be dropped from each")
+        return 1
+    faults = (("a name added to LOGOS", loaded, logos | {"zz-added.svg"}),
+              ("a name dropped from LOGOS", loaded, logos - {min(logos)}),
+              ("a page that starts loading a logo outside LOGOS", loaded | {"zz-loaded.svg"}, logos),
+              ("a page that stops loading a logo", loaded - {min(loaded)}, logos))
+    for name, pages, listed in faults:
+        if logo_set_problem(pages, listed) is None:
+            failures.append(f"logo set: logo_set_problem() does not refuse {name}")
+    return 1 + len(faults)
 
 
 def check_version_literals(failures: list[str]) -> int:
