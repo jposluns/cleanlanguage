@@ -4,9 +4,12 @@
 Patch the gate's manifest paths to a temp fixture and drive the failure and
 success paths offline with the standard library. The fixture also holds a root
 LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
-cases can make a copy differ, go missing, or become a symlink, a FIFO or a
-folder. The cases name the 2 files in COPIED_FILES below, not in the gate's own
-list.
+cases can make a copy differ, go missing, or become a symlink, a FIFO, a folder
+or a socket. On Linux the other files that are not regular are character and
+block devices, which no case makes: creating a device node needs the CAP_MKNOD
+capability, which an unprivileged test lacks, so the gate's refusal of a copy
+that is a device is untested. The cases name the 2 files in COPIED_FILES below,
+not in the gate's own list.
 
 The licence-copy cases check outcomes only: the exit code, the message, that
 the gate ends and, for a FIFO, whether anything opened it for reading. They
@@ -25,16 +28,18 @@ state no rule about how the gate reads a file:
   seconds, while a FifoWitness waits to open the FIFO for writing. A gate
   that opens the FIFO for reading before refusing the copy, with or without
   blocking, ends that wait, so it fails the case.
-- A gate that reads a missing copy or a folder with its own read_bytes
-  before refusing it stops with exit 3, not 1, so it fails the case for a
-  missing copy or for a folder.
+- A gate that reads a missing copy, a folder or a socket with its own
+  read_bytes before refusing it stops with exit 3, not 1, so it fails the
+  case for a missing copy, for a folder or for a socket.
 
 No case catches a gate that, before refusing a copy, reads through a symlink
-to a regular file, lists a folder, tries to read a missing copy or a folder
-and ignores the error, or opens a FIFO neither for reading nor with blocking,
-such as with O_PATH: each leaves the exit code and the message the same. No
-case makes a symlink to a device, such as /dev/zero, so a gate that reads
-through one before refusing it is untested too.
+to a regular file, lists a folder, tries to read a missing copy, a folder or a
+socket and ignores the error, or opens a FIFO neither for reading nor with
+blocking, such as with O_PATH: each leaves the exit code and the message the
+same. No case makes a symlink to a device, such as /dev/zero, so a gate that
+reads through one before refusing it is untested too, and no case makes a copy
+that is a device, so a gate that refuses only the kinds the cases make and
+reads a device copy is untested as well.
 """
 from __future__ import annotations
 
@@ -44,6 +49,7 @@ import io
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -455,6 +461,20 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 copy.mkdir()
+                self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
+
+    def test_licence_copy_socket_fails(self):
+        # A Unix socket is the remaining kind that is not regular and that an
+        # unprivileged test can make. Opening it fails, so a gate that reads it
+        # with read_bytes before refusing it stops with exit 3, not 1.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                with socket.socket(socket.AF_UNIX) as listener:
+                    listener.bind(str(copy))
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_unreadable_root_licence_fails_closed(self):

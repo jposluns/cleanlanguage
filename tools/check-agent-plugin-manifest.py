@@ -13,21 +13,25 @@ to equal the Claude manifest version, so the two manifests cannot drift.
 
 It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
-is missing, or is a FIFO, a folder or any other file that is not regular fails
-with exit 1, and the code reads a copy only after those checks. The tests
-observe that order for a FIFO: a copy that is a FIFO, or a symlink to one, must
-end within FIFO_TIMEOUT (10 seconds) with exit 1 and its message while nothing
-opens the FIFO for reading (test_licence_copy_fifo_fails and the FIFO subtests
-of test_licence_copy_symlink_fails in tools/test-agent-plugin-manifest.py), so
-a gate that opens such a FIFO for reading first, with or without blocking,
-fails. They also observe it for a missing copy and a folder read with
+is missing, or is a FIFO, a folder, a socket, a character or block device or
+any other file that is not regular fails with exit 1, and the code reads a copy
+only after those checks. The tests make a copy of each of these kinds except a
+device: creating a device node needs the CAP_MKNOD capability, which the
+unprivileged tests lack, so the refusal of a copy that is a device is an
+untested residual. The tests observe the order for a FIFO: a copy that is a
+FIFO, or a symlink to one, must end within FIFO_TIMEOUT (10 seconds) with exit
+1 and its message while nothing opens the FIFO for reading
+(test_licence_copy_fifo_fails and the FIFO subtests of
+test_licence_copy_symlink_fails in tools/test-agent-plugin-manifest.py), so a
+gate that opens such a FIFO for reading first, with or without blocking, fails.
+They also observe it for a missing copy, a folder and a socket read with
 read_bytes, whose error stops the gate with exit 3, not 1. Before the refusal,
 a read through a link to a regular file, a listing of a folder, a read of a
-missing copy or a folder whose error is ignored, or an open of a FIFO that is
-neither for reading nor blocking, such as one with O_PATH, is an untested
-residual: no case catches it, because the exit code and the message stay the
-same. A read through a link to a device, such as /dev/zero, before the refusal
-is an untested residual too, since no case makes such a link. The plugin
+missing copy, a folder or a socket whose error is ignored, or an open of a FIFO
+that is neither for reading nor blocking, such as one with O_PATH, is an
+untested residual: no case catches it, because the exit code and the message
+stay the same. A read through a link to a device, such as /dev/zero, before the
+refusal is an untested residual too, since no case makes such a link. The plugin
 installs the cleanlanguage/ tree and the skill zip takes these 2 files from it,
 so a copy that drifted from the root file would ship a licence text the
 repository does not state. The gate reads the working tree;
@@ -96,20 +100,24 @@ def read_bytes(path: Path) -> bytes:
 def check_licence_copies() -> None:
     """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file.
 
-    A copy that is a symlink, is missing, or is a FIFO, a folder or any other
-    file that is not regular fails with exit 1, and a copy is read only after
-    it passes those checks. The tests observe that order for a FIFO copy, or a
-    symlink to one, which must end with exit 1 and its message within the
-    test's time limit while nothing opens the FIFO for reading, with or
-    without blocking (test_licence_copy_fifo_fails, and the FIFO subtests of
-    test_licence_copy_symlink_fails), and for a missing copy or a folder read
-    with read_bytes, whose error stops the gate with exit 3, not 1. No case
-    catches, before the refusal, a read through a link to a regular file, a
-    listing of a folder, a read of a missing copy or a folder whose error is
-    ignored, or an open of a FIFO that is neither for reading nor blocking,
-    such as one with O_PATH: each leaves the exit code and the message the
-    same. No case makes a link to a device, such as /dev/zero, so a read
-    through one before the refusal is untested too.
+    A copy that is a symlink, is missing, or is a FIFO, a folder, a socket, a
+    character or block device or any other file that is not regular fails
+    with exit 1, and a copy is read only after it passes those checks. The
+    tests make each of these kinds except a device, whose node needs the
+    CAP_MKNOD capability to create, so the refusal of a device copy is
+    untested. The tests observe the order for a FIFO copy, or a symlink to
+    one, which must end with exit 1 and its message within the test's time
+    limit while nothing opens the FIFO for reading, with or without blocking
+    (test_licence_copy_fifo_fails, and the FIFO subtests of
+    test_licence_copy_symlink_fails), and for a missing copy, a folder or a
+    socket read with read_bytes, whose error stops the gate with exit 3, not
+    with exit 1. No case catches, before the refusal, a read through a link
+    to a regular file, a listing of a folder, a read of a missing copy, a
+    folder or a socket whose error is ignored, or an open of a FIFO that is
+    neither for reading nor blocking, such as one with O_PATH: each leaves the
+    exit code and the message the same. No case makes a link to a device,
+    such as /dev/zero, so a read through one before the refusal is untested
+    too.
     """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name
