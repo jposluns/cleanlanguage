@@ -25,6 +25,7 @@ import importlib.util
 import io
 import json
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -421,73 +422,65 @@ class GrammarTest(unittest.TestCase):
         )
 
 
-# The tests' own group kill, saved at import, so that a test that replaces
-# os.killpg to stand in for a client that kills nothing does not also replace
-# the kill that cleans up after it.
-KILLPG = os.killpg
+# The group-kill check's bounds, in seconds: how long the readiness poll may
+# hold the client's first wait, how long the group may take to end after the
+# client returns, and the stub's own end, after which each of its processes
+# ends by itself.
+POLL_SECONDS = 60
+CHECK_SECONDS = 10
+OWN_END_SECONDS = 90
+
+# The stub child of the group-kill check. It ignores SIGTERM, SIGINT and
+# SIGHUP, so only SIGKILL ends it early. Its leader forks 1 member into its
+# group and then writes 1 byte to the FIFO alive, so the member holds the
+# write end of alive when the test reads that byte, and the test reads end
+# of file on alive only once every process holding that write end, the
+# leader and the member, has ended. Each process then waits for end of file
+# on the FIFO lifeline, whose only write end the test holds, or for its own
+# end, and exits. The test closes lifeline when its check ends, and the
+# kernel closes it when the test process ends in any other way, SIGKILL
+# included. Both opens are non-blocking, so a stub that finds no reader of
+# alive fails at once rather than block. A stub that opens lifeline after
+# the test has closed it would see no end of file there, so it reads
+# lifeline once first: a read that returns, rather than fail with
+# BlockingIOError, finds no writer, and the stub exits at once.
+GROUP_STUB = (
+    "import os, select, signal\n"
+    "for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):\n"
+    "    signal.signal(number, signal.SIG_IGN)\n"
+    "lifeline = os.open('lifeline', os.O_RDONLY | os.O_NONBLOCK)\n"
+    "try:\n"
+    "    os.read(lifeline, 1)\n"
+    "    os._exit(0)\n"
+    "except BlockingIOError:\n"
+    "    pass\n"
+    "alive = os.open('alive', os.O_WRONLY | os.O_NONBLOCK)\n"
+    "if os.fork() != 0:\n"
+    "    os.write(alive, b'r')\n"
+    "select.select([lifeline], [], [], {own_end})\n"
+    "os._exit(0)\n"
+)
+
+# The names of the calls that send a signal. The group-kill check calls none.
+SIGNAL_CALLS = ("kill", "killpg", "pidfd_send_signal", "send_signal", "terminate", "KILLPG")
 
 
-def unreaped(pid: int) -> bool:
-    """Return whether ``pid`` is a child of this process that has not been
-    reaped, whether it is running or has ended. Until it is reaped, its pid,
-    and the id of the group it leads, cannot be given to another process,
-    and no other thread of this process waits for it, so a signal sent to
-    that group before this process reaps it reaches no other group."""
-    try:
-        os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-    except ChildProcessError:
-        return False
-    return True
-
-
-def pin_member(group: int, pid: int) -> int:
-    """Return a pidfd for the process ``pid``, confirmed to be a member of
-    the process group ``group``, whose leader must be an unreaped child of
-    this process. A pidfd names one process and never a later process given
-    the same pid, so a signal sent through it reaches no other process.
-    Raises AssertionError when the process is not in the group."""
-    fd = os.pidfd_open(pid)
-    try:
-        member = os.getpgid(pid)
-        # The process the pidfd names is still not reaped, so it held the pid
-        # when getpgid read it.
-        signal.pidfd_send_signal(fd, 0)
-        if member != group:
-            raise AssertionError(f"the process {pid} is in the group {member}, not {group}")
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
-
-
-def end_groups(children: list, members: list) -> None:
-    """Kill the group of each child in ``children``, Popen objects for
-    children of this process that each lead their own group, but only while
-    the child is unreaped, and reap it, waiting at most the reap grace for
-    it. A child already reaped is not signalled, since its id may have been
-    reused. Then kill each process that ``members`` holds a pidfd for, and
-    close and remove the pidfd."""
-    for proc in children:
-        if not unreaped(proc.pid):
-            continue
-        with contextlib.suppress(ProcessLookupError):
-            KILLPG(proc.pid, signal.SIGKILL)
-        deadline = time.monotonic() + client.REAP_GRACE_SECONDS
-        while True:
-            pid, status = os.waitpid(proc.pid, os.WNOHANG)
-            if pid == proc.pid:
-                proc.returncode = os.waitstatus_to_exitcode(status)
-                break
-            if time.monotonic() > deadline:
-                break
-            time.sleep(0.05)
-    while members:
-        fd = members.pop()
-        try:
-            with contextlib.suppress(ProcessLookupError):
-                signal.pidfd_send_signal(fd, signal.SIGKILL)
-        finally:
-            os.close(fd)
+def end_of_file(fd: int, deadline: float) -> float | None:
+    """Wait until ``deadline``, a time.monotonic value, for end of file on
+    ``fd``, the non-blocking read end of a FIFO whose writers have opened it,
+    and return the time it came, or None if it did not come. A byte read on
+    the way is dropped."""
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        readable, _write, _error = select.select([fd], [], [], remaining)
+        if readable:
+            try:
+                if os.read(fd, 1) == b"":
+                    return time.monotonic()
+            except BlockingIOError:
+                pass
 
 
 class BoundsTest(unittest.TestCase):
@@ -557,85 +550,94 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual(caught.exception.reason, f"wrote stdout up to the output cap of {cap} bytes")
 
     def test_a_child_that_does_not_end_is_killed_with_its_group(self):
+        # The stub's own end comes after the latest time at which the check
+        # can see the group end: the poll, the 1 second timeout, the reap
+        # grace and the check after the client returns.
+        self.assertGreater(OWN_END_SECONDS, POLL_SECONDS + 1 + client.REAP_GRACE_SECONDS + CHECK_SECONDS)
         self.check_group_kill()
 
-    def check_group_kill(self):
-        # The child forks a sleeper into its group, writes the sleeper's pid
-        # and then its ready file, and both sleep past the timeout. The
-        # client's first wait is held back until the ready file exists,
-        # polled for at most 60 seconds, so a busy host cannot fire the 1
-        # second timeout before the pid file is written, and a child that is
-        # not ready when the poll ends fails the test. The client must ask
-        # that first wait for exactly its 1 second timeout; the wait itself,
-        # the group kill and the reap are the real ones, and the real wait
-        # gives up no earlier than the timeout it was asked for. The client's
-        # run, less the poll that holds its first wait, must end within 15
-        # seconds. The sleeper sleeps longer than the test can run (the poll,
-        # the timeout, the reap grace and the sleeper check), and must be seen
-        # gone before its sleep could end, so however late the child gets
-        # ready, the sleeper's own end is never taken for the group kill.
+    def check_group_kill(self, check: float = CHECK_SECONDS, own_end: float = OWN_END_SECONDS, witness=None):
+        # The stub child (GROUP_STUB) forks a member into its group and
+        # writes the ready byte to the FIFO alive, and both its processes then
+        # wait for the release, end of file on the FIFO lifeline, or for their
+        # own end, own_end seconds after each starts. The client's first wait
+        # is held back until the ready byte is read, polled for at most
+        # POLL_SECONDS, so a busy host cannot fire the 1 second timeout before
+        # the member exists, and a child that is not ready when the poll ends
+        # fails the check. The client must ask that first wait for exactly
+        # its 1 second timeout; the wait itself, the group kill and the reap
+        # are the real ones, and the real wait gives up no earlier than the
+        # timeout it was asked for. The client's run, less the poll that
+        # holds its first wait, must end within 15 seconds.
         #
-        # The child's pid, the id of its group, is recorded as the client
-        # starts it. Once the child is ready, and before the client's first
-        # wait, the child is still unreaped, so its group id is still its
-        # own; the sleeper is then confirmed to be in that group and held by
-        # a pidfd. However the check ends (a pass, a failure, an error, or an
-        # exception such as KeyboardInterrupt that unwinds it), its finally
-        # clause kills the group if the child is still unreaped, and the
-        # sleeper through its pidfd unless the check has seen it gone, so it
-        # never signals an id that may have been reused. The finally clause
-        # cannot run when the test process ends without unwinding, as on
-        # SIGKILL or on a signal whose default action ends it, such as SIGTERM,
-        # and a second interrupt during the finally clause can stop it early.
-        poll = 60
-        check = 10
-        sleeper_seconds = 600
-        self.assertGreater(sleeper_seconds, poll + 1 + client.REAP_GRACE_SECONDS + check)
+        # The client's reason is checked first, so a client that fails for
+        # another reason is reported with that reason. alive must then read
+        # end of file within check seconds after the client returns, which
+        # shows that no process of the group still holds it: the client
+        # killed the member too, not only the leader. That end of file must
+        # also come less than own_end seconds after the client's start, so
+        # however late the child gets ready, the group's own end is never
+        # taken for the kill.
+        #
+        # The check sends no signal, so it never names a process by an id
+        # that may have been reused. Its finally clause closes lifeline,
+        # which ends any process of the group that the client left, and then
+        # reaps a child that the client left unreaped; the verdict depends on
+        # neither. When the test process ends without unwinding, as on
+        # SIGKILL or SIGTERM, the kernel closes lifeline.
+        # witness, when given, is called with the path of alive before the
+        # stub starts, so that a caller can open a reader of its own.
         real_wait = client.wait_child
         real_popen = subprocess.Popen
-        self.children = []
-        self.members = []
+        children = []
         seen = set()
         ready_seen = []
         first_timeouts = []
         poll_began = []
         ready_at = []
-        sleepers = []
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                ready = Path(tmp) / "ready"
-                tool = self.stub(tmp, (
-                    "import os, time\n"
-                    "pid = os.fork()\n"
-                    "if pid == 0:\n"
-                    f"    time.sleep({sleeper_seconds})\n"
-                    "    os._exit(0)\n"
-                    "open('sleeper.pid', 'w').write(str(pid))\n"
-                    "open('ready', 'w').write('ready')\n"
-                    "time.sleep(60)\n"
-                ))
+        with tempfile.TemporaryDirectory() as tmp:
+            alive_path = Path(tmp) / "alive"
+            lifeline_path = Path(tmp) / "lifeline"
+            held = []
+            try:
+                os.mkfifo(alive_path)
+                os.mkfifo(lifeline_path)
+                held.append(os.open(alive_path, os.O_RDONLY | os.O_NONBLOCK))
+                alive = held[0]
+                # A non-blocking write end of a FIFO opens only while a read
+                # end is open, so a read end is held just long enough for it.
+                reader = os.open(lifeline_path, os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    held.append(os.open(lifeline_path, os.O_WRONLY | os.O_NONBLOCK))
+                finally:
+                    os.close(reader)
+                if witness is not None:
+                    witness(alive_path)
+                tool = self.stub(tmp, GROUP_STUB.format(own_end=own_end))
 
                 def popen(*args, **kwargs):
-                    proc = real_popen(*args, **kwargs)
-                    # The client starts the child in a new session (the source
-                    # shape test pins this), so the child's pid is its group id.
-                    self.children.append(proc)
-                    return proc
+                    children.append(real_popen(*args, **kwargs))
+                    return children[-1]
+
+                def ready() -> bool:
+                    try:
+                        return os.read(alive, 1) == b"r"
+                    except BlockingIOError:
+                        return False
 
                 def wait_when_ready(proc, timeout):
                     if proc.pid not in seen:
                         seen.add(proc.pid)
                         poll_began.append(time.monotonic())
-                        deadline = poll_began[0] + poll
-                        while not ready.exists() and time.monotonic() < deadline:
+                        deadline = poll_began[0] + POLL_SECONDS
+                        got_ready = ready()
+                        while not got_ready and time.monotonic() < deadline:
                             if real_wait(proc, 0.05):
                                 return True
-                        ready_seen.append(ready.exists())
+                            got_ready = ready()
+                        ready_seen.append(got_ready)
                         first_timeouts.append(timeout)
                         ready_at.append(time.monotonic())
-                        if ready_seen[0]:
-                            sleepers.append(int((Path(tmp) / "sleeper.pid").read_text()))
-                            self.members.append(pin_member(proc.pid, sleepers[0]))
                     return real_wait(proc, timeout)
 
                 started = time.monotonic()
@@ -643,114 +645,149 @@ class BoundsTest(unittest.TestCase):
                         mock.patch.object(client, "wait_child", wait_when_ready):
                     with self.assertRaises(client.Unavailable) as caught:
                         client.run_extractor("baseline", {}, timeout=1, tool=tool)
+                returned = time.monotonic()
+                self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
                 self.assertEqual(ready_seen, [True], "the child was not ready when the poll ended")
                 self.assertEqual(first_timeouts, [1], "the client's first wait was not its 1 second timeout")
                 self.assertLess(time.monotonic() - started - (ready_at[0] - poll_began[0]), 15)
-                self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
-                deadline = time.monotonic() + check
-                while True:
-                    try:
-                        signal.pidfd_send_signal(self.members[0], 0)
-                    except ProcessLookupError:
-                        break
-                    if time.monotonic() > deadline:
-                        self.fail(f"the sleeper {sleepers[0]} outlived the timeout")
-                    time.sleep(0.05)
-                # The sleeper has been reaped, so the cleanup has no cause to
-                # signal it.
-                os.close(self.members.pop())
-                self.assertLess(time.monotonic() - started, sleeper_seconds,
-                                "the sleeper may have ended on its own, so its end does not show the group kill")
-        finally:
-            end_groups(self.children, self.members)
+                ended = end_of_file(alive, returned + check)
+                if ended is None:
+                    self.fail(f"a process of the child's group outlived the client's kill: alive did not reach "
+                              f"end of file within {check} seconds after the client returned")
+                self.assertLess(ended, started + own_end,
+                                "the group may have ended on its own, so its end does not show the kill")
+            finally:
+                # The release: lifeline first, then alive. A child that the
+                # client left unreaped then ends, and is reaped here, waiting
+                # at most the reap grace; this sends no signal, and the
+                # verdict does not depend on it.
+                for fd in reversed(held):
+                    os.close(fd)
+                for proc in children:
+                    if proc.returncode is None:
+                        with contextlib.suppress(subprocess.TimeoutExpired):
+                            proc.wait(timeout=client.REAP_GRACE_SECONDS)
 
-    def assert_group_ended(self, case: BoundsTest, how: str) -> None:
-        """Assert that no process of the group of the one child that ``case``
-        recorded is left 10 seconds after ``case`` ended. The probe sends no
-        signal; if the group still has a process when the time is up, the
-        group is killed only while its leader is unreaped."""
-        self.assertEqual(len(case.children), 1, case.children)
-        group = case.children[0].pid
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                os.killpg(group, 0)
-            except ProcessLookupError:
-                break
-            if time.monotonic() > deadline:
-                end_groups(case.children, case.members)
-                self.fail(f"a process of the group {group} outlived the {how} check")
-            time.sleep(0.05)
+    def test_a_client_that_kills_only_the_leader_fails_the_check(self):
+        # The check runs against 2 stand-ins for the client's group kill,
+        # each called while the child is still unreaped: a kill of the
+        # leader alone, which leaves the member running, and a SIGTERM to the
+        # group, which the stub ignores. Each run must fail, the first at the
+        # end of file check and the second at the reason, since the client
+        # then gives up after the reap grace. A reader of alive that this
+        # test opens before the run must see end of file within 5 seconds
+        # after the run ends, so the release ended what the client left.
+        real_killpg = os.killpg
+        for label, kill, message in (
+            ("a kill of the leader only", lambda group, sig: os.kill(group, sig),
+             "a process of the child's group outlived the client's kill"),
+            ("SIGTERM to the group", lambda group, sig: real_killpg(group, signal.SIGTERM),
+             "could not be reaped"),
+        ):
+            with self.subTest(label):
+                witnesses = []
+                try:
+                    with mock.patch.object(client.os, "killpg", kill):
+                        with self.assertRaises(AssertionError) as caught:
+                            self.check_group_kill(check=2, witness=lambda path: witnesses.append(
+                                os.open(path, os.O_RDONLY | os.O_NONBLOCK)))
+                    self.assertIn(message, str(caught.exception))
+                    self.assertEqual(len(witnesses), 1)
+                    self.assertIsNotNone(end_of_file(witnesses[0], time.monotonic() + 5),
+                                         "a process of the group outlived the failed check")
+                finally:
+                    for fd in witnesses:
+                        os.close(fd)
 
-    def test_a_forced_early_failure_leaves_no_process(self):
-        # The group-kill check runs against a client whose group kill does
-        # nothing, so the child and its 600 second sleeper outlive the
-        # client, which gives up after the reap grace. The check then fails
-        # at its reason assertion: after the child was seen ready, so after
-        # the fork, and before the sleeper check. Its cleanup must still kill
-        # the group, so that no process of it is left 10 seconds after the
-        # check ends.
-        case = BoundsTest("check_group_kill")
-        result = unittest.TestResult()
-        with mock.patch.object(client.os, "killpg", lambda group, sig: None):
-            case.run(result)
-        self.assertEqual((result.testsRun, result.errors, len(result.failures)), (1, [], 1))
-        self.assertIn("could not be reaped", result.failures[0][1])
-        self.assert_group_ended(case, "failed")
+    def test_a_group_that_ends_on_its_own_does_not_pass(self):
+        # A client that kills only the leader, against a stub whose own end,
+        # 3 seconds, falls inside the 10 second check after the client
+        # returns: the member ends on its own and alive reaches end of file
+        # in time, but only after the stub's own end, so the check must fail
+        # rather than take that end for the client's kill. This stands for a
+        # child that gets ready so late that the stub's own end would fall
+        # inside the check.
+        with mock.patch.object(client.os, "killpg", lambda group, sig: os.kill(group, sig)):
+            with self.assertRaises(AssertionError) as caught:
+                self.check_group_kill(check=10, own_end=3)
+        self.assertIn("the group may have ended on its own", str(caught.exception))
 
-    def test_an_interrupted_check_leaves_no_process(self):
-        # The group-kill check is interrupted as the client kills the group:
-        # the client's group kill raises KeyboardInterrupt, as a Ctrl-C at
-        # that point would, after the child was seen ready and the sleeper
-        # pinned. unittest runs no addCleanup cleanup when KeyboardInterrupt
-        # passes through a test, so the check's own finally clause must kill
-        # the group, and no process of it may be left 10 seconds after the
-        # check ends.
-        case = BoundsTest("check_group_kill")
+    def test_an_interrupted_check_releases_its_group(self):
+        # The client's group kill raises KeyboardInterrupt, as a Ctrl-C at
+        # that point would, so the client neither kills nor reaps the child.
+        # The interrupt must pass through the check, and a reader of alive
+        # that this test opens before the run must see end of file within 5
+        # seconds after the check ends, so the check's finally clause
+        # released the group. Only the injected interrupt is caught; any
+        # other, such as a real Ctrl-C, is raised again.
+        injected = []
 
         def interrupt(group, sig):
-            raise KeyboardInterrupt
+            injected.append(KeyboardInterrupt("injected"))
+            raise injected[-1]
 
-        with mock.patch.object(client.os, "killpg", interrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                case.run(unittest.TestResult())
-        self.assert_group_ended(case, "interrupted")
-
-    def test_a_passed_check_sends_no_signal_from_its_cleanup(self):
-        # After a pass, the client has reaped the child and the check has
-        # seen the sleeper gone, so the group id and the sleeper's pid may
-        # already name other processes: the check's cleanup must send no
-        # signal at all. The cleanup's kills are recorded, not sent.
-        sent = []
-        real_pidfd_send_signal = signal.pidfd_send_signal
-
-        def pidfd_send_signal(fd, sig, *args):
-            if sig == 0:
-                return real_pidfd_send_signal(fd, sig, *args)
-            sent.append(("pidfd", sig))
-            return None
-
-        case = BoundsTest("check_group_kill")
-        result = unittest.TestResult()
-        with mock.patch.object(sys.modules[__name__], "KILLPG", lambda group, sig: sent.append((group, sig))), \
-                mock.patch.object(signal, "pidfd_send_signal", pidfd_send_signal):
-            case.run(result)
-        self.assertEqual(sent, [])
-        self.assertEqual((result.testsRun, result.errors, result.failures), (1, [], []))
-        self.assertEqual(len(case.children), 1, case.children)
-
-    def test_a_process_outside_the_group_is_not_pinned(self):
-        # The sleeper's pid is read from a file the child writes, so it is
-        # confirmed to be in the child's group before a pidfd for it is
-        # kept; a process in another group is refused.
-        other = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"],
-                                 start_new_session=True)
+        witnesses = []
         try:
-            with self.assertRaises(AssertionError):
-                pin_member(os.getpgrp(), other.pid)
+            try:
+                with mock.patch.object(client.os, "killpg", interrupt):
+                    self.check_group_kill(witness=lambda path: witnesses.append(
+                        os.open(path, os.O_RDONLY | os.O_NONBLOCK)))
+            except KeyboardInterrupt as error:
+                if not injected or error is not injected[-1]:
+                    raise
+            else:
+                self.fail("the injected interrupt did not pass through the check")
+            self.assertEqual(len(witnesses), 1)
+            self.assertIsNotNone(end_of_file(witnesses[0], time.monotonic() + 5),
+                                 "a process of the group outlived the interrupted check")
         finally:
-            other.kill()
-            other.wait()
+            for fd in witnesses:
+                os.close(fd)
+
+    def test_a_stub_started_after_the_release_ends_at_once(self):
+        # A stub that opens lifeline only after the test has closed it, as
+        # when an interrupt ends the check before the stub starts, would see
+        # no end of file there and live until its own end. It must find no
+        # writer and exit at once. A reader of alive is held, so that the
+        # stub does not fail at that open instead. The own end is 10
+        # seconds, so a stub that waits for it fails this test without
+        # being signalled.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.mkfifo(Path(tmp) / "alive")
+            os.mkfifo(Path(tmp) / "lifeline")
+            alive = os.open(Path(tmp) / "alive", os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                reader = os.open(Path(tmp) / "lifeline", os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    os.close(os.open(Path(tmp) / "lifeline", os.O_WRONLY | os.O_NONBLOCK))
+                finally:
+                    os.close(reader)
+                tool = self.stub(tmp, GROUP_STUB.format(own_end=10))
+                started = time.monotonic()
+                proc = subprocess.run([sys.executable, "-I", str(tool)], cwd=tmp, capture_output=True)
+                elapsed = time.monotonic() - started
+            finally:
+                os.close(alive)
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+        self.assertLess(elapsed, 5)
+
+    def test_the_check_sends_no_signal(self):
+        # The check and the helper it waits with call nothing that sends a
+        # signal, by any of the names that can: the check sees the group
+        # only through alive, so it never names a process by an id that may
+        # have been reused, and its verdict needs no cleanup.
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                     and node.name in ("check_group_kill", "end_of_file")]
+        self.assertEqual(sorted(node.name for node in functions), ["check_group_kill", "end_of_file"])
+        calls = []
+        for function in functions:
+            for node in ast.walk(function):
+                if isinstance(node, ast.Call):
+                    name = getattr(node.func, "attr", getattr(node.func, "id", None))
+                    if name in SIGNAL_CALLS:
+                        calls.append((function.name, ast.unparse(node)))
+        self.assertEqual(calls, [])
 
     def test_bound_constants_equal_the_gates(self):
         gate = _load("crc_gate_bounds", GATE)
