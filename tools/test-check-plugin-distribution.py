@@ -8,7 +8,8 @@ Each case of PluginDistributionTest starts from a temporary tree that holds
 the files the gate reads and a copy of the real tools/skill-version.py, with
 the gate's REPO_ROOT pointed at it. expect runs the gate's main and requires
 the exit status, each text given and the lines of that status (assert_lines).
-test_gate_runs_as_a_command runs a copy of the gate as a command,
+test_gate_runs_as_a_command and test_keys_outside_read_keys_change_no_output
+each run a copy of the gate as a command,
 test_loading_a_gate_that_raises_stops_the_test and
 test_loading_a_gate_that_prints_stops_the_test each run a copy of this test as
 a command, and RepositoryTreeTest runs the gate on the repository itself. The
@@ -17,29 +18,48 @@ swapped for a FIFO where os.mkfifo or signal.SIGALRM is missing, and the case
 of a source that reaches a folder named like the plugin's own but for letter
 case where the file system folds letter case.
 
-Each in-process run of the gate's main, in expect, run_gate and
-RepositoryTreeTest, goes through recorded_main: every JSON object load_json
-gives is a stand-in that logs each use the gate makes of it, and inside
-load_json's object_pairs_hook, which builds each object before the recorder
-can wrap it, each key is a str that logs each comparison with a value other
-than another key as a read of that value. The case fails on a use or read
-that breaks the gate's rule for keys (see breaches), on a JSON object
-load_json gives that is not a stand-in, or when the gate exits 0 or 1 and
-fewer stand-ins were made than its JSON inputs, as when the recorder is off.
-So a read is seen by what it does to a stand-in or a key, not found by the
-form of its code; test_recorder_sees_each_route applies 48 routes.
-Residual: the recorder does not see a read on a path that no in-process case
-runs; a read behind a test that tells a stand-in from a dict by its real
-type, or whose TypeError, which dict's own methods and json.dumps raise on a
-stand-in, the gate catches; a read that reaches the recorder's table by
-introspection; a parse of an object's text that the output holds, before or
-after it is printed; a JSON object the gate decodes without load_json; a
-parse of an input's text outside load_json, such as a regular expression
-over what read_bytes gives, since that text never reaches a stand-in; and,
-inside the hook, which makes each object as a plain dict, a read of a key
-the object does not hold, or code that works on a key's text, such as
-key.lower(), since neither compares a key. The cases that run the gate or
-this test as a command are not recorded.
+The gate's rule for keys is held where the gate decodes, not by watching
+what it does. The core is the gate's object_pairs_hook `_unique_object`,
+which load_json gives json.loads, `load_json` and READ_KEYS; "the 6" are the
+keys of READ_KEYS. The hook refuses a key repeated among all keys of a JSON
+object, then keeps only the pairs whose key is exactly 1 of the 6, so after
+load_json returns, no object the gate can reach holds any other key, and
+the text the gate shows of an object value lists only its kept pairs.
+4 cases hold the core and its effect:
+- U, test_hook_keeps_only_the_pairs_of_read_keys: the hook, given every
+  letter-case spelling of each of the 6 (4,560 in all) and each spelling
+  with 1 character that str.casefold, str.lower or str.upper maps onto a
+  letter of the key, gives exactly the pairs whose key is 1 of the 6, and
+  refuses each of those spellings repeated, also one outside the 6.
+- The pin, test_core_is_pinned: the sha256 of the source of the functions
+  bound to the gate's _unique_object and load_json and of its READ_KEYS
+  must be CORE_SHA256, so an edit of the core, or a rebinding of either name
+  while the gate loads, fails until a reviewer renews the digest. The pin
+  shows the core is unchanged since review, not that it is right; U is the
+  evidence it freezes.
+- The structural check: each in-process run of the gate's main, in expect,
+  run_gate and RepositoryTreeTest, goes through checked_main, which wraps
+  load_json and fails the case on a dict it gives, at any depth through
+  lists and dicts, that holds a key outside the 6;
+  test_checked_main_reports_a_key_outside_read_keys shows it does.
+- E, test_keys_outside_read_keys_change_no_output and its counterpart in
+  RepositoryTreeTest: the gate runs on a tree and on the same tree with each
+  JSON object at every depth given each of the 6 in 3 other letter cases
+  with a conflicting value, and a key outside the 6 that holds such an
+  object, and must give the same exit status and every line the same; on
+  setUp's tree and on one whose vendored source is an object, in this
+  process and as a command, and on a copy of the files the gate reads in
+  the repository, in this process.
+Residual: By construction, no code outside the core can read a key outside
+the 6 from a decoded JSON object, on any path and in any form. Not covered
+by construction: (i) code inside the core (`_unique_object`, `load_json`,
+READ_KEYS), held by the pin and U; (ii) a parse of an input's bytes or text
+outside `load_json`, such as a regular expression over what `read_bytes`
+gives, held only by E on the perturbations and paths it runs; (iii) code
+that changes the interpreter or the gate while it runs, such as rebinding
+`json.loads` or the hook after load, tracing, or `gc` and frame
+introspection, and the extractor, which the gate runs in its own process
+(gate:78-90), held only by E as in (ii).
 
 Loading the gate must write nothing to sys.stdout or sys.stderr and raise
 nothing; a gate that does either while this test loads it stops the test with
@@ -56,17 +76,15 @@ from __future__ import annotations
 
 import ast
 import builtins
-import collections
-import collections.abc
 import contextlib
-import copy
 import errno
+import hashlib
 import importlib.util
+import inspect
 import io
+import itertools
 import json
-import operator
 import os
-import pickle
 import shutil
 import signal
 import subprocess
@@ -213,249 +231,63 @@ def manifest(name: str = "cleanlanguage", version: str = VERSION) -> dict:
 
 # The keys of a JSON object the gate's docstring says it reads, written out, not read from the gate.
 READ_KEYS = frozenset({"name", "site_key", "plugins", "source", "version", "dependencies"})
-# The JSON files the gate reads before it makes any check: the 2 marketplaces, the 2 manifests and
-# site.json, written out.
-JSON_INPUTS = 5
-# Each stand-in the recorder has made and not yet released, by id: the stand-in, kept so that its id is
-# not reused, the JSON object it stands in for and the log of the run that made it.
-RECORDED: dict = {}
+# The sha256 of the core as reviewed: core_text of the gate. Renew it only after reading the core and
+# seeing test_hook_keeps_only_the_pairs_of_read_keys pass.
+CORE_SHA256 = "ae519e5961b26e488f84f1d5fc0e7db833870b9bf5940bbd4c85652520f810af"
+# Values that each change the gate's output wherever one is read in place of a key of READ_KEYS: a
+# string, a list and a JSON object, each of which every check refuses for every key of READ_KEYS.
+CONFLICTS = ("claude-x", ["claude-x"], {"name": "claude-x"})
+# A key outside READ_KEYS in every letter case.
+UNKNOWN_KEY = "x-perturbed"
 
 
-class Recorded:
-    """A stand-in for 1 JSON object the gate decodes, which logs each use the gate makes of it as
-    (id of the stand-in, use, detail). It holds nothing itself: the object sits in RECORDED.
-
-    A key read by get, a subscript, in, pop or setdefault logs ("key", the key). A use of the whole
-    object logs ("whole", its name): its keys, values or items, iteration, len and so truth, a copy, a
-    change, == or != against a mapping, | either way, and pickling or copying through the copy module.
-    Its text, which str, format and an f-string take through repr, logs ("repr", the text). Its
-    __class__ is dict, so isinstance(stand-in, dict) holds, as the gate's checks require; dict's own
-    methods called on it, and code in C that tests the real type, such as json.dumps, raise TypeError.
-    It is registered as a Mapping, so a mapping pattern of match reaches it through len and get."""
-
-    __slots__ = ()
-    __hash__ = None
-
-    @property
-    def __class__(self):
-        return dict
-
-    def _reach(self, use: str, detail=None) -> dict:
-        _, data, log = RECORDED[id(self)]
-        log.append((id(self), use, detail))
-        return data
-
-    def get(self, key, default=None):
-        return self._reach("key", key).get(key, default)
-
-    def __getitem__(self, key):
-        return self._reach("key", key)[key]
-
-    def __contains__(self, key):
-        return key in self._reach("key", key)
-
-    def pop(self, key, *default):
-        return self._reach("key", key).pop(key, *default)
-
-    def setdefault(self, key, default=None):
-        return self._reach("key", key).setdefault(key, default)
-
-    def keys(self):
-        return self._reach("whole", "keys").keys()
-
-    def values(self):
-        return self._reach("whole", "values").values()
-
-    def items(self):
-        return self._reach("whole", "items").items()
-
-    def __iter__(self):
-        return iter(self._reach("whole", "iter"))
-
-    def __reversed__(self):
-        return reversed(self._reach("whole", "reversed"))
-
-    def __len__(self):
-        return len(self._reach("whole", "len"))
-
-    def copy(self):
-        return self._reach("whole", "copy").copy()
-
-    def popitem(self):
-        return self._reach("whole", "popitem").popitem()
-
-    def update(self, *args, **kwargs):
-        self._reach("whole", "update").update(*args, **kwargs)
-
-    def clear(self):
-        self._reach("whole", "clear").clear()
-
-    def __setitem__(self, key, value):
-        self._reach("whole", "setitem")[key] = value
-
-    def __delitem__(self, key):
-        del self._reach("whole", "delitem")[key]
-
-    def __eq__(self, other):
-        if not isinstance(other, collections.abc.Mapping):
-            return NotImplemented
-        return self._reach("whole", "==") == other
-
-    def __ne__(self, other):
-        if not isinstance(other, collections.abc.Mapping):
-            return NotImplemented
-        return self._reach("whole", "!=") != other
-
-    def __or__(self, other):
-        return self._reach("whole", "|") | other
-
-    def __ror__(self, other):
-        return other | self._reach("whole", "|")
-
-    def __reduce_ex__(self, protocol):
-        return dict, (dict(self._reach("whole", "pickle")),)
-
-    def __getstate__(self):
-        return dict(self._reach("whole", "getstate"))
-
-    def __copy__(self):
-        return dict(self._reach("whole", "copy.copy"))
-
-    def __deepcopy__(self, memo):
-        return copy.deepcopy(self._reach("whole", "copy.deepcopy"), memo)
-
-    def __repr__(self):
-        _, data, log = RECORDED[id(self)]
-        text = repr(data)
-        log.append((id(self), "repr", text))
-        return text
+def core_text(module) -> str:
+    """The text the pin hashes: the source of the functions bound to module._unique_object and
+    module.load_json, then the type name and the sorted members of module.READ_KEYS."""
+    return "\n".join([inspect.getsource(module._unique_object), inspect.getsource(module.load_json),
+                      type(module.READ_KEYS).__name__, repr(sorted(module.READ_KEYS))])
 
 
-collections.abc.Mapping.register(Recorded)
+def other_cases(key: str) -> list:
+    """3 spellings of key in other letter cases, unlike each other: with a first capital, in capitals
+    and with a last capital."""
+    return [key.capitalize(), key.upper(), key[:-1] + key[-1].upper()]
 
 
-def stand_in(data: dict, log: list) -> Recorded:
-    """A stand-in for data that logs into log; RECORDED holds it until release."""
-    made = Recorded()
-    RECORDED[id(made)] = (made, data, log)
-    log.append((id(made), "made", None))
-    return made
+def perturbed(value):
+    """value with each JSON object in it, at every depth, given each key of READ_KEYS in the 3 letter
+    cases of other_cases, with the values of CONFLICTS in turn, and UNKNOWN_KEY holding an object of
+    those keys and of each key of READ_KEYS as written, again with values of CONFLICTS."""
+    if isinstance(value, list):
+        return [perturbed(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    added = {other: CONFLICTS[index] for key in sorted(READ_KEYS) for index, other in enumerate(other_cases(key))}
+    held = {**added, **{key: CONFLICTS[0] for key in sorted(READ_KEYS)}}
+    return {**{key: perturbed(item) for key, item in value.items()}, **added, UNKNOWN_KEY: held}
 
 
-def release(log: list) -> None:
-    """Drop from RECORDED each stand-in made into log."""
-    for ident, use, _ in log:
-        if use == "made":
-            RECORDED.pop(ident, None)
-
-
-class Compared(str):
-    """A key of 1 JSON object as the gate's object_pairs_hook builds it: a str equal to the key, with the
-    key's hash, so that a lookup in the object of a key it holds compares this key. Each comparison, by ==
-    or !=, with a value that is not another Compared adds that value to reads, as a read of it."""
-
-    def __new__(cls, key: str, reads: list):
-        made = super().__new__(cls, key)
-        made.reads = reads
-        return made
-
-    __hash__ = str.__hash__
-
-    def __eq__(self, other):
-        if type(other) is not Compared:
-            self.reads.append(other)
-        return str.__eq__(self, other)
-
-    def __ne__(self, other):
-        if type(other) is not Compared:
-            self.reads.append(other)
-        return str.__ne__(self, other)
-
-
-def unwrapped(value) -> int:
-    """The count of dicts, not stand-ins, in value, as load_json gives it: value itself, and each in a
-    list or in the object a stand-in holds, at any depth through these, read from RECORDED, so that
-    nothing is logged."""
-    count, held = 0, [value]
-    while held:
-        item = held.pop()
-        if type(item) is Recorded:
-            held.extend(RECORDED[id(item)][1].values())
-        elif type(item) is list:
-            held.extend(item)
-        elif type(item) is dict:
-            count += 1
-    return count
-
-
-@contextlib.contextmanager
-def recording(log: list):
-    """While it runs, the gate's object_pairs_hook, which load_json looks up at each call, is the real one
-    given each key as a Compared, followed by stand_in, so a repeated key is still refused and each JSON
-    object the gate decodes is a stand-in that logs into log; each value a key was compared with inside
-    the real hook is logged as a read of that value, also when the hook raises. And load_json logs
-    ("dict", the input) for each dict it gives that is not a stand-in, at the top or at any depth in
-    lists and stand-ins."""
-    real, real_load = gate._unique_object, gate.load_json
-
-    def hook(pairs):
-        reads: list = []
-        try:
-            built = real([(Compared(key, reads), value) for key, value in pairs])
-        finally:
-            log.extend((None, "key", read) for read in reads)
-        return stand_in(built, log)
+def checked_main(out: io.StringIO, err: io.StringIO) -> tuple:
+    """The gate's main, its standard output in out and standard error in err, with load_json wrapped: its
+    exit status and a problem for each key outside READ_KEYS of each dict load_json gives, at any depth
+    through lists and dicts. An exception that escapes main is raised."""
+    problems: list = []
+    real = gate.load_json
 
     def load(rel):
-        data = real_load(rel)
-        log.extend((None, "dict", rel) for _ in range(unwrapped(data)))
+        data = real(rel)
+        held = [data]
+        while held:
+            item = held.pop()
+            if isinstance(item, list):
+                held.extend(item)
+            elif isinstance(item, dict):
+                problems.extend(f"a JSON object of {rel} holds the key {key!r}" for key in item
+                                if not (type(key) is str and key in READ_KEYS))
+                held.extend(item.values())
         return data
-    try:
-        with mock.patch.object(gate, "_unique_object", hook), mock.patch.object(gate, "load_json", load):
-            yield log
-    finally:
-        release(log)
-
-
-def breaches(log: list, output: str) -> list:
-    """Each use in log that breaks the gate's rule for keys, which reads each key exactly as written:
-    (a) a key that is not exactly a str of READ_KEYS; (b) a use of a whole object, which would let a key
-    in another letter case change the result; (c) the text of an object that the gate reads a key of, or
-    a text taken more times than output holds it, since the gate shows an object's text only in a line
-    it prints; (d) a JSON object load_json gives that is not a stand-in, whose uses the recorder cannot
-    see."""
-    found = []
-    keyed = {ident for ident, use, _ in log if use == "key"}
-    taken = collections.Counter()
-    for ident, use, detail in log:
-        if use == "key" and not (type(detail) is str and detail in READ_KEYS):
-            shown = _made(lambda: repr(detail), "(a key that cannot be shown)")
-            found.append(f"a read of the key {shown} of type {_made(lambda: type(detail).__name__, UNSHOWN_NAME)}")
-        elif use == "whole":
-            found.append(f"a use of a whole JSON object: {detail}")
-        elif use == "repr":
-            taken[detail] += 1
-            if ident in keyed:
-                found.append(f"the text {detail} of a JSON object read by key")
-        elif use == "dict":
-            found.append(f"a JSON object of {detail} that is not a stand-in")
-    for text, times in taken.items():
-        if times > output.count(text):
-            found.append(f"the text {text} taken {times} times, held {output.count(text)} times in the output")
-    return found
-
-
-def recorded_main(out: io.StringIO, err: io.StringIO) -> tuple:
-    """The gate's main run with the recorder, its standard output in out and standard error in err: its
-    exit status and each problem: the breaches of its run, and, where it exits 0 or 1, fewer stand-ins
-    made than JSON_INPUTS, as when the recorder is off. An exception that escapes main is raised."""
-    log: list = []
-    with recording(log), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with mock.patch.object(gate, "load_json", load), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = gate.main()
-    problems = breaches(log, out.getvalue() + err.getvalue())
-    made = sum(use == "made" for _, use, _ in log)
-    if code in (0, 1) and made < JSON_INPUTS:
-        problems.append(f"the recorder made {made} stand-ins, fewer than the {JSON_INPUTS} JSON inputs the gate read")
     return code, problems
 
 
@@ -553,11 +385,11 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_json(rel, data)
 
     def run_gate(self):
-        """The gate's main, run with the recorder: its exit status, standard output and standard error.
-        Fails on each problem recorded_main finds."""
+        """The gate's main, run through checked_main: its exit status, standard output and standard error.
+        Fails on each problem checked_main finds."""
         out, err = io.StringIO(), io.StringIO()
         try:
-            code, problems = recorded_main(out, err)
+            code, problems = checked_main(out, err)
         except BaseException as error:
             self.fail(f"the gate's main let {_made(lambda: type(error).__name__, UNSHOWN_NAME)} escape, a traceback "
                       f"in place of an exit status\n{out.getvalue()}{err.getvalue()}")
@@ -698,8 +530,12 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(0, "2 dependencies read", "3 relative sources resolved")
 
     def test_duplicate_json_key_exits_3(self):
-        self.write_text(gate.AGENT_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "version": "1.0.15"}\n')
-        self.expect(3, "cleanlanguage/plugin.json repeats the key 'version'")
+        # A repeated key is refused whether or not the gate keeps it.
+        for key in ("version", "Version", "description"):
+            with self.subTest(key=key):
+                self.write_text(gate.AGENT_MANIFEST, f'{{"name": "cleanlanguage", "version": "1.0.15", "{key}": "1.0.15", '
+                                                     f'"{key}": "1.0.15"}}\n')
+                self.expect(3, f"cleanlanguage/plugin.json repeats the key '{key}'")
 
     def test_json_keys_alike_but_for_letter_case_pass(self):
         # 2 keys of 1 object that differ only in letter case are 2 keys, not 1 key repeated.
@@ -710,9 +546,9 @@ class PluginDistributionTest(unittest.TestCase):
         """The setups of test_keys_in_another_letter_case_are_not_read, each (rel, change, lines): the file
         the setup changes and how, writing a key the gate reads in another letter case, and the FAIL lines
         the gate gives, each without its "FAIL " (none: exit 0). A read of that key in another letter case
-        would change the gate's output in the setup. That the gate reads no key but those of READ_KEYS,
-        each exactly as written, is checked by the recorder in each case that runs the gate's main in the
-        test's own process, within the residual the module docstring states, not by these setups."""
+        would change the gate's output in the setup. That the gate keeps no key but those of READ_KEYS,
+        each exactly as written, is held by the core and the cases the module docstring names, within the
+        residual it states, not by these setups."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
 
@@ -836,160 +672,104 @@ class PluginDistributionTest(unittest.TestCase):
                 finally:
                     (self.root / rel).write_bytes(saved)
 
-    def test_recorder_sees_each_route(self):
-        # Each route by which code can read a key, or every key, of a JSON object, applied to a stand-in
-        # of 1 that holds "version" and "Version": each logs a use that breaks the rule (breaches), or
-        # raises TypeError or AttributeError, which the gate's main turns into exit 3 unless the gate
-        # catches it (a residual the module docstring states). Then the uses that
-        # keep the rule: each logs no breach and gives what a dict gives. The output is empty but where
-        # a route names the text it shows.
-        text = "{'version': '1', 'Version': '2'}"
+    def test_hook_keeps_only_the_pairs_of_read_keys(self):
+        # U: every spelling in letter case of each key of READ_KEYS, 4,560 in all, and each spelling with
+        # 1 character that str.casefold, str.lower or str.upper maps onto a letter of the key, such as
+        # U+017F for s and U+212A for k, given to the gate's hook in 1 object with keys outside READ_KEYS:
+        # it gives a dict of exactly the pairs whose key is 1 of READ_KEYS, in order, each value the one
+        # given. Then each of those spellings repeated, with another key between, is refused, naming it.
+        self.assertIs(type(gate.READ_KEYS), frozenset)
+        self.assertEqual(gate.READ_KEYS, READ_KEYS)
+        cased = {key: {"".join(chars) for chars in itertools.product(*({char.lower(), char.upper()} for char in key))}
+                 for key in READ_KEYS}
+        self.assertEqual(sum(len(spellings) for spellings in cased.values()), 4560)
+        letters = set("".join(READ_KEYS))
+        lookalikes: dict = {}
+        for point in range(0x80, sys.maxunicode + 1):
+            char = chr(point)
+            for mapped in {char.casefold(), char.lower(), char.upper()}:
+                if len(mapped) == 1 and mapped.lower() in letters:
+                    lookalikes.setdefault(mapped.lower(), set()).add(char)
+        self.assertIn(chr(0x17F), lookalikes["s"])
+        self.assertIn(chr(0x212A), lookalikes["k"])
+        folded = {key[:index] + other + key[index + 1:] for key in READ_KEYS for index, char in enumerate(key)
+                  for other in lookalikes.get(char, ())}
+        spellings = sorted(set().union(*cased.values()) | folded | {UNKNOWN_KEY, "description", ""})
+        for order in (spellings, spellings[::-1]):
+            with self.subTest(order="reversed" if order is not spellings else "sorted"):
+                pairs = [(key, [index]) for index, key in enumerate(order)]
+                kept = gate._unique_object(pairs)
+                self.assertIs(type(kept), dict)
+                self.assertEqual(list(kept), [key for key, _ in pairs if key in READ_KEYS])
+                self.assertTrue(all(kept[key] is value for key, value in pairs if key in READ_KEYS))
+        wrong = []
+        for key in spellings:
+            between = "name" if key != "name" else UNKNOWN_KEY
+            try:
+                gate._unique_object([(key, 1), (between, 2), (key, 3)])
+            except gate.DuplicateKey as error:
+                if error.key != key:
+                    wrong.append((key, error.key))
+            else:
+                wrong.append((key, None))
+        self.assertEqual(wrong, [])
 
-        class Folded(str):
-            """A key equal to any str equal to it after case folding."""
+    def test_core_is_pinned(self):
+        # The pin: the core as reviewed. An edit of the function bound to the gate's _unique_object or
+        # load_json, a rebinding of either name while the gate loads, or a change of READ_KEYS fails here
+        # until a reviewer renews CORE_SHA256. It shows the core is unchanged since review, not that it is
+        # right; test_hook_keeps_only_the_pairs_of_read_keys is the evidence it freezes.
+        self.assertEqual(hashlib.sha256(core_text(gate).encode("utf-8")).hexdigest(), CORE_SHA256)
 
-            def __eq__(self, other):
-                return isinstance(other, str) and self.casefold() == str.casefold(other)
-
-            def __hash__(self):
-                return hash(self.casefold())
-
-        def matched(held):
-            match held:
-                case {"Version": _}:
-                    return True
-            return False
-
-        breaking = [
-            ("get", lambda held: held.get("Version"), ""), ("subscript", lambda held: held["Version"], ""),
-            ("in", lambda held: "Version" in held, ""),
-            ("operator.methodcaller", lambda held: operator.methodcaller("get", "Version")(held), ""),
-            ("operator.itemgetter", lambda held: operator.itemgetter("Version")(held), ""),
-            ("getattr", lambda held: getattr(held, "get")("Version"), ""),
-            ("object.__getattribute__", lambda held: object.__getattribute__(held, "get")("Version"), ""),
-            ("str.format_map", lambda held: "{Version}".format_map(held), ""),
-            ("%", lambda held: "%(Version)s" % held, ""), ("str.format", lambda held: "{0[Version]}".format(held), ""),
-            ("a key of a str subclass", lambda held: held.get(Folded("version")), ""),
-            ("json.dumps", json.dumps, ""), ("dict.get", lambda held: dict.get(held, "Version"), ""),
-            ("dict.__getitem__", lambda held: dict.__getitem__(held, "Version"), ""),
-            ("dict", dict, ""), ("** unpacking", lambda held: {**held}, ""), ("| on the left", lambda held: held | {}, ""),
-            ("| on the right", lambda held: {} | held, ""), ("list", list, ""), ("len", len, ""), ("bool", bool, ""),
-            ("items", lambda held: held.items(), ""), ("copy.copy", copy.copy, ""), ("copy.deepcopy", copy.deepcopy, ""),
-            ("pickle", pickle.dumps, ""), ("str", str, ""), ("an f-string", lambda held: f"{held}", ""),
-            ("== with a dict", lambda held: held == {"version": "1"}, ""), ("vars", vars, ""),
-            ("__dict__", lambda held: held.__dict__, ""), ("a mapping pattern of match", matched, ""),
-            ("repr not shown", repr, ""), ("repr taken twice, shown once", lambda held: (repr(held), repr(held)), text),
-            ("repr of an object read by key", lambda held: (held.get("version"), repr(held)), text),
-            # The other methods of the stand-in that log, keys and iteration by a for loop among them, so
-            # that any 1 of its 26 methods that log fails this case when it stops logging.
-            ("keys", lambda held: held.keys(), ""), ("a for loop", lambda held: [key for key in held], ""),
-            ("pop", lambda held: held.pop("Version"), ""), ("setdefault", lambda held: held.setdefault("Version"), ""),
-            ("values", lambda held: held.values(), ""), ("reversed", reversed, ""), ("copy", lambda held: held.copy(), ""),
-            ("popitem", lambda held: held.popitem(), ""), ("update", lambda held: held.update(), ""),
-            ("clear", lambda held: held.clear(), ""), ("item assignment", lambda held: held.__setitem__("Version", "3"), ""),
-            ("del", lambda held: held.__delitem__("Version"), ""), ("!= with a dict", lambda held: held != {"version": "1"}, ""),
-            ("__getstate__", lambda held: held.__getstate__(), ""),
-        ]
-        keeping = [
-            ("get of a key the gate reads", lambda held: held.get("version"), "1", ""),
-            ("isinstance", lambda held: isinstance(held, dict), True, ""),
-            ("!= with a str", lambda held: held != "cleanlanguage", True, ""),
-            ("repr shown", repr, text, text),
-        ]
-        for name, route, output in breaking:
-            with self.subTest(route=name):
-                log: list = []
-                held = stand_in({"version": "1", "Version": "2"}, log)
-                try:
-                    route(held)
-                except (TypeError, AttributeError):
-                    pass
-                else:
-                    self.assertNotEqual(breaches(log, output), [])
-                finally:
-                    release(log)
-        for name, route, want, output in keeping:
-            with self.subTest(route=name):
-                log = []
-                held = stand_in({"version": "1", "Version": "2"}, log)
-                try:
-                    self.assertEqual(route(held), want)
-                    self.assertEqual(breaches(log, output), [])
-                finally:
-                    release(log)
-        self.assertEqual(RECORDED, {})
-
-    def test_recorder_sees_a_key_read_inside_the_hook(self):
-        # The gate's object_pairs_hook, with a read added after it builds the object, on a tree whose
-        # Claude manifest holds version and Version: a read of Version, by in, == or != on its keys, or
-        # by in followed by a raise where the object holds the key, is a breach, and a read of version,
-        # as written, is not. The read followed by a raise ends the gate with exit 3.
+    def test_checked_main_reports_a_key_outside_read_keys(self):
+        # checked_main, through which every in-process run goes, on runs whose hook keeps every pair, as
+        # the gate's did before it kept only READ_KEYS: each key outside READ_KEYS of an object load_json
+        # gives is reported, at the top, in an object and in a list; with the gate's own hook, none is.
         self.write_text(gate.CLAUDE_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Version": "2", '
-                                              '"skills": ["./skills/cleanlanguage"]}\n')
-        real = gate._unique_object
+                                              '"skills": [{"Nested": 1}]}\n')
+        self.assertEqual(checked_main(io.StringIO(), io.StringIO()), (0, []))
+        with mock.patch.object(gate, "_unique_object", dict):
+            _, problems = checked_main(io.StringIO(), io.StringIO())
+        for rel, key in ((gate.CLAUDE_MANIFEST, "Version"), (gate.CLAUDE_MANIFEST, "skills"),
+                         (gate.CLAUDE_MANIFEST, "Nested"), (gate.MARKETPLACE, "owner"), (gate.MARKETPLACE, "url"),
+                         (gate.MARKETPLACE, "category"), (gate.SITE_JSON, "schema")):
+            self.assertIn(f"a JSON object of {rel} holds the key {key!r}", problems)
 
-        def raising(result, key):
-            if key in result:
-                raise gate.DuplicateKey(key)
+    def test_keys_outside_read_keys_change_no_output(self):
+        # E: the gate on a tree and on the same tree with each JSON file perturbed, so that each object at
+        # every depth holds keys outside READ_KEYS, gives the same exit status and every line the same, in
+        # this process and as a command. The trees: setUp's, which passes, and one whose vendored entry's
+        # source is an object, which fails and shows only the kept pairs of that object.
+        script = self.root / "tools" / "check-plugin-distribution.py"
+        shutil.copyfile(MODULE_PATH, script)
 
-        reads = [("in", lambda result, key: key in result, 0), ("==", lambda result, key: [k == key for k in result], 0),
-                 ("!=", lambda result, key: [k != key for k in result], 0), ("in, then a raise", raising, 3)]
-        for name, read, code in reads:
-            for key, want in (("Version", ["a read of the key 'Version' of type str"]), ("version", [])):
-                with self.subTest(read=name, key=key):
-                    def hook(pairs, read=read, key=key):
-                        result = real(pairs)
-                        read(result, key)
-                        return result
-                    with mock.patch.object(gate, "_unique_object", hook):
-                        got, problems = recorded_main(io.StringIO(), io.StringIO())
-                    # The gate decodes the manifest more than once, so each problem is counted once.
-                    self.assertEqual((got, sorted(set(problems))), (code, want))
-        # The hook's own comparison of 2 keys of 1 object, which finds a repeated key, is not a read.
-        self.write_text(gate.AGENT_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Description": "d", '
-                                             '"Description": "d"}\n')
-        self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (3, []))
-        self.assertEqual(RECORDED, {})
+        def runs():
+            done = subprocess.run([sys.executable, "-I", str(script)], cwd=self.root, capture_output=True,
+                                  text=True, errors="backslashreplace", timeout=120)
+            return self.run_gate(), (done.returncode, done.stdout, done.stderr)
 
-    def test_recorded_main_fails_a_run_the_recorder_does_not_wrap(self):
-        # recorded_main on runs whose JSON objects the recorder leaves as dicts, on a tree that passes
-        # and on one that fails: with no recorder, it reports only that fewer stand-ins were made than
-        # the gate's 5 JSON inputs; with a stand-in made only for the first 4 objects decoded, that 4
-        # were made, and an object of site.json that is not a stand-in among others; with each plugin
-        # entry, which sits in a list in a stand-in, left as a dict, only that entry of each
-        # marketplace. A run that exits 3 is not held to the count.
-        made = stand_in
-
-        def first_4(data, log):
-            return made(data, log) if sum(use == "made" for _, use, _ in log) < 4 else data
-
-        def entries_left(data, log):
-            return data if "source" in data else made(data, log)
-
-        @contextlib.contextmanager
-        def off(log):
-            yield log
-
-        few = "the recorder made {} stand-ins, fewer than the 5 JSON inputs the gate read"
-        for code in (0, 1):
-            with self.subTest(code=code):
-                if code:
-                    self.edit_json(gate.AGENT_MANIFEST, lambda d: d.update(version="1.0.16"))
-                with mock.patch.dict(globals(), {"recording": off}):
-                    self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (code, [few.format(0)]))
-                with mock.patch.dict(globals(), {"stand_in": first_4}):
-                    got, problems = recorded_main(io.StringIO(), io.StringIO())
-                self.assertEqual(got, code)
-                self.assertIn(few.format(4), problems)
-                self.assertIn(f"a JSON object of {gate.SITE_JSON} that is not a stand-in", problems)
-                with mock.patch.dict(globals(), {"stand_in": entries_left}):
-                    self.assertEqual(recorded_main(io.StringIO(), io.StringIO()),
-                                     (code, [f"a JSON object of {rel} that is not a stand-in"
-                                             for rel in (gate.MARKETPLACE, gate.VENDORED_MARKETPLACE)]))
-        (self.root / gate.SITE_JSON).unlink()
-        with mock.patch.dict(globals(), {"recording": off}):
-            self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (3, []))
-        self.assertEqual(RECORDED, {})
+        inputs = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*.json"))
+        self.assertEqual(len(inputs), 6)
+        source = ("FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source {} is not a string, so this "
+                  "gate cannot read where it leads\n")
+        for tree, change, code, needle in (
+                ("passing", None, 0, "OK: D1 to D4 hold"),
+                ("an object source", lambda d: d["plugins"][0].update(source={"Repo": "x"}), 1, source)):
+            with self.subTest(tree=tree):
+                if change is not None:
+                    self.edit_json(gate.VENDORED_MARKETPLACE, change)
+                saved = {rel: (self.root / rel).read_bytes() for rel in inputs}
+                try:
+                    before = runs()
+                    self.assertEqual(before[0][0], code, before)
+                    self.assertIn(needle, before[0][1], before)
+                    for rel in inputs:
+                        self.write_json(rel, perturbed(json.loads(saved[rel])))
+                        self.assertIn(b'"Version": "claude-x"', (self.root / rel).read_bytes())
+                    self.assertEqual(runs(), before)
+                finally:
+                    for rel, data in saved.items():
+                        (self.root / rel).write_bytes(data)
 
     def test_unreadable_file_exits_3(self):
         (self.root / gate.SITE_JSON).unlink()
@@ -1031,12 +811,13 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertNotIn("FAIL D1", output)
 
     def test_object_source_fails_d2(self):
+        # The object's shown text holds only its pairs whose key is 1 of READ_KEYS.
         for rel in (gate.MARKETPLACE, gate.VENDORED_MARKETPLACE):
             with self.subTest(rel=rel):
                 saved = (self.root / rel).read_bytes()
                 self.edit_json(rel, lambda d: d["plugins"][0].update(source={"source": "github", "repo": "someone/else"}))
                 try:
-                    self.expect(1, f"FAIL D2: {rel} plugins[0].source {{'source': 'github', 'repo': 'someone/else'}} is "
+                    self.expect(1, f"FAIL D2: {rel} plugins[0].source {{'source': 'github'}} is "
                                    "not a string, so this gate cannot read where it leads", "1 relative source resolved")
                 finally:
                     (self.root / rel).write_bytes(saved)
@@ -1341,10 +1122,11 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertEqual(output.splitlines()[-1], "FAIL: 2 inconsistencies")
 
     def test_entry_name_that_is_an_object_fails_d1(self):
-        # The repository's second entry: read by the names check and by the dependencies check.
+        # The repository's second entry: read by the names check and by the dependencies check. The
+        # object's shown text holds only its pairs whose key is 1 of READ_KEYS, here none.
         self.edit_json(gate.MARKETPLACE, lambda d: d["plugins"].append({"name": {"a": 1}, "source": "./absent"}))
         self.expect(1, "FAIL D1: .claude-plugin/marketplace.json lists 2 plugins, not exactly 1",
-                    "FAIL D1: .claude-plugin/marketplace.json plugins[1].name is {'a': 1}, not a name")
+                    "FAIL D1: .claude-plugin/marketplace.json plugins[1].name is {}, not a name")
 
     def test_marketplace_name_that_is_an_array_fails_d1_and_d4(self):
         # Read by the names check and by a qualified dependency.
@@ -2530,12 +2312,53 @@ class PluginDistributionTest(unittest.TestCase):
 class RepositoryTreeTest(unittest.TestCase):
     def test_repository_is_consistent(self):
         out, err = io.StringIO(), io.StringIO()
-        code, problems = recorded_main(out, err)
+        code, problems = checked_main(out, err)
         output = out.getvalue() + err.getvalue()
         self.assertEqual(problems, [], output)
         self.assertEqual(code, 0, output)
         self.assertTrue(out.getvalue().splitlines()[-1].startswith("OK: D1 to D4 hold"), output)
         self.assertNotIn("FAIL", output)
+
+    def test_keys_outside_read_keys_change_no_output(self):
+        # E on a copy of the files the gate reads in the repository: each JSON input load_json reads,
+        # SKILL.md and the extractor. The gate on the copy, and on the copy with each JSON input
+        # perturbed, gives the same exit status and every line the same, in this process.
+        read: list = []
+        real = gate.load_json
+
+        def load(rel):
+            read.append(rel)
+            return real(rel)
+
+        with mock.patch.object(gate, "load_json", load):
+            self.assertEqual(checked_main(io.StringIO(), io.StringIO()), (0, []))
+        inputs = sorted(set(read))
+        self.assertGreaterEqual(len(inputs), 6)
+
+        def run() -> tuple:
+            out, err = io.StringIO(), io.StringIO()
+            code, problems = checked_main(out, err)
+            self.assertEqual(problems, [], out.getvalue() + err.getvalue())
+            return code, out.getvalue(), err.getvalue()
+
+        saved = gate.REPO_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in [*inputs, gate.SKILL_MD, gate.EXTRACTOR]:
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(saved / rel, root / rel)
+            gate.REPO_ROOT = root
+            try:
+                before = run()
+                for rel in inputs:
+                    text = json.dumps(perturbed(json.loads((root / rel).read_bytes())), indent=2) + "\n"
+                    (root / rel).write_text(text, encoding="utf-8")
+                    self.assertIn('"Version": "claude-x"', text)
+                after = run()
+            finally:
+                gate.REPO_ROOT = saved
+        self.assertEqual(before[0], 0, before)
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":

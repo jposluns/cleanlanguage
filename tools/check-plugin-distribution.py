@@ -42,9 +42,9 @@ component at a time with os.lstat, none a symlink, each spelled as os.listdir
 of its folder lists it. The hosted catalog and the release zips are not
 checked here.
 
-Keys: the gate reads each key of a JSON object exactly as written, so a key
-written in another letter case is not read, and 2 keys of 1 object that
-differ only in letter case are 2 keys, not 1 key repeated.
+Keys: as it decodes, the gate refuses a key repeated in a JSON object, then
+keeps only the pairs whose key is exactly 1 of READ_KEYS, so a key in another
+letter case is neither a repeat nor read, and an object's shown text omits it.
 
 Output and exit status:
   0: every check holds; a line of counts, then a last line that starts "OK:".
@@ -132,6 +132,8 @@ READ_BLOCK = 65536
 # object is 1 level. Far below any default recursion limit, so every supported
 # interpreter decodes JSON at this depth, and far above the manifests' own.
 MAX_JSON_DEPTH = 64
+# The only keys of a JSON object the gate keeps; load_json drops every other pair as it decodes.
+READ_KEYS = frozenset({"name", "site_key", "plugins", "source", "version", "dependencies"})
 # The value read for a key a JSON object does not hold, unlike any value JSON can hold.
 ABSENT = object()
 
@@ -147,12 +149,16 @@ class DuplicateKey(Exception):
 
 
 def _unique_object(pairs: list) -> dict:
-    """object_pairs_hook: build 1 JSON object, refusing a key that appears twice."""
+    """object_pairs_hook: build 1 JSON object, refusing a key that appears twice, that holds only the
+    pairs whose key is exactly 1 of READ_KEYS, so no other key reaches the rest of the gate."""
+    seen: set = set()
     result: dict = {}
     for key, value in pairs:
-        if key in result:
+        if key in seen:
             raise DuplicateKey(key)
-        result[key] = value
+        seen.add(key)
+        if key in READ_KEYS:
+            result[key] = value
     return result
 
 
