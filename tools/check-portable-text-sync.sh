@@ -8,7 +8,7 @@
 #                                      size-labelled rendering (29k for now).
 #   cleanlanguage-instructions-29k.md  the largest rendering; GENERATED from the skill by
 #                                      tools/build-portable-text.py, byte-equal to
-#                                      cleanlanguage-instructions.md.
+#                                      cleanlanguage-instructions.md (<= 29000 chars).
 #   cleanlanguage-instructions-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
 #   cleanlanguage-instructions-8k.md   a hand-maintained further-condensed rendering (<= 8000
 #                                      chars) for assistants that cap instruction length.
@@ -25,8 +25,8 @@
 # skill and all files, that the skill carries a well-formed Released line when
 # its version sorts above the undated baseline and that every file carries the
 # same Released value as the skill (or none when the skill has none), that
-# cleanlanguage-instructions.md and cleanlanguage-instructions-29k.md are byte-equal, and that the
-# condensed files are within their size labels.
+# cleanlanguage-instructions.md and cleanlanguage-instructions-29k.md are byte-equal, and that every
+# size-labelled file is within its label.
 #
 # Usage:
 #   tools/check-portable-text-sync.sh            Check; exit non-zero on drift.
@@ -175,12 +175,20 @@ check_common() {
   if ! cmp -s "${canonical}" "${twin29}"; then
     echo "${canonical} is not byte-equal to ${twin29}." >&2; return 1
   fi
-  # The condensed files must stay within their size labels.
+  # Every size-labelled file must stay within its label. The 29k twin is
+  # byte-equal to the canonical file (checked above), so 1 count covers both.
+  # Each count is that of wc -m; where wc -m gives bytes, the gate compares a
+  # file's bytes, not its characters, with its label. On a UTF-8 file, GNU
+  # coreutils 9.7 wc -m gave its bytes in the C and POSIX locales and its
+  # characters in the C.UTF-8 and en_US.UTF-8 locales; uutils coreutils
+  # 0.10.0 wc -m gave its characters in all 4.
   local n
   n="$(wc -m < "${eight}")"
   [ "${n}" -le 8000 ] || { echo "${eight} is ${n} chars, over its 8000 label." >&2; return 1; }
   n="$(wc -m < "${eleven}")"
   [ "${n}" -le 11000 ] || { echo "${eleven} is ${n} chars, over its 11000 label." >&2; return 1; }
+  n="$(wc -m < "${canonical}")"
+  [ "${n}" -le 29000 ] || { echo "${canonical} is ${n} chars, over its 29000 label." >&2; return 1; }
 }
 
 mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/skills/cleanlanguage/SKILL.md"; find cleanlanguage/skills/cleanlanguage/references -type f -name '*.md' | sort)
