@@ -1214,13 +1214,17 @@ SLEEPING_ENUMERATOR = "import time\ntime.sleep(3600)\n"
 # SIGKILL, reaps each that has ended, and repeats until it has no child left: once a process ends,
 # its children become children of this process and are killed in the next pass. It signals only its
 # own children, and a child keeps its process id until it is reaped, so no signal can reach an
-# unrelated process. It stops early only if the cleanup bound passes with a child still alive, which
-# needs a process that outlasts SIGKILL that long, such as one in uninterruptible sleep, and then
-# lists it in the report. It writes the report as JSON: "exited" (the hook exited within its bound),
-# "left_running" (a process that the hook started was alive once the hook had ended) and
-# "not_reaped" (the process ids still alive when cleanup stopped), and then passes on the hook's
-# stdout, stderr and exit status. A process that the hook gets some other program to start, such as
-# a service manager, is not its descendant, and the wrapper does not reach it.
+# unrelated process. The cleanup bound counts from the reap just after the hook has ended, and each
+# pass checks it before it sends any signal, so cleanup stops with a child still alive if the bound
+# passes first: when a process outlasts SIGKILL that long, such as one in uninterruptible sleep, or
+# when the wrapper itself does not run for that long, such as when it is stopped or kept off the CPU,
+# in which case it can stop before it has signalled any child. It then lists its children that are
+# still alive in the report and leaves them, and their descendants, running. It writes the report as
+# JSON: "exited" (the hook exited within its bound), "left_running" (a process that the hook started
+# was alive once the hook had ended) and "not_reaped" (the process ids of its children still alive
+# when cleanup stopped), and then passes on the hook's stdout, stderr and exit status. A process that
+# the hook gets some other program to start, such as a service manager, is not its descendant, and
+# the wrapper does not reach it.
 REAPER_PROG = """
 import ctypes, glob, json, os, signal, subprocess, sys, tempfile, time
 
@@ -1309,18 +1313,25 @@ if mode == "hang":
 """
 
 # Runs in a separate python3 -I process: argv[1] is the hook file, argv[2] the record file, argv[3]
-# the hook action and argv[4] the mode, "strip" or "keep". It replaces subprocess.run with a recorder
-# that appends a JSON line for each call: the argv, and the timeout argument or "absent" when none is
-# passed. With "strip" it writes the line and then makes the real call with the same arguments except
-# the timeout, so a slow host cannot cut the call short. With "keep" it makes the real call with the
-# same arguments, timeout included, and writes the line once the call has ended, adding "outcome":
-# "returned", or the type name of the exception that the call raised, such as "TimeoutExpired", which
-# it then raises again unchanged. It runs the unchanged hook file as __main__, so the hook reads its
-# stdin payload and exits as it does when it is run directly.
+# the hook action, argv[4] the mode, "strip" or "keep", and with "keep" argv[5] the enumerator argv
+# as JSON. It replaces subprocess.run with a recorder that appends a JSON line for each call: the
+# argv, and the timeout argument or "absent" when none is passed. With "strip", and with "keep" for
+# each call whose argv is not the enumerator argv, it writes the line and then makes the real call
+# with the same arguments except the timeout, so a slow host cannot cut the call short. With "keep",
+# for each call whose argv is the enumerator argv, it makes the real call with the same arguments,
+# timeout included, and writes the line once the call has ended, adding "outcome": "returned", or
+# the type name of the exception that the call raised, such as "TimeoutExpired", which it then raises
+# again unchanged. So in neither mode can a timeout of the hook other than the enumerator's fire. In
+# the enforcement test the hook's only other call is git rev-parse --show-toplevel in
+# _recovery_toplevel, with a 5 s timeout; if that timeout fired, as it can on a loaded host,
+# _orch_stop_family would allow the stop without running the enumerator, and the test would fail. It
+# runs the unchanged hook file as __main__, so the hook reads its stdin payload and exits as it does
+# when it is run directly.
 RECORDING_HOOK_PROG = """
 import json, runpy, subprocess, sys
 
 hook, record, action, mode = sys.argv[1:5]
+enumerator = json.loads(sys.argv[5]) if mode == "keep" else None
 real_run = subprocess.run
 
 
@@ -1331,7 +1342,7 @@ def write(row):
 
 def recording_run(*args, **kwargs):
     row = {"argv": args[0] if args else kwargs.get("args"), "timeout": kwargs.get("timeout", "absent")}
-    if mode == "strip":
+    if mode == "strip" or json.loads(json.dumps(row["argv"], default=repr)) != enumerator:
         kwargs.pop("timeout", None)
         write(row)
         return real_run(*args, **kwargs)
@@ -1366,9 +1377,15 @@ class T15EnumeratorTimeout(Stage2Harness):
         or None if it reached the wall-clock bound, and the report, or None if the wrapper wrote
         none). The hook bound defaults to HOOK_BOUND and the wall-clock bound to WALL_CLOCK_BOUND,
         which leaves the wrapper 90 s beyond its 2 bounds; the 2 wrapper tests pass 10 s and 60 s,
-        which leaves it 20 s. The wall-clock bound kills only the wrapper, so if it fires, the
-        processes under the wrapper at that moment, such as the stand-in hook's child and
-        grandchild, outlive the test."""
+        which leaves it 20 s. What can outlive the test: every process under the wrapper when the
+        wrapper ends before its cleanup has finished, which happens when the wall-clock bound kills
+        it (that bound kills only the wrapper; in a wrapper test those processes include the
+        stand-in hook's child and grandchild), when another signal ends it, such as one that the
+        hook sends it, or when an error ends it; the children that REAPER_PROG lists as still alive
+        when cleanup stops at its bound, and their descendants; and a process that the hook gets
+        another program, such as a service manager, to start. In each case but the last the test
+        fails, as this method then returns no completed wrapper, no report, or a report that lists
+        a child."""
         hook_bound = self.HOOK_BOUND if hook_bound is None else hook_bound
         try:
             r = run_doctor_recorded(self, [sys.executable, "-I", "-c", REAPER_PROG, str(report),
@@ -1443,6 +1460,8 @@ class T15EnumeratorTimeout(Stage2Harness):
     def test_sleeping_enumerator_times_out_and_denies(self):
         # Catches: the sleeping enumerator runs under a declared timeout of 1 s, and the unchanged
         # hook runs through RECORDING_HOOK_PROG in its "keep" mode, itself run through REAPER_PROG.
+        # The recorder keeps the timeout argument of the enumerator call only, so no other timeout of
+        # the hook, such as the 5 s one of its git call in _recovery_toplevel, can fire.
         # Once the wrapper call ends, the test requires, in this order:
         # - that the wrapper call ended within the 240 s wall-clock bound (temporal) and that the
         #   wrapper wrote its report (logical);
@@ -1461,15 +1480,18 @@ class T15EnumeratorTimeout(Stage2Harness):
         # 120 s bound kills the hook first. A correct hook leaves no process running, so for such a
         # hook only the 240 s and 120 s bounds can make a check's result depend on how loaded the
         # host is. A hook that passes no timeout argument waits for the enumerator, is killed at
-        # 120 s and fails the "exited" check. A hook that passes a timeout argument other than 1,
-        # such as a fixed 20 s or 60 s, max(timeout, 30) or timeout * 2, fails the call check, as
-        # does a hook that runs the enumerator again after a timeout, which records 2 or more calls,
-        # however many. A hook that starts the enumerator with Popen and returns without stopping
-        # it, in or out of a new session, records no call and fails the call check, and the test
-        # ends there: such a hook also leaves the enumerator running, but the "left_running" check
-        # comes after the call check and is not reached. A hook that takes the timeout as success
-        # or gives another verdict fails the last check. The wrapper kills every process that the
-        # hook started and left running, so none outlives the test (REAPER_PROG states the limits).
+        # 120 s and fails the "exited" check. A hook that passes a timeout argument other than 1
+        # fails the call check if it still exits within the 120 s bound, as with a fixed 20 s or
+        # 60 s, max(timeout, 30) or timeout * 2, and fails the "exited" check first if it does not,
+        # as with a fixed 180 s. A hook that runs the enumerator again after a timeout records 2 or
+        # more calls and fails the call check if it still exits within 120 s, and fails the
+        # "exited" check first if its runs take it past 120 s. A hook that starts the enumerator
+        # with Popen and returns without stopping it, in or out of a new session, records no call
+        # and fails the call check, and the test ends there: such a hook also leaves the enumerator
+        # running, but the "left_running" check comes after the call check and is not reached. A
+        # hook that takes the timeout as success or gives another verdict fails the last check. The
+        # wrapper kills every process that the hook started and left running, within the limits
+        # that REAPER_PROG and run_reaped state.
         # Misses: the test does not time the effective timeout. Enforcement rests on subprocess.run
         # honouring its timeout argument, seen once here as TimeoutExpired. A hook that passes 1 s
         # whatever is declared, or changes only values other than 1, such as round(timeout), passes;
@@ -1480,14 +1502,15 @@ class T15EnumeratorTimeout(Stage2Harness):
         # than through subprocess.run records no call and fails here even if it stops the
         # enumerator at the declared time. The unchanged hook's timeout stops only the enumerator's
         # own process, and the sleeping enumerator is 1 process, so this test says nothing about
-        # processes that an enumerator starts. This test declares only 1 s, so it does not exercise
-        # the hook's check of the declared value (a number, above 0, at most 600).
+        # processes that an enumerator starts. This test declares only 1 s, so of the changes to the
+        # hook's check of the declared value (a number, above 0, at most 600) it catches only one
+        # that rejects 1: such a hook passes the 60 s fallback as the timeout and fails the call check.
         record = self._tmp / "run-calls-enforced.jsonl"
         argv = [sys.executable, "-I", "-c", SLEEPING_ENUMERATOR]
         self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": 1}))
         self.arm_lease()
         r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
-                                  str(record), "orch_stop_guard", "keep"],
+                                  str(record), "orch_stop_guard", "keep", json.dumps(argv)],
                                  self._tmp / "reaper-report.json")
         self.assert_reaped(r, rep)
         rows = [json.loads(line) for line in
@@ -1535,8 +1558,11 @@ class T15EnumeratorTimeout(Stage2Harness):
         # hook that runs the enumerator again after a timeout, as no call here times out
         # (test_sleeping_enumerator_times_out_and_denies catches that). No declared value is one
         # that the hook's check rejects (not a number, 0 or below, or above 600), so it also misses
-        # a change to the 60 s fallback for such a value, such as 30 s, or to which values the
-        # check rejects, such as one that rejects JSON true, which the unchanged hook takes as 1 s.
+        # a change to the 60 s fallback for such a value, such as 30 s, and a change to which values
+        # the check rejects that still accepts 0.001, 1, 7.5 and 600, such as one that rejects JSON
+        # true, which the unchanged hook takes as 1 s. A change that rejects one of the 4, such as
+        # one that accepts only an int, fails for that value, as the hook then passes the 60 s
+        # fallback.
         script = self._tmp / "writing_enum_fixture.py"
         script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         for declared in self.DECLARED_TIMEOUTS:
