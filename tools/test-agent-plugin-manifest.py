@@ -3,21 +3,36 @@
 
 Patch the gate's manifest paths to a temp fixture and drive the failure and
 success paths offline with the standard library. The fixture also holds a root
-LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
-cases can make a copy differ, go missing, or become a symlink, a FIFO, a folder,
-a socket or a character device. On Linux the only other files that are not
-regular are block devices, which no case makes. Creating a device node needs
-the CAP_MKNOD capability, which an unprivileged run lacks, so there the device
-case skips, as below, and the gate's refusal of a copy that is a device goes
-untested. A further case makes a root LICENSE or NOTICE.md a symlink and
-requires that the gate read it through the link: it passes when the link leads
-to a file equal to the copy, and fails with the message that the copy differs
-when it leads to a different file. The cases name the 2 files in COPIED_FILES
-below, not in the gate's own list.
+LICENSE and NOTICE.md and their copies under cleanlanguage/. The cases name the
+2 files in COPIED_FILES below, not in the gate's own list.
 
-The licence-copy cases check outcomes only: the exit code, the message, that
-the gate ends and, for a FIFO, whether anything opened it for reading. They
-state no rule about how the gate reads a file:
+The gate's refusal of each kind of licence copy is tested on every runner,
+with no skip, through a seam. FakeNode answers os.stat and os.lstat for the
+exact path of 1 file with a stat result of the kind under test, while the
+file behind it stays a real, regular copy equal to its root file, and it
+records every io.open, open, os.open, os.listdir and os.scandir of that path.
+The gate asks for the type of a copy through pathlib's is_symlink, exists and
+is_file, which look up os.lstat and os.stat when they are called, so the gate
+sees the fake's type. For each copy and each of the 11 kinds in COPY_KINDS (a
+symlink to a regular file, to a FIFO or to a character device, a dangling
+symlink, a missing copy, a folder, a FIFO, a socket, a character device, a
+block device and a type that Linux does not use),
+test_licence_copy_kind_refused_untouched requires exit 1, the message for that
+kind and no recorded access to the copy, so a gate that opens, reads or lists
+a copy before refusing it fails, whether or not it ignores the error. A
+control requires that a regular type through the same fake passes, that the
+fake answered the gate and that the recorder saw the gate read the copy, so a
+fake that no longer reaches the gate fails. A further seam case gives a root
+LICENSE or NOTICE.md the type of a symlink and requires that the gate read it
+through: it passes when its bytes equal the copy, and fails with the message
+that the copy differs when they do not.
+
+Real-node smoke cases make, where the OS allows it, a copy that is a symlink
+(to the root file, to a FIFO, or to a path that does not exist), a FIFO, a
+Unix socket or a character device, and a root file that is a symlink. Each
+requires that the real node has the type that FakeNode gives that kind, and
+runs the gate on it. They check outcomes only: the exit code, the message,
+that the gate ends and, for a FIFO, whether anything opened it for reading:
 
 - The edit sweep makes every copy that differs from its root file by 1 byte
   inserted (a space, a CR or an LF), 1 byte deleted, or 1 byte replaced (a
@@ -36,34 +51,46 @@ state no rule about how the gate reads a file:
   read_bytes before refusing it stops with exit 3, not 1, so it fails the
   case for a missing copy, for a folder or for a socket.
 
-Every FIFO, Unix socket, symlink and device node that a case makes is made
-through make_node. Where the OS refuses to make that kind of node, with
-EPERM, EACCES, EOPNOTSUPP or ENOSYS from the call that makes it, the case or
-subtest cannot set up the state it tests, so it skips, naming the error, and
-observes nothing about the gate. Any other error from that call, such as a
-path that already exists, or a socket path longer than a socket address
-holds, as under a long TMPDIR, is raised, so the case errors. unittest counts
-a skipped case as skipped, not as failed, so a run whose other cases pass
-ends with OK (skipped=N) and exit 0. When the OS refused any node, the run
-then prints, after unittest's summary, the number of cases or subtests that
-did not run for that reason, says that they observed nothing about the gate,
-and names each, with the node and the error.
+Every FIFO, Unix socket, symlink and device node that a smoke case makes is
+made through make_node. Where the OS refuses to make that kind of node, with
+EPERM, EACCES, EOPNOTSUPP or ENOSYS from the call that makes it, the smoke
+case or subtest skips, naming the error; the seam still tests the gate's
+refusal of that kind. Any other error from that call, such as a path that
+already exists, or a socket path longer than a socket address holds, as
+under a long TMPDIR, is raised, so the case errors.
+test_make_node_skips_only_on_refusal pins this policy, and a skip on any
+other error fails it. unittest counts a skipped case as skipped, not as
+failed, so a run whose other cases pass ends with OK (skipped=N) and exit 0.
+The script then prints, after unittest's summary, each skip that unittest
+recorded, with the test's id, which for a subtest carries its parameters, so
+each skipped subtest is named once.
 
-No case catches a gate that, before refusing a copy, reads through a symlink
-to a regular file, lists a folder, tries to read a missing copy, a folder or a
-socket and ignores the error, or opens a FIFO neither for reading nor with
-blocking, such as with O_PATH: each leaves the exit code and the message the
-same. No case makes a symlink to a device, such as /dev/zero, so a gate that
-reads through one before refusing it is untested too. No case makes a block
-device, and where the OS refuses to make a character device, as it does for
-an unprivileged run, no case makes a device at all, so there a gate that
-refuses only the other kinds and reads a device copy is untested as well.
-Where the OS refuses to make a FIFO, a socket or a symlink, the cases that
-need one skip, so there a gate that mishandles that kind passes the run, which
-still exits 0; the summary line names those cases.
+These residuals remain:
+
+- The seam reaches the gate only while the gate asks for a file type through
+  os.stat or os.lstat looked up when it is called. A gate that asks another
+  way sees the real regular copy and accepts it, so every refusal subtest
+  fails: a false alarm on a correct refactor, never a silent pass, and whoever
+  changes that route must update FakeNode.
+- Only io.open, open, os.open, os.listdir and os.scandir of the exact path
+  string are recorded. A read before the refusal through io.FileIO, a dir_fd,
+  a bytes path, another spelling of the path, a subprocess or ctypes is not
+  caught.
+- The seam case for a root file cannot catch a gate that detects a root
+  symlink without os.lstat; the real-node case catches it where the OS lets
+  the test make a symlink.
+- Where the OS refuses to make a kind of node, nothing on that runner checks
+  that FakeNode describes that kind as the kernel does. No unprivileged run
+  can make a block device, so that kind has no smoke case, and a character
+  device has one only where the run has the CAP_MKNOD capability.
+- Deleting the lines that print the skip records fails no case; unittest's
+  own summary still reads skipped=N.
+- The seam has been run on Python 3.14 only. If a Python release reaches the
+  type of a file another way, the seam fails closed, as in the first item.
 """
 from __future__ import annotations
 
+import builtins
 import contextlib
 import errno
 import importlib.util
@@ -100,9 +127,30 @@ FIFO_TIMEOUT = 10
 # the privilege (EPERM, EACCES), or the file system or the kernel does not
 # support that kind (EOPNOTSUPP, ENOSYS). make_node skips only on these.
 REFUSAL_ERRNOS = frozenset({errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS})
-# One line for each case or subtest that skipped because the OS refused to
-# make its node, printed after unittest's summary.
-REFUSED_NODES: list[str] = []
+# Errors outside REFUSAL_ERRNOS on which make_node must raise, not skip.
+OTHER_ERRNOS = (errno.EEXIST, errno.ENAMETOOLONG, errno.ENOENT)
+# A file type that Linux does not use (a Solaris door has this value).
+FOREIGN_TYPE = 0o150000
+# Each kind of node a licence copy can be: its label, the type that lstat of
+# the copy gives, the type that stat of it gives (None where that call finds
+# nothing) and the end of the gate's message for it.
+COPY_KINDS = (
+    ("symlink to a regular file", stat.S_IFLNK, stat.S_IFREG, "is a symlink"),
+    ("symlink to a FIFO", stat.S_IFLNK, stat.S_IFIFO, "is a symlink"),
+    ("symlink to a character device", stat.S_IFLNK, stat.S_IFCHR, "is a symlink"),
+    ("dangling symlink", stat.S_IFLNK, None, "is a symlink"),
+    ("missing", None, None, "is missing"),
+    ("folder", stat.S_IFDIR, stat.S_IFDIR, "is not a regular file"),
+    ("FIFO", stat.S_IFIFO, stat.S_IFIFO, "is not a regular file"),
+    ("socket", stat.S_IFSOCK, stat.S_IFSOCK, "is not a regular file"),
+    ("character device", stat.S_IFCHR, stat.S_IFCHR, "is not a regular file"),
+    ("block device", stat.S_IFBLK, stat.S_IFBLK, "is not a regular file"),
+    ("type that Linux does not use", FOREIGN_TYPE, FOREIGN_TYPE, "is not a regular file"),
+)
+KIND_TYPES = {label: (ltype, ftype) for label, ltype, ftype, _ in COPY_KINDS}
+# The real calls, taken before any FakeNode replaces them.
+REAL_STAT = os.stat
+REAL_LSTAT = os.lstat
 # Runs the gate's licence-copy check on the fixture root given as argv[2].
 DRIVER = (
     "import importlib.util, sys\n"
@@ -191,6 +239,82 @@ class FifoWitness:
             finally:
                 os.close(reader)
         return not self._writer.is_alive()
+
+
+class FakeNode:
+    """While in place, answer os.stat and os.lstat for 1 path with a stat
+    result of the given types, and record every access to that path.
+
+    ``ltype`` is the type that os.lstat gives and ``ftype`` the type that
+    os.stat gives when it follows a symlink; None means that the call finds
+    nothing. The other fields come from the real file, which stays as it is.
+    A call with a dir_fd, or with any other path, goes to the real function.
+    Every io.open, open, os.open, os.listdir and os.scandir of the path is
+    recorded in ``touched`` before the real call, and every stat or lstat
+    that the fake answered in ``answered``. Only the exact path string is
+    matched: another spelling of the path, a bytes path or a dir_fd is not.
+    """
+
+    def __init__(self, path, ltype, ftype):
+        self.path = os.fspath(path)
+        self.ltype = ltype
+        self.ftype = ftype
+        self.touched: list[str] = []
+        self.answered: list[str] = []
+        self._saved: list[tuple[object, str, object]] = []
+
+    def _hit(self, target) -> bool:
+        try:
+            return os.fspath(target) == self.path
+        except TypeError:
+            return False
+
+    def _result(self, file_type):
+        if file_type is None:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), self.path)
+        mode = file_type | (0o777 if file_type == stat.S_IFLNK else 0o644)
+        return os.stat_result((mode,) + tuple(REAL_LSTAT(self.path))[1:10])
+
+    def stat(self, path, *, dir_fd=None, follow_symlinks=True):
+        if dir_fd is None and self._hit(path):
+            self.answered.append("stat" if follow_symlinks else "lstat")
+            return self._result(self.ftype if follow_symlinks else self.ltype)
+        return REAL_STAT(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    def lstat(self, path, *, dir_fd=None):
+        if dir_fd is None and self._hit(path):
+            self.answered.append("lstat")
+            return self._result(self.ltype)
+        return REAL_LSTAT(path, dir_fd=dir_fd)
+
+    def _recorder(self, label, real, keyword):
+        def record(*args, **kwargs):
+            target = args[0] if args else kwargs.get(keyword)
+            if target is not None and self._hit(target):
+                self.touched.append(label)
+            return real(*args, **kwargs)
+        return record
+
+    def __enter__(self):
+        patches = [
+            (os, "stat", self.stat),
+            (os, "lstat", self.lstat),
+            (io, "open", self._recorder("io.open", io.open, "file")),
+            (builtins, "open", self._recorder("open", builtins.open, "file")),
+            (os, "open", self._recorder("os.open", os.open, "path")),
+            (os, "listdir", self._recorder("os.listdir", os.listdir, "path")),
+            (os, "scandir", self._recorder("os.scandir", os.scandir, "path")),
+        ]
+        for owner, name, replacement in patches:
+            self._saved.append((owner, name, getattr(owner, name)))
+            setattr(owner, name, replacement)
+        return self
+
+    def __exit__(self, *exc_info):
+        while self._saved:
+            owner, name, original = self._saved.pop()
+            setattr(owner, name, original)
+        return False
 
 
 def valid_manifest():
@@ -287,19 +411,40 @@ class AgentPluginManifestTest(unittest.TestCase):
     def make_node(self, kind: str, path: Path, create, *args) -> None:
         """Make the node of ``kind`` (a FIFO, a Unix socket, a symlink or a
         device) at ``path`` by calling ``create(*args)``. Where the OS refuses
-        to make that kind of node, with an error in REFUSAL_ERRNOS, the case
-        cannot set up the state it tests, so it records the refusal in
-        REFUSED_NODES and skips, naming the error. Any other error, such as a
-        path that already exists or a socket path longer than a socket
-        address holds, is raised, so the case errors."""
+        to make that kind of node, with an error in REFUSAL_ERRNOS, the smoke
+        case cannot set up the state it tests, so it skips, naming the error.
+        Any other error, such as a path that already exists or a socket path
+        longer than a socket address holds, is raised, so the case errors."""
         try:
             create(*args)
         except OSError as error:
             if error.errno not in REFUSAL_ERRNOS:
                 raise
-            reason = f"the OS refused to make {kind} at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}"
-            REFUSED_NODES.append(f"{self.id()}: {reason}")
-            self.skipTest(reason)
+            self.skipTest(f"the OS refused to make {kind} at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}")
+
+    def assert_real_kind(self, path: Path, label: str) -> None:
+        """Require that the real node at ``path`` has the types that FakeNode
+        gives the kind ``label`` in COPY_KINDS, so the seam describes that
+        kind as the kernel does."""
+        ltype, ftype = KIND_TYPES[label]
+        self.assertEqual(stat.S_IFMT(REAL_LSTAT(path).st_mode), ltype, f"lstat type of a real {label}")
+        if ftype is None:
+            with self.assertRaises(FileNotFoundError):
+                REAL_STAT(path)
+        else:
+            self.assertEqual(stat.S_IFMT(REAL_STAT(path).st_mode), ftype, f"stat type of a real {label}")
+
+    def run_through_fake(self, fake: FakeNode):
+        """Run the gate with ``fake`` in place; return its exit code and its
+        stderr. An exit without SystemExit is 0."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            with fake:
+                try:
+                    code = gate.main()
+                except SystemExit as stop:
+                    code = stop.code
+        return code, err.getvalue()
 
     def test_valid_passes(self):
         self.write(valid_manifest())
@@ -471,6 +616,87 @@ class AgentPluginManifestTest(unittest.TestCase):
                                  f"with exit 1 and {needle!r}")
             self.restore_licence_files()
 
+    def test_licence_copy_kind_refused_untouched(self):
+        # The seam: on every runner and with no skip, each kind of copy in
+        # COPY_KINDS must fail with exit 1 and its message before the gate
+        # opens, reads or lists the copy, which stays a real regular file
+        # equal to its root file, so a gate that accepts the kind, or reads
+        # the copy before refusing it, fails.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            copy = gate.REPO_ROOT / "cleanlanguage" / name
+            for label, ltype, ftype, message in COPY_KINDS:
+                with self.subTest(name, kind=label):
+                    self.restore_licence_files()
+                    fake = FakeNode(copy, ltype, ftype)
+                    code, err = self.run_through_fake(fake)
+                    self.assertTrue(fake.answered, "the gate never asked the fake for the copy's type")
+                    self.assertEqual(code, 1, err)
+                    self.assertIn(f"cleanlanguage/{name} {message}", err)
+                    self.assertEqual(fake.touched, [], f"the gate reached cleanlanguage/{name} before refusing it")
+
+    def test_regular_copy_through_fake_is_read(self):
+        # The control: a regular copy through the same fake passes, the fake
+        # answered both calls, and the recorder saw the gate read the copy,
+        # so a fake that no longer reaches the gate fails here.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                fake = FakeNode(gate.REPO_ROOT / "cleanlanguage" / name, stat.S_IFREG, stat.S_IFREG)
+                code, err = self.run_through_fake(fake)
+                self.assertEqual(code, 0, err)
+                self.assertIn("lstat", fake.answered)
+                self.assertIn("stat", fake.answered)
+                self.assertIn("io.open", fake.touched)
+
+    def test_root_symlink_read_through_fake(self):
+        # A root file whose lstat gives a symlink must be read, not refused:
+        # it passes when its bytes equal the copy and fails with the message
+        # that the copy differs when they do not.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            root = gate.REPO_ROOT / name
+            for target, data, code_wanted in (
+                ("equal bytes", LICENCE_TEXTS[name], 0),
+                ("different bytes", LICENCE_TEXTS[name] + b"Other text.\n", 1),
+            ):
+                with self.subTest(name, root=target):
+                    self.restore_licence_files()
+                    root.write_bytes(data)
+                    fake = FakeNode(root, stat.S_IFLNK, stat.S_IFREG)
+                    code, err = self.run_through_fake(fake)
+                    self.assertEqual(code, code_wanted, err)
+                    if code_wanted:
+                        self.assertIn(f"cleanlanguage/{name} differs from the root {name}", err)
+                    self.assertIn("io.open", fake.touched)
+        self.restore_licence_files()
+
+    def test_make_node_skips_only_on_refusal(self):
+        # make_node must skip on each refusal error and raise every other
+        # error. A skip counts as a pass in unittest, so a skip on any other
+        # error is caught here and fails the subtest.
+        path = gate.REPO_ROOT / "cleanlanguage" / "node"
+
+        def refuse(code):
+            raise OSError(code, os.strerror(code), str(path))
+
+        for code in sorted(REFUSAL_ERRNOS):
+            with self.subTest(errno=errno.errorcode[code]):
+                with self.assertRaises(unittest.SkipTest) as caught:
+                    self.make_node("a test node", path, refuse, code)
+                self.assertIn(os.strerror(code), str(caught.exception))
+        for code in OTHER_ERRNOS:
+            with self.subTest(errno=errno.errorcode[code]):
+                try:
+                    self.make_node("a test node", path, refuse, code)
+                except unittest.SkipTest as skip:
+                    self.fail(f"make_node skipped on {errno.errorcode[code]}: {skip}")
+                except OSError as error:
+                    self.assertEqual(error.errno, code)
+                else:
+                    self.fail(f"make_node did not raise {errno.errorcode[code]}")
+
     def test_licence_copy_symlink_fails(self):
         # A symlink to the root file reads equal, but the plugin tree would
         # then point outside itself, so only a regular file passes.
@@ -481,6 +707,15 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 self.make_node("a symlink", copy, copy.symlink_to, gate.REPO_ROOT / name)
+                self.assert_real_kind(copy, "symlink to a regular file")
+                self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
+            with self.subTest(name, target="nothing"):
+                # A dangling link is a symlink, not a missing copy.
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                self.make_node("a symlink", copy, copy.symlink_to, gate.REPO_ROOT / f"{name}.absent")
+                self.assert_real_kind(copy, "dangling symlink")
                 self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
             with self.subTest(name, target="FIFO"):
                 self.restore_licence_files()
@@ -490,6 +725,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.make_node("a FIFO", fifo, os.mkfifo, fifo)
                 try:
                     self.make_node("a symlink", copy, copy.symlink_to, fifo)
+                    self.assert_real_kind(copy, "symlink to a FIFO")
                     # A gate that opens the FIFO for reading through the link
                     # before refusing the link fails, with or without
                     # blocking.
@@ -508,6 +744,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 self.make_node("a FIFO", copy, os.mkfifo, copy)
+                self.assert_real_kind(copy, "FIFO")
                 self.expect_fifo_refusal(copy, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_folder_fails(self):
@@ -533,6 +770,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 self.make_node("a Unix socket", copy, bind_socket, copy)
+                self.assert_real_kind(copy, "socket")
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_device_fails(self):
@@ -549,6 +787,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy.unlink()
                 self.make_node("a character device", copy, os.mknod, copy,
                                stat.S_IFCHR | 0o600, os.makedev(1, 3))
+                self.assert_real_kind(copy, "character device")
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_root_licence_symlink_is_read_through(self):
@@ -565,6 +804,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.restore_licence_files()
                 root.unlink()
                 self.make_node("a symlink", root, root.symlink_to, copy)
+                self.assert_real_kind(root, "symlink to a regular file")
                 self.assertEqual(gate.main(), 0)
             with self.subTest(name, target="a different file"):
                 self.restore_licence_files()
@@ -572,6 +812,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 other.write_bytes(LICENCE_TEXTS[name] + b"Other text.\n")
                 root.unlink()
                 self.make_node("a symlink", root, root.symlink_to, other)
+                self.assert_real_kind(root, "symlink to a regular file")
                 self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
         self.restore_licence_files()
 
@@ -583,10 +824,7 @@ class AgentPluginManifestTest(unittest.TestCase):
 
 if __name__ == "__main__":
     program = unittest.main(exit=False)
-    if REFUSED_NODES:
-        print(f"test-agent-plugin-manifest: {len(REFUSED_NODES)} case(s) or subtest(s) did not run, because "
-              "the OS refused to make the node each needs; unittest counts them as skipped, not as failed, "
-              "and they observed nothing about the gate:", file=sys.stderr)
-        for line in REFUSED_NODES:
-            print(f"  {line}", file=sys.stderr)
+    # unittest's own skip records; a subtest's id carries its parameters.
+    for test, reason in program.result.skipped:
+        print(f"test-agent-plugin-manifest: skipped {test.id()}: {reason}", file=sys.stderr)
     sys.exit(0 if program.result.wasSuccessful() else 1)

@@ -16,7 +16,7 @@
 #   1. Reads the version from the first Version: line in cleanlanguage/skills/cleanlanguage/SKILL.md
 #      at HEAD and requires a bare X.Y.Z, the same rule the release gates apply;
 #      with --tag, fails unless the tag is v<version>. Also requires the
-#      skill name line and at least one Markdown reference, the two structural
+#      skill name line and at least 1 Markdown reference, the 2 structural
 #      checks the previous inline validation enforced. Reads the Released line
 #      (item 26) through tools/skill-release-date.py, run in its --json mode by
 #      tools/skill-release-date-client.py, and fails on a malformed
@@ -25,7 +25,7 @@
 #      the check that the line is present, at any version, and names that date.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
 #      which rejects executable files (100755), symlinks (120000), and
-#      submodules (160000) in one comparison.
+#      submodules (160000) in 1 comparison.
 #   3. Requires every path to match the package allowlist by shape:
 #      skills/cleanlanguage/SKILL.md, the Claude manifest at
 #      .claude-plugin/plugin.json, the Agent Plugins manifest at plugin.json,
@@ -158,13 +158,13 @@ fi
 # is given. Both pipeline statuses are printed on a last line of their own and
 # read explicitly, so a failed blob read never surfaces as the client exit 13
 # (absent) that pipefail would otherwise report. A non-zero blob status is
-# reported as a failed blob read, with one exception: a blob status of 141
+# reported as a failed blob read, with 1 exception: a blob status of 141
 # (git show ended by SIGPIPE) beside a client exit that is not a content
 # verdict (0, 11 or 13) means the client ended before it read the whole blob,
 # so the client's own exit and reason are reported instead. A content verdict
 # is never taken beside a non-zero blob status, since it may rest on part of
 # the blob.
-# The client writes to one stream only: on exit 0 the value on stdout, and on
+# The client writes to 1 stream only: on exit 0 the value on stdout, and on
 # any other exit its message on stderr with nothing on stdout. The probe, the
 # check-date call, the first Released read and the requires-date call below
 # capture both streams, so 5 branches relay the line in which the client

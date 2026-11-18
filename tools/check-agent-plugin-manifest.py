@@ -15,41 +15,40 @@ It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
 is missing, or is a FIFO, a folder, a socket, a character or block device or
 any other file that is not regular fails with exit 1, and the code reads a copy
-only after those checks. The tests (tools/test-agent-plugin-manifest.py) make
-a copy of each of these kinds except a block device, but they make a symlink, a
-FIFO, a socket or a character device only where the OS lets them: where it
-refuses one, with EPERM, EACCES, EOPNOTSUPP or ENOSYS, each case or subtest
-that needs it skips and observes nothing about the gate, unittest still reports
-OK (skipped=N) with exit 0 if nothing else fails, and the run then prints that
-those cases did not run and why. Creating a device node needs the CAP_MKNOD
-capability, so in an unprivileged run the device case skips, and the refusal
-of a copy that is a device, like that of a block device, is an untested
-residual. Where the FIFO can be made, the tests observe the order for it: a
-copy that is a FIFO, or a symlink to one, must end within FIFO_TIMEOUT (10
-seconds) with exit 1 and its message while nothing opens the FIFO for reading
-(test_licence_copy_fifo_fails and the FIFO subtests of
-test_licence_copy_symlink_fails), so a gate that opens such a FIFO for reading
-first, with or without blocking, fails. They also observe it for a missing
-copy, a folder and, where the socket can be made, a socket read with
-read_bytes, whose error stops the gate with exit 3, not 1. Before the refusal,
-a read through a link to a regular file, a listing of a folder, a read of a
-missing copy, a folder or a socket whose error is ignored, or an open of a FIFO
-that is neither for reading nor blocking, such as one with O_PATH, is an
-untested residual: no case catches it, because the exit code and the message
-stay the same. A read through a link to a device, such as /dev/zero, before the
-refusal is an untested residual too, since no case makes such a link. The plugin
-installs the cleanlanguage/ tree and the skill zip takes these 2 files from it,
-so a copy that drifted from the root file would ship a licence text the
-repository does not state. The gate reads the working tree. It refuses a copy
-that is a symlink, but not a root LICENSE or NOTICE.md that is one: it reads
-such a root file through the link, so it compares the copy with the bytes of
-the file the link leads to. Where the OS lets the tests make a symlink,
-test_root_licence_symlink_is_read_through pins this: a root file linked to its
-copy passes, and one linked to a different file fails with the message that
-the copy differs. tools/release-package.sh compares the git blob of each copy
-with the git blob of its root file at HEAD, and the blob of a symlink holds
-the path it leads to, not that file's bytes, so a root file that is a symlink
-passes this gate but not that comparison.
+only after those checks. The code asks for the type of a copy only through
+pathlib's is_symlink, exists and is_file, which call os.lstat and os.stat.
+
+The tests (tools/test-agent-plugin-manifest.py) check this on every runner,
+with no skip, through that route: they answer os.stat and os.lstat for 1 copy
+with the type of each kind (a symlink to a regular file, to a FIFO or to a
+character device, a dangling symlink, a missing copy, a folder, a FIFO, a
+socket, a character device, a block device and a type that Linux does not
+use), while the file behind it stays a regular, equal copy, and require exit
+1, the kind's message and no open, read or listing of the copy before the
+refusal. Where the OS lets them, they also make a symlink, a FIFO, a socket or
+a character device for real, check that it has the type they give that kind,
+and run the gate on it; where the OS refuses one, with EPERM, EACCES,
+EOPNOTSUPP or ENOSYS, that smoke case or subtest skips, and the run prints
+unittest's own record of each skip after its summary. A gate that asks for a
+file type another way sees the real regular copy, so every refusal case fails:
+a false alarm on a correct change, never a silent pass, and the tests' fake
+must then follow the new route. A read before the refusal through a route the
+tests do not record (io.FileIO, a dir_fd, a bytes path, another spelling of the
+path, a subprocess or ctypes) is an untested residual.
+
+The plugin installs the cleanlanguage/ tree and the skill zip takes these 2
+files from it, so a copy that drifted from the root file would ship a licence
+text the repository does not state. The gate reads the working tree. It
+refuses a copy that is a symlink, but not a root LICENSE or NOTICE.md that is
+one: it reads such a root file through the link, so it compares the copy with
+the bytes of the file the link leads to. The tests pin this: a root file whose
+type is a symlink passes when its bytes equal the copy, and fails with the
+message that the copy differs when they do not.
+tools/release-package.sh compares the git blob of each copy with the git blob
+of its root file at HEAD, and the blob of a symlink holds the path it leads
+to, not that file's bytes, so a root file that is a symlink to a file equal to
+the copy passes this gate but fails that comparison, and one that leads to a
+different file fails both.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
@@ -117,25 +116,14 @@ def check_licence_copies() -> None:
     A copy that is a symlink, is missing, or is a FIFO, a folder, a socket, a
     character or block device or any other file that is not regular fails
     with exit 1, and a copy is read only after it passes those checks. The
-    tests make each of these kinds except a block device, but a symlink, a
-    FIFO, a socket or a character device only where the OS lets them; where
-    it refuses, the case or subtest skips, observes nothing about the gate
-    and is named after the run's summary, which still reads OK with exit 0
-    if nothing else fails. A device node needs the CAP_MKNOD capability, so
-    in an unprivileged run the refusal of a device copy is untested. Where
-    the nodes can be made, the tests observe the order for a FIFO copy, or a
-    symlink to one, which must end with exit 1 and its message within the
-    test's time limit while nothing opens the FIFO for reading, with or
-    without blocking (test_licence_copy_fifo_fails, and the FIFO subtests of
-    test_licence_copy_symlink_fails), and for a missing copy, a folder or a
-    socket read with read_bytes, whose error stops the gate with exit 3, not
-    with exit 1. No case catches, before the refusal, a read through a link
-    to a regular file, a listing of a folder, a read of a missing copy, a
-    folder or a socket whose error is ignored, or an open of a FIFO that is
-    neither for reading nor blocking, such as one with O_PATH: each leaves the
-    exit code and the message the same. No case makes a link to a device,
-    such as /dev/zero, so a read through one before the refusal is untested
-    too.
+    type of a copy is asked for only through is_symlink, exists and is_file,
+    which call os.lstat and os.stat. The tests answer those calls for 1 copy
+    with the type of each kind, on every runner and with no skip, and
+    require exit 1, the kind's message and no open, read or listing of the
+    copy before the refusal; real-node smoke cases, which skip where the OS
+    refuses to make the node, check that each kind they can make has the
+    type the tests give it. If this route changes, every refusal case fails
+    until the tests' fake follows it.
     """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name
