@@ -24,7 +24,10 @@ query, fragment or further field, with a case for each of those
 conditions, and that a header rule for such a path still fails; in this
 process it also calls the gate's redirect_break() on 1 character of each
 class that it refuses or allows (BREAK_CHARACTERS), the line feed among
-them, which no run of the gate gives it. It runs the gate there as a separate process and asserts
+them, which no run of the gate gives it, and the gate's
+exact_path_problem() on a source whose segment holds each code point but
+/, which must pass for exactly the characters of SEGMENT_CHARACTERS
+(segment_character_problems()). It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
 refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
@@ -38,11 +41,19 @@ under root that case is not run, and main() names it as skipped, as it names
 the 2 mode-000 load cases. 2 cases, of CASE_FOLDER_CASES, run the gate
 through SORTED_PROBE, which loads the copy of the gate, wraps its
 list_folder() to give the entries of each folder sorted by name, so that
-site/assets/QZM is listed before site/assets/qzm on any file system, and
-exits with main()'s code; the file that occupies their source lies in the
-folder listed last in 1 case and in the folder listed first in the other, so
-occupied() must enter each folder whose name matches a segment in any letter
-case. 3 cases put
+site/assets/QZM is listed before site/assets/qzm, and exits with main()'s
+code; the file that occupies their source lies in the folder listed last in
+1 case and in the folder listed first in the other, so occupied() must enter
+each folder whose name matches a segment in any letter case. They need 2
+folders whose names differ only in letter case, which a file system that
+treats such names as 1 cannot hold, so main() first probes the scratch
+folder of each of them (folds_letter_case()), not the platform's name, and
+where the file system there treats such names as 1, it does not run the
+case and names it as skipped with the reason FOLDED. Where the file system
+holds both names, a case whose copy holds 2 names in 1 folder that differ
+only in letter case (case_twins()) fails unless it is of CASE_FOLDER_CASES,
+and a case of CASE_FOLDER_CASES whose copy holds none fails, so that no
+other case relies on such names unnoticed. 3 cases put
 a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
@@ -1708,6 +1719,12 @@ CASES = [
         0),
     ("a dropped logo whose source holds _", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz_old.svg"), 0),
     ("a dropped logo whose source holds ~", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz~old.svg"), 0),
+    # It may hold no other character: not +, which a path may hold, nor a letter or a digit outside ASCII.
+    *((f"a dropped logo whose source holds {name}",
+       target("/assets/baseline/logos/aiqt.svg 301", f"/assets/qz{char}old.svg"),
+       (1, f"its segment qz{char}old.svg holds a character other than ASCII letters, digits"))
+      for name, char in (("+", "+"), ("a letter outside ASCII, U+00E9", chr(0xE9)),
+                         ("a digit outside ASCII, U+0663", chr(0x663)))),
     ("a redirect of a dropped logo under a full URL",
         append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/aiqt-old.svg /x.svg 301\n"),
         (1, "it does not start with /, so it can carry a scheme and a host")),
@@ -2623,6 +2640,8 @@ RUN_EXEMPT = {
                          "SUPPORTED_PYTHONS"),
     "redirect_break_problems": ("of the gate, it calls only redirect_break(), which calls neither parse() nor "
                                 "load_tool(), the functions that exiting_gate() replaces"),
+    "segment_character_problems": ("of the gate, it calls only exact_path_problem(), which calls neither parse() nor "
+                                   "load_tool(), the functions that exiting_gate() replaces"),
 }
 
 
@@ -2805,6 +2824,27 @@ def redirect_break_problems(loader=load_gate) -> list[str]:
         return [f"redirect_break() could not be read from tools/{GATE.name}: {error!r}"]
     return [f"redirect_break() gives {got} for U+{ord(char):04X}, not {expected}"
             for char, got, expected in found if got != expected]
+
+
+# Check 7: the characters that a segment of an exact source may hold, the gate's EXACT_SEGMENT: the ASCII letters and
+# digits, ., _, ~ and -.
+SEGMENT_CHARACTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-")
+
+
+def segment_character_problems(loader=load_gate) -> list[str]:
+    """The gate's exact_path_problem() passes the source /assets/qz<c>old.svg for exactly the code points c of
+    SEGMENT_CHARACTERS, of every code point but /, which ends a segment, so that EXACT_SEGMENT, or the test that applies
+    it, cannot be widened or narrowed with every case passing. It names at most the first 10 code points it gets
+    wrong, and the number of the rest."""
+    try:
+        gate = loader()
+        wrong = [code for code in range(0x110000) if code != 0x2F and
+                 (gate.exact_path_problem(f"/assets/qz{chr(code)}old.svg") is None) != (chr(code) in SEGMENT_CHARACTERS)]
+    except (Exception, SystemExit) as error:
+        return [f"exact_path_problem() could not be read from tools/{GATE.name}: {error!r}"]
+    return ([f"exact_path_problem() {'refuses' if chr(code) in SEGMENT_CHARACTERS else 'passes'} a segment that holds "
+             f"U+{code:04X}" for code in wrong[:10]]
+            + ([f"exact_path_problem() also gets {len(wrong) - 10} more code points wrong"] if len(wrong) > 10 else []))
 
 
 def end_tag_problems(loader=load_gate) -> list[str]:
@@ -3281,7 +3321,7 @@ LOCKED_CASES = [
 ]
 # The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate, wraps its
 # list_folder() to give the entries of each folder sorted by name, so that site/assets/QZM is listed before
-# site/assets/qzm on any file system, and exits with main()'s code.
+# site/assets/qzm wherever the copy holds both, and exits with main()'s code.
 SORTED_PROBE = """\
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
@@ -3292,7 +3332,9 @@ gate.list_folder = lambda folder: sorted(listed(folder), key=lambda entry: entry
 sys.exit(gate.main())
 """
 # 2 folders whose names differ only in letter case match the segment qzm of a source, and occupied() must enter each:
-# the file that occupies the source lies in the folder listed last, then in the folder listed first.
+# the file that occupies the source lies in the folder listed last, then in the folder listed first. A file system that
+# treats 2 such names as 1 cannot hold both folders, so main() runs these cases only where folds_letter_case() finds
+# that the file system of the case's own scratch folder holds both names; elsewhere it names each as skipped (FOLDED).
 CASE_FOLDER_CASES = [
     ("a redirect of a file in the last listed of 2 folders whose names differ only in letter case",
         both(create("site/assets/QZM/keep.txt", "x\n"), create("site/assets/qzm/old.svg", "<svg></svg>\n"),
@@ -3312,6 +3354,38 @@ PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,)),
 # is left out of CASES, and main() names it as skipped.
 SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES if "mode 000" in case[0] and os.geteuid() == 0]
 CASES += [case for case in LOAD_CASES + LOCKED_CASES if case[0] not in SKIPPED]
+ROOT_READS = "root reads a file and lists a folder whatever its mode"
+FOLDED = ("the file system of its scratch folder treats 2 names that differ only in letter case as 1, so the copy "
+          "cannot hold the 2 folders that the case needs")
+
+
+def folds_letter_case(folder: Path) -> bool:
+    """Whether the file system that holds folder treats 2 names that differ only in letter case as 1, probed in folder
+    and not read from the platform's name: it makes the folder qzcase there, then QZCASE, which only such a file
+    system refuses as already there, and removes what it made. Any other OSError passes through."""
+    lower, upper = folder / "qzcase", folder / "QZCASE"
+    lower.mkdir()
+    try:
+        upper.mkdir()
+    except FileExistsError:
+        lower.rmdir()
+        return True
+    upper.rmdir()
+    lower.rmdir()
+    return False
+
+
+def case_twins(root: Path) -> list[str]:
+    """Each pair of entries of 1 folder under root whose names differ only in letter case, read with
+    str.casefold(), as their 2 paths from root; os.walk() enters no link."""
+    twins: list[str] = []
+    for folder, folders, files in os.walk(root):
+        first: dict[str, str] = {}
+        for name in sorted(folders + files):
+            kept = first.setdefault(name.casefold(), name)
+            if kept != name:
+                twins.append(f"{Path(folder, kept).relative_to(root)} and {Path(folder, name).relative_to(root)}")
+    return twins
 
 
 def main() -> int:
@@ -3345,6 +3419,7 @@ def main() -> int:
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
+    failures += [f"the segment characters: {problem}" for problem in segment_character_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
@@ -3354,11 +3429,30 @@ def main() -> int:
     for name, _, words in RESIDUALS:
         if words not in doc:
             failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
+    skipped = [(name, ROOT_READS) for name in SKIPPED]
+    twinned = {case[0] for case in CASE_FOLDER_CASES}
     for name, fault, expected in ([] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]):
         with tempfile.TemporaryDirectory() as scratch:
+            folded = False
+            if name in twinned:
+                try:
+                    folded = folds_letter_case(Path(scratch))
+                except OSError as error:
+                    failures.append(f"{name}: folds_letter_case() could not probe its scratch folder: {error}")
+                    continue
+            if folded:
+                skipped.append((name, FOLDED))
+                continue
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
+            twins = case_twins(root)
+            if twins and name not in twinned:
+                failures.append(f"{name}: its copy holds {'; '.join(twins)}, whose names differ only in letter case, "
+                                "but it is not of CASE_FOLDER_CASES, which main() skips where the file system treats "
+                                "such names as 1")
+            elif name in twinned and not twins:
+                failures.append(f"{name}: its copy holds no 2 names that differ only in letter case")
             command = [sys.executable, "-I", str(root / "tools" / GATE.name)]
             if name in PROBED:
                 probe, paths = PROBED[name]
@@ -3369,20 +3463,21 @@ def main() -> int:
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
-    for name in SKIPPED:
-        print(f"test-install-page: skipped {name}: root reads a file and lists a folder whatever its mode")
+    for name, reason in skipped:
+        print(f"test-install-page: skipped {name}: {reason}")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
+    run_cases = len(CASES) - sum(reason == FOLDED for _, reason in skipped)
+    print(f"test-install-page: all {run_cases} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
           f"ALLOWED_SCRIPTS, the scan of this file for literal versions, version_binding_problems(), "
           f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
-          f"redirect_break(), the workflow's path "
+          f"redirect_break(), the segment characters of exact_path_problem(), the workflow's path "
           f"lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
