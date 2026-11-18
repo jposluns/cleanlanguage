@@ -21,9 +21,11 @@ its source is an exact path that no file occupies or lies above, in any
 letter case, and it sends that source with the status 301 to a file under
 /assets/baseline/logos/ that tools/check-baseline-pin.py pins, with no
 query, fragment or further field, with a case for each of those
-conditions, and that a header rule for such a path still fails; in this
-process it also calls the gate's redirect_break() on 1 character of each
-class that it refuses or allows (BREAK_CHARACTERS), the line feed among
+conditions, the statuses 200, 300 and 302 to 308, 404, 0301, 3010, 301.0
+and +301 each in a case of its own, and that a header rule for such a path
+still fails; in this process it also calls the gate's redirect_break()
+on 1 character of each class that it refuses or allows
+(BREAK_CHARACTERS), the line feed among
 them, which no run of the gate gives it, and the gate's
 exact_path_problem() on sources that hold each code point but / at each
 place of SEGMENT_PLACES: at the start, inside and at the end of a segment,
@@ -34,9 +36,23 @@ source then has the segment "." (segment_character_problems());
 segment_report_problems() fails unless segment_character_problems(), given
 stand-ins for the gate that get 3, 5, 15 or 45 sources wrong, names each of
 the first 10 and the number of the rest, as written out in
-SEGMENT_REPORT_CASES. It runs the gate there as a separate process and asserts
-its exit code and, where a case gives them as (code, words), that its output
-holds those words, so that a crash, which also exits 1, does not pass for a
+SEGMENT_REPORT_CASES. It also calls exact_path_problem() on sources that
+hold each ASCII character but / and 7 code points beyond ASCII
+(POSITION_PROBES) at every position of each segment of 1 to 16 characters in
+a source of 1 to 6 segments, and directly before and after each character of
+SEGMENT_CHARACTERS as the whole of each segment of a source of 3, which must
+pass exactly where the source is an exact path (segment_position_problems());
+a widening or a narrowing that acts only where neither check puts a code
+point, such as at a 17th character of a segment, in a 7th segment, beside
+2 given characters at once, or for a code point beyond ASCII that
+POSITION_PROBES does not hold outside SEGMENT_PLACES, is not caught.
+position_report_problems() fails unless
+segment_position_problems(), given 7 stand-ins for the gate, names each of
+the first 10 sources it gets wrong and the number of the rest, as written out
+in POSITION_REPORT_CASES. It runs the gate there as a separate process
+and asserts its exit code and, where a case gives them as (code, words),
+that its output holds those words, so that a crash, which also exits 1,
+does not pass for a
 refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
 of the gate alone: the probe loads the copy of the gate, wraps its
 occupied() to record each folder it could not list, sets the folder
@@ -61,7 +77,15 @@ main() runs the cases in run_cases() and fails unless it ran each case and
 each residual, or left it unrun with a reason, exactly once, each case it
 did not run is of CASE_FOLDER_CASES with FOLDED, and, for each such case,
 a folder made as qzcase in a new scratch folder is found as QZCASE
-(folds_on_second_look()); its count of the cases run is of those it ran.
+(folds_on_second_look(), read by unrun_problems()); its count of the cases
+run is of those it ran. second_look_problems() fails unless
+folds_on_second_look() gives the answer of a new stand-in folder that treats
+such names as 1 and of 1 that does not, having made qzcase there alone, lets
+through the PermissionError of a stand-in folder that refuses to make it,
+and on this file system gives what folds_letter_case() gives, and unless
+unrun_problems(), given stand-ins for the look, fails each unrun case but a
+case of CASE_FOLDER_CASES with FOLDED whose look gives True, a look that
+raises an OSError included.
 Where the file system holds both names, a case whose copy
 holds 2 names in 1 folder that differ only in letter case, 2 folders, 2
 files or a folder and a file (case_twins()), fails unless it is of
@@ -1703,6 +1727,12 @@ CASES = [
         (1, TARGET + "its status is 302, not 301")),
     ("a dropped logo sent to a pinned logo with the status 308", target("/assets/baseline/logos/aiqt.svg 308"),
         (1, TARGET + "its status is 308, not 301")),
+    # Every other status of the HTTP redirect class, 300 to 307, the status 404, and texts that a reading of the status
+    # as a number, or by its first 3 characters, could take for 301, each with an exact source that nothing in the copy
+    # occupies, so that only its status fails the rule: the gate passes the text 301 and no other.
+    *[(f"a dropped logo sent to a pinned logo with the status {status}",
+       target(f"/assets/baseline/logos/aiqt.svg {status}"), (1, TARGET + f"its status is {status}, not 301"))
+      for status in ("300", "303", "304", "305", "306", "307", "404", "0301", "3010", "301.0", "+301")],
     ("a rewrite of a dropped logo to a pinned logo", target("/assets/baseline/logos/aiqt.svg 200"),
         (1, TARGET + "its status is 200, not 301")),
     ("a dropped logo sent to a pinned logo with the status 301", target("/assets/baseline/logos/aiqt.svg 301"), 0),
@@ -2679,6 +2709,8 @@ RUN_EXEMPT = {
                                 "load_tool(), the functions that exiting_gate() replaces"),
     "segment_character_problems": ("of the gate, it calls only exact_path_problem(), which calls neither parse() nor "
                                    "load_tool(), the functions that exiting_gate() replaces"),
+    "segment_position_problems": ("of the gate, it calls only exact_path_problem(), which calls neither parse() nor "
+                                  "load_tool(), the functions that exiting_gate() replaces"),
 }
 
 
@@ -2872,7 +2904,9 @@ SEGMENT_CHARACTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 # EXACT_SEGMENT, or of the test that applies it, at only 1 of those places, such as a leading ! or a leading : in a
 # segment that is not the last, a ! alone as a segment or a * allowed only beside another, fails. A place that leaves
 # no other character in its segment gives the segment "." for the code point ".", which the gate refuses as it refuses
-# "..".
+# "..". segment_position_problems() puts the code points of POSITION_PROBES at every position of each segment of up to
+# POSITION_LENGTH characters in a source of up to POSITION_SEGMENTS segments, and beside each character of
+# SEGMENT_CHARACTERS (POSITION_PLACES).
 SEGMENT_PLACES = ("/{}qz/old.svg", "/q{}z/old.svg", "/qz{}/old.svg", "/{}/old.svg", "/q{0}{0}z/old.svg",
                   "/assets/{}qz/old.svg", "/assets/q{}z/old.svg", "/assets/qz{}/old.svg", "/assets/{}/old.svg",
                   "/assets/q{0}{0}z/old.svg",
@@ -2954,6 +2988,152 @@ def segment_report_problems() -> list[str]:
         found = segment_character_problems(segment_stand_in(pattern, last))
         if found != expected:
             problems.append(f"segment_character_problems(), given {name}, returns {found!r}, not {expected!r}")
+    return problems
+
+
+# Check 7: the code points that segment_position_problems() puts at each place of POSITION_PLACES: each ASCII
+# character but /, so each character of SEGMENT_CHARACTERS and each other ASCII character, and U+0080, U+00E9, U+0130,
+# U+212A, U+FFFD, U+10000 and U+10FFFF, code points of 2, 3 and 4 bytes in UTF-8, 2 of them with a lower case that is
+# ASCII or longer. segment_character_problems() puts every other code point at the places of SEGMENT_PLACES.
+POSITION_PROBES = (tuple(chr(code) for code in range(0x80) if code != 0x2F)
+                   + tuple(map(chr, (0x80, 0xE9, 0x130, 0x212A, 0xFFFD, 0x10000, 0x10FFFF))))
+# Check 7: the most segments of a source, and the most characters of a segment, at each of whose places
+# segment_position_problems() puts each probe.
+POSITION_SEGMENTS, POSITION_LENGTH = 6, 16
+
+
+def position_places() -> tuple[str, ...]:
+    """The places of segment_position_problems(), {} standing for the probe, each once: in a source of 1 to
+    POSITION_SEGMENTS segments, each qz but 1, the probe in that segment, which holds 1 to POSITION_LENGTH characters,
+    q before the probe and z after it, at each of its positions; and in a source of 3 segments, each qz but 1, the
+    probe directly before and directly after each character of SEGMENT_CHARACTERS as the whole of that segment."""
+    places: list[str] = []
+    for count in range(1, POSITION_SEGMENTS + 1):
+        for index in range(count):
+            for length in range(1, POSITION_LENGTH + 1):
+                for at in range(length):
+                    segments = ["qz"] * count
+                    segments[index] = "q" * at + "{}" + "z" * (length - at - 1)
+                    places.append("/" + "/".join(segments))
+    for index in range(3):
+        for char in sorted(SEGMENT_CHARACTERS):
+            for pair in (char + "{}", "{}" + char):
+                segments = ["qz"] * 3
+                segments[index] = pair
+                places.append("/" + "/".join(segments))
+    return tuple(dict.fromkeys(places))
+
+
+POSITION_PLACES = position_places()
+
+
+def exact_source(source: str) -> bool:
+    """Whether source is an exact path as check 7 states it: / and then segments, none empty, none of DOT_SEGMENTS and
+    each of only the characters of SEGMENT_CHARACTERS."""
+    start, *segments = source.split("/")
+    return start == "" and bool(segments) and all(
+        segment and segment not in DOT_SEGMENTS and set(segment) <= SEGMENT_CHARACTERS for segment in segments)
+
+
+def segment_position_problems(loader=load_gate) -> list[str]:
+    """The gate's exact_path_problem() passes the source that each place of POSITION_PLACES gives with each probe of
+    POSITION_PROBES exactly when that source is an exact path (exact_source()), so that EXACT_SEGMENT, or the test that
+    applies it, cannot be widened or narrowed for a probe in 1 segment of a source of up to POSITION_SEGMENTS segments,
+    at 1 position of a segment of up to POSITION_LENGTH characters, or beside 1 character, with every case passing. It
+    names at most the first 10 sources it gets wrong, by probe and then by place, and the number of the rest."""
+    try:
+        gate = loader()
+        wrong = [(place, probe) for probe in POSITION_PROBES for place in POSITION_PLACES
+                 if (gate.exact_path_problem(source := place.format(probe)) is None) != exact_source(source)]
+    except (Exception, SystemExit) as error:
+        return [f"exact_path_problem() could not be read from tools/{GATE.name}: {error!r}"]
+    return ([f"exact_path_problem() {'refuses' if exact_source(place.format(probe)) else 'passes'} the source "
+             + place.format(f"<U+{ord(probe):04X}>") for place, probe in wrong[:10]]
+            + ([f"exact_path_problem() also gets {len(wrong) - 10} more sources wrong"] if len(wrong) > 10 else []))
+
+
+def position_stand_in(allows=None, refuses=None):
+    """A loader of a stand-in for the gate whose exact_path_problem() reads a source as exact_source() does, but first
+    reads as q each character for which allows(segments, index, at) is true, and refuses the source when refuses(
+    segments, index, at) is true for 1 of its characters; segments are the source's segments after its leading /, index
+    is the segment's place among them and at the character's place in it."""
+    def exact_path_problem(source: str) -> str | None:
+        start, *segments = source.split("/")
+        places = [(index, at) for index, segment in enumerate(segments) for at in range(len(segment))]
+        if refuses is not None and any(refuses(segments, index, at) for index, at in places):
+            return "a stand-in refusal"
+        read = ["".join("q" if allows is not None and allows(segments, index, at) else char
+                        for at, char in enumerate(segment)) for index, segment in enumerate(segments)]
+        return None if exact_source("/".join([start, *read])) else "a stand-in refusal"
+    return lambda: types.SimpleNamespace(exact_path_problem=exact_path_problem)
+
+
+# Stand-ins for the gate that get sources wrong at places that SEGMENT_PLACES does not hold, each as the allows and the
+# refuses of position_stand_in(), with the problems that segment_position_problems() must return for it, in order,
+# written out rather than made from POSITION_PLACES or POSITION_PROBES: the first 5 are widenings that every case
+# passed before segment_position_problems() was added, and the last 2 pass or refuse every probe as the last character
+# of a segment of POSITION_LENGTH characters that is the last of POSITION_SEGMENTS segments, so that neither bound nor
+# the number of probes can shrink unnoticed.
+POSITION_REPORT_CASES = (
+    ("a gate that also passes a leading :, * or ! in the 3rd to the next to last segment of 4 or more",
+     lambda s, i, a: a == 0 and s[i][a] in ":*!" and 2 <= i < len(s) - 1, None,
+     ["exact_path_problem() passes the source " + source
+      for source in ("/qz/qz/<U+0021>/qz", "/qz/qz/<U+0021>z/qz", "/qz/qz/<U+0021>zz/qz", "/qz/qz/<U+0021>zzz/qz",
+                     "/qz/qz/<U+0021>zzzz/qz", "/qz/qz/<U+0021>zzzzz/qz", "/qz/qz/<U+0021>zzzzzz/qz",
+                     "/qz/qz/<U+0021>zzzzzzz/qz", "/qz/qz/<U+0021>zzzzzzzz/qz", "/qz/qz/<U+0021>zzzzzzzzz/qz")]
+     + ["exact_path_problem() also gets 278 more sources wrong"]),
+    ("a gate that also passes :, * or ! as the 2nd character of a segment of 4 or more that is not the last",
+     lambda s, i, a: a == 1 and s[i][a] in ":*!" and len(s[i]) >= 4 and i < len(s) - 1, None,
+     ["exact_path_problem() passes the source " + source
+      for source in ("/q<U+0021>zz/qz", "/q<U+0021>zzz/qz", "/q<U+0021>zzzz/qz", "/q<U+0021>zzzzz/qz",
+                     "/q<U+0021>zzzzzz/qz", "/q<U+0021>zzzzzzz/qz", "/q<U+0021>zzzzzzzz/qz", "/q<U+0021>zzzzzzzzz/qz",
+                     "/q<U+0021>zzzzzzzzzz/qz", "/q<U+0021>zzzzzzzzzzz/qz")]
+     + ["exact_path_problem() also gets 575 more sources wrong"]),
+    ("a gate that also passes :, * or ! as the next to last character of a segment of 4 or more that is not the last",
+     lambda s, i, a: a == len(s[i]) - 2 and s[i][a] in ":*!" and len(s[i]) >= 4 and i < len(s) - 1, None,
+     ["exact_path_problem() passes the source " + source
+      for source in ("/qq<U+0021>z/qz", "/qqq<U+0021>z/qz", "/qqqq<U+0021>z/qz", "/qqqqq<U+0021>z/qz",
+                     "/qqqqqq<U+0021>z/qz", "/qqqqqqq<U+0021>z/qz", "/qqqqqqqq<U+0021>z/qz", "/qqqqqqqqq<U+0021>z/qz",
+                     "/qqqqqqqqqq<U+0021>z/qz", "/qqqqqqqqqqq<U+0021>z/qz")]
+     + ["exact_path_problem() also gets 575 more sources wrong"]),
+    ("a gate that also passes a leading ! or * in a segment of 2 characters",
+     lambda s, i, a: a == 0 and s[i][a] in "!*" and len(s[i]) == 2, None,
+     ["exact_path_problem() passes the source " + source
+      for source in ("/<U+0021>z", "/<U+0021>z/qz", "/qz/<U+0021>z", "/<U+0021>z/qz/qz", "/qz/<U+0021>z/qz",
+                     "/qz/qz/<U+0021>z", "/<U+0021>z/qz/qz/qz", "/qz/<U+0021>z/qz/qz", "/qz/qz/<U+0021>z/qz",
+                     "/qz/qz/qz/<U+0021>z")]
+     + ["exact_path_problem() also gets 422 more sources wrong"]),
+    ("a gate that also passes !, : or * directly after x",
+     lambda s, i, a: a > 0 and s[i][a] in "!:*" and s[i][a - 1] == "x", None,
+     ["exact_path_problem() passes the source " + source
+      for source in ("/x<U+0021>/qz/qz", "/qz/x<U+0021>/qz", "/qz/qz/x<U+0021>", "/x<U+002A>/qz/qz", "/qz/x<U+002A>/qz",
+                     "/qz/qz/x<U+002A>", "/x<U+003A>/qz/qz", "/qz/x<U+003A>/qz", "/qz/qz/x<U+003A>")]),
+    ("a gate that also passes every code point as the 16th character of a 6th segment of 16 in a source of 6",
+     lambda s, i, a: len(s) == 6 and i == 5 and len(s[i]) == 16 and a == 15, None,
+     ["exact_path_problem() passes the source /qz/qz/qz/qz/qz/qqqqqqqqqqqqqqq" + probe
+      for probe in ("<U+0000>", "<U+0001>", "<U+0002>", "<U+0003>", "<U+0004>", "<U+0005>", "<U+0006>", "<U+0007>",
+                    "<U+0008>", "<U+0009>")]
+     + ["exact_path_problem() also gets 58 more sources wrong"]),
+    ("a gate that refuses every code point but q and z as the 16th character of a 6th segment of 16 in a source of 6",
+     None, lambda s, i, a: len(s) == 6 and i == 5 and len(s[i]) == 16 and a == 15 and s[i][a] not in "qz",
+     ["exact_path_problem() refuses the source /qz/qz/qz/qz/qz/qqqqqqqqqqqqqqq" + probe
+      for probe in ("<U+002D>", "<U+002E>", "<U+0030>", "<U+0031>", "<U+0032>", "<U+0033>", "<U+0034>", "<U+0035>",
+                    "<U+0036>", "<U+0037>")]
+     + ["exact_path_problem() also gets 54 more sources wrong"]),
+)
+
+
+def position_report_problems() -> list[str]:
+    """A problem for each case of POSITION_REPORT_CASES for which segment_position_problems(), given the case's
+    stand-in for the gate, does not return exactly the case's problems, so that its report cannot be dropped or cut
+    unnoticed, and nor can a place of POSITION_PLACES or a probe of POSITION_PROBES that those cases need; and 1 unless
+    it returns none for a stand-in that passes exactly the exact paths."""
+    problems: list[str] = []
+    for name, allows, refuses, expected in (("a gate that passes exactly the exact paths", None, None, []),
+                                            *POSITION_REPORT_CASES):
+        found = segment_position_problems(position_stand_in(allows, refuses))
+        if found != expected:
+            problems.append(f"segment_position_problems(), given {name}, returns {found!r}, not {expected!r}")
     return problems
 
 
@@ -3528,8 +3708,9 @@ def twin_problems(name: str, twins: list[str]) -> list[str]:
 
 
 class StandInFolder:
-    """A stand-in for a folder for folds_letter_case(): it holds the names made in it, treats 2 names that differ
-    only in letter case as 1 when folding is true, and refuses to make a name of refused with a PermissionError."""
+    """A stand-in for a folder for folds_letter_case() and folds_on_second_look(): it holds the names made in it, treats
+    2 names that differ only in letter case as 1 when folding is true, both in making a name and in finding it as a
+    folder, and refuses to make a name of refused with a PermissionError."""
 
     def __init__(self, folding: bool, refused: tuple[str, ...] = ()):
         self.folding = folding
@@ -3552,6 +3733,9 @@ class StandInFolder:
 
             def rmdir(self) -> None:
                 folder.names.remove(name)
+
+            def is_dir(self) -> bool:
+                return folder.key(name) in {folder.key(held) for held in folder.names}
         return Entry()
 
 
@@ -3756,12 +3940,122 @@ def case_loop_problems() -> list[str]:
     return problems
 
 
-def folds_on_second_look() -> bool:
-    """Whether a folder made as qzcase in a new scratch folder is found as QZCASE: a look, apart from
-    folds_letter_case(), at whether the file system there treats 2 names that differ only in letter case as 1."""
+def folds_on_second_look(new_folder=tempfile.TemporaryDirectory, folder=Path) -> bool:
+    """Whether a folder made as qzcase in a new scratch folder, which new_folder() opens and folder() reads, is found as
+    QZCASE: a look, apart from folds_letter_case(), at whether the file system there treats 2 names that differ only in
+    letter case as 1. Any OSError passes through."""
+    with new_folder() as scratch:
+        (folder(scratch) / "qzcase").mkdir()
+        return (folder(scratch) / "QZCASE").is_dir()
+
+
+def unrun_problems(unrun: list[tuple[str, str]], look=folds_on_second_look) -> list[str]:
+    """main()'s reading of each case that run_cases() left unrun, with its reason: a failure unless the case is of
+    CASE_FOLDER_CASES, its reason is FOLDED and look(), a 2nd look at a new scratch folder, gives True; an OSError of
+    the look fails it too."""
+    failures: list[str] = []
+    for name, reason in unrun:
+        if name not in TWINNED or reason != FOLDED:
+            failures.append(f"{name}: main() did not run it, with the reason {reason!r}, but only a case of "
+                            "CASE_FOLDER_CASES may go unrun, with the reason FOLDED")
+            continue
+        try:
+            folds = look()
+        except OSError as error:
+            folds = f"not known: {error}"
+        if folds is not True:
+            failures.append(f"{name}: main() did not run it, with the reason FOLDED, but whether a folder made as "
+                            f"qzcase in a new scratch folder is found as QZCASE is {folds}")
+    return failures
+
+
+class StandInScratch:
+    """A stand-in for tempfile.TemporaryDirectory for folds_on_second_look(): each use opens a new StandInFolder whose
+    folding is folding and that refuses to make a name of refused, and keeps it in opened."""
+
+    def __init__(self, folding: bool, refused: tuple[str, ...] = ()):
+        self.folding = folding
+        self.refused = refused
+        self.opened: list[StandInFolder] = []
+
+    def __call__(self):
+        return self
+
+    def __enter__(self) -> StandInFolder:
+        self.opened.append(StandInFolder(self.folding, self.refused))
+        return self.opened[-1]
+
+    def __exit__(self, *details) -> None:
+        return None
+
+
+def second_look_problems() -> list[str]:
+    """A problem unless folds_on_second_look() gives True in a new stand-in folder that treats 2 names that differ only
+    in letter case as 1 and False in 1 that does not, having opened exactly 1 such folder and made qzcase in it alone,
+    lets through the PermissionError of a stand-in folder that refuses to make qzcase, and on this file system gives
+    what folds_letter_case() gives on a scratch folder; and unless unrun_problems() passes a case of CASE_FOLDER_CASES
+    left unrun with FOLDED only when its look gives True, fails it when the look gives False or raises an OSError,
+    fails a case outside it or another reason without a look, and gives nothing, with no look, when no case is left
+    unrun. So the 2nd look, and main()'s reading of it, cannot be changed unnoticed."""
+    problems: list[str] = []
+    for folding in (True, False):
+        scratch = StandInScratch(folding)
+        try:
+            found = folds_on_second_look(scratch, lambda folder: folder)
+        except OSError as error:
+            found = repr(error)
+        made = [sorted(folder.names) for folder in scratch.opened]
+        if found is not folding or made != [["qzcase"]]:
+            problems.append(f"folds_on_second_look() gives {found!r} in a stand-in folder whose folding is {folding}, "
+                            f"having made {made} in the folders it opened, not {folding} and [['qzcase']]")
+    try:
+        found = folds_on_second_look(StandInScratch(False, ("qzcase",)), lambda folder: folder)
+        problems.append(f"folds_on_second_look() gives {found!r} in a stand-in folder that refuses to make qzcase "
+                        "with a PermissionError, not that error")
+    except PermissionError:
+        pass
     with tempfile.TemporaryDirectory() as scratch:
-        (Path(scratch) / "qzcase").mkdir()
-        return (Path(scratch) / "QZCASE").is_dir()
+        try:
+            first = folds_letter_case(Path(scratch))
+            second = folds_on_second_look()
+        except OSError as error:
+            problems.append(f"folds_on_second_look() could not be checked on this file system: {error}")
+        else:
+            if second is not first:
+                problems.append(f"folds_on_second_look() gives {second!r} on this file system, where "
+                                f"folds_letter_case() gives {first!r}")
+    twinned, other = sorted(TWINNED), CASES[0][0]
+    looks: list[bool | OSError] = []
+
+    def look(answer):
+        def second() -> bool:
+            looks.append(answer)
+            if isinstance(answer, OSError):
+                raise answer
+            return answer
+        return second
+
+    denied = PermissionError(13, "Permission denied", "scratch")
+    for unrun, answer, starts, count in (
+            ([(twinned[0], FOLDED)], True, [], 1),
+            ([(twinned[0], FOLDED)], False, [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"], 1),
+            ([(twinned[0], FOLDED)], denied, [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"], 1),
+            ([(other, FOLDED)], True, [f"{other}: main() did not run it, with the reason {FOLDED!r}, but only"], 0),
+            ([(twinned[0], ROOT_READS)], True,
+             [f"{twinned[0]}: main() did not run it, with the reason {ROOT_READS!r}, but only"], 0),
+            ([], False, [], 0)):
+        looks.clear()
+        try:
+            found = unrun_problems(unrun, look(answer))
+        except Exception as error:
+            problems.append(f"unrun_problems() raises {error!r} for {unrun!r} with a look that gives {answer!r}")
+            continue
+        if (len(found) != len(starts) or not all(map(str.startswith, found, starts)) or len(looks) != count
+                or (isinstance(answer, OSError) and "not known: " not in "".join(found))):
+            problems.append(f"unrun_problems() gives {found!r} for {unrun!r} with a look that gives {answer!r}, "
+                            f"having looked {len(looks)} times, not the failures that start with {starts!r} after "
+                            f"{count} looks")
+    return problems
 
 
 def main() -> int:
@@ -3796,6 +4090,7 @@ def main() -> int:
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the segment characters: {problem}" for problem in segment_character_problems()]
+    failures += [f"the segment positions: {problem}" for problem in segment_position_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
@@ -3808,6 +4103,8 @@ def main() -> int:
     failures += [f"the letter-case guard: {problem}" for problem in letter_case_problems()]
     failures += [f"the segment report: {problem}" for problem in segment_report_problems()]
     failures += [f"the case loop: {problem}" for problem in case_loop_problems()]
+    failures += [f"the second look: {problem}" for problem in second_look_problems()]
+    failures += [f"the position report: {problem}" for problem in position_report_problems()]
     skipped = [(name, ROOT_READS) for name in SKIPPED]
     run = [] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]
     looped, tried, unrun = run_cases(run)
@@ -3817,18 +4114,7 @@ def main() -> int:
     wanted = collections.Counter([] if copied else [case[0] for case in CASES] + [name for name, _, _ in RESIDUALS])
     failures += [f"{name}: main() ran it or left it unrun with a reason {held[name]} times, not {wanted[name]}"
                  for name in wanted | held if held[name] != wanted[name]]
-    for name, reason in unrun:
-        if name not in TWINNED or reason != FOLDED:
-            failures.append(f"{name}: main() did not run it, with the reason {reason!r}, but only a case of "
-                            "CASE_FOLDER_CASES may go unrun, with the reason FOLDED")
-            continue
-        try:
-            folds = folds_on_second_look()
-        except OSError as error:
-            folds = f"not known: {error}"
-        if folds is not True:
-            failures.append(f"{name}: main() did not run it, with the reason FOLDED, but whether a folder made as "
-                            f"qzcase in a new scratch folder is found as QZCASE is {folds}")
+    failures += unrun_problems(unrun)
     skipped += unrun
     for name, reason in skipped:
         print(f"test-install-page: skipped {name}: {reason}")
@@ -3846,7 +4132,9 @@ def main() -> int:
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
           f"redirect_break(), the segment characters of exact_path_problem() at {len(SEGMENT_PLACES)} places, the "
-          f"{len(SEGMENT_REPORT_CASES) + 1} cases of its report, the letter-case guard, the case loop, the "
+          f"{len(SEGMENT_REPORT_CASES) + 1} cases of its report, its {len(POSITION_PROBES)} probes at "
+          f"{len(POSITION_PLACES)} places, the {len(POSITION_REPORT_CASES) + 1} cases of that report, the "
+          f"letter-case guard, the case loop, the 2nd look, the "
           f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
