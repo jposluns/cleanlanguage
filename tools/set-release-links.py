@@ -200,7 +200,8 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="report changes without writing")
     args = parser.parse_args()
 
-    if not re.match(r"^[0-9][0-9.]*$", args.version):
+    # --version and --date are checked with re.fullmatch, since a $ anchor admits a final LF.
+    if not re.fullmatch(r"[0-9][0-9.]*", args.version):
         die(f"{args.version!r} is not a version number")
     checksum = args.checksum.strip().split()[0] if args.checksum.strip() else ""
     if not SHA256.match(checksum):
@@ -211,7 +212,7 @@ def main() -> int:
             "a mistyped placeholder; pass the zero placeholder until the release is published, and the "
             "published release checksum after that"
         )
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date):
         die(f"{args.date!r} is not a YYYY-MM-DD date")
     try:
         dt.date.fromisoformat(args.date)

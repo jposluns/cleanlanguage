@@ -954,9 +954,10 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(self.gate_code(), 0)
         self.assertEqual(self.apply(ZEROS), pending)
 
-    def write_links(self, checksum: str) -> tuple[int, str]:
-        """Run set-release-links.py's main on the copy for ``checksum``, returning its exit code and stderr."""
-        argv = ["set-release-links.py", "--version", self.next, "--checksum", checksum, "--date", "2026-11-04"]
+    def write_links(self, checksum: str, version: str | None = None, date: str = "2026-11-04") -> tuple[int, str]:
+        """Run set-release-links.py's main on the copy for ``checksum``, ``version`` (the next release unless given)
+        and ``date``, returning its exit code and stderr."""
+        argv = ["set-release-links.py", "--version", version or self.next, "--checksum", checksum, "--date", date]
         err = io.StringIO()
         with unittest.mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(err):
@@ -987,6 +988,22 @@ class WriterTest(unittest.TestCase):
         release.write_text(release.read_text(encoding="utf-8").replace("1234abcd" * 8, "0" * 63 + "1"),
                            encoding="utf-8")
         self.assertEqual(self.gate_code(), 1)
+
+    def test_a_version_or_date_with_a_final_newline_is_refused(self):
+        # --version and --date are checked with a full match, so a value with a final LF is refused (exit 2) with
+        # the reason of its form, before anything is written. A $ anchor would admit that LF past the form check, so
+        # the value would be refused later, if at all, and with another reason.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        with_lf = self.next + "\n"
+        for version, date, reason in ((with_lf, "2026-11-04", f"{with_lf!r} is not a version number"),
+                                      (None, "2026-11-04\n", "'2026-11-04\\n' is not a YYYY-MM-DD date")):
+            with self.subTest(version=version, date=date):
+                code, err = self.write_links(ZEROS, version, date)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {reason}", err)
+                self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
 
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()
@@ -1075,8 +1092,9 @@ class RedirectHopTest(unittest.TestCase):
        the set. Every pattern is checked with re.fullmatch, since a $ anchor admits a final LF.
     5. A destination path is not a source, both read without a final /, since that takes a second hop. It does not
        end in .html or .htm, since the site serves each page at its folder path and the host may answer a path that
-       names the HTML file with a redirect of its own. It names a file under site/, the path itself or its index.html
-       when the path ends with /, and that file resolves inside site/, so a symbolic link cannot point elsewhere.
+       names the HTML file with a redirect of its own. It names a file under site/, not a folder, the path itself or
+       its index.html when the path ends with /, and that file resolves inside site/, so a symbolic link cannot point
+       elsewhere.
        tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
        committed tree is the tree the site serves.
     6. The file holds at least 1 rule.
@@ -1459,13 +1477,17 @@ class RedirectHopTest(unittest.TestCase):
                             or f"REDIRECT_REASONS['{keys[reason]}']" in source, name)
 
     def test_a_destination_with_no_file_fails(self):
+        # A destination names a file, so a missing file fails, and so does a folder: /folder/ with no index.html,
+        # /folder itself, which exists without a final /, and /nested/, whose index.html is a folder. /page/ passes.
         origin = self.origin()
         self.assertEqual(self.failures_on(f"/a /missing.md 301\n/b /folder/ 301\n/c /page/ 301\n"
-                                          f"/d {origin}/missing.md 301\n",
-                                          ("folder/other.md", "page/index.html")), [
+                                          f"/d {origin}/missing.md 301\n/e /folder 301\n/f /nested/ 301\n",
+                                          ("folder/other.md", "page/index.html", "nested/index.html/other.md")), [
             f"site/_redirects line 1: /a redirects to /missing.md, {REDIRECT_REASONS['file']}",
             f"site/_redirects line 2: /b redirects to /folder/, {REDIRECT_REASONS['file']}",
             f"site/_redirects line 4: /d redirects to {origin}/missing.md, {REDIRECT_REASONS['form']}",
+            f"site/_redirects line 5: /e redirects to /folder, {REDIRECT_REASONS['file']}",
+            f"site/_redirects line 6: /f redirects to /nested/, {REDIRECT_REASONS['file']}",
         ])
 
 
