@@ -18,17 +18,28 @@ of a source that reaches a folder named like the plugin's own but for letter
 case where the file system folds letter case.
 
 Each in-process run of the gate's main, in expect, run_gate and
-RepositoryTreeTest, goes through recorded_main: every JSON object the gate
-decodes is a stand-in that logs each use the gate makes of it, and the case
-fails on a use that breaks the gate's rule for keys (see breaches), or when
-the gate exits 0 or 1 and fewer stand-ins were made than its JSON inputs, as
-when the recorder is off. So a read is seen whatever form it is written in.
+RepositoryTreeTest, goes through recorded_main: every JSON object load_json
+gives is a stand-in that logs each use the gate makes of it, and inside
+load_json's object_pairs_hook, which builds each object before the recorder
+can wrap it, each key is a str that logs each comparison with a value other
+than another key as a read of that value. The case fails on a use or read
+that breaks the gate's rule for keys (see breaches), on a JSON object
+load_json gives that is not a stand-in, or when the gate exits 0 or 1 and
+fewer stand-ins were made than its JSON inputs, as when the recorder is off.
+So a read is seen by what it does to a stand-in or a key, not found by the
+form of its code; test_recorder_sees_each_route applies 48 routes.
 Residual: the recorder does not see a read on a path that no in-process case
-runs, a read behind a test that tells a stand-in from a dict by its real
-type, a read that reaches the recorder's table by introspection, a parse of
-text the gate has already printed, or a JSON object the gate decodes without
-the object_pairs_hook of load_json; and the cases that run the gate or this
-test as a command are not recorded.
+runs; a read behind a test that tells a stand-in from a dict by its real
+type, or whose TypeError, which dict's own methods and json.dumps raise on a
+stand-in, the gate catches; a read that reaches the recorder's table by
+introspection; a parse of an object's text that the output holds, before or
+after it is printed; a JSON object the gate decodes without load_json; a
+parse of an input's text outside load_json, such as a regular expression
+over what read_bytes gives, since that text never reaches a stand-in; and,
+inside the hook, which makes each object as a plain dict, a read of a key
+the object does not hold, or code that works on a key's text, such as
+key.lower(), since neither compares a key. The cases that run the gate or
+this test as a command are not recorded.
 
 Loading the gate must write nothing to sys.stdout or sys.stderr and raise
 nothing; a gate that does either while this test loads it stops the test with
@@ -338,17 +349,69 @@ def release(log: list) -> None:
             RECORDED.pop(ident, None)
 
 
+class Compared(str):
+    """A key of 1 JSON object as the gate's object_pairs_hook builds it: a str equal to the key, with the
+    key's hash, so that a lookup in the object of a key it holds compares this key. Each comparison, by ==
+    or !=, with a value that is not another Compared adds that value to reads, as a read of it."""
+
+    def __new__(cls, key: str, reads: list):
+        made = super().__new__(cls, key)
+        made.reads = reads
+        return made
+
+    __hash__ = str.__hash__
+
+    def __eq__(self, other):
+        if type(other) is not Compared:
+            self.reads.append(other)
+        return str.__eq__(self, other)
+
+    def __ne__(self, other):
+        if type(other) is not Compared:
+            self.reads.append(other)
+        return str.__ne__(self, other)
+
+
+def unwrapped(value) -> int:
+    """The count of dicts, not stand-ins, in value, as load_json gives it: value itself, and each in a
+    list or in the object a stand-in holds, at any depth through these, read from RECORDED, so that
+    nothing is logged."""
+    count, held = 0, [value]
+    while held:
+        item = held.pop()
+        if type(item) is Recorded:
+            held.extend(RECORDED[id(item)][1].values())
+        elif type(item) is list:
+            held.extend(item)
+        elif type(item) is dict:
+            count += 1
+    return count
+
+
 @contextlib.contextmanager
 def recording(log: list):
     """While it runs, the gate's object_pairs_hook, which load_json looks up at each call, is the real one
-    followed by stand_in, so a repeated key is still refused and each JSON object the gate decodes is a
-    stand-in that logs into log."""
-    real = gate._unique_object
+    given each key as a Compared, followed by stand_in, so a repeated key is still refused and each JSON
+    object the gate decodes is a stand-in that logs into log; each value a key was compared with inside
+    the real hook is logged as a read of that value, also when the hook raises. And load_json logs
+    ("dict", the input) for each dict it gives that is not a stand-in, at the top or at any depth in
+    lists and stand-ins."""
+    real, real_load = gate._unique_object, gate.load_json
 
     def hook(pairs):
-        return stand_in(real(pairs), log)
+        reads: list = []
+        try:
+            built = real([(Compared(key, reads), value) for key, value in pairs])
+        finally:
+            log.extend((None, "key", read) for read in reads)
+        return stand_in(built, log)
+
+    def load(rel):
+        data = real_load(rel)
+        log.extend((None, "dict", rel) for _ in range(unwrapped(data)))
+        return data
     try:
-        with mock.patch.object(gate, "_unique_object", hook):
+        with mock.patch.object(gate, "_unique_object", hook), mock.patch.object(gate, "load_json", load):
             yield log
     finally:
         release(log)
@@ -359,7 +422,8 @@ def breaches(log: list, output: str) -> list:
     (a) a key that is not exactly a str of READ_KEYS; (b) a use of a whole object, which would let a key
     in another letter case change the result; (c) the text of an object that the gate reads a key of, or
     a text taken more times than output holds it, since the gate shows an object's text only in a line
-    it prints."""
+    it prints; (d) a JSON object load_json gives that is not a stand-in, whose uses the recorder cannot
+    see."""
     found = []
     keyed = {ident for ident, use, _ in log if use == "key"}
     taken = collections.Counter()
@@ -373,6 +437,8 @@ def breaches(log: list, output: str) -> list:
             taken[detail] += 1
             if ident in keyed:
                 found.append(f"the text {detail} of a JSON object read by key")
+        elif use == "dict":
+            found.append(f"a JSON object of {detail} that is not a stand-in")
     for text, times in taken.items():
         if times > output.count(text):
             found.append(f"the text {text} taken {times} times, held {output.count(text)} times in the output")
@@ -645,7 +711,8 @@ class PluginDistributionTest(unittest.TestCase):
         the setup changes and how, writing a key the gate reads in another letter case, and the FAIL lines
         the gate gives, each without its "FAIL " (none: exit 0). A read of that key in another letter case
         would change the gate's output in the setup. That the gate reads no key but those of READ_KEYS,
-        each exactly as written, is pinned by the recorder in every case, not by these setups."""
+        each exactly as written, is checked by the recorder in each case that runs the gate's main in the
+        test's own process, within the residual the module docstring states, not by these setups."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
 
@@ -772,7 +839,8 @@ class PluginDistributionTest(unittest.TestCase):
     def test_recorder_sees_each_route(self):
         # Each route by which code can read a key, or every key, of a JSON object, applied to a stand-in
         # of 1 that holds "version" and "Version": each logs a use that breaks the rule (breaches), or
-        # raises TypeError or AttributeError, as the gate's main turns into exit 3. Then the uses that
+        # raises TypeError or AttributeError, which the gate's main turns into exit 3 unless the gate
+        # catches it (a residual the module docstring states). Then the uses that
         # keep the rule: each logs no breach and gives what a dict gives. The output is empty but where
         # a route names the text it shows.
         text = "{'version': '1', 'Version': '2'}"
@@ -812,7 +880,9 @@ class PluginDistributionTest(unittest.TestCase):
             ("__dict__", lambda held: held.__dict__, ""), ("a mapping pattern of match", matched, ""),
             ("repr not shown", repr, ""), ("repr taken twice, shown once", lambda held: (repr(held), repr(held)), text),
             ("repr of an object read by key", lambda held: (held.get("version"), repr(held)), text),
-            # The other methods of the stand-in that log, so that each is reached by at least 1 route.
+            # The other methods of the stand-in that log, keys and iteration by a for loop among them, so
+            # that any 1 of its 26 methods that log fails this case when it stops logging.
+            ("keys", lambda held: held.keys(), ""), ("a for loop", lambda held: [key for key in held], ""),
             ("pop", lambda held: held.pop("Version"), ""), ("setdefault", lambda held: held.setdefault("Version"), ""),
             ("values", lambda held: held.values(), ""), ("reversed", reversed, ""), ("copy", lambda held: held.copy(), ""),
             ("popitem", lambda held: held.popitem(), ""), ("update", lambda held: held.update(), ""),
@@ -847,6 +917,78 @@ class PluginDistributionTest(unittest.TestCase):
                     self.assertEqual(breaches(log, output), [])
                 finally:
                     release(log)
+        self.assertEqual(RECORDED, {})
+
+    def test_recorder_sees_a_key_read_inside_the_hook(self):
+        # The gate's object_pairs_hook, with a read added after it builds the object, on a tree whose
+        # Claude manifest holds version and Version: a read of Version, by in, == or != on its keys, or
+        # by in followed by a raise where the object holds the key, is a breach, and a read of version,
+        # as written, is not. The read followed by a raise ends the gate with exit 3.
+        self.write_text(gate.CLAUDE_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Version": "2", '
+                                              '"skills": ["./skills/cleanlanguage"]}\n')
+        real = gate._unique_object
+
+        def raising(result, key):
+            if key in result:
+                raise gate.DuplicateKey(key)
+
+        reads = [("in", lambda result, key: key in result, 0), ("==", lambda result, key: [k == key for k in result], 0),
+                 ("!=", lambda result, key: [k != key for k in result], 0), ("in, then a raise", raising, 3)]
+        for name, read, code in reads:
+            for key, want in (("Version", ["a read of the key 'Version' of type str"]), ("version", [])):
+                with self.subTest(read=name, key=key):
+                    def hook(pairs, read=read, key=key):
+                        result = real(pairs)
+                        read(result, key)
+                        return result
+                    with mock.patch.object(gate, "_unique_object", hook):
+                        got, problems = recorded_main(io.StringIO(), io.StringIO())
+                    # The gate decodes the manifest more than once, so each problem is counted once.
+                    self.assertEqual((got, sorted(set(problems))), (code, want))
+        # The hook's own comparison of 2 keys of 1 object, which finds a repeated key, is not a read.
+        self.write_text(gate.AGENT_MANIFEST, '{"name": "cleanlanguage", "version": "1.0.15", "Description": "d", '
+                                             '"Description": "d"}\n')
+        self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (3, []))
+        self.assertEqual(RECORDED, {})
+
+    def test_recorded_main_fails_a_run_the_recorder_does_not_wrap(self):
+        # recorded_main on runs whose JSON objects the recorder leaves as dicts, on a tree that passes
+        # and on one that fails: with no recorder, it reports only that fewer stand-ins were made than
+        # the gate's 5 JSON inputs; with a stand-in made only for the first 4 objects decoded, that 4
+        # were made, and an object of site.json that is not a stand-in among others; with each plugin
+        # entry, which sits in a list in a stand-in, left as a dict, only that entry of each
+        # marketplace. A run that exits 3 is not held to the count.
+        made = stand_in
+
+        def first_4(data, log):
+            return made(data, log) if sum(use == "made" for _, use, _ in log) < 4 else data
+
+        def entries_left(data, log):
+            return data if "source" in data else made(data, log)
+
+        @contextlib.contextmanager
+        def off(log):
+            yield log
+
+        few = "the recorder made {} stand-ins, fewer than the 5 JSON inputs the gate read"
+        for code in (0, 1):
+            with self.subTest(code=code):
+                if code:
+                    self.edit_json(gate.AGENT_MANIFEST, lambda d: d.update(version="1.0.16"))
+                with mock.patch.dict(globals(), {"recording": off}):
+                    self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (code, [few.format(0)]))
+                with mock.patch.dict(globals(), {"stand_in": first_4}):
+                    got, problems = recorded_main(io.StringIO(), io.StringIO())
+                self.assertEqual(got, code)
+                self.assertIn(few.format(4), problems)
+                self.assertIn(f"a JSON object of {gate.SITE_JSON} that is not a stand-in", problems)
+                with mock.patch.dict(globals(), {"stand_in": entries_left}):
+                    self.assertEqual(recorded_main(io.StringIO(), io.StringIO()),
+                                     (code, [f"a JSON object of {rel} that is not a stand-in"
+                                             for rel in (gate.MARKETPLACE, gate.VENDORED_MARKETPLACE)]))
+        (self.root / gate.SITE_JSON).unlink()
+        with mock.patch.dict(globals(), {"recording": off}):
+            self.assertEqual(recorded_main(io.StringIO(), io.StringIO()), (3, []))
         self.assertEqual(RECORDED, {})
 
     def test_unreadable_file_exits_3(self):
