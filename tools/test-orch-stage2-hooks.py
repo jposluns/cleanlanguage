@@ -318,6 +318,28 @@ def tree_state(path):
     return out
 
 
+# Timeouts of the hook. A test of a Stage2Harness class that runs the hook, through run_hook or a
+# program of this file that loads the hook and calls its functions, or that runs the doctor, which
+# loads the hook too, runs the unchanged hook with its own timeouts, as the platform runs it; this
+# file does not shorten or remove them there. Such a test requires that none of them fires:
+# - the 5 s timeout of the git call in _recovery_toplevel, which each orch_ action that a test runs,
+#   and the doctor, make to find the repo root; on a timeout they get no root, which the hook takes
+#   as out of scope;
+# - the timeout of any other git call of the hook, such as the 5 s one in _orch_resume_probes and the
+#   10 s ones in _orch_merge_pending_findings and _orch_register_authority, which the resume audit
+#   can reach;
+# - the timeout that the registry declares for the enumerator, 5 s in stage2(), on which the hook
+#   reports ENUMERATOR_ERROR;
+# - for a PreToolUse action run through run_hook (orch_yield_tool and orch_ask_guard here), the 8 s
+#   deadline (PRETOOL_BUDGET_SECONDS) in which main() runs it and past which it fails closed, exit 2.
+# Reason: these tests check what the installed hook does when it runs as the platform runs it, and a
+# recorder that dropped the timeouts would no longer run it so. Bound: such a test can fail a correct
+# hook only on a host slow enough that 1 git call takes 5 s, or 10 s for a 10 s call, that a declared
+# enumerator takes its declared timeout, or that a PreToolUse action takes 8 s, beside the limit of
+# 60 s or 120 s that the test puts on the whole call. Whether a timeout that fires can also let such
+# a test pass a wrong hook is not established. The 2 wrapper tests of T15EnumeratorTimeout do not run
+# the hook, and its other 3 tests run it through RECORDING_HOOK_PROG, so in them no timeout of the
+# hook can fire but the enumerator's in the enforcement test.
 class Stage2Harness(unittest.TestCase):
     """A throwaway git repo, a temporary stand-in store, and a fixture enumerator, torn down per test."""
 
@@ -1324,9 +1346,11 @@ if mode == "hang":
 # again unchanged. So in neither mode can a timeout of the hook other than the enumerator's fire. In
 # the enforcement test the hook's only other call is git rev-parse --show-toplevel in
 # _recovery_toplevel, with a 5 s timeout; if that timeout fired, as it can on a loaded host,
-# _orch_stop_family would allow the stop without running the enumerator, and the test would fail. It
-# runs the unchanged hook file as __main__, so the hook reads its stdin payload and exits as it does
-# when it is run directly.
+# _orch_stop_family would allow the stop without running the enumerator, and the test would fail.
+# test_stage1_contrast runs the hook in "strip" mode, and there the same git call is the hook's only
+# call; if its timeout fired, the hook would allow the stop without its NO_ENUMERATOR deny. It runs
+# the unchanged hook file as __main__, so the hook reads its stdin payload and exits as it does when
+# it is run directly.
 RECORDING_HOOK_PROG = """
 import json, runpy, subprocess, sys
 
@@ -1586,9 +1610,26 @@ class T15EnumeratorTimeout(Stage2Harness):
                                  "the recorded call did not run the enumerator once")
 
     def test_stage1_contrast(self):
+        # The stage 1 registry declares no enumerator. The unchanged hook runs through
+        # RECORDING_HOOK_PROG in its "strip" mode, with the 120 s limit of run_hook on the call, so no
+        # timeout of the hook can fire. The test requires that the hook's only call was git rev-parse
+        # --show-toplevel in _recovery_toplevel, whose timeout argument the recorder dropped, so no
+        # enumerator ran (logical); then exit 2, NO_ENUMERATOR and no 'failed to run' in stderr
+        # (logical). Run directly, the hook allows the stop when that call's 5 s timeout fires, as it
+        # can on a loaded host, and the test would then fail a correct hook.
+        record = self._tmp / "run-calls-stage1.jsonl"
         self.write_registry(self.stage1())
         self.arm_lease()
-        r = self.stop()
+        r = run_doctor_recorded(self, [sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
+                                       str(record), "orch_stop_guard", "strip"],
+                                input=json.dumps({"cwd": str(self.repo)}), capture_output=True,
+                                text=True, env=self._env(), timeout=120)
+        rows = [json.loads(line) for line in
+                (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
+        calls = [row["argv"] for row in rows]
+        self.assertEqual(calls, [["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"]],
+                         "calls of the hook for the stage 1 registry: {}; hook exit {}, stderr: {}"
+                         .format(calls, r.returncode, r.stderr))
         self.assert_no_enumerator_deny(r)
         self.assertNotIn("failed to run", r.stderr)
 
