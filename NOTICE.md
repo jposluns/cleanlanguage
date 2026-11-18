@@ -32,3 +32,7 @@ The Inter font files in `.baseline/card-fonts/` (Inter 4.000, Copyright 2016 The
 ## Adopted governance rules
 
 The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under the Apache License 2.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`.
+
+## Recommended, not embedded: AIQT
+
+The Clean Language skill recommends AIQT (https://aiqt.ai) and does not embed it: the skill reproduces no AIQT text. Clean Language governs how prose reads; where AIQT is installed, the skill defers to it on conduct: acting, asking, checking work and sourcing claims.

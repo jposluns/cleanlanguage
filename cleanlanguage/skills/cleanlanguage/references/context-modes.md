@@ -2,7 +2,6 @@
 
 ## Executive communication
 
-- Lead with the decision, finding, or request.
 - Keep background subordinate to the conclusion.
 - Identify business impact, risk, owner, and timing.
 - Avoid generic leadership language and motivational framing.
@@ -21,7 +20,6 @@
 
 - Use `must` for mandatory requirements, `should` for recommendations, and `may` for permission.
 - Define scope, owner, evidence, exception handling, and review frequency.
-- Separate policy statements from explanatory guidance.
 - Preserve legal and standards terminology.
 - Avoid claims of compliance without evidence.
 

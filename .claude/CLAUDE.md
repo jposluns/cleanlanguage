@@ -10,9 +10,9 @@ The one priority ordering, decided in advance:
 
 **(Accuracy = Integrity = Quality = Trust) > Progress > Speed > Cost.**
 
-The four facets form one non-negotiable top tier, co-equal, with no ranking among
-them. Below the top tier sit three throughput values, in order: Progress, then
-Speed, then Cost. When two dimensions conflict, the higher tier wins outright, and
+The 4 facets form 1 non-negotiable top tier, co-equal, with no ranking among
+them. Below the top tier sit 3 throughput values, in order: Progress, then
+Speed, then Cost. When 2 dimensions conflict, the higher tier wins outright, and
 that call is made once, up front, so it never has to be re-argued under pressure.
 "Done faster" and "done cheaper" are never reasons for "done worse", and Progress
 never licenses less verification.
@@ -35,7 +35,7 @@ If any constraint would force a compromise on the top tier, halt and surface the
 tradeoff to the maintainer rather than resolving it silently in favour of
 progress, speed, or cost.
 
-The full AIQT standard, including the five rules of AIQT, is at
+The full AIQT standard, including the 5 rules of AIQT, is at
 https://aiqt.ai.
 
 The authoritative full statement is the vendored apex rule
@@ -70,11 +70,12 @@ originals; the 3 concrete clauses they drop are restored in
 The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
 blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
 for dev-time sessions through [`settings.json`](settings.json) and the local
-marketplace at `plugin/`. All 14 core hooks can fire (`gensrc_guard` was armed in PR #156).
-`write_scope_guard` keeps its structural cross-repository write denial, now exempting one
+marketplace at `plugin/`. The plugin registers 33 hooks, 12 orchestrator hooks and 21
+others (`gensrc_guard` was armed in PR #156).
+`write_scope_guard` keeps its structural cross-repository write denial, now exempting 1
 declared companion store (`/opt/cleanlanguage/private`, the record store), while its slice
 confinement stays un-armed. A minimal orchestration registry is declared; what each of the
-10 orchestrator hooks does under it today, including the stop guard denial and the operator
+12 orchestrator hooks does under it today, including the stop guard denial and the operator
 escape that releases it, is described in [`../.aiqt/config.md`](../.aiqt/config.md).
 
 ## Asking the maintainer questions
