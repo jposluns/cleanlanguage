@@ -318,28 +318,87 @@ def tree_state(path):
     return out
 
 
+# Every time limit that a test of a Stage2Harness class sets on itself, which the comment above
+# Stage2Harness counts: for each class of this file that is Stage2Harness or derives from it, and
+# each function at the top level of this file, each distinct timeout argument of a call and bound of
+# an assertLess or assertLessEqual call, keyed by its class ("" at the top level), its function (""
+# in a class body) and the source text of the value, with the least value in seconds that it takes
+# when the file runs. Stage2TimeLimitProbe requires the keys to be exactly those of the code, and the
+# value of each entry whose source is a number, an attribute of self or of a class, or a sum or
+# product of them to be the value of the code; for an attribute of self it takes the least value
+# that a Stage2Harness class of this file gives that name, as a class can take a method of another
+# (DoctorScopeMargin takes Doctor._doctor_bounded). It does not check the value of an entry whose
+# source reads a parameter, which is stated here from the callers: run_reaped's wall_clock_bound is
+# STANDIN_WALL_CLOCK_BOUND, 60, in the 2 wrapper tests and is not passed, so WALL_CLOCK_BOUND, 240,
+# elsewhere; no caller passes DoctorCheckpointWrites._doctor a timeout, so it is TIMEOUT, 30. It does
+# not find a limit written in another form, such as an elapsed time compared in an if statement, or a
+# limit inside a program string of this file, such as the hook bound and the cleanup bound of
+# REAPER_PROG, which it reads from its arguments.
+TEST_TIME_LIMITS = {
+    ("Stage2Harness", "run_hook", "120"): 120,
+    ("Stage2Harness", "run_doctor", "120"): 120,
+    ("T15EnumeratorTimeout", "run_reaped", "wall_clock_bound or self.WALL_CLOCK_BOUND"): 60,
+    ("Doctor", "test_preflight_writes_nothing", "120"): 120,
+    ("Doctor", "_doctor_bounded", "self.SPECIAL_TIMEOUT"): 30,
+    ("Doctor", "test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib", "60"): 60,
+    ("Doctor", "test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib", "120"): 120,
+    ("Doctor", "test_a_failed_reexecution_exits_2_with_a_message", "60"): 60,
+    ("Doctor", "test_usage_error", "60"): 60,
+    ("Doctor", "test_help_text_says_the_doctor_writes_nothing_and_the_enumerator_runs", "60"): 60,
+    ("Doctor", "test_resume_audit_rewrite_with_a_ts_outside_the_run_is_unverified", "120"): 120,
+    ("Doctor", "test_resume_audit_refuses_a_barrier_that_it_cannot_read_back", "120"): 120,
+    ("Doctor", "_audit_bounded", "self.BARRIER_TIMEOUT"): 60,
+    ("DoctorPrecheckSites", "_hook_bounded", "self.SPECIAL_TIMEOUT"): 30,
+    ("DoctorPrecheckSites", "_assert_hook_reader", "self.SPECIAL_TIMEOUT"): 30,
+    ("DoctorScopeMargin", "_assert_refused_near", "self.NEAR"): 4.5,
+    ("DoctorCheckpointWrites", "_doctor", "timeout"): 30,
+    ("DoctorCheckpointWrites", "_faulted", "self.TIMEOUT * 2"): 60,
+    ("DoctorStandInRestore", "_run", "60"): 60,
+}
+
+
 # Timeouts of the hook. A test of a Stage2Harness class that runs the hook, through run_hook or a
 # program of this file that loads the hook and calls its functions, or that runs the doctor, which
 # loads the hook too, runs the unchanged hook with its own timeouts, as the platform runs it; this
 # file does not shorten or remove them there. Such a test requires that none of them fires:
-# - the 5 s timeout of the git call in _recovery_toplevel, which each orch_ action that a test runs,
-#   and the doctor, make to find the repo root; on a timeout they get no root, which the hook takes
-#   as out of scope;
-# - the timeout of any other git call of the hook, such as the 5 s one in _orch_resume_probes and the
-#   10 s ones in _orch_merge_pending_findings and _orch_register_authority, which the resume audit
-#   can reach;
-# - the timeout that the registry declares for the enumerator, 5 s in stage2(), on which the hook
-#   reports ENUMERATOR_ERROR;
+# - the 5 s timeout of the git call in _recovery_toplevel (aiqt_hooks.py:10540), which each orch_
+#   action that a test runs, and the doctor, make to find the repo root; on a timeout they get no
+#   root, which the hook takes as out of scope;
+# - the timeout of any other git call of the hook, such as the 5 s one in _orch_resume_probes
+#   (32780) and the 10 s ones in _orch_merge_pending_findings (32853) and _orch_register_authority
+#   (32938, 32947 and 32952), which the resume audit can reach;
+# - the timeout that the registry declares for the enumerator, 5 s in stage2() (60 s, the hook's
+#   fallback, where a T14PosturePins case declares "fast"), on which the hook reports
+#   ENUMERATOR_ERROR;
 # - for a PreToolUse action run through run_hook (orch_yield_tool and orch_ask_guard here), the 8 s
-#   deadline (PRETOOL_BUDGET_SECONDS) in which main() runs it and past which it fails closed, exit 2.
+#   deadline (PRETOOL_BUDGET_SECONDS, HOOK_TIMEOUT_SECONDS 10 less 2.0, aiqt_hooks.py:347-348) in
+#   which main() runs it and past which it fails closed, exit 2.
 # Reason: these tests check what the installed hook does when it runs as the platform runs it, and a
-# recorder that dropped the timeouts would no longer run it so. Bound: such a test can fail a correct
-# hook only on a host slow enough that 1 git call takes 5 s, or 10 s for a 10 s call, that a declared
-# enumerator takes its declared timeout, or that a PreToolUse action takes 8 s, beside the limit of
-# 60 s or 120 s that the test puts on the whole call. Whether a timeout that fires can also let such
-# a test pass a wrong hook is not established. The 2 wrapper tests of T15EnumeratorTimeout do not run
-# the hook, and its other 3 tests run it through RECORDING_HOOK_PROG, so in them no timeout of the
-# hook can fire but the enumerator's in the enforcement test.
+# recorder that dropped the timeouts would no longer run it so.
+# Limits of the tests. Such a test also sets time limits of its own, which TEST_TIME_LIMITS lists and
+# Stage2TimeLimitProbe keeps in step with the code. The least of them is 4.5 s: DoctorScopeMargin.NEAR,
+# which _assert_refused_near puts on the time from just before it sets the lease mtime NEAR seconds
+# from a freshness bound of the hook to the return of the doctor call, as a later check could see
+# the lease on the other side of that bound. The others are 30 s on 1 doctor or hook program call
+# (Doctor.SPECIAL_TIMEOUT, which DoctorPrecheckSites and DoctorScopeMargin take too, and
+# DoctorCheckpointWrites.TIMEOUT), 60 s or 120 s on 1 call, and 60 s or 240 s on a wrapper call of
+# T15EnumeratorTimeout, whose REAPER_PROG also bounds the hook at 120 s, or 10 s for the stand-in
+# hook, and its own cleanup at 30 s. DoctorCheckpointWrites.PROMPT, 15, is read by no check.
+# Bound, derived from the 2 lists: the least hook timeout above is 5 s and the least test limit is
+# 4.5 s. So such a test can fail a correct hook on a host slow enough that the doctor call of a
+# DoctorScopeMargin case, with the os.utime before it, takes 4.5 s, while its git call in
+# _recovery_toplevel is still inside its 5 s timeout; otherwise only when 1 git call takes 5 s, or
+# 10 s for a 10 s call, a declared enumerator takes its declared timeout, a PreToolUse action takes
+# 8 s, or 1 call reaches the limit that TEST_TIME_LIMITS gives for it. The bound counts these
+# timeouts and limits only. A fixture time that a slow host could carry across a bound of the hook is
+# not counted: DoctorScopeMargin sets its lease 4.5 s from a bound by design, which NEAR covers,
+# and whether any other fixture time is within reach of a slow host is not established. Whether a
+# timeout that fires can also let such a test pass a wrong hook is not established. A process that
+# the hook leaves running after a run_hook call is neither detected nor stopped. The 2 wrapper tests
+# of T15EnumeratorTimeout do not run the hook, and its other 3 tests run it through
+# RECORDING_HOOK_PROG under REAPER_PROG, so in them no timeout of the hook can fire but the
+# enumerator's in the enforcement test, and the wrapper kills what the hook leaves running, within
+# the limits that REAPER_PROG and run_reaped state.
 class Stage2Harness(unittest.TestCase):
     """A throwaway git repo, a temporary stand-in store, and a fixture enumerator, torn down per test."""
 
@@ -1348,20 +1407,35 @@ if mode == "hang":
 # _recovery_toplevel, with a 5 s timeout; if that timeout fired, as it can on a loaded host,
 # _orch_stop_family would allow the stop without running the enumerator, and the test would fail.
 # test_stage1_contrast runs the hook in "strip" mode, and there the same git call is the hook's only
-# call; if its timeout fired, the hook would allow the stop without its NO_ENUMERATOR deny. It runs
-# the unchanged hook file as __main__, so the hook reads its stdin payload and exits as it does when
-# it is run directly.
+# call; if its timeout fired, the hook would allow the stop without its NO_ENUMERATOR deny. In both
+# modes it also adds an audit hook that appends a JSON line to the file named by argv[2] with
+# ".starts" added for each audit event that starts a process (START_EVENTS, the events of
+# LAUNCH_EVENTS but ctypes.dlopen, which loads native code and starts no process itself): the event
+# name, and for subprocess.Popen the argv. A call of subprocess.run raises 1 subprocess.Popen event
+# and then 1 os.posix_spawn or _posixsubprocess.fork_exec event, so a process that the hook starts
+# other than through subprocess.run, by subprocess.Popen, os.system, os.exec*, os.posix_spawn,
+# os.spawn* or os.fork, adds a line that no call of the run record matches. A process that native
+# code starts without an audit event adds none. It runs the unchanged hook file as __main__, so the
+# hook reads its stdin payload and exits as it does when it is run directly.
 RECORDING_HOOK_PROG = """
 import json, runpy, subprocess, sys
 
 hook, record, action, mode = sys.argv[1:5]
 enumerator = json.loads(sys.argv[5]) if mode == "keep" else None
 real_run = subprocess.run
+START_EVENTS = ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
+                "_posixsubprocess.fork_exec")
 
 
-def write(row):
-    with open(record, "a", encoding="utf-8") as fh:
+def write(row, path=record):
+    with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, default=repr) + "\\n")
+
+
+def record_start(event, args):
+    if event.startswith(START_EVENTS):
+        write({"event": event, "argv": args[1] if event == "subprocess.Popen" else None},
+              record + ".starts")
 
 
 def recording_run(*args, **kwargs):
@@ -1383,6 +1457,7 @@ def recording_run(*args, **kwargs):
 
 
 subprocess.run = recording_run
+sys.addaudithook(record_start)
 sys.argv = [hook, action]
 runpy.run_path(hook, run_name="__main__")
 """
@@ -1521,7 +1596,8 @@ class T15EnumeratorTimeout(Stage2Harness):
         # whatever is declared, or changes only values other than 1, such as round(timeout), passes;
         # test_declared_timeout_reaches_the_enumerator_call catches each such change to 0.001, 7.5
         # or 600. A stall after the timeout, or before the hook starts the enumerator, passes if the
-        # hook still exits within 120 s; main's 15 s bound on the whole call caught such a stall,
+        # hook still exits within 120 s; the 15 s bound on the whole call that this test had at
+        # d649a24 caught such a stall,
         # and also failed the correct hook on a loaded host. A hook that starts the enumerator other
         # than through subprocess.run records no call and fails here even if it stops the
         # enumerator at the declared time. The unchanged hook's timeout stops only the enumerator's
@@ -1611,25 +1687,63 @@ class T15EnumeratorTimeout(Stage2Harness):
 
     def test_stage1_contrast(self):
         # The stage 1 registry declares no enumerator. The unchanged hook runs through
-        # RECORDING_HOOK_PROG in its "strip" mode, with the 120 s limit of run_hook on the call, so no
-        # timeout of the hook can fire. The test requires that the hook's only call was git rev-parse
-        # --show-toplevel in _recovery_toplevel, whose timeout argument the recorder dropped, so no
-        # enumerator ran (logical); then exit 2, NO_ENUMERATOR and no 'failed to run' in stderr
-        # (logical). Run directly, the hook allows the stop when that call's 5 s timeout fires, as it
-        # can on a loaded host, and the test would then fail a correct hook.
+        # RECORDING_HOOK_PROG in its "strip" mode, itself run through REAPER_PROG, so no timeout of
+        # the hook can fire, and the wrapper kills every process that the hook started and left
+        # running, within the limits that REAPER_PROG and run_reaped state. Once the wrapper call
+        # ends, the test requires, in this order:
+        # - that the wrapper call ended within the 240 s wall-clock bound (temporal), that the
+        #   wrapper wrote its report (logical), that "not_reaped" is empty, so no process that the
+        #   hook started was alive when cleanup stopped, which it does once no process is left or
+        #   once the 30 s cleanup bound has passed (temporal), and that the hook exited within the
+        #   120 s hook bound (temporal);
+        # - that no process that the hook started was still running when it ended (logical);
+        # - that the hook's only subprocess.run call was git rev-parse --show-toplevel in
+        #   _recovery_toplevel, whose timeout argument the recorder dropped (logical);
+        # - that the process starts that the recorder's audit hook saw are that call's and 1 other:
+        #   1 subprocess.Popen event with the same argv and 1 os.posix_spawn or
+        #   _posixsubprocess.fork_exec event, and 1 os.fork event, which is the child that main()
+        #   forks to check that it can read a child's exit status (_child_status_refusal at
+        #   aiqt_hooks.py:38112-38139; the child exits at once with status 77 and main() waits for
+        #   it), and no other (logical);
+        # - exit 2, NO_ENUMERATOR and no 'failed to run' in stderr (logical).
+        # So the hook started no process but its git call and that child by subprocess, os.system,
+        # os.exec*, os.posix_spawn, os.spawn* or os.fork, and left none running. A hook that also
+        # starts a process by one of those routes, such as an enumerator, and leaves it running
+        # fails the "left_running" check, and one whose process has ended fails the start check.
+        # Run directly, the hook allows the stop when the git call's 5 s timeout fires, as it can
+        # on a loaded host, and the test would then fail a correct hook. Misses: a process that
+        # native code starts without an audit event passes the start check, though the
+        # "left_running" check still fails it if it outlives the hook; and a process that the hook
+        # gets another program, such as a service manager, to start is seen by neither check.
         record = self._tmp / "run-calls-stage1.jsonl"
+        starts_record = Path(str(record) + ".starts")
         self.write_registry(self.stage1())
         self.arm_lease()
-        r = run_doctor_recorded(self, [sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
-                                       str(record), "orch_stop_guard", "strip"],
-                                input=json.dumps({"cwd": str(self.repo)}), capture_output=True,
-                                text=True, env=self._env(), timeout=120)
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
+                                  str(record), "orch_stop_guard", "strip"],
+                                 self._tmp / "reaper-report-stage1.json")
+        self.assert_reaped(r, rep)
+        self.assertFalse(rep["left_running"], "a process that the hook started was still running "
+                         "when the hook call ended; exit {}, stderr: {}".format(r.returncode,
+                                                                                r.stderr))
+        git_argv = ["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"]
         rows = [json.loads(line) for line in
                 (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
         calls = [row["argv"] for row in rows]
-        self.assertEqual(calls, [["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"]],
+        self.assertEqual(calls, [git_argv],
                          "calls of the hook for the stage 1 registry: {}; hook exit {}, stderr: {}"
                          .format(calls, r.returncode, r.stderr))
+        starts = [json.loads(line) for line in (starts_record.read_text(encoding="utf-8")
+                                                if starts_record.exists() else "").splitlines()]
+        popen = [row["argv"] for row in starts if row["event"] == "subprocess.Popen"]
+        spawns = [row["event"] for row in starts
+                  if row["event"] in ("os.posix_spawn", "_posixsubprocess.fork_exec")]
+        others = [row["event"] for row in starts
+                  if row["event"] not in ("subprocess.Popen", "os.posix_spawn",
+                                          "_posixsubprocess.fork_exec")]
+        self.assertEqual((popen, len(spawns), others), ([git_argv], 1, ["os.fork"]),
+                         "process starts of the hook for the stage 1 registry: {}; hook exit {}, "
+                         "stderr: {}".format(starts, r.returncode, r.stderr))
         self.assert_no_enumerator_deny(r)
         self.assertNotIn("failed to run", r.stderr)
 
@@ -5445,6 +5559,144 @@ class DoctorSourceProbe(unittest.TestCase):
         names = {n.attr for n in ast.walk(helper) if isinstance(n, ast.Attribute)}
         for needed in ("O_NONBLOCK", "O_CLOEXEC", "fstat", "S_ISREG", "set_blocking"):
             self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
+
+
+def _time_limit_value(expr, cls, classes, stage2):
+    """The value in seconds of a time limit's source expr in class cls (None at the top level): a
+    number; an attribute of self, as the least value that a class of stage2 gives that name in its
+    body; an attribute of a class of this file, as that class or the nearest of its bases gives it;
+    a sum or product of such values. None for any other expr, such as one that reads a parameter."""
+    if isinstance(expr, ast.Constant) and type(expr.value) in (int, float):
+        return expr.value
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mult)):
+        left = _time_limit_value(expr.left, cls, classes, stage2)
+        right = _time_limit_value(expr.right, cls, classes, stage2)
+        if left is None or right is None:
+            return None
+        return left + right if isinstance(expr.op, ast.Add) else left * right
+    if not (isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name)):
+        return None
+    owners = ([classes[name] for name in stage2] if expr.value.id == "self"
+              else [classes[expr.value.id]] if expr.value.id in classes else [])
+    values = []
+    for owner in owners:
+        seen = set()
+        while owner is not None and owner.name not in seen:
+            seen.add(owner.name)
+            found = [node.value for node in owner.body if isinstance(node, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == expr.attr for t in node.targets)]
+            if found:
+                value = _time_limit_value(found[-1], owner, classes, stage2)
+                if value is not None:
+                    values.append(value)
+                break
+            if expr.value.id == "self":
+                break
+            owner = next((classes[b.id] for b in owner.bases
+                          if isinstance(b, ast.Name) and b.id in classes), None)
+    return min(values) if values else None
+
+
+def stage2_time_limits(source):
+    """{(class, function, source text of the value): value in seconds or None} for every time limit
+    that TEST_TIME_LIMITS states it lists, found in source as that comment says."""
+    tree = ast.parse(source)
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    def derives(cls):
+        seen = set()
+        while cls is not None and cls.name not in seen:
+            if cls.name == "Stage2Harness":
+                return True
+            seen.add(cls.name)
+            cls = next((classes[b.id] for b in cls.bases if isinstance(b, ast.Name) and b.id in classes),
+                       None)
+        return False
+
+    stage2 = [name for name, cls in classes.items() if derives(cls)]
+    scopes = [(None, node.name, node) for node in tree.body
+              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    for name in stage2:
+        for node in classes[name].body:
+            scopes.append((classes[name], node.name if isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "", node))
+    found = {}
+    for cls, function, scope in scopes:
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            exprs = [kw.value for kw in node.keywords if kw.arg == "timeout"]
+            if isinstance(node.func, ast.Attribute) and node.func.attr in ("assertLess", "assertLessEqual") \
+                    and len(node.args) >= 2:
+                exprs.append(node.args[1])
+            for expr in exprs:
+                key = ("" if cls is None else cls.name, function, ast.unparse(expr))
+                found[key] = _time_limit_value(expr, cls, classes, stage2)
+    return found
+
+
+def stage2_time_limit_mismatches(source, table):
+    """What differs between table, in the form of TEST_TIME_LIMITS, and the time limits of source, and
+    between the comment directly above class Stage2Harness and the least value of table: [] when
+    nothing does."""
+    found = stage2_time_limits(source)
+    out = ["not in the table: {!r}".format(key) for key in sorted(set(found) - set(table))]
+    out += ["not in the code: {!r}".format(key) for key in sorted(set(table) - set(found))]
+    out += ["{!r}: the table gives {}, the code {}".format(key, table[key], found[key])
+            for key in sorted(set(found) & set(table))
+            if found[key] is not None and found[key] != table[key]]
+    lines = source.splitlines()
+    end = next((n for n, line in enumerate(lines) if line.startswith("class Stage2Harness(")), 0)
+    start = end
+    while start > 0 and lines[start - 1].startswith("#"):
+        start -= 1
+    comment = " ".join(line[1:].strip() for line in lines[start:end])
+    least = min(table.values()) if table else None
+    names = sorted({"{}.{}".format(key[0], key[2][len("self."):]) if key[2].startswith("self.")
+                    else key[0] for key, value in table.items() if value == least})
+    for needed in ["The least of them is {:g} s".format(least)] + names:
+        if needed not in comment:
+            out.append("the comment above Stage2Harness does not state {!r}".format(needed))
+    return out
+
+
+class Stage2TimeLimitProbe(unittest.TestCase):
+    """Class probe: TEST_TIME_LIMITS lists every time limit that a Stage2Harness test sets on itself,
+    with its value, and the comment above Stage2Harness states the least of them."""
+
+    def test_the_table_and_the_comment_match_the_code(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(stage2_time_limit_mismatches(source, TEST_TIME_LIMITS), [])
+
+    def test_it_refuses_a_planted_change_of_each_kind(self):
+        # Each change below is made to a copy of this file's source, which is parsed and never run:
+        # a timeout argument added to a Stage2Harness method, an assertLess bound in a new class that
+        # derives from Stage2Harness, a timeout argument in a new function at the top level, a new
+        # value of the least limit, and a comment that no longer states the least limit.
+        source = Path(__file__).read_text(encoding="utf-8")
+        near = "    NEAR = 4.5  # seconds from the bound"
+        stated = "The least of them is 4.5 s"
+        self.assertIn(near, source, "precondition: NEAR as this case plants against it")
+        self.assertIn(stated, source.replace("\n# ", " "), "precondition: the stated least limit")
+        planted = {
+            "a timeout argument": source.replace(
+                "    def run_doctor(self, *args):\n",
+                "    def run_doctor(self, *args):\n        subprocess.run([], timeout=3)\n", 1),
+            "an assertLess bound": source + "\n\nclass Planted(Stage2Harness):\n"
+                                            "    def test_planted(self):\n"
+                                            "        self.assertLess(1, 2.5)\n",
+            "a top-level timeout": source + "\n\ndef planted():\n"
+                                            "    return subprocess.run([], timeout=7)\n",
+            "a new least value": source.replace(near, "    NEAR = 4.0  # seconds from the bound", 1),
+            "a comment without it": source.replace("# Stage2TimeLimitProbe keeps in step with the code. "
+                                                   "The least of them is 4.5 s",
+                                                   "# Stage2TimeLimitProbe keeps in step with the code. "
+                                                   "The least of them is 5 s", 1),
+        }
+        for kind, text in planted.items():
+            with self.subTest(kind=kind):
+                self.assertNotEqual(text, source, "precondition: the change was made")
+                self.assertNotEqual(stage2_time_limit_mismatches(text, TEST_TIME_LIMITS), [])
 
 
 # Added once every definition of the module is made; an audit hook cannot be removed.

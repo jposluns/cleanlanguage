@@ -759,6 +759,7 @@ class WholeFunctionCitations(unittest.TestCase):
         ("test-orch-stage1-hooks.py", "orch_prompt_stamp"): 1,
         ("test-orch-stage1-hooks.py", "orch_resume_audit"): 1,
         ("test-orch-stage1-hooks.py", "orch_resume_barrier"): 1,
+        ("test-orch-stage2-hooks.py", "_child_status_refusal"): 1,
         ("test-orch-stage2-hooks.py", "_orch_attestation_refs"): 1,
         ("test-orch-stage2-hooks.py", "_orch_barrier_write"): 1,
         ("test-orch-stage2-hooks.py", "_orch_chained_rows"): 1,
