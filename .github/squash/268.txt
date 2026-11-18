@@ -12,11 +12,13 @@ contract with its precondition. Add its suite,
 tools/test-check-pr-text.py, with a failing case for each defect
 class, cases at the edges of the masks and exemptions, cases that
 compare each class of characters that ends a mask or a URL with its
-set by enumeration, and a mutant sweep whose sites are generated from
-the gate source, and the workflow .github/workflows/pr-text.yml, which
-runs the suite and the gate on every pull request with read-only
-permissions, keeps no credentials after checkout and stops the job
-after 10 minutes. tools/ci-status.py does not insist on the new check.
+set by enumeration, a mutant sweep whose sites are generated from the
+gate source, and subtests on fixed probes for the forms that the
+suite's static helpers and the sweep's kill rule accept, and the
+workflow .github/workflows/pr-text.yml, which runs the suite and the
+gate on every pull request with read-only permissions, keeps no
+credentials after checkout and stops the job after 10 minutes.
+tools/ci-status.py does not insist on the new check.
 tools/run_all_checks.sh runs the gate's suite, and
 tools/test-run-all-checks.py lists the workflow's event step as an
 exception, with the suite in its place. The label lint,

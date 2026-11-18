@@ -456,22 +456,26 @@ def reached(tree, accepts):
     """(node, (module, name)) for each place in tree that names a function that accepts takes.
 
     accepts(module, name) is given 2 kinds of place, a call or any other reference alike, so a
-    reference that binds the function to another name is found as well as a call: an attribute
-    read, x.name, where module is the name x or a module that an import binds to x, such as
-    subprocess for sp after import subprocess as sp, and None when x is not a name; and a name
-    read that from module import binds, such as run after from subprocess import run, or that
-    from module import * can bind, such as run after from subprocess import *: each name read
-    is tried with each module that such a star import in tree names, whether or not the module
-    has that name. The imports are read in every scope of tree at once, not scope by scope, and
-    a name that imports bind to more than 1 module or function is tried with each, so an import
-    in 1 scope that binds the name to something else, such as import json as sp in a function
-    that never runs, does not hide the place; a read of the name in the scope where it means the
-    other binding is found too, a false failure that renaming the name ends. The place is given
-    with the first module or function that accepts takes, in sorted order: the first module
-    name for an attribute read, and the first (module, name) pair for a name read. A function
-    reached otherwise is not found, such as through getattr, importlib, or a module bound to
-    another name by assignment. The pair is returned, not a dotted name, so the cases that
-    compare it hold no text that reads as such a place.
+    reference that binds the function to another name is found as well as a call: an attribute,
+    x.name, whether it is read, assigned or deleted, where module is tried as the name x itself
+    and as each module that an import binds to x, such as subprocess for sp after import
+    subprocess as sp, and is None when x is not a name; and a name read, not a name that is
+    assigned or deleted, that from module import binds, such as run after from subprocess import
+    run, or that from module import * can bind, such as run after from subprocess import *: each
+    name read is tried with each module that such a star import in tree names, whether or not
+    the module has that name. A relative import is read as the module it names, such as
+    subprocess for from .subprocess import run, and one that names no module, such as
+    from . import run or from . import *, binds no name that is tried. The imports are read in
+    every scope of tree at once, not scope by scope, and a name that imports bind to more than
+    1 module or function is tried with each, so an import in 1 scope that binds the name to
+    something else, such as import json as sp in a function that never runs, does not hide the
+    place; a read of the name in the scope where it means the other binding is found too, a
+    false failure that renaming the name ends. The place is given with the first module or
+    function that accepts takes, in sorted order: the first module name for an attribute, and
+    the first (module, name) pair for a name read. A function reached otherwise is not found,
+    such as through getattr, importlib, or a module bound to another name by assignment. The
+    pair is returned, not a dotted name, so the cases that compare it hold no text that reads
+    as such a place.
     """
     modules, names = collections.defaultdict(set), collections.defaultdict(set)
     starred = set()
@@ -525,14 +529,17 @@ def embedded_places(tree, accepts, guarded=None):
 def run_on_every_path(tree):
     """The ids of the nodes of tree that run on every path out of their block.
 
-    Those are each node in a finally clause, and each node in the arguments of a call of
-    addCleanup that is outside every call in those arguments: addCleanup registers a function
-    and its arguments, and the function runs on every path out of the case, but the arguments
-    are evaluated when addCleanup is called, so a call among them, such as os.unlink(path) in
-    addCleanup(print, os.unlink(path)), runs then, with every node under it, and is not
+    Those are each node in a finally clause, of a try or a try with except*, and each node in
+    the arguments of a call of the method addCleanup, x.addCleanup(...) on any object x, that
+    is outside every call in those arguments: addCleanup registers a function and its
+    arguments, and the function runs on every path out of the case, but the arguments are
+    evaluated when addCleanup is called, so a call among them, such as os.unlink(path) in
+    self.addCleanup(print, os.unlink(path)), runs then, with every node under it, and is not
     guarded. A call in the body of a lambda given to addCleanup is not guarded either, though
     it runs only with the cleanup, so such a removal fails the case; the author passes the
-    function and its arguments to addCleanup instead.
+    function and its arguments to addCleanup instead. A call of a bare name, such as
+    addCleanup(os.unlink, path), is not a call of the method, and the arguments of a call of
+    any other method or function are not guarded.
     """
     ids = set()
     for node in ast.walk(tree):
@@ -2097,11 +2104,11 @@ class OutputAndHonestTexts(GateCase):
         # the gate. So each place in the suite's own code that names a function or method that
         # removes a file or folder, one of REMOVALS on any object or one that from ... import
         # binds or from ... import * can bind, in any scope, a call or any other reference,
-        # such as one that binds it to another name, is in a finally clause or is given to
-        # addCleanup, whose cleanup runs on every path, as its function or in its arguments
-        # outside every call there, since such a call runs when addCleanup is called, as
-        # run_on_every_path() states. The code that the suite runs in a child names 1 more,
-        # outside a finally clause: the child of test_removed_working_directory_exits_2
+        # such as one that binds it to another name, is in a finally clause or is given to the
+        # method addCleanup of any object, whose cleanup runs on every path, as its function or
+        # in its arguments outside every call there, since such a call runs when addCleanup is
+        # called, as run_on_every_path() states. The code that the suite runs in a child names
+        # 1 more, outside a finally clause: the child of test_removed_working_directory_exits_2
         # removes the folder it has just made its working directory, which is what that case
         # checks; that folder is in the case's temporary folder, which the cleanup of setUp
         # removes on every path. The check reads the suite's source and each text of code that
@@ -2151,20 +2158,43 @@ class OutputAndHonestTexts(GateCase):
 
     def test_place_is_given_with_its_first_accepted_binding(self):
         # reached() gives a place with the first module, or the first (module, name) pair, that
-        # accepts takes, in sorted order, as its docstring states: for an attribute read, the
-        # module that import ... as binds to the name, the whole dotted name when it imports a
-        # submodule, or the name itself, and None when the read is on a value that is not a
-        # name; for a name read, the pair that from ... import binds.
-        for label, text, expected in (
-                ("attribute read", "> import os as sp\n> sp.unlink('p')\n", [("os", "unlink")]),
+        # accepts takes, in sorted order, as its docstring states: for an attribute, the module
+        # that import ... as binds to the name, the whole dotted name when it imports a
+        # submodule, or the name itself, which is tried beside the module that an import binds
+        # to it, so it comes first when it sorts first and is found when only it is accepted,
+        # and None when the attribute is on a value that is not a name; for a name read, the pair
+        # that from ... import binds.
+        for label, text, accepts, expected in (
+                ("attribute read", "> import os as sp\n> sp.unlink('p')\n", removes,
+                 [("os", "unlink")]),
+                ("attribute read on a name that sorts before its import binding",
+                 "> import os as a\n> a.unlink('p')\n", removes, [("a", "unlink")]),
+                ("attribute read on a name that an import binds to another module",
+                 "> import json as subprocess\n> subprocess.run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
                 ("attribute read of a submodule imported as a name",
-                 "> import os.path as p\n> p.unlink('p')\n", [("os.path", "unlink")]),
+                 "> import os.path as p\n> p.unlink('p')\n", removes, [("os.path", "unlink")]),
                 ("attribute read on a value that is not a name", "> Path('p').unlink()\n",
-                 [(None, "unlink")]),
+                 removes, [(None, "unlink")]),
                 ("name read", "> from shutil import remove\n> def f():\n"
-                 ">     from os import remove\n> remove('p')\n", [("os", "remove")])):
+                 ">     from os import remove\n> remove('p')\n", removes, [("os", "remove")])):
             with self.subTest(read=label):
-                self.assertEqual([name for node, name in reached(probe_tree(text), removes)],
+                self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
+                                 expected)
+
+    def test_from_import_is_read_only_with_the_module_it_names(self):
+        # reached() reads a relative from import as the module it names, and a from import that
+        # names no module, such as from . import, binds no name that is tried, as its docstring
+        # states, whether it imports a name or a star.
+        for label, text, accepts, expected in (
+                ("relative from import", "> from .subprocess import run\n> run(['x'])\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("from import with no module", "> from . import rmtree as rm\n> rm('p')\n",
+                 removes, []),
+                ("star import with no module", "> from . import *\n> unlink('p')\n", removes,
+                 [])):
+            with self.subTest(binding=label):
+                self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
                                  expected)
 
     def test_star_import_hides_no_place(self):
@@ -2201,30 +2231,99 @@ class OutputAndHonestTexts(GateCase):
     def test_reference_that_is_not_a_call_is_found(self):
         # reached() finds a call or any other reference alike, as its docstring states, so a
         # launch or a removal bound to another name is found, whether an attribute read or a
-        # name read gives it; a name that is assigned or deleted, not read, is no place.
+        # name read gives it; an attribute that is assigned or deleted is a place too, and a
+        # name that is assigned or deleted, not read, is no place.
         for label, text, accepts, expected in (
                 ("attribute read", "> import subprocess as sp\n> launch = sp.run\n",
                  starts_a_process, [("subprocess", "run")]),
+                ("attribute assigned", "> import subprocess as sp\n> sp.run = None\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("attribute deleted", "> import subprocess as sp\n> del sp.run\n",
+                 starts_a_process, [("subprocess", "run")]),
                 ("name read", "> from os import unlink\n> handlers = [unlink]\n", removes,
                  [("os", "unlink")]),
-                ("name assigned or deleted", "> from subprocess import run\n> run = None\n"
-                 "> del run\n", starts_a_process, [])):
+                ("name assigned", "> from subprocess import run\n> run = None\n",
+                 starts_a_process, []),
+                ("name deleted", "> from subprocess import run\n> del run\n", starts_a_process,
+                 [])):
             with self.subTest(reference=label):
                 self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
                                  expected)
 
+    def test_texts_of_code_are_read_in_each_form(self):
+        # code_texts() reads a string constant, and a sum of string constants joined with +, at
+        # any depth, labelled with the innermost function or async function that holds it, or
+        # "module"; and each string that the suite module binds, labelled with the name that
+        # binds it, which also labels a constant equal to it, as its docstring states. A
+        # constant that is not a string, a sum with a part that is not a string constant, a
+        # text joined by another operator and a text built by a call are not read whole, though
+        # each string constant in them is. embedded_places() passes over a text that does not
+        # parse, leaves out a place that guarded gives and a label with no place, and gives
+        # the places of the texts of 1 label in the sorted order of the texts. Each subtest
+        # compares what a probe adds to what the helper gives for a probe that holds no text.
+        empty = code_texts(probe_tree("> pass\n"))
+        self.assertEqual(empty["UNMUTATED_NAME"], {UNMUTATED_NAME})
+        for label, text, expected in (
+                ("constant at module level", "> x = 'a'\n", {"module": {"a"}}),
+                ("constant in a function", "> def f():\n>     x = 'a'\n", {"f": {"a"}}),
+                ("constant in an async function", "> async def f():\n>     x = 'a'\n",
+                 {"f": {"a"}}),
+                ("constant in a nested function",
+                 "> def f():\n>     def g():\n>         x = 'a'\n", {"g": {"a"}}),
+                ("constant after a nested function",
+                 "> def f():\n>     def g():\n>         pass\n>     x = 'a'\n", {"f": {"a"}}),
+                ("constant that is not a string", "> x = b'a'\n", {}),
+                ("sum of 2 constants", "> x = 'a' + 'b'\n", {"module": {"a", "b", "ab"}}),
+                ("sum of 3 constants", "> x = 'a' + 'b' + 'c'\n",
+                 {"module": {"a", "b", "c", "ab", "abc"}}),
+                ("sum with a part that is not a string constant", "> x = 'a' + y\n",
+                 {"module": {"a"}}),
+                ("text joined by another operator", "> x = 'a' % 'b'\n", {"module": {"a", "b"}}),
+                ("text built by a call", "> x = str(['a', 'b'])\n", {"module": {"a", "b"}}),
+                ("constant equal to a string the module binds",
+                 "> def f():\n>     x = " + repr(UNMUTATED_NAME) + "\n", {})):
+            with self.subTest(text=label):
+                found = code_texts(probe_tree(text))
+                self.assertEqual({owner: texts - empty.get(owner, set())
+                                  for owner, texts in found.items()
+                                  if texts - empty.get(owner, set())}, expected)
+        for label, text, guarded, expected in (
+                ("text that does not parse", "> x = 'os.unlink('\n", None, {}),
+                ("text that parses", "> x = 'os.unlink(p)'\n", None,
+                 {"module": [("os", "unlink")]}),
+                ("guarded place", "> x = 'try:\\n    pass\\nfinally:\\n    os.unlink(p)\\n'\n",
+                 run_on_every_path, {}),
+                ("text with no place", "> x = 'y = 1'\n", None, {}),
+                ("5 texts of 1 label", "> a = 'shutil.rmtree(p)'\n> b = 'os.unlink(p)'\n"
+                 "> c = 'os.rmdir(p)'\n> d = 'os.removedirs(p)'\n> e = 'os.remove(p)'\n", None,
+                 {"module": [("os", "remove"), ("os", "removedirs"), ("os", "rmdir"),
+                             ("os", "unlink"), ("shutil", "rmtree")]})):
+            with self.subTest(embedded=label):
+                found = embedded_places(probe_tree(text), removes, guarded)
+                held = embedded_places(probe_tree("> pass\n"), removes, guarded)
+                self.assertEqual({owner: places for owner, places in found.items()
+                                  if owner not in held}, expected)
+
     def test_call_in_the_arguments_of_addcleanup_is_not_guarded(self):
-        # run_on_every_path() guards a removal given to addCleanup, on any object, as its
-        # function, or in its arguments outside every call there, and one in the finally clause
-        # of a try or a try with except*. The arguments take 5 forms: the function, a later
-        # argument, a starred argument, a keyword argument and a ** argument; in each, a
-        # reference outside every call is guarded, also when an assignment expression binds it,
-        # and a call, which runs when addCleanup is called, is not, nor is a call inside another
-        # call or in the body of a lambda, so each such removal is found.
+        # run_on_every_path() guards a removal given to the method addCleanup, on any object,
+        # a name or a value that is not a name, as its function, or in its arguments outside
+        # every call there, and one in the finally clause of a try or a try with except*. The
+        # arguments take 5 forms: the function, a later argument, a starred argument, a keyword
+        # argument and a ** argument; in each, a reference outside every call is guarded, also
+        # when an assignment expression binds it, and a call, which runs when addCleanup is
+        # called, is not, nor is a call inside another call or in the body of a lambda, so each
+        # such removal is found. A removal given to a bare name addCleanup, or to another
+        # method, is not guarded either.
         for label, text, expected in (
                 ("function", "> self.addCleanup(os.unlink, path)\n", []),
                 ("function, addCleanup of another object", "> case.addCleanup(os.unlink, path)\n",
                  []),
+                ("function, addCleanup of a value that is not a name",
+                 "> cases[0].addCleanup(os.unlink, path)\n", []),
+                ("function, bare addCleanup", "> addCleanup(os.unlink, path)\n",
+                 [("os", "unlink")]),
+                ("function, another method", "> self.assertTrue(os.unlink, path)\n",
+                 [("os", "unlink")]),
                 ("later argument", "> self.addCleanup(print, os.unlink)\n", []),
                 ("starred argument", "> self.addCleanup(print, *[os.unlink])\n", []),
                 ("keyword argument", "> self.addCleanup(print, done=os.unlink)\n", []),
@@ -2260,6 +2359,8 @@ class OutputAndHonestTexts(GateCase):
         # kills no row whose cases fail on a stop of the gate but the row listed with the
         # memory limit, the only limit that can itself show as a stop. A row listed with the
         # wall timeout is held by the stop rule, and the sweep's own timeout is not its limit.
+        # Failures alone means exit status 1 with a report of failures and no error, so a row
+        # whose cases end with another exit status is not killed, whatever their report says.
         sweep = MutantSweep("test_rows_are_well_formed")
         memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
@@ -2289,6 +2390,8 @@ class OutputAndHonestTexts(GateCase):
                  (1, "FAILED (failures=1, errors=1)", hit, []),
                  error + "FAILED (failures=1, errors=1)"),
                 ("listed, passes", memory, (0, "OK", hit, []), "survived: exit 0, OK"),
+                ("listed, failures with another exit status", memory,
+                 (2, "FAILED (failures=1)", hit, []), "survived: exit 2, FAILED (failures=1)"),
                 ("listed by the wall timeout, failures", wall,
                  (1, "FAILED (failures=1)", timed, []), None),
                 ("listed by the wall timeout, failures and a stop", wall,
@@ -5348,16 +5451,19 @@ class MutantSweep(unittest.TestCase):
     def killed(self, words, path, mutated, ids, root):
         """None when the named cases fail on the mutated file, or the reason they do not.
 
-        A row hits a limit, and that kills it, only when RUNAWAY_SITES lists it with that
-        limit and its cases fail by an assertion; a row that hits any other limit is not
-        killed. A row whose cases fail with an error rather than an assertion, a listed row
-        included, is not killed either, nor is a row whose cases fail on a stop of the gate
-        that the unmutated gate does not make: its cases fail for a reason other than the one
-        the row changes. The stop rule does not apply to a row listed with the memory limit,
-        since that limit can itself show as a stop: it stops the gate with a MemoryError, which
-        the gate reports as an unexpected error. The rule holds a row listed with the wall
-        timeout, which cannot show as a stop: when that timeout stops the gate, run_child()
-        raises TimeoutExpired before run_gate() reads the run for a stop.
+        A row is killed only when its cases fail by an assertion: exit status 1, with a last
+        line of the report that gives failures and no error. A row whose cases end with another
+        exit status, or fail with an error rather than an assertion, a listed row included, is
+        not killed. The limit-hit rule: a row that RUNAWAY_SITES does not list is not killed
+        when its child hits any limit, and a row that it lists is not killed unless its child
+        hits the limit it is listed with, whatever other limit the child hits as well. The stop
+        rule: a row whose cases fail on a stop of the gate that the unmutated gate does not make
+        is not killed, since its cases fail for a reason other than the one the row changes.
+        The stop rule does not apply to a row listed with the memory limit, since that limit
+        can itself show as a stop: it stops the gate with a MemoryError, which the gate reports
+        as an unexpected error. The rule holds a row listed with the wall timeout, which cannot
+        show as a stop: when that timeout stops the gate, run_child() raises TimeoutExpired
+        before run_gate() reads the run for a stop.
         """
         path.write_text(mutated, encoding="utf-8")
         code, last, hits, stops = self.run_cases(root, ids)
