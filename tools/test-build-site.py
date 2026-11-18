@@ -28,7 +28,9 @@ its SHA-256 is the digest that ``.baseline/SHA256SUMS`` lists for
 missing or unlisted favicon, a card data file that names another site or no
 site, and a SHA256SUMS without that line, with that name starting
 elsewhere in its line or with a character other than a space in its 65th
-place, or with that line ended other than by a line feed. Another checks
+place, or with that line ended other than by a line feed, the file read
+from its bytes so that a carriage return or a CRLF is not translated to
+a line feed. Another checks
 that the logos the built pages load are exactly the pin gate's ``LOGOS``,
 loading ``tools/check-baseline-pin.py`` from its path as
 ``tools/copy-baseline.py`` does, that its comparison refuses a name
@@ -3595,12 +3597,12 @@ def published_favicon_digest(sums: str, site: str) -> str | None:
 def favicon_problems(root: Path) -> list[str]:
     """Why the tree at root does not serve the published favicon (none if it does): each of FAVICON_INPUTS can be
     read and parsed; site-src/site.json's static_files lists favicon.ico; .baseline/site-card.toml names its site as
-    a string; .baseline/SHA256SUMS lists 1 digest for that site's favicon (published_favicon_digest()); and
-    site/favicon.ico hashes to that digest."""
+    a string; .baseline/SHA256SUMS, decoded from its bytes so that no line end in it is translated, lists 1 digest
+    for that site's favicon (published_favicon_digest()); and site/favicon.ico hashes to that digest."""
     try:
         config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         site = tomllib.loads((root / ".baseline/site-card.toml").read_text(encoding="utf-8")).get("site")
-        sums = (root / ".baseline/SHA256SUMS").read_text(encoding="utf-8")
+        sums = (root / ".baseline/SHA256SUMS").read_bytes().decode("utf-8")
         actual = hashlib.sha256((root / "site" / FAVICON).read_bytes()).hexdigest()
     except (OSError, ValueError) as error:
         return [f"the favicon, site.json, the card data or the baseline's SHA256SUMS could not be read: {error}"]
@@ -3619,12 +3621,13 @@ def favicon_problems(root: Path) -> list[str]:
 
 
 def replaced(relative: str, old: str, new: str):
-    """A fault that replaces the first old in the file at relative under a root with new; old must be there."""
+    """A fault that replaces the first old in the file at relative under a root with new; old must be there. It reads
+    and writes the file's bytes, so that no line end is translated either way."""
     def apply(root: Path) -> None:
-        text = (root / relative).read_text(encoding="utf-8")
+        text = (root / relative).read_bytes().decode("utf-8")
         if old not in text:
             raise AssertionError(f"{old!r} is not in {relative}")
-        (root / relative).write_text(text.replace(old, new, 1), encoding="utf-8")
+        (root / relative).write_bytes(text.replace(old, new, 1).encode("utf-8"))
     return apply
 
 
@@ -3649,6 +3652,11 @@ FAVICON_FAULTS = (
     ("SHA256SUMS without the line of the site's favicon",
      replaced(".baseline/SHA256SUMS", "  logos/cleanlanguage-favicon.ico\n", "  logos/cleanlanguage-favicon.icx\n"),
      "lists no single digest"),
+    # The file's own line of the site's favicon ended by each of SUMS_LINE_ENDS in place of its line feed, so that a
+    # reading of the file that translates a line end, as read_text() does a carriage return, fails.
+    *((f"SHA256SUMS with the line of the site's favicon ended by {' '.join(f'U+{ord(char):04X}' for char in end)}",
+       replaced(".baseline/SHA256SUMS", "  logos/cleanlanguage-favicon.ico\n", "  logos/cleanlanguage-favicon.ico" + end),
+       "lists no single digest") for end in SUMS_LINE_ENDS),
 )
 
 
@@ -3659,7 +3667,9 @@ def check_favicon(failures: list[str]) -> int:
     marked as read in binary mode, a name that does not start at the 67th character of its line: after a 65th
     digit, after a further character or a 3rd space between the digest and the name, or under a further folder, a
     character other than a space in the 65th place, or a line ended by 1 of SUMS_LINE_ENDS in place of a line feed.
-    --check alone passes when the file and its listing are removed together, so this case is what keeps them."""
+    FAVICON_FAULTS hold the file's own line ended by each of SUMS_LINE_ENDS too, so that favicon_problems() refuses
+    it as read from the file's bytes. --check alone passes when the file and its listing are removed together, so
+    this case is what keeps them."""
     failures += [f"favicon: {problem}" for problem in favicon_problems(REPO_ROOT)]
     for name, fault, words in (("an unchanged copy", None, None),) + FAVICON_FAULTS:
         with tempfile.TemporaryDirectory() as scratch:

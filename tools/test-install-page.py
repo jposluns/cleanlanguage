@@ -25,9 +25,13 @@ conditions, and that a header rule for such a path still fails; in this
 process it also calls the gate's redirect_break() on 1 character of each
 class that it refuses or allows (BREAK_CHARACTERS), the line feed among
 them, which no run of the gate gives it, and the gate's
-exact_path_problem() on a source whose segment holds each code point but
-/, which must pass for exactly the characters of SEGMENT_CHARACTERS
-(segment_character_problems()). It runs the gate there as a separate process and asserts
+exact_path_problem() on sources that hold each code point but / at each
+place of SEGMENT_PLACES: at the start, inside and at the end of a segment,
+and inside a segment that is not the last, which must pass for exactly the
+characters of SEGMENT_CHARACTERS (segment_character_problems());
+segment_report_problems() fails unless segment_character_problems(), given
+stand-ins for the gate that get 1, 4 or 12 sources wrong, names each of the
+first 10 and the number of the rest. It runs the gate there as a separate process and asserts
 its exit code and, where a case gives them as (code, words), that its output
 holds those words, so that a crash, which also exits 1, does not pass for a
 refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
@@ -49,11 +53,23 @@ folders whose names differ only in letter case, which a file system that
 treats such names as 1 cannot hold, so main() first probes the scratch
 folder of each of them (folds_letter_case()), not the platform's name, and
 where the file system there treats such names as 1, it does not run the
-case and names it as skipped with the reason FOLDED. Where the file system
-holds both names, a case whose copy holds 2 names in 1 folder that differ
-only in letter case (case_twins()) fails unless it is of CASE_FOLDER_CASES,
-and a case of CASE_FOLDER_CASES whose copy holds none fails, so that no
-other case relies on such names unnoticed. 3 cases put
+case and names it as skipped with the reason FOLDED (letter_case_skip()),
+and main() fails unless each case it does not run is skipped with a
+reason and each case of CASE_FOLDER_CASES that it does not run is skipped
+with FOLDED. Where the file system holds both names, a case whose copy
+holds 2 names in 1 folder that differ only in letter case, 2 folders, 2
+files or a folder and a file (case_twins()), fails unless it is of
+CASE_FOLDER_CASES, a case of CASE_FOLDER_CASES whose copy holds none fails
+(twin_problems()), and a case whose copy holds a folder that case_twins()
+cannot list fails, so that no other case relies on such names unnoticed.
+letter_case_problems() fails unless folds_letter_case() gives the answer
+of a stand-in folder that treats such names as 1 and of 1 that does not,
+and on the scratch folder the answer that a 2nd look at its names gives,
+letter_case_skip() skips exactly the cases of CASE_FOLDER_CASES whose
+probe finds folding, with FOLDED, and probes no other case, case_twins()
+finds folder, file and mixed twins and raises an OSError for a folder that
+it cannot list, and twin_problems() rejects twins outside
+CASE_FOLDER_CASES and a case of it without twins. 3 cases put
 a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
@@ -2829,22 +2845,68 @@ def redirect_break_problems(loader=load_gate) -> list[str]:
 # Check 7: the characters that a segment of an exact source may hold, the gate's EXACT_SEGMENT: the ASCII letters and
 # digits, ., _, ~ and -.
 SEGMENT_CHARACTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-")
+# Check 7: the places at which segment_character_problems() puts each code point in a source, {} standing for it: at
+# the start, inside and at the end of a segment, and inside a segment that is not the last, so that a widening or a
+# narrowing of EXACT_SEGMENT, or of the test that applies it, at only 1 place in a segment, such as a leading !, fails.
+# Each place leaves at least 2 other characters in its segment, so that no source is a segment "." or "..".
+SEGMENT_PLACES = ("/assets/{}qzold.svg", "/assets/qz{}old.svg", "/assets/qzold.svg{}", "/qz{}/old.svg")
 
 
 def segment_character_problems(loader=load_gate) -> list[str]:
-    """The gate's exact_path_problem() passes the source /assets/qz<c>old.svg for exactly the code points c of
-    SEGMENT_CHARACTERS, of every code point but /, which ends a segment, so that EXACT_SEGMENT, or the test that applies
-    it, cannot be widened or narrowed with every case passing. It names at most the first 10 code points it gets
-    wrong, and the number of the rest."""
+    """The gate's exact_path_problem() passes the source that each place of SEGMENT_PLACES gives with the code point c
+    for exactly the code points c of SEGMENT_CHARACTERS, of every code point but /, which ends a segment, so that
+    EXACT_SEGMENT, or the test that applies it, cannot be widened or narrowed at any of those places with every case
+    passing. It names at most the first 10 sources it gets wrong, by code point and then by place, and the number of
+    the rest."""
     try:
         gate = loader()
-        wrong = [code for code in range(0x110000) if code != 0x2F and
-                 (gate.exact_path_problem(f"/assets/qz{chr(code)}old.svg") is None) != (chr(code) in SEGMENT_CHARACTERS)]
+        wrong = [(place, code) for code in range(0x110000) if code != 0x2F for place in SEGMENT_PLACES
+                 if (gate.exact_path_problem(place.format(chr(code))) is None) != (chr(code) in SEGMENT_CHARACTERS)]
     except (Exception, SystemExit) as error:
         return [f"exact_path_problem() could not be read from tools/{GATE.name}: {error!r}"]
-    return ([f"exact_path_problem() {'refuses' if chr(code) in SEGMENT_CHARACTERS else 'passes'} a segment that holds "
-             f"U+{code:04X}" for code in wrong[:10]]
-            + ([f"exact_path_problem() also gets {len(wrong) - 10} more code points wrong"] if len(wrong) > 10 else []))
+    return ([f"exact_path_problem() {'refuses' if chr(code) in SEGMENT_CHARACTERS else 'passes'} the source "
+             + place.format(f"<U+{code:04X}>") for place, code in wrong[:10]]
+            + ([f"exact_path_problem() also gets {len(wrong) - 10} more sources wrong"] if len(wrong) > 10 else []))
+
+
+def segment_stand_in(pattern: str):
+    """A loader of a stand-in for the gate whose exact_path_problem() passes a source that starts with / exactly when
+    each of its segments is a full match of pattern."""
+    segment = re.compile(pattern)
+
+    def exact_path_problem(source: str) -> str | None:
+        segments = source.split("/")
+        return None if segments[0] == "" and all(map(segment.fullmatch, segments[1:])) else "a stand-in refusal"
+    return lambda: types.SimpleNamespace(exact_path_problem=exact_path_problem)
+
+
+# Stand-ins for the gate that get sources wrong, each with the problems that segment_character_problems() must
+# return for it, in order: 1 wrong source, which the report names; 4; and 12, of which it names the first 10 and the
+# number of the rest.
+SEGMENT_REPORT_CASES = (
+    ("a gate that also passes ! at the start of a segment", r"!?[A-Za-z0-9._~-]+",
+     ["exact_path_problem() passes the source /assets/<U+0021>qzold.svg"]),
+    ("a gate that refuses ~", r"[A-Za-z0-9._-]+",
+     ["exact_path_problem() refuses the source " + place.format("<U+007E>") for place in SEGMENT_PLACES]),
+    ("a gate that also passes !, # and $", r"[A-Za-z0-9._~!#$-]+",
+     ["exact_path_problem() passes the source " + place.format(f"<U+{code:04X}>")
+      for code in (0x21, 0x23, 0x24) for place in SEGMENT_PLACES][:10]
+     + ["exact_path_problem() also gets 2 more sources wrong"]),
+)
+
+
+def segment_report_problems() -> list[str]:
+    """A problem for each case of SEGMENT_REPORT_CASES for which segment_character_problems(), given the case's stand-in
+    for the gate, does not return exactly the case's problems, so that its report of the sources it gets wrong cannot
+    be dropped or cut unnoticed, and nor can a place of SEGMENT_PLACES; and 1 unless it returns none for a stand-in
+    that passes exactly SEGMENT_CHARACTERS."""
+    problems: list[str] = []
+    for name, pattern, expected in (("a gate that passes exactly SEGMENT_CHARACTERS", r"[A-Za-z0-9._~-]+", []),
+                                    *SEGMENT_REPORT_CASES):
+        found = segment_character_problems(segment_stand_in(pattern))
+        if found != expected:
+            problems.append(f"segment_character_problems(), given {name}, returns {found!r}, not {expected!r}")
+    return problems
 
 
 def end_tag_problems(loader=load_gate) -> list[str]:
@@ -3375,17 +3437,164 @@ def folds_letter_case(folder: Path) -> bool:
     return False
 
 
-def case_twins(root: Path) -> list[str]:
+TWINNED = frozenset(case[0] for case in CASE_FOLDER_CASES)
+
+
+def letter_case_skip(name: str, scratch: Path, probe=folds_letter_case) -> str | None:
+    """Why main() does not run the case name in its scratch folder, or None if it runs it: FOLDED when the case is of
+    CASE_FOLDER_CASES and probe(scratch) finds that the file system there treats 2 names that differ only in letter
+    case as 1. No other case is probed, and any OSError of the probe passes through."""
+    if name in TWINNED and probe(scratch):
+        return FOLDED
+    return None
+
+
+def raise_error(error: OSError) -> None:
+    """The onerror of case_twins()'s os.walk(): a folder that cannot be listed raises its OSError."""
+    raise error
+
+
+def case_twins(root: Path, walk=os.walk) -> list[str]:
     """Each pair of entries of 1 folder under root whose names differ only in letter case, read with
-    str.casefold(), as their 2 paths from root; os.walk() enters no link."""
+    str.casefold(), 2 folders, 2 files or a folder and a file, as their 2 paths from root; os.walk() enters no link.
+    A folder that cannot be listed raises its OSError, so that no twins below it go unread."""
     twins: list[str] = []
-    for folder, folders, files in os.walk(root):
+    for folder, folders, files in walk(root, onerror=raise_error):
         first: dict[str, str] = {}
         for name in sorted(folders + files):
             kept = first.setdefault(name.casefold(), name)
             if kept != name:
                 twins.append(f"{Path(folder, kept).relative_to(root)} and {Path(folder, name).relative_to(root)}")
     return twins
+
+
+def twin_problems(name: str, twins: list[str]) -> list[str]:
+    """Why the case name, whose copy holds twins (case_twins()), does not hold to CASE_FOLDER_CASES: a case outside it
+    whose copy holds twins, or a case of it whose copy holds none."""
+    if twins and name not in TWINNED:
+        return [f"{name}: its copy holds {'; '.join(twins)}, whose names differ only in letter case, but it is not of "
+                "CASE_FOLDER_CASES, which main() skips where the file system treats such names as 1"]
+    if name in TWINNED and not twins:
+        return [f"{name}: its copy holds no 2 names that differ only in letter case"]
+    return []
+
+
+class StandInFolder:
+    """A stand-in for a folder for folds_letter_case(): it holds the names made in it, and treats 2 names that differ
+    only in letter case as 1 when folding is true."""
+
+    def __init__(self, folding: bool):
+        self.folding = folding
+        self.names: set[str] = set()
+
+    def key(self, name: str) -> str:
+        return name.casefold() if self.folding else name
+
+    def __truediv__(self, name: str):
+        folder = self
+
+        class Entry:
+            def mkdir(self) -> None:
+                if folder.key(name) in {folder.key(held) for held in folder.names}:
+                    raise FileExistsError(name)
+                folder.names.add(name)
+
+            def rmdir(self) -> None:
+                folder.names.remove(name)
+        return Entry()
+
+
+def stand_in_walk(*listings):
+    """A stand-in for os.walk() that yields each of listings, a (folder, folders, files) triple, and then, if it is
+    given an onerror, calls it with an OSError for a folder that it cannot list, as os.walk() does."""
+    def walk(root, onerror=None):
+        for folder, folders, files in listings:
+            yield str(root / folder), list(folders), list(files)
+        if onerror is not None:
+            onerror(PermissionError(13, "Permission denied", str(root / "locked")))
+    return walk
+
+
+def letter_case_problems() -> list[str]:
+    """A problem unless folds_letter_case() gives True for a stand-in folder that treats 2 names that differ only in
+    letter case as 1 and False for 1 that does not, leaving each as it was, and on a scratch folder of this file
+    system gives what a 2nd look gives: whether a folder made as qzcase is found as QZCASE; unless letter_case_skip()
+    gives FOLDED for each case of CASE_FOLDER_CASES with a probe that finds folding, None with a probe that does not,
+    lets a probe's OSError through, and gives None for a case outside it without calling the probe; unless
+    case_twins() finds 2 folders, 2 files, and a folder and a file whose names differ only in letter case, finds none
+    in names that differ otherwise, and raises the OSError of a folder that it cannot list; and unless twin_problems()
+    rejects twins outside CASE_FOLDER_CASES and a case of it without twins, and passes the others."""
+    problems: list[str] = []
+    for folding in (True, False):
+        folder = StandInFolder(folding)
+        try:
+            found = folds_letter_case(folder)
+        except OSError as error:
+            found = repr(error)
+        if found is not folding or folder.names:
+            problems.append(f"folds_letter_case() gives {found!r} for a stand-in folder whose folding is {folding} and "
+                            f"leaves it holding {sorted(folder.names)}")
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            found = folds_letter_case(Path(scratch))
+            left = sorted(os.listdir(scratch))
+            (Path(scratch) / "qzcase").mkdir()
+            seen = (Path(scratch) / "QZCASE").is_dir()
+        except OSError as error:
+            problems.append(f"folds_letter_case() could not be checked on a scratch folder: {error}")
+        else:
+            if found != seen or left:
+                problems.append(f"folds_letter_case() gives {found} for a scratch folder in which a folder made as "
+                                f"qzcase is{'' if seen else ' not'} found as QZCASE, and leaves it holding {left}")
+    twinned, other = sorted(TWINNED), CASES[0][0]
+    asked: list[Path] = []
+
+    def probe(answer):
+        def check(scratch: Path) -> bool:
+            asked.append(scratch)
+            return answer
+        return check
+
+    def failing(scratch: Path) -> bool:
+        raise PermissionError(13, "Permission denied", str(scratch))
+
+    for name, answer, expected in [(name, answer, FOLDED if answer else None) for name in twinned
+                                   for answer in (True, False)] + [(other, True, None)]:
+        asked.clear()
+        found = letter_case_skip(name, Path("scratch"), probe(answer))
+        if found != expected or asked != ([Path("scratch")] if name in TWINNED else []):
+            problems.append(f"letter_case_skip() gives {found!r} for {name} with a probe that gives {answer}, not "
+                            f"{expected!r}, having probed {asked}")
+    try:
+        letter_case_skip(twinned[0], Path("scratch"), failing)
+        problems.append(f"letter_case_skip() lets no OSError through from a probe that raises it for {twinned[0]}")
+    except PermissionError:
+        pass
+    root = Path("copy")
+    for listing, expected in (
+            (("site", ["QZM", "qzm"], []), ["site/QZM and site/qzm"]),
+            (("site", [], ["QZF.txt", "qzf.txt"]), ["site/QZF.txt and site/qzf.txt"]),
+            (("site", ["QZD"], ["qzd"]), ["site/QZD and site/qzd"]),
+            (("site", ["qzm", "qzn"], ["qzm.txt", "QZN.svg"]), [])):
+        walk = stand_in_walk(listing)
+        try:
+            found = case_twins(root, lambda root, onerror=None: walk(root))
+        except OSError as error:
+            found = repr(error)
+        if found != expected:
+            problems.append(f"case_twins() gives {found!r} for a folder that holds {listing[1:]}, not {expected!r}")
+    try:
+        found = case_twins(root, stand_in_walk(("site", ["qzm"], [])))
+        problems.append(f"case_twins() gives {found!r} where a folder cannot be listed, not its OSError")
+    except PermissionError:
+        pass
+    for name, twins, count in ((other, ["site/QZT and site/qzt"], 1), (other, [], 0),
+                               (twinned[0], ["site/assets/QZM and site/assets/qzm"], 0), (twinned[0], [], 1)):
+        found = twin_problems(name, twins)
+        if len(found) != count or not all(problem.startswith(f"{name}: its copy holds ") for problem in found):
+            problems.append(f"twin_problems() gives {found!r} for {name} with the twins {twins}, not {count} problem"
+                            f"{'' if count == 1 else 's'}")
+    return problems
 
 
 def main() -> int:
@@ -3429,30 +3638,30 @@ def main() -> int:
     for name, _, words in RESIDUALS:
         if words not in doc:
             failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
+    failures += [f"the letter-case guard: {problem}" for problem in letter_case_problems()]
+    failures += [f"the segment report: {problem}" for problem in segment_report_problems()]
     skipped = [(name, ROOT_READS) for name in SKIPPED]
-    twinned = {case[0] for case in CASE_FOLDER_CASES}
-    for name, fault, expected in ([] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]):
+    run = [] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]
+    unrun: list[tuple[str, str | None]] = []
+    for name, fault, expected in run:
         with tempfile.TemporaryDirectory() as scratch:
-            folded = False
-            if name in twinned:
-                try:
-                    folded = folds_letter_case(Path(scratch))
-                except OSError as error:
-                    failures.append(f"{name}: folds_letter_case() could not probe its scratch folder: {error}")
-                    continue
-            if folded:
-                skipped.append((name, FOLDED))
+            try:
+                reason = letter_case_skip(name, Path(scratch))
+            except OSError as error:
+                failures.append(f"{name}: folds_letter_case() could not probe its scratch folder: {error}")
+                continue
+            if reason is not None:
+                unrun.append((name, reason))
                 continue
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
-            twins = case_twins(root)
-            if twins and name not in twinned:
-                failures.append(f"{name}: its copy holds {'; '.join(twins)}, whose names differ only in letter case, "
-                                "but it is not of CASE_FOLDER_CASES, which main() skips where the file system treats "
-                                "such names as 1")
-            elif name in twinned and not twins:
-                failures.append(f"{name}: its copy holds no 2 names that differ only in letter case")
+            try:
+                twins = case_twins(root)
+            except OSError as error:
+                failures.append(f"{name}: case_twins() could not list a folder of its copy: {error}")
+                continue
+            failures += twin_problems(name, twins)
             command = [sys.executable, "-I", str(root / "tools" / GATE.name)]
             if name in PROBED:
                 probe, paths = PROBED[name]
@@ -3463,6 +3672,11 @@ def main() -> int:
             if result.returncode != code or words not in result.stdout + result.stderr:
                 failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
+    for name, reason in unrun:
+        if name not in TWINNED or reason != FOLDED:
+            failures.append(f"{name}: main() did not run it, with the reason {reason!r}, but only a case of "
+                            "CASE_FOLDER_CASES may go unrun, with the reason FOLDED")
+    skipped += unrun
     for name, reason in skipped:
         print(f"test-install-page: skipped {name}: {reason}")
     if failures:
@@ -3477,7 +3691,8 @@ def main() -> int:
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
-          f"redirect_break(), the segment characters of exact_path_problem(), the workflow's path "
+          f"redirect_break(), the segment characters of exact_path_problem() at {len(SEGMENT_PLACES)} places, the "
+          f"{len(SEGMENT_REPORT_CASES) + 1} cases of its report, the letter-case guard, the workflow's path "
           f"lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "

@@ -253,9 +253,11 @@ What it verifies
    ``/assets/`` fails, 1 for an exact path that the redirect reading below
    accepts as a source included.
    ``site/_redirects`` is read by ``redirect_problems``, rule by rule,
-   because a redirect sends the reader away from the page and a
-   rewrite (status 200) serves other content at its address, and the same
-   holds for a stylesheet, a script, a font or an image; a blank line, and a
+   because a redirect of an install page can send the reader away from the
+   page and a rewrite (status 200) can serve other content at its address,
+   and a redirect or a rewrite of a stylesheet, a script, a font or an
+   image that a page loads can make the browser load other content in its
+   place, while the reader stays on the page; a blank line, and a
    line whose first field starts with ``#``, is skipped. Its lines end only
    at a line feed, and a line that holds a control character other than the
    line feed (a carriage return, a vertical tab and a form feed among them),
