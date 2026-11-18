@@ -7,7 +7,7 @@
 # bits the repository never recorded), so a check that read them would pass on
 # one machine and fail on another. The git tree is identical everywhere the
 # commit exists, and the archive is stamped from the commit and ordered, so
-# the same commit rebuilt with the same zip implementation gives the same
+# the same commit rebuilt with the same zip binary gives the same
 # bytes and checksum; different zip builds can differ, so a digest is
 # comparable only between builds made with the same zip binary.
 #
@@ -43,22 +43,81 @@
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Stages the package from git archive, removes both plugin manifests, which
-#      ship through the marketplace rather than the zip, restores SKILL.md and
-#      references/ from skills/cleanlanguage/ to the archive root, and zips the
-#      files at the archive ROOT (SKILL.md, agents/, assets/, references/,
-#      LICENSE, NOTICE.md), with no cleanlanguage/ prefix, so the zip holds
-#      exactly what git records under cleanlanguage/, licence files included,
-#      minus both manifests and the skills/cleanlanguage/ nesting, whatever
-#      state the checkout is in.
+#   5. Lays out the package from git archive in src/ of its work folder,
+#      removes both plugin manifests, which ship through the marketplace
+#      rather than the zip, restores SKILL.md and references/ from
+#      skills/cleanlanguage/ to the archive root, and zips the files at the
+#      archive ROOT (SKILL.md, agents/, assets/, references/, LICENSE,
+#      NOTICE.md), with no cleanlanguage/ prefix, so the zip holds exactly
+#      what git records under cleanlanguage/, licence files included, minus
+#      both manifests and the skills/cleanlanguage/ nesting, whatever state
+#      the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, excluding the plugin manifest, and verifies every
 #      archived file's bytes against its git blob under cleanlanguage/, so a
 #      git attribute such as export-subst cannot change the shipped bytes
 #      unnoticed.
+#   7. Moves the 2 verified zips into dist/, then their .sha256 files. Steps 5
+#      and 6 run in 1 work folder that the build makes in dist/ with mktemp
+#      (dist/.release-package.XXXXXX, mode 0700), so no unverified output
+#      ever sits under an output name in dist/.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
-# .sha256 beside each. It never tags, pushes, or talks to the network.
+# .sha256 beside each, only after every check passes.
+#
+# What it removes. Recursively, it removes only its own work folder, by the
+# path that mktemp gave in this run; it never removes recursively a folder
+# that it did not make in this run. Non-recursively, it removes each regular
+# file in dist/ named cleanlanguage.zip or cleanlanguage-X.Y.Z.zip (X, Y and
+# Z each 1 or more ASCII digits) or the .sha256 of either, before every
+# check but the refusal of a linked or non-folder dist, and again on a
+# failed exit, so that a refused build leaves no zip and no .sha256 that a
+# reader could take for its own. It keeps every other entry of dist/,
+# among them a folder with a work-folder name (.release-package. and 6
+# characters) that an earlier build left: it removes such a folder only
+# when this run made it. It makes dist/ before it lays out the package, so a
+# build that fails after that point and started with no dist/ leaves an
+# empty dist/.
+#
+# What it refuses, each with exit 1 and a message: a dist that is a
+# symbolic link or that exists and is not a folder, before it removes
+# anything; a removal at the start that fails; an object other than a
+# regular file at 1 of the 4 names it writes, once it knows the version
+# and before it makes dist/ or its work folder; and a dist that is a
+# symbolic link after it makes dist/. It moves each output from its work
+# folder to the folder that holds the work folder, so the outputs land
+# beside the folder that this run made; if that folder is no longer at the
+# path that mktemp gave, the move fails, and so does the build.
+#
+# What it does not defend against, by decision: another process of the
+# same user that renames or replaces dist/, the work folder or an entry of
+# either while the build runs. Such a process can write to dist/ directly,
+# and the packager reaches dist/ and its work folder by their paths, which
+# such a process can change between 2 uses, so a use can reach another
+# folder than the one that a check just before saw. The packager makes no
+# claim for that case.
+#
+# A signal whose default action ends a process ends the build with exit 128
+# plus the signal's number, such as 129, 130 or 143 for SIGHUP, SIGINT or
+# SIGTERM, once the command in progress has ended, and counts as a failed
+# exit, unless the signal was ignored when the build started (as SIGHUP is
+# under nohup): bash cannot trap such a signal, so it does not end the
+# build. A signal whose name the kill -l of the running shell does not
+# know is left out of the traps, rather than ending the build at its
+# start (see the traps below). The exit trap ignores the trapped signals
+# while it runs, so 1 that arrives then leaves the exit code as it was,
+# and its own commands inherit that, so 1 sent to the whole process group
+# cannot end them either. A signal that arrives before the exit trap is
+# set, when the build has removed and written nothing, leaves dist/ as it
+# was. A refused build therefore leaves in dist/ no zip
+# and no .sha256, unless a removal itself fails: the build then still
+# fails, and an output that it could not remove stays. 3 signals that end
+# a process run no trap: SIGKILL, which no process can trap, and signals 32
+# and 33, which the C library keeps for its own use, so that a trap that
+# bash sets for them does not take effect. Such a signal can leave the work
+# folder in dist/ and, during the moves, a zip without its .sha256; the
+# next build removes such outputs and keeps the folder.
+# It never tags, pushes, or talks to the network.
 #
 # Usage:
 #   tools/release-package.sh                 Build and verify at HEAD.
@@ -71,8 +130,78 @@
 # Exit codes:
 #   0  built and verified
 #   1  a validation or layout check failed
+#   128 + n      ended by the signal numbered n, from 129 to 192, such as
+#                129, 130 and 143 for SIGHUP, SIGINT and SIGTERM, unless
+#                that signal was ignored when the build started
+#   other codes  the exit code of a command that failed, such as zip, mv
+#                or git, which set -e passes through unchanged and the
+#                exit trap keeps; such a command can also give 1 or 1 of
+#                the codes from 129 to 192
 
 set -euo pipefail
+
+# Glob and match options can come from the environment (BASHOPTS or
+# SHELLOPTS) or from a file that BASH_ENV names: failglob would end the
+# removal below at a glob that matches nothing, noglob would hide the
+# entries of dist/ from it, and nocasematch would let its name test match
+# a name in another letter case. A GLOBIGNORE that the shell assigns drops
+# the names it matches from what a glob gives. Bash 5.3.9 does not apply a
+# GLOBIGNORE taken from the environment, but it does apply one that a
+# BASH_ENV file assigns. So GLOBIGNORE is unset and these options are set
+# here: the glob * in dist/ gives the entries of dist/, names that start
+# with a dot included, and the name test alone chooses what is removed. With
+# no entry in dist/, the glob gives the word * itself, which the name test
+# does not match and which is not a file, so the removal
+# does nothing, as it would with nullglob. CDPATH is unset as well, so that
+# cd enters the folder that its relative name gives here, not 1 that CDPATH
+# gives. An option that the running shell does not know cannot be on, so it
+# is left alone rather than ending the build under set -e, as a signal name
+# that the shell does not know is below; shopt -p prints a line only for an
+# option that the shell knows, and each such option is turned off.
+unset GLOBIGNORE CDPATH
+set +f
+for shell_option in extglob failglob globstar nocaseglob nocasematch; do
+  if [ -n "$(shopt -p "${shell_option}" 2>/dev/null)" ]; then
+    shopt -u "${shell_option}"
+  fi
+done
+shopt -s dotglob
+
+# Without a trap, bash meets a signal whose default action ends a process
+# in 1 of 3 ways, none of them a failed exit that the exit trap below can
+# rely on: it ends at once and runs no exit trap; it runs the exit trap at
+# once, with the status of the last command, which is 0 after a command
+# that succeeded, so that the trap reads a good exit, while a command in
+# progress, such as a move into dist/, still runs; or, for SIGINT and
+# SIGQUIT that arrive while a command runs, it can go on with the build. So
+# each such signal that bash can trap exits with 128 plus its number; bash
+# runs such a trap once the command in progress has ended. They are the
+# signals from 1 to the last real-time signal, except SIGKILL, which no
+# process can trap; SIGSTOP, SIGTSTP, SIGTTIN and SIGTTOU, which stop a
+# process; SIGCHLD, SIGCONT, SIGURG and SIGWINCH, which do not end one; and
+# signals 32 and 33, for which a trap does not take effect. The exit trap
+# ignores the signals of signal_numbers while it runs. The numbers come
+# from the kill -l of the running shell, and a name that it does not know
+# is left out rather than ending the build under set -e: not every
+# platform has SIGSTKFLT, SIGPWR or the real-time signals, whose range is
+# left out unless the shell knows both SIGRTMIN and SIGRTMAX. POSIX
+# requires every shell to know SIGHUP, SIGINT and SIGTERM, so the list is
+# never empty.
+signal_numbers=()
+for signal_name in HUP INT QUIT ILL TRAP ABRT BUS FPE USR1 SEGV USR2 PIPE \
+  ALRM TERM STKFLT XCPU XFSZ VTALRM PROF IO PWR SYS; do
+  if signal_number="$(kill -l "${signal_name}" 2>/dev/null)"; then
+    signal_numbers+=("${signal_number}")
+  fi
+done
+if first_signal="$(kill -l RTMIN 2>/dev/null)" && last_signal="$(kill -l RTMAX 2>/dev/null)"; then
+  for ((signal_number = first_signal; signal_number <= last_signal; signal_number++)); do
+    signal_numbers+=("${signal_number}")
+  done
+fi
+for signal_number in "${signal_numbers[@]}"; do
+  trap "exit $((128 + signal_number))" "${signal_number}"
+done
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -80,6 +209,84 @@ fail() {
   printf 'release-package: %s\n' "$1" >&2
   exit 1
 }
+
+# A dist that is a symbolic link would send every removal and every output to
+# wherever it points, which may lie outside this checkout, and a dist that is
+# a file cannot hold the outputs, so both are refused before anything is
+# removed.
+if [ -L dist ]; then
+  fail "dist is a symbolic link; the packager writes only into a real dist/ folder"
+elif [ -e dist ] && [ ! -d dist ]; then
+  fail "dist exists and is not a folder"
+fi
+
+# Remove each regular file in dist/ with an output name, and nothing else: no
+# folder, no symbolic link and no entry of any other name, so a folder with
+# a work-folder name that an earlier build left stays. An output name is
+# cleanlanguage.zip, cleanlanguage-X.Y.Z.zip or the .sha256 of either, where
+# X, Y and Z are 1 or more ASCII digits. The name test lists each digit, not
+# a range such as [0-9]: a range in a bash =~ test follows the locale, and
+# under LC_ALL=en_US.UTF-8 it also takes digits outside ASCII, such as an
+# Arabic-Indic digit. The removal enters dist/ once, in a subshell, and
+# removes each entry by its name there; rm -f removes a symbolic link put at
+# that name in between without following it. Each removal is tried, so a
+# failed removal does not stop the others; the status is 1 if 1 or more
+# failed or cd cannot enter dist/. With no dist/ folder there is nothing to
+# remove.
+remove_outputs() {
+  local output_name='^cleanlanguage(-[0123456789]+\.[0123456789]+\.[0123456789]+)?\.zip(\.sha256)?$'
+  { [ -d dist ] && [ ! -L dist ]; } || return 0
+  (
+    cd -P -- ./dist || exit 1
+    rc=0
+    for name in *; do
+      if [[ "${name}" =~ ${output_name} ]] && [ -f "./${name}" ] && [ ! -L "./${name}" ]; then
+        rm -f -- "./${name}" || rc=1
+      fi
+    done
+    exit "${rc}"
+  )
+}
+
+# The path of the 1 work folder of this run, as mktemp gave it; empty until
+# mktemp has made it.
+work=""
+# On each exit that runs this trap (SIGKILL and signals 32 and 33 do not):
+# on a failed exit, which includes an exit through 1 of the signal traps
+# above, remove the outputs in dist/ again, so that a failure during the
+# first removal below or during the moves leaves none, unless a removal
+# fails; then, on any exit, remove the work folder of this run by the path
+# that mktemp gave. This rm -rf is the only recursive removal of the
+# packager. Each removal runs whatever the one before it returned, since a
+# failed command would otherwise end the trap under set -e; what a failed
+# removal leaves stays, and the build keeps its exit code, 0 included. The
+# trap ignores the signals that the traps above catch while it runs, so 1
+# of them cannot cut its removals short: the subshell and the rm of each
+# removal inherit an ignored signal, while a handler, even 1 that does
+# nothing, would be reset to the default action in them, and a signal
+# sent to the whole process group would end them. It ends with the build's
+# own exit code. It is set before the first removal, so a signal that ends
+# that removal half done still has the rest of the outputs removed.
+cleanup() {
+  local rc=$?
+  trap '' "${signal_numbers[@]}"
+  if [ "${rc}" -ne 0 ]; then
+    remove_outputs || true
+  fi
+  if [ -n "${work}" ]; then
+    rm -rf -- "${work}" || true
+  fi
+  exit "${rc}"
+}
+trap cleanup EXIT
+
+# Remove an earlier build's outputs directly after the refusal of a linked or
+# non-folder dist and before every other check, so a build refused at a
+# later check does not leave them in dist/ for a reader to take for its
+# own. A failed removal ends the build here; the exit trap then tries the
+# removal of each output once more, and what neither could remove stays.
+remove_outputs \
+  || fail "could not remove every earlier output from dist/; any it could not remove is still there"
 
 tag=""
 release_date=""
@@ -144,6 +351,20 @@ fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
+# The outputs reach dist/ by a rename, which replaces whatever holds the
+# name, and the exit trap then removes what it moved there. The removal above
+# has removed every regular file at an output name, or the build has exited,
+# so an object still at an output name is one that the packager does not
+# write: a symbolic link (followed or not), folder, FIFO or other special
+# file at 1 of the 4 names this build writes is refused here, before the
+# build makes dist/ or its work folder or writes anything to dist/, and is
+# left as it is.
+for path in dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip" \
+  dist/cleanlanguage.zip.sha256 "dist/cleanlanguage-${version}.zip.sha256"; do
+  if [ -L "${path}" ] || { [ -e "${path}" ] && [ ! -f "${path}" ]; }; then
+    fail "${path} exists and is not a regular file that the packager wrote; move it out of dist/ and build again"
+  fi
+done
 # The Released line (item 26), read from HEAD through the 1 shared strict
 # extractor, tools/skill-release-date.py, run in its --json mode by
 # tools/skill-release-date-client.py (row 89). The client gives a content
@@ -278,10 +499,10 @@ grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
 # inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
 # root so a marketplace install copies only the skill tree. The plugin
 # manifest therefore sits inside the tree this script archives, and the
-# staging step below deliberately keeps it out of the zip: the zip is the
-# skill artefact, and the plugin ships through the marketplace. The version,
-# name, and source checks run here because this is the script that runs at
-# release time. A version that disagrees with SKILL.md is exactly what would
+# layout step in the work folder below deliberately keeps it out of the
+# zip: the zip is the skill artefact, and the plugin ships through the
+# marketplace. The version, name, and source checks run here because this
+# is the script that runs at release time. A version that disagrees with SKILL.md is exactly what would
 # ship a plugin pinned to the wrong release, and a source that regresses to
 # "./" is exactly what would ship the whole repository. Read from the git
 # tree at HEAD, like everything else above, so a dirty working tree cannot
@@ -392,61 +613,78 @@ sys.exit(1 if bad else 0)
 ' || exit 1
 fi
 
-staging="$(mktemp -d)"
-trap 'rm -rf "${staging}"' EXIT
-git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
-# Keep the downloadable skill zip free of plugin metadata: the Claude manifest
-# (.claude-plugin/plugin.json) and the Agent Plugins manifest (the root
-# plugin.json) both ship through the marketplace install, never through the zip.
-# rmdir, not rm -rf, so an unexpected extra file under .claude-plugin/ fails the
-# build loudly instead of being discarded.
-rm "${staging}/cleanlanguage/plugin.json"
-rm "${staging}/cleanlanguage/.claude-plugin/plugin.json"
-rmdir "${staging}/cleanlanguage/.claude-plugin"
+# The work folder: 1 folder that this run makes in dist/ with mktemp, mode
+# 0700, on the filesystem of dist/, so that each move into dist/ is a
+# rename. dist/ is made here, before the layout, and a dist that is a
+# symbolic link at this point is refused before mktemp runs. The layout
+# goes in src/ of the work folder and the outputs beside src/. The exit
+# trap removes the work folder by the path that mktemp gave.
+mkdir -p dist
+[ ! -L dist ] || fail "dist is a symbolic link; the packager writes only into a real dist/ folder"
+work="$(mktemp -d "${PWD}/dist/.release-package.XXXXXX")"
+mkdir "${work}/src"
+git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${work}/src"
+# Keep the downloadable skill zip free of plugin metadata: the Claude
+# manifest (.claude-plugin/plugin.json) and the Agent Plugins manifest (the
+# root plugin.json) both ship through the marketplace install, never
+# through the zip. rmdir, not rm -rf, so an unexpected extra file under
+# .claude-plugin/ fails the build loudly instead of being discarded.
+rm "${work}/src/cleanlanguage/plugin.json"
+rm "${work}/src/cleanlanguage/.claude-plugin/plugin.json"
+rmdir "${work}/src/cleanlanguage/.claude-plugin"
 # The source keeps SKILL.md and references/ under skills/cleanlanguage/ for
 # Agent Plugins discovery; Claude, ChatGPT, and Copilot Studio load the zip
 # only with SKILL.md at the archive root, so restore the root layout here.
 # rmdir, not rm -rf, so an unexpected extra entry under skills/ fails loudly.
-mv "${staging}/cleanlanguage/skills/cleanlanguage/SKILL.md" "${staging}/cleanlanguage/SKILL.md"
-mv "${staging}/cleanlanguage/skills/cleanlanguage/references" "${staging}/cleanlanguage/references"
-rmdir "${staging}/cleanlanguage/skills/cleanlanguage"
-rmdir "${staging}/cleanlanguage/skills"
-# LICENSE and NOTICE.md need no step here: git archive staged them from
-# cleanlanguage/. It applies export attributes, so a staged copy can differ
-# from the blob that the licence-copy check above proved equal to the root
-# file (an eol=crlf attribute writes CR LF, for example). The byte check below
-# compares each zip entry with its cleanlanguage/ blob and fails the build when
-# they differ.
+mv "${work}/src/cleanlanguage/skills/cleanlanguage/SKILL.md" "${work}/src/cleanlanguage/SKILL.md"
+mv "${work}/src/cleanlanguage/skills/cleanlanguage/references" "${work}/src/cleanlanguage/references"
+rmdir "${work}/src/cleanlanguage/skills/cleanlanguage"
+rmdir "${work}/src/cleanlanguage/skills"
+# LICENSE and NOTICE.md need no step here: git archive laid them out in src/
+# from cleanlanguage/. It applies export attributes, so a copy in src/ can
+# differ from the blob that the licence-copy check above proved equal to the
+# root file (an eol=crlf attribute writes CR LF, for example). The byte check
+# below compares each zip entry with its cleanlanguage/ blob and fails the
+# build when they differ.
 
-# A byte-reproducible archive: stamp every staged path with the commit's own
-# timestamp, order the entries, and read the DOS times in UTC, so the same
-# commit always yields the same zip and therefore the same checksum, on any
-# machine and at any clock time. Without this a file staged by any step other
-# than git archive would carry the build clock, so a later rebuild of the same
-# commit would not match.
+# A byte-reproducible archive: stamp every path in src/ with the
+# commit's own timestamp, order the entries, and read the DOS times in UTC,
+# so the same commit always yields the same zip and therefore the same
+# checksum, on any machine and at any clock time. Without this a file
+# written to src/ by any step other than git archive would carry the build
+# clock, so a later rebuild of the same commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
 # files carry only regular content (the mode gate above rejects anything but
 # 100644), so normalize every directory to 0755 and every file to 0644. Zip
 # records the Unix mode in each entry, so without this an ambient umask would
 # change the central-directory bytes and the checksum for the same commit.
-find "${staging}" -type d -exec chmod 755 {} +
-find "${staging}" -type f -exec chmod 644 {} +
-find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
+(
+  cd -- "${work}/src"
+  find . -type d -exec chmod 755 {} +
+  find . -type f -exec chmod 644 {} +
+  find . -exec touch -h -d "@${commit_epoch}" {} +
+)
 
-rm -rf dist
-mkdir -p dist
-dist_dir="$(pwd)/dist"
 # Clear ZIP and ZIPOPT so an ambient option (for example ZIPOPT=-0) cannot
 # change the archive bytes; -D omits directory records (whose modes and order
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
-# bytes at any clock time and umask, given the same zip implementation.
-(cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
-  | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${dist_dir}/cleanlanguage.zip")
-cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
-(cd dist && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
-(cd dist && sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256")
+# bytes at any clock time and umask, given the same zip binary. zip reads
+# the files in src/cleanlanguage/ and writes the archive beside src/ in the
+# work folder, where the build also makes the version-named copy and both
+# .sha256 files; the checks below read that staged zip.
+(
+  cd -- "${work}/src/cleanlanguage"
+  find . -type f -printf '%P\n' | LC_ALL=C sort \
+    | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${work}/cleanlanguage.zip"
+)
+(
+  cd -- "${work}"
+  cp cleanlanguage.zip "cleanlanguage-${version}.zip"
+  sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256
+  sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256"
+)
 
 expected="$(
   {
@@ -457,7 +695,7 @@ expected="$(
       | sed 's#^cleanlanguage/##'
   } | LC_ALL=C sort
 )"
-actual="$(unzip -Z1 dist/cleanlanguage.zip | grep -v '/$' | LC_ALL=C sort)"
+actual="$(unzip -Z1 "${work}/cleanlanguage.zip" | grep -v '/$' | LC_ALL=C sort)"
 if [ "${expected}" != "${actual}" ]; then
   echo "release-package: the archive entry list does not match the git tree:" >&2
   diff <(printf '%s\n' "${expected}") <(printf '%s\n' "${actual}") >&2 || true
@@ -477,18 +715,19 @@ fi
 grep -qx 'SKILL.md' <<< "${actual}" \
   || fail "SKILL.md is not at the archive root"
 
-# The source nests the skill under skills/cleanlanguage/; the staging step above
-# re-roots it, so a surviving skills/ entry means that re-root was dropped.
+# The source nests the skill under skills/cleanlanguage/; the layout step in
+# the work folder above re-roots it, so a surviving skills/ entry means
+# that re-root was dropped.
 if grep -q '^skills/' <<< "${actual}"; then
   echo "release-package: the archive must not carry a skills/ subtree" >&2
   exit 1
 fi
 
 # The entry-list check above already excludes the plugin manifest, but a
-# coordinated revert of the staging rm and the expected-list filter would put
-# the manifest in both lists and slip past it, the same shape the root-layout
-# check above guards for its own pair of lines. This proves the shipped zip
-# itself carries no plugin metadata.
+# coordinated revert of the rm in the work folder and the expected-list
+# filter would put the manifest in both lists and slip past it, the same
+# shape the root-layout check above guards for its own pair of lines. This
+# proves the shipped zip itself carries no plugin metadata.
 if grep -q '^\.claude-plugin/' <<< "${actual}"; then
   echo "release-package: the plugin manifest must not ship in the skill zip" >&2
   exit 1
@@ -510,13 +749,29 @@ while IFS= read -r entry; do
     references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;
   esac
-  if ! cmp -s <(unzip -p dist/cleanlanguage.zip "${entry}") <(git cat-file blob "${blob}"); then
+  if ! cmp -s <(unzip -p "${work}/cleanlanguage.zip" "${entry}") <(git cat-file blob "${blob}"); then
     echo "release-package: archived ${entry} differs from its git blob (${blob})" >&2
     exit 1
   fi
 done <<EOF_ENTRIES
 ${actual}
 EOF_ENTRIES
+
+# Every check passed. Move the 2 zips into dist/, then their .sha256 files, so a
+# .sha256 that a build moved into dist/ has its zip beside it, unless a
+# removal, at the start of a later build or in an exit trap, removed that
+# zip and then failed to remove the .sha256, or a signal that runs no trap
+# (SIGKILL, or signal 32 or 33) ended a later build during its first
+# removal. Each of the 4 moves is a rename from the work folder to the
+# folder that holds it, named as .. of the work folder,
+# so the outputs land beside the work folder of this run; if that folder is
+# no longer at the path that mktemp gave, the move fails. -T makes mv treat
+# the target as a name, never as a folder to move into, so a folder put at
+# an output name after the refusal above makes the move fail.
+for name in cleanlanguage.zip "cleanlanguage-${version}.zip" \
+  cleanlanguage.zip.sha256 "cleanlanguage-${version}.zip.sha256"; do
+  mv -fT -- "${work}/${name}" "${work}/../${name}"
+done
 
 echo "release-package: dist/cleanlanguage-${version}.zip built and verified for version ${version}."
 printf '%s\n' "${actual}" | sed 's/^/  /'
