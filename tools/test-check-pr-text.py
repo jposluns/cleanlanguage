@@ -459,18 +459,22 @@ def reached(tree, accepts):
     reference that binds the function to another name is found as well as a call: an attribute
     read, x.name, where module is the name x or a module that an import binds to x, such as
     subprocess for sp after import subprocess as sp, and None when x is not a name; and a name
-    read that from module import binds, such as run after from subprocess import run. The
-    imports are read in every scope of tree at once, not scope by scope, and a name that
-    imports bind to more than 1 module or function is tried with each, so an import in 1 scope
-    that binds the name to something else, such as import json as sp in a function that never
-    runs, does not hide the place; a read of the name in the scope where it means the other
-    binding is found too, a false failure that renaming the name ends. The place is given with
-    the first module or function that accepts takes, in sorted order. A function reached
-    otherwise is not found, such as through getattr, importlib, or a module bound to another
-    name by assignment. The pair is returned, not a dotted name, so the cases that compare it
-    hold no text that reads as such a place.
+    read that from module import binds, such as run after from subprocess import run, or that
+    from module import * can bind, such as run after from subprocess import *: each name read
+    is tried with each module that such a star import in tree names, whether or not the module
+    has that name. The imports are read in every scope of tree at once, not scope by scope, and
+    a name that imports bind to more than 1 module or function is tried with each, so an import
+    in 1 scope that binds the name to something else, such as import json as sp in a function
+    that never runs, does not hide the place; a read of the name in the scope where it means the
+    other binding is found too, a false failure that renaming the name ends. The place is given
+    with the first module or function that accepts takes, in sorted order: the first module
+    name for an attribute read, and the first (module, name) pair for a name read. A function
+    reached otherwise is not found, such as through getattr, importlib, or a module bound to
+    another name by assignment. The pair is returned, not a dotted name, so the cases that
+    compare it hold no text that reads as such a place.
     """
     modules, names = collections.defaultdict(set), collections.defaultdict(set)
+    starred = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -478,7 +482,10 @@ def reached(tree, accepts):
                 modules[alias.asname or top].add(alias.name if alias.asname else top)
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
-                names[alias.asname or alias.name].add((node.module, alias.name))
+                if alias.name == "*":
+                    starred.add(node.module)
+                else:
+                    names[alias.asname or alias.name].add((node.module, alias.name))
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute):
@@ -488,7 +495,8 @@ def reached(tree, accepts):
             if accepted:
                 found.append((node, (accepted[0], node.attr)))
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            accepted = [pair for pair in sorted(names.get(node.id, set())) if accepts(*pair)]
+            pairs = names.get(node.id, set()) | {(module, node.id) for module in starred}
+            accepted = [pair for pair in sorted(pairs) if accepts(*pair)]
             if accepted:
                 found.append((node, accepted[0]))
     return found
@@ -545,6 +553,16 @@ def uncalled(node):
     for child in ast.iter_child_nodes(node):
         found += uncalled(child)
     return found
+
+
+def probe_tree(text):
+    """The tree of text, a probe whose every line starts with "> ", read with that start cut.
+
+    The cases of the static helpers write each probe so: no probe parses as it stands, so
+    code_texts() passes it over, and the places it holds do not fail the static cases that read
+    the suite's source.
+    """
+    return ast.parse(re.sub(r"(?m)^> ", "", text))
 
 
 class GateCase(unittest.TestCase):
@@ -2013,12 +2031,12 @@ class OutputAndHonestTexts(GateCase):
         # finds in it, and fails on any other place that reached() finds there naming a
         # function of subprocess or os that starts_a_process() accepts: a call or any other
         # reference, through the module's name, a name that import binds to the module or a
-        # name that from ... import binds to the function, in any scope, so an import in another
-        # scope that binds the same name to another module does not hide it, as reached()
-        # states. A process started otherwise is not seen, such as through getattr, importlib,
-        # a module bound to another name by assignment or a module outside subprocess and os,
-        # such as asyncio, multiprocessing or pty, or from a text of code built otherwise than
-        # code_texts() reads.
+        # name that from ... import binds to the function or that from ... import * can bind
+        # to it, in any scope, so an import in another scope that binds the same name to
+        # another module does not hide it, as reached() states. A process started otherwise is
+        # not seen, such as through getattr, importlib, a module bound to another name by
+        # assignment or a module outside subprocess and os, such as asyncio, multiprocessing or
+        # pty, or from a text of code built otherwise than code_texts() reads.
         tree = ast.parse(SUITE.read_text(encoding="utf-8"))
         self.assertEqual([name for node, name in reached(tree, starts_a_process)],
                          [("subprocess", "Popen")])
@@ -2057,18 +2075,19 @@ class OutputAndHonestTexts(GateCase):
         # fails, so a later subtest that makes it again stops on FileExistsError before it runs
         # the gate. So each place in the suite's own code that names a function or method that
         # removes a file or folder, one of REMOVALS on any object or one that from ... import
-        # binds, in any scope, a call or any other reference, such as one that binds it to
-        # another name, is in a finally clause or is given to addCleanup, whose cleanup runs on
-        # every path, as its function or in its arguments outside every call there, since such
-        # a call runs when addCleanup is called, as run_on_every_path() states. The
-        # code that the suite runs in a child names 1 more, outside a finally clause: the child
-        # of test_removed_working_directory_exits_2 removes the folder it has just made its
-        # working directory, which is what that case checks; that folder is in the case's
-        # temporary folder, which the cleanup of setUp removes on every path. The check reads
-        # the suite's source and each text of code that code_texts() finds in it, through
-        # reached(), so any other such place in either fails it. A removal reached otherwise is
-        # not seen, such as through getattr, a function whose name is not in REMOVALS, or a
-        # text of code built otherwise than code_texts() reads.
+        # binds or from ... import * can bind, in any scope, a call or any other reference,
+        # such as one that binds it to another name, is in a finally clause or is given to
+        # addCleanup, whose cleanup runs on every path, as its function or in its arguments
+        # outside every call there, since such a call runs when addCleanup is called, as
+        # run_on_every_path() states. The code that the suite runs in a child names 1 more,
+        # outside a finally clause: the child of test_removed_working_directory_exits_2
+        # removes the folder it has just made its working directory, which is what that case
+        # checks; that folder is in the case's temporary folder, which the cleanup of setUp
+        # removes on every path. The check reads the suite's source and each text of code that
+        # code_texts() finds in it, through reached(), so any other such place in either fails
+        # it. A removal reached otherwise is not seen, such as through getattr, a function
+        # whose name is not in REMOVALS, or a text of code built otherwise than code_texts()
+        # reads.
         tree = ast.parse(SUITE.read_text(encoding="utf-8"))
         guarded = run_on_every_path(tree)
         self.assertEqual(["{}: {}".format(node.lineno, ast.unparse(node))
@@ -2076,6 +2095,99 @@ class OutputAndHonestTexts(GateCase):
                          [])
         self.assertEqual(embedded_places(tree, removes, run_on_every_path),
                          {"test_removed_working_directory_exits_2": [("os", "rmdir")]})
+
+    def test_import_in_another_scope_hides_no_place(self):
+        # reached() reads the imports of every scope at once and tries each binding of a name,
+        # so an import in a function that binds the name to another module or function, walked
+        # after the import that binds it to a launch or a removal, or sorted before it, does
+        # not hide the place, whether import or from ... import binds the name.
+        for label, text, accepts, expected in (
+                ("import", "> import subprocess as sp\n> def f():\n>     import json as sp\n"
+                 "> sp.run(['x'])\n", starts_a_process, [("subprocess", "run")]),
+                ("from import", "> from subprocess import run\n> def f():\n"
+                 ">     from json import run\n> run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
+                ("from import of a removal", "> from shutil import rmtree as rm\n> def f():\n"
+                 ">     from json import loads as rm\n> rm('p')\n", removes,
+                 [("shutil", "rmtree")])):
+            with self.subTest(binding=label):
+                self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
+                                 expected)
+
+    def test_place_is_given_with_its_first_accepted_binding(self):
+        # reached() gives a place with the first module, or the first (module, name) pair, that
+        # accepts takes, in sorted order, as its docstring states.
+        for label, text, expected in (
+                ("attribute read", "> import os as sp\n> sp.unlink('p')\n", [("os", "unlink")]),
+                ("name read", "> from shutil import remove\n> def f():\n"
+                 ">     from os import remove\n> remove('p')\n", [("os", "remove")])):
+            with self.subTest(read=label):
+                self.assertEqual([name for node, name in reached(probe_tree(text), removes)],
+                                 expected)
+
+    def test_star_import_hides_no_place(self):
+        # A name read is tried with each module that from ... import * names, so a launch or a
+        # removal that a star import binds is found; a module that is not accepted finds none.
+        for label, text, accepts, expected in (
+                ("launch", "> from subprocess import *\n> run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
+                ("removal", "> from os import *\n> unlink('p')\n", removes, [("os", "unlink")]),
+                ("other module", "> from json import *\n> run(['x'])\n", starts_a_process, [])):
+            with self.subTest(star=label):
+                self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
+                                 expected)
+
+    def test_call_in_the_arguments_of_addcleanup_is_not_guarded(self):
+        # run_on_every_path() guards a removal given to addCleanup as its function, or in its
+        # arguments outside every call there, and one in a finally clause; a call in those
+        # arguments, as an argument, a keyword argument, inside another call or as the function
+        # itself, runs when addCleanup is called, and a call in the body of a lambda is not
+        # guarded either, so each such removal is found.
+        for label, text, expected in (
+                ("function", "> self.addCleanup(os.unlink, path)\n", []),
+                ("finally", "> try:\n>     pass\n> finally:\n>     os.unlink(path)\n", []),
+                ("argument", "> self.addCleanup(print, os.unlink(path))\n", [("os", "unlink")]),
+                ("keyword", "> self.addCleanup(print, done=os.unlink(path))\n",
+                 [("os", "unlink")]),
+                ("nested call", "> self.addCleanup(print, [str(os.unlink(path))])\n",
+                 [("os", "unlink")]),
+                ("called function", "> self.addCleanup(os.unlink(path))\n", [("os", "unlink")]),
+                ("lambda", "> self.addCleanup(lambda: os.unlink(path))\n", [("os", "unlink")])):
+            with self.subTest(removal=label):
+                tree = probe_tree(text)
+                guarded = run_on_every_path(tree)
+                self.assertEqual([name for node, name in reached(tree, removes)
+                                  if id(node) not in guarded], expected)
+
+    def test_listed_row_is_killed_by_failures_alone(self):
+        # killed() kills a row that RUNAWAY_SITES lists only when its cases fail with failures
+        # alone and the child hit the listed limit, and a row that it does not list only when
+        # they fail with failures alone and on no stop of the gate; the stop rule does not
+        # apply to a listed row, whose limit can itself show as a stop.
+        sweep = MutantSweep("test_rows_are_well_formed")
+        listed = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
+                      if limit == "memory limit")
+        hit = ["the memory limit of {} bytes".format(SWEEP_MEMORY)]
+        stop = [STOP_MARK + "the gate stopped on an unexpected error in a case"]
+        error = "its cases fail with an error, not an assertion: "
+        for label, words, result, expected in (
+                ("listed, failures", listed, (1, "FAILED (failures=1)", hit, []), None),
+                ("listed, failures and a stop", listed, (1, "FAILED (failures=1)", hit, stop),
+                 None),
+                ("listed, an error", listed, (1, "FAILED (errors=1)", hit, []),
+                 error + "FAILED (errors=1)"),
+                ("listed, failures and an error", listed,
+                 (1, "FAILED (failures=1, errors=1)", hit, []),
+                 error + "FAILED (failures=1, errors=1)"),
+                ("not listed, failures", "a row not listed", (1, "FAILED (failures=1)", [], []),
+                 None),
+                ("not listed, failures and a stop", "a row not listed",
+                 (1, "FAILED (failures=1)", [], stop),
+                 "its cases fail on a stop of the gate: " + stop[0])):
+            with self.subTest(row=label):
+                sweep.run_cases = lambda root, ids, result=result: result
+                self.assertEqual(sweep.killed(words, self.tmp / "gate.py", "", [], self.tmp),
+                                 expected)
 
     def test_workflow_job_has_a_time_limit(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -4071,8 +4183,11 @@ STOPPING_SITES = {
          'stops the gate on a TypeError, and the handler that reports it stops on it again.'),
     'in Report.__init__(), the statement `self.count = 0` deleted, at its 1st occurrence':
         (EVERY_PROBE,
-         'Report then has no count, so every run stops on an AttributeError when the count line '
-         'reads it, after any defect line.'),
+         'Report then has no count, so every run stops on an AttributeError: a run that prints a '
+         'defect line stops where 1 is added to the count, right after its first defect line, '
+         'so it prints no later defect line; a run that prints none stops where the count is '
+         'first read, for the exit status or in the count line; and the count line, which '
+         'reads the count outside every handler, raises it on every run.'),
     'in read_utf8(), the statement `try:` deleted, at its 1st occurrence':
         (EVERY_PROBE,
          'the site deletes the only binding of data before it is read, so every run that reaches '
@@ -5012,12 +5127,15 @@ class MutantSweep(unittest.TestCase):
     the site or the hand row applied, exit 1 with FAILED and failures alone, no error, under
     the limit-hit rule and the stop rule. Each named case is one whose name gives the reason
     the row changes, and the stop rule holds the sweep to that reason where a gate stop would
-    hide it: a row whose named cases see a stop of the mutated gate, a stop sign of STOP_SIGNS
-    in a gate run that the unmutated gate, run with the same arguments, does not show, is not
-    killed, since its cases fail because the gate stops, not for the reason the row changes.
-    A stop counts only on a run that the unmutated gate reads and checks to its end, with exit
-    status 0 or 1: where the unmutated gate refuses its input with exit status 2, a row that
-    removes or narrows that refusal can show only as an error that escapes it.
+    hide it: a row that RUNAWAY_SITES does not list whose named cases see a stop of the mutated
+    gate, a stop sign of STOP_SIGNS in a gate run that the unmutated gate, run with the same
+    arguments, does not show, is not killed, since its cases fail because the gate stops, not
+    for the reason the row changes. A listed row is held by the limit-hit rule instead, since
+    the limit it lists can itself show as a stop: the memory limit stops the gate with a
+    MemoryError, which the gate reports as an unexpected error. A stop counts only on a run
+    that the unmutated gate reads and checks to its end, with exit status 0 or 1: where the
+    unmutated gate refuses its input with exit status 2, a row that removes or narrows that
+    refusal can show only as an error that escapes it.
     The rule reads the gate runs that GateCase.run_gate() makes; a case that starts the gate
     through run_child() itself, as the deep-nesting case and the bytecode case do, is not
     read by it. Each sweep
@@ -5113,8 +5231,11 @@ class MutantSweep(unittest.TestCase):
         A row hits a limit, and that kills it, only when RUNAWAY_SITES lists it with that
         limit and its cases fail by an assertion; a row that hits any other limit is not
         killed. A row whose cases fail with an error rather than an assertion, a listed row
-        included, or on a stop of the gate that the unmutated gate does not make, is not killed
-        either: its cases fail for a reason other than the one the row changes.
+        included, is not killed either, nor is a row that RUNAWAY_SITES does not list whose
+        cases fail on a stop of the gate that the unmutated gate does not make: its cases fail
+        for a reason other than the one the row changes. The stop rule does not apply to a
+        listed row, since the limit it lists can itself show as a stop: the memory limit stops
+        the gate with a MemoryError, which the gate reports as an unexpected error.
         """
         path.write_text(mutated, encoding="utf-8")
         code, last, hits, stops = self.run_cases(root, ids)

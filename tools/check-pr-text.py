@@ -165,9 +165,11 @@ line of output.
 
 Unreadable input is a file that the gate cannot read, whatever the OSError that the read
 raises, such as a missing file, a folder given as a file or a file it may not read; a squash
-file or text file that is not UTF-8; a payload that is not JSON, and a payload that is valid
-JSON but that the JSON reader refuses, which is reported with "not JSON" too, such as one with
-an integer of more than 4300 digits in any member or one nested so deeply that the stack fills;
+file or text file that is not UTF-8; a payload that the JSON reader refuses, which is reported
+with "not JSON": one that is not JSON, except that the reader takes the tokens NaN, Infinity
+and -Infinity, which JSON lacks, as numbers, so a payload that is JSON but for them is read,
+and one that is valid JSON but that the reader refuses, such as one with an integer of more
+than 4300 digits in any member or one nested so deeply that the stack fills;
 an event that is not a pull request or whose body is neither null nor text, and a payload
 number that is not a positive integer; a working directory that cannot be read when a relative
 squash path needs it; and a lint that cannot be loaded or that raises, exits or is interrupted
