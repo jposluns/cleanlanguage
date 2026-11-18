@@ -23,7 +23,11 @@ tools/run_all_checks.sh runs the gate's suite, and
 tools/test-run-all-checks.py lists the workflow's event step as an
 exception, with the suite in its place. The label lint,
 tools/test-no-qa-labels.py, names the workflow in SCANNED, the files
-it scans for review-history labels.
+it scans for review-history labels. The branch merged main at the
+merge of pull request 273; git reported a conflict only in the
+SCRIPT_SHA256 pin of tools/test-run-all-checks.py, because both sides
+changed tools/run_all_checks.sh, and the pin was set to the sha256 of
+the merged tools/run_all_checks.sh.
 
 Residuals include, for example: a defect in a form the patterns miss,
 such as an upper-case revision id or an -ise stem the denylist lacks;

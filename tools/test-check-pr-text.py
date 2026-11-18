@@ -422,8 +422,10 @@ def code_texts(tree):
     A text is a string constant, or a sum of string constants joined with +, at any depth of
     tree; its label is the name of the innermost function that holds it, or "module". Each
     string that the suite module binds is a text too, labelled with the name that binds it,
-    which also labels a constant or a sum equal to it. A text built otherwise, such as by a
-    call, a format or a join, is not read.
+    which also labels a constant or a sum equal to it. A sum with a part that is not a string
+    constant is not read whole, wherever that part is. A text built otherwise, such as by a
+    call, a format, an f-string included, or a join, is not read whole either; each string
+    constant in it is read as a text of its own.
     """
     bound = {value: name for name, value in globals().items() if isinstance(value, str)}
     texts = collections.defaultdict(set)
@@ -509,8 +511,11 @@ def reached(tree, accepts):
 def embedded_places(tree, accepts, guarded=None):
     """{label: (module, name) pairs} of the places reached() finds in each text of code_texts().
 
-    A text that does not parse as Python is passed over; with guarded, a place whose node is
-    in guarded(text tree) is left out. A label with no place is left out.
+    A text that does not parse as Python is passed over, whether ast.parse() raises SyntaxError,
+    as for a text that is not code, or ValueError, as for a text that holds a lone surrogate,
+    which cannot be encoded; with guarded, a place whose node is in guarded(text tree) is left
+    out. A label with no place is left out. The places of a label are given in the sorted
+    order of its texts, and those of 1 text in the order that reached() gives them.
     """
     embedded = {}
     for label, texts in code_texts(tree).items():
@@ -2254,15 +2259,19 @@ class OutputAndHonestTexts(GateCase):
         # code_texts() reads a string constant, and a sum of string constants joined with +, at
         # any depth, labelled with the innermost function or async function that holds it, or
         # "module"; and each string that the suite module binds, labelled with the name that
-        # binds it, which also labels a constant equal to it, as its docstring states. A
-        # constant that is not a string, a sum with a part that is not a string constant, a
-        # text joined by another operator and a text built by a call are not read whole, though
-        # each string constant in them is. embedded_places() passes over a text that does not
-        # parse, leaves out a place that guarded gives and a label with no place, and gives
-        # the places of the texts of 1 label in the sorted order of the texts. Each subtest
-        # compares what a probe adds to what the helper gives for a probe that holds no text.
+        # binds it, which also labels a constant or a sum equal to it, as its docstring states.
+        # A constant that is not a string, a sum with a part that is not a string constant,
+        # first, last or between 2 constants, a text joined by another operator, a text built
+        # by a call and an f-string are not read whole, though each string constant in them
+        # is. embedded_places() passes over a text that does not parse, with SyntaxError or
+        # with ValueError, leaves out a place that guarded gives and a label with no place,
+        # and gives the places of the texts of 1 label in the sorted order of the texts, and
+        # those of 1 text in the order that reached() gives them, so the 2 orders differ in a
+        # subtest. Each subtest compares what a probe adds to what the helper gives for a probe
+        # that holds no text.
         empty = code_texts(probe_tree("> pass\n"))
         self.assertEqual(empty["UNMUTATED_NAME"], {UNMUTATED_NAME})
+        head, tail = UNMUTATED_NAME[:len("unmutated-")], UNMUTATED_NAME[len("unmutated-"):]
         for label, text, expected in (
                 ("constant at module level", "> x = 'a'\n", {"module": {"a"}}),
                 ("constant in a function", "> def f():\n>     x = 'a'\n", {"f": {"a"}}),
@@ -2278,10 +2287,18 @@ class OutputAndHonestTexts(GateCase):
                  {"module": {"a", "b", "c", "ab", "abc"}}),
                 ("sum with a part that is not a string constant", "> x = 'a' + y\n",
                  {"module": {"a"}}),
+                ("sum with a part that is not a string constant first", "> x = y + 'a' + 'b'\n",
+                 {"module": {"a", "b"}}),
+                ("sum with a part that is not a string constant between 2 constants",
+                 "> x = 'a' + y + 'b'\n", {"module": {"a", "b"}}),
                 ("text joined by another operator", "> x = 'a' % 'b'\n", {"module": {"a", "b"}}),
                 ("text built by a call", "> x = str(['a', 'b'])\n", {"module": {"a", "b"}}),
+                ("f-string", "> x = f'a{y}b'\n", {"module": {"a", "b"}}),
                 ("constant equal to a string the module binds",
-                 "> def f():\n>     x = " + repr(UNMUTATED_NAME) + "\n", {})):
+                 "> def f():\n>     x = " + repr(UNMUTATED_NAME) + "\n", {}),
+                ("sum equal to a string the module binds",
+                 "> def f():\n>     x = " + repr(head) + " + " + repr(tail) + "\n",
+                 {"f": {head, tail}})):
             with self.subTest(text=label):
                 found = code_texts(probe_tree(text))
                 self.assertEqual({owner: texts - empty.get(owner, set())
@@ -2289,6 +2306,7 @@ class OutputAndHonestTexts(GateCase):
                                   if texts - empty.get(owner, set())}, expected)
         for label, text, guarded, expected in (
                 ("text that does not parse", "> x = 'os.unlink('\n", None, {}),
+                ("text that cannot be encoded", "> x = '\\ud800'\n", None, {}),
                 ("text that parses", "> x = 'os.unlink(p)'\n", None,
                  {"module": [("os", "unlink")]}),
                 ("guarded place", "> x = 'try:\\n    pass\\nfinally:\\n    os.unlink(p)\\n'\n",
@@ -2297,7 +2315,10 @@ class OutputAndHonestTexts(GateCase):
                 ("5 texts of 1 label", "> a = 'shutil.rmtree(p)'\n> b = 'os.unlink(p)'\n"
                  "> c = 'os.rmdir(p)'\n> d = 'os.removedirs(p)'\n> e = 'os.remove(p)'\n", None,
                  {"module": [("os", "remove"), ("os", "removedirs"), ("os", "rmdir"),
-                             ("os", "unlink"), ("shutil", "rmtree")]})):
+                             ("os", "unlink"), ("shutil", "rmtree")]}),
+                ("texts of 1 label whose places sort otherwise",
+                 "> a = 'x = os.unlink(p)'\n> b = 'y = os.rmdir(p); os.remove(p)'\n", None,
+                 {"module": [("os", "unlink"), ("os", "rmdir"), ("os", "remove")]})):
             with self.subTest(embedded=label):
                 found = embedded_places(probe_tree(text), removes, guarded)
                 held = embedded_places(probe_tree("> pass\n"), removes, guarded)
@@ -2359,8 +2380,10 @@ class OutputAndHonestTexts(GateCase):
         # kills no row whose cases fail on a stop of the gate but the row listed with the
         # memory limit, the only limit that can itself show as a stop. A row listed with the
         # wall timeout is held by the stop rule, and the sweep's own timeout is not its limit.
-        # Failures alone means exit status 1 with a report of failures and no error, so a row
-        # whose cases end with another exit status is not killed, whatever their report says.
+        # Failures alone means exit status 1 with a report of failures and no error, so a row,
+        # listed or not, whose cases end with another exit status or fail with an error is not
+        # killed, whatever their report says; a row not listed is not killed when its child
+        # hits any limit, the memory limit, the wall timeout or the sweep's own timeout.
         sweep = MutantSweep("test_rows_are_well_formed")
         memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
@@ -2404,7 +2427,22 @@ class OutputAndHonestTexts(GateCase):
                  (1, "FAILED (failures=1)", timed, []),
                  "hit a limit but is not a runaway site: " + timed[0]),
                 ("not listed, failures and a stop", "a row not listed",
-                 (1, "FAILED (failures=1)", [], stop), on_stop)):
+                 (1, "FAILED (failures=1)", [], stop), on_stop),
+                ("not listed, failures and the memory limit", "a row not listed",
+                 (1, "FAILED (failures=1)", hit, []),
+                 "hit a limit but is not a runaway site: " + hit[0]),
+                ("not listed, the sweep's timeout", "a row not listed",
+                 (None, "timed out", swept, []),
+                 "hit a limit but is not a runaway site: " + swept[0]),
+                ("not listed, an error", "a row not listed", (1, "FAILED (errors=1)", [], []),
+                 error + "FAILED (errors=1)"),
+                ("not listed, failures and an error", "a row not listed",
+                 (1, "FAILED (failures=1, errors=1)", [], []),
+                 error + "FAILED (failures=1, errors=1)"),
+                ("not listed, passes", "a row not listed", (0, "OK", [], []),
+                 "survived: exit 0, OK"),
+                ("not listed, failures with another exit status", "a row not listed",
+                 (2, "FAILED (failures=1)", [], []), "survived: exit 2, FAILED (failures=1)")):
             with self.subTest(row=label):
                 sweep.run_cases = lambda root, ids, result=result: result
                 self.assertEqual(sweep.killed(words, self.tmp / "gate.py", "", [], self.tmp),
