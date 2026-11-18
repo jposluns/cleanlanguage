@@ -32,6 +32,11 @@ state no rule about how the gate reads a file:
   read_bytes before refusing it stops with exit 3, not 1, so it fails the
   case for a missing copy, for a folder or for a socket.
 
+Where the environment refuses to make a FIFO or a Unix socket, the case or
+subtest that needs one cannot set up the state it tests, so it skips, naming
+the error: the run reports it as skipped, never as passed, and it observes
+nothing about the gate.
+
 No case catches a gate that, before refusing a copy, reads through a symlink
 to a regular file, lists a folder, tries to read a missing copy, a folder or a
 socket and ignores the error, or opens a FIFO neither for reading nor with
@@ -244,6 +249,27 @@ class AgentPluginManifestTest(unittest.TestCase):
         self.assertFalse(opened, f"the gate opened the FIFO {fifo.relative_to(gate.REPO_ROOT).as_posix()} "
                                  "before refusing the copy")
 
+    def make_fifo(self, path: Path) -> None:
+        """Make a FIFO at ``path``. Where the environment refuses to make one,
+        the case cannot set up the state it tests, so it skips, naming the
+        error."""
+        try:
+            os.mkfifo(path)
+        except OSError as error:
+            self.skipTest(f"cannot make a FIFO at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}")
+
+    def make_socket(self, path: Path) -> None:
+        """Bind a Unix socket at ``path`` and close it, which leaves the socket
+        file in place. The socket or the bind fails where the environment
+        refuses Unix sockets, or where the path is longer than a socket
+        address holds, as under a long TMPDIR; the case then cannot set up the
+        state it tests, so it skips, naming the error."""
+        try:
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(path))
+        except OSError as error:
+            self.skipTest(f"cannot bind a Unix socket at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}")
+
     def test_valid_passes(self):
         self.write(valid_manifest())
         self.assertEqual(gate.main(), 0)
@@ -430,7 +456,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 fifo = gate.REPO_ROOT / f"{name}.fifo"
-                os.mkfifo(fifo)
+                self.make_fifo(fifo)
                 copy.symlink_to(fifo)
                 try:
                     # A gate that opens the FIFO for reading through the link
@@ -450,7 +476,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                os.mkfifo(copy)
+                self.make_fifo(copy)
                 self.expect_fifo_refusal(copy, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_folder_fails(self):
@@ -466,15 +492,16 @@ class AgentPluginManifestTest(unittest.TestCase):
     def test_licence_copy_socket_fails(self):
         # A Unix socket is the remaining kind that is not regular and that an
         # unprivileged test can make. Opening it fails, so a gate that reads it
-        # with read_bytes before refusing it stops with exit 3, not 1.
+        # with read_bytes before refusing it stops with exit 3, not 1. Where
+        # the environment refuses to make the socket, each subtest skips,
+        # naming the error.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                with socket.socket(socket.AF_UNIX) as listener:
-                    listener.bind(str(copy))
+                self.make_socket(copy)
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_unreadable_root_licence_fails_closed(self):

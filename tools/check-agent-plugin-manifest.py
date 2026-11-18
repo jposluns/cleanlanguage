@@ -34,8 +34,11 @@ stay the same. A read through a link to a device, such as /dev/zero, before the
 refusal is an untested residual too, since no case makes such a link. The plugin
 installs the cleanlanguage/ tree and the skill zip takes these 2 files from it,
 so a copy that drifted from the root file would ship a licence text the
-repository does not state. The gate reads the working tree;
-tools/release-package.sh makes the same comparison on the git blobs at HEAD.
+repository does not state. The gate reads the working tree. It refuses a copy
+that is a symlink, but not a root LICENSE or NOTICE.md that is one: it reads
+such a root file through the link, so it compares the copy with the bytes of
+the file the link leads to. tools/release-package.sh compares the git blob of
+each copy with the git blob of its root file at HEAD.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
