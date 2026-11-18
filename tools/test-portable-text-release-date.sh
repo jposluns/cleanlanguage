@@ -562,8 +562,10 @@ set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
 
 # 10. The 29k label: the generated full file, and so its byte-equal twin, may
-#     hold at most 29000 characters by wc -m, which counts characters, not
-#     bytes, in a UTF-8 locale; this case needs one. pad_full TARGET appends a
+#     hold at most 29000 characters by wc -m. The case needs a wc -m that
+#     counts characters, not bytes. With a wc that counts bytes outside a
+#     UTF-8 locale, as GNU coreutils does, the case needs a UTF-8 locale;
+#     in any other locale, pad_full fails the case. pad_full TARGET appends a
 #     line of U+00E9 (e with an acute accent, 1 character and 2 bytes in
 #     UTF-8) after a blank line at the end of the fixture skill, which adds
 #     its length plus 2 characters to the full file, regenerates, and fails
