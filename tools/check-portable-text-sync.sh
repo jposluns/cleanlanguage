@@ -177,6 +177,11 @@ check_common() {
   fi
   # Every size-labelled file must stay within its label. The 29k twin is
   # byte-equal to the canonical file (checked above), so 1 count covers both.
+  # Each count is that of wc -m; where wc -m gives bytes, the gate compares a
+  # file's bytes, not its characters, with its label. On a UTF-8 file, GNU
+  # coreutils 9.7 wc -m gave its bytes in the C and POSIX locales and its
+  # characters in the C.UTF-8 and en_US.UTF-8 locales; uutils coreutils
+  # 0.10.0 wc -m gave its characters in all 4.
   local n
   n="$(wc -m < "${eight}")"
   [ "${n}" -le 8000 ] || { echo "${eight} is ${n} chars, over its 8000 label." >&2; return 1; }

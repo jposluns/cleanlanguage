@@ -562,20 +562,22 @@ set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
 
 # 10. The 29k label: the generated full file, and so its byte-equal twin, may
-#     hold at most 29000 characters by wc -m. The case needs a wc -m that
-#     counts characters, not bytes. With a wc that counts bytes outside a
-#     UTF-8 locale, as GNU coreutils does, the case needs a UTF-8 locale;
-#     in any other locale, pad_full fails the case. pad_full TARGET appends a
-#     line of U+00E9 (e with an acute accent, 1 character and 2 bytes in
-#     UTF-8) after a blank line at the end of the fixture skill, which adds
-#     its length plus 2 characters to the full file, regenerates, and fails
-#     the case unless the full file then holds exactly TARGET characters. The
+#     hold at most 29000 characters by wc -m. pad_full TARGET appends a line
+#     of U+00E9 (e with an acute accent, 1 character and 2 bytes in UTF-8)
+#     after a blank line at the end of the fixture skill, which adds its
+#     length plus 2 characters to the full file, regenerates, and fails the
+#     case unless the full file then holds exactly TARGET characters. The
 #     padded file then holds more bytes than characters, so a gate that
 #     counted bytes would refuse it at 29000 and print another count at 29001.
 #     At 29000 the case expects record to succeed and the gate to pass; at
 #     29001 it expects the gate to fail with the label line as its whole last
 #     line, so a label check that printed the line but did not stop the gate
-#     fails the case.
+#     fails the case. The case needs a wc -m that gives the characters of the
+#     full file, not its bytes: where wc -m gives bytes, the count after
+#     padding exceeds TARGET, so pad_full fails the case. On a UTF-8 file,
+#     GNU coreutils 9.7 wc -m gave its bytes in the C and POSIX locales and
+#     its characters in the C.UTF-8 and en_US.UTF-8 locales; uutils
+#     coreutils 0.10.0 wc -m gave its characters in all 4.
 full="site/downloads/cleanlanguage.md"
 pad_full() { # target
   local before after
