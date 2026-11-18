@@ -22,7 +22,7 @@ adopted = "2026-09-05"
 # the adopted subset. Both are recorded regardless of the version label.
 pack = "1.0.0"          # VERSION, changelog.toml, manifest.toml release-version
 skill = "1.0.4"         # .aiqt/core/skill/skill-source.md meta.version
-hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json
+hooks-plugin = "0.5.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json, from pack commit 9d249b47 (see [hooks-update])
 
 [integrity]
 tree-sha256 = "9dbbe17c9bb1372b0bff9b01216d6860851d7b735983a0c40691d91329ca1fe4"
@@ -60,7 +60,7 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # wrtscp / cnsdif hardening. This is a SCOPED, hooks-only advance: the rule corpus and
 # everything else remain at v1.0.0. The [integrity] tree-sha256 above (9dbbe17c) therefore
 # describes the v1.0.0 baseline and NO LONGER matches the working tree; the per-file hashes
-# in .aiqt/manifest.toml (updated for the two plugin hook files) are authoritative for what
+# in .aiqt/manifest.toml (updated for the 2 plugin hook files) are authoritative for what
 # is installed.
 # 2026-09-13: reconciled aiqt_hooks.py to guardrails main (PR #233, 2eb6812) - the
 # protected_line no-remote commit exemption (unblocks a local no-remote store's handoff
@@ -70,13 +70,50 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # hooks-only advance; the orchestrator suite stays inert (no registry). Adopted per maintainer
 # decision 2026-09-13 (32-adopt, option C sequenced, Step 1). Prior advance: 2026-09-12 PR #232
 # fa5f942 (the no-ask posture conversion and hardening).
-advanced = "2026-09-13"
-source-commit = "2eb6812c" # guardrails main PR #233; file == upstream HEAD 0510edd
+# 2026-11-15: the whole hooks plugin (plugin.json, hooks.json and aiqt_hooks.py) was refreshed
+# to guardrails main at commit 9d249b47 (merge train #1193, which carries guardrails PR #1177),
+# whose own .aiqt/manifest.toml reads release-version 1.0.5 and whose .aiqt/release/root.txt
+# names that manifest's sha256 (below); maintainer decision Entry 99 set this re-pin. The range
+# from the earlier pin of this change, 730c039b, has 6 commits, 2 of which touch the plugin:
+# 9d249b47 itself and 7045af1b, merge train #1171 (#1159, #1124, #1152, #1163, #1166, #1167
+# and #1144). This is a COMMIT pin, not a release pin: no pack release carries these hooks
+# (v1.0.5, the only annotated tag of the pack's 7 tags and the only release tag, ships plugin
+# 0.4.0; the other 6, skill-v1.0.4 and 5 pre-rebase tags, are lightweight), and the pack plans
+# release 1.1.1 with no date set; a re-pin to that release replaces this block once it is cut.
+# The refreshed gate_weakening denies the 5 write-then-run commit probes of
+# tools/test-gate-weakening-probes.py, which the 2eb6812c hooks allowed; other write-then-run
+# forms, such as a script written under a quoted delimiter that sets core.hooksPath, or a
+# base64-decoded script, still get no decision, on a branch and on a detached HEAD, where the
+# script's path is absolute and git can probe the directory that it names, inside the work tree
+# or not, and where either script is written to a relative path with >> or tee
+# (git_discard denies the core.hooksPath script when the command text also holds a word it reads
+# as a git verb that can lose work, such as branch, clean or reset in a directory name;
+# review_workdir_hold denies it where git cannot probe that directory; bash_absolute_paths
+# denies either script written with > to a relative path; protected_line denies such a
+# core.hooksPath script written under an unquoted delimiter).
+# The refreshed orch_truncation_guard denies a
+# here-document body that a shell runs with a bare & in it, as the 2eb6812c hooks did, and no
+# longer denies 80 here-document and open-quote rows of the extended decision-table run
+# (table sha256 ba0f9b6fc7c39d5f57f4cd94f9f906d1d19b4a7b9fe3646ee66106ca89f53a93, class
+# summary sha256 b4870a6ea63388179ee62750e36eae45f54cc4b3ede0cf8670095045f34f829d) that the
+# 2eb6812c hooks denied; 15 of those rows are of the 15 forms added to the run after review,
+# and Entry 99 covers those forms as well (maintainer decision Entry 126); the refresh adds 2
+# context-only clock hooks (see .aiqt/config.md for both).
+# Still a SCOPED hooks-only advance; the rule corpus is unchanged.
+# The 3 per-file entries in .aiqt/manifest.toml are updated to these values.
+advanced = "2026-11-15"
+source-commit = "9d249b47b48ee3d4fbf60b5eb4af748901446b56" # guardrails main, untagged
+source-release-version = "1.0.5"  # release-version in the manifest of that commit
+source-manifest-root = "sha256:c648d00477fd6b88e3af34a5101b43a8b3fa89fcbac423c3c4b59403fd24f951"
 files = [
-  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 704505 B, sha256 1052f4f48f2fe0e839c665455ad2af2c21abf3fe389fa8acb832fcdf842062ce
-  "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
+  "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",   # 288 B, sha256 6a019cab82e0df55d88b44b1199d10bf95d37c5bd959fffd57b7aa36df84c591
+  "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 11798 B, sha256 9097238d890a3a42897b598a1fa1a904cef5f4666b1a9b1a279d9f6748e8b9ca
+  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 2525997 B, sha256 c03c88544f5b1675467e422c7ac201e81d04367a85f72f5d50075dff75c170f7
 ]
-verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
+verified = "each file byte-equal to its [[sources]] entry in the manifest of commit 9d249b47, and that manifest's sha256 equal to the commit's .aiqt/release/root.txt"
+# Prior source-commit: 2eb6812c (guardrails main PR #233; file == upstream HEAD 0510edd).
+# History: this change first pinned guardrails main 730c039b (2026-11-14), superseded by the
+# re-pin above before merge.
 
 [rules-update]
 # 2026-09-13: added guardrails PR #205's rule "explicit-binding-over-ambient-context"
@@ -86,7 +123,7 @@ verified = "byte-identical to the merged manifest (tri-family --expensive QA ups
 # missing. This mirrors the [hooks-update] scoped advance: the rest of the corpus stays at
 # v1.0.0, the [integrity] tree-sha256 above (9dbbe17c) still describes the v1.0.0 baseline and
 # does NOT match the working tree, and the per-file hashes in .aiqt/manifest.toml (updated with
-# the two new rule files below, matching upstream's manifest entries) are authoritative for
+# the 2 new rule files below, matching upstream's manifest entries) are authoritative for
 # what is installed. [active-rules] active rises from 106 to 107; the full vendored corpus
 # rises from 125 to 126. Vendored byte-identical to upstream main at HEAD 7c6478c.
 advanced = "2026-09-13"

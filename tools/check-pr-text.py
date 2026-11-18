@@ -142,8 +142,9 @@ digits keeps the conversions of
 the --number value and of the squash file name to a number far under the limit of 4300 digits
 that Python sets. In --event mode the number is the payload's pull request number, a positive
 integer of any length the JSON reader accepts, and the squash file of that number,
-.github/squash/<number>.txt, binds the subject; a payload number of more than 4300 digits is
-unreadable, with "not JSON", since the JSON reader refuses it.
+.github/squash/<number>.txt, binds the subject. The JSON reader refuses an integer of more than
+4300 digits in any member of the payload, the number or any other, such as the action, so such
+a payload is unreadable, with "not JSON", though it is valid JSON.
 
 The exit contract. The gate decides its exit status in this order:
 
@@ -164,13 +165,15 @@ line of output.
 
 Unreadable input is a file that the gate cannot read, whatever the OSError that the read
 raises, such as a missing file, a folder given as a file or a file it may not read; a squash
-file or text file that is not UTF-8; a payload that is not JSON, an event that is not a pull
-request or whose body is neither null nor text, and a payload number that is not a positive
-integer; a working directory that cannot be read when a relative squash path needs it; and a
-lint that cannot be loaded or that raises, exits or is interrupted while it loads. The gate
-catches every exception raised while it reads and checks, SystemExit and KeyboardInterrupt
-among them, such as from a scan of the lint or from a hit it returns that cannot be printed,
-and reports it as unreadable with its type name.
+file or text file that is not UTF-8; a payload that is not JSON, and a payload that is valid
+JSON but that the JSON reader refuses, which is reported with "not JSON" too, such as one with
+an integer of more than 4300 digits in any member or one nested so deeply that the stack fills;
+an event that is not a pull request or whose body is neither null nor text, and a payload
+number that is not a positive integer; a working directory that cannot be read when a relative
+squash path needs it; and a lint that cannot be loaded or that raises, exits or is interrupted
+while it loads. The gate catches every exception raised while it reads and checks, SystemExit
+and KeyboardInterrupt among them, such as from a scan of the lint or from a hit it returns that
+cannot be printed, and reports it as unreadable with its type name.
 Each handler that writes a caught error into a report line writes it through describe(), or,
 for an OSError, writes its strerror when that is set, so an error whose message cannot be
 formatted, even one whose formatting raises SystemExit or KeyboardInterrupt, still ends in the
