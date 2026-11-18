@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "probe",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat > /tmp/probe-p2.sh <<'EOF'\ngit commit --no-verify -m probe\nEOF\nbash /tmp/probe-p2.sh"
+  }
+}

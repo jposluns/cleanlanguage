@@ -17,6 +17,19 @@ swapped for a FIFO where os.mkfifo or signal.SIGALRM is missing, and the case
 of a source that reaches a folder named like the plugin's own but for letter
 case where the file system folds letter case.
 
+Each in-process run of the gate's main, in expect, run_gate and
+RepositoryTreeTest, goes through recorded_main: every JSON object the gate
+decodes is a stand-in that logs each use the gate makes of it, and the case
+fails on a use that breaks the gate's rule for keys (see breaches), or when
+the gate exits 0 or 1 and fewer stand-ins were made than its JSON inputs, as
+when the recorder is off. So a read is seen whatever form it is written in.
+Residual: the recorder does not see a read on a path that no in-process case
+runs, a read behind a test that tells a stand-in from a dict by its real
+type, a read that reaches the recorder's table by introspection, a parse of
+text the gate has already printed, or a JSON object the gate decodes without
+the object_pairs_hook of load_json; and the cases that run the gate or this
+test as a command are not recorded.
+
 Loading the gate must write nothing to sys.stdout or sys.stderr and raise
 nothing; a gate that does either while this test loads it stops the test with
 exit 1 before any case runs. The exception's type name and message are shown
@@ -33,12 +46,16 @@ from __future__ import annotations
 import ast
 import builtins
 import collections
+import collections.abc
 import contextlib
+import copy
 import errno
 import importlib.util
 import io
 import json
+import operator
 import os
+import pickle
 import shutil
 import signal
 import subprocess
@@ -183,216 +200,197 @@ def manifest(name: str = "cleanlanguage", version: str = VERSION) -> dict:
     return {"name": name, "version": version, "description": "d"}
 
 
-# The methods of dict that read a key, or every key, of the dict they are called on; KEYED_METHODS of
-# them take the key as their first argument.
-MAPPING_METHODS = frozenset({"get", "pop", "setdefault", "items", "keys", "values", "popitem", "copy",
-                             "__getitem__", "__contains__", "__iter__", "__reversed__", "__or__", "__ror__"})
-KEYED_METHODS = frozenset({"get", "pop", "setdefault", "__getitem__", "__contains__"})
-# The functions of the operator module that read a key: getitem and contains of the object given first,
-# itemgetter of the object the function it makes is called on.
-OPERATOR_READS = frozenset({"getitem", "contains", "itemgetter"})
-# The builtins and methods that iterate each positional argument, which reads every key of a dict; map
-# and filter take a function first.
-ITERATING = frozenset({"iter", "list", "tuple", "set", "frozenset", "sorted", "reversed", "dict", "enumerate", "zip",
-                       "map", "filter", "min", "max", "sum", "any", "all", "join", "extend", "update", "union",
-                       "intersection", "difference", "symmetric_difference", "issubset", "issuperset", "isdisjoint",
-                       "fromkeys"})
-# Calls whose result, iterated, is not recorded there: their own reads are recorded at the call.
-NOT_ITERATED_CALLS = ITERATING | MAPPING_METHODS
+# The keys of a JSON object the gate's docstring says it reads, written out, not read from the gate.
+READ_KEYS = frozenset({"name", "site_key", "plugins", "source", "version", "dependencies"})
+# The JSON files the gate reads before it makes any check: the 2 marketplaces, the 2 manifests and
+# site.json, written out.
+JSON_INPUTS = 5
+# Each stand-in the recorder has made and not yet released, by id: the stand-in, kept so that its id is
+# not reused, the JSON object it stands in for and the log of the run that made it.
+RECORDED: dict = {}
 
 
-def key_reads(source: str) -> list:
-    """Each place the Python source may read a key of a dict, as (function, object, key): the top-level
-    function or class that holds it ("<module>" for none), the object read as ast.unparse writes it, and
-    the key as a str where it is written as a string constant or as a name that the module binds once, to
-    a string constant; else None, as for a place that reads every key.
+class Recorded:
+    """A stand-in for 1 JSON object the gate decodes, which logs each use the gate makes of it as
+    (id of the stand-in, use, detail). It holds nothing itself: the object sits in RECORDED.
 
-    The places: a subscript, an augmented assignment to one among them; an in or not in test, at each
-    link of a chain; a method of MAPPING_METHODS called on the object, called through dict or type(...)
-    with the object first, or taken as an attribute without a call; getattr of such a method, or of a
-    name not written as a string constant; a function of OPERATOR_READS; each key of a mapping pattern of
-    match, and its **rest; ** and * unpacking; and iteration: a for loop, a comprehension, yield from, an
-    assignment that unpacks, and each positional argument of a call of ITERATING. A subscript by an int or
-    a slice and an in test of a literal read no key. Where an object is iterated, a literal, a display, a
-    comprehension, a lambda, an f-string and a call of NOT_ITERATED_CALLS are not recorded, and each
-    branch of a conditional expression or of and or or is recorded on its own.
+    A key read by get, a subscript, in, pop or setdefault logs ("key", the key). A use of the whole
+    object logs ("whole", its name): its keys, values or items, iteration, len and so truth, a copy, a
+    change, == or != against a mapping, | either way, and pickling or copying through the copy module.
+    Its text, which str, format and an f-string take through repr, logs ("repr", the text). Its
+    __class__ is dict, so isinstance(stand-in, dict) holds, as the gate's checks require; dict's own
+    methods called on it, and code in C that tests the real type, such as json.dumps, raise TypeError.
+    It is registered as a Mapping, so a mapping pattern of match reaches it through len and get."""
 
-    Residual: code outside the source, given an object, is not scanned, such as str, repr or json.dumps
-    given a dict; and the scan does not tell a dict from another object."""
-    tree = ast.parse(source)
-    owner, parent = {}, {}
-    for top in tree.body:
-        name = top.name if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else "<module>"
-        for node in ast.walk(top):
-            owner[id(node)] = name
-            for child in ast.iter_child_nodes(node):
-                parent[id(child)] = node
-    bound = collections.Counter(node.id for node in ast.walk(tree)
-                                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load))
-    bound.update(node.arg for node in ast.walk(tree) if isinstance(node, ast.arg))
-    constants = {target.id: top.value.value for top in tree.body if isinstance(top, ast.Assign)
-                 and isinstance(top.value, ast.Constant) and isinstance(top.value.value, str)
-                 for target in top.targets if isinstance(target, ast.Name) and bound[target.id] == 1}
+    __slots__ = ()
+    __hash__ = None
 
-    def text(node) -> str | None:
-        if isinstance(node, ast.Constant):
-            return node.value if isinstance(node.value, str) else None
-        return constants.get(node.id) if isinstance(node, ast.Name) else None
+    @property
+    def __class__(self):
+        return dict
 
-    def literal(node) -> bool:
-        try:
-            ast.literal_eval(node)
-        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-            return False
-        return True
+    def _reach(self, use: str, detail=None) -> dict:
+        _, data, log = RECORDED[id(self)]
+        log.append((id(self), use, detail))
+        return data
 
-    def node_name(node) -> str | None:
-        """The name a call, or the name or attribute it calls, is written with."""
-        node = node.func if isinstance(node, ast.Call) else node
-        return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+    def get(self, key, default=None):
+        return self._reach("key", key).get(key, default)
 
-    def objects(node) -> list:
-        """The objects that iterating node may iterate."""
-        if isinstance(node, ast.IfExp):
-            return [*objects(node.body), *objects(node.orelse)]
-        if isinstance(node, ast.BoolOp):
-            return [found for value in node.values for found in objects(value)]
-        if isinstance(node, ast.NamedExpr):
-            return objects(node.value)
-        if (literal(node) or isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp, ast.SetComp,
-                                               ast.DictComp, ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
-                or isinstance(node, ast.Call)
-                and node_name(node) in NOT_ITERATED_CALLS):
-            return []
-        return [node]
+    def __getitem__(self, key):
+        return self._reach("key", key)[key]
 
-    reads = []
+    def __contains__(self, key):
+        return key in self._reach("key", key)
 
-    def add(place, obj, key):
-        reads.append((owner[id(place)], obj if isinstance(obj, str) else ast.unparse(obj), key))
+    def pop(self, key, *default):
+        return self._reach("key", key).pop(key, *default)
 
-    def iterated(place, node):
-        for obj in objects(node):
-            add(place, obj, None)
+    def setdefault(self, key, default=None):
+        return self._reach("key", key).setdefault(key, default)
 
-    def pattern(place, node, obj: str):
-        if isinstance(node, ast.MatchMapping):
-            for key, value in zip(node.keys, node.patterns):
-                add(place, obj, text(key))
-                pattern(place, value, f"{obj}[{ast.unparse(key)}]")
-            if node.rest is not None:
-                add(place, obj, None)
-        elif isinstance(node, ast.MatchSequence):
-            for index, value in enumerate(node.patterns):
-                pattern(place, value, f"{obj}[{index}]")
-        elif isinstance(node, ast.MatchClass):
-            for value in node.patterns:
-                pattern(place, value, obj)
-            for attr, value in zip(node.kwd_attrs, node.kwd_patterns):
-                pattern(place, value, f"{obj}.{attr}")
-        elif isinstance(node, ast.MatchOr):
-            for value in node.patterns:
-                pattern(place, value, obj)
-        elif isinstance(node, ast.MatchAs) and node.pattern is not None:
-            pattern(place, node.pattern, obj)
+    def keys(self):
+        return self._reach("whole", "keys").keys()
 
-    for node in ast.walk(tree):
-        # Keys read by name.
-        if isinstance(node, ast.Subscript) and (
-                isinstance(node.ctx, ast.Load) or isinstance(parent.get(id(node)), ast.AugAssign)) and not (
-                isinstance(node.slice, ast.Slice)) and not (literal(node.slice) and text(node.slice) is None):
-            add(node, node.value, text(node.slice))
-        elif isinstance(node, ast.Compare):
-            left = node.left
-            for op, right in zip(node.ops, node.comparators):
-                if isinstance(op, (ast.In, ast.NotIn)) and not literal(right):
-                    add(node, right, text(left))
-                left = right
-        elif isinstance(node, ast.Attribute) and node.attr in MAPPING_METHODS and isinstance(node.ctx, ast.Load):
-            call = parent.get(id(node))
-            if isinstance(call, ast.Call) and call.func is node:
-                through_class = (isinstance(node.value, ast.Name) and node.value.id == "dict"
-                                 or isinstance(node.value, ast.Call) and node_name(node.value) == "type")
-                keyed = node.attr in KEYED_METHODS and len(call.args) > (1 if through_class else 0)
-                key = text(call.args[1 if through_class else 0]) if keyed else None
-                add(node, call.args[0] if through_class and call.args else node.value, key)
-            else:
-                add(node, node.value, None)
-        elif isinstance(node, ast.Call) and node_name(node) == "getattr" and len(node.args) >= 2:
-            name = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
-            if name is None or name in MAPPING_METHODS:
-                add(node, node.args[0], None)
-        elif isinstance(node, (ast.Name, ast.Attribute)) and node_name(node) in OPERATOR_READS:
-            call = parent.get(id(node))
-            if isinstance(call, ast.Call) and call.func is node and node_name(node) == "itemgetter":
-                for key in call.args:
-                    add(node, node, text(key))
-            elif isinstance(call, ast.Call) and call.func is node and call.args:
-                add(node, call.args[0], text(call.args[1]) if len(call.args) > 1 else None)
-            else:
-                add(node, node, None)
-        elif isinstance(node, ast.Match):
-            for case in node.cases:
-                pattern(node, case.pattern, ast.unparse(node.subject))
-        # Every key read: unpacking.
-        elif isinstance(node, ast.Dict):
-            for key, value in zip(node.keys, node.values):
-                if key is None:
-                    iterated(node, value)
-        elif isinstance(node, ast.keyword) and node.arg is None:
-            iterated(node, node.value)
-        elif isinstance(node, ast.Starred) and isinstance(node.ctx, ast.Load):
-            iterated(node, node.value)
-        # Every key read: iteration.
-        if isinstance(node, (ast.For, ast.AsyncFor)):
-            iterated(node, node.iter)
-        elif isinstance(node, ast.comprehension):
-            iterated(node, node.iter)
-        elif isinstance(node, ast.YieldFrom):
-            iterated(node, node.value)
-        elif isinstance(node, ast.Assign) and any(
-                isinstance(target, (ast.Tuple, ast.List)) for target in node.targets):
-            iterated(node, node.value)
-        elif isinstance(node, ast.Call) and node_name(node) in ITERATING:
-            first = 1 if node_name(node) in ("map", "filter") else 0
-            for value in node.args[first:]:
-                if not isinstance(value, ast.Starred):
-                    iterated(node, value)
-    return reads
+    def values(self):
+        return self._reach("whole", "values").values()
+
+    def items(self):
+        return self._reach("whole", "items").items()
+
+    def __iter__(self):
+        return iter(self._reach("whole", "iter"))
+
+    def __reversed__(self):
+        return reversed(self._reach("whole", "reversed"))
+
+    def __len__(self):
+        return len(self._reach("whole", "len"))
+
+    def copy(self):
+        return self._reach("whole", "copy").copy()
+
+    def popitem(self):
+        return self._reach("whole", "popitem").popitem()
+
+    def update(self, *args, **kwargs):
+        self._reach("whole", "update").update(*args, **kwargs)
+
+    def clear(self):
+        self._reach("whole", "clear").clear()
+
+    def __setitem__(self, key, value):
+        self._reach("whole", "setitem")[key] = value
+
+    def __delitem__(self, key):
+        del self._reach("whole", "delitem")[key]
+
+    def __eq__(self, other):
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return self._reach("whole", "==") == other
+
+    def __ne__(self, other):
+        if not isinstance(other, collections.abc.Mapping):
+            return NotImplemented
+        return self._reach("whole", "!=") != other
+
+    def __or__(self, other):
+        return self._reach("whole", "|") | other
+
+    def __ror__(self, other):
+        return other | self._reach("whole", "|")
+
+    def __reduce_ex__(self, protocol):
+        return dict, (dict(self._reach("whole", "pickle")),)
+
+    def __getstate__(self):
+        return dict(self._reach("whole", "getstate"))
+
+    def __copy__(self):
+        return dict(self._reach("whole", "copy.copy"))
+
+    def __deepcopy__(self, memo):
+        return copy.deepcopy(self._reach("whole", "copy.deepcopy"), memo)
+
+    def __repr__(self):
+        _, data, log = RECORDED[id(self)]
+        text = repr(data)
+        log.append((id(self), "repr", text))
+        return text
 
 
-# The places key_reads finds in the gate that read no key of a JSON object, each as often as the gate
-# reads it there: the pairs the decoder gives and the object _unique_object builds from them; a str, a
-# list of str, a list of lines, a tuple of patterns, the extractor's namespace, the folder list of
-# os.listdir, a str split in 3; the dict of the 2 marketplaces by path; the gate's own lists, sets and
-# dicts of labels, values, names and folders, and the (index, entry) pairs of plugin_entries; and a JSON
-# array of plugins or of dependencies that the gate iterates only once it is a list.
-NOT_JSON_READS = (
-    ("_unique_object", "pairs", None), ("_unique_object", "result", None),
-    ("one_line", "text", None),
-    ("walk", "parts", None), ("walk", "os.listdir(parent)", None),
-    ("read_bytes", "blocks", None),
-    ("exceeds_depth", "text", None),
-    ("extractor_patterns", "namespace", None), ("extractor_patterns", "patterns", None),
-    ("skill_version", "extractor_patterns()", None),
-    ("plugin_entries", "plugins", None),
-    ("check_names", "markets", ".claude-plugin/marketplace.json"), ("check_names", "markets", None),
-    ("check_names", "pairs", None), ("check_names", "held", None), ("check_names", "listed", None),
-    ("check_names", "listed", None), ("check_names", "names", None), ("check_names", "repeats", None),
-    ("resolve_source", "parts", None), ("resolve_source", "parts", None), ("resolve_source", "parts", None),
-    ("resolve_source", "base", None), ("resolve_source", "base", None), ("resolve_source", "steps", None),
-    ("resolve_source", "os.listdir(parent)", None),
-    ("check_sources", "markets", None), ("check_sources", "plugin_entries(rel, data, failures, 'D2')", None),
-    ("check_reach", "folders", None),
-    ("check_versions", "markets", ".claude-plugin/marketplace.json"), ("check_versions", "held", None),
-    ("check_versions", "found", None), ("check_versions", "found", None), ("check_versions", "found", None),
-    ("check_dependencies", "markets", None), ("check_dependencies", "entries", None),
-    ("check_dependencies", "entries", None), ("check_dependencies", "folders", None),
-    ("check_dependencies", "folders", None), ("check_dependencies", "lists", None),
-    ("check_dependencies", "deps", None), ("check_dependencies", "dep.partition('@')", None),
-    ("check_dependencies", "names", None), ("check_dependencies", "seen", None),
-    ("run", "failures", None), ("run", "CHECKS", None), ("run", "CHECKS", None),
-)
+collections.abc.Mapping.register(Recorded)
+
+
+def stand_in(data: dict, log: list) -> Recorded:
+    """A stand-in for data that logs into log; RECORDED holds it until release."""
+    made = Recorded()
+    RECORDED[id(made)] = (made, data, log)
+    log.append((id(made), "made", None))
+    return made
+
+
+def release(log: list) -> None:
+    """Drop from RECORDED each stand-in made into log."""
+    for ident, use, _ in log:
+        if use == "made":
+            RECORDED.pop(ident, None)
+
+
+@contextlib.contextmanager
+def recording(log: list):
+    """While it runs, the gate's object_pairs_hook, which load_json looks up at each call, is the real one
+    followed by stand_in, so a repeated key is still refused and each JSON object the gate decodes is a
+    stand-in that logs into log."""
+    real = gate._unique_object
+
+    def hook(pairs):
+        return stand_in(real(pairs), log)
+    try:
+        with mock.patch.object(gate, "_unique_object", hook):
+            yield log
+    finally:
+        release(log)
+
+
+def breaches(log: list, output: str) -> list:
+    """Each use in log that breaks the gate's rule for keys, which reads each key exactly as written:
+    (a) a key that is not exactly a str of READ_KEYS; (b) a use of a whole object, which would let a key
+    in another letter case change the result; (c) the text of an object that the gate reads a key of, or
+    a text taken more times than output holds it, since the gate shows an object's text only in a line
+    it prints."""
+    found = []
+    keyed = {ident for ident, use, _ in log if use == "key"}
+    taken = collections.Counter()
+    for ident, use, detail in log:
+        if use == "key" and not (type(detail) is str and detail in READ_KEYS):
+            shown = _made(lambda: repr(detail), "(a key that cannot be shown)")
+            found.append(f"a read of the key {shown} of type {_made(lambda: type(detail).__name__, UNSHOWN_NAME)}")
+        elif use == "whole":
+            found.append(f"a use of a whole JSON object: {detail}")
+        elif use == "repr":
+            taken[detail] += 1
+            if ident in keyed:
+                found.append(f"the text {detail} of a JSON object read by key")
+    for text, times in taken.items():
+        if times > output.count(text):
+            found.append(f"the text {text} taken {times} times, held {output.count(text)} times in the output")
+    return found
+
+
+def recorded_main(out: io.StringIO, err: io.StringIO) -> tuple:
+    """The gate's main run with the recorder, its standard output in out and standard error in err: its
+    exit status and each problem: the breaches of its run, and, where it exits 0 or 1, fewer stand-ins
+    made than JSON_INPUTS, as when the recorder is off. An exception that escapes main is raised."""
+    log: list = []
+    with recording(log), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = gate.main()
+    problems = breaches(log, out.getvalue() + err.getvalue())
+    made = sum(use == "made" for _, use, _ in log)
+    if code in (0, 1) and made < JSON_INPUTS:
+        problems.append(f"the recorder made {made} stand-ins, fewer than the {JSON_INPUTS} JSON inputs the gate read")
+    return code, problems
 
 
 class FoldingOs:
@@ -489,13 +487,15 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_json(rel, data)
 
     def run_gate(self):
+        """The gate's main, run with the recorder: its exit status, standard output and standard error.
+        Fails on each problem recorded_main finds."""
         out, err = io.StringIO(), io.StringIO()
         try:
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = gate.main()
+            code, problems = recorded_main(out, err)
         except BaseException as error:
             self.fail(f"the gate's main let {_made(lambda: type(error).__name__, UNSHOWN_NAME)} escape, a traceback "
                       f"in place of an exit status\n{out.getvalue()}{err.getvalue()}")
+        self.assertEqual(problems, [], out.getvalue() + err.getvalue())
         return code, out.getvalue(), err.getvalue()
 
     def assert_lines(self, code: int, out: str, err: str):
@@ -641,12 +641,11 @@ class PluginDistributionTest(unittest.TestCase):
         self.expect(0, "OK: D1 to D4 hold")
 
     def key_setups(self) -> list:
-        """The setups of test_keys_in_another_letter_case_are_not_read, each (reads, rel, change, lines):
-        places the gate reads a JSON key, as key_reads names them, that this setup pins, since a read of
-        the key written in another letter case at any one of them would change the gate's output in this
-        setup; the file the setup changes and how; and the FAIL lines the gate gives, each without its
-        "FAIL " (none: exit 0). Such a read at a place a setup does not name can change its output too;
-        each place is named by at least 1 setup."""
+        """The setups of test_keys_in_another_letter_case_are_not_read, each (rel, change, lines): the file
+        the setup changes and how, writing a key the gate reads in another letter case, and the FAIL lines
+        the gate gives, each without its "FAIL " (none: exit 0). A read of that key in another letter case
+        would change the gate's output in the setup. That the gate reads no key but those of READ_KEYS,
+        each exactly as written, is pinned by the recorder in every case, not by these setups."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
 
@@ -691,93 +690,74 @@ class PluginDistributionTest(unittest.TestCase):
                     data["plugins"][0]["dependencies"] = [dependency]
             return change
 
-        names = ("check_names", "data", "name")
-        sources = ("check_sources", "entry", "source")
-        reaches = ("check_reach", "entry", "name")
-        manifest_name = ("check_reach", "load_json(manifest)", "name")
-        entry_deps = ("check_dependencies", "entry", "dependencies")
-        manifest_deps = ("check_dependencies", "reached", "dependencies")
-        plugin_reads = [("check_names", "data", "plugins"), ("check_dependencies", "data", "plugins")]
         return [
             # Each key, in each file and plugin entry where the gate reads it.
-            ([("check_names", "root", "name"), names], root, other("name"),
+            (root, other("name"),
              [f"D1: {root} name is None, not 'cleanlanguage'", f"D1: {root} name is None, not a name"]),
-            ([("check_names", "root", "plugins"), ("plugin_entries", "data", "plugins")], root, other("plugins"),
-             [f"D1: {root} lists no plugins, not exactly 1", f"D2: {root} has no plugins list"]),
-            ([("check_names", "first", "name"), ("check_names", "entry", "name"), reaches], root,
-             other("name", entry=True),
+            (root, other("plugins"), [f"D1: {root} lists no plugins, not exactly 1", f"D2: {root} has no plugins list"]),
+            (root, other("name", entry=True),
              [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'", f"D1: {root} plugins[0].name is None, not a name",
               reach(root, 0, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
-            ([sources], root, other("source", entry=True), [f"D2: {root} plugins[0] has no source"]),
-            ([("check_versions", "entry", "version")], root, other("version", "9.9.9", True), []),
-            ([entry_deps], root, other("dependencies", ["no-such-plugin"], True), []),
-            ([names], vend, other("name"), [f"D1: {vend} name is None, not a name"]),
-            ([("plugin_entries", "data", "plugins")], vend, other("plugins"), [f"D2: {vend} has no plugins list"]),
-            ([("check_names", "entry", "name"), reaches], vend, other("name", entry=True),
+            (root, other("source", entry=True), [f"D2: {root} plugins[0] has no source"]),
+            (root, other("version", "9.9.9", True), []),
+            (root, other("dependencies", ["no-such-plugin"], True), []),
+            (vend, other("name"), [f"D1: {vend} name is None, not a name"]),
+            (vend, other("plugins"), [f"D2: {vend} has no plugins list"]),
+            (vend, other("name", entry=True),
              [f"D1: {vend} plugins[0].name is None, not a name", reach(vend, 0, None, hooks, "aiqt-guardrails-hooks")]),
-            ([sources], vend, other("source", entry=True), [f"D2: {vend} plugins[0] has no source"]),
-            ([entry_deps], vend, other("dependencies", ["no-such-plugin"], True), []),
-            ([("check_names", "claude", "name"), manifest_name], gate.CLAUDE_MANIFEST, other("name"),
+            (vend, other("source", entry=True), [f"D2: {vend} plugins[0] has no source"]),
+            (vend, other("dependencies", ["no-such-plugin"], True), []),
+            (gate.CLAUDE_MANIFEST, other("name"),
              [f"D1: {gate.CLAUDE_MANIFEST} name is None, not 'cleanlanguage'",
               reach(root, 0, "cleanlanguage", gate.CLAUDE_MANIFEST, None)]),
-            ([("check_versions", "claude", "version")], gate.CLAUDE_MANIFEST, other("version"),
-             [f"D3: {gate.CLAUDE_MANIFEST} version is None, not a version"]),
-            ([manifest_deps], gate.CLAUDE_MANIFEST, other("dependencies", ["no-such-plugin"]), []),
-            ([("check_names", "agent", "name")], gate.AGENT_MANIFEST, other("name"),
-             [f"D1: {gate.AGENT_MANIFEST} name is None, not 'cleanlanguage'"]),
-            ([("check_versions", "agent", "version")], gate.AGENT_MANIFEST, other("version"),
-             [f"D3: {gate.AGENT_MANIFEST} version is None, not a version"]),
-            ([("check_names", "site", "site_key")], gate.SITE_JSON, other("site_key"),
-             [f"D1: {gate.SITE_JSON} site_key is None, not 'cleanlanguage'"]),
-            ([manifest_name], hooks, other("name"), [reach(vend, 0, "aiqt-guardrails-hooks", hooks, None)]),
-            ([manifest_deps], hooks, other("dependencies", ["no-such-plugin"]), []),
-            # Each place that reads a key the setups above change, but whose output those setups leave
-            # alone: the plugins list as the names, versions and dependencies checks read it; the
-            # marketplace name as a dependency's marketplace; and an entry's name as a dependency names
-            # it and as the plugin a list belongs to.
-            ([*plugin_reads, ("check_versions", "root", "plugins")], root,
-             plugins_other(name="claude-x", version="9.9.9", dependencies=["no-such-plugin"]),
+            (gate.CLAUDE_MANIFEST, other("version"), [f"D3: {gate.CLAUDE_MANIFEST} version is None, not a version"]),
+            (gate.CLAUDE_MANIFEST, other("dependencies", ["no-such-plugin"]), []),
+            (gate.AGENT_MANIFEST, other("name"), [f"D1: {gate.AGENT_MANIFEST} name is None, not 'cleanlanguage'"]),
+            (gate.AGENT_MANIFEST, other("version"), [f"D3: {gate.AGENT_MANIFEST} version is None, not a version"]),
+            (gate.SITE_JSON, other("site_key"), [f"D1: {gate.SITE_JSON} site_key is None, not 'cleanlanguage'"]),
+            (hooks, other("name"), [reach(vend, 0, "aiqt-guardrails-hooks", hooks, None)]),
+            (hooks, other("dependencies", ["no-such-plugin"]), []),
+            # Each read of a key the setups above change, but whose output those setups leave alone: the
+            # plugins list as the names, versions and dependencies checks read it; the marketplace name as
+            # a dependency's marketplace; and an entry's name as a dependency names it and as the plugin a
+            # list belongs to.
+            (root, plugins_other(name="claude-x", version="9.9.9", dependencies=["no-such-plugin"]),
              [f"D1: {root} lists no plugins, not exactly 1", f"D2: {root} has no plugins list"]),
-            (plugin_reads, vend, plugins_other(name="claude-x", dependencies=["no-such-plugin"]),
-             [f"D2: {vend} has no plugins list"]),
-            ([("check_dependencies", "data", "name")], root, name_other(0, "cleanlanguage@cleanlanguage"),
+            (vend, plugins_other(name="claude-x", dependencies=["no-such-plugin"]), [f"D2: {vend} has no plugins list"]),
+            (root, name_other(0, "cleanlanguage@cleanlanguage"),
              [f"D1: {root} name is None, not 'cleanlanguage'", f"D1: {root} name is None, not a name",
               f"D4: {root} plugins[0] dependency 'cleanlanguage@cleanlanguage' names no plugin of the marketplace "
               f"None in {root}"]),
-            ([("check_dependencies", "data", "name")], vend,
-             name_other(1, "aiqt-guardrails-hooks@aiqt-guardrails", {"name": "aiqt-skill", "source": "./aiqt-skill"}),
+            (vend, name_other(1, "aiqt-guardrails-hooks@aiqt-guardrails", {"name": "aiqt-skill", "source": "./aiqt-skill"}),
              [f"D1: {vend} name is None, not a name",
               f"D4: {vend} plugins[1] dependency 'aiqt-guardrails-hooks@aiqt-guardrails' names no plugin of the "
               f"marketplace None in {vend}"]),
-            ([("check_dependencies", "e", "name")], root, entry_other(dependency="cleanlanguage"),
+            (root, entry_other(dependency="cleanlanguage"),
              [f"D1: {root} plugins[0].name is None, not 'cleanlanguage'", f"D1: {root} plugins[0].name is None, not a name",
               reach(root, 0, None, gate.CLAUDE_MANIFEST, "cleanlanguage"),
               f"D4: {root} plugins[0] dependency 'cleanlanguage' names no plugin of the marketplace 'cleanlanguage' "
               f"in {root}"]),
-            ([("check_dependencies", "e", "name")], vend,
-             entry_other({"Name": "aiqt-skill", "source": "./aiqt-skill"}, "aiqt-skill"),
+            (vend, entry_other({"Name": "aiqt-skill", "source": "./aiqt-skill"}, "aiqt-skill"),
              [f"D1: {vend} plugins[1].name is None, not a name",
               reach(vend, 1, None, "plugin/aiqt-skill/.claude-plugin/plugin.json", "aiqt-skill"),
               f"D4: {vend} plugins[0] dependency 'aiqt-skill' names no plugin of the marketplace 'aiqt-guardrails' "
               f"in {vend}"]),
-            ([("check_dependencies", "entry", "name")], root,
-             entry_other({"Name": "cleanlanguage", "source": "./cleanlanguage", "dependencies": ["cleanlanguage"]}),
+            (root, entry_other({"Name": "cleanlanguage", "source": "./cleanlanguage", "dependencies": ["cleanlanguage"]}),
              [f"D1: {root} lists 2 plugins, not exactly 1", f"D1: {root} plugins[1].name is None, not a name",
               reach(root, 1, None, gate.CLAUDE_MANIFEST, "cleanlanguage")]),
-            ([("check_dependencies", "entry", "name")], vend,
-             entry_other({"Name": "aiqt-guardrails-hooks", "source": "./aiqt-guardrails-hooks",
-                          "dependencies": ["aiqt-guardrails-hooks"]}),
+            (vend, entry_other({"Name": "aiqt-guardrails-hooks", "source": "./aiqt-guardrails-hooks",
+                                "dependencies": ["aiqt-guardrails-hooks"]}),
              [f"D1: {vend} plugins[1].name is None, not a name", reach(vend, 1, None, hooks, "aiqt-guardrails-hooks")]),
         ]
 
     def test_keys_in_another_letter_case_are_not_read(self):
-        # Each place the gate reads a JSON key, with the key written in another letter case in a setup
-        # whose output that place would change if it read the key. The gate reads a key exactly as
+        # Each key the gate reads, in each file and plugin entry where it reads it, written in another
+        # letter case in a setup whose output a read of it would change. The gate reads a key exactly as
         # written, so a key it requires is missing, and a key it reads only where present, given a value
         # that fails when read, is not read. The manifest of a vendored entry that only 2 setups list.
         self.write_json("plugin/aiqt-skill/.claude-plugin/plugin.json", manifest("aiqt-skill", "0.4.0"))
-        for reads, rel, change, lines in self.key_setups():
-            with self.subTest(rel=rel, reads=reads):
+        for setup, (rel, change, lines) in enumerate(self.key_setups()):
+            with self.subTest(setup=setup, rel=rel):
                 saved = (self.root / rel).read_bytes()
                 self.edit_json(rel, change)
                 try:
@@ -789,60 +769,85 @@ class PluginDistributionTest(unittest.TestCase):
                 finally:
                     (self.root / rel).write_bytes(saved)
 
-    def test_each_place_the_gate_reads_a_key_has_a_setup(self):
-        # The places key_reads finds in the gate, each counted as often as it is found, are exactly the
-        # places the setups of test_keys_in_another_letter_case_are_not_read name, each once, and those of
-        # NOT_JSON_READS, each as often as listed. So a read added in any form key_reads finds, moved, or
-        # made twice at 1 place fails here until a setup or NOT_JSON_READS names it; and a read whose key
-        # is not a string constant, or that reads every key, fails unless NOT_JSON_READS lists it.
-        reads = collections.Counter(key_reads(MODULE_PATH.read_text(encoding="utf-8")))
-        named = collections.Counter({read for setup_reads, _, _, _ in self.key_setups() for read in setup_reads})
-        self.assertEqual(set(named) & set(NOT_JSON_READS), set())
-        listed = named + collections.Counter(NOT_JSON_READS)
-        self.assertEqual((sorted((reads - listed).elements(), key=repr), sorted((listed - reads).elements(), key=repr)),
-                         ([], []))
+    def test_recorder_sees_each_route(self):
+        # Each route by which code can read a key, or every key, of a JSON object, applied to a stand-in
+        # of 1 that holds "version" and "Version": each logs a use that breaks the rule (breaches), or
+        # raises TypeError or AttributeError, as the gate's main turns into exit 3. Then the uses that
+        # keep the rule: each logs no breach and gives what a dict gives. The output is empty but where
+        # a route names the text it shows.
+        text = "{'version': '1', 'Version': '2'}"
 
-    def test_key_reads_finds_each_form_of_key_read(self):
-        # Each form in which Python source reads a key of a dict, in a function f, with KEY bound once at
-        # module level, and what key_reads finds for it; then forms that read no key of a dict.
-        one = [("f", "obj", "Version")]
-        every = [("f", "obj", None)]
-        forms = [
-            ('obj.get("Version")', one), ('obj.get("Version", None)', one), ('obj["Version"]', one),
-            ('obj["Version"] += "x"', one), ('"Version" in obj', one), ('"Version" not in obj', one),
-            ('"a" == "Version" in obj', one), ('"Version" in load(obj)', [("f", "load(obj)", "Version")]),
-            ('dict.get(obj, "Version")', one),
-            ('type(obj).get(obj, "Version")', one), ('obj.pop("Version")', one), ('obj.setdefault("Version")', one),
-            ('obj.__getitem__("Version")', one), ('obj.__contains__("Version")', one),
-            ('operator.getitem(obj, "Version")', one), ('operator.contains(obj, "Version")', one),
-            ('operator.itemgetter("Version")(obj)', [("f", "operator.itemgetter", "Version")]),
-            ('obj.get(KEY)', one), ('obj[KEY]', one),
-            ('match obj:\n        case {"Version": _}:\n            pass', one),
-            ('match obj:\n        case [{"Version": {"Inner": _}}]:\n            pass',
-             [("f", "obj[0]", "Version"), ("f", "obj[0]['Version']", "Inner")]),
-            ('obj.get(key)', every), ('obj.get(KEY.lower())', every), ('obj[key]', every), ('key in obj', every),
-            ('obj.items()', every), ('obj.keys()', every), ('obj.values()', every), ('obj.copy()', every),
-            ('obj.popitem()', every), ('obj.__iter__()', every), ('getter = obj.get', every),
-            ('getattr(obj, "get")("Version")', every), ('getattr(obj, key)', every),
-            ('operator.getitem', [("f", "operator.getitem", None)]),
-            ('match obj:\n        case {**rest}:\n            pass', every),
-            ('for key in obj:\n        pass', every), ('[key for key in obj]', every), ('{**obj}', every),
-            ('dict(**obj)', every), ('[*obj]', every), ('first, *rest = obj', every), ('yield from obj', every),
-            ('list(obj)', every), ('sorted(obj)', every), ('enumerate(obj)', every), ('map(str, obj)', every),
-            ('"".join(obj)', every), ('for key in (obj if key else []):\n        pass', every),
-            ('for key in key or obj:\n        pass', [("f", "key", None), ("f", "obj", None)]),
-            ('for key in load(obj):\n        pass', [("f", "load(obj)", None)]),
-            ('obj[0]', []), ('obj[-1]', []), ('obj[1:]', []), ('"a" in "abc"', []), ('"a" in ("a", "b")', []),
-            ('for key in ("a", "b"):\n        pass', []), ('getattr(obj, "real", 0)', []), ('x = {"a": obj}', []),
-            ('len(obj)', []), ('for key, value in obj.items():\n        pass', every),
+        class Folded(str):
+            """A key equal to any str equal to it after case folding."""
+
+            def __eq__(self, other):
+                return isinstance(other, str) and self.casefold() == str.casefold(other)
+
+            def __hash__(self):
+                return hash(self.casefold())
+
+        def matched(held):
+            match held:
+                case {"Version": _}:
+                    return True
+            return False
+
+        breaking = [
+            ("get", lambda held: held.get("Version"), ""), ("subscript", lambda held: held["Version"], ""),
+            ("in", lambda held: "Version" in held, ""),
+            ("operator.methodcaller", lambda held: operator.methodcaller("get", "Version")(held), ""),
+            ("operator.itemgetter", lambda held: operator.itemgetter("Version")(held), ""),
+            ("getattr", lambda held: getattr(held, "get")("Version"), ""),
+            ("object.__getattribute__", lambda held: object.__getattribute__(held, "get")("Version"), ""),
+            ("str.format_map", lambda held: "{Version}".format_map(held), ""),
+            ("%", lambda held: "%(Version)s" % held, ""), ("str.format", lambda held: "{0[Version]}".format(held), ""),
+            ("a key of a str subclass", lambda held: held.get(Folded("version")), ""),
+            ("json.dumps", json.dumps, ""), ("dict.get", lambda held: dict.get(held, "Version"), ""),
+            ("dict.__getitem__", lambda held: dict.__getitem__(held, "Version"), ""),
+            ("dict", dict, ""), ("** unpacking", lambda held: {**held}, ""), ("| on the left", lambda held: held | {}, ""),
+            ("| on the right", lambda held: {} | held, ""), ("list", list, ""), ("len", len, ""), ("bool", bool, ""),
+            ("items", lambda held: held.items(), ""), ("copy.copy", copy.copy, ""), ("copy.deepcopy", copy.deepcopy, ""),
+            ("pickle", pickle.dumps, ""), ("str", str, ""), ("an f-string", lambda held: f"{held}", ""),
+            ("== with a dict", lambda held: held == {"version": "1"}, ""), ("vars", vars, ""),
+            ("__dict__", lambda held: held.__dict__, ""), ("a mapping pattern of match", matched, ""),
+            ("repr not shown", repr, ""), ("repr taken twice, shown once", lambda held: (repr(held), repr(held)), text),
+            ("repr of an object read by key", lambda held: (held.get("version"), repr(held)), text),
+            # The other methods of the stand-in that log, so that each is reached by at least 1 route.
+            ("pop", lambda held: held.pop("Version"), ""), ("setdefault", lambda held: held.setdefault("Version"), ""),
+            ("values", lambda held: held.values(), ""), ("reversed", reversed, ""), ("copy", lambda held: held.copy(), ""),
+            ("popitem", lambda held: held.popitem(), ""), ("update", lambda held: held.update(), ""),
+            ("clear", lambda held: held.clear(), ""), ("item assignment", lambda held: held.__setitem__("Version", "3"), ""),
+            ("del", lambda held: held.__delitem__("Version"), ""), ("!= with a dict", lambda held: held != {"version": "1"}, ""),
+            ("__getstate__", lambda held: held.__getstate__(), ""),
         ]
-        for statement, expected in forms:
-            with self.subTest(statement=statement):
-                source = f'import operator\nKEY = "Version"\n\n\ndef f(obj, key, load):\n    {statement}\n'
-                self.assertEqual(sorted(key_reads(source), key=repr), sorted(expected, key=repr))
-        # A name bound more than once is not read as a string constant.
-        source = 'KEY = "Version"\n\n\ndef f(obj):\n    KEY = "x"\n    obj.get(KEY)\n'
-        self.assertEqual(key_reads(source), [("f", "obj", None)])
+        keeping = [
+            ("get of a key the gate reads", lambda held: held.get("version"), "1", ""),
+            ("isinstance", lambda held: isinstance(held, dict), True, ""),
+            ("!= with a str", lambda held: held != "cleanlanguage", True, ""),
+            ("repr shown", repr, text, text),
+        ]
+        for name, route, output in breaking:
+            with self.subTest(route=name):
+                log: list = []
+                held = stand_in({"version": "1", "Version": "2"}, log)
+                try:
+                    route(held)
+                except (TypeError, AttributeError):
+                    pass
+                else:
+                    self.assertNotEqual(breaches(log, output), [])
+                finally:
+                    release(log)
+        for name, route, want, output in keeping:
+            with self.subTest(route=name):
+                log = []
+                held = stand_in({"version": "1", "Version": "2"}, log)
+                try:
+                    self.assertEqual(route(held), want)
+                    self.assertEqual(breaches(log, output), [])
+                finally:
+                    release(log)
+        self.assertEqual(RECORDED, {})
 
     def test_unreadable_file_exits_3(self):
         (self.root / gate.SITE_JSON).unlink()
@@ -2383,9 +2388,9 @@ class PluginDistributionTest(unittest.TestCase):
 class RepositoryTreeTest(unittest.TestCase):
     def test_repository_is_consistent(self):
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = gate.main()
+        code, problems = recorded_main(out, err)
         output = out.getvalue() + err.getvalue()
+        self.assertEqual(problems, [], output)
         self.assertEqual(code, 0, output)
         self.assertTrue(out.getvalue().splitlines()[-1].startswith("OK: D1 to D4 hold"), output)
         self.assertNotIn("FAIL", output)

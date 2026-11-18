@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Tests the Released-line checks (item 26, G1 and G2) in
-# tools/check-portable-text-sync.sh.
+# tools/check-portable-text-sync.sh, and its 29000-character label on the
+# generated full file (case 10).
 #
 # G1: the skill must carry a well-formed "Released: YYYY-MM-DD" line directly
 # after its Version line when its version sorts above the undated baseline
@@ -12,17 +13,42 @@
 # probe but breaks its --json contract is reported as unavailable, never as a
 # malformed line or a rejected version.
 #
-# Each case runs the CHECKOUT copy of the gate in a throwaway copy of the files
-# it reads, so nothing in the repository is changed. Every fixture is built so
-# that the generated files are current (regenerated) and the Version agrees
-# everywhere, so a failing case can fail only on the Released check it targets;
-# each failure is also pinned by its message. The passing cases record the
-# source hash with --update --force inside the copy, which also regenerates the
-# site pages with tools/build-site.py, so the copy carries the generator's
-# inputs and a site-src/release.json that names the fixture's version. Every
-# fixture sets its own Version and Released lines explicitly (an undated
-# fixture strips them), so the suite gives the same verdicts on an undated
-# checkout and on a dated one.
+# Every case but 2f runs a copy of the CHECKOUT gate: fresh copies
+# tools/check-portable-text-sync.sh and the files it reads from the repository
+# into a throwaway directory, and the case runs that copy there with bash, or,
+# in case 2g, with bash -O inherit_errexit and with bash -o posix, so nothing
+# in the repository is changed. No case changes the copy of the gate; cases
+# 2b to 2e and 2g replace or break the copy's extractor or client. Case 2f
+# runs no gate: it compares the lines that name the extractor or the client
+# in the checkout gate, and in a scratch file that holds the checkout gate
+# with 1 launch form appended, once per form, with the lines it allows, and
+# counts the client launches in the checkout gate. Every fixture regenerates
+# the generated files and sets 1 Version in the skill and every rendering.
+#
+# A case that expects the gate to fail (expect_fail, expect_fail_without or
+# expect_fail_line) runs no record on its copy, which keeps the checkout's
+# recorded source hash. The case fails when the gate exits 0, when the
+# gate's output does not hold the text that the case pins from the message of
+# the check it targets, or when the last line of that output does not hold
+# the text that the case pins for it, by default the same text;
+# expect_fail_without also fails when the output holds the text that the case
+# names as absent, and expect_fail_line pins its text as the whole last line.
+# The gate stops at the first check that fails and prints nothing after that
+# check's message, and it compares the source hash last, after
+# build-portable-text.py --check and check_common, with a message of several
+# lines when the hash differs and a closing line when it matches. So if the
+# targeted check printed its message but did not stop the gate, a later
+# check's message, the hash message or the closing line would follow it, and
+# the case would fail.
+#
+# A case that expects the gate to pass first records the source hash with
+# --update --force inside the copy, which also regenerates the site pages with
+# tools/build-site.py, so the copy carries the generator's inputs and a
+# site-src/release.json that names the fixture's version; its "records" result
+# fails when that update exits non-zero. expect_pass then fails when the gate
+# exits non-zero. Every fixture sets its own Version and Released lines
+# explicitly (an undated fixture strips them), so the suite gives the same
+# verdicts on an undated checkout and on a dated one.
 #
 # It runs offline.
 #
@@ -163,19 +189,28 @@ expect_pass() { # label
   fi
 }
 
-expect_fail() { # label fragment
-  local code=0
+# last_line_holds TEXT: the last line of the gate's output holds TEXT.
+last_line_holds() {
+  local last
+  last="$(tail -n 1 "${gate_out}")"
+  [[ "${last}" == *"$1"* ]]
+}
+
+expect_fail() { # label fragment: the last line holds last_pin when a case set it, by default fragment; clears last_pin
+  local code=0 last="${last_pin:-$2}"; last_pin=""
   run_gate || code=$?
   if [ "${code}" -eq 0 ]; then
     fail "$1 (expected a failure, the gate passed)"
   elif ! grep -Fq -- "$2" "${gate_out}"; then
     fail "$1 (failed, but not with [$2]: $(cat "${gate_out}"))"
+  elif ! last_line_holds "${last}"; then
+    fail "$1 (failed, but its last line does not hold [${last}]: $(cat "${gate_out}"))"
   else
     pass "$1"
   fi
 }
 
-expect_fail_without() { # label fragment absent-fragment
+expect_fail_without() { # label fragment absent-fragment: the last line holds fragment
   local code=0
   run_gate || code=$?
   if [ "${code}" -eq 0 ]; then
@@ -184,18 +219,22 @@ expect_fail_without() { # label fragment absent-fragment
     fail "$1 (failed, but not with [$2]: $(cat "${gate_out}"))"
   elif grep -Fq -- "$3" "${gate_out}"; then
     fail "$1 (failed, but also with [$3]: $(cat "${gate_out}"))"
+  elif ! last_line_holds "$2"; then
+    fail "$1 (failed, but its last line does not hold [$2]: $(cat "${gate_out}"))"
   else
     pass "$1"
   fi
 }
 
-expect_fail_line() { # label line: the gate fails and prints line as a whole line
+expect_fail_line() { # label line: the gate fails and prints line as its whole last line
   local code=0
   run_gate || code=$?
   if [ "${code}" -eq 0 ]; then
     fail "$1 (expected a failure, the gate passed)"
   elif ! grep -Fxq -- "$2" "${gate_out}"; then
     fail "$1 (failed, but no line is exactly [$2]: $(cat "${gate_out}"))"
+  elif [ "$(tail -n 1 "${gate_out}")" != "$2" ]; then
+    fail "$1 (failed, but its last line is not [$2]: $(cat "${gate_out}"))"
   else
     pass "$1"
   fi
@@ -312,16 +351,20 @@ for mode in exit1 notjson otherop badvalue refused; do
 done
 
 # 2d2. Row 89: at each call of the gate, the line in which the client names
-#      its reason is relayed before the message of the gate.
+#      its reason is relayed before the message of the gate, which is the
+#      last line.
 for op in baseline extract requires_release_date; do
   undated_fixture 1.0.14
   break_extractor "${op}" exit1
+  last_pin="is unavailable or"
   expect_fail "the client reason is relayed at the ${op} call" \
     "skill-release-date-client: skill-release-date.py exited 1 in ${op}, so the extractor is unavailable"
 done
 
 # 2d3. Row 89: an exit 0 whose output is not a bare day (which the client
 #      never gives) fails as an unexpected answer, never as a Released date.
+#      The message quotes both lines of that output, so its last line opens
+#      with the second.
 undated_fixture 1.0.14
 mv "${work}/tools/skill-release-date-client.py" "${work}/tools/real-client.py"
 cat > "${work}/tools/skill-release-date-client.py" <<'PYCLIENT'
@@ -333,6 +376,7 @@ if sys.argv[1:2] == ["extract-file"]:
 real = os.path.join(os.path.dirname(os.path.abspath(__file__)), "real-client.py")
 os.execv(sys.executable, [sys.executable, "-I", real, *sys.argv[1:]])
 PYCLIENT
+last_pin="noise) for the Released line of ${skill}."
 expect_fail "a value that is not a bare day is not used" \
   "tools/skill-release-date.py gave an unexpected answer (2026-11-15"
 
@@ -516,6 +560,53 @@ expect_fail "a malformed rendering line fails" "Malformed Released: line in ${el
 undated_fixture 1.0.14
 set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
+
+# 10. The 29k label: the generated full file, and so its byte-equal twin, may
+#     hold at most 29000 characters by wc -m. pad_full TARGET appends a line
+#     of U+00E9 (e with an acute accent, 1 character and 2 bytes in UTF-8)
+#     after a blank line at the end of the fixture skill, which adds its
+#     length plus 2 characters to the full file, regenerates, and fails the
+#     case unless the full file then holds exactly TARGET characters. The
+#     padded file then holds more bytes than characters, so a gate that
+#     counted bytes would refuse it at 29000 and print another count at 29001.
+#     At 29000 the case expects record to succeed and the gate to pass; at
+#     29001 it expects the gate to fail with the label line as its whole last
+#     line, so a label check that printed the line but did not stop the gate
+#     fails the case. The case needs a wc -m that gives the characters of the
+#     full file, not its bytes: where wc -m gives bytes, the count after
+#     padding exceeds TARGET, so pad_full fails the case. On a UTF-8 file,
+#     GNU coreutils 9.7 wc -m gave its bytes in the C and POSIX locales and
+#     its characters in the C.UTF-8 and en_US.UTF-8 locales; uutils
+#     coreutils 0.10.0 wc -m gave its characters in all 4.
+full="site/downloads/cleanlanguage.md"
+pad_full() { # target
+  local before after
+  before="$(wc -m < "${work}/${full}")"
+  python3 -I - "${work}/${skill}" "$(( $1 - before - 2 ))" <<'PYPAD'
+import sys
+path, count = sys.argv[1], int(sys.argv[2])
+if count < 1:
+    sys.exit("pad_full: the full file is already too long to pad to the target")
+with open(path, "a", encoding="utf-8", newline="") as fh:
+    fh.write("\n" + chr(0xE9) * count + "\n")
+PYPAD
+  regen
+  after="$(wc -m < "${work}/${full}")"
+  if [ "${after}" -ne "$1" ]; then
+    fail "the full file was padded to $1 characters (it holds ${after})"
+    return 1
+  fi
+}
+undated_fixture 1.0.14
+if pad_full 29000; then
+  if record; then pass "a full file of 29000 characters records"; else fail "a full file of 29000 characters records"; fi
+  expect_pass "a full file of 29000 characters is within its label"
+fi
+undated_fixture 1.0.14
+if pad_full 29001; then
+  expect_fail_line "a full file of 29001 characters is over its label" \
+    "${full} is 29001 chars, over its 29000 label."
+fi
 
 if [ "${fails}" -ne 0 ]; then
   printf '%d failure(s).\n' "${fails}" >&2

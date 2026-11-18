@@ -5,7 +5,7 @@ This suite proves that the stage-1 `.aiqt/orchestration.json` arming keys `recor
 `state_dir` actually change the installed hook's behaviour, and that the change adds no unbounded or
 fail-closed path beyond the pre-existing bad-registry class. The fourth stage-1 key, `dispatch_tools`,
 is NOT behaviourally load-bearing at its committed value `[]`: the recorder reads it as
-`reg.get("dispatch_tools") if isinstance(..., list) else []` (aiqt_hooks.py:9277-9280), so declaring
+`reg.get("dispatch_tools") if isinstance(..., list) else []` (aiqt_hooks.py:27060-27063), so declaring
 `[]` is identical to omitting the key, and a background Bash or a TaskOutput is recorded regardless of
 it. `dispatch_tools` only EXTENDS the dispatch set with extra tool names; the committed `[]` is declared
 for honesty and explicitness, not because it flips any assertion here. It does so by
@@ -27,17 +27,20 @@ behaviourally identical to omitting it, so a two-key contrast on it would prove 
 
 Grounding: every hook-behaviour assertion below is read from
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; the cited line numbers are in the
-per-test comments. Dispatch-action names are the HANDLERS keys (aiqt_hooks.py:10594-10619), passed as
-the single argv (main(sys.argv[1:]), aiqt_hooks.py:10724). The repo root is the git top level of
-data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:7590-7595, 3859), and scope goes live only
-when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:7779-7817).
+per-test comments. Dispatch-action names are the keys of the dispatch table
+`HANDLERS = {` (aiqt_hooks.py:37584-37618), passed as the single argv (`main(sys.argv[1:])` at
+aiqt_hooks.py:38363). The repo root is the git top level of
+data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:21723-21728, 10532), and scope goes live only
+when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:22596-22656).
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -201,12 +204,12 @@ class HookHarness(unittest.TestCase):
 
 
 # =====================================================================================================
-# 1. orch_dispatch_ledger (PostToolUse recorder; aiqt_hooks.py:9248-9304)
+# 1. orch_dispatch_ledger (PostToolUse recorder; aiqt_hooks.py:27030-27092)
 # =====================================================================================================
 class DispatchLedger(HookHarness):
     def test_background_bash_synthesized_id_wake_false(self):
         # A background Bash with no observed task id gets a synthesized "disp-" id and wake=False, so it
-        # can never be counted as a live task (aiqt_hooks.py:9279-9296).
+        # can never be counted as a live task (aiqt_hooks.py:27062-27079).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -223,7 +226,7 @@ class DispatchLedger(HookHarness):
         self.assertTrue(rows[0]["task_id"].startswith("disp-"))
 
     def test_background_bash_observed_id_wake_true(self):
-        # A REAL observed task id (tool_response.task_id) records wake=True (aiqt_hooks.py:9284-9296).
+        # A REAL observed task id (tool_response.task_id) records wake=True (aiqt_hooks.py:27067-27079).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -236,7 +239,7 @@ class DispatchLedger(HookHarness):
         self.assertEqual(rows[0], {**rows[0], "event": "launch", "task_id": "task-abc", "wake": True})
 
     def test_taskoutput_with_id_completes(self):
-        # TaskOutput carrying a task id appends a complete row, wake=True (aiqt_hooks.py:9264-9267).
+        # TaskOutput carrying a task id appends a complete row, wake=True (aiqt_hooks.py:27047-27050).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -250,7 +253,7 @@ class DispatchLedger(HookHarness):
 
     def test_two_key_registry_writes_nothing(self):
         # LOAD-BEARING contrast: with the two-key registry scope is never live (no lease, no mode), so
-        # the recorder returns _allow() and writes NO ledger anywhere (aiqt_hooks.py:9258-9259).
+        # the recorder returns _allow() and writes NO ledger anywhere (aiqt_hooks.py:27040-27042).
         self.write_registry(self.two_key())
         self.arm_lease()  # a lease file exists but the registry declares none, so scope stays inert
         r = self.run_hook("orch_dispatch_ledger", {
@@ -264,7 +267,7 @@ class DispatchLedger(HookHarness):
 
 
 # =====================================================================================================
-# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:9268-9275)
+# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:27051-27058)
 # =====================================================================================================
 class TaskOutputNoId(HookHarness):
     def test_unbound_taskoutput(self):
@@ -280,12 +283,12 @@ class TaskOutputNoId(HookHarness):
 
 
 # =====================================================================================================
-# 3. orch_prompt_stamp (UserPromptSubmit recorder; aiqt_hooks.py:9307-9348)
+# 3. orch_prompt_stamp (UserPromptSubmit recorder; aiqt_hooks.py:32509-32576)
 # =====================================================================================================
 class PromptStamp(HookHarness):
     def test_human_prompt_stamps_and_zeroes_counters(self):
         # A genuine human prompt stamps last_human_input_utc and zeroes both denial counters
-        # (aiqt_hooks.py:9327-9333). LOAD-BEARING: the turn-state is SEEDED with NONZERO stop/schedule
+        # (aiqt_hooks.py:32530-32545). LOAD-BEARING: the turn-state is SEEDED with NONZERO stop/schedule
         # denial counters first, so a broken implementation that dropped the reset (preserving the seeded
         # values) would fail these assertions instead of passing on a fresh (absent-key => 0) turn-state.
         # The prompt is not a seeded wake digest, so it is genuine human input, not timer-originated.
@@ -304,7 +307,7 @@ class PromptStamp(HookHarness):
     def test_timer_originated_prompt(self):
         # A prompt whose digest is a seeded wake digest is classified TIMER-ORIGINATED, injects the
         # measured gap, and consumes exactly one digest without resetting the counters
-        # (aiqt_hooks.py:9325, 9334-9348).
+        # (`timer_originated` at aiqt_hooks.py:32528, `wd.remove(digest)` at 32550-32576).
         self.write_registry(self.stage1())
         self.arm_lease()
         prompt = "scheduled wake: recheck ci-7"
@@ -327,7 +330,7 @@ class PromptStamp(HookHarness):
 
     def test_two_key_registry_writes_nothing(self):
         # LOAD-BEARING contrast: two-key scope is inert, so no turn-state is written anywhere
-        # (aiqt_hooks.py:9317-9318).
+        # (`_orch_scope_live` at aiqt_hooks.py:32519-32521).
         self.write_registry(self.two_key())
         self.arm_lease()
         r = self.run_hook("orch_prompt_stamp", {"prompt": "please continue"})
@@ -337,12 +340,13 @@ class PromptStamp(HookHarness):
 
 
 # =====================================================================================================
-# 4. orch_resume_audit (SessionStart, warn-only; aiqt_hooks.py:9765-9794)
+# 4. orch_resume_audit (SessionStart, warn-only; aiqt_hooks.py:33270-33354)
 # =====================================================================================================
 class ResumeAudit(HookHarness):
     def test_wrong_branch_handoff_arms_barrier(self):
         # A handoff naming a branch other than HEAD is a divergence finding; the audit warns and arms
-        # the resume barrier active:true (aiqt_hooks.py:9365-9370, 9783-9793).
+        # the resume barrier active:true (`_head_branch` at aiqt_hooks.py:32769-32774,
+        # `_orch_barrier_write` at 33324-33338).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.write_record_files(handoff="Branch: some-other-branch\n")
@@ -356,7 +360,7 @@ class ResumeAudit(HookHarness):
 
     def test_stale_gate_marker_arms_barrier(self):
         # A handoff gate marker citing a commit that is not HEAD is a divergence finding
-        # (aiqt_hooks.py:9371-9382).
+        # (`sha.startswith(m.group(1))` at aiqt_hooks.py:32775-32786).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.write_record_files(handoff="Gate: green @ deadbeef1234\n")
@@ -368,11 +372,12 @@ class ResumeAudit(HookHarness):
 
     def test_clean_audit_clears_barrier(self):
         # With readable record surfaces, a fresh lease, and no divergence markers, the audit is clean:
-        # a silent allow and resume-barrier.json active:false (aiqt_hooks.py:9784, 9794).
-        # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:9783-9785),
+        # a silent allow and resume-barrier.json active:false (aiqt_hooks.py:33324, 33354).
+        # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:33324-33325),
         # so this proves the clean audit CLEARS an existing barrier (overwrites active:true -> false),
         # not merely that a fresh barrier initializes inactive. orch_resume_audit writes the barrier with
-        # "active": bool(findings) unconditionally (mode "w", aiqt_hooks.py:9783-9785), so a no-findings
+        # "active": bool(findings) unconditionally (it replaces the file through _orch_barrier_write,
+        # aiqt_hooks.py:33324-33325), so a no-findings
         # audit overwrites the seed; removing that clear-write breaks this test.
         self.write_registry(self.stage1())
         self.arm_lease()
@@ -390,8 +395,9 @@ class ResumeAudit(HookHarness):
 
     def test_two_key_registry_finds_no_divergence(self):
         # LOAD-BEARING contrast: the same wrong-branch handoff file is on disk, but the two-key registry
-        # declares no record surface, so the audit reads nothing and stays clean (aiqt_hooks.py:9355,
-        # 9420) -- proving record.handoff is what makes the finding possible.
+        # declares no record surface, so the audit reads nothing and stays clean
+        # (`_orch_record_block` at aiqt_hooks.py:32752 and `_orch_record_block(reg)[0]` at 32833)
+        # -- proving record.handoff is what makes the finding possible.
         self.write_registry(self.two_key())
         self.arm_lease()
         self.write_record_files(handoff="Branch: some-other-branch\n")
@@ -403,7 +409,7 @@ class ResumeAudit(HookHarness):
 
 
 # =====================================================================================================
-# 5. orch_resume_barrier (PreToolUse, warn-first BAKE posture; aiqt_hooks.py:9797-9845)
+# 5. orch_resume_barrier (PreToolUse, warn-first BAKE posture; aiqt_hooks.py:33527-33619)
 # =====================================================================================================
 class ResumeBarrier(HookHarness):
     def _arm_barrier(self, warned=False):
@@ -413,7 +419,7 @@ class ResumeBarrier(HookHarness):
 
     def test_first_out_of_allowlist_write_warns_once(self):
         # An active barrier surfaces the first mutation outside the allowlist exactly once, flipping
-        # warned:true (aiqt_hooks.py:9833-9845).
+        # warned:true (`barrier["warned"] = True` at aiqt_hooks.py:33608-33619).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=False)
         r = self.run_hook("orch_resume_barrier", {
@@ -426,7 +432,7 @@ class ResumeBarrier(HookHarness):
 
     def test_second_write_is_silent(self):
         # Once warned, further out-of-allowlist writes are silent: surface once per arming, never a nag
-        # wall (aiqt_hooks.py:9833-9834).
+        # wall (`barrier.get("warned")` at aiqt_hooks.py:33608-33609).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=True)
         r = self.run_hook("orch_resume_barrier", {
@@ -437,7 +443,7 @@ class ResumeBarrier(HookHarness):
 
     def test_write_to_record_surface_is_silent(self):
         # The record surfaces stay writable, so the only exit (correcting the record) is never obstructed
-        # (aiqt_hooks.py:9820-9832).
+        # (`allow_prefixes` at aiqt_hooks.py:33580-33592).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=False)
         self.write_record_files()
@@ -491,7 +497,7 @@ class CorruptedRegistry(HookHarness):
     TRUNCATED = '{ "version": 1, "record": { "findings":'
 
     def test_dispatch_ledger_silent_allow(self):
-        # status != "ok" -> _allow(); no row (aiqt_hooks.py:9256-9257).
+        # status != "ok" -> _allow(); no row (aiqt_hooks.py:27038-27039).
         self.write_registry(self.TRUNCATED)
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -502,7 +508,7 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(self.find_anywhere("dispatch-ledger.jsonl"), [])
 
     def test_prompt_stamp_silent_allow(self):
-        # status != "ok" -> _allow() (aiqt_hooks.py:9314-9315).
+        # status != "ok" -> _allow() (aiqt_hooks.py:32517-32518).
         self.write_registry(self.TRUNCATED)
         self.arm_lease()
         r = self.run_hook("orch_prompt_stamp", {"prompt": "hello"})
@@ -512,7 +518,7 @@ class CorruptedRegistry(HookHarness):
 
     def test_resume_audit_warns_naming_the_registry(self):
         # status == "bad" -> a warn naming the unreadable registry and barrier active:true
-        # (aiqt_hooks.py:9776-9793).
+        # (`_orch_resume_audit_findings` at aiqt_hooks.py:33316-33338).
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_resume_audit", {})
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -522,18 +528,19 @@ class CorruptedRegistry(HookHarness):
         self.assertTrue(self.read_json_anywhere("resume-barrier.json")["active"])
 
     def test_resume_barrier_allows(self):
-        # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:9805-9807).
+        # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:33562-33564).
         # LOAD-BEARING: on a BAD registry _orch_state_dir_for_root falls back to
-        # the XDG default (aiqt_hooks.py:7658-7659 -> _state_dir_from_registry(root, None)), NOT the
+        # the XDG default (aiqt_hooks.py:22153-22154 -> _state_dir_from_registry(root, None)), NOT the
         # registry-declared state_dir, so orch_resume_barrier reads its barrier from the XDG default. We
         # ARM the barrier THERE by running orch_resume_audit first, which on a bad registry writes an
         # active barrier to that XDG default (proven by test_resume_audit_warns_naming_the_registry). The
         # real code takes the `status != "ok"` early-return and allows WITHOUT reading the barrier; a
         # mutant that DELETES that early-return would fall through, read this active barrier, and reach the
-        # record-allowlist build where `reg` is the bad-registry detail STRING (aiqt_hooks.py:9821),
-        # changing the observed result (a fail-closed exit 2, not this clean exit-0 allow). The previous
-        # version seeded into the DECLARED state_dir, where the fall-through never looks, so the barrier
-        # was absent on both paths and the mutant survived.
+        # record-allowlist build where `reg` is the bad-registry detail STRING
+        # (`reg.get("record")` at aiqt_hooks.py:33581), changing the observed result (a fail-closed
+        # exit 2, not this clean exit-0 allow). The previous version seeded into the DECLARED state_dir,
+        # where the fall-through never looks, so the barrier was absent on both paths and the mutant
+        # survived.
         self.write_registry(self.TRUNCATED)
         self.run_hook("orch_resume_audit", {})  # arms an active barrier at the XDG default (bad registry)
         self.assertTrue(self.read_json_anywhere("resume-barrier.json")["active"],
@@ -545,8 +552,8 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(r.stdout.strip(), "")
 
     def test_stop_guard_fails_open_warn(self):
-        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, not fail-closed: a
-        # bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
+        # DURABLE PIN of the fail-OPEN posture, `_stop_warn` at aiqt_hooks.py:23572-23576, not
+        # fail-closed: a bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_stop_guard", {})
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -557,7 +564,7 @@ class CorruptedRegistry(HookHarness):
     def test_yield_tool_fails_closed_deny(self):
         # PIN of the PRE-EXISTING fail-closed class (unchanged by stage 1): a bad registry denies a
         # scheduling call. A PreToolUse deny is exit 0 with permissionDecision "deny"
-        # (aiqt_hooks.py:8654-8661, _deny at :195-201).
+        # (`status != "ok"` at aiqt_hooks.py:23676-23683, `_deny` at :396-403).
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_yield_tool", {
             "tool_name": "ScheduleWakeup", "tool_input": {},
@@ -568,11 +575,11 @@ class CorruptedRegistry(HookHarness):
 
 
 # =====================================================================================================
-# 7. Missing / unwritable state_dir (aiqt_hooks.py:7666, 9301-9303)
+# 7. Missing / unwritable state_dir (_orch_append_jsonl, aiqt_hooks.py:22161 and 27084-27086)
 # =====================================================================================================
 class StateDirIO(HookHarness):
     def test_missing_state_dir_is_created_on_demand(self):
-        # The recorders makedirs the state dir on demand and the row lands (aiqt_hooks.py:7666).
+        # The recorders makedirs the state dir on demand and the row lands (aiqt_hooks.py:22161).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.assertFalse(self.state_dir().exists(), "precondition: state_dir does not yet exist")
@@ -585,7 +592,8 @@ class StateDirIO(HookHarness):
     @unittest.skipIf(os.geteuid() == 0, "root bypasses directory write permissions")
     def test_unwritable_state_dir_surfaces_failed_write(self):
         # An unwritable state dir makes the ledger append fail; it surfaces a non-blocking systemMessage
-        # and never denies (aiqt_hooks.py:9301-9303). The prompt stamp likewise exits 0.
+        # and never denies (`_allow_note` at aiqt_hooks.py:27084-27086). The prompt stamp likewise
+        # exits 0.
         self.write_registry(self.stage1())
         self.arm_lease()
         sd = self.state_dir()
@@ -605,12 +613,13 @@ class StateDirIO(HookHarness):
 
 
 # =====================================================================================================
-# 8. Stale lease (aiqt_hooks.py:7793-7798, 9400-9401)
+# 8. Stale lease (`_orch_lease_age_class` at aiqt_hooks.py:22619-22630,
+#    `age_class == "stale"` at 32808-32809)
 # =====================================================================================================
 class StaleLease(HookHarness):
     def test_recorders_noop_under_stale_lease(self):
         # A lease older than max_age_hours is not fresh, so scope is not live and the recorders write
-        # nothing (aiqt_hooks.py:7798-7799).
+        # nothing (aiqt_hooks.py:22630-22632).
         self.write_registry(self.stage1())
         self.arm_lease(age_seconds=2 * 24 * 3600)  # two days old, past the 24h horizon
         r = self.run_hook("orch_dispatch_ledger", {
@@ -620,7 +629,8 @@ class StaleLease(HookHarness):
         self.assertEqual(self.find_anywhere("dispatch-ledger.jsonl"), [])
 
     def test_audit_reports_stale_lease(self):
-        # The resume audit surfaces the staleness as a warn-only finding (aiqt_hooks.py:9400-9401).
+        # The resume audit surfaces the staleness as a warn-only finding
+        # (`age_class == "stale"` at aiqt_hooks.py:32808-32809).
         self.write_registry(self.stage1())
         self.arm_lease(age_seconds=2 * 24 * 3600)
         self.write_record_files(handoff="no markers\n")
@@ -632,13 +642,15 @@ class StaleLease(HookHarness):
 
 
 # =====================================================================================================
-# 9. Stop-family surface: stage-1 fixture, live lease, NO operator sentinel (aiqt_hooks.py:8196-8213,
-#    8190-8214, 8542-8566)
+# 9. Stop-family surface: stage-1 fixture, live lease, NO operator sentinel
+#    (`ctx["enum_status"]` at aiqt_hooks.py:23067-23100, `decide_yield` at 23061-23101,
+#    `_orch_record_forced_exit` at 23535-23559)
 # =====================================================================================================
 class StopFamilySurface(HookHarness):
     def test_stop_denies_with_no_enumerator(self):
         # With scope live and no enumerator declared, a turn-end Stop is DENIED once (exit 2) with the
-        # NO_ENUMERATOR reason (aiqt_hooks.py:7966-7968, 8196+8208-8213, 8590-8599).
+        # NO_ENUMERATOR reason (aiqt_hooks.py:22819-22823, `ctx["enum_status"]` at 23067 and
+        # 23095-23100 (`cntdef: the backlog is not enumerable`), `verdict == "DENY"` at 23590-23601).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_stop_guard", {})
@@ -647,7 +659,7 @@ class StopFamilySurface(HookHarness):
 
     def test_followup_stop_releases_with_forced_exit_row(self):
         # The follow-up Stop carrying stop_hook_active:true releases as ALLOW_WITH_FINDINGS (exit 0) and
-        # appends a forced-exit row (aiqt_hooks.py:8192-8195, 8601-8607, 8542-8561).
+        # appends a forced-exit row (aiqt_hooks.py:23063-23066, 23602-23609, 23535-23554).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_stop_guard", {"stop_hook_active": True})
@@ -660,11 +672,13 @@ class StopFamilySurface(HookHarness):
 
     def test_self_owned_sentinel_is_ignored_and_spoof_recorded(self):
         # A sentinel owned by the hook's OWN euid is not the operator's; it is ignored (the Stop still
-        # denies) and recorded as a spoof (aiqt_hooks.py:7897-7898, 8511-8521).
+        # denies) and recorded as a spoof (`os.geteuid()` at aiqt_hooks.py:22736-22737,
+        # `_orch_record_escape_spoof` at 23500-23514).
         #
         # NOTE: the sentinel HONOUR leg (a sentinel owned by a DIFFERENT uid opening the clean-ALLOW
-        # channel, aiqt_hooks.py:8190-8191) needs a second uid to create a foreign-owned file and cannot
-        # run in single-uid CI; it is verified at arming on the host with the root-owned sentinel.
+        # channel, `if ctx["escape"]` at aiqt_hooks.py:23061-23062) needs a second uid to create a
+        # foreign-owned file and cannot run in single-uid CI; it is verified at arming on the host with
+        # the root-owned sentinel.
         self.write_registry(self.stage1())
         self.arm_lease()
         sd = self.state_dir()
@@ -678,6 +692,159 @@ class StopFamilySurface(HookHarness):
         spoof = self.read_json("escape-spoof.json")
         self.assertIsNotNone(spoof, "an ignored sentinel is spoof-recorded")
         self.assertIn("uid", (spoof.get("detail") or ""))
+
+
+# =====================================================================================================
+# 10. Citations of a whole hook function in the tools files
+# =====================================================================================================
+class WholeFunctionCitations(unittest.TestCase):
+    """A line range A-B in a tools/*.py file whose B is the last line of a top-level function of the
+    vendored hook, and whose A is any line from that function's def line to the first line of its body
+    after any docstring (the def line, a line of the signature or the docstring, or the body's first
+    line), is a whole-function citation, whatever words stand around it. WHOLE holds, for each
+    tools file and hook function, how many such ranges the file holds. The case counts, in each tools
+    file, the A-B tokens equal to either current range of each hook function and compares the counts
+    with WHOLE. A re-pin that moves or lengthens a cited function lowers its count, and a new
+    whole-function citation raises one, so either fails here until the citations and WHOLE follow. The
+    case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range written A-B
+    with a hyphen is read; a range that covers part of a function, a range over more than 1 whole
+    function (such as A, the def line of 1 function, to B, the last line of a later one), a single line
+    and a nested function are not checked."""
+
+    WHOLE = {
+        ("check-orchestration-registry.py", "_orch_path"): 2,
+        ("check-orchestration-registry.py", "_orch_root"): 1,
+        ("check-orchestration-registry.py", "_orch_scope_live"): 1,
+        ("check-orchestration-registry.py", "_schema_staleness"): 6,
+        ("check-orchestration-registry.py", "_state_dir_from_registry"): 2,
+        ("check-orchestration-registry.py", "_v_finite_pos"): 3,
+        ("orch-enumerate-backlog.py", "_orch_enumerate"): 1,
+        ("orch-enumerate-backlog.py", "_orch_parse_utc"): 1,
+        ("orch-enumerate-backlog.py", "validate_enumeration"): 1,
+        ("orch_doctor.py", "_orch_barrier_write"): 1,
+        ("orch_doctor.py", "_orch_build_ctx"): 2,
+        ("orch_doctor.py", "_orch_checkpoint_union"): 1,
+        ("orch_doctor.py", "_orch_enumerate"): 4,
+        ("orch_doctor.py", "_orch_path"): 1,
+        ("orch_doctor.py", "_orch_register_wake"): 3,
+        ("orch_doctor.py", "_orch_resume_probes"): 2,
+        ("orch_doctor.py", "_orch_root"): 2,
+        ("orch_doctor.py", "_orch_save_turn_state"): 2,
+        ("orch_doctor.py", "_orch_scope_live"): 2,
+        ("orch_doctor.py", "_orch_state_dir_for_root"): 2,
+        ("orch_doctor.py", "_orch_stop_family"): 1,
+        ("orch_doctor.py", "_orch_write_json_at"): 1,
+        ("orch_doctor.py", "_orch_write_json_atomic"): 1,
+        ("orch_doctor.py", "orch_resume_audit"): 2,
+        ("orch_doctor.py", "orch_yield_tool"): 1,
+        ("test-no-qa-labels.py", "_orch_attestation_refs"): 1,
+        ("test-no-qa-labels.py", "_orch_checkpoint_union"): 1,
+        ("test-no-qa-labels.py", "_orch_escape_active"): 1,
+        ("test-no-qa-labels.py", "_orch_record_escape_spoof"): 1,
+        ("test-no-qa-labels.py", "_orch_scope_live"): 1,
+        ("test-no-qa-labels.py", "_schema_staleness"): 1,
+        ("test-no-qa-labels.py", "orch_ask_guard"): 1,
+        ("test-no-qa-labels.py", "orch_teammate_idle"): 1,
+        ("test-no-qa-labels.py", "orch_yield_tool"): 1,
+        ("test-orch-enumerate-backlog.py", "_orch_enumerate"): 1,
+        ("test-orch-enumerate-backlog.py", "classify_backlog"): 1,
+        ("test-orch-enumerate-backlog.py", "validate_enumeration"): 2,
+        ("test-orch-migrate-todo.py", "validate_enumeration"): 1,
+        ("test-orch-stage1-hooks.py", "_deny"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_record_forced_exit"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_root"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_scope_live"): 1,
+        ("test-orch-stage1-hooks.py", "_orch_state_dir_for_root"): 1,
+        ("test-orch-stage1-hooks.py", "orch_dispatch_ledger"): 1,
+        ("test-orch-stage1-hooks.py", "orch_prompt_stamp"): 1,
+        ("test-orch-stage1-hooks.py", "orch_resume_audit"): 1,
+        ("test-orch-stage1-hooks.py", "orch_resume_barrier"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_attestation_refs"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_barrier_write"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_chained_rows"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_checkpoint_union"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_escape_active"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_event_warn"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_pointer_resolves"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_record_escape_spoof"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_register_tip"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_register_wake"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_resume_probes"): 1,
+        ("test-orch-stage2-hooks.py", "_orch_scope_live"): 1,
+        ("test-orch-stage2-hooks.py", "_schema_staleness"): 1,
+        ("test-orch-stage2-hooks.py", "orch_ask_guard"): 1,
+        ("test-orch-stage2-hooks.py", "orch_teammate_idle"): 1,
+        ("test-orch-stage2-hooks.py", "orch_yield_tool"): 1,
+        ("test-orch-stage2-hooks.py", "validate_enumeration"): 1,
+        ("test-orchestration-registry.py", "_orch_path"): 1,
+        ("test-orchestration-registry.py", "_orch_root"): 1,
+        ("test-orchestration-registry.py", "_schema_staleness"): 3,
+        ("test-orchestration-registry.py", "_state_dir_from_registry"): 1,
+    }
+    RANGE = re.compile(r"(?<![\w.])(\d+)-(\d+)(?![\w.])")
+    # 1 entry per rule of the count: (rule, the text of a fixture file a.py, a fixture WHOLE, the
+    # mismatches the count must give against FIXTURE_HOOK). FIXTURE_HOOK defines f on its lines 1 to 4,
+    # g nested in f on lines 2 and 3, h on lines 5 and 6, and k on lines 7 to 10, with its docstring on
+    # line 8 and its body on lines 9 and 10.
+    FIXTURE_HOOK = ("def f():\n    def g():\n        pass\n    return g\ndef h():\n    pass\n"
+                    "def k():\n    \"\"\"Doc.\"\"\"\n    x = 1\n    return x\n")
+    RANGE_FORMS = (
+        ("a range in any words is read", "`f` at 1-4; f (aiqt_hooks.py:1-4); lines 1-4 of h",
+         {("a.py", "f"): 3}, []),
+        ("an unlisted range raises a count", "f, 1-4", {}, [("a.py", "f", 1, 0)]),
+        ("a shortened range lowers a count", "f at 1-3", {("a.py", "f"): 1}, [("a.py", "f", 0, 1)]),
+        ("a range from the first line of the body after the docstring counts", "k at 9-10, 7-10",
+         {("a.py", "k"): 2}, []),
+        ("a range from a docstring line counts", "k at 8-10", {("a.py", "k"): 1}, []),
+        ("a shortened body range lowers a count", "k at 9-9", {("a.py", "k"): 1}, [("a.py", "k", 0, 1)]),
+        ("only a range from the def line to the body's first line, to the last line, counts",
+         "f at 1-1, h at 5-5, f at 4-4, f at 3-4, k at 10-10, k at 7-9", {}, []),
+        ("only top-level functions count", "g at 2-3", {}, []),
+        ("a range over more than 1 function counts for none", "f and h at 1-6", {}, []),
+        ("no letter, digit or dot before the range", "v1-4, x.1-4, 11-4", {}, []),
+        ("no letter, digit or dot after the range", "1-4a, 1-4.5, 1-44", {}, []),
+    )
+
+    @staticmethod
+    def functions(source):
+        """{(first line, last line): name} for each top-level function of the source, with every
+        line from the def line to the first line of the body after any docstring as a first line."""
+        spans = {}
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef):
+                body = node.body
+                docstring = (isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                             and isinstance(body[0].value.value, str))
+                first = body[1] if docstring and len(body) > 1 else body[0]
+                for start in range(node.lineno, first.lineno + 1):
+                    spans[(start, node.end_lineno)] = node.name
+        return spans
+
+    @classmethod
+    def mismatches(cls, functions, texts, whole):
+        """[(file, function, ranges found, count in whole)] for each file and function whose number of
+        A-B ranges equal to the function's range in texts ({file: text}) differs from whole."""
+        found = {}
+        for file_name, text in texts.items():
+            for match in cls.RANGE.finditer(text):
+                name = functions.get((int(match.group(1)), int(match.group(2))))
+                if name:
+                    found[(file_name, name)] = found.get((file_name, name), 0) + 1
+        return [(key[0], key[1], found.get(key, 0), whole.get(key, 0))
+                for key in sorted(set(found) | set(whole)) if found.get(key, 0) != whole.get(key, 0)]
+
+    def test_whole_function_citations_follow_the_hook(self):
+        fixture = self.functions(self.FIXTURE_HOOK)
+        for rule, text, whole, expected in self.RANGE_FORMS:
+            with self.subTest(rule=rule):
+                self.assertEqual(self.mismatches(fixture, {"a.py": text}, whole), expected)
+        functions = self.functions(HOOK.read_text(encoding="utf-8"))
+        for _file_name, name in self.WHOLE:
+            self.assertIn(name, functions.values(), "the hook defines no function {}".format(name))
+        texts = {path.name: path.read_text(encoding="utf-8")
+                 for path in sorted(Path(__file__).resolve().parent.glob("*.py"))}
+        self.assertEqual(self.mismatches(functions, texts, self.WHOLE), [],
+                         "(file, function, whole-function ranges found, count in WHOLE)")
 
 
 if __name__ == "__main__":

@@ -3,10 +3,10 @@
 
 The gate must fail a page whose JSON-LD carries no author object with a
 non-empty name, not merely check agreement when a name happens to be present.
-These tests pin that requirement, and the preserved disagreement checks, on
-fixture pages. They run offline with the standard library: the fixtures patch
-the module's git readers, so no history is needed. The CI workflow invokes this
-file before the gate itself runs against the real pages.
+These tests pin that requirement, and the check that the meta and JSON-LD
+authors agree, on fixture pages. They run offline with the standard library:
+the fixtures patch the module's git readers, so no history is needed. The CI
+workflow invokes this file before the gate itself runs against the real pages.
 
 They also pin the gate's meta-tag parsing, its handling of an unreadable
 (non-UTF-8) page, and its containment of image references to the site
@@ -254,7 +254,7 @@ class AuthorRequirementTest(unittest.TestCase):
 
     def test_wrong_primary_author_not_saved_by_secondary(self):
         # The primary Article has the wrong author; a secondary Comment that
-        # names the meta author must NOT rescue it, which would be a false green.
+        # names the meta author must not rescue it, which would be a false green.
         block = (
             '<script type="application/ld+json">'
             '[{"@type": "Article",'
@@ -350,8 +350,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
 
     def test_stamp_within_tolerance_passes(self):
         # modified = D (2026-01-10); the file last changed D + 4 days, within the
-        # 7-day tolerance; today is well after both. The OLD gate flagged any
-        # changed > modified; the NEW gate tolerates the short window.
+        # 7-day tolerance; today is well after both. A gate that flagged any
+        # changed > modified would fail this page; the tolerance must pass it.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-14", today="2026-02-01")
@@ -370,16 +370,17 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 
     def test_stamp_exactly_at_tolerance_passes(self):
-        # The file last changed exactly D + 7 days, the tolerance boundary. The
-        # check is `> tolerance`, so exactly 7 passes; a `>=` mutation would fail
-        # this.
+        # modified = D (2026-01-10); the file last changed exactly D + 7 days, the
+        # last day within the 7-day tolerance. The check is `> tolerance`, so
+        # exactly 7 passes; a `>=` check would fail this test.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-17", today="2026-02-01")
         self.assertEqual(problems, [], problems)
 
     def test_stamp_one_day_past_tolerance_fails(self):
-        # The file last changed D + 8 days, one day past the boundary.
+        # modified = D (2026-01-10); the file last changed D + 8 days, 1 day past
+        # the 7-day tolerance.
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-18", today="2026-02-01")
@@ -387,8 +388,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 
     def test_modified_in_future_still_rejected(self):
-        # modified is after today; the tolerance branch stays silent (changed
-        # equals modified) so only the future check fires.
+        # modified is after today and equals changed, a 0-day gap within the 7-day
+        # tolerance; the test needs a problem stating that the stamp is in the future.
         problems = self.check(
             published="2026-01-01", modified="2026-02-15",
             changed="2026-02-15", today="2026-02-01")
@@ -397,8 +398,8 @@ class ModifiedStampToleranceTest(unittest.TestCase):
 
     def test_invalid_calendar_date_is_reported_not_crashed(self):
         # An ISO-shaped but invalid date (fromisoformat rejects it) must produce
-        # a clean problem, not a traceback. Before the guard, the tolerance math
-        # raised ValueError here.
+        # a clean problem, not a traceback: tolerance math that parsed the date
+        # unguarded would raise ValueError here.
         problems = self.check(
             published="2026-01-01", modified="2026-13-40",
             changed="2026-01-14", today="2026-02-01")
@@ -503,10 +504,10 @@ class ImageReferenceTest(_PatchedGateTest):
         self.assertTrue(any("outside the site directory" in p for p in problems))
 
     def test_traversal_to_missing_target_is_reported_outside(self):
-        # A traversal to a MISSING out-of-tree target must be reported as a
-        # containment violation, not as a plain "does not exist": the old
-        # unresolved code emitted "does not exist", so asserting the
-        # "outside" message makes this a real change-detector for fix (c).
+        # A traversal to a missing out-of-tree target must be reported as a
+        # containment violation, not as a plain "does not exist": the test needs
+        # exactly 1 problem, whose text holds "outside the site directory", and
+        # fails a gate that reports this missing target only as "does not exist".
         problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
         self.assertEqual(len(problems), 1)
         self.assertIn("outside the site directory", problems[0])
@@ -541,10 +542,14 @@ class OriginMatchTest(_PatchedGateTest):
 
     def test_explicit_default_port_maps_to_the_file(self):
         # :443 is the default https port, so this is on-origin and maps to
-        # card.png. The old gate looked for site/:443/card.png and false-failed.
+        # card.png. A gate that looked up site/:443/card.png would fail the page.
         problems = self._problems(_img_meta("https://cleanlanguage.ai:443/card.png"),
                                   files=["card.png"])
         self.assertEqual(problems, [])
+        # The same port on a missing file must be reported as missing, so a gate
+        # that reads :443 as off-origin and skips the URL fails this test.
+        problems = self._problems(_img_meta("https://cleanlanguage.ai:443/missing.png"))
+        self.assertTrue(any("does not exist" in p for p in problems))
 
     def test_subdomain_lookalike_is_ignored(self):
         problems = self._problems(_img_meta("https://cleanlanguage.ai.evil/card.png"))
@@ -557,8 +562,8 @@ class OriginMatchTest(_PatchedGateTest):
 
     def test_backslash_url_missing_is_reported(self):
         # A browser normalizes the backslash to a slash, so this is on-origin and
-        # points at a missing file. The old textual check also caught it; the new
-        # parser must not silently pass it.
+        # points at a missing file. A parser that kept the backslash in the host
+        # would treat the URL as off-origin and silently pass it.
         problems = self._problems(_img_meta("https://cleanlanguage.ai\\missing.png"))
         self.assertTrue(any("does not exist" in p for p in problems))
 
@@ -586,8 +591,8 @@ class MultiImageTest(_PatchedGateTest):
         self.assertTrue(any("missing.png" in p for p in problems))
 
     def test_twitter_image_reference_is_checked(self):
-        # Parity: og:image present, twitter:image missing -> the twitter reference
-        # is reported (passes before and after; guards the reference loop).
+        # og:image names an existing file and twitter:image a missing one, so a
+        # gate that checks only the first image reference fails this test.
         extra = (_img_meta("https://cleanlanguage.ai/card.png") + "\n"
                  + '<meta name="twitter:image" content="https://cleanlanguage.ai/missing.png">')
         problems = self._problems(extra, files=["card.png"])
@@ -620,8 +625,8 @@ class MetaContextTest(_PatchedGateTest):
         self.assertEqual(problems, [])
 
     def test_meta_after_closed_template_still_counts(self):
-        # Parity guard against over-suppression: the author after a closed
-        # template is active and satisfies the requirement.
+        # The author after a closed template is active and satisfies the
+        # requirement: a gate that ignores meta past </template> fails this test.
         problems, author = self._check(
             '<template><meta name="robots" content="noindex"></template>\n'
             '<meta name="author" content="Jeff Posluns">')
@@ -646,8 +651,8 @@ class MalformedImageUrlTest(_PatchedGateTest):
         self.assertTrue(any("not a valid image URL" in p for p in problems))
 
     def test_url_through_a_file_is_a_content_problem_not_exit_3(self):
-        # og:image traverses THROUGH an existing file: a content problem (exit 1),
-        # never a whole-gate exit-3 traceback.
+        # og:image traverses through an existing file. The test needs a problem
+        # holding "does not exist" and errors if check_page() raises instead.
         (gate.SITE_ROOT / "card.png").write_bytes(b"x")
         problems = self._problems("https://cleanlanguage.ai/card.png/child.png")
         self.assertTrue(any("does not exist" in p for p in problems))
