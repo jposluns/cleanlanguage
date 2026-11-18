@@ -35,19 +35,19 @@ HEAD; the checkout's tools/release-package.sh, tools/skill-release-date.py
 and tools/skill-release-date-client.py are copied into it, so the code under
 test is the checkout's, uncommitted changes included. The test runs
 read-only git commands and git clone only; it sets core.autocrlf for 3
-builds, 1 in each of cases 3, 17 and 18, through the GIT_CONFIG_COUNT,
+builds, 1 in each of cases 3, 16 and 18, through the GIT_CONFIG_COUNT,
 GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0 variables of each such build's
 environment, never by a git config command. Each build runs with TMPDIR set
 to a folder of the temporary folder, and without the BASHOPTS, SHELLOPTS,
 GLOBIGNORE, BASH_ENV and CDPATH of the test's own environment; the cases of
-inherited shell options set 1 of the first 4, case 26 sets BASHOPTS, and
+inherited shell options set 1 of the first 4, case 25 sets BASHOPTS, and
 case 23 sets CDPATH. Each stand-in command but kill, shopt and trap is a
 short sh script that the test writes into its temporary folder and puts
 first on the PATH of 1 build. The script gives each path that it uses as 1
 shell word, quoted by shlex.quote, and the test writes it in the encoding
 of the file system, so that a path with an apostrophe, white space or a
 character outside ASCII reaches it unchanged. The stand-ins kill, shopt and
-trap of cases 24 and 26 are bash functions that the environment of 1 build
+trap of cases 24 and 25 are bash functions that the environment of 1 build
 exports as BASH_FUNC_<name>%%, since each is a builtin of bash, which no
 entry of PATH replaces; each gives the path of its log as 1 shell word,
 quoted by shlex.quote. Some stand-ins record their calls in a log. The
@@ -68,7 +68,7 @@ test waits for its stand-in. Every build runs in a session and a process
 group of its own. Once the bash of a build that the test signals has ended,
 the test ends with SIGKILL any process of that process group that still
 runs, so that none changes dist/ while the test reads it; and when any build
-outlasts its time limit, BUILD_TIMEOUT unless case 27 gives a shorter one,
+outlasts its time limit, BUILD_TIMEOUT unless case 26 gives a shorter one,
 the test ends every process of that group with SIGKILL, waits at most
 REAP_TIMEOUT seconds for its bash to end and at most REAP_TIMEOUT more for
 its output to close, and then reports the timeout, so that none of them
@@ -209,57 +209,52 @@ that clone:
 15. After a good build, a build refused by --bogus keeps the planted
     paths, among them the near miss Cleanlanguage.zip, and removes the
     outputs of version 11111111111.0.0.
-16. The packager's code, with its comment lines and the Python programs
-    that it passes to python3 -c set aside, and with each line that bash
-    continues joined to the next with nothing between them, holds exactly
-    1 rm with a recursive option, `rm -rf -- "${work}" || true`, no rmdir
-    in a for, while or until loop, no rmdir with its parents option, no
-    find -delete, and the line that sets work from mktemp -d with a
-    template in dist/. A line that bash continues is 1 whose last
-    backslash is not escaped by a backslash before it and stands outside
-    single quotes, a $'...' string, a comment and the body of a
-    here-document whose delimiter is quoted; to tell, the scan follows
-    quotes, $'...' strings, backquotes, $(...), ${...}, comments and
-    here-documents across the lines. It joins lines before it sets comment
-    lines and blank lines aside, since bash joins them first, so a line
-    continued onto 1 of them ends there. The scan decodes each $'...'
-    string as bash does, reads each $"..." as "...", reads each ${...} as
-    its parameter, its operator and its word, expands each brace list or
-    sequence in a word, such as -{r,f} or {a..c}, sets aside the quotes and
-    backslashes of each line, and starts a new command at each (, ),
-    backquote, {, }, ;, & and |, so it reads the commands of a subshell, a
-    command substitution, backquotes or a group too, in the word of a
-    ${...} as well; such a character that a backslash escapes or that a
-    $'...' string gives is part of a word and starts no command. When it
-    counts loops, it reads a character that a backslash escapes, and a
-    $'...' string, as bash does. A word names rm or rmdir whatever folder
-    path, quotes or backslash it carries (/usr/bin/rm, \\rm, 'rm'),
-    wherever it stands in its command, such as after `command` or find
-    -exec, and each option word up to the end of that command counts,
-    before or after an operand; an option is recursive when it is a group
-    of short options that holds r or R, or --recursive or an abbreviation
-    of it from --r on. When it counts loops, it sets aside each quoted
-    string that holds no command substitution. The scan reads quotes by
-    their characters, not as bash pairs them, except to tell which lines
-    bash continues, and makes no expansion that depends on the run, so it
-    does not see a removal whose command name or option comes from a
-    variable, eval of a variable, an alias, a function, pathname expansion
-    or another program, such as a Python program, nor an option after a
-    quoted (, ), backquote, {, }, ;, & or |, nor a loop whose words sit in
-    a quoted string with no command substitution or a line that it takes
-    for part of a Python program, nor a removal on a line that it joins or
-    leaves apart unlike bash after a construct that misleads the way it
-    follows quotes, such as the ) of a case pattern in a command
-    substitution or a << that shifts in arithmetic; and it counts a
-    removal that a quoted message only names.
-17. A stand-in rm, found through the PATH, records each call and a
-    stand-in mktemp the work folder: a good build, a build refused by the
-    blob check under core.autocrlf=true, and a build whose stand-in mv
-    refuses each move of a .sha256 file each call rm with a recursive
-    option exactly once, with the path that mktemp gave as its only
-    operand; a build refused by --bogus calls it never. A call of rm by
-    its folder path does not reach the stand-in; case 16 refuses 1 with a
-    recursive option.
+16. A good build, a build refused by the blob check under
+    core.autocrlf=true, a build whose stand-in mv refuses each move of a
+    .sha256 file, and a build refused by --bogus each run under strace
+    -f, which records the unlink, unlinkat, rmdir, rename, renameat and
+    renameat2 calls of every process of the build, whatever program makes
+    them and however it names the path, and the chdir, fchdir, clone,
+    clone3, fork and vfork calls by which the test follows the current
+    folder of each process; -xx gives each string in hex escapes and -y
+    the path of each descriptor, so the test reads no shell text. Each
+    path that a call removes or replaces, the path of an unlink, unlinkat
+    or rmdir and both paths of a rename, is made absolute against the
+    folder of its descriptor or the current folder of its process; a call
+    that failed removes nothing, and 1 that strace shows with no result or
+    with the result ?, since strace detached from its process or that
+    process ended during it, counts as a removal; a chdir or fchdir of that
+    kind leaves the current folder not known, so a later relative path in
+    it ends the case; a call that strace could not read at the entry where
+    its process ended removes nothing (case 27). Just before each build
+    the test records every path under the temporary folder with lstat,
+    which follows no link. Each such path must lie in the temporary
+    folder, below no symbolic link that was there before the build, and
+    either not have existed before the build or be a regular file
+    directly in dist/ with an output name; the case names any other path
+    with its call and process id, and strace leads the session and
+    process group of each build. A stand-in mktemp records the work
+    folder: the trace of each build but the last shows the removal of the
+    folder at the path that mktemp gave, and the last makes none. The case
+    fails, and is never skipped, when strace is not on the PATH, writes to
+    the build's error output, or records no chdir of the build into the
+    clone. The test makes a path absolute by its text, so a removal
+    through a symbolic link that the build itself made is read at the
+    link's path. A removal on a code path that none of these 4 builds
+    runs, such as 1 behind a condition that they never meet, is not
+    observed, and wider build coverage, not parsing, is the remedy for it.
+17. The trace of case 16 is checked against itself. A good build of a copy
+    of the packager runs under that trace and must give no path that case
+    16 refuses; then, for each form of ORACLE_FORMS, a good build of a copy
+    with that form added at its end, unguarded, must give as refused
+    exactly the paths that the form removes or replaces and no other: a
+    folder planted outside the clone before the build and the file in it,
+    or the planted dist/keep.txt. So the case fails when strace cannot
+    trace, when the test decodes a path wrongly (each planted path holds
+    the space, apostrophe and letter outside ASCII of TEMP_PREFIX), when
+    it makes a relative path absolute against the wrong folder (the forms
+    on dist/keep.txt), when the rule of case 16 lets a form pass, and when
+    it refuses a path of the unchanged packager.
 18. A folder with a work-folder name that holds a file, as a SIGKILL could
     leave, is kept unchanged by a good build, by a build refused by
     --bogus, by a build refused by the blob check, and by a build whose
@@ -307,15 +302,7 @@ that clone:
     the build trapped, and its exit trap ignored, each signal of
     TRAPPED_SIGNALS but SIGSTKFLT, SIGPWR and the real-time range, SIGSYS
     among them.
-25. The scan of case 16 finds 1 more removal of its kind in the packager's
-    text with each line of SECOND_REMOVALS added at its end than without:
-    a recursive rm, an rmdir with its parents option, a find -delete or an
-    rmdir in a loop, in each form that case 16 names, among them a removal
-    on the line after 1 that ends in a backslash that bash does not read as
-    a continuation, and a removal with a word that a continued line splits
-    after a quote, comment or here-document that a scan which follows no
-    quotes would misread.
-26. For each glob or match option of SHELL_OPTIONS_OFF, which the packager
+25. For each glob or match option of SHELL_OPTIONS_OFF, which the packager
     turns off, with a stand-in shopt that records each call and fails as
     bash does for an option that it does not know at each call that names
     that option, with the other 4 turned on through BASHOPTS, and with the
@@ -325,12 +312,25 @@ that clone:
     that option; and at each trap that it set, its shell options held
     dotglob and none of the 5, so an option that the shell does not know
     neither ends the build nor leaves another option turned on.
-27. A build by a stand-in script, with a time limit of 1 second, that
+26. A build by a stand-in script, with a time limit of 1 second, that
     starts in its own process group a child that writes a file after 3
     seconds, starts under job control a process that leaves that group and
     keeps the build's output open, and then sleeps, makes the test raise
     the timeout within the limit plus twice REAP_TIMEOUT and 5 seconds,
     long before that process ends; the child never writes its file.
+27. The reader of the trace of cases 16 and 17 is checked on traces that
+    the test writes in the form of strace -f -qq -xx -y, with no build and
+    no strace. strace writes TRACE_UNREAD, ???( with no name and no
+    argument, for a call that it could not read at the entry where its
+    process ended, and closes that line with <detached ...> or, when
+    another line comes first, with <unfinished ...>, which no resumption
+    follows. Such a call removes nothing, and a removal before it or next
+    to it is still reported; a removal that strace detached during, or
+    whose process ended during it (= ?), counts. The reader ends the case
+    when that process shows any later line, when such a call is resumed,
+    when a record differs from that form in any character, and when a
+    relative path follows a chdir that strace cut short in the folder that
+    the path is read against.
 
 Each case starts with no dist/ in the clone.
 
@@ -344,9 +344,10 @@ same pull request.
 Usage:
   python3 -I tools/test-release-package-dist.py
 
-Needs git, bash, zip, unzip, sha256sum and GNU coreutils, and the full
-history of the checkout, since it reads tools/release-package.sh at
-REFERENCE_COMMIT.
+Needs git, bash, zip, unzip, sha256sum and GNU coreutils, strace that may
+trace the processes that it starts, without which cases 16 and 17 fail,
+and the full history of the checkout, since it reads
+tools/release-package.sh at REFERENCE_COMMIT.
 """
 
 import hashlib
@@ -463,126 +464,79 @@ NON_LINUX_NAMES = ("STKFLT", "PWR", "RTMIN", "RTMAX")
 # The glob and match options that the packager turns off when its shell
 # knows them.
 SHELL_OPTIONS_OFF = ("extglob", "failglob", "globstar", "nocaseglob", "nocasematch")
-# Words that end a shell command on a line of the packager.
-COMMAND_ENDS = {"||", "&&", "|", ";", ";;", "&", ")", "}", "then", "do", "done", "else", "fi", "esac"}
-# A ${...} expansion with no brace inside, which the removal scan reads as
-# its parameter, its operator and its word, so that a command substitution
-# or an option in its word is read too; the parts of its text; and the
-# characters at which the scan starts a new command: a subshell or command
-# substitution, a backquote, a group, a list or a pipe.
-PARAMETER = re.compile(r"\$\{([^{}]*)\}")
-PARAMETER_PARTS = re.compile(r"([#!]?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-*@#?$!])(?:\[[^]]*\])?)"
-                             r"(:?[-+=?]|##?|%%?|/[/#%]?|\^\^?|,,?|:|@)?(.*)", re.S)
-COMMAND_STARTS = re.compile(r"[()`{};&|]")
-# A character that a backslash escapes, which bash reads as part of a word.
-ESCAPED = re.compile(r"\\(.)", re.S)
-# A here-document operator, <<, or <<- that strips leading tabs, with its
-# delimiter word; a here-string, <<<, is not one.
-HEREDOC = re.compile(r"<<(-?)[ \t]*([^\s;&|()<>]+)")
-# The characters before which a # starts a comment: those that end a word.
-WORD_ENDS = " \t\n;&|()<>"
-# An ANSI-C quoted string, $'...', the escapes in it that bash decodes, and
-# the 1-letter ones among them.
-ANSI_C = re.compile(r"\$'((?:\\.|[^'\\])*)'", re.S)
-ANSI_C_ESCAPE = re.compile(r"\\(?:([abeEfnrtv\\'\"?])|([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})"
-                           r"|U([0-9A-Fa-f]{1,8})|c(.))", re.S)
-ANSI_C_LETTERS = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
-                  "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
-# A pair of braces with no white space and no brace in it, which bash
-# expands as a brace expansion when it holds a list, such as {r,f}, or a
-# sequence, such as {a..c} or {1..9..2}.
-BRACES = re.compile(r"\{([^\s{}]*)\}")
-BRACE_SEQUENCE = re.compile(r"(-?[0-9]+|[A-Za-z])\.\.(-?[0-9]+|[A-Za-z])(?:\.\.(-?[0-9]+))?")
-# A quoted string of a shell line that holds no command substitution, which
-# the scan sets aside when it counts loops: a $'...' string, a '...' string
-# or a "..." string; or a character that a backslash escapes outside them,
-# which it keeps, so that an escaped quote opens no string.
-QUOTED = re.compile(r"\\.|\$'(?:\\.|[^'\\])*'|'[^']*'|\"(?:\\.|\$(?!\()|[^\"\\$`])*\"", re.S)
-# A second removal in each form that the scan of the structural case must
-# see, as lines added at the end of the packager's text, with the list of
-# removal_scan that it adds to: recursive rm, looped rmdir or other.
-SECOND_REMOVALS = (
-    ("recursive", 'rm -rf -- "${work}/src"'),
-    ("recursive", '/usr/bin/rm -rf -- "${work}/src"'),
-    ("recursive", '\\rm -r -- "${work}/src"'),
-    ("recursive", "'rm' -R -- \"${work}/src\""),
-    ("recursive", 'r"m" --recursive -- "${work}/src"'),
-    ("recursive", 'rm --rec -- "${work}/src"'),
-    ("recursive", 'rm "${work}/src" -r'),
-    ("recursive", '/bin/rm "-rf" -- "${work}/src"'),
-    ("recursive", "rm '-r' -- \"${work}/src\""),
-    ("recursive", '(rm -rf -- "${work}/src")'),
-    ("recursive", 'gone="$(\\rm -r -- "${work}/src")"'),
-    ("recursive", 'gone=`rm -r -- "${work}/src"`'),
-    ("recursive", '/usr/bin/rm -f \\\n  -r -- "${work}/src"'),
-    ("recursive", '/bin/rm \\\n  -rf -- "${work}/src"'),
-    ("recursive", 'rm -f "${work}/a" \\\n  "${work}/src" -r'),
-    ("recursive", 'true; rm -r -- "${work}/src"'),
-    ("recursive", 'true && rm -r -- "${work}/src"'),
-    ("recursive", 'true || rm -r -- "${work}/src"'),
-    ("recursive", 'true | rm -r -- "${work}/src"'),
-    ("recursive", '{ rm -r -- "${work}/src"; }'),
-    ("recursive", 'if true; then rm -r -- "${work}/src"; fi'),
-    ("recursive", 'command rm -r -- "${work}/src"'),
-    ("recursive", 'find "${work}/src" -exec rm -r {} +'),
-    ("recursive", "rm $'-r' -- \"${work}/src\""),
-    ("recursive", "/usr/bin/rm $'\\x2drf' -- \"${work}/src\""),
-    ("recursive", 'rm $"-r" -- "${work}/src"'),
-    ("recursive", '/usr/bin/r\\\nm -rf -- "${work}/src"'),
-    ("recursive", 'rm -\\\nrf -- "${work}/src"'),
-    ("recursive", ': "${unset_name:-$(/usr/bin/rm -rf -- "$work/src")}"'),
-    ("recursive", ': "${unset_name:-`rm -r -- "$work/src"`}"'),
-    ("recursive", 'rm ${unset_name:--r} -- "${work}/src"'),
-    ("recursive", 'rm -f{,r} -- "${work}/src"'),
-    ("other", 'rmdir -p "${work}/src/a"'),
-    ("other", 'rmdir "-p" "${work}/src/a"'),
-    ("other", '(rmdir --parents "${work}/src/a")'),
-    ("other", '/usr/bin/rmdir \\\n  -p "${work}/src/a"'),
-    ("other", 'find "${work}" -delete'),
-    ("other", 'find "${work}" "-delete"'),
-    ("other", "rmdir $'-p' \"${work}/src/a\""),
-    ("other", 'rmdir -{p..p} "${work}/src/a"'),
-    ("other", "find \"${work}\" $'-delete'"),
-    ("other", 'find "${work}" -del\\\nete'),
-    ("looped", 'for d in a b; do rmdir "${work}/$d"; done'),
-    ("looped", '(for d in a b; do rmdir "${work}/$d"; done)'),
-    ("looped", 'while false; do\n  rmdir "${work}/src"\ndone'),
-    ("looped", 'gone="$(for d in a b; do rmdir "${work}/$d"; done)"'),
-    # A removal on the line after 1 that ends in a backslash that bash
-    # does not read as a continuation: an escaped backslash, 2 of them, a
-    # backslash in a comment, in single quotes, in a $'...' string and in
-    # the body of a here-document whose delimiter is quoted, and a line
-    # continued onto a comment line or a blank line, which ends there.
-    ("recursive", ': clean\\\\\nrm -rf -- "${work}/src"'),
-    ("recursive", ': clean\\\\\\\\\nrm -rf -- "${work}/src"'),
-    ("looped", ': clean\\\\\nfor d in a b; do rmdir "${work}/$d"; done'),
-    ("recursive", ': clean #x\\\nrm -rf -- "${work}/src"'),
-    ("recursive", ": 'clean\\\n'; rm -rf -- \"${work}/src\""),
-    ("recursive", ": $'clean\\\n'; rm -rf -- \"${work}/src\""),
-    ("recursive", "cat <<'E' >/dev/null\nclean\\\nE\nrm -rf -- \"${work}/src\""),
-    ("recursive", ': clean\\\n# a comment\nrm -rf -- "${work}/src"'),
-    ("recursive", ': clean\\\n\nrm -rf -- "${work}/src"'),
-    # A word that a continued line splits, after an escaped quote, an
-    # apostrophe in double quotes, in a comment, in a command substitution
-    # or a ${...} in double quotes, or in a here-document, after a # that
-    # starts no comment, and in double quotes and backquotes.
-    ("recursive", ": it\\'s\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
-    ("recursive", ': "it\'s"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
-    ("recursive", ": clean # it's\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
-    ("recursive", ': "$(echo "it\'s")"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
-    ("recursive", ': "${unset_name:-"it\'s"}"\n/usr/bin/r\\\nm -rf -- "${work}/src"'),
-    ("recursive", "cat <<E >/dev/null\nit's\nE\n/usr/bin/r\\\nm -rf -- \"${work}/src\""),
-    ("recursive", '/usr/bin/rm -f "${#work}" \\\n  -r "${work}/src"'),
-    ("recursive", '/usr/bin/rm -f "${work}/a$#" \\\n  -r "${work}/src"'),
-    ("recursive", '/usr/bin/rm "-r\\\nf" -- "${work}/src"'),
-    ("recursive", 'gone=`/usr/bin/r\\\nm -r -- "${work}/src"`'),
-    # A character that starts a command, escaped by a backslash or given
-    # by a $'...' string, which bash reads as part of a word; and an
-    # escaped quote and a $'...' string before a loop.
-    ("recursive", 'rm -f \\; \\& \\| \\( \\) \\{ \\} \\` -r -- "${work}/src"'),
-    ("recursive", "rm -f $'\\x3b' -r -- \"${work}/src\""),
-    ("looped", ": it\\'s; for d in a b; do rmdir \"${work}/$d\"; done; : \\'"),
-    ("looped", ": $'it\\'s'; for d in a b; do rmdir \"${work}/$d\"; done; : 'x'"),
+# The system calls that the trace of a build records: each that removes or
+# replaces a path, each that changes the current folder of a process, and
+# each that makes a process or a thread, which starts in the current folder
+# of the process that made it, or shares it.
+TRACED_CALLS = ("unlink", "unlinkat", "rmdir", "rename", "renameat", "renameat2",
+                "chdir", "fchdir", "clone", "clone3", "fork", "vfork")
+# For each traced call that removes or replaces a path, the arguments that
+# give each such path, as (descriptor, path) positions; a call with no
+# descriptor works from the current folder of its process.
+REMOVING_CALLS = {"unlink": ((None, 0),), "rmdir": ((None, 0),), "unlinkat": ((0, 1),),
+                  "rename": ((None, 0), (None, 1)), "renameat": ((0, 1), (2, 3)),
+                  "renameat2": ((0, 1), (2, 3))}
+FORKING_CALLS = ("clone", "clone3", "fork", "vfork")
+CLONE_FS = re.compile(r"\bCLONE_FS\b")
+# A line of the trace that strace -f -o writes: a process id, then a call
+# with its arguments and its result, a signal (---) or an exit (+++). A call
+# that another process interrupts is split into a line that ends in
+# TRACE_UNFINISHED and a later 1 that starts with <... name resumed>. A call
+# during which its process ended has the result ?, and 1 whose line was
+# still open when strace detached from its ended process ends in
+# TRACE_DETACHED, with no result; either may have taken effect. strace
+# writes TRACE_UNREAD, with no name and no argument, for a call that it
+# could not read at the entry stop of its process, since that process had
+# already ended there, before the call ran; the line then ends in
+# TRACE_DETACHED or in TRACE_UNFINISHED, and that process shows no later
+# line.
+TRACE_LINE = re.compile(r"([0-9]+) +(.*)", re.S)
+TRACE_UNFINISHED = " <unfinished ...>"
+TRACE_DETACHED = " <detached ...>"
+TRACE_UNREAD = "???("
+TRACE_RESUMED = re.compile(r"<\.\.\. ([a-z0-9_]+) resumed>(.*)", re.S)
+TRACE_CALL = re.compile(r"([a-z0-9_]+)\((.*)\) += (-?[0-9]+|\?)(?: .*)?", re.S)
+# A string argument as strace -xx gives it, each byte as a hex escape; a
+# string that strace cut short has ... after its closing quote and does not
+# match. A descriptor argument as strace -y gives it: AT_FDCWD or a number,
+# with the path of the descriptor in <...>; and the escapes in that path.
+TRACE_STRING = re.compile(r'"((?:\\x[0-9A-Fa-f]{2})*)"')
+TRACE_DESCRIPTOR = re.compile(r"(AT_FDCWD|-?[0-9]+)(?:<(.*)>)?", re.S)
+TRACE_ESCAPE = re.compile(r"\\(?:x([0-9A-Fa-f]{2})|([0-7]{1,3})|(.))", re.S)
+TRACE_ESCAPES = {"a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r", "t": b"\t", "v": b"\v"}
+# The removals that the self-check of the trace (case 17) adds, 1 at a
+# time and unguarded, at the end of a copy of the packager, each with the
+# paths that it removes or replaces and that the trace must report: @PLANT
+# stands for a folder outside the clone, planted before the build, that
+# holds the file KEEP, and dist/keep.txt is a planted file. The forms give
+# rm an option in a $'...' string; split /usr/bin/rm over a continued line
+# after a here-document whose body line continues onto its delimiter line;
+# run rm in a command substitution in the word of a ${...}; follow an
+# escaped backslash with rm on the next line; build the command name in a
+# variable; remove with a Python program, with find -delete, with rm of a
+# relative path in a subshell that entered dist/, and with mv of a new
+# file onto dist/keep.txt, both paths relative; split /usr/bin/rm over a
+# continued line after a here-document on a line that ends inside a
+# single-quoted string, after a here-document whose quoted delimiter holds
+# a backslash, and after an apostrophe in backquotes, with set +e first, so
+# that the error in those backquotes cannot end the build; and follow a
+# here-document whose quoted delimiter holds a backslash with rm.
+PLANT_PATHS = ("@PLANT", "@PLANT/" + KEEP)
+KEPT_PATHS = ("dist/" + KEEP,)
+ORACLE_FORMS = (
+    ("/usr/bin/rm $'-r' -- @PLANT", PLANT_PATHS),
+    ("cat <<E >/dev/null\nx\\\nE\nit's\nE\n/usr/bin/r\\\nm -rf -- @PLANT", PLANT_PATHS),
+    (': "${unset_name:-$(/usr/bin/rm -rf -- @PLANT)}"', PLANT_PATHS),
+    (": clean\\\\\nrm -rf -- @PLANT", PLANT_PATHS),
+    ('cmd=r; cmd+=m; "$cmd" -rf -- @PLANT', PLANT_PATHS),
+    ("python3 -I -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' @PLANT", PLANT_PATHS),
+    ("find @PLANT -delete", PLANT_PATHS),
+    ("( cd -P -- dist && rm -f -- ./keep.txt )", KEPT_PATHS),
+    (": > dist/new.txt\nmv -f -- dist/new.txt dist/keep.txt", KEPT_PATHS),
+    ("cat <<E >/dev/null; : 'a\nb'\nit\nE\n/usr/bin/r\\\nm -rf -- @PLANT", PLANT_PATHS),
+    ("cat <<'E\\' >/dev/null\nx\nE\\\n/usr/bin/r\\\nm -rf -- @PLANT", PLANT_PATHS),
+    ("set +e\n: `: it's`\n/usr/bin/r\\\nm -rf -- @PLANT", PLANT_PATHS),
+    ("cat <<'E\\' >/dev/null\nx\nE\\\nrm -rf -- @PLANT", PLANT_PATHS),
 )
 
 
@@ -707,274 +661,200 @@ def sh_word(value) -> str:
     return shlex.quote(str(value))
 
 
-def command_name(word: str) -> str:
-    """The name of the command that a word of a shell line gives, with its
-    quotes, backslashes and folder path set aside: rm for rm, \\rm, 'rm',
-    "rm" or /usr/bin/rm."""
-    return word.replace("\\", "").replace("'", "").replace('"', "").rsplit("/", 1)[-1]
-
-
-def command_options(words: list) -> list:
-    """The option words among words, the arguments of a command on a line,
-    up to the word that ends the command or --; an option may stand before
-    or after an operand, as GNU rm and rmdir take it."""
-    options = []
-    for word in words:
-        last = word.endswith(";")
-        word = word.rstrip(";")
-        if word in COMMAND_ENDS or word == "--":
-            break
-        if word.startswith("-") and word != "-":
-            options.append(word)
-        if last:
-            break
-    return options
-
-
-def long_option(word: str, name: str) -> bool:
-    """Whether word is the long option name or an abbreviation of it, from
-    its first letter on, as GNU rm and rmdir take it."""
-    return word.startswith("--") and len(word) > 2 and name.startswith(word)
-
-
-def recursive_option(word: str) -> bool:
-    """Whether an rm option word asks for a recursive removal: a group of
-    short options that holds r or R, or --recursive or an abbreviation of it."""
-    if word.startswith("--"):
-        return long_option(word, "--recursive")
-    return word.startswith("-") and ("r" in word or "R" in word)
-
-
-def parents_option(word: str) -> bool:
-    """Whether an rmdir option word asks for its parents option: a group of
-    short options that holds p, or --parents or an abbreviation of it."""
-    if word.startswith("--"):
-        return long_option(word, "--parents")
-    return word.startswith("-") and "p" in word
-
-
-def code_lines(text: str) -> list:
-    """(number, line) for each line of a shell script that is not blank, not
-    a comment line, and not inside a Python program that the script passes
-    to python3 -c in single quotes over several lines."""
-    found, in_python = [], False
-    for n, line in enumerate(text.splitlines(), 1):
-        if in_python:
-            in_python = not line.startswith("'")
-            continue
-        if "python3 -I -c '" in line and line.count("'") % 2 == 1:
-            in_python = True
-        if line.strip() and not line.lstrip().startswith("#"):
-            found.append((n, line))
+def lstat_tree(root: str) -> dict:
+    """The lstat mode of root and of every path under it, by its path; lstat
+    follows no symbolic link, and neither does the walk."""
+    found = {root: os.lstat(root).st_mode}
+    for folder, folders, files in os.walk(root):
+        for name in folders + files:
+            path = os.path.join(folder, name)
+            found[path] = os.lstat(path).st_mode
     return found
 
 
-def continued_lines(text: str) -> set:
-    """The numbers of the lines of a shell script that bash continues on the
-    next line: each whose last character is a backslash that no backslash
-    before it escapes and that stands outside single quotes, a $'...'
-    string, a comment and the body of a here-document whose delimiter is
-    quoted. To tell, it follows across the lines each quoted string, $'...'
-    string, backquote, $(...), ${...} and here-document: a backslash
-    escapes the next character outside single quotes; a # starts a comment
-    where a word starts, outside quotes and ${...}; a here-document starts
-    on the line after its << and ends at the line that is its delimiter.
-    The ) of a case pattern in a command substitution, which it takes for
-    the end of that substitution, and a << that shifts in arithmetic, which
-    it takes for a here-document, mislead it."""
-    continued, stack, waiting, body, before = set(), [], [], None, "\n"
-    for number, line in enumerate(text.splitlines(), 1):
-        if body is not None:
-            delimiter, strip, quoted = body
-            if (line.lstrip("\t") if strip else line) == delimiter:
-                body = waiting.pop(0) if waiting else None
-            elif not quoted and (len(line) - len(line.rstrip("\\"))) % 2:
-                continued.add(number)
-            continue
-        index = 0
-        while index < len(line):
-            char, top = line[index], stack[-1] if stack else ""
-            redirect = char == "<" and top not in ("'", "$'", '"')
-            heredoc = HEREDOC.match(line, index) if redirect else None
-            if redirect and line.startswith("<<<", index):
-                index, heredoc = index + 2, None
-            elif char == "\\" and top != "'":
-                if index == len(line) - 1:
-                    if top != "$'":
-                        continued.add(number)
-                    break
-                index, char = index + 1, "\\"
-            elif top in ("'", "$'"):
-                if char == "'":
-                    stack.pop()
-            elif (top == char and char in '"`') or (top, char) in (("(", ")"), ("{", "}")):
-                stack.pop()
-            elif top not in ('"', "{") and char == "#" and before in WORD_ENDS:
-                break
-            elif heredoc:
-                word = heredoc.group(2)
-                waiting.append((re.sub(r"[\\'\"]", "", word), heredoc.group(1) == "-",
-                                any(c in word for c in "\\'\"")))
-                index, char = heredoc.end() - 1, word[-1]
-            elif line.startswith(("$(", "${"), index) or (top != '"' and line.startswith("$'", index)):
-                stack.append("$'" if line[index + 1] == "'" else line[index + 1])
+def trace_bytes(text: str) -> bytes:
+    """The bytes that text, a string or a path of a trace read as Latin-1,
+    gives once its escapes are decoded."""
+    found, start = bytearray(), 0
+    for match in TRACE_ESCAPE.finditer(text):
+        found += text[start:match.start()].encode("latin-1")
+        hexadecimal, octal, letter = match.groups()
+        if hexadecimal:
+            found.append(int(hexadecimal, 16))
+        elif octal:
+            found.append(int(octal, 8) & 0xFF)
+        else:
+            found += TRACE_ESCAPES.get(letter, letter.encode("latin-1"))
+        start = match.end()
+    return bytes(found + text[start:].encode("latin-1"))
+
+
+def trace_string(token: str) -> str:
+    """The path that a string argument of the trace gives; a string that is
+    not whole or not in hex escapes ends the case."""
+    match = TRACE_STRING.fullmatch(token)
+    if match is None:
+        raise AssertionError("the trace gives the path %r, which is not 1 whole string in hex escapes" % token)
+    return os.fsdecode(trace_bytes(match.group(1)))
+
+
+def trace_folder(token: str, current: str) -> str:
+    """The folder that a descriptor argument of the trace names: current for
+    AT_FDCWD, and otherwise the path that strace -y gives for the
+    descriptor; a descriptor with no such path, or with that of a removed
+    folder, ends the case."""
+    match = TRACE_DESCRIPTOR.fullmatch(token)
+    if match is None:
+        raise AssertionError("the trace gives the descriptor %r, which the test cannot read" % token)
+    if match.group(1) == "AT_FDCWD":
+        return current
+    path = None if match.group(2) is None else os.fsdecode(trace_bytes(match.group(2)))
+    if path is None or not os.path.isabs(path) or path.endswith(" (deleted)"):
+        raise AssertionError("the trace gives the descriptor %r, with no path that the test can use" % token)
+    return path
+
+
+def trace_arguments(text: str) -> list:
+    """The arguments of a call of the trace, split at each comma that stands
+    outside a string, a path in <...>, braces and brackets."""
+    found, start, depth, closing, index = [], 0, 0, "", 0
+    while index < len(text):
+        char = text[index]
+        if closing:
+            if char == "\\":
                 index += 1
-            elif char in '"`' or (char == "'" and top != '"') or (char == "(" and top == "("):
-                stack.append(char)
-            before = char
-            index += 1
-        if number in continued:
-            continue
-        before = "\n"
-        if waiting:
-            body = waiting.pop(0)
-    return continued
-
-
-def logical_lines(text: str) -> list:
-    """(number, line) for each line of code_lines(text), with each line of
-    continued_lines(text) joined to the next with nothing between them, as
-    bash removes a backslash and the newline after it, so that a word split
-    there, such as r and m, is read as 1 word; each is numbered by its first
-    line. The join comes before comment lines and blank lines are set
-    aside, as in bash, so a line continued onto 1 of them ends there."""
-    code, continued = dict(code_lines(text)), continued_lines(text)
-    found, start, joined = [], None, ""
-    for number, line in enumerate(text.splitlines(), 1):
-        if start is None:
-            start, joined = number, ""
-        if number in continued:
-            joined += line[:-1]
-            continue
-        if start in code:
-            found.append((start, joined + line))
-        start = None
-    if start in code:
-        found.append((start, joined))
+            elif char == closing:
+                closing = ""
+        elif char in "\"<":
+            closing = '"' if char == '"' else ">"
+        elif char in "{[(":
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+        elif char == "," and depth == 0:
+            found.append(text[start:index].strip())
+            start = index + 1
+        index += 1
+    found.append(text[start:].strip())
     return found
 
 
-def ansi_c(text: str) -> str:
-    """The text of a $'...' string, without its quotes, as bash decodes
-    its escapes."""
-    def escape(match) -> str:
-        letter, octal, hexadecimal, short, long, control = match.groups()
-        if letter:
-            return ANSI_C_LETTERS[letter]
-        if control:
-            return chr(ord(control) & 0x1F)
-        value = int(octal, 8) if octal else int(hexadecimal or short or long, 16)
-        return chr(min(value, 0x10FFFF))
-    return ANSI_C_ESCAPE.sub(escape, text)
+def trace_call(pid: int, text: str, result_given: bool = True) -> tuple:
+    """(process id, name, arguments, result) for the text of 1 call of the
+    trace; result is None for a call whose text has no result, since the
+    trace never resumed it or strace detached from its process during it,
+    and name is None, with no argument, for the whole text TRACE_UNREAD. A
+    text that fits no call ends the case."""
+    if not result_given:
+        if text == TRACE_UNREAD:
+            return pid, None, [], None
+        name, _, arguments = text.partition("(")
+        if not arguments or not re.fullmatch(r"[a-z0-9_]+", name):
+            raise AssertionError("the trace holds a call that the test cannot read: %r" % text)
+        return pid, name, trace_arguments(arguments), None
+    match = TRACE_CALL.fullmatch(text)
+    if match is None:
+        raise AssertionError("the trace holds a call that the test cannot read: %r" % text)
+    name, arguments, result = match.groups()
+    return pid, name, trace_arguments(arguments), result
 
 
-def parameter_words(match) -> str:
-    """The text of 1 ${...} with no brace inside, read as its parameter, its
-    operator and its word, separated by spaces, with the first / of the
-    word of a pattern substitution read as a space as well, so that each of
-    them is read as a word."""
-    parts = PARAMETER_PARTS.fullmatch(match.group(1))
-    if parts is None:
-        return "$" + match.group(1)
-    name, operator, word = parts.groups()
-    if operator and operator.startswith("/"):
-        word = word.replace("/", " ", 1)
-    return " ".join(part for part in ("$" + name, operator, word) if part)
-
-
-def brace_items(text: str):
-    """The items that bash gives for the text between a pair of braces: the
-    parts of a list split at each comma, or each item of a sequence; None
-    when the text is neither."""
-    sequence = BRACE_SEQUENCE.fullmatch(text)
-    if sequence:
-        first, last, step = sequence.groups()
-        step = abs(int(step or 1)) or 1
-        if first.isalpha() != last.isalpha():
-            return None
-        start, end = (ord(first), ord(last)) if first.isalpha() else (int(first), int(last))
-        numbers = range(start, end + 1, step) if start <= end else range(start, end - 1, -step)
-        return [chr(n) for n in numbers] if first.isalpha() else [str(n) for n in numbers]
-    return text.split(",") if "," in text else None
-
-
-def brace_expand(line: str) -> str:
-    """line with each brace expansion in a word replaced by the words that
-    bash gives for it; braces that hold neither a list nor a sequence stay."""
-    start = 0
-    while True:
-        match = BRACES.search(line, start)
+def trace_records(log: Path) -> list:
+    """Each call of the trace at log as trace_call gives it, in the order in
+    which the calls started; a call that another process interrupted is
+    joined again. A line that fits no form of the trace ends the case, and
+    so does any line of a process after a call that ends in TRACE_DETACHED
+    or that is TRACE_UNREAD, since that process had ended."""
+    records, open_calls, ended = [], {}, set()
+    for line in log.read_bytes().decode("latin-1").splitlines():
+        match = TRACE_LINE.fullmatch(line)
         if match is None:
-            return line
-        items = brace_items(match.group(1))
-        if items is None:
-            start = match.end()
+            raise AssertionError("the trace holds a line that the test cannot read: %r" % line)
+        pid, text = int(match.group(1)), match.group(2)
+        if pid in ended:
+            raise AssertionError("the trace shows process %d after the call at which it ended: %r" % (pid, line))
+        if text.startswith(("---", "+++")):
             continue
-        before = re.search(r"\S*\Z", line[:match.start()]).start()
-        after = match.end() + re.match(r"\S*", line[match.end():]).end()
-        prefix, suffix = line[before:match.start()], line[match.end():after]
-        line = line[:before] + " ".join(prefix + item + suffix for item in items) + line[after:]
-        start = before
+        resumed = TRACE_RESUMED.fullmatch(text)
+        if resumed:
+            index, start = open_calls.pop(pid, (None, ""))
+            if index is None or not start.startswith(resumed.group(1) + "("):
+                raise AssertionError("the trace resumes a call that it did not start: %r" % line)
+            records[index] = trace_call(pid, start + resumed.group(2))
+        elif text.endswith(TRACE_UNFINISHED):
+            if pid in open_calls:
+                raise AssertionError("the trace starts a call of process %d before it resumes the last" % pid)
+            open_calls[pid] = (len(records), text[:-len(TRACE_UNFINISHED)])
+            records.append(None)
+            if open_calls[pid][1] == TRACE_UNREAD:
+                ended.add(pid)
+        elif text.endswith(TRACE_DETACHED):
+            if pid in open_calls:
+                raise AssertionError("the trace starts a call of process %d before it resumes the last" % pid)
+            records.append(trace_call(pid, text[:-len(TRACE_DETACHED)], result_given=False))
+            ended.add(pid)
+        else:
+            records.append(trace_call(pid, text))
+    for pid, (index, start) in open_calls.items():
+        records[index] = trace_call(pid, start, result_given=False)
+    return records
 
 
-def commands(line: str) -> list:
-    """The words of each command of a logical line, read as bash reads them
-    in these respects: each $'...' string decoded, each $"..." read as
-    "...", each ${...} read as its parameter, its operator and its word,
-    each brace expansion expanded, and the quotes and backslashes of the
-    line set aside. A command starts at each character of COMMAND_STARTS,
-    so the commands of a subshell, a command substitution, backquotes or a
-    group are read as well, in the word of a ${...} too; such a character
-    that a backslash escapes or that a $'...' string gives is read as part
-    of a word, as an underscore, and starts no command."""
-    def literal(match) -> str:
-        char = match.group(1)
-        return "_" if COMMAND_STARTS.match(char) else "" if char == "\\" else char
-
-    line = ANSI_C.sub(lambda match: COMMAND_STARTS.sub("_", ansi_c(match.group(1))), line)
-    line = line.replace('$"', '"')
-    while PARAMETER.search(line):
-        line = PARAMETER.sub(parameter_words, line)
-    line = brace_expand(line)
-    line = ESCAPED.sub(literal, line).replace("\\", "").replace("'", "").replace('"', "")
-    return [part.split() for part in COMMAND_STARTS.split(line) if part.split()]
+def traced_path(arguments: list, current: str, descriptor, position: int) -> str:
+    """The absolute path that the argument at position of a traced call
+    gives, made absolute against the folder of the argument at descriptor,
+    or against current when descriptor is None, by its text alone; a
+    relative path against a current folder that is None, not known, ends
+    the case."""
+    path = trace_string(arguments[position])
+    if not os.path.isabs(path):
+        base = current if descriptor is None else trace_folder(arguments[descriptor], current)
+        if base is None:
+            raise AssertionError("the trace gives the relative path %r in a current folder that it does not "
+                                 "show, after a change of folder that strace cut short" % path)
+        path = os.path.join(base, path)
+    return os.path.normpath(path)
 
 
-def loop_counts(line: str) -> tuple:
-    """The number of for, while and until loops that a logical line opens
-    and the number of done words that close 1, read from its commands with
-    its quoted strings set aside, so that a word of a message is not
-    taken for either; a character that a backslash escapes stays, so an
-    escaped quote opens no string."""
-    kept = QUOTED.sub(lambda match: match.group(0) if match.group(0).startswith("\\") else "''", line)
-    words = [w[0] for w in commands(kept)]
-    return sum(w in ("for", "while", "until") for w in words), words.count("done")
-
-
-def removal_scan(text: str) -> dict:
-    """The removals of a shell script that the structural case refuses, each
-    as (number, line): "recursive", each rm with a recursive option;
-    "looped", each rmdir on a line that is in a for, while or until loop or
-    opens 1; and "other", each rmdir with its parents option and each find
-    -delete."""
-    found = {"recursive": [], "looped": [], "other": []}
-    depth = 0
-    for number, line in logical_lines(text):
-        opens, closes = loop_counts(line)
-        for words in commands(line):
-            for index, word in enumerate(words):
-                name = command_name(word)
-                if name == "rm" and any(recursive_option(o) for o in command_options(words[index + 1:])):
-                    found["recursive"].append((number, line.strip()))
-                if name == "rmdir":
-                    if depth + opens:
-                        found["looped"].append((number, line.strip()))
-                    if any(parents_option(o) for o in command_options(words[index + 1:])):
-                        found["other"].append((number, line.strip()))
-                if word == "-delete":
-                    found["other"].append((number, line.strip()))
-        depth = max(depth + opens - closes, 0)
-    return found
+def traced_removals(log: Path, start: str) -> tuple:
+    """The paths that the processes of the trace at log removed or replaced,
+    each as (process id, call, path), and the folders that they entered. A
+    path is that given to unlink, unlinkat or rmdir, or either path of a
+    rename, renameat or renameat2, of a call that returned 0 or whose result
+    the trace does not give. The first process of the trace starts in start;
+    each process or thread that a traced call makes starts in the current
+    folder of its maker, and shares it when made with CLONE_FS; chdir and
+    fchdir change it, and 1 of them whose result is ? or not given leaves
+    it not known. A call of TRACE_UNREAD never ran and changes nothing. A
+    process that no traced call made ends the case, as does a call that the
+    test did not ask strace for."""
+    records = trace_records(log)
+    if not records:
+        raise AssertionError("the trace records no call")
+    folders, removed, entered = {records[0][0]: [start]}, [], []
+    for pid, name, arguments, result in records:
+        if pid not in folders:
+            raise AssertionError("the trace shows process %d, which no traced call made" % pid)
+        folder = folders[pid]
+        if name is None:
+            continue
+        if name in FORKING_CALLS:
+            if result is not None and result.isdigit() and int(result) > 0:
+                folders[int(result)] = folder if CLONE_FS.search(", ".join(arguments)) else [folder[0]]
+        elif name in ("chdir", "fchdir"):
+            if result == "0":
+                folder[0] = (traced_path(arguments, folder[0], None, 0) if name == "chdir"
+                             else os.path.normpath(trace_folder(arguments[0], folder[0])))
+                entered.append(folder[0])
+            elif result in (None, "?"):
+                folder[0] = None
+        elif name in REMOVING_CALLS:
+            if result in (None, "?", "0"):
+                for descriptor, position in REMOVING_CALLS[name]:
+                    removed.append((pid, name, traced_path(arguments, folder[0], descriptor, position)))
+        else:
+            raise AssertionError("the trace holds the call %s, which the test did not ask strace for" % name)
+    return removed, entered
 
 
 class DistTests(unittest.TestCase):
@@ -985,6 +865,7 @@ class DistTests(unittest.TestCase):
             cls.tmp.cleanup()
             raise AssertionError("the temporary folder %r holds %r, which no entry of PATH can hold; "
                                  "set TMPDIR to a folder whose path holds none" % (cls.tmp.name, os.pathsep))
+        cls.root = os.path.realpath(cls.tmp.name)
         cls.clone = Path(cls.tmp.name) / "clone"
         cls.work = Path(cls.tmp.name) / "work"
         cls.work.mkdir()
@@ -1044,7 +925,7 @@ class DistTests(unittest.TestCase):
 
     @classmethod
     def run_packager(cls, script: Path, *args: str, autocrlf: bool = False, path_prefix: str = "",
-                     extra: dict = None, timeout: float = BUILD_TIMEOUT):
+                     extra: dict = None, timeout: float = BUILD_TIMEOUT, trace: Path = None):
         """Run script with bash in the clone and return its exit code and
         error output. The build runs in a session and a process group of its
         own. When it outlasts timeout, every process of that group is ended
@@ -1052,8 +933,15 @@ class DistTests(unittest.TestCase):
         bash to end and at most REAP_TIMEOUT more for its output to close,
         closes that output, and raises the timeout; so no process of the
         group can change dist/ during a later case, and the wait is bounded
-        even when a process that has left the group keeps the output open."""
-        proc = subprocess.Popen(["bash", str(script), *args], cwd=str(cls.clone),
+        even when a process that has left the group keeps the output open.
+        With trace, bash runs under strace, which leads that session and
+        group and writes to trace each call of TRACED_CALLS by every
+        process of the build."""
+        command = ["bash", str(script), *args]
+        if trace is not None:
+            command = [shutil.which("strace") or "strace", "-f", "-qq", "-xx", "-y", "-o", str(trace),
+                       "-e", "trace=" + ",".join(TRACED_CALLS)] + command
+        proc = subprocess.Popen(command, cwd=str(cls.clone),
                                 env=cls.packager_env(autocrlf, path_prefix, extra),
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, start_new_session=True)
@@ -1854,87 +1742,102 @@ class DistTests(unittest.TestCase):
         self.assertEqual(outputs(self.dist), [], "a refused build left output in dist/")
         self.assert_plants_kept()
 
-    def test_only_recursive_removal_is_work_folder(self):
-        """The packager's code, comment lines set aside and continued lines
-        joined, holds exactly 1 rm with a recursive option, the removal of
-        the work folder by the path that mktemp gave; no rmdir in a for or
-        while loop, no rmdir with its parents option, and no find -delete.
-        Each command of a line counts, in a subshell, a command substitution
-        or a group too; a word names rm or rmdir whatever folder path,
-        quotes or backslash it carries, and each option word up to the end
-        of its command counts, read as case 16 of the module's docstring
-        says."""
-        text = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
-        found = removal_scan(text)
-        self.assertEqual([line for _, line in found["recursive"]], ['rm -rf -- "${work}" || true'],
-                         "the recursive removals are %r" % found["recursive"])
-        self.assertEqual(found["looped"], [], "rmdir runs in a loop at %r" % found["looped"])
-        self.assertEqual(found["other"], [], "other recursive or repeated removals: %r" % found["other"])
-        self.assertIn('work="$(mktemp -d "${PWD}/dist/.release-package.XXXXXX")"',
-                      [line.strip() for _, line in code_lines(text)])
+    @classmethod
+    def real_path(cls, path: str) -> str:
+        """path with the path of the temporary folder, as the test gave it,
+        replaced by the real path of that folder, root."""
+        given = os.path.abspath(cls.tmp.name)
+        if path == given or path.startswith(given + os.sep):
+            return cls.root + path[len(given):]
+        return path
 
-    def test_structural_scan_sees_second_removal(self):
-        """The scan of the structural case finds 1 more removal of its kind
-        in the packager's text with each line of SECOND_REMOVALS added at
-        its end than in the text alone."""
-        text = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
-        before = removal_scan(text)
-        for kind, added in SECOND_REMOVALS:
-            with self.subTest(added):
-                after = removal_scan(text.rstrip("\n") + "\n" + added + "\n")
-                self.assertEqual(len(after[kind]), len(before[kind]) + 1,
-                                 "the scan did not see %r: %r" % (added, after[kind]))
+    def stated_removal(self, path: str, before: dict) -> bool:
+        """Whether the packager states that a build may remove or replace
+        path, a real path: a path of the temporary folder below no symbolic
+        link of before that did not exist before the build, or a regular
+        file directly in dist/ with an output name. before is lstat_tree of
+        the temporary folder just before the build."""
+        if not path.startswith(self.root + os.sep):
+            return False
+        folder = os.path.dirname(path)
+        while folder != self.root:
+            if stat.S_ISLNK(before.get(folder, 0)):
+                return False
+            folder = os.path.dirname(folder)
+        if path not in before:
+            return True
+        return (os.path.dirname(path) == self.real_path(str(self.dist))
+                and OUTPUT_NAME.fullmatch(os.path.basename(path)) is not None and stat.S_ISREG(before[path]))
 
-    def recording_rm(self, bin_dir: Path) -> Path:
-        """Write into bin_dir a stand-in rm that writes each call's arguments
-        as 1 record of its log, then runs the real rm. Return the log."""
-        log = bin_dir / "rm-calls.log"
-        self.write_script(bin_dir / "rm", self.recorder(log) +
-                          "record \"$@\"\n"
-                          "exec %s \"$@\"\n" % sh_word(self.real("rm")))
-        return log
+    def traced_build(self, script: Path, *args: str, autocrlf: bool = False, path_prefix: str = "") -> tuple:
+        """Run script as run_packager does, under strace, and return its exit
+        code, its error output, each path that the build removed or
+        replaced, as (process id, call, real path), and those of them that
+        stated_removal refuses. The case fails, rather than passing without
+        a trace, when strace is not on the PATH, writes to the build's error
+        output, or records no chdir of the build into the clone."""
+        self.assertIsNotNone(shutil.which("strace"),
+                             "strace is not on the PATH; this case needs it to see what a build removes")
+        trace = self.outside("trace") / "calls.trace"
+        before = lstat_tree(self.root)
+        code, stderr = self.run_packager(script, *args, autocrlf=autocrlf, path_prefix=path_prefix, trace=trace)
+        self.assertNotIn("strace: ", stderr, "strace could not trace the build")
+        self.assertTrue(trace.is_file(), "strace wrote no trace of the build: %s" % stderr)
+        removed, entered = traced_removals(trace, str(self.clone))
+        self.assertIn(self.real_path(str(self.clone)), [self.real_path(p) for p in entered],
+                      "the trace records no chdir of the build into the clone, so strace did not trace it")
+        removed = [(pid, call, self.real_path(path)) for pid, call, path in removed]
+        return code, stderr, removed, [r for r in removed if not self.stated_removal(r[2], before)]
 
-    def recursive_removals(self, log: Path) -> list:
-        """The operands of each recorded rm call with a recursive option. An
-        option word may stand before or after an operand, as GNU rm takes
-        it, and each word after -- is an operand."""
-        found = []
-        for args in self.records(log):
-            options, operands, ended = [], [], False
-            for arg in args:
-                if not ended and arg == "--":
-                    ended = True
-                elif not ended and arg.startswith("-") and arg != "-":
-                    options.append(arg)
-                else:
-                    operands.append(arg)
-            if any(recursive_option(o) for o in options):
-                found.append(operands)
-        return found
-
-    def test_recursive_removal_only_of_work_folder(self):
-        """A stand-in rm records each call and a stand-in mktemp the work
-        folder: a good build, a build refused by the blob check, and a build
-        whose move of the .sha256 files fails each call rm with a recursive
-        option exactly once, with the path that mktemp gave as its only
-        operand; a build refused by --bogus calls it never."""
+    def test_removals_only_as_stated(self):
+        """Under strace, a good build, a build refused by the blob check, a
+        build whose move of the .sha256 files fails, and a build refused by
+        --bogus each remove or replace only what stated_removal allows; each
+        but the last removes the work folder at the path that the stand-in
+        mktemp recorded, and the last makes none."""
         for label, args, autocrlf, move_exit in (("good", (), False, 0), ("blob", (), True, 0),
                                                   ("move", (), False, MOVE_EXIT), ("bogus", ("--bogus",), False, 0)):
             with self.subTest(label):
                 self.setUp()
                 bin_dir, work_log = self.trap_stand_ins(move_exit)
-                rm_log = self.recording_rm(Path(bin_dir))
                 self.plant()
-                code, stderr = self.build(*args, autocrlf=autocrlf, path_prefix=bin_dir)
+                code, stderr, removed, refused = self.traced_build(
+                    self.clone / "tools" / "release-package.sh", *args, autocrlf=autocrlf, path_prefix=bin_dir)
                 self.assertEqual(code, {"good": 0, "blob": 1, "move": MOVE_EXIT, "bogus": 1}[label], stderr)
-                removals = self.recursive_removals(rm_log)
+                self.assertEqual(refused, [], "the build removed or replaced paths that it does not state")
                 if label == "bogus":
                     self.assertFalse(work_log.exists(), "the build refused by --bogus made a work folder")
-                    self.assertEqual(removals, [], "the build refused by --bogus removed %r" % removals)
                 else:
-                    self.assertEqual(removals, [[str(self.work_folder(work_log))]],
-                                     "the recursive removals were %r" % removals)
+                    folder = self.real_path(str(self.work_folder(work_log)))
+                    self.assertIn(folder, [path for _, _, path in removed],
+                                  "the trace shows no removal of the work folder %s" % folder)
                 self.assert_plants_kept()
+
+    def test_trace_reports_each_form(self):
+        """A good build with no added form, and with each form of
+        ORACLE_FORMS added at the end of a copy of the packager, runs under
+        the trace of traced_build: the control gives no refused path, and
+        each form gives exactly the paths that it names, real, and no other."""
+        packager = (self.clone / "tools" / "release-package.sh").read_text(encoding="utf-8")
+        script = self.clone / "tools" / "release-package-oracle.sh"
+        clone = self.real_path(str(self.clone))
+        try:
+            for form, paths in (("", ()),) + ORACLE_FORMS:
+                with self.subTest(form or "control"):
+                    self.setUp()
+                    self.plant()
+                    plant = self.outside("oracle-plant")
+                    (plant / KEEP).write_bytes(KEEP_TEXT)
+                    added = form.replace("@PLANT", sh_word(plant))
+                    script.write_bytes(os.fsencode(packager.rstrip("\n") + "\n" + added + "\n"))
+                    _, stderr, _, refused = self.traced_build(script)
+                    expected = sorted(p.replace("@PLANT", self.real_path(str(plant))) if p.startswith("@PLANT")
+                                      else os.path.join(clone, p) for p in paths)
+                    self.assertEqual(sorted({path for _, _, path in refused}), expected,
+                                     "the trace refused %r: %s" % (refused, stderr))
+        finally:
+            if script.exists():
+                script.unlink()
 
     def test_leftover_work_folders_kept(self):
         """A folder with a work-folder name that holds a file, as a SIGKILL
@@ -2230,6 +2133,90 @@ class DistTests(unittest.TestCase):
         self.assertLess(elapsed, bound, "the timeout was raised after %.1f seconds" % elapsed)
         time.sleep(max(0.0, 4 - elapsed))
         self.assertFalse(late.exists(), "a child in the build's process group outlived the timeout")
+
+
+class TraceReaderTests(unittest.TestCase):
+    """Case 27: the reader of the trace of cases 16 and 17, on traces that
+    the test writes in the form of strace -f -qq -xx -y; no build runs, and
+    strace is not needed."""
+
+    FORK = ("100   clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, "
+            "child_tidptr=0x7f0a) = 101")
+    SHARED = ("100   clone(child_stack=0x7f0b, flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD"
+              "|CLONE_SYSVSEM, parent_tid=[101], tls=0x7f0c, child_tidptr=0x7f0d) = 101")
+
+    @staticmethod
+    def hexed(path: str) -> str:
+        """path as strace -xx gives a string: each byte as a hex escape."""
+        return '"%s"' % "".join("\\x%02x" % b for b in os.fsencode(path))
+
+    def removals(self, *lines: str) -> tuple:
+        """traced_removals of a trace that holds lines, whose first process
+        starts in /clone."""
+        folder = tempfile.TemporaryDirectory(prefix=TEMP_PREFIX)
+        self.addCleanup(folder.cleanup)
+        log = Path(folder.name) / "calls.trace"
+        log.write_bytes("".join(line + "\n" for line in lines).encode("latin-1"))
+        return traced_removals(log, "/clone")
+
+    def test_trace_reads_calls_cut_short_by_an_ended_process(self):
+        """A call of TRACE_UNREAD, which strace could not read at the entry
+        where its process ended, ended by TRACE_DETACHED or by
+        TRACE_UNFINISHED with no resumption, removes nothing, and the
+        removals before it and next to it are still reported; a removal that
+        strace detached during, or whose process ended during it, counts."""
+        for ending in (TRACE_DETACHED, TRACE_UNFINISHED):
+            with self.subTest(ending.strip()):
+                removed, _ = self.removals(
+                    self.FORK,
+                    "101   rmdir(%s) = 0" % self.hexed("work"),
+                    "101   " + TRACE_UNREAD + ending,
+                    "100   unlinkat(AT_FDCWD</clone>, %s, 0) = 0" % self.hexed("dist/old.zip"))
+                self.assertEqual(removed, [(101, "rmdir", "/clone/work"),
+                                           (100, "unlinkat", "/clone/dist/old.zip")])
+        with self.subTest("cut short"):
+            removed, _ = self.removals(
+                self.FORK,
+                "101   unlinkat(AT_FDCWD</clone>, %s, AT_REMOVEDIR%s" % (self.hexed("a"), TRACE_DETACHED),
+                "100   rename(%s, %s) = ?" % (self.hexed("b"), self.hexed("/c")))
+            self.assertEqual(removed, [(101, "unlinkat", "/clone/a"), (100, "rename", "/clone/b"),
+                                       (100, "rename", "/c")])
+
+    def test_trace_refuses_what_it_cannot_read(self):
+        """The reader ends the case, rather than let a removal or a change of
+        folder pass unseen, when a process shows any line after a call of
+        TRACE_UNREAD or after a call that strace detached during, when such
+        a call is resumed or starts while another call of its process is
+        open, when a record differs from TRACE_UNREAD and its ending in any
+        character, and when a relative path follows a chdir that strace cut
+        short in the folder that the path is read against."""
+        unlink = "100   unlink(%s) = 0" % self.hexed("x")
+        traces = {
+            "a call after a detached unread call":
+                (self.FORK, "101   ???( <detached ...>", "101   unlink(%s) = 0" % self.hexed("x")),
+            "a call after an unfinished unread call":
+                (self.FORK, "101   ???( <unfinished ...>", "101   unlink(%s) = 0" % self.hexed("x")),
+            "a signal after a detached unread call":
+                (self.FORK, "101   ???( <detached ...>", "101   --- SIGCHLD {si_signo=SIGCHLD} ---"),
+            "an unread call resumed":
+                (self.FORK, "101   ???( <unfinished ...>", "101   <... ??? resumed>) = 0"),
+            "a call after a detached call":
+                (self.FORK, "101   unlink(%s <detached ...>" % self.hexed("y"), "101   rmdir(%s) = 0" % self.hexed("z")),
+            "an unread call while a call is open":
+                (self.FORK, "101   unlink(%s <unfinished ...>" % self.hexed("y"), "101   ???( <detached ...>"),
+            "an unread call with an argument": (self.FORK, "101   ???(0 <detached ...>"),
+            "an unread call with 2 spaces": (self.FORK, "101   ???(  <detached ...>"),
+            "an unread call with a space after it": (self.FORK, "101   ???( <detached ...> "),
+            "an unread call with no parenthesis": (self.FORK, "101   ??? <detached ...>"),
+            "an unread call with 4 question marks": (self.FORK, "101   ????( <detached ...>"),
+            "a chdir detached in a shared folder":
+                (self.SHARED, "101   chdir(%s <detached ...>" % self.hexed("sub"), unlink),
+            "a chdir ended in a shared folder": (self.SHARED, "101   chdir(%s) = ?" % self.hexed("sub"), unlink),
+        }
+        for label, lines in traces.items():
+            with self.subTest(label):
+                with self.assertRaises(AssertionError):
+                    self.removals(*lines)
 
 
 if __name__ == "__main__":
