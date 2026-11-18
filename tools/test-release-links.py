@@ -17,7 +17,7 @@ placeholder to a published checksum. They also pin that each rule of the
 committed ``site/_redirects`` that stays on this site names a file under site/
 that is not an HTML file, is not the source of a rule and does not start with a
 splat source (a source ending in *) without its *, that each rule to another
-host names a target the writer documents, and that no scanned file names an old
+origin names a target the writer documents, and that no scanned file names an old
 name of a portable instructions file outside the redirect rule that answers for
 it. They run
 offline with the standard library: the fixtures patch each module's file paths,
@@ -1036,8 +1036,12 @@ class WriterTest(unittest.TestCase):
 class RedirectHopTest(unittest.TestCase):
     """Each rule of the committed site/_redirects that stays on this site names a file under site/ that is not an
     HTML file, is not the source of a rule and does not start with a splat source without its *, and each rule to
-    another host names a target the writer documents.
+    another origin names a target the writer documents.
 
+    A destination stays on this site when it is a path, such as /downloads/file.md, or an absolute URL on the
+    origin that site-src/site.json gives, such as https://cleanlanguage.ai/downloads/file.md, which the test reads as
+    its path. A URL is on that origin when its text up to the first /, ? or # after its :// is the origin, ignoring
+    letter case, so a URL that adds a port or user details to the origin is read as on another origin.
     A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
     with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
     committed tree is the tree the site serves. A destination that is the source of a rule, or that starts with a
@@ -1047,9 +1051,9 @@ class RedirectHopTest(unittest.TestCase):
     unseen. A destination with an empty or . segment, such as /downloads//file.md, fails, since the file the test
     finds under site/ is not the path as written, and so does one with a .. segment. A destination that names an
     HTML file, such as /install/index.html, fails too: the site serves each page at its folder path, and the host
-    may answer a path that names the HTML file with a redirect of its own. A destination on another host passes
+    may answer a path that names the HTML file with a redirect of its own. A destination on another origin passes
     only when it is 1 of the targets the writer documents: the release zip and its checksum for the version in
-    site-src/release.json, and the privacy page. The test does not follow a destination on another host, so it does
+    site-src/release.json, and the privacy page. The test does not follow a destination on another origin, so it does
     not count the hops that host takes. A line that is neither blank nor a comment fails unless it holds 3 fields,
     and a file with no rule fails.
     """
@@ -1061,6 +1065,9 @@ class RedirectHopTest(unittest.TestCase):
         zip_url = (f"https://github.com/jposluns/cleanlanguage/releases/download/{release['tag']}"
                    f"/cleanlanguage-{release['version']}.zip")
         return {zip_url, zip_url + ".sha256", "https://posluns.ca/privacy/"}
+
+    def origin(self) -> str:
+        return json.loads((self.REPO / "site-src/site.json").read_text(encoding="utf-8"))["origin"]
 
     def failures(self, site: Path) -> list[str]:
         """Each line of site/_redirects under ``site`` that breaks the rule above, with its first reason."""
@@ -1077,28 +1084,31 @@ class RedirectHopTest(unittest.TestCase):
             found.append("site/_redirects holds no rule")
         sources = {source for _, source, _ in rules}
         splats = [source[:-1] for source in sources if source.endswith("*")]
-        off_site = self.off_site_targets()
+        off_site, origin = self.off_site_targets(), self.origin().lower()
         for number, source, destination in rules:
             where = f"site/_redirects line {number}: {source} redirects to {destination}"
-            parts = destination.strip("/").split("/")
-            splat = next((prefix for prefix in splats if destination.startswith(prefix)), None)
+            url = re.fullmatch(r"([^/?#]*://[^/?#]*)(.*)", destination)
+            on_origin = url is not None and url.group(1).lower() == origin
+            path = "/" + url.group(2).removeprefix("/") if on_origin else destination
+            parts = path.strip("/").split("/")
+            splat = next((prefix for prefix in splats if path.startswith(prefix)), None)
             target = site.joinpath(*parts)
-            if destination.endswith("/"):
+            if path.endswith("/"):
                 target = target / "index.html"
-            if "://" in destination:
+            if "://" in destination and not on_origin:
                 if destination not in off_site:
-                    found.append(f"{where}, a host other than this site's that is not a documented target")
-            elif not destination.startswith("/"):
+                    found.append(f"{where}, on an origin other than this site's and not a documented target")
+            elif not path.startswith("/"):
                 found.append(f"{where}, which is not a path on this site")
-            elif destination in sources:
+            elif path in sources:
                 found.append(f"{where}, the source of another rule: 2 hops")
             elif splat is not None:
                 found.append(f"{where}, which the splat source {splat}* matches: 2 hops")
-            elif "." in destination[1:].split("/") or "" in destination[1:].split("/")[:-1]:
+            elif "." in path[1:].split("/") or "" in path[1:].split("/")[:-1]:
                 found.append(f"{where}, which has an empty or . segment, so it does not name its file as written")
             elif ".." in parts:
                 found.append(f"{where}, which leaves site/")
-            elif not destination.endswith("/") and parts[-1].lower().endswith((".html", ".htm")):
+            elif not path.endswith("/") and parts[-1].lower().endswith((".html", ".htm")):
                 found.append(f"{where}, which names an HTML file that the host may redirect again: 2 hops")
             elif not target.is_file():
                 found.append(f"{where}, which is not a file under site/")
@@ -1145,14 +1155,27 @@ class RedirectHopTest(unittest.TestCase):
     def test_a_file_with_no_rule_fails(self):
         self.assertEqual(self.failures_on("# a comment line\n\n", ()), ["site/_redirects holds no rule"])
 
-    def test_a_destination_on_an_undocumented_host_fails(self):
+    def test_a_destination_on_another_origin_that_is_not_documented_fails(self):
         zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
+        origin = self.origin()
+        plain = origin.replace("https://", "http://", 1)
         rules = (f"/privacy https://posluns.ca/privacy/ 301\n/download {zip_url} 302\n"
-                 f"/download/checksum {zip_url}.sha256 302\n/elsewhere https://example.com/privacy/ 301\n")
-        self.assertEqual(self.failures_on(rules, ()), [
-            "site/_redirects line 4: /elsewhere redirects to https://example.com/privacy/, "
-            "a host other than this site's that is not a documented target",
+                 f"/download/checksum {zip_url}.sha256 302\n/elsewhere https://example.com/privacy/ 301\n"
+                 f"/plain {plain}/a.md 301\n/lookalike {origin}.example.com/a.md 301\n/port {origin}:8443/a.md 301\n")
+        reason = "on an origin other than this site's and not a documented target"
+        self.assertEqual(self.failures_on(rules, ("a.md",)), [
+            f"site/_redirects line 4: /elsewhere redirects to https://example.com/privacy/, {reason}",
+            f"site/_redirects line 5: /plain redirects to {plain}/a.md, {reason}",
+            f"site/_redirects line 6: /lookalike redirects to {origin}.example.com/a.md, {reason}",
+            f"site/_redirects line 7: /port redirects to {origin}:8443/a.md, {reason}",
         ])
+
+    def test_a_destination_on_this_sites_origin_is_read_as_its_path(self):
+        # A URL on this site's origin that reaches its file in 1 hop passes, as its path does.
+        origin = self.origin()
+        rules = (f"/a {origin}/downloads/a.md 302\n/b {origin.upper()}/downloads/a.md 302\n"
+                 f"/c {origin}/page/ 301\n/d {origin} 301\n")
+        self.assertEqual(self.failures_on(rules, ("downloads/a.md", "page/index.html", "index.html")), [])
 
     def test_a_destination_without_a_leading_slash_fails(self):
         self.assertEqual(self.failures_on("/a downloads/a.md 301\n", ("downloads/a.md",)), [
@@ -1160,8 +1183,11 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_a_destination_that_is_the_source_of_a_rule_fails(self):
-        self.assertEqual(self.failures_on("/a /b.md 301\n/b.md /c.md 301\n", ("b.md", "c.md")), [
+        origin = self.origin()
+        self.assertEqual(self.failures_on(f"/a /b.md 301\n/b.md /c.md 301\n/d {origin}/b.md 301\n",
+                                          ("b.md", "c.md")), [
             "site/_redirects line 1: /a redirects to /b.md, the source of another rule: 2 hops",
+            f"site/_redirects line 3: /d redirects to {origin}/b.md, the source of another rule: 2 hops",
         ])
 
     def test_a_destination_that_a_splat_source_matches_fails(self):
@@ -1186,10 +1212,13 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_a_destination_with_no_file_fails(self):
-        self.assertEqual(self.failures_on("/a /missing.md 301\n/b /folder/ 301\n/c /page/ 301\n",
+        origin = self.origin()
+        self.assertEqual(self.failures_on(f"/a /missing.md 301\n/b /folder/ 301\n/c /page/ 301\n"
+                                          f"/d {origin}/missing.md 301\n",
                                           ("folder/other.md", "page/index.html")), [
             "site/_redirects line 1: /a redirects to /missing.md, which is not a file under site/",
             "site/_redirects line 2: /b redirects to /folder/, which is not a file under site/",
+            f"site/_redirects line 4: /d redirects to {origin}/missing.md, which is not a file under site/",
         ])
 
 
