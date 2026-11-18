@@ -15,16 +15,22 @@ It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
 is missing, or is a FIFO, a folder, a socket, a character or block device or
 any other file that is not regular fails with exit 1, and the code reads a copy
-only after those checks. The tests make a copy of each of these kinds except a
-device: creating a device node needs the CAP_MKNOD capability, which the
-unprivileged tests lack, so the refusal of a copy that is a device is an
-untested residual. The tests observe the order for a FIFO: a copy that is a
-FIFO, or a symlink to one, must end within FIFO_TIMEOUT (10 seconds) with exit
-1 and its message while nothing opens the FIFO for reading
+only after those checks. The tests (tools/test-agent-plugin-manifest.py) make
+a copy of each of these kinds except a block device, but they make a symlink, a
+FIFO, a socket or a character device only where the OS lets them: where it
+refuses one, with EPERM, EACCES, EOPNOTSUPP or ENOSYS, each case or subtest
+that needs it skips and observes nothing about the gate, unittest still reports
+OK (skipped=N) with exit 0 if nothing else fails, and the run then prints that
+those cases did not run and why. Creating a device node needs the CAP_MKNOD
+capability, so in an unprivileged run the device case skips, and the refusal
+of a copy that is a device, like that of a block device, is an untested
+residual. Where the FIFO can be made, the tests observe the order for it: a
+copy that is a FIFO, or a symlink to one, must end within FIFO_TIMEOUT (10
+seconds) with exit 1 and its message while nothing opens the FIFO for reading
 (test_licence_copy_fifo_fails and the FIFO subtests of
-test_licence_copy_symlink_fails in tools/test-agent-plugin-manifest.py), so a
-gate that opens such a FIFO for reading first, with or without blocking, fails.
-They also observe it for a missing copy, a folder and a socket read with
+test_licence_copy_symlink_fails), so a gate that opens such a FIFO for reading
+first, with or without blocking, fails. They also observe it for a missing
+copy, a folder and, where the socket can be made, a socket read with
 read_bytes, whose error stops the gate with exit 3, not 1. Before the refusal,
 a read through a link to a regular file, a listing of a folder, a read of a
 missing copy, a folder or a socket whose error is ignored, or an open of a FIFO
@@ -37,8 +43,13 @@ so a copy that drifted from the root file would ship a licence text the
 repository does not state. The gate reads the working tree. It refuses a copy
 that is a symlink, but not a root LICENSE or NOTICE.md that is one: it reads
 such a root file through the link, so it compares the copy with the bytes of
-the file the link leads to. tools/release-package.sh compares the git blob of
-each copy with the git blob of its root file at HEAD.
+the file the link leads to. Where the OS lets the tests make a symlink,
+test_root_licence_symlink_is_read_through pins this: a root file linked to its
+copy passes, and one linked to a different file fails with the message that
+the copy differs. tools/release-package.sh compares the git blob of each copy
+with the git blob of its root file at HEAD, and the blob of a symlink holds
+the path it leads to, not that file's bytes, so a root file that is a symlink
+passes this gate but not that comparison.
 
 Exit codes:
   0  the manifest is valid and consistent, and the licence copies equal the root files
@@ -106,12 +117,16 @@ def check_licence_copies() -> None:
     A copy that is a symlink, is missing, or is a FIFO, a folder, a socket, a
     character or block device or any other file that is not regular fails
     with exit 1, and a copy is read only after it passes those checks. The
-    tests make each of these kinds except a device, whose node needs the
-    CAP_MKNOD capability to create, so the refusal of a device copy is
-    untested. The tests observe the order for a FIFO copy, or a symlink to
-    one, which must end with exit 1 and its message within the test's time
-    limit while nothing opens the FIFO for reading, with or without blocking
-    (test_licence_copy_fifo_fails, and the FIFO subtests of
+    tests make each of these kinds except a block device, but a symlink, a
+    FIFO, a socket or a character device only where the OS lets them; where
+    it refuses, the case or subtest skips, observes nothing about the gate
+    and is named after the run's summary, which still reads OK with exit 0
+    if nothing else fails. A device node needs the CAP_MKNOD capability, so
+    in an unprivileged run the refusal of a device copy is untested. Where
+    the nodes can be made, the tests observe the order for a FIFO copy, or a
+    symlink to one, which must end with exit 1 and its message within the
+    test's time limit while nothing opens the FIFO for reading, with or
+    without blocking (test_licence_copy_fifo_fails, and the FIFO subtests of
     test_licence_copy_symlink_fails), and for a missing copy, a folder or a
     socket read with read_bytes, whose error stops the gate with exit 3, not
     with exit 1. No case catches, before the refusal, a read through a link

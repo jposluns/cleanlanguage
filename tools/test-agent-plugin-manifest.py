@@ -4,12 +4,16 @@
 Patch the gate's manifest paths to a temp fixture and drive the failure and
 success paths offline with the standard library. The fixture also holds a root
 LICENSE and NOTICE.md and their copies under cleanlanguage/, so the licence copy
-cases can make a copy differ, go missing, or become a symlink, a FIFO, a folder
-or a socket. On Linux the other files that are not regular are character and
-block devices, which no case makes: creating a device node needs the CAP_MKNOD
-capability, which an unprivileged test lacks, so the gate's refusal of a copy
-that is a device is untested. The cases name the 2 files in COPIED_FILES below,
-not in the gate's own list.
+cases can make a copy differ, go missing, or become a symlink, a FIFO, a folder,
+a socket or a character device. On Linux the only other files that are not
+regular are block devices, which no case makes. Creating a device node needs
+the CAP_MKNOD capability, which an unprivileged run lacks, so there the device
+case skips, as below, and the gate's refusal of a copy that is a device goes
+untested. A further case makes a root LICENSE or NOTICE.md a symlink and
+requires that the gate read it through the link: it passes when the link leads
+to a file equal to the copy, and fails with the message that the copy differs
+when it leads to a different file. The cases name the 2 files in COPIED_FILES
+below, not in the gate's own list.
 
 The licence-copy cases check outcomes only: the exit code, the message, that
 the gate ends and, for a FIFO, whether anything opened it for reading. They
@@ -32,29 +36,43 @@ state no rule about how the gate reads a file:
   read_bytes before refusing it stops with exit 3, not 1, so it fails the
   case for a missing copy, for a folder or for a socket.
 
-Where the environment refuses to make a FIFO or a Unix socket, the case or
-subtest that needs one cannot set up the state it tests, so it skips, naming
-the error: the run reports it as skipped, never as passed, and it observes
-nothing about the gate.
+Every FIFO, Unix socket, symlink and device node that a case makes is made
+through make_node. Where the OS refuses to make that kind of node, with
+EPERM, EACCES, EOPNOTSUPP or ENOSYS from the call that makes it, the case or
+subtest cannot set up the state it tests, so it skips, naming the error, and
+observes nothing about the gate. Any other error from that call, such as a
+path that already exists, or a socket path longer than a socket address
+holds, as under a long TMPDIR, is raised, so the case errors. unittest counts
+a skipped case as skipped, not as failed, so a run whose other cases pass
+ends with OK (skipped=N) and exit 0. When the OS refused any node, the run
+then prints, after unittest's summary, the number of cases or subtests that
+did not run for that reason, says that they observed nothing about the gate,
+and names each, with the node and the error.
 
 No case catches a gate that, before refusing a copy, reads through a symlink
 to a regular file, lists a folder, tries to read a missing copy, a folder or a
 socket and ignores the error, or opens a FIFO neither for reading nor with
 blocking, such as with O_PATH: each leaves the exit code and the message the
 same. No case makes a symlink to a device, such as /dev/zero, so a gate that
-reads through one before refusing it is untested too, and no case makes a copy
-that is a device, so a gate that refuses only the kinds the cases make and
-reads a device copy is untested as well.
+reads through one before refusing it is untested too. No case makes a block
+device, and where the OS refuses to make a character device, as it does for
+an unprivileged run, no case makes a device at all, so there a gate that
+refuses only the other kinds and reads a device copy is untested as well.
+Where the OS refuses to make a FIFO, a socket or a symlink, the cases that
+need one skip, so there a gate that mishandles that kind passes the run, which
+still exits 0; the summary line names those cases.
 """
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.util
 import io
 import json
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -78,6 +96,13 @@ LICENCE_TEXTS = {
 }
 # Seconds the gate may take to refuse a FIFO copy.
 FIFO_TIMEOUT = 10
+# The errors with which the OS refuses to make a kind of node: the run lacks
+# the privilege (EPERM, EACCES), or the file system or the kernel does not
+# support that kind (EOPNOTSUPP, ENOSYS). make_node skips only on these.
+REFUSAL_ERRNOS = frozenset({errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS})
+# One line for each case or subtest that skipped because the OS refused to
+# make its node, printed after unittest's summary.
+REFUSED_NODES: list[str] = []
 # Runs the gate's licence-copy check on the fixture root given as argv[2].
 DRIVER = (
     "import importlib.util, sys\n"
@@ -110,6 +135,13 @@ def single_edits(data: bytes, every_kind_at=None):
         yield "replace", offset, data[:offset] + replaced + data[offset + 1:]
         if every_kind:
             yield "delete", offset, data[:offset] + data[offset + 1:]
+
+
+def bind_socket(path: Path) -> None:
+    """Bind a Unix socket at ``path`` and close it, which leaves the socket
+    file in place."""
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(path))
 
 
 class FifoWitness:
@@ -196,7 +228,10 @@ class AgentPluginManifestTest(unittest.TestCase):
         """Write each root licence file and a regular, equal copy, replacing
         whatever a case left at the copy's path."""
         for name, data in LICENCE_TEXTS.items():
-            (gate.REPO_ROOT / name).write_bytes(data)
+            root = gate.REPO_ROOT / name
+            if root.is_symlink():
+                root.unlink()
+            root.write_bytes(data)
             copy = gate.REPO_ROOT / "cleanlanguage" / name
             if copy.is_dir() and not copy.is_symlink():
                 copy.rmdir()
@@ -249,26 +284,22 @@ class AgentPluginManifestTest(unittest.TestCase):
         self.assertFalse(opened, f"the gate opened the FIFO {fifo.relative_to(gate.REPO_ROOT).as_posix()} "
                                  "before refusing the copy")
 
-    def make_fifo(self, path: Path) -> None:
-        """Make a FIFO at ``path``. Where the environment refuses to make one,
-        the case cannot set up the state it tests, so it skips, naming the
-        error."""
+    def make_node(self, kind: str, path: Path, create, *args) -> None:
+        """Make the node of ``kind`` (a FIFO, a Unix socket, a symlink or a
+        device) at ``path`` by calling ``create(*args)``. Where the OS refuses
+        to make that kind of node, with an error in REFUSAL_ERRNOS, the case
+        cannot set up the state it tests, so it records the refusal in
+        REFUSED_NODES and skips, naming the error. Any other error, such as a
+        path that already exists or a socket path longer than a socket
+        address holds, is raised, so the case errors."""
         try:
-            os.mkfifo(path)
+            create(*args)
         except OSError as error:
-            self.skipTest(f"cannot make a FIFO at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}")
-
-    def make_socket(self, path: Path) -> None:
-        """Bind a Unix socket at ``path`` and close it, which leaves the socket
-        file in place. The socket or the bind fails where the environment
-        refuses Unix sockets, or where the path is longer than a socket
-        address holds, as under a long TMPDIR; the case then cannot set up the
-        state it tests, so it skips, naming the error."""
-        try:
-            with socket.socket(socket.AF_UNIX) as listener:
-                listener.bind(str(path))
-        except OSError as error:
-            self.skipTest(f"cannot bind a Unix socket at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}")
+            if error.errno not in REFUSAL_ERRNOS:
+                raise
+            reason = f"the OS refused to make {kind} at {path.relative_to(gate.REPO_ROOT).as_posix()}: {error}"
+            REFUSED_NODES.append(f"{self.id()}: {reason}")
+            self.skipTest(reason)
 
     def test_valid_passes(self):
         self.write(valid_manifest())
@@ -449,16 +480,16 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                copy.symlink_to(gate.REPO_ROOT / name)
+                self.make_node("a symlink", copy, copy.symlink_to, gate.REPO_ROOT / name)
                 self.expect_exit(1, f"cleanlanguage/{name} is a symlink")
             with self.subTest(name, target="FIFO"):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
                 fifo = gate.REPO_ROOT / f"{name}.fifo"
-                self.make_fifo(fifo)
-                copy.symlink_to(fifo)
+                self.make_node("a FIFO", fifo, os.mkfifo, fifo)
                 try:
+                    self.make_node("a symlink", copy, copy.symlink_to, fifo)
                     # A gate that opens the FIFO for reading through the link
                     # before refusing the link fails, with or without
                     # blocking.
@@ -476,7 +507,7 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                self.make_fifo(copy)
+                self.make_node("a FIFO", copy, os.mkfifo, copy)
                 self.expect_fifo_refusal(copy, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_folder_fails(self):
@@ -493,7 +524,22 @@ class AgentPluginManifestTest(unittest.TestCase):
         # A Unix socket is the remaining kind that is not regular and that an
         # unprivileged test can make. Opening it fails, so a gate that reads it
         # with read_bytes before refusing it stops with exit 3, not 1. Where
-        # the environment refuses to make the socket, each subtest skips,
+        # the OS refuses to make the socket, each subtest skips, naming the
+        # error.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            with self.subTest(name):
+                self.restore_licence_files()
+                copy = gate.REPO_ROOT / "cleanlanguage" / name
+                copy.unlink()
+                self.make_node("a Unix socket", copy, bind_socket, copy)
+                self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
+
+    def test_licence_copy_device_fails(self):
+        # A character device with the numbers of /dev/null reads as empty, so
+        # a gate that reads it before refusing it gives the message that the
+        # copy differs, not the one required here. Making it needs the
+        # CAP_MKNOD capability; where the OS refuses, each subtest skips,
         # naming the error.
         self.write(valid_manifest())
         for name in COPIED_FILES:
@@ -501,8 +547,33 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.restore_licence_files()
                 copy = gate.REPO_ROOT / "cleanlanguage" / name
                 copy.unlink()
-                self.make_socket(copy)
+                self.make_node("a character device", copy, os.mknod, copy,
+                               stat.S_IFCHR | 0o600, os.makedev(1, 3))
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
+
+    def test_root_licence_symlink_is_read_through(self):
+        # The gate refuses a copy that is a symlink but not a root file that
+        # is one: it reads the root file through the link, so it compares the
+        # copy with the bytes of the file the link leads to. A root file
+        # linked to its own copy passes, and one linked to a different file
+        # fails with the message that the copy differs.
+        self.write(valid_manifest())
+        for name in COPIED_FILES:
+            root = gate.REPO_ROOT / name
+            copy = gate.REPO_ROOT / "cleanlanguage" / name
+            with self.subTest(name, target="its copy"):
+                self.restore_licence_files()
+                root.unlink()
+                self.make_node("a symlink", root, root.symlink_to, copy)
+                self.assertEqual(gate.main(), 0)
+            with self.subTest(name, target="a different file"):
+                self.restore_licence_files()
+                other = gate.REPO_ROOT / f"{name}.other"
+                other.write_bytes(LICENCE_TEXTS[name] + b"Other text.\n")
+                root.unlink()
+                self.make_node("a symlink", root, root.symlink_to, other)
+                self.expect_exit(1, f"cleanlanguage/{name} differs from the root {name}")
+        self.restore_licence_files()
 
     def test_unreadable_root_licence_fails_closed(self):
         self.write(valid_manifest())
@@ -511,4 +582,11 @@ class AgentPluginManifestTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    program = unittest.main(exit=False)
+    if REFUSED_NODES:
+        print(f"test-agent-plugin-manifest: {len(REFUSED_NODES)} case(s) or subtest(s) did not run, because "
+              "the OS refused to make the node each needs; unittest counts them as skipped, not as failed, "
+              "and they observed nothing about the gate:", file=sys.stderr)
+        for line in REFUSED_NODES:
+            print(f"  {line}", file=sys.stderr)
+    sys.exit(0 if program.result.wasSuccessful() else 1)
