@@ -559,8 +559,8 @@ def probe_tree(text):
     """The tree of text, a probe whose every line starts with "> ", read with that start cut.
 
     The cases of the static helpers write each probe so: no probe parses as it stands, so
-    code_texts() passes it over, and the places it holds do not fail the static cases that read
-    the suite's source.
+    embedded_places() passes it over, though code_texts() returns it as a text of code, and the
+    places it holds do not fail the static cases that read the suite's source.
     """
     return ast.parse(re.sub(r"(?m)^> ", "", text))
 
@@ -1528,6 +1528,27 @@ class UnreadableInputs(GateCase):
                 else:
                     self.assertResult(result, 0, 0)
 
+    def test_nan_and_infinity_tokens_are_read_as_numbers(self):
+        # The JSON reader takes each of the tokens NaN, Infinity and -Infinity, which JSON
+        # lacks, as a number, as the gate docstring states, so a payload that is JSON but for
+        # 1 of them, in a member at the top or in the pull request, is read and checked; any
+        # other spelling of such a number is not JSON.
+        gate = self.tree(squash=CLEAN_SQUASH)
+        for token in ("NaN", "Infinity", "-Infinity"):
+            for member, text in (
+                    ("action", '{"action": ' + token + ', "pull_request": {"number": 999, '
+                     '"body": "A body."}}'),
+                    ("pull request", '{"action": "opened", "pull_request": {"number": 999, '
+                     '"body": "A body.", "extra": [' + token + ']}}')):
+                with self.subTest(token=token, member=member):
+                    path = self.write("payload.json", text)
+                    self.assertResult(self.run_gate("--event", path, gate=gate), 0, 0)
+        for token in ("nan", "+Infinity", "-NaN", "infinity"):
+            with self.subTest(token=token):
+                path = self.write("payload.json", '{"action": ' + token + ', "pull_request": '
+                                  '{"number": 999, "body": "A body."}}')
+                self.assertUnreadable(self.run_gate("--event", path, gate=gate), "not JSON")
+
     def test_deeply_nested_payload_exits_2(self):
         # The gate runs under a stack limit this case sets, so the payload overflows on every
         # runner; the message shows that the RecursionError branch, not the ValueError
@@ -2098,17 +2119,31 @@ class OutputAndHonestTexts(GateCase):
 
     def test_import_in_another_scope_hides_no_place(self):
         # reached() reads the imports of every scope at once and tries each binding of a name,
-        # so an import in a function that binds the name to another module or function, walked
-        # after the import that binds it to a launch or a removal, or sorted before it, does
-        # not hide the place, whether import or from ... import binds the name.
+        # so an import in a function that binds the name to another module or function does
+        # not hide the place, whether import ... as, from ... import or from ... import ... as
+        # binds the name, and whichever of the 2 bindings ast.walk() meets first: the module
+        # level, then the function. Each form is tried in 2 orders, the launch or removal met
+        # first and sorted after the other binding, and met second and sorted before it, so a
+        # reader that keeps only the first or only the last binding met, or tries only the
+        # first or only the last in sorted order, fails a subtest of each form.
         for label, text, accepts, expected in (
-                ("import", "> import subprocess as sp\n> def f():\n>     import json as sp\n"
-                 "> sp.run(['x'])\n", starts_a_process, [("subprocess", "run")]),
-                ("from import", "> from subprocess import run\n> def f():\n"
+                ("import as, met first", "> import subprocess as sp\n> def f():\n"
+                 ">     import json as sp\n> sp.run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
+                ("import as, met second", "> import zlib as sp\n> def f():\n"
+                 ">     import subprocess as sp\n> sp.run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
+                ("from import, met first", "> from subprocess import run\n> def f():\n"
                  ">     from json import run\n> run(['x'])\n", starts_a_process,
                  [("subprocess", "run")]),
-                ("from import of a removal", "> from shutil import rmtree as rm\n> def f():\n"
+                ("from import, met second", "> from zlib import run\n> def f():\n"
+                 ">     from subprocess import run\n> run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")]),
+                ("from import as, met first", "> from shutil import rmtree as rm\n> def f():\n"
                  ">     from json import loads as rm\n> rm('p')\n", removes,
+                 [("shutil", "rmtree")]),
+                ("from import as, met second", "> from zlib import compress as rm\n"
+                 "> def f():\n>     from shutil import rmtree as rm\n> rm('p')\n", removes,
                  [("shutil", "rmtree")])):
             with self.subTest(binding=label):
                 self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
@@ -2116,9 +2151,16 @@ class OutputAndHonestTexts(GateCase):
 
     def test_place_is_given_with_its_first_accepted_binding(self):
         # reached() gives a place with the first module, or the first (module, name) pair, that
-        # accepts takes, in sorted order, as its docstring states.
+        # accepts takes, in sorted order, as its docstring states: for an attribute read, the
+        # module that import ... as binds to the name, the whole dotted name when it imports a
+        # submodule, or the name itself, and None when the read is on a value that is not a
+        # name; for a name read, the pair that from ... import binds.
         for label, text, expected in (
                 ("attribute read", "> import os as sp\n> sp.unlink('p')\n", [("os", "unlink")]),
+                ("attribute read of a submodule imported as a name",
+                 "> import os.path as p\n> p.unlink('p')\n", [("os.path", "unlink")]),
+                ("attribute read on a value that is not a name", "> Path('p').unlink()\n",
+                 [(None, "unlink")]),
                 ("name read", "> from shutil import remove\n> def f():\n"
                  ">     from os import remove\n> remove('p')\n", [("os", "remove")])):
             with self.subTest(read=label):
@@ -2128,30 +2170,82 @@ class OutputAndHonestTexts(GateCase):
     def test_star_import_hides_no_place(self):
         # A name read is tried with each module that from ... import * names, so a launch or a
         # removal that a star import binds is found; a module that is not accepted finds none.
+        # Of several star imports, every module is tried: the launch's module met second and
+        # sorted last, and met first and sorted first, so a reader that tries only the first
+        # or only the last star module met, or in sorted order, fails a subtest. A star import
+        # and a from import of the same name are both tried, in either role. A relative import
+        # is read as the module it names.
         for label, text, accepts, expected in (
                 ("launch", "> from subprocess import *\n> run(['x'])\n", starts_a_process,
                  [("subprocess", "run")]),
                 ("removal", "> from os import *\n> unlink('p')\n", removes, [("os", "unlink")]),
-                ("other module", "> from json import *\n> run(['x'])\n", starts_a_process, [])):
+                ("other module", "> from json import *\n> run(['x'])\n", starts_a_process, []),
+                ("several, met second and sorted last",
+                 "> from json import *\n> from subprocess import *\n> run(['x'])\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("several, met first and sorted first",
+                 "> from subprocess import *\n> from zlib import *\n> run(['x'])\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("star launch beside a from import of the name",
+                 "> from json import run\n> from subprocess import *\n> run(['x'])\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("from import launch beside a star import",
+                 "> from subprocess import run\n> from json import *\n> run(['x'])\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("relative", "> from .subprocess import *\n> run(['x'])\n", starts_a_process,
+                 [("subprocess", "run")])):
             with self.subTest(star=label):
                 self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
                                  expected)
 
+    def test_reference_that_is_not_a_call_is_found(self):
+        # reached() finds a call or any other reference alike, as its docstring states, so a
+        # launch or a removal bound to another name is found, whether an attribute read or a
+        # name read gives it; a name that is assigned or deleted, not read, is no place.
+        for label, text, accepts, expected in (
+                ("attribute read", "> import subprocess as sp\n> launch = sp.run\n",
+                 starts_a_process, [("subprocess", "run")]),
+                ("name read", "> from os import unlink\n> handlers = [unlink]\n", removes,
+                 [("os", "unlink")]),
+                ("name assigned or deleted", "> from subprocess import run\n> run = None\n"
+                 "> del run\n", starts_a_process, [])):
+            with self.subTest(reference=label):
+                self.assertEqual([name for node, name in reached(probe_tree(text), accepts)],
+                                 expected)
+
     def test_call_in_the_arguments_of_addcleanup_is_not_guarded(self):
-        # run_on_every_path() guards a removal given to addCleanup as its function, or in its
-        # arguments outside every call there, and one in a finally clause; a call in those
-        # arguments, as an argument, a keyword argument, inside another call or as the function
-        # itself, runs when addCleanup is called, and a call in the body of a lambda is not
-        # guarded either, so each such removal is found.
+        # run_on_every_path() guards a removal given to addCleanup, on any object, as its
+        # function, or in its arguments outside every call there, and one in the finally clause
+        # of a try or a try with except*. The arguments take 5 forms: the function, a later
+        # argument, a starred argument, a keyword argument and a ** argument; in each, a
+        # reference outside every call is guarded, also when an assignment expression binds it,
+        # and a call, which runs when addCleanup is called, is not, nor is a call inside another
+        # call or in the body of a lambda, so each such removal is found.
         for label, text, expected in (
                 ("function", "> self.addCleanup(os.unlink, path)\n", []),
+                ("function, addCleanup of another object", "> case.addCleanup(os.unlink, path)\n",
+                 []),
+                ("later argument", "> self.addCleanup(print, os.unlink)\n", []),
+                ("starred argument", "> self.addCleanup(print, *[os.unlink])\n", []),
+                ("keyword argument", "> self.addCleanup(print, done=os.unlink)\n", []),
+                ("** argument", "> self.addCleanup(print, **{'done': os.unlink})\n", []),
+                ("assignment expression", "> self.addCleanup(print, (done := os.unlink))\n", []),
                 ("finally", "> try:\n>     pass\n> finally:\n>     os.unlink(path)\n", []),
-                ("argument", "> self.addCleanup(print, os.unlink(path))\n", [("os", "unlink")]),
-                ("keyword", "> self.addCleanup(print, done=os.unlink(path))\n",
+                ("finally of a try with except*", "> try:\n>     pass\n> except* OSError:\n"
+                 ">     pass\n> finally:\n>     os.unlink(path)\n", []),
+                ("called function", "> self.addCleanup(os.unlink(path))\n", [("os", "unlink")]),
+                ("call in a later argument", "> self.addCleanup(print, os.unlink(path))\n",
                  [("os", "unlink")]),
+                ("call in a starred argument", "> self.addCleanup(print, *[os.unlink(path)])\n",
+                 [("os", "unlink")]),
+                ("call in a keyword argument", "> self.addCleanup(print, done=os.unlink(path))\n",
+                 [("os", "unlink")]),
+                ("call in a ** argument",
+                 "> self.addCleanup(print, **{'done': os.unlink(path)})\n", [("os", "unlink")]),
+                ("call in an assignment expression",
+                 "> self.addCleanup(print, (done := os.unlink(path)))\n", [("os", "unlink")]),
                 ("nested call", "> self.addCleanup(print, [str(os.unlink(path))])\n",
                  [("os", "unlink")]),
-                ("called function", "> self.addCleanup(os.unlink(path))\n", [("os", "unlink")]),
                 ("lambda", "> self.addCleanup(lambda: os.unlink(path))\n", [("os", "unlink")])):
             with self.subTest(removal=label):
                 tree = probe_tree(text)
@@ -2161,29 +2255,53 @@ class OutputAndHonestTexts(GateCase):
 
     def test_listed_row_is_killed_by_failures_alone(self):
         # killed() kills a row that RUNAWAY_SITES lists only when its cases fail with failures
-        # alone and the child hit the listed limit, and a row that it does not list only when
-        # they fail with failures alone and on no stop of the gate; the stop rule does not
-        # apply to a listed row, whose limit can itself show as a stop.
+        # alone and the child hit the listed limit, whatever other limit it hit, and a row that
+        # it does not list only when they fail with failures alone, with no limit hit; and it
+        # kills no row whose cases fail on a stop of the gate but the row listed with the
+        # memory limit, the only limit that can itself show as a stop. A row listed with the
+        # wall timeout is held by the stop rule, and the sweep's own timeout is not its limit.
         sweep = MutantSweep("test_rows_are_well_formed")
-        listed = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
+        memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
+        wall = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
+                    if limit == "wall timeout")
         hit = ["the memory limit of {} bytes".format(SWEEP_MEMORY)]
+        timed = ["the wall timeout of {} s".format(SPAN_TIMEOUT)]
+        swept = ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)]
         stop = [STOP_MARK + "the gate stopped on an unexpected error in a case"]
         error = "its cases fail with an error, not an assertion: "
+        unhit = "a runaway site whose cases did not fail by its {}: exit {}, {}"
+        on_stop = "its cases fail on a stop of the gate: " + stop[0]
         for label, words, result, expected in (
-                ("listed, failures", listed, (1, "FAILED (failures=1)", hit, []), None),
-                ("listed, failures and a stop", listed, (1, "FAILED (failures=1)", hit, stop),
+                ("listed, failures", memory, (1, "FAILED (failures=1)", hit, []), None),
+                ("listed, failures and another limit", memory,
+                 (1, "FAILED (failures=1)", sorted(hit + timed), []), None),
+                ("listed, failures and a stop", memory, (1, "FAILED (failures=1)", hit, stop),
                  None),
-                ("listed, an error", listed, (1, "FAILED (errors=1)", hit, []),
+                ("listed, failures and no limit", memory, (1, "FAILED (failures=1)", [], []),
+                 unhit.format("memory limit", 1, "FAILED (failures=1)")),
+                ("listed, failures and only another limit", memory,
+                 (1, "FAILED (failures=1)", timed, []),
+                 unhit.format("memory limit", 1, "FAILED (failures=1)")),
+                ("listed, an error", memory, (1, "FAILED (errors=1)", hit, []),
                  error + "FAILED (errors=1)"),
-                ("listed, failures and an error", listed,
+                ("listed, failures and an error", memory,
                  (1, "FAILED (failures=1, errors=1)", hit, []),
                  error + "FAILED (failures=1, errors=1)"),
+                ("listed, passes", memory, (0, "OK", hit, []), "survived: exit 0, OK"),
+                ("listed by the wall timeout, failures", wall,
+                 (1, "FAILED (failures=1)", timed, []), None),
+                ("listed by the wall timeout, failures and a stop", wall,
+                 (1, "FAILED (failures=1)", timed, stop), on_stop),
+                ("listed by the wall timeout, the sweep's timeout", wall,
+                 (None, "timed out", swept, []), unhit.format("wall timeout", None, "timed out")),
                 ("not listed, failures", "a row not listed", (1, "FAILED (failures=1)", [], []),
                  None),
+                ("not listed, failures and a limit", "a row not listed",
+                 (1, "FAILED (failures=1)", timed, []),
+                 "hit a limit but is not a runaway site: " + timed[0]),
                 ("not listed, failures and a stop", "a row not listed",
-                 (1, "FAILED (failures=1)", [], stop),
-                 "its cases fail on a stop of the gate: " + stop[0])):
+                 (1, "FAILED (failures=1)", [], stop), on_stop)):
             with self.subTest(row=label):
                 sweep.run_cases = lambda root, ids, result=result: result
                 self.assertEqual(sweep.killed(words, self.tmp / "gate.py", "", [], self.tmp),
@@ -5127,12 +5245,14 @@ class MutantSweep(unittest.TestCase):
     the site or the hand row applied, exit 1 with FAILED and failures alone, no error, under
     the limit-hit rule and the stop rule. Each named case is one whose name gives the reason
     the row changes, and the stop rule holds the sweep to that reason where a gate stop would
-    hide it: a row that RUNAWAY_SITES does not list whose named cases see a stop of the mutated
-    gate, a stop sign of STOP_SIGNS in a gate run that the unmutated gate, run with the same
-    arguments, does not show, is not killed, since its cases fail because the gate stops, not
-    for the reason the row changes. A listed row is held by the limit-hit rule instead, since
-    the limit it lists can itself show as a stop: the memory limit stops the gate with a
-    MemoryError, which the gate reports as an unexpected error. A stop counts only on a run
+    hide it: a row whose named cases see a stop of the mutated gate, a stop sign of STOP_SIGNS
+    in a gate run that the unmutated gate, run with the same arguments, does not show, is not
+    killed, since its cases fail because the gate stops, not for the reason the row changes.
+    The row that RUNAWAY_SITES lists with the memory limit is held by the limit-hit rule
+    instead, since that limit can itself show as a stop: it stops the gate with a MemoryError,
+    which the gate reports as an unexpected error. A row listed with the wall timeout is held
+    by both rules, since that timeout cannot show as a stop: when it stops the gate,
+    run_child() raises before run_gate() reads the run for a stop. A stop counts only on a run
     that the unmutated gate reads and checks to its end, with exit status 0 or 1: where the
     unmutated gate refuses its input with exit status 2, a row that removes or narrows that
     refusal can show only as an error that escapes it.
@@ -5231,11 +5351,13 @@ class MutantSweep(unittest.TestCase):
         A row hits a limit, and that kills it, only when RUNAWAY_SITES lists it with that
         limit and its cases fail by an assertion; a row that hits any other limit is not
         killed. A row whose cases fail with an error rather than an assertion, a listed row
-        included, is not killed either, nor is a row that RUNAWAY_SITES does not list whose
-        cases fail on a stop of the gate that the unmutated gate does not make: its cases fail
-        for a reason other than the one the row changes. The stop rule does not apply to a
-        listed row, since the limit it lists can itself show as a stop: the memory limit stops
-        the gate with a MemoryError, which the gate reports as an unexpected error.
+        included, is not killed either, nor is a row whose cases fail on a stop of the gate
+        that the unmutated gate does not make: its cases fail for a reason other than the one
+        the row changes. The stop rule does not apply to a row listed with the memory limit,
+        since that limit can itself show as a stop: it stops the gate with a MemoryError, which
+        the gate reports as an unexpected error. The rule holds a row listed with the wall
+        timeout, which cannot show as a stop: when that timeout stops the gate, run_child()
+        raises TimeoutExpired before run_gate() reads the run for a stop.
         """
         path.write_text(mutated, encoding="utf-8")
         code, last, hits, stops = self.run_cases(root, ids)
@@ -5245,7 +5367,7 @@ class MutantSweep(unittest.TestCase):
         if limit is not None and not any(limit in hit for hit in hits):
             return "a runaway site whose cases did not fail by its {}: exit {}, {}".format(
                 limit, code, last)
-        if limit is None and stops:
+        if limit != "memory limit" and stops:
             return "its cases fail on a stop of the gate: " + "; ".join(stops)
         if code == 1 and re.fullmatch(r"FAILED \(failures=\d+\)", last):
             return None
