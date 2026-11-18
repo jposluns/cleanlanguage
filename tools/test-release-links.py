@@ -1050,6 +1050,13 @@ class RedirectHopTest(unittest.TestCase):
     stays on this site when it is a path or a URL on the origin, which the test reads as its path, or as / when its
     path is empty, as in https://cleanlanguage.ai?x=1, and holds to the same checks as a path. A destination that
     urlsplit cannot read, such as http://[x/file.md, fails.
+    A destination that holds a control character (U+0000 to U+001F) or a space anywhere, or a backslash, fails
+    before the test reads it. The basic URL parser of the WHATWG URL Standard, which browsers follow, removes every
+    leading and trailing control character or space and every tab and newline before it reads a URL,
+    percent-encodes any other control character, and reads a backslash as / in an https URL. urlsplit strips only
+    the leading ones and keeps a backslash, so a destination of U+0001 followed by //example.com/file.md, or
+    /\\example.com/file.md, would read here as a path while a browser goes to example.com. The test refuses such a
+    destination rather than strip it, since the host that reads site/_redirects need not strip it as a browser does.
     A destination on this site must be a file under site/: the path itself, or its index.html when the path ends
     with a slash. tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
     committed tree is the tree the site serves. A destination that is the source of a rule, or that starts with a
@@ -1095,13 +1102,20 @@ class RedirectHopTest(unittest.TestCase):
         off_site, origin = self.off_site_targets(), urllib.parse.urlsplit(self.origin())
         for number, source, destination in rules:
             where = f"site/_redirects line {number}: {source} redirects to {destination}"
+            # The WHATWG URL Standard's basic URL parser removes leading and trailing control characters (U+0000 to
+            # U+001F) and spaces and every tab and newline, and reads \ as / in an https URL; urlsplit strips only the
+            # leading ones. Refusing them all makes the text below the text a browser reads.
+            if any(character <= " " or character == "\\" for character in destination):
+                found.append(f"{where}, which holds a control character, a space or a backslash, so a browser may "
+                             "not read it as written")
+                continue
             try:
                 url = urllib.parse.urlsplit(destination)
             except ValueError:
                 found.append(f"{where}, which urllib.parse cannot read as a URL")
                 continue
             # urlsplit gives an empty netloc both for no authority and for an empty one, so a destination that
-            # starts with // is a URL by its own text.
+            # starts with // is a URL by its own text; the check above leaves nothing that urlsplit strips before it.
             is_url = bool(url.scheme) or destination.startswith("//")
             on_origin = is_url and ((url.scheme or origin.scheme).lower(), url.netloc.lower()) == (
                 origin.scheme.lower(), origin.netloc.lower())
@@ -1134,18 +1148,21 @@ class RedirectHopTest(unittest.TestCase):
         self.assertEqual(self.failures(self.REPO / "site"), [])
 
     def test_a_destination_that_names_an_html_file_fails(self):
+        origin = self.origin()
         with tempfile.TemporaryDirectory() as tmp:
             site = Path(tmp)
             (site / "install").mkdir()
             for name in ("install/index.html", "about.html", "About.HTM"):
                 (site / name).write_text("<p>page</p>\n", encoding="utf-8")
             (site / "_redirects").write_text("/get /install/index.html 301\n/old-about /about.html 301\n"
-                                             "/older-about /About.HTM 301\n/go /install/ 301\n", encoding="utf-8")
+                                             "/older-about /About.HTM 301\n/go /install/ 301\n"
+                                             f"/origin-about {origin}/about.html 301\n", encoding="utf-8")
             reason = "which names an HTML file that the host may redirect again: 2 hops"
             self.assertEqual(self.failures(site), [
                 f"site/_redirects line 1: /get redirects to /install/index.html, {reason}",
                 f"site/_redirects line 2: /old-about redirects to /about.html, {reason}",
                 f"site/_redirects line 3: /older-about redirects to /About.HTM, {reason}",
+                f"site/_redirects line 5: /origin-about redirects to {origin}/about.html, {reason}",
             ])
 
     def failures_on(self, redirects: str, files: tuple[str, ...]) -> list[str]:
@@ -1254,8 +1271,25 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_a_destination_that_leaves_the_site_fails(self):
-        self.assertEqual(self.failures_on("/a /../outside.md 301\n", ("../outside.md",)), [
+        origin = self.origin()
+        self.assertEqual(self.failures_on(f"/a /../outside.md 301\n/b {origin}/../outside.md 301\n",
+                                          ("../outside.md",)), [
             "site/_redirects line 1: /a redirects to /../outside.md, which leaves site/",
+            f"site/_redirects line 2: /b redirects to {origin}/../outside.md, which leaves site/",
+        ])
+
+    def test_a_destination_with_a_control_character_space_or_backslash_fails(self):
+        # Each destination below reaches a file as urlsplit reads it, yet a browser strips a leading or trailing
+        # control character, percent-encodes any other, and reads \ as /, so it goes to another host or asks for
+        # another path. str.split() ends a field at a space, tab or newline, so those cannot reach the check.
+        reason = "which holds a control character, a space or a backslash, so a browser may not read it as written"
+        destinations = ("\x01//example.com/a.md", "\x08//example.com/downloads/a.md", "\x00//example.com/a.md",
+                        "/a.md\x01", "/downloads/\x1ba.md", "/\\example.com/a.md", "/downloads\\a.md")
+        rules = "".join(f"/r{number} {destination} 301\n" for number, destination in enumerate(destinations, 1))
+        files = ("a.md", "downloads/a.md", "a.md\x01", "downloads/\x1ba.md", "\\example.com/a.md", "downloads\\a.md")
+        self.assertEqual(self.failures_on(rules + "/plain /a.md 301\n", files), [
+            f"site/_redirects line {number}: /r{number} redirects to {destination}, {reason}"
+            for number, destination in enumerate(destinations, 1)
         ])
 
     def test_a_destination_with_no_file_fails(self):
