@@ -30,7 +30,7 @@ It removes common AI-writing patterns such as robotic tone, filler, contrast fra
 
 ## Supported platforms
 
-Clean Language uses one canonical skill definition for Claude, ChatGPT, Gemini, Copilot, and other compatible AI systems. The core skill lives in [`cleanlanguage/`](cleanlanguage/).
+Clean Language uses 1 canonical skill definition for Claude, ChatGPT, Gemini, Copilot, and other compatible AI systems. The core skill lives in [`cleanlanguage/`](cleanlanguage/).
 
 - **Claude:** download the packaged Skill, upload it through Claude's Skills interface, and enable it.
 - **ChatGPT:** create or upload a Skill using the Clean Language instructions.

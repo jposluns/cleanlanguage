@@ -106,9 +106,9 @@ if git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null; then
 fi
 skill="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md)" \
   || fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
-# Read the version exactly as the two release gates do, so all three consumers
+# Read the version exactly as the 2 release gates do, so all 3 consumers
 # agree on every input by construction instead of re-implementing the gates'
-# parse in shell (three QA rounds found byte-level divergences that a shell
+# parse in shell (3 QA rounds found byte-level divergences that a shell
 # re-implementation cannot fully reconcile: NUL location, invalid UTF-8, and CR
 # line endings). This decodes the blob as UTF-8 with universal newlines, exactly
 # as Path.read_text does, and applies the gates' own VERSION_LINE and
@@ -144,7 +144,7 @@ fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
-# The Released line (item 26), read from HEAD through the one shared strict
+# The Released line (item 26), read from HEAD through the 1 shared strict
 # extractor, tools/skill-release-date.py, run in its --json mode by
 # tools/skill-release-date-client.py (row 89). The client gives a content
 # verdict only from a reply that meets the contract: exit 0 prints the date,
@@ -273,7 +273,7 @@ fi
 grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
   || fail "cleanlanguage/skills/cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
-# The plugin manifests live in two places: marketplace.json at the repository
+# The plugin manifests live in 2 places: marketplace.json at the repository
 # root, which is what makes this repository a marketplace, and plugin.json
 # inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
 # root so a marketplace install copies only the skill tree. The plugin
@@ -349,7 +349,7 @@ if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
   # serialized through newline-delimited shell: parse the YAML, walk it at any
   # depth, reject a value that is missing, empty, or carries a control
   # character, resolve an optional ./, confirm the git blob exists at HEAD, and
-  # require at least one icon_ key so the check can never become vacuous.
+  # require at least 1 icon_ key so the check can never become vacuous.
   git show HEAD:cleanlanguage/agents/openai.yaml | python3 -I -c '
 import sys, subprocess
 try:

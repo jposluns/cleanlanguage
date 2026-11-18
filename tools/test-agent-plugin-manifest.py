@@ -58,9 +58,16 @@ case or subtest skips, naming the error; the seam still tests the gate's
 refusal of that kind. Any other error from that call, such as a path that
 already exists, or a socket path longer than a socket address holds, as
 under a long TMPDIR, is raised, so the case errors.
-test_make_node_skips_only_on_refusal pins this policy, and a skip on any
-other error fails it. unittest counts a skipped case as skipped, not as
-failed, so a run whose other cases pass ends with OK (skipped=N) and exit 0.
+test_make_node_skips_only_on_refusal pins this policy. It names the 4
+refusal errors itself, not through REFUSAL_ERRNOS, and requires a skip on
+each of them. It requires make_node to raise, not skip, each other errno that
+the errno module names on the running platform (ENOSPC, EINVAL and EROFS
+among them), the number 1 above the highest that the module names, an
+OSError with no errno, which is what Python raises for a socket path longer
+than a socket address holds, and a ValueError, which is not an OSError; a
+skip on any of those fails it. unittest counts a skipped case as skipped,
+not as failed, so a run whose other cases pass ends with OK (skipped=N) and
+exit 0.
 The script then prints, after unittest's summary, each skip that unittest
 recorded, with the test's id, which for a subtest carries its parameters, so
 each skipped subtest is named once.
@@ -76,9 +83,15 @@ These residuals remain:
   string are recorded. A read before the refusal through io.FileIO, a dir_fd,
   a bytes path, another spelling of the path, a subprocess or ctypes is not
   caught.
-- The seam case for a root file cannot catch a gate that detects a root
-  symlink without os.lstat; the real-node case catches it where the OS lets
-  the test make a symlink.
+- The seam case for a root file answers os.stat and os.lstat, so it catches
+  a gate that refuses a root symlink that either call reports, including
+  os.stat with follow_symlinks=False. It cannot catch a gate that finds the
+  symlink another way, such as os.readlink or a call with a dir_fd; the
+  real-node case catches that where the OS lets the test make a symlink.
+- test_make_node_skips_only_on_refusal tries 1 errno number that the errno
+  module does not name and 1 exception that is not an OSError, a ValueError,
+  so a make_node that skips only on another such number or on another such
+  exception is not caught.
 - Where the OS refuses to make a kind of node, nothing on that runner checks
   that FakeNode describes that kind as the kernel does. No unprivileged run
   can make a block device, so that kind has no smoke case, and a character
@@ -127,8 +140,6 @@ FIFO_TIMEOUT = 10
 # the privilege (EPERM, EACCES), or the file system or the kernel does not
 # support that kind (EOPNOTSUPP, ENOSYS). make_node skips only on these.
 REFUSAL_ERRNOS = frozenset({errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS})
-# Errors outside REFUSAL_ERRNOS on which make_node must raise, not skip.
-OTHER_ERRNOS = (errno.EEXIST, errno.ENAMETOOLONG, errno.ENOENT)
 # A file type that Linux does not use (a Solaris door has this value).
 FOREIGN_TYPE = 0o150000
 # Each kind of node a licence copy can be: its label, the type that lstat of
@@ -673,29 +684,46 @@ class AgentPluginManifestTest(unittest.TestCase):
         self.restore_licence_files()
 
     def test_make_node_skips_only_on_refusal(self):
-        # make_node must skip on each refusal error and raise every other
-        # error. A skip counts as a pass in unittest, so a skip on any other
-        # error is caught here and fails the subtest.
+        # make_node must skip on each of the 4 refusal errors, named here and
+        # not read from REFUSAL_ERRNOS, so a change to that set fails too. It
+        # must raise every other error: each other errno that the errno
+        # module names, the number 1 above the highest it names, an OSError
+        # with no errno (as Python raises for a socket path longer than a
+        # socket address holds) and a ValueError, which is not an OSError. A
+        # skip counts as a pass in unittest, so a skip on any of them is
+        # caught here and fails the subtest.
         path = gate.REPO_ROOT / "cleanlanguage" / "node"
+        refusals = {errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS}
 
-        def refuse(code):
-            raise OSError(code, os.strerror(code), str(path))
+        def raise_error(error):
+            raise error
 
-        for code in sorted(REFUSAL_ERRNOS):
+        for code in sorted(refusals):
             with self.subTest(errno=errno.errorcode[code]):
                 with self.assertRaises(unittest.SkipTest) as caught:
-                    self.make_node("a test node", path, refuse, code)
+                    self.make_node("a test node", path, raise_error, OSError(code, os.strerror(code), str(path)))
                 self.assertIn(os.strerror(code), str(caught.exception))
-        for code in OTHER_ERRNOS:
-            with self.subTest(errno=errno.errorcode[code]):
+        others = [(errno.errorcode[code], OSError(code, os.strerror(code), str(path)))
+                  for code in sorted(set(errno.errorcode) - refusals)]
+        unnamed = max(errno.errorcode) + 1
+        others += [
+            (f"unnamed errno {unnamed}", OSError(unnamed, "an errno that the errno module does not name", str(path))),
+            ("no errno", OSError("AF_UNIX path too long")),
+            ("ValueError", ValueError("embedded null character in path")),
+        ]
+        labels = [label for label, _ in others]
+        for named in ("EEXIST", "ENAMETOOLONG", "ENOENT", "ENOSPC", "EINVAL", "EROFS"):
+            self.assertIn(named, labels)
+        for label, error in others:
+            with self.subTest(error=label):
                 try:
-                    self.make_node("a test node", path, refuse, code)
+                    self.make_node("a test node", path, raise_error, error)
                 except unittest.SkipTest as skip:
-                    self.fail(f"make_node skipped on {errno.errorcode[code]}: {skip}")
-                except OSError as error:
-                    self.assertEqual(error.errno, code)
+                    self.fail(f"make_node skipped on {label}: {skip}")
+                except Exception as raised:
+                    self.assertIs(raised, error)
                 else:
-                    self.fail(f"make_node did not raise {errno.errorcode[code]}")
+                    self.fail(f"make_node did not raise {label}")
 
     def test_licence_copy_symlink_fails(self):
         # A symlink to the root file reads equal, but the plugin tree would

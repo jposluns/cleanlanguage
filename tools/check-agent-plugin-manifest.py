@@ -9,7 +9,7 @@ top-level keys (the schema is additionalProperties: false), field types, and the
 author object shape. It also cross-checks that the name and version agree with
 the Claude manifest, and that the name agrees with the marketplace entry (which
 carries no version). This gate requires the Agent Plugins version and requires it
-to equal the Claude manifest version, so the two manifests cannot drift.
+to equal the Claude manifest version, so the 2 manifests cannot drift.
 
 It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
 files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Cross-consumer contract: the packager and the two release gates select and
+"""Cross-consumer contract: the packager and the 2 release gates select and
 validate the SKILL.md ``Version:`` line by the same rule.
 
-The two gates (check-release-links.py, check-release-checksum-live.py) already
+The 2 gates (check-release-links.py, check-release-checksum-live.py) already
 apply a strict rule: the first ``Version:`` line must be a bare ``X.Y.Z``. This
 test pins that the packager (release-package.sh) selects and validates
-identically, so a malformed first line fails in all three, and a clean version
+identically, so a malformed first line fails in all 3, and a clean version
 still passes. It runs offline: the packager is exercised in a throwaway git
 worktree, and the gates are exercised through their own compiled regexes.
 The packager and the dry run read the Released line through
@@ -74,7 +74,7 @@ LAUNCH_PROBES = (
 # the caller, each launch exactly "python3 -I tools/skill-release-date-
 # client.py" and its arguments, so any other line that names it fails:
 # a launch without -I, with another interpreter word, quoted or from a
-# variable, over a continuation line, by its shebang, or one more launch in
+# variable, over a continuation line, by its shebang, or 1 more launch in
 # the listed form. Residual: a launch that builds the name from parts or
 # reads it from a variable is not seen.
 CLIENT_NAME = 'skill-release-date-client.py'
@@ -1663,7 +1663,7 @@ class CallerLaunchTest(unittest.TestCase):
                     self.assertNotEqual(client_mentions(text + probe + "\n"), list(client))
 
 
-# Row 89: the two ways errexit can be inherited by a command substitution.
+# Row 89: the 2 ways errexit can be inherited by a command substitution.
 INHERITED_ERREXIT = (("inherit_errexit", ("-O", "inherit_errexit")), ("posix", ("-o", "posix")))
 
 
