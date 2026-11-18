@@ -492,8 +492,17 @@ class BoundsTest(unittest.TestCase):
         # and then its ready file, and both sleep past the timeout. The 1
         # second timeout starts only once the ready file exists, polled for at
         # most 60 seconds, so a busy host cannot fire it before the pid file
-        # is written; the bound is measured from then. The wait the client
-        # then makes, its group kill and its reap are the real ones.
+        # is written; the bound is measured from then, and the client must
+        # wait at least the timeout from then before its kill. The wait the
+        # client then makes, its group kill and its reap are the real ones.
+        # The sleeper sleeps longer than the test can run (the poll, the
+        # timeout, the reap grace and the sleeper check), and must be seen
+        # gone before its sleep could end, so however late the child gets
+        # ready, the sleeper's own end is never taken for the group kill.
+        poll = 60
+        check = 10
+        sleeper_seconds = 600
+        self.assertGreater(sleeper_seconds, poll + 1 + client.REAP_GRACE_SECONDS + check)
         real_wait = client.wait_child
         seen = set()
         ready_at = []
@@ -503,7 +512,7 @@ class BoundsTest(unittest.TestCase):
                 "import os, time\n"
                 "pid = os.fork()\n"
                 "if pid == 0:\n"
-                "    time.sleep(60)\n"
+                f"    time.sleep({sleeper_seconds})\n"
                 "    os._exit(0)\n"
                 "open('sleeper.pid', 'w').write(str(pid))\n"
                 "open('ready', 'w').write('ready')\n"
@@ -513,29 +522,36 @@ class BoundsTest(unittest.TestCase):
             def wait_when_ready(proc, timeout):
                 if proc.pid not in seen:
                     seen.add(proc.pid)
-                    deadline = time.monotonic() + 60
+                    deadline = time.monotonic() + poll
                     while not ready.exists() and time.monotonic() < deadline:
                         if real_wait(proc, 0.05):
                             return True
                     ready_at.append(time.monotonic())
                 return real_wait(proc, timeout)
 
+            started = time.monotonic()
             with mock.patch.object(client, "wait_child", wait_when_ready):
                 with self.assertRaises(client.Unavailable) as caught:
                     client.run_extractor("baseline", {}, timeout=1, tool=tool)
             self.assertTrue(ready.exists(), "the child did not get ready")
-            self.assertLess(time.monotonic() - ready_at[0], 15)
+            elapsed = time.monotonic() - ready_at[0]
+            self.assertGreaterEqual(elapsed, 1, "the client fired its timeout early")
+            self.assertLess(elapsed, 15)
             self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
             sleeper = int((Path(tmp) / "sleeper.pid").read_text())
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + check
             while True:
                 try:
                     os.kill(sleeper, 0)
                 except ProcessLookupError:
                     break
                 if time.monotonic() > deadline:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(sleeper, signal.SIGKILL)
                     self.fail(f"the sleeper {sleeper} outlived the timeout")
                 time.sleep(0.05)
+            self.assertLess(time.monotonic() - started, sleeper_seconds,
+                            "the sleeper may have ended on its own, so its end does not show the group kill")
 
     def test_bound_constants_equal_the_gates(self):
         gate = _load("crc_gate_bounds", GATE)
