@@ -4,7 +4,7 @@
 ``site/instructions/index.html`` shows the full Clean Language rule set so a
 reader can copy it without downloading anything. The text is embedded in the
 page rather than fetched at runtime, which means the page now holds a second copy
-of ``site/downloads/cleanlanguage.md`` and the 2 can drift. This
+of ``site/downloads/cleanlanguage-instructions.md`` and the 2 can drift. This
 check makes that drift fail.
 
 Why the page is static
@@ -39,7 +39,7 @@ template:
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, and none of the elements that
    the parser reads differently from a browser.
-3. The page states the character count of ``site/downloads/cleanlanguage.md``
+3. The page states the character count of ``site/downloads/cleanlanguage-instructions.md``
    as saved, its bytes decoded as UTF-8 with no newline translation and nothing
    stripped, parsed from the sentence's fixed words (``the same content the
    full download saves (N characters)``), which must occur exactly once in the
@@ -139,7 +139,7 @@ import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage.md"
+SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage-instructions.md"
 PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
 # (page, the copy button the template puts first in the block, or None)
 COPY_BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'

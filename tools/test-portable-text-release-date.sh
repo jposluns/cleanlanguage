@@ -66,8 +66,8 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 work="${scratch}/work"
 skill="cleanlanguage/skills/cleanlanguage/SKILL.md"
-eleven="site/downloads/cleanlanguage-11k.md"
-eight="site/downloads/cleanlanguage-8k.md"
+eleven="site/downloads/cleanlanguage-instructions-11k.md"
+eight="site/downloads/cleanlanguage-instructions-8k.md"
 
 fresh() {
   rm -rf "${work}"
@@ -578,7 +578,7 @@ expect_fail "a dated rendering beside an undated skill fails" "Released disagree
 #     GNU coreutils 9.7 wc -m gave its bytes in the C and POSIX locales and
 #     its characters in the C.UTF-8 and en_US.UTF-8 locales; uutils
 #     coreutils 0.10.0 wc -m gave its characters in all 4.
-full="site/downloads/cleanlanguage.md"
+full="site/downloads/cleanlanguage-instructions.md"
 pad_full() { # target
   local before after
   before="$(wc -m < "${work}/${full}")"

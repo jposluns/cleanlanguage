@@ -4,17 +4,17 @@
 # their size labels.
 #
 # The size-labelled family in site/downloads/:
-#   cleanlanguage.md      the canonical file; always byte-equal to the largest
-#                         size-labelled rendering (29k for now).
-#   cleanlanguage-29k.md  the largest rendering; GENERATED from the skill by
-#                         tools/build-portable-text.py, byte-equal to cleanlanguage.md
-#                         (<= 29000 chars).
-#   cleanlanguage-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
-#   cleanlanguage-8k.md   a hand-maintained further-condensed rendering (<= 8000
-#                         chars) for assistants that cap instruction length.
+#   cleanlanguage-instructions.md      the canonical file; always byte-equal to the largest
+#                                      size-labelled rendering (29k for now).
+#   cleanlanguage-instructions-29k.md  the largest rendering; GENERATED from the skill by
+#                                      tools/build-portable-text.py, byte-equal to
+#                                      cleanlanguage-instructions.md (<= 29000 chars).
+#   cleanlanguage-instructions-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
+#   cleanlanguage-instructions-8k.md   a hand-maintained further-condensed rendering (<= 8000
+#                                      chars) for assistants that cap instruction length.
 #
 # The generated files are checked byte-for-byte by build-portable-text.py --check.
-# The instructions page embeds cleanlanguage.md; tools/build-site.py generates
+# The instructions page embeds cleanlanguage-instructions.md; tools/build-site.py generates
 # it, --update regenerates it, and build-site.py --check and
 # check-instructions-page.py verify the embed.
 # The hand-maintained files cannot be compared byte for byte, so this gate records
@@ -25,7 +25,7 @@
 # skill and all files, that the skill carries a well-formed Released line when
 # its version sorts above the undated baseline and that every file carries the
 # same Released value as the skill (or none when the skill has none), that
-# cleanlanguage.md and cleanlanguage-29k.md are byte-equal, and that every
+# cleanlanguage-instructions.md and cleanlanguage-instructions-29k.md are byte-equal, and that every
 # size-labelled file is within its label.
 #
 # Usage:
@@ -37,10 +37,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 recorded_file="tools/portable-text-skill-source.sha256"
-canonical="site/downloads/cleanlanguage.md"
-twin29="site/downloads/cleanlanguage-29k.md"
-eleven="site/downloads/cleanlanguage-11k.md"
-eight="site/downloads/cleanlanguage-8k.md"
+canonical="site/downloads/cleanlanguage-instructions.md"
+twin29="site/downloads/cleanlanguage-instructions-29k.md"
+eleven="site/downloads/cleanlanguage-instructions-11k.md"
+eight="site/downloads/cleanlanguage-instructions-8k.md"
 hand_maintained=("${eleven}" "${eight}")
 all_files=("${canonical}" "${twin29}" "${eleven}" "${eight}")
 opening="This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to."
