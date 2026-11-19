@@ -2173,7 +2173,9 @@ class OutputAndHonestTexts(GateCase):
         # submodule, or the name itself, which is tried beside the module that an import binds
         # to it, so it comes first when it sorts first and is found when only it is accepted,
         # and None when the attribute is on a value that is not a name; for a name read, the pair
-        # that from ... import binds.
+        # that from ... import binds. A plain import, such as import os or import os.path, binds
+        # the name it gives, os, to the module of that name, which is tried as the name itself
+        # anyway, so its handling changes no result, and no subtest can fail when it is undone.
         for label, text, accepts, expected in (
                 ("attribute read", "> import os as sp\n> sp.unlink('p')\n", removes,
                  [("os", "unlink")]),
@@ -2278,7 +2280,12 @@ class OutputAndHonestTexts(GateCase):
         # and gives the places of the texts of 1 label in the sorted order of the texts, and
         # those of 1 text in the order that reached() gives them, so the 2 orders differ in a
         # subtest. Each subtest compares what a probe adds to what the helper gives for a probe
-        # that holds no text.
+        # that holds no text. A text built by a join, which the docstring names, is not read
+        # whole either, though each string constant in it is. A constant or a sum equal to a
+        # string the module binds is labelled with each name that binds it, but each of those
+        # names already labels that string, so that labelling changes no result, and no
+        # subtest can fail when it is undone; what the subtests pin is that such a text is not
+        # labelled with the function that holds it.
         empty = code_texts(probe_tree("> pass\n"))
         self.assertEqual(empty["UNMUTATED_NAME"], {UNMUTATED_NAME})
         with self.subTest(text="string that 2 names of the module bind"):
@@ -2314,6 +2321,8 @@ class OutputAndHonestTexts(GateCase):
                  {"module": {"a", "b", "c", "bc", "abc"}}),
                 ("text joined by another operator", "> x = 'a' % 'b'\n", {"module": {"a", "b"}}),
                 ("text built by a call", "> x = str(['a', 'b'])\n", {"module": {"a", "b"}}),
+                ("text built by a join", "> x = 'c'.join(['a', 'b'])\n",
+                 {"module": {"a", "b", "c"}}),
                 ("f-string", "> x = f'a{y}b'\n", {"module": {"a", "b"}}),
                 ("constant equal to a string the module binds",
                  "> def f():\n>     x = " + repr(UNMUTATED_NAME) + "\n", {}),
@@ -2423,10 +2432,12 @@ class OutputAndHonestTexts(GateCase):
         # sweep's own timeout is not the limit of a row listed with the wall timeout. The table
         # tries each kind of row with failures alone, an error, failures and an error, a pass
         # and another exit status; each listed kind with its limit and another, no limit, only
-        # another limit, the sweep's own timeout and a stop; the row listed with the wall
-        # timeout also with 2 stops and with a stop and no limit; and a row not listed with each
-        # kind of limit, 2 limits, a limit and a stop, a stop and 2 stops. So a kill rule that
-        # undoes the handling of 1 of these forms fails a subtest.
+        # another limit, the sweep's own timeout and a stop, and with its limit and a CPU limit
+        # and with only a CPU limit, each of a gate child and of the sweep child, since a CPU
+        # limit is the limit of no listed row; the row listed with the wall timeout also with 2
+        # stops and with a stop and no limit; and a row not listed with each kind of limit, 2
+        # limits, a limit and a stop, a stop and 2 stops. So a kill rule that undoes the
+        # handling of 1 of these forms fails a subtest.
         sweep = MutantSweep("test_rows_are_well_formed")
         memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
@@ -2454,6 +2465,14 @@ class OutputAndHonestTexts(GateCase):
                  unhit.format("memory limit", 1, failed)),
                 ("listed, failures and only another limit", memory, (1, failed, timed, []),
                  unhit.format("memory limit", 1, failed)),
+                ("listed, failures and the CPU limit of a gate child", memory,
+                 (1, failed, sorted(hit + cpu), []), None),
+                ("listed, failures and the CPU limit of the sweep child", memory,
+                 (1, failed, hit + own_cpu, []), None),
+                ("listed, failures and only the CPU limit of a gate child", memory,
+                 (1, failed, cpu, []), unhit.format("memory limit", 1, failed)),
+                ("listed, failures and only the CPU limit of the sweep child", memory,
+                 (1, failed, own_cpu, []), unhit.format("memory limit", 1, failed)),
                 ("listed, the sweep's timeout", memory, (None, "timed out", swept, []),
                  unhit.format("memory limit", None, "timed out")),
                 ("listed, an error", memory, (1, "FAILED (errors=1)", hit, []),
@@ -2477,6 +2496,14 @@ class OutputAndHonestTexts(GateCase):
                  (1, failed, [], stop), unhit.format("wall timeout", 1, failed)),
                 ("listed by the wall timeout, failures and only another limit", wall,
                  (1, failed, hit, []), unhit.format("wall timeout", 1, failed)),
+                ("listed by the wall timeout, failures and the CPU limit of a gate child", wall,
+                 (1, failed, sorted(timed + cpu), []), None),
+                ("listed by the wall timeout, failures and the CPU limit of the sweep child",
+                 wall, (1, failed, timed + own_cpu, []), None),
+                ("listed by the wall timeout, failures and only the CPU limit of a gate child",
+                 wall, (1, failed, cpu, []), unhit.format("wall timeout", 1, failed)),
+                ("listed by the wall timeout, failures and only the CPU limit of the sweep child",
+                 wall, (1, failed, own_cpu, []), unhit.format("wall timeout", 1, failed)),
                 ("listed by the wall timeout, the sweep's timeout", wall,
                  (None, "timed out", swept, []), unhit.format("wall timeout", None, "timed out")),
                 ("listed by the wall timeout, an error", wall, (1, "FAILED (errors=1)", timed, []),
