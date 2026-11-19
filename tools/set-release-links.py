@@ -212,7 +212,8 @@ def main() -> int:
             "a mistyped placeholder; pass the zero placeholder until the release is published, and the "
             "published release checksum after that"
         )
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date):
+    # re.ASCII limits \d to 0-9; without it \d matches a digit of any script, such as U+0664.
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date, re.ASCII):
         die(f"{args.date!r} is not a YYYY-MM-DD date")
     try:
         dt.date.fromisoformat(args.date)

@@ -955,9 +955,11 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(self.apply(ZEROS), pending)
 
     def write_links(self, checksum: str, version: str | None = None, date: str = "2026-11-04") -> tuple[int, str]:
-        """Run set-release-links.py's main on the copy for ``checksum``, ``version`` (the next release unless given)
-        and ``date``, returning its exit code and stderr."""
-        argv = ["set-release-links.py", "--version", version or self.next, "--checksum", checksum, "--date", date]
+        """Run set-release-links.py's main on the copy for ``checksum``, ``version`` (the next release when it is None;
+        any other value, the empty string included, is passed as given) and ``date``, returning its exit code and
+        stderr."""
+        version = self.next if version is None else version
+        argv = ["set-release-links.py", "--version", version, "--checksum", checksum, "--date", date]
         err = io.StringIO()
         with unittest.mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(err):
@@ -1002,6 +1004,35 @@ class WriterTest(unittest.TestCase):
                 code, err = self.write_links(ZEROS, version, date)
                 self.assertEqual(code, 2, err)
                 self.assertIn(f"set-release-links: {reason}", err)
+                self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
+
+    def test_an_empty_version_is_passed_to_the_writer_and_refused(self):
+        # write_links passes an empty version to the writer as given, not as the next release, so the writer refuses
+        # it (exit 2) with the reason of its form before anything is written. An omitted version is the next release.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        code, err = self.write_links(ZEROS, "")
+        self.assertEqual(code, 2, err)
+        self.assertIn("set-release-links: '' is not a version number", err)
+        self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
+        self.assertEqual(json.loads(release.read_text(encoding="utf-8"))["version"], self.next)
+
+    def test_a_date_in_digits_outside_ascii_is_refused_for_its_form(self):
+        # The --date form takes only the ASCII digits 0-9, so a date written wholly or partly in other Unicode digits
+        # (Arabic-Indic, fullwidth or Devanagari here) is refused (exit 2) as not a YYYY-MM-DD date before anything is
+        # written. Without re.ASCII, \d admits those digits, and the date is refused later with another reason.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        # 2026-11-04 in each of those digits, and with only its last digit Arabic-Indic.
+        dates = ["".join(chr(zero + int(c)) if c.isdigit() else c for c in "2026-11-04")
+                 for zero in (0x660, 0xFF10, 0x966)]
+        for date in dates + ["2026-11-0" + chr(0x664)]:
+            with self.subTest(date=date):
+                code, err = self.write_links(ZEROS, None, date)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {date!r} is not a YYYY-MM-DD date", err)
                 self.assertEqual(release.read_bytes(), before)
         self.assertEqual(self.write_links(ZEROS), (0, ""))
 
@@ -1107,24 +1138,27 @@ class RedirectHopTest(unittest.TestCase):
     that folds letter case cannot make a destination equal a source.
 
     What the form gives up, none of which the committed file or redirects_body() in tools/set-release-links.py
-    uses: a URL on this site's origin written in full; a query or fragment; a destination that starts with //; any
-    character other than a-z, 0-9, a dot, an underscore, a hyphen and / in a path; a segment that starts with a dot,
-    such as /.well-known/; the root / as a destination; splat and placeholder sources; and a status other than 301
-    and 302. Each can be admitted later by widening the form on purpose, with its own argument.
+    uses. In a source, and in a destination that is not a documented target: a value that does not start with /,
+    such as a URL written in full, on this site's origin or on another, or a relative path; any character other than
+    a-z, 0-9, a dot, an underscore, a hyphen and /, such as a query, a fragment, an upper-case letter, a
+    percent-encoded byte, or the * or : of a splat or placeholder source; an empty segment, such as the first one of
+    a value that starts with // or the one in /downloads//a.md; a segment that starts with a dot, an underscore or a
+    hyphen, such as /.well-known/, /downloads/_a.md or /downloads/-a.md; and the root / alone. Also given up: a
+    status other than 301 and 302. Each can be admitted later by widening the form on purpose, with its own argument.
 
     The argument holds for a host whose reading of site/_redirects and of a request path leaves such lines, and paths
-    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. This closed form is design B.
-    Residual of design B, stated plainly:
+    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. Its residual, stated plainly:
 
     - The host is not observed. A host that changes a string in that alphabet, for example by serving `/a` for
       `/a.html` (the HTML check covers this), by redirecting `/x/` to `/x`, or by treating a `.` in a path specially,
       is outside the argument. Unknown: Cloudflare Pages behaviour, which cannot be observed offline.
     - The 5 off-site rules are checked only as exact strings. The test does not follow them, so their hops at GitHub
-      and posluns.ca stay unchecked, as the pull request already discloses.
+      and posluns.ca stay unchecked.
     - The test reads the committed file. Whether the deployed file equals it is outside this test.
-    - Design B narrows the contract. Tests that pinned the wider language change on purpose (section 5).
-
-    Section 5 is the design's list of the cases of this class whose expectations the closed form changed.
+    - The closed form narrows the contract on purpose. An earlier version of this test read each destination as a
+      browser would, and accepted URLs on this site's origin written in full and paths with a query or fragment.
+      The inputs of the cases that pinned that wider reading were kept, and the cases of this class now expect each
+      of them to be refused.
 
     Each reason the test gives, with the case that covers it (REDIRECT_REASONS holds the same reasons):
 
@@ -1349,7 +1383,8 @@ class RedirectHopTest(unittest.TestCase):
         # file exists under its literal name where 1 can: URLs on another origin or on this site's origin, a query
         # or fragment, a destination that starts with // or does not start with /, an empty, ., .. or percent-encoded
         # segment, a backslash, an upper-case letter, a character outside a-z, 0-9, ., _, - and /, a segment that
-        # starts with a dot, and the root /. The documented targets and 2 paths in the form pass.
+        # starts with a dot, an underscore or a hyphen, and the root /. The documented targets and 2 paths in the form
+        # pass.
         origin = self.origin()
         zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
         plain, user = origin.replace("https://", "http://", 1), origin.replace("://", "://user@", 1)
