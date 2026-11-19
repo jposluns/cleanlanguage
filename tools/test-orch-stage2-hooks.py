@@ -339,13 +339,15 @@ def tree_state(path):
 # code of a function at the top level of this file or of a method defined in the body of a class of
 # this file, at any depth, keyed by that class ("" at the top level) and that function, each told by
 # the identity of its code; code nested in such a function, such as a lambda, a nested function or a
-# method of a class that it defines, has its site, and the sinks have none. A site of a Stage2Harness
-# test is a site whose class is "", Stage2Harness, a class that derives from it, or a class of the
-# file that such a class derives from (TIME_LIMIT_SCOPE). _time_limit_applied refuses, raising
-# TimeLimitViolation before the sink runs: a value that is not an int or a float; anywhere in the
-# process, a value below TIME_LIMIT_FLOOR, the least value of this table, also where no frame has a
-# site, which is checked against that floor only; and, at a site of a Stage2Harness test, a site that
-# this table does not list, or a value below the value that it gives the site. It compares by
+# method of a class that it defines, has its site, and the sinks and the wrapper of
+# unittest.TestCase.run have none, so a limit applied where no other frame runs the code of this file,
+# such as by a cleanup that is a sink or by a test of another module, has no site. A site of a
+# Stage2Harness test is a site whose class is "", Stage2Harness, a class that derives from it, or a
+# class of the file that such a class derives from (TIME_LIMIT_SCOPE). _time_limit_applied refuses,
+# raising TimeLimitViolation before the sink runs: a value that is not an int or a float; anywhere in
+# the process, a value below TIME_LIMIT_FLOOR, the least value of this table, also where no frame has
+# a site, which is checked against that floor only; and, at a site of a Stage2Harness test, a site
+# that this table does not list, or a value below the value that it gives the site. It compares by
 # "not value >= floor", so it refuses NaN. It records each limit that it is given, and each refusal,
 # and unittest.TestCase.run is wrapped so that each test in the process gets a cleanup that fails it
 # for each refusal recorded while it ran: also one raised in a thread, which stops only that thread,
@@ -486,8 +488,8 @@ def _time_limit_sites(namespace, sinks):
     """({id of a code object: (that code object, its site)}, the names of the classes of the sites of
     Stage2Harness tests, "" included) for this module's namespace, as the comment on TEST_TIME_LIMITS
     states: each function at its top level, and each method defined in the body of a class of it at any
-    depth, told by its __qualname__, with each code object nested in it; the code of sinks, and the
-    code nested in it, has no site."""
+    depth, told by its __qualname__, with each code object nested in it; the code of each function of
+    sinks, the sinks and the wrapper of unittest.TestCase.run, and the code nested in it, has no site."""
     module = namespace["__name__"]
     classes, pending = [], [value for value in namespace.values() if isinstance(value, type)]
     while pending:
@@ -5894,7 +5896,7 @@ class DoctorSourceProbe(unittest.TestCase):
 def stage2_comment_mismatches(source, table):
     """What differs between the comment directly above class Stage2Harness in source and table, in the
     form of TEST_TIME_LIMITS: [] when the comment states the least value of table and the site of each
-    entry that holds it."""
+    entry that holds it, each as a whole, so a longer name or value that contains it does not count."""
     out = []
     lines = source.splitlines()
     end = next((n for n, line in enumerate(lines) if line.startswith("class Stage2Harness(")), 0)
@@ -5906,7 +5908,7 @@ def stage2_comment_mismatches(source, table):
     names = sorted("{}.{}".format(*key) if key[0] else key[1] for key, value in table.items()
                    if value == least)
     for needed in ["The least of them is {:g} s".format(least)] + names:
-        if needed not in comment:
+        if not re.search(r"(?<![\w.])" + re.escape(needed) + r"(?![\w]|\.\w)", comment):
             out.append("the comment above Stage2Harness does not state {!r}".format(needed))
     return out
 
@@ -5928,16 +5930,23 @@ class Stage2TimeLimitProbe(unittest.TestCase):
         self.assertEqual(stage2_comment_mismatches(source, TEST_TIME_LIMITS), [])
 
     def test_it_refuses_a_comment_or_a_table_that_disagrees(self):
-        # A comment that states another least value, a table whose least value changes, and a table
-        # whose least value moves to another site each disagree.
+        # A comment that states another least value, a comment that names, in place of the site that
+        # holds the least value, another site whose name holds the name of that site, a table whose
+        # least value changes, and a table whose least value moves to another site each disagree.
         source = Path(__file__).read_text(encoding="utf-8")
         stated = "The least of them is 4.5 s"
+        named = "# DoctorScopeMargin._assert_refused_near, which"
         near = ("DoctorScopeMargin", "_assert_refused_near")
         self.assertIn(stated, source, "precondition: the stated least limit, on 1 line")
+        self.assertIn(named, source, "precondition: the stated site of the least limit, on 1 line")
         self.assertEqual(TEST_TIME_LIMITS.get(near), 4.5, "precondition: the entry that holds the least value")
         planted = {
             "a comment that states another value": (source.replace(stated, "The least of them is 5 s", 1),
                                                     TEST_TIME_LIMITS),
+            "a comment that names a site whose name starts with that of the site": (
+                source.replace(named, "# DoctorScopeMargin._assert_refused_nearby, which", 1), TEST_TIME_LIMITS),
+            "a comment that names a site whose name ends with that of the site": (
+                source.replace(named, "# XDoctorScopeMargin._assert_refused_near, which", 1), TEST_TIME_LIMITS),
             "a new least value": (source, {**TEST_TIME_LIMITS, near: 4.0}),
             "the least value at another site": (source, {**TEST_TIME_LIMITS, near: 30,
                                                          ("Doctor", "_doctor_bounded"): 4.5}),
@@ -5967,8 +5976,9 @@ MARK_PROG = "import sys; open(sys.argv[1], 'w').close()"
 class TimeLimitSinkProbe(unittest.TestCase):
     """Class probe: each sink gives _time_limit_applied the limit that it is about to apply, whatever way
     a test binds it, and a refusal fails the test that ran it, also when it is raised in a thread or
-    caught. Each form is a planted case, a class defined in the test, run in this process through
-    unittest with its own setUp and tearDown."""
+    caught, and a limit applied where no other frame runs the code of this file has no site and takes
+    TIME_LIMIT_FLOOR only. Each form is a planted case, a class defined in the test, run in this process
+    through unittest with its own setUp and tearDown."""
 
     def test_each_form_is_checked_at_its_sink(self):
         # Each form binds a limit of 1 s unless its name gives another value. A refused form must fail
@@ -6240,10 +6250,48 @@ class TimeLimitSinkProbe(unittest.TestCase):
                 else:
                     self.assertIn(wanted, refusal or "")
 
+    def test_a_limit_with_no_other_frame_of_the_file_takes_the_floor_only(self):
+        # A sink that a cleanup calls directly applies its limit with no frame of this file on the
+        # stack but the wrappers of the sink and of unittest.TestCase.run, as a test of another module
+        # does; the case runs in a thread of its own, so no frame of this test is on that stack either.
+        # Such a limit has no site and only TIME_LIMIT_FLOOR applies: 60 s at Thread.join and at
+        # assertLess must pass the case and be recorded as admitted at no site, and 4.4 s at
+        # Thread.join (control) must fail it with the refusal at that floor.
+        class Cleanup(unittest.TestCase):
+            sink, value = None, None
+
+            def planted(test):
+                if test.sink == "join":
+                    worker = threading.Thread(target=lambda: None)
+                    worker.start()
+                    test.addCleanup(worker.join, test.value)
+                else:
+                    test.addCleanup(test.assertLess, 0, test.value)
+
+        floor = "below TIME_LIMIT_FLOOR, {:g} s".format(TIME_LIMIT_FLOOR)
+        for sink, value, refusal in (("join", 60, None), ("assertLess", 60, None), ("join", 4.4, floor)):
+            with self.subTest(sink=sink, value=value):
+                Cleanup.sink, Cleanup.value = sink, value
+                start, result = len(TIME_LIMIT_CHECKS), unittest.TestResult()
+                runner = threading.Thread(target=Cleanup("planted").run, args=(result,))
+                runner.start()
+                runner.join(60)
+                self.assertFalse(runner.is_alive(), "the case did not end within 60 s")
+                texts = "\n".join(text for _test, text in result.errors + result.failures)
+                if refusal is None:
+                    self.assertTrue(result.wasSuccessful(), texts)
+                    self.assertIn((sink, None, value, None), TIME_LIMIT_CHECKS[start:],
+                                  "the limit was not admitted at no site")
+                else:
+                    self.assertFalse(result.wasSuccessful(), "the limit was not refused")
+                    self.assertIn("{} limit {!r} at ".format(sink, value), texts)
+                    self.assertIn(refusal, texts)
+
     def test_each_function_of_the_file_is_a_site(self):
         # A method is the site of the class that defines it, also where another class takes it; code
-        # nested in a function has the site of that function; the sinks have no site; and the classes
-        # of the sites of Stage2Harness tests are "" and the classes related to Stage2Harness only.
+        # nested in a function has the site of that function; the sinks and the wrappers that the file
+        # installs in unittest and threading have no site; and the classes of the sites of
+        # Stage2Harness tests are "" and the classes related to Stage2Harness only.
         def site(function):
             found = TIME_LIMIT_SITES.get(id(function.__code__))
             return found[1] if found is not None and found[0] is function.__code__ else None
@@ -6256,8 +6304,10 @@ class TimeLimitSinkProbe(unittest.TestCase):
         self.assertTrue(nested, "precondition: code nested in the method")
         self.assertEqual({TIME_LIMIT_SITES[id(code)][1] for code in nested},
                          {("TimeLimitSinkProbe", "test_each_form_is_checked_at_its_sink")})
-        for sink in (run_doctor_recorded, _time_limit_applied):
-            self.assertIsNone(site(sink))
+        for sink in (run_doctor_recorded, _time_limit_applied, unittest.TestCase.assertLess,
+                     unittest.TestCase.assertLessEqual, threading.Thread.join, unittest.TestCase.run):
+            with self.subTest(sink=sink.__qualname__):
+                self.assertIsNone(site(sink))
         for name in ("", "Stage2Harness", "T15EnumeratorTimeout", "Doctor", "DoctorScopeMargin"):
             self.assertIn(name, TIME_LIMIT_SCOPE)
         for name in ("DoctorRefusalCoverage", "TimeLimitSinkProbe", "Stage2TimeLimitProbe"):
@@ -6303,8 +6353,10 @@ class HookRangeProbe(unittest.TestCase):
                          "a cited range that does not start or end on a statement, or a stale PART_RANGES")
 
 
-# Read once every definition of the module is made: the sites of time limits, the sinks without one.
-_sites, _scope = _time_limit_sites(globals(), (run_doctor_recorded, _time_limit_applied, _checked_sink))
+# Read once every definition of the module is made: the sites of time limits, the sinks and the wrapper
+# of unittest.TestCase.run without one.
+_sites, _scope = _time_limit_sites(globals(), (run_doctor_recorded, _time_limit_applied, _checked_sink,
+                                               _checked_run))
 TIME_LIMIT_SITES.update(_sites)
 TIME_LIMIT_SCOPE.update(_scope)
 # Added once every definition of the module is made; an audit hook cannot be removed.
