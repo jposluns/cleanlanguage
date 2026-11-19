@@ -1112,12 +1112,19 @@ class RedirectHopTest(unittest.TestCase):
     such as /.well-known/; the root / as a destination; splat and placeholder sources; and a status other than 301
     and 302. Each can be admitted later by widening the form on purpose, with its own argument.
 
-    Residual. The argument holds for a host whose reading of site/_redirects and of a request path leaves such lines
-    and paths as written. The host is not observed, and how Cloudflare Pages reads them is unknown offline: a host
-    that changes a path in the form, for example by redirecting /x/ to /x or by treating a dot in a path specially,
-    is outside the argument; the HTML check covers a host that serves /a for /a.html. The rules to another origin
-    are checked only as exact strings and are not followed, so the hops that GitHub and posluns.ca take are not
-    counted. The test reads the committed file; whether the deployed file equals it is outside this test.
+    The argument holds for a host whose reading of site/_redirects and of a request path leaves such lines, and paths
+    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. This closed form is design B.
+    Residual of design B, stated plainly:
+
+    - The host is not observed. A host that changes a string in that alphabet, for example by serving `/a` for
+      `/a.html` (the HTML check covers this), by redirecting `/x/` to `/x`, or by treating a `.` in a path specially,
+      is outside the argument. Unknown: Cloudflare Pages behaviour, which cannot be observed offline.
+    - The 5 off-site rules are checked only as exact strings. The test does not follow them, so their hops at GitHub
+      and posluns.ca stay unchecked, as the pull request already discloses.
+    - The test reads the committed file. Whether the deployed file equals it is outside this test.
+    - Design B narrows the contract. Tests that pinned the wider language change on purpose (section 5).
+
+    Section 5 is the design's list of the cases of this class whose expectations the closed form changed.
 
     Each reason the test gives, with the case that covers it (REDIRECT_REASONS holds the same reasons):
 
@@ -1246,6 +1253,25 @@ class RedirectHopTest(unittest.TestCase):
             f"site/_redirects line 2 {fields}",
             f"site/_redirects line 6 {alphabet}",
             f"site/_redirects line 7 {alphabet}",
+        ])
+
+    def test_a_field_ends_only_at_a_space(self):
+        # Every byte that a line may hold, other than the space, belongs to a field, so a line whose 3 parts are
+        # joined by any of them is 1 field and fails. A rule whose fields are split at a space passes.
+        joiners = [chr(code) for code in range(0x21, 0x7F)]
+        lines = [f"/a{joiner}/a.md{joiner}301" for joiner in joiners] + ["/b /b.md 301"]
+        fields = REDIRECT_REASONS["fields"]
+        self.assertEqual(self.failures_on("\n".join(lines) + "\n", ("a.md", "b.md")), [
+            f"site/_redirects line {number} {fields}" for number in range(1, len(joiners) + 1)
+        ])
+
+    def test_a_line_whose_first_field_starts_with_a_hash_is_a_comment(self):
+        # A line is a comment when its first field starts with #: the # alone or joined to text, with or without
+        # spaces before it. A # in a later field does not make a line a comment, so that line fails.
+        lines = ["# a comment line", "#a comment", "#", "##", "   # after spaces", " #after a space",
+                 "#/c /a.md 301 extra", "/a /a.md 301", "/b /a.md 301 #not a comment"]
+        self.assertEqual(self.failures_on("\n".join(lines) + "\n", ("a.md",)), [
+            f"site/_redirects line {len(lines)} {REDIRECT_REASONS['fields']}",
         ])
 
     def test_a_file_with_no_rule_fails(self):
