@@ -505,7 +505,7 @@ ALLOWLIST = {
         "arm whichever way P5 and P6 are decided.",
         "uid and cannot run here; T11 proves the declared path is the one consulted (spoof-recorded) and that a",
         "        which T6 and T12 add). drop removes keys; overrides replace or add them.\"\"\"",
-        "        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22825, `enum_status` 23095-23100).",
+        "        # Stage-1 T1:650-658 posture (`NO_ENUMERATOR` aiqt_hooks.py:22820-22825, `enum_status` 23095-23100).",
         "# T1. Stop with one open granted unblocked item denies, naming the id (aiqt_hooks.py:23179-23210)",
         "# T2. Nothing actionable: Stop allows (`classify_backlog` :22977-22981, `decide_yield` :23167-23168)",
         "# T3. `human-decision` (aiqt_hooks.py:22999-23011) blockers against the pending-decisions record",
