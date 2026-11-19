@@ -1349,7 +1349,8 @@ class RedirectHopTest(unittest.TestCase):
     def test_a_source_outside_the_form_fails(self):
         # These are examples: a splat or placeholder source, a source in upper case, with a dot segment, a query, or as
         # a URL, and the root / each fail, and the rules they would have made are not read. A source with a final /
-        # passes. test_the_path_rule_is_read_as_the_docstring_states checks rule 3 on every short value.
+        # passes. test_the_path_rule_is_read_as_the_docstring_states checks rules 1 to 3, as a source, on each value
+        # that its comment lists.
         origin, source = self.origin(), REDIRECT_REASONS["source"]
         rules = (f"/old/* /new.md 301\n/old/:name /new.md 301\n/Old /new.md 301\n/./old /new.md 301\n"
                  f"/old?x=1 /new.md 301\n{origin}/old /new.md 301\n/ /new.md 301\n/older/ /new.md 301\n"
@@ -1383,7 +1384,8 @@ class RedirectHopTest(unittest.TestCase):
         # origin, a query or fragment, a destination that starts with // or does not start with /, an empty, ., .. or
         # percent-encoded segment, a backslash, an upper-case letter, a character outside a-z, 0-9, ., _, - and /, a
         # segment that starts with a dot, an underscore or a hyphen, and the root /. The documented targets and 2 paths
-        # in the form pass, and test_the_path_rule_is_read_as_the_docstring_states checks rule 3 on every short value.
+        # in the form pass. test_the_path_rule_is_read_as_the_docstring_states checks rules 1 and 2 and the path form of
+        # rule 4, as a destination, on each value that its comment lists.
         origin = self.origin()
         zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
         plain, user = origin.replace("https://", "http://", 1), origin.replace("://", "://user@", 1)
@@ -1412,11 +1414,20 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_the_path_rule_is_read_as_the_docstring_states(self):
-        # Rule 3 of the class docstring, read segment by segment without a regular expression, is the oracle. For each
-        # value of length 1 to 4 over the alphabet below, failures() refuses it as a source, and as a destination,
-        # exactly when the oracle does. Residual: longer values and other characters are not run, and the oracle binds
-        # the segment-by-segment reading of rule 3, not every word of the docstring.
-        alphabet, first = "/a0._-A%*:?", "abcdefghijklmnopqrstuvwxyz0123456789"
+        # The oracle reads rules 1 and 2 of the class docstring without a regular expression, and the closed path form,
+        # which rule 3 applies to a source and rule 4 to a destination, segment by segment. The values are each value
+        # of length 1 to 4 over the 11 characters /a0._-A%*:?; each value of length 1 or 2 over the 98 characters of
+        # wide, 0x20 to 0x7E (the space and printable ASCII) and U+00E9, U+0430 and U+FF0F; and, for x of a or 0 and
+        # each character w of wide, /xw, /xwx and /x/w, so that each of the 98 is run first in a segment, last after
+        # its first character, between 2 others, and first in a second segment: 26196 values. failures() gives the
+        # line of each value, as a source and as a destination, a reason of rule 1, of rule 2 or of the path form
+        # exactly when the oracle does, and the same one. Residual: a value longer than 4 characters, a value of length
+        # 3 or 4 that holds a character outside the 11 and is not 1 of those 3 forms, and a value that holds a
+        # character outside 0x20 to 0x7E other than those 3 are not run; a destination in the path form is read on by
+        # the rest of rules 4 and 5, which this case does not check; and the oracle binds this reading of rules 1 to 4,
+        # not every word of the docstring.
+        narrow, first = "/a0._-A%*:?", "abcdefghijklmnopqrstuvwxyz0123456789"
+        wide = "".join(chr(code) for code in (*range(0x20, 0x7F), 0xE9, 0x430, 0xFF0F))
 
         def in_form(value: str) -> bool:
             # 1 or more segments, each a / then a letter or digit and then any of those, a dot, an underscore or a
@@ -1425,21 +1436,43 @@ class RedirectHopTest(unittest.TestCase):
             return len(segments) > 1 and segments[0] == "" and all(
                 segment and segment[0] in first and set(segment) <= set(first + "._-") for segment in segments[1:])
 
-        values, layer = [], [""]
-        for _ in range(4):
-            layer = [value + char for value in layer for char in alphabet]
-            values += layer
-        oracle = {value for value in values if not in_form(value)}
+        def strings(alphabet: str, longest: int) -> list[str]:
+            # Each value of length 1 to longest over alphabet, shortest first.
+            found, layer = [], [""]
+            for _ in range(longest):
+                layer = [value + char for value in layer for char in alphabet]
+                found += layer
+            return found
 
-        def refused(rules: list[str], files: tuple[str, ...], key: str) -> set[str]:
+        placed = [value for x in "a0" for w in wide for value in (f"/{x}{w}", f"/{x}{w}{x}", f"/{x}/{w}")]
+        values = list(dict.fromkeys(strings(narrow, 4) + strings(wide, 2) + placed))
+        self.assertEqual(len(values), 26196)
+
+        def reason(line: str, index: int, key: str) -> str | None:
+            # Rule 1: only the space and printable ASCII. Rule 2: a comment, or 3 fields split at runs of spaces; each
+            # line here ends with a status of 301 or 302. Rules 3 and 4: field ``index`` is a path in the closed form.
+            if not all(" " <= char <= "~" for char in line):
+                return "alphabet"
+            fields = [field for field in line.split(" ") if field]
+            if fields[0].startswith("#"):
+                return None
+            if len(fields) != 3:
+                return "fields"
+            return None if in_form(fields[index]) else key
+
+        def given(rules: list[str], files: tuple[str, ...], key: str) -> set[tuple[str, str]]:
             # 1 rule per value, so the line number that a failure names gives its value back.
-            found = self.failures_on("".join(f"{rule}\n" for rule in rules), files)
-            return {values[int(line.split()[2].rstrip(":")) - 1] for line in found
-                    if line.endswith(REDIRECT_REASONS[key])}
+            names = ("alphabet", "fields", key)
+            return {(values[int(line.split()[2].rstrip(":")) - 1], name)
+                    for line in self.failures_on("".join(f"{rule}\n" for rule in rules), files)
+                    for name in names if line.endswith(REDIRECT_REASONS[name])}
 
-        self.assertEqual(refused([f"{value} /a.md 301" for value in values], ("a.md",), "source"), oracle)
-        self.assertEqual(refused([f"/r{number} {value} 302" for number, value in enumerate(values, 1)], (), "form"),
-                         oracle)
+        sources = [f"{value} /a.md 301" for value in values]
+        destinations = [f"/r{number} {value} 302" for number, value in enumerate(values, 1)]
+        for rules, files, index, key in ((sources, ("a.md",), 0, "source"), (destinations, (), 1, "form")):
+            with self.subTest(key=key):
+                oracle = {(value, reason(rule, index, key)) for value, rule in zip(values, rules)}
+                self.assertEqual(given(rules, files, key), {pair for pair in oracle if pair[1]})
 
     def test_a_destination_that_is_the_source_of_a_rule_fails(self):
         # A destination and a source are compared without a final /, so /f/ and /f, or /h and /h/, are 1 path, and a
