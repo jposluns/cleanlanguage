@@ -58,16 +58,19 @@ case or subtest skips, naming the error; the seam still tests the gate's
 refusal of that kind. Any other error from that call, such as a path that
 already exists, or a socket path longer than a socket address holds, as
 under a long TMPDIR, is raised, so the case errors.
-test_make_node_skips_only_on_refusal pins this policy. It names the 4
+test_make_node_skips_only_on_refusal tests this policy. It names the 4
 refusal errors itself, not through REFUSAL_ERRNOS, and requires a skip on
-each of them. It requires make_node to raise, not skip, each other errno that
-the errno module names on the running platform (ENOSPC, EINVAL and EROFS
-among them), the number 1 above the highest that the module names, an
-OSError with no errno, which is what Python raises for a socket path longer
-than a socket address holds, and a ValueError, which is not an OSError; a
-skip on any of those fails it. unittest counts a skipped case as skipped,
-not as failed, so a run whose other cases pass ends with OK (skipped=N) and
-exit 0.
+each of them. It requires make_node to raise, not skip, each error of a
+fixed set: for each other errno that the errno module names on the running
+platform (ENOSPC, EINVAL and EROFS among them) and for the number 1 above
+the highest that the module names, an OSError with that errno, a message
+and a path; 1 OSError with no errno, whose message is "AF_UNIX path too
+long", which is what Python raises for a socket path longer than a socket
+address holds; and 1 ValueError, which is not an OSError, whose message is
+"embedded null character in path". A skip on any error of that set fails
+it; the residuals below name what it does not catch. unittest counts a
+skipped case as skipped, not as failed, so a run whose other cases pass
+ends with OK (skipped=N) and exit 0.
 The script then prints, after unittest's summary, each skip that unittest
 recorded, with the test's id, which for a subtest carries its parameters, so
 each skipped subtest is named once.
@@ -92,11 +95,13 @@ These residuals remain:
   raise: each errno that the errno module names other than the 4 refusal
   errors and 1 errno number that it does not name, each as an OSError with
   a message and a path; 1 OSError with no errno, whose message is "AF_UNIX
-  path too long"; and 1 exception that is not an OSError, a ValueError. A
-  make_node that skips only on an error outside that set is not caught,
-  such as another errno number that the errno module does not name, an
-  OSError with no errno and another message, an OSError with an errno of
-  the set but no path, or another exception that is not an OSError.
+  path too long"; and 1 exception that is not an OSError, a ValueError
+  whose message is "embedded null character in path". A make_node that
+  skips only on an error outside that set is not caught, such as another
+  errno number that the errno module does not name, an OSError with no
+  errno and another message, an OSError with an errno of the set but no
+  path, a ValueError with another message, or another exception that is
+  not an OSError.
 - Where the OS refuses to make a kind of node, nothing on that runner checks
   that FakeNode describes that kind as the kernel does. No unprivileged run
   can make a block device, so that kind has no smoke case, and a character
@@ -692,13 +697,15 @@ class AgentPluginManifestTest(unittest.TestCase):
         # make_node must skip on each of the 4 refusal errors, named here and
         # not read from REFUSAL_ERRNOS, so a change to that set fails too. It
         # must raise, not skip, each error of a fixed set, and the case tries
-        # no other error for a raise: each other errno that the errno module
-        # names, the number 1 above the highest it names, an OSError with no
-        # errno (as Python raises for a socket path longer than a socket
-        # address holds) and a ValueError, which is not an OSError. A skip
-        # counts as a pass in unittest, so a skip on any of them is caught
-        # here and fails the subtest; a skip only on an error outside that
-        # set is not, as the module docstring's residuals say.
+        # no other error for a raise: an OSError with a message and a path
+        # for each other errno that the errno module names and for the
+        # number 1 above the highest it names, 1 OSError with no errno whose
+        # message is "AF_UNIX path too long" (as Python raises for a socket
+        # path longer than a socket address holds) and 1 ValueError, which
+        # is not an OSError, whose message is "embedded null character in
+        # path". A skip counts as a pass in unittest, so a skip on any of
+        # them is caught here and fails the subtest; a skip only on an error
+        # outside that set is not, as the module docstring's residuals say.
         path = gate.REPO_ROOT / "cleanlanguage" / "node"
         refusals = {errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS}
 
