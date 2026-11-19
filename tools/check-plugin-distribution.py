@@ -150,7 +150,8 @@ class DuplicateKey(Exception):
 
 def _unique_object(pairs: list) -> dict:
     """object_pairs_hook: build 1 JSON object, refusing a key that appears twice, that holds only the
-    pairs whose key is exactly 1 of READ_KEYS, so no other key reaches the rest of the gate."""
+    pairs whose key is exactly 1 of READ_KEYS. Any other key reaches the rest of the gate only when it
+    is repeated, as the key of the DuplicateKey raised, which load_json names in its refusal."""
     seen: set = set()
     result: dict = {}
     for key, value in pairs:

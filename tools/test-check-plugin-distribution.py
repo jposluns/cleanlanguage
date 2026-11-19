@@ -27,16 +27,27 @@ load_json returns, no object the gate can reach holds any other key, and
 the text the gate shows of an object value lists only its kept pairs.
 4 cases hold the core and its effect:
 - U, test_hook_keeps_only_the_pairs_of_read_keys: the hook, given every
-  letter-case spelling of each of the 6 (4,560 in all) and each spelling
-  with 1 character that str.casefold, str.lower or str.upper maps onto a
-  letter of the key, gives exactly the pairs whose key is 1 of the 6, and
-  refuses each of those spellings repeated, also one outside the 6.
+  letter-case spelling of each of the 6 (4,560 in all) and every spelling
+  in which each letter, or run of letters, of the key is written in either
+  letter case or as any character outside ASCII that str.casefold,
+  str.lower or str.upper maps onto it, so with any number of such
+  characters, gives exactly the pairs whose key is 1 of the 6, and refuses
+  each of those spellings repeated, also one outside the 6.
 - The pin, test_core_is_pinned: the sha256 of the source of the functions
-  bound to the gate's _unique_object and load_json and of its READ_KEYS
-  must be CORE_SHA256, so an edit of the core, or a rebinding of either name
-  while the gate loads, fails until a reviewer renews the digest. The pin
-  shows the core is unchanged since review, not that it is right; U is the
-  evidence it freezes.
+  bound to the gate's _unique_object and load_json, read from the gate's
+  file, and of its READ_KEYS must be CORE_SHA256, so an edit of the core,
+  or a rebinding of either name while the gate loads, fails until a
+  reviewer renews the digest. What runs must be that source: each of the 2
+  names is bound to a plain function of the gate whose code is the code
+  compiled from the file's 1 definition of it, READ_KEYS is a frozenset,
+  and each global name the core's code loads is bound as CORE_NAMES states:
+  a builtin the gate does not shadow, unchanged since before the gate
+  loaded; the json module, its loads unchanged since then; or a name of
+  the gate. So code outside the core that, as the gate loads, swaps the
+  code of either function, shadows or changes a builtin the core loads, or
+  rebinds json or changes json.loads, fails the pin too. The pin shows the
+  core and what it reaches are unchanged since review, not that the core
+  is right; U is the evidence it freezes.
 - The structural check: each in-process run of the gate's main, in expect,
   run_gate and RepositoryTreeTest, goes through checked_main, which wraps
   load_json and fails the case on a dict it gives, at any depth through
@@ -49,7 +60,12 @@ the text the gate shows of an object value lists only its kept pairs.
   object, and must give the same exit status and every line the same; on
   setUp's tree and on one whose vendored source is an object, in this
   process and as a command, and on a copy of the files the gate reads in
-  the repository, in this process.
+  the repository, in this process. E's own reach is held: each file it
+  perturbs, read back, has every JSON object of the file at every depth
+  with its keys, each of the 6 in 3 other letter cases with a conflicting
+  value and the key outside the 6 (shortfalls, written out apart from
+  perturbed); and on the 2 trees the command gives what the run in this
+  process gives.
 Residual: By construction, no code outside the core can read a key outside
 the 6 from a decoded JSON object, on any path and in any form. Not covered
 by construction: (i) code inside the core (`_unique_object`, `load_json`,
@@ -58,7 +74,9 @@ outside `load_json`, such as a regular expression over what `read_bytes`
 gives, held only by E on the perturbations and paths it runs; (iii) code
 that changes the interpreter or the gate while it runs, such as rebinding
 `json.loads` or the hook after load, tracing, or `gc` and frame
-introspection, and the extractor, which the gate runs in its own process
+introspection, code that changes the interpreter as the gate loads beyond
+the builtins and `json.loads` the pin binds, such as the decoder of the
+json module, and the extractor, which the gate runs in its own process
 (gate:78-90), held only by E as in (ii).
 
 Loading the gate must write nothing to sys.stdout or sys.stderr and raise
@@ -77,6 +95,7 @@ from __future__ import annotations
 import ast
 import builtins
 import contextlib
+import dis
 import errno
 import hashlib
 import importlib.util
@@ -90,6 +109,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import tokenize
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -127,6 +148,9 @@ def _made(make, stand_in: str) -> str:
         return stand_in
 
 
+# The builtins and json.loads as they are before the gate loads, which the pin requires unchanged.
+BUILTINS_BEFORE = dict(vars(builtins))
+JSON_LOADS_BEFORE = json.loads
 spec = importlib.util.spec_from_file_location("check_plugin_distribution", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 _loaded = io.StringIO()
@@ -233,7 +257,7 @@ def manifest(name: str = "cleanlanguage", version: str = VERSION) -> dict:
 READ_KEYS = frozenset({"name", "site_key", "plugins", "source", "version", "dependencies"})
 # The sha256 of the core as reviewed: core_text of the gate. Renew it only after reading the core and
 # seeing test_hook_keeps_only_the_pairs_of_read_keys pass.
-CORE_SHA256 = "ae519e5961b26e488f84f1d5fc0e7db833870b9bf5940bbd4c85652520f810af"
+CORE_SHA256 = "b62c68c072850babd920c4aa5e70585b424b299b6cf080f523fdacc6c797d184"
 # Values that each change the gate's output wherever one is read in place of a key of READ_KEYS: a
 # string, a list and a JSON object, each of which every check refuses for every key of READ_KEYS.
 CONFLICTS = ("claude-x", ["claude-x"], {"name": "claude-x"})
@@ -241,11 +265,42 @@ CONFLICTS = ("claude-x", ["claude-x"], {"name": "claude-x"})
 UNKNOWN_KEY = "x-perturbed"
 
 
+# Each function of the core, and each global name its code loads with what the pin requires that name to be
+# bound to, written out, not read from the gate. "builtin": a builtin the gate does not bind, the object that
+# builtins held before the gate loaded. "json": the json module this test imported before the gate loaded,
+# its loads the one it held then. "core": a name of the core. "outside": a name the gate binds outside the
+# core, whose code is given no decoded JSON object, only an input's bytes or text (read_bytes and
+# exceeds_depth, the residual's item (ii)), a repeated key, a NaN or Infinity token, a message or a number.
+CORE_NAMES = {
+    "_unique_object": {"DuplicateKey": "outside", "READ_KEYS": "core", "set": "builtin"},
+    "load_json": {"DuplicateKey": "outside", "MAX_JSON_DEPTH": "outside", "RecursionError": "builtin",
+                  "UnicodeError": "builtin", "Unreadable": "outside", "ValueError": "builtin",
+                  "_reject_constant": "outside", "_unique_object": "core", "dict": "builtin",
+                  "exceeds_depth": "outside", "isinstance": "builtin", "json": "json", "read_bytes": "outside",
+                  "shown": "outside"},
+}
+
+
 def core_text(module) -> str:
-    """The text the pin hashes: the source of the functions bound to module._unique_object and
-    module.load_json, then the type name and the sorted members of module.READ_KEYS."""
-    return "\n".join([inspect.getsource(module._unique_object), inspect.getsource(module.load_json),
-                      type(module.READ_KEYS).__name__, repr(sorted(module.READ_KEYS))])
+    """The text the pin hashes: the source of the functions bound to the names _unique_object and load_json
+    of module, each read as inspect.getsource reads it from the line its code starts on, but from the gate's
+    file and never from linecache, which code that runs can fill; then the type name and the sorted members
+    of module.READ_KEYS."""
+    with tokenize.open(MODULE_PATH) as file:
+        lines = file.readlines()
+    namespace = vars(module)
+    blocks = ["".join(inspect.getblock(lines[namespace[name].__code__.co_firstlineno - 1:])) for name in CORE_NAMES]
+    return "\n".join([*blocks, type(namespace["READ_KEYS"]).__name__, repr(sorted(namespace["READ_KEYS"]))])
+
+
+def loaded_names(code) -> set:
+    """The global names that code, and any code nested in it, loads."""
+    names = {instruction.argval for instruction in dis.get_instructions(code)
+             if instruction.opname in ("LOAD_GLOBAL", "LOAD_NAME", "LOAD_FROM_DICT_OR_GLOBALS")}
+    for const in code.co_consts:
+        if isinstance(const, types.CodeType):
+            names |= loaded_names(const)
+    return names
 
 
 def other_cases(key: str) -> list:
@@ -265,6 +320,44 @@ def perturbed(value):
     added = {other: CONFLICTS[index] for key in sorted(READ_KEYS) for index, other in enumerate(other_cases(key))}
     held = {**added, **{key: CONFLICTS[0] for key in sorted(READ_KEYS)}}
     return {**{key: perturbed(item) for key, item in value.items()}, **added, UNKNOWN_KEY: held}
+
+
+def few_spellings(held: dict) -> list:
+    """For each key of READ_KEYS of which the JSON object held has fewer than 3 spellings in other letter
+    cases, each with a value of CONFLICTS, a problem; written out, not built with other_cases."""
+    problems = []
+    for key in sorted(READ_KEYS):
+        count = sum(1 for other, item in held.items() if other != key and other.lower() == key and item in CONFLICTS)
+        if count < 3:
+            problems.append(f"holds {count} spellings of {key!r} in other letter cases with a value of CONFLICTS")
+    return problems
+
+
+def shortfalls(original, value, where: str = "$") -> list:
+    """Each place where value, decoded from a file E perturbed, falls short of original, decoded from it
+    before, perturbed as E requires; written out, not built with perturbed: original and value differ but
+    in JSON objects, or a JSON object of original, at any depth, has a counterpart that lacks one of its
+    keys, fails few_spellings, or lacks UNKNOWN_KEY holding an object that holds each key of READ_KEYS with
+    a value of CONFLICTS and passes few_spellings."""
+    if isinstance(original, list):
+        if not isinstance(value, list) or len(value) != len(original):
+            return [f"{where} is not a list of {len(original)} items"]
+        return [problem for index, item in enumerate(original)
+                for problem in shortfalls(item, value[index], f"{where}[{index}]")]
+    if not isinstance(original, dict):
+        return [] if type(value) is type(original) and value == original else [f"{where} changed"]
+    if not isinstance(value, dict):
+        return [f"{where} is not a JSON object"]
+    problems = []
+    for key, item in original.items():
+        problems += shortfalls(item, value[key], f"{where}.{key}") if key in value else [f"{where} lacks {key!r}"]
+    problems += [f"{where} {problem}" for problem in few_spellings(value)]
+    held = value.get(UNKNOWN_KEY)
+    if not isinstance(held, dict):
+        return [*problems, f"{where} has no JSON object under {UNKNOWN_KEY!r}"]
+    problems += [f"{where}.{UNKNOWN_KEY} lacks {key!r} with a value of CONFLICTS" for key in sorted(READ_KEYS)
+                 if key not in held or held[key] not in CONFLICTS]
+    return problems + [f"{where}.{UNKNOWN_KEY} {problem}" for problem in few_spellings(held)]
 
 
 def checked_main(out: io.StringIO, err: io.StringIO) -> tuple:
@@ -545,10 +638,12 @@ class PluginDistributionTest(unittest.TestCase):
     def key_setups(self) -> list:
         """The setups of test_keys_in_another_letter_case_are_not_read, each (rel, change, lines): the file
         the setup changes and how, writing a key the gate reads in another letter case, and the FAIL lines
-        the gate gives, each without its "FAIL " (none: exit 0). A read of that key in another letter case
-        would change the gate's output in the setup. That the gate keeps no key but those of READ_KEYS,
-        each exactly as written, is held by the core and the cases the module docstring names, within the
-        residual it states, not by these setups."""
+        the gate gives, each without its "FAIL " (none: exit 0). The hook keeps no key in another letter
+        case, so a read of one gives what a read of a missing key gives; for each of the 23 places where
+        the gate reads a key, a setup holds that key exactly as written where the output shows its read,
+        so that a read there of the key in another letter case would change the output. That the gate
+        keeps no key but those of READ_KEYS, each exactly as written, is held by the core and the cases the
+        module docstring names, within the residual it states, not by these setups."""
         hooks = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
         root, vend = ".claude-plugin/marketplace.json", "plugin/.claude-plugin/marketplace.json"
 
@@ -593,6 +688,14 @@ class PluginDistributionTest(unittest.TestCase):
                     data["plugins"][0]["dependencies"] = [dependency]
             return change
 
+        def written(values, entry=False):
+            """The JSON object, or its first plugin entry, given the values, each under its key as written."""
+            def change(data):
+                (data["plugins"][0] if entry else data).update(values)
+            return change
+
+        versions = "; ".join([f"{gate.CLAUDE_MANIFEST} version '{VERSION}'", f"{gate.AGENT_MANIFEST} version '{VERSION}'",
+                              f"{gate.SKILL_MD} Version: line '{VERSION}'", f"{root} plugins[0].version '9.9.9'"])
         return [
             # Each key, in each file and plugin entry where the gate reads it.
             (root, other("name"),
@@ -651,13 +754,26 @@ class PluginDistributionTest(unittest.TestCase):
             (vend, entry_other({"Name": "aiqt-guardrails-hooks", "source": "./aiqt-guardrails-hooks",
                                 "dependencies": ["aiqt-guardrails-hooks"]}),
              [f"D1: {vend} plugins[1].name is None, not a name", reach(vend, 1, None, hooks, "aiqt-guardrails-hooks")]),
+            # Each read of a key that no setup above gives exactly as written where the output shows its read,
+            # each beside the key in another letter case with a value that would change the output if read:
+            # the plugins list and an entry's version as the versions check reads them, an entry's name as the
+            # plugin its list belongs to, and a manifest's dependencies.
+            (root, written({"version": "9.9.9", "Version": VERSION}, True), [f"D3: the versions differ: {versions}"]),
+            (root, written({"dependencies": ["cleanlanguage"], "Name": "claude-x"}, True),
+             [f"D4: {root} plugins[0] dependency 'cleanlanguage' names the plugin itself, which this gate refuses"]),
+            (gate.CLAUDE_MANIFEST, written({"dependencies": ["no-such-plugin"], "Dependencies": ["cleanlanguage"]}),
+             [f"D4: {gate.CLAUDE_MANIFEST} dependency 'no-such-plugin' names no plugin of the marketplace "
+              f"'cleanlanguage' in {root}"]),
         ]
 
     def test_keys_in_another_letter_case_are_not_read(self):
         # Each key the gate reads, in each file and plugin entry where it reads it, written in another
-        # letter case in a setup whose output a read of it would change. The gate reads a key exactly as
-        # written, so a key it requires is missing, and a key it reads only where present, given a value
-        # that fails when read, is not read. The manifest of a vendored entry that only 2 setups list.
+        # letter case; and for each of the 23 places where the gate reads a key, a setup that holds the key
+        # exactly as written where the output shows its read, so that a read there of the key in another
+        # letter case, which the hook never keeps and which so reads as missing, would change the output.
+        # The gate reads a key exactly as written, so a key it requires is missing, and a key it reads only
+        # where present, given a value that fails when read, is not read. The manifest of a vendored entry
+        # that only 2 setups list.
         self.write_json("plugin/aiqt-skill/.claude-plugin/plugin.json", manifest("aiqt-skill", "0.4.0"))
         for setup, (rel, change, lines) in enumerate(self.key_setups()):
             with self.subTest(setup=setup, rel=rel):
@@ -673,27 +789,39 @@ class PluginDistributionTest(unittest.TestCase):
                     (self.root / rel).write_bytes(saved)
 
     def test_hook_keeps_only_the_pairs_of_read_keys(self):
-        # U: every spelling in letter case of each key of READ_KEYS, 4,560 in all, and each spelling with
-        # 1 character that str.casefold, str.lower or str.upper maps onto a letter of the key, such as
-        # U+017F for s and U+212A for k, given to the gate's hook in 1 object with keys outside READ_KEYS:
-        # it gives a dict of exactly the pairs whose key is 1 of READ_KEYS, in order, each value the one
-        # given. Then each of those spellings repeated, with another key between, is refused, naming it.
+        # U: every spelling in letter case of each key of READ_KEYS, 4,560 in all, and every spelling in
+        # which each letter of the key, or each run of its letters, is written as itself in either letter
+        # case or as any character outside ASCII that str.casefold, str.lower or str.upper maps onto it,
+        # lowered, such as U+017F for s and U+212A for k, so with any number of such characters, given to
+        # the gate's hook in 1 object with keys outside READ_KEYS: it gives a dict of exactly the pairs
+        # whose key is 1 of READ_KEYS, in order, each value the one given. Then each of those spellings
+        # repeated, with another key between, is refused, naming it.
         self.assertIs(type(gate.READ_KEYS), frozenset)
         self.assertEqual(gate.READ_KEYS, READ_KEYS)
         cased = {key: {"".join(chars) for chars in itertools.product(*({char.lower(), char.upper()} for char in key))}
                  for key in READ_KEYS}
         self.assertEqual(sum(len(spellings) for spellings in cased.values()), 4560)
-        letters = set("".join(READ_KEYS))
+        runs = {key[start:end] for key in READ_KEYS for start in range(len(key)) for end in range(start + 1, len(key) + 1)}
         lookalikes: dict = {}
         for point in range(0x80, sys.maxunicode + 1):
             char = chr(point)
             for mapped in {char.casefold(), char.lower(), char.upper()}:
-                if len(mapped) == 1 and mapped.lower() in letters:
+                if mapped.lower() in runs:
                     lookalikes.setdefault(mapped.lower(), set()).add(char)
         self.assertIn(chr(0x17F), lookalikes["s"])
         self.assertIn(chr(0x212A), lookalikes["k"])
-        folded = {key[:index] + other + key[index + 1:] for key in READ_KEYS for index, char in enumerate(key)
-                  for other in lookalikes.get(char, ())}
+        spelled = {"": {""}}
+
+        def spell(text: str) -> set:
+            """Every spelling of text, a run of a key, by the rule above."""
+            if text not in spelled:
+                spelled[text] = {first + rest for end in range(1, len(text) + 1)
+                                 for first in lookalikes.get(text[:end], set()) | (
+                                     {text[0].lower(), text[0].upper()} if end == 1 else set())
+                                 for rest in spell(text[end:])}
+            return spelled[text]
+        folded = set().union(*(spell(key) for key in READ_KEYS))
+        self.assertIn(chr(0x17F) + "ite_" + chr(0x212A) + "ey", folded)
         spellings = sorted(set().union(*cased.values()) | folded | {UNKNOWN_KEY, "description", ""})
         for order in (spellings, spellings[::-1]):
             with self.subTest(order="reversed" if order is not spellings else "sorted"):
@@ -715,10 +843,40 @@ class PluginDistributionTest(unittest.TestCase):
         self.assertEqual(wrong, [])
 
     def test_core_is_pinned(self):
-        # The pin: the core as reviewed. An edit of the function bound to the gate's _unique_object or
-        # load_json, a rebinding of either name while the gate loads, or a change of READ_KEYS fails here
-        # until a reviewer renews CORE_SHA256. It shows the core is unchanged since review, not that it is
-        # right; test_hook_keeps_only_the_pairs_of_read_keys is the evidence it freezes.
+        # The pin: the core as reviewed, and the core as it runs. An edit of the function bound to the gate's
+        # _unique_object or load_json, a rebinding of either name while the gate loads, or a change of
+        # READ_KEYS fails here until a reviewer renews CORE_SHA256. What runs must be that text: each of the 2
+        # names is bound to a plain function of the gate with no defaults, whose code is the code its loader
+        # compiles from the 1 top-level definition of that name in the gate's file; READ_KEYS is a frozenset;
+        # and each global name the code of the core loads is bound as CORE_NAMES states. So code outside the
+        # core that, as the gate loads, swaps that code, shadows or changes a builtin the core loads, or
+        # rebinds json or changes json.loads, fails here too. It shows the core and what it reaches are
+        # unchanged since review, not that the core is right; test_hook_keeps_only_the_pairs_of_read_keys is
+        # the evidence it freezes.
+        namespace = vars(gate)
+        defined: dict = {}
+        for const in compile(MODULE_PATH.read_bytes(), str(MODULE_PATH), "exec", dont_inherit=True).co_consts:
+            if isinstance(const, types.CodeType):
+                defined.setdefault(const.co_name, []).append(const)
+        self.assertIs(type(namespace["READ_KEYS"]), frozenset)
+        for name, reached in CORE_NAMES.items():
+            with self.subTest(function=name):
+                function = namespace[name]
+                self.assertIs(type(function), types.FunctionType)
+                self.assertIs(function.__globals__, namespace)
+                self.assertEqual((function.__defaults__, function.__kwdefaults__, function.__closure__), (None, None, None))
+                self.assertEqual(len(defined.get(name, [])), 1, name)
+                self.assertEqual(function.__code__, defined[name][0])
+                self.assertEqual(loaded_names(function.__code__), set(reached))
+                for loaded, kind in reached.items():
+                    if kind == "builtin":
+                        self.assertNotIn(loaded, namespace)
+                        self.assertIs(function.__builtins__.get(loaded), BUILTINS_BEFORE[loaded], loaded)
+                    elif kind == "json":
+                        self.assertIs(namespace.get(loaded), json)
+                        self.assertIs(json.loads, JSON_LOADS_BEFORE)
+                    else:
+                        self.assertIn(loaded, namespace)
         self.assertEqual(hashlib.sha256(core_text(gate).encode("utf-8")).hexdigest(), CORE_SHA256)
 
     def test_checked_main_reports_a_key_outside_read_keys(self):
@@ -739,7 +897,9 @@ class PluginDistributionTest(unittest.TestCase):
         # E: the gate on a tree and on the same tree with each JSON file perturbed, so that each object at
         # every depth holds keys outside READ_KEYS, gives the same exit status and every line the same, in
         # this process and as a command. The trees: setUp's, which passes, and one whose vendored entry's
-        # source is an object, which fails and shows only the kept pairs of that object.
+        # source is an object, which fails and shows only the kept pairs of that object. E's own reach is
+        # held too: the command gives what the run in this process gives, and each of the 6 files, read
+        # back once all are perturbed, has no shortfall against the file as it was.
         script = self.root / "tools" / "check-plugin-distribution.py"
         shutil.copyfile(MODULE_PATH, script)
 
@@ -763,9 +923,12 @@ class PluginDistributionTest(unittest.TestCase):
                     before = runs()
                     self.assertEqual(before[0][0], code, before)
                     self.assertIn(needle, before[0][1], before)
+                    self.assertEqual(before[1], before[0])
                     for rel in inputs:
                         self.write_json(rel, perturbed(json.loads(saved[rel])))
-                        self.assertIn(b'"Version": "claude-x"', (self.root / rel).read_bytes())
+                    for rel in inputs:
+                        self.assertEqual(shortfalls(json.loads(saved[rel]), json.loads((self.root / rel).read_bytes())),
+                                         [], rel)
                     self.assertEqual(runs(), before)
                 finally:
                     for rel, data in saved.items():
@@ -2322,7 +2485,8 @@ class RepositoryTreeTest(unittest.TestCase):
     def test_keys_outside_read_keys_change_no_output(self):
         # E on a copy of the files the gate reads in the repository: each JSON input load_json reads,
         # SKILL.md and the extractor. The gate on the copy, and on the copy with each JSON input
-        # perturbed, gives the same exit status and every line the same, in this process.
+        # perturbed, gives the same exit status and every line the same, in this process. Each JSON input,
+        # read back once all are perturbed, has no shortfall against the input as it was.
         read: list = []
         real = gate.load_json
 
@@ -2350,10 +2514,12 @@ class RepositoryTreeTest(unittest.TestCase):
             gate.REPO_ROOT = root
             try:
                 before = run()
+                originals = {rel: json.loads((root / rel).read_bytes()) for rel in inputs}
                 for rel in inputs:
                     text = json.dumps(perturbed(json.loads((root / rel).read_bytes())), indent=2) + "\n"
                     (root / rel).write_text(text, encoding="utf-8")
-                    self.assertIn('"Version": "claude-x"', text)
+                for rel in inputs:
+                    self.assertEqual(shortfalls(originals[rel], json.loads((root / rel).read_bytes())), [], rel)
                 after = run()
             finally:
                 gate.REPO_ROOT = saved
