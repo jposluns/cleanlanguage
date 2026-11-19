@@ -7,10 +7,11 @@ LICENSE and NOTICE.md and their copies under cleanlanguage/. The cases name the
 2 files in COPIED_FILES below, not in the gate's own list.
 
 The gate's refusal of each kind of licence copy is tested on every runner,
-with no skip, through a seam. FakeNode answers os.stat and os.lstat for the
-exact path of 1 file with a stat result of the kind under test, while the
-file behind it stays a real, regular copy equal to its root file, and it
-records every io.open, open, os.open, os.listdir and os.scandir of that path.
+with no skip, through a seam. FakeNode answers os.stat and os.lstat, called
+with the exact path string of 1 file and no dir_fd, with a stat result of the
+kind under test, while the file behind it stays a real, regular copy equal to
+its root file, and it records every io.open, open, os.open, os.listdir and
+os.scandir whose path argument is that exact path string.
 The gate asks for the type of a copy through pathlib's is_symlink, exists and
 is_file, which look up os.lstat and os.stat when they are called, so the gate
 sees the fake's type. For each copy and each of the 11 kinds in COPY_KINDS (a
@@ -54,23 +55,25 @@ that the gate ends and, for a FIFO, whether anything opened it for reading:
 Every FIFO, Unix socket, symlink and device node that a smoke case makes is
 made through make_node. Where the OS refuses to make that kind of node, with
 EPERM, EACCES, EOPNOTSUPP or ENOSYS from the call that makes it, the smoke
-case or subtest skips, naming the error; the seam still tests the gate's
-refusal of that kind. Any other error from that call, such as a path that
-already exists, or a socket path longer than a socket address holds, as
-under a long TMPDIR, is raised, so the case errors.
+case or subtest skips with a message that names the kind of node, its path
+and the error; the seam still tests the gate's refusal of that kind. Any
+other error from that call, such as a path that already exists, or a socket
+path longer than a socket address holds, as under a long TMPDIR, is raised,
+so the case errors.
 test_make_node_skips_only_on_refusal tests this policy. It names the 4
 refusal errors itself, not through REFUSAL_ERRNOS, and requires a skip on
-each of them. It requires make_node to raise, not skip, each error of a
-fixed set: for each other errno that the errno module names on the running
-platform (ENOSPC, EINVAL and EROFS among them) and for the number 1 above
-the highest that the module names, an OSError with that errno, a message
-and a path; 1 OSError with no errno, whose message is "AF_UNIX path too
-long", which is what Python raises for a socket path longer than a socket
-address holds; and 1 ValueError, which is not an OSError, whose message is
-"embedded null character in path". A skip on any error of that set fails
-it; the residuals below name what it does not catch. unittest counts a
-skipped case as skipped, not as failed, so a run whose other cases pass
-ends with OK (skipped=N) and exit 0.
+each of them whose message is, character for character, the one that names
+the kind, the path and the error. It requires make_node to raise, not skip,
+each error of a fixed set: for each other errno that the errno module names
+on the running platform (ENOSPC, EINVAL and EROFS among them) and for the
+number 1 above the highest that the module names, an OSError with that
+errno, a message and a path; 1 OSError with no errno, whose message is
+"AF_UNIX path too long", which is what Python raises for a socket path
+longer than a socket address holds; and 1 ValueError, which is not an
+OSError, whose message is "embedded null character in path". A skip on any
+error of that set fails it; the residuals below name what it does not
+catch. unittest counts a skipped case as skipped, not as failed, so a run
+whose other cases pass ends with OK (skipped=N) and exit 0.
 The script then prints, after unittest's summary, each skip that unittest
 recorded, with the test's id, which for a subtest carries its parameters, so
 each skipped subtest is named once.
@@ -82,15 +85,24 @@ These residuals remain:
   way sees the real regular copy and accepts it, so every refusal subtest
   fails: a false alarm on a correct refactor, never a silent pass, and whoever
   changes that route must update FakeNode.
-- Only io.open, open, os.open, os.listdir and os.scandir of the exact path
-  string are recorded. A read before the refusal through io.FileIO, a dir_fd,
-  a bytes path, another spelling of the path, a subprocess or ctypes is not
-  caught.
-- The seam case for a root file answers os.stat and os.lstat, so it catches
-  a gate that refuses a root symlink that either call reports, including
-  os.stat with follow_symlinks=False. It cannot catch a gate that finds the
-  symlink another way, such as os.readlink or a call with a dir_fd; the
-  real-node case catches that where the OS lets the test make a symlink.
+- Only a call of io.open, open, os.open, os.listdir or os.scandir whose path
+  argument is the exact path string is recorded, with or without a dir_fd.
+  A read before the refusal through io.FileIO, a bytes path, another
+  spelling of the path (such as one relative to a dir_fd), a subprocess or
+  ctypes is not caught.
+- The seam case for a root file answers only os.stat and os.lstat called
+  with the exact path string and no dir_fd, so it catches a gate that
+  refuses a root symlink that such a call reports, including os.stat with
+  follow_symlinks=False and os.path.islink of that string. A gate that
+  finds the symlink any other way is not caught, such as through
+  os.readlink, a call with a dir_fd, or os.stat, os.lstat or a function that
+  calls them, such as os.path.islink, given a bytes path or another spelling
+  of the path. The real-node case catches it where the OS lets the test make
+  a symlink.
+- The gate reads only the type bits of a stat result, so no case checks the
+  rest of the result that FakeNode gives: a fake whose permission bits are
+  other than 0o777 for a symlink and 0o644 for any other type, or whose
+  other fields differ from those of the real file, passes every case.
 - test_make_node_skips_only_on_refusal tries a fixed set of errors for a
   raise: each errno that the errno module names other than the 4 refusal
   errors and 1 errno number that it does not name, each as an OSError with
@@ -268,12 +280,15 @@ class FakeNode:
 
     ``ltype`` is the type that os.lstat gives and ``ftype`` the type that
     os.stat gives when it follows a symlink; None means that the call finds
-    nothing. The other fields come from the real file, which stays as it is.
-    A call with a dir_fd, or with any other path, goes to the real function.
-    Every io.open, open, os.open, os.listdir and os.scandir of the path is
-    recorded in ``touched`` before the real call, and every stat or lstat
-    that the fake answered in ``answered``. Only the exact path string is
-    matched: another spelling of the path, a bytes path or a dir_fd is not.
+    nothing. The result's permission bits are 0o777 for a symlink and 0o644
+    for any other type, and its other fields come from the real file, which
+    stays as it is. A stat or lstat call with a dir_fd, or with any path
+    other than the exact path string, goes to the real function; every one
+    that the fake answered is recorded in ``answered``. Every io.open, open,
+    os.open, os.listdir and os.scandir whose path argument is the exact path
+    string is recorded in ``touched`` before the real call, with or without
+    a dir_fd. Only the exact path string is matched: a bytes path or another
+    spelling of the path, such as one relative to a dir_fd, is not.
     """
 
     def __init__(self, path, ltype, ftype):
@@ -433,7 +448,9 @@ class AgentPluginManifestTest(unittest.TestCase):
         """Make the node of ``kind`` (a FIFO, a Unix socket, a symlink or a
         device) at ``path`` by calling ``create(*args)``. Where the OS refuses
         to make that kind of node, with an error in REFUSAL_ERRNOS, the smoke
-        case cannot set up the state it tests, so it skips, naming the error.
+        case cannot set up the state it tests, so it skips with a message
+        that names ``kind``, ``path`` relative to the fixture root and the
+        error.
         Any other error, such as a path that already exists or a socket path
         longer than a socket address holds, is raised, so the case errors."""
         try:
@@ -695,10 +712,12 @@ class AgentPluginManifestTest(unittest.TestCase):
 
     def test_make_node_skips_only_on_refusal(self):
         # make_node must skip on each of the 4 refusal errors, named here and
-        # not read from REFUSAL_ERRNOS, so a change to that set fails too. It
-        # must raise, not skip, each error of a fixed set, and the case tries
-        # no other error for a raise: an OSError with a message and a path
-        # for each other errno that the errno module names and for the
+        # not read from REFUSAL_ERRNOS, so a change to that set fails too,
+        # with a message equal to the one that names the kind, the path and
+        # the error, so a message that drops or changes any of the 3 fails.
+        # It must raise, not skip, each error of a fixed set, and the case
+        # tries no other error for a raise: an OSError with a message and a
+        # path for each other errno that the errno module names and for the
         # number 1 above the highest it names, 1 OSError with no errno whose
         # message is "AF_UNIX path too long" (as Python raises for a socket
         # path longer than a socket address holds) and 1 ValueError, which
@@ -714,9 +733,11 @@ class AgentPluginManifestTest(unittest.TestCase):
 
         for code in sorted(refusals):
             with self.subTest(errno=errno.errorcode[code]):
+                refusal = OSError(code, os.strerror(code), str(path))
                 with self.assertRaises(unittest.SkipTest) as caught:
-                    self.make_node("a test node", path, raise_error, OSError(code, os.strerror(code), str(path)))
-                self.assertIn(os.strerror(code), str(caught.exception))
+                    self.make_node("a test node", path, raise_error, refusal)
+                self.assertEqual(str(caught.exception),
+                                 f"the OS refused to make a test node at cleanlanguage/node: {refusal}")
         others = [(errno.errorcode[code], OSError(code, os.strerror(code), str(path)))
                   for code in sorted(set(errno.errorcode) - refusals)]
         unnamed = max(errno.errorcode) + 1
@@ -804,7 +825,7 @@ class AgentPluginManifestTest(unittest.TestCase):
         # unprivileged test can make. Opening it fails, so a gate that reads it
         # with read_bytes before refusing it stops with exit 3, not 1. Where
         # the OS refuses to make the socket, each subtest skips, naming the
-        # error.
+        # kind, the path and the error.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):
@@ -820,7 +841,7 @@ class AgentPluginManifestTest(unittest.TestCase):
         # a gate that reads it before refusing it gives the message that the
         # copy differs, not the one required here. Making it needs the
         # CAP_MKNOD capability; where the OS refuses, each subtest skips,
-        # naming the error.
+        # naming the kind, the path and the error.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):

@@ -33,8 +33,8 @@ unittest's own record of each skip after its summary. A gate that asks for a
 file type another way sees the real regular copy, so every refusal case fails:
 a false alarm on a correct change, never a silent pass, and the tests' fake
 must then follow the new route. A read before the refusal through a route the
-tests do not record (io.FileIO, a dir_fd, a bytes path, another spelling of the
-path, a subprocess or ctypes) is an untested residual.
+tests do not record (io.FileIO, a bytes path, another spelling of the path such
+as one relative to a dir_fd, a subprocess or ctypes) is an untested residual.
 
 The plugin installs the cleanlanguage/ tree and the skill zip takes these 2
 files from it, so a copy that drifted from the root file would ship a licence
