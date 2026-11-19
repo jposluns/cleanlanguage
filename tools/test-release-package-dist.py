@@ -358,7 +358,7 @@ same pull request.
 
 The packager of REFERENCE_COMMIT predates the licence copies
 cleanlanguage/LICENSE and cleanlanguage/NOTICE.md, which pull request #279
-adds to the git tree without changing the zip's bytes. Its allowlist
+adds to the git tree. Its allowlist
 refuses the 2 paths, and its expected entry list adds LICENSE and NOTICE.md
 by name to the entries of the git tree, so with the copies in the tree it
 would list each twice. REFERENCE_EDITS makes 2 edits to its text, each of

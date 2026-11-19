@@ -686,12 +686,14 @@ class AgentPluginManifestTest(unittest.TestCase):
     def test_make_node_skips_only_on_refusal(self):
         # make_node must skip on each of the 4 refusal errors, named here and
         # not read from REFUSAL_ERRNOS, so a change to that set fails too. It
-        # must raise every other error: each other errno that the errno
-        # module names, the number 1 above the highest it names, an OSError
-        # with no errno (as Python raises for a socket path longer than a
-        # socket address holds) and a ValueError, which is not an OSError. A
-        # skip counts as a pass in unittest, so a skip on any of them is
-        # caught here and fails the subtest.
+        # must raise, not skip, each error of a fixed set, and the case tries
+        # no other error for a raise: each other errno that the errno module
+        # names, the number 1 above the highest it names, an OSError with no
+        # errno (as Python raises for a socket path longer than a socket
+        # address holds) and a ValueError, which is not an OSError. A skip
+        # counts as a pass in unittest, so a skip on any of them is caught
+        # here and fails the subtest; a skip only on an error outside that
+        # set is not, as the module docstring's residuals say.
         path = gate.REPO_ROOT / "cleanlanguage" / "node"
         refusals = {errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS}
 
