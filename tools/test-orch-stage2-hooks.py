@@ -352,8 +352,12 @@ def tree_state(path):
 # and unittest.TestCase.run is wrapped so that each test in the process gets a cleanup that fails it
 # for each refusal recorded while it ran: also one raised in a thread, which stops only that thread,
 # and one that the test caught. A refusal raised after the cleanup of the test that started its thread
-# fails the test that is running then, or, when none is, tearDownModule. Once every test that
-# unittest finds in this module has run in this process, tearDownModule also fails the run for each
+# fails the test that is running then. When none is, tearDownModule fails the run for it if it was
+# raised before tearDownModule read TIME_LIMIT_REFUSALS; one raised later while no test runs, such as
+# in a thread that is still running once tearDownModule has run, is read by nothing, so it fails the
+# run only as its own TimeLimitViolation does, which in a thread stops only that thread, and the run's
+# result and exit status are then as they would be without it. Once every test that unittest finds
+# in this module has run in this process, tearDownModule also fails the run for each
 # entry whose site admitted no limit, and for each entry whose value is not the least value admitted at
 # its site, so each value below is the least that its site applies in a whole run. Not checked: a limit
 # that reaches none of the 3 sinks, such as an elapsed time compared in an if statement or bounded by
@@ -542,9 +546,10 @@ def time_limit_table_mismatches(checks, table):
 
 
 def tearDownModule():
-    """Fail the run for each time limit refusal that no cleanup read and, once every test that unittest
-    finds in this module has run in this process, for each entry of TEST_TIME_LIMITS that
-    time_limit_table_mismatches reports."""
+    """Fail the run for each time limit refusal that no cleanup read, of those recorded before it reads
+    TIME_LIMIT_REFUSALS (one recorded later is read by nothing, as the comment on TEST_TIME_LIMITS
+    states) and, once every test that unittest finds in this module has run in this process, for each
+    entry of TEST_TIME_LIMITS that time_limit_table_mismatches reports."""
     with TIME_LIMIT_LOCK:
         problems = ["refused outside a test: {}".format(text) for text in TIME_LIMIT_REFUSALS]
         del TIME_LIMIT_REFUSALS[:]
@@ -585,7 +590,7 @@ def tearDownModule():
 # Limits of the tests. Such a test also sets time limits of its own, which TEST_TIME_LIMITS lists by
 # the site that applies each, with the least value that the site applies, and against which
 # _time_limit_applied checks each limit when it is applied. The least of them is 4.5 s, at
-# DoctorScopeMargin._assert_refused_near, which puts NEAR on the time from just before it sets the
+# DoctorScopeMargin._assert_refused_near. That site puts NEAR on the time from just before it sets the
 # lease mtime NEAR seconds from a freshness bound of the hook to the return of the doctor call, as a
 # later check could see the lease on the other side of that bound. The others are 30 s on 1 doctor or
 # hook program call (Doctor.SPECIAL_TIMEOUT, which DoctorPrecheckSites and DoctorScopeMargin take too,
@@ -5895,8 +5900,14 @@ class DoctorSourceProbe(unittest.TestCase):
 
 def stage2_comment_mismatches(source, table):
     """What differs between the comment directly above class Stage2Harness in source and table, in the
-    form of TEST_TIME_LIMITS: [] when the comment states the least value of table and the site of each
-    entry that holds it, each as a whole, so a longer name or value that contains it does not count."""
+    form of TEST_TIME_LIMITS, with the comment's lines joined by a space, V the least value of table as
+    "{:g}" gives it, and a phrase found in any case, with any white space between its words and no
+    letter, digit, underscore or dot before it: [] when the comment holds the phrase "least of them is"
+    exactly once, as "The least of them is V s, at L.", where L, up to the first full stop that a space
+    or the end of the comment follows, names the sites of exactly the entries that hold V, each once,
+    in any order, joined by ", and ", ", " or " and ", and when each phrase "least of them is" and
+    "least test limit is" in it is followed by " V s" and then by no letter, digit or underscore, alone
+    or after a dot."""
     out = []
     lines = source.splitlines()
     end = next((n for n, line in enumerate(lines) if line.startswith("class Stage2Harness(")), 0)
@@ -5905,17 +5916,31 @@ def stage2_comment_mismatches(source, table):
         start -= 1
     comment = " ".join(line[1:].strip() for line in lines[start:end])
     least = min(table.values()) if table else None
-    names = sorted("{}.{}".format(*key) if key[0] else key[1] for key, value in table.items()
-                   if value == least)
-    for needed in ["The least of them is {:g} s".format(least)] + names:
-        if not re.search(r"(?<![\w.])" + re.escape(needed) + r"(?![\w]|\.\w)", comment):
-            out.append("the comment above Stage2Harness does not state {!r}".format(needed))
+    value = "{:g}".format(least)
+    names = sorted("{}.{}".format(*key) if key[0] else key[1] for key, limit in table.items()
+                   if limit == least)
+    stated = list(re.finditer(r"(?i)(?<![\w.])least\s+(?:(of\s+them)|test\s+limit)\s+is", comment))
+    for found in stated:
+        if not re.match(r" " + re.escape(value) + r" s(?![\w]|\.\w)", comment[found.end():]):
+            out.append("the comment above Stage2Harness states another least value: {!r}".format(
+                comment[found.start():found.end() + 12]))
+    held = sum(1 for found in stated if found.group(1))
+    if held != 1:
+        out.append("the comment above Stage2Harness states 'least of them is' {} times, not once".format(held))
+    sites = re.search(r"The least of them is " + re.escape(value) + r" s, at (.*?)\.(?: |$)", comment)
+    if sites is None:
+        out.append("the comment above Stage2Harness does not state 'The least of them is {} s, at' and the "
+                   "sites that hold it".format(value))
+    elif sorted(re.split(r", and |, | and ", sites.group(1))) != names:
+        out.append("the comment above Stage2Harness names {!r} as the sites of the least value, not {!r}"
+                   .format(sites.group(1), names))
     return out
 
 
 class Stage2TimeLimitProbe(unittest.TestCase):
     """Class probe: each entry of TEST_TIME_LIMITS is a site of a Stage2Harness test, and the comment
-    above Stage2Harness states the least value of the table and the site of each entry that holds it.
+    above Stage2Harness states the least value of the table once, with the sites of exactly the entries
+    that hold it, and states no other least value, in the forms that stage2_comment_mismatches reads.
     _time_limit_applied checks each limit against the table when it is applied, and tearDownModule
     checks, once the whole file has run, that each entry is the least value admitted at its site."""
 
@@ -5930,27 +5955,72 @@ class Stage2TimeLimitProbe(unittest.TestCase):
         self.assertEqual(stage2_comment_mismatches(source, TEST_TIME_LIMITS), [])
 
     def test_it_refuses_a_comment_or_a_table_that_disagrees(self):
-        # A comment that states another least value, a comment that names, in place of the site that
-        # holds the least value, another site whose name holds the name of that site, a table whose
-        # least value changes, and a table whose least value moves to another site each disagree.
+        # A comment that states another least value, or a second one, or states it again at another
+        # site or in a line that it comments out, that names, in place of the site that holds the least
+        # value, another site, such as one whose name holds the name of that site, or that names a
+        # second site or the same site twice as holding it, a table whose least value changes, a table
+        # whose least value moves to another site, and a table whose least value is held by a site that
+        # the comment does not name each disagree. Controls: a comment that also names the site in
+        # another sentence, 2 sites that hold the least value named in either order, and a least value
+        # that is an int.
         source = Path(__file__).read_text(encoding="utf-8")
         stated = "The least of them is 4.5 s"
-        named = "# DoctorScopeMargin._assert_refused_near, which"
-        near = ("DoctorScopeMargin", "_assert_refused_near")
-        self.assertIn(stated, source, "precondition: the stated least limit, on 1 line")
-        self.assertIn(named, source, "precondition: the stated site of the least limit, on 1 line")
+        named = "# DoctorScopeMargin._assert_refused_near. That"
+        bound = "the least test limit is\n# 4.5 s"
+        other = "# DoctorCheckpointWrites.PROMPT, 15, is read by no check."
+        near, doctor = ("DoctorScopeMargin", "_assert_refused_near"), ("Doctor", "_doctor_bounded")
+        end = source.index("\nclass Stage2Harness(")
+        begin = source.rindex("\n\n", 0, end)
+        for text in (stated, named, bound, other):
+            self.assertTrue(begin < source.find(text) < end,
+                            "precondition: {!r} first in the comment above Stage2Harness".format(text))
         self.assertEqual(TEST_TIME_LIMITS.get(near), 4.5, "precondition: the entry that holds the least value")
+
+        def sited(text):
+            return source.replace(named, text, 1)
+
+        also = source.replace(other, other + " DoctorScopeMargin._assert_refused_near sets NEAR.", 1)
+        whole = source.replace(stated, "The least of them is 4 s", 1).replace(bound, "the least test limit is\n# 4 s", 1)
+        admitted = {
+            "the comment unchanged": (source, TEST_TIME_LIMITS),
+            "a comment that also names the site in another sentence": (also, TEST_TIME_LIMITS),
+            "2 sites named": (sited("# Doctor._doctor_bounded and DoctorScopeMargin._assert_refused_near. That"),
+                              {**TEST_TIME_LIMITS, doctor: 4.5}),
+            "2 sites named in the other order": (
+                sited("# DoctorScopeMargin._assert_refused_near and Doctor._doctor_bounded. That"),
+                {**TEST_TIME_LIMITS, doctor: 4.5}),
+            "a least value that is an int": (whole, {**TEST_TIME_LIMITS, near: 4}),
+        }
         planted = {
             "a comment that states another value": (source.replace(stated, "The least of them is 5 s", 1),
                                                     TEST_TIME_LIMITS),
+            "a comment that states a second least value": (
+                source.replace(stated, "The least of them is 3 s. " + stated, 1), TEST_TIME_LIMITS),
+            "a comment whose bound states another least value": (
+                source.replace(bound, "the least test limit is\n# 3 s", 1), TEST_TIME_LIMITS),
+            "a comment that states the least value again, at another site": (
+                source.replace(other, other + " " + stated + ", at Doctor._doctor_bounded.", 1), TEST_TIME_LIMITS),
+            "a comment that states another value and the least value in a line that it comments out": (
+                source.replace(stated, "The least of them is 9 s", 1).replace(other, other + "\n# # " + stated, 1),
+                TEST_TIME_LIMITS),
             "a comment that names a site whose name starts with that of the site": (
-                source.replace(named, "# DoctorScopeMargin._assert_refused_nearby, which", 1), TEST_TIME_LIMITS),
+                sited("# DoctorScopeMargin._assert_refused_nearby. That"), TEST_TIME_LIMITS),
             "a comment that names a site whose name ends with that of the site": (
-                source.replace(named, "# XDoctorScopeMargin._assert_refused_near, which", 1), TEST_TIME_LIMITS),
+                sited("# XDoctorScopeMargin._assert_refused_near. That"), TEST_TIME_LIMITS),
+            "a comment that names another site, and the site in another sentence": (
+                also.replace(named, "# Doctor._doctor_bounded. That", 1), TEST_TIME_LIMITS),
+            "a comment that names a second site": (
+                sited("# DoctorScopeMargin._assert_refused_near and Doctor._doctor_bounded. That"), TEST_TIME_LIMITS),
+            "a comment that names the site twice": (
+                sited("# DoctorScopeMargin._assert_refused_near and DoctorScopeMargin._assert_refused_near. That"),
+                TEST_TIME_LIMITS),
             "a new least value": (source, {**TEST_TIME_LIMITS, near: 4.0}),
-            "the least value at another site": (source, {**TEST_TIME_LIMITS, near: 30,
-                                                         ("Doctor", "_doctor_bounded"): 4.5}),
+            "the least value at another site": (source, {**TEST_TIME_LIMITS, near: 30, doctor: 4.5}),
+            "the least value also at another site": (source, {**TEST_TIME_LIMITS, doctor: 4.5}),
         }
+        for kind, (text, table) in admitted.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(stage2_comment_mismatches(text, table), [])
         for kind, (text, table) in planted.items():
             with self.subTest(kind=kind):
                 self.assertNotEqual((text, table), (source, TEST_TIME_LIMITS), "precondition: the change")
