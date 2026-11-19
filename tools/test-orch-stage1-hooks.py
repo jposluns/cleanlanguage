@@ -267,7 +267,7 @@ class DispatchLedger(HookHarness):
 
 
 # =====================================================================================================
-# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:27051-27058)
+# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:27056-27058)
 # =====================================================================================================
 class TaskOutputNoId(HookHarness):
     def test_unbound_taskoutput(self):
@@ -307,7 +307,7 @@ class PromptStamp(HookHarness):
     def test_timer_originated_prompt(self):
         # A prompt whose digest is a seeded wake digest is classified TIMER-ORIGINATED, injects the
         # measured gap, and consumes exactly one digest without resetting the counters
-        # (`timer_originated` at aiqt_hooks.py:32528, `wd.remove(digest)` at 32550-32576).
+        # (`timer_originated` at aiqt_hooks.py:32528, `wd.remove(digest)` at 32552-32576).
         self.write_registry(self.stage1())
         self.arm_lease()
         prompt = "scheduled wake: recheck ci-7"
@@ -643,13 +643,13 @@ class StaleLease(HookHarness):
 
 # =====================================================================================================
 # 9. Stop-family surface: stage-1 fixture, live lease, NO operator sentinel
-#    (`ctx["enum_status"]` at aiqt_hooks.py:23067-23100, `decide_yield` at 23061-23101,
+#    (`ctx["enum_status"]` at aiqt_hooks.py:23067-23100, `decide_yield` at 23061-23100,
 #    `_orch_record_forced_exit` at 23535-23559)
 # =====================================================================================================
 class StopFamilySurface(HookHarness):
     def test_stop_denies_with_no_enumerator(self):
         # With scope live and no enumerator declared, a turn-end Stop is DENIED once (exit 2) with the
-        # NO_ENUMERATOR reason (aiqt_hooks.py:22819-22823, `ctx["enum_status"]` at 23067 and
+        # NO_ENUMERATOR reason (aiqt_hooks.py:22820-22825, `ctx["enum_status"]` at 23067 and
         # 23095-23100 (`cntdef: the backlog is not enumerable`), `verdict == "DENY"` at 23590-23601).
         self.write_registry(self.stage1())
         self.arm_lease()
@@ -703,13 +703,13 @@ class WholeFunctionCitations(unittest.TestCase):
     after any docstring (the def line, a line of the signature or the docstring, or the body's first
     line), is a whole-function citation, whatever words stand around it. WHOLE holds, for each
     tools file and hook function, how many such ranges the file holds. The case counts, in each tools
-    file, the A-B tokens equal to either current range of each hook function and compares the counts
-    with WHOLE. A re-pin that moves or lengthens a cited function lowers its count, and a new
-    whole-function citation raises one, so either fails here until the citations and WHOLE follow. The
-    case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a range written A-B
-    with a hyphen is read; a range that covers part of a function, a range over more than 1 whole
-    function (such as A, the def line of 1 function, to B, the last line of a later one), a single line
-    and a nested function are not checked."""
+    file, the A-B tokens that are such a range of a hook function, with any of the first lines above,
+    and compares the counts with WHOLE. A re-pin that moves or lengthens a cited function lowers its
+    count, and a new whole-function citation raises one, so either fails here until the citations and
+    WHOLE follow. The case first checks each rule of the count on the fixtures of RANGE_FORMS. Only a
+    range written A-B with a hyphen is read; a range that covers part of a function, a range over more
+    than 1 whole function (such as A, the def line of 1 function, to B, the last line of a later one), a
+    single line and a nested function are not checked."""
 
     WHOLE = {
         ("check-orchestration-registry.py", "_orch_path"): 2,
