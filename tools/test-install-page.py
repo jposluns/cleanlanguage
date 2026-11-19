@@ -21,9 +21,9 @@ its source is an exact path that no file occupies or lies above, in any
 letter case, and it sends that source with the status 301 to a file under
 /assets/baseline/logos/ that tools/check-baseline-pin.py pins, with no
 query, fragment or further field, with a case for each of those
-conditions, the statuses 200, 300 and 302 to 308, 404, 0301, 3010, 301.0
-and +301 each in a case of its own, and that a header rule for such a path
-still fails; in this process it also calls the gate's redirect_break()
+conditions, the statuses 200, 201, 300 and 302 to 308, 404, 0301, 3010,
+301.0, +301 and 301! each in a case of its own, and that a header rule
+for such a path still fails; in this process it also calls the gate's redirect_break()
 on 1 character of each class that it refuses or allows
 (BREAK_CHARACTERS), the line feed among
 them, which no run of the gate gives it, and the gate's
@@ -41,15 +41,37 @@ hold each ASCII character but / and 7 code points beyond ASCII
 (POSITION_PROBES) at every position of each segment of 1 to 16 characters in
 a source of 1 to 6 segments, and directly before and after each character of
 SEGMENT_CHARACTERS as the whole of each segment of a source of 3, which must
-pass exactly where the source is an exact path (segment_position_problems());
-a widening or a narrowing that acts only where neither check puts a code
-point, such as at a 17th character of a segment, in a 7th segment, beside
-2 given characters at once, or for a code point beyond ASCII that
-POSITION_PROBES does not hold outside SEGMENT_PLACES, is not caught.
+pass exactly where the source is an exact path (segment_position_problems()),
+and on sources that hold those code points and each other code point of
+U+0080 to U+00FF (LOADED_PROBES) in place of each character of the path of
+each file under site/assets/ (loaded_paths()) and of that path written
+twice, and directly before each such character and after the last of each
+segment, which must pass exactly where the source is an exact path
+(loaded_path_problems()). A widening or a narrowing that acts only where no
+check puts a code point is not caught: one that acts only where the
+characters and segments around the code point are neither those that
+segment_position_problems() puts there (q, z, qz or 1 given character) nor
+those of a path of loaded_paths() written once or twice, such as at a 17th
+character of a segment or in a 7th segment of another source, or beside 2
+given characters at once that no such path holds side by side or with 1
+character between them, and one for a code point beyond ASCII that
+POSITION_PROBES does not hold, at a place of neither SEGMENT_PLACES nor, for
+U+0080 to U+00FF, loaded_places().
 position_report_problems() fails unless
 segment_position_problems(), given 7 stand-ins for the gate, names each of
 the first 10 sources it gets wrong and the number of the rest, as written out
-in POSITION_REPORT_CASES. It runs the gate there as a separate process
+in POSITION_REPORT_CASES; loaded_report_problems() fails unless
+loaded_path_problems(), given 6 stand-ins for the gate on the 2 paths of
+LOADED_REPORT_PATHS, does the same, as written out in LOADED_REPORT_CASES,
+and unless loaded_paths() gives exactly the files that os.walk() finds
+under site/assets/. status_problems() gives the gate's target_problem() each
+status of STATUS_PROBES, each text of 3 digits, 301 with 1 code point of
+POSITION_PROBES but whitespace before or after it or in place of 1 of its
+characters, and 301 with 1 of its characters dropped, and fails unless it
+passes exactly 301;
+status_report_problems() fails unless status_problems() names exactly the
+statuses that 2 stand-ins for the gate get wrong and none for 1 that passes
+exactly 301. It runs the gate there as a separate process
 and asserts its exit code and, where a case gives them as (code, words),
 that its output holds those words, so that a crash, which also exits 1,
 does not pass for a
@@ -73,7 +95,8 @@ treats such names as 1 cannot hold, so main() first probes the scratch
 folder of each of them (folds_letter_case()), not the platform's name, and
 where the file system there treats such names as 1, it does not run the
 case and names it as skipped with the reason FOLDED (letter_case_skip()).
-main() runs the cases in run_cases() and fails unless it ran each case and
+main() runs the cases in case_run_problems(), which runs them in run_cases()
+and fails unless it ran each case and
 each residual, or left it unrun with a reason, exactly once, each case it
 did not run is of CASE_FOLDER_CASES with FOLDED, and, for each such case,
 a folder made as qzcase in a new scratch folder is found as QZCASE
@@ -82,10 +105,14 @@ run is of those it ran. second_look_problems() fails unless
 folds_on_second_look() gives the answer of a new stand-in folder that treats
 such names as 1 and of 1 that does not, having made qzcase there alone, lets
 through the PermissionError of a stand-in folder that refuses to make it,
-and on this file system gives what folds_letter_case() gives, and unless
+and on this file system gives what folds_letter_case() gives, unless
 unrun_problems(), given stand-ins for the look, fails each unrun case but a
 case of CASE_FOLDER_CASES with FOLDED whose look gives True, a look that
-raises an OSError included.
+raises an OSError included, and unless case_run_problems(), given stand-ins
+for run_cases() and the look, gives the failures of the loop, fails a case
+run twice or neither run nor left unrun and fails a case left unrun with
+FOLDED unless the look gives True. No case holds main()'s own use of what
+case_run_problems() returns, as none holds its use of any check it calls.
 Where the file system holds both names, a case whose copy
 holds 2 names in 1 folder that differ only in letter case, 2 folders, 2
 files or a folder and a file (case_twins()), fails unless it is of
@@ -1727,12 +1754,13 @@ CASES = [
         (1, TARGET + "its status is 302, not 301")),
     ("a dropped logo sent to a pinned logo with the status 308", target("/assets/baseline/logos/aiqt.svg 308"),
         (1, TARGET + "its status is 308, not 301")),
-    # Every other status of the HTTP redirect class, 300 to 307, the status 404, and texts that a reading of the status
-    # as a number, or by its first 3 characters, could take for 301, each with an exact source that nothing in the copy
-    # occupies, so that only its status fails the rule: the gate passes the text 301 and no other.
+    # Every other status of the HTTP redirect class, 300 to 307, the statuses 201 and 404, and texts that a reading of
+    # the status as a number, or by its first 3 characters, could take for 301, or that marks 301 as forced, each with
+    # an exact source that nothing in the copy occupies, so that only its status fails the rule: the gate passes the
+    # text 301 and no other. status_problems() gives target_problem() more statuses in this process.
     *[(f"a dropped logo sent to a pinned logo with the status {status}",
        target(f"/assets/baseline/logos/aiqt.svg {status}"), (1, TARGET + f"its status is {status}, not 301"))
-      for status in ("300", "303", "304", "305", "306", "307", "404", "0301", "3010", "301.0", "+301")],
+      for status in ("300", "303", "304", "305", "306", "307", "201", "404", "0301", "3010", "301.0", "+301", "301!")],
     ("a rewrite of a dropped logo to a pinned logo", target("/assets/baseline/logos/aiqt.svg 200"),
         (1, TARGET + "its status is 200, not 301")),
     ("a dropped logo sent to a pinned logo with the status 301", target("/assets/baseline/logos/aiqt.svg 301"), 0),
@@ -2665,7 +2693,7 @@ def gate_exit_problems() -> list[str]:
     check of its tuple that, given exiting_gate() as its loader, does not return exactly 1 problem naming SystemExit(3).
     It is for the catches of those checks."""
     checks = (class_pin_problems, head_pin_problems, header_pin_problems, tag_pin_problems, page_attribute_pin_problems,
-              page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems)
+              page_tag_pin_problems, name_reading_problems, end_tag_problems, loaded_segment_problems, status_problems)
     try:
         exiting_gate().parse("<p>x</p>")
         raised = "nothing"
@@ -2711,6 +2739,8 @@ RUN_EXEMPT = {
                                    "load_tool(), the functions that exiting_gate() replaces"),
     "segment_position_problems": ("of the gate, it calls only exact_path_problem(), which calls neither parse() nor "
                                   "load_tool(), the functions that exiting_gate() replaces"),
+    "loaded_path_problems": ("of the gate, it calls only exact_path_problem(), which calls neither parse() nor "
+                             "load_tool(), the functions that exiting_gate() replaces"),
 }
 
 
@@ -2906,7 +2936,8 @@ SEGMENT_CHARACTERS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 # no other character in its segment gives the segment "." for the code point ".", which the gate refuses as it refuses
 # "..". segment_position_problems() puts the code points of POSITION_PROBES at every position of each segment of up to
 # POSITION_LENGTH characters in a source of up to POSITION_SEGMENTS segments, and beside each character of
-# SEGMENT_CHARACTERS (POSITION_PLACES).
+# SEGMENT_CHARACTERS (POSITION_PLACES); loaded_path_problems() puts those of LOADED_PROBES at each place of the path of
+# each file under site/assets/, written once and twice (loaded_places()).
 SEGMENT_PLACES = ("/{}qz/old.svg", "/q{}z/old.svg", "/qz{}/old.svg", "/{}/old.svg", "/q{0}{0}z/old.svg",
                   "/assets/{}qz/old.svg", "/assets/q{}z/old.svg", "/assets/qz{}/old.svg", "/assets/{}/old.svg",
                   "/assets/q{0}{0}z/old.svg",
@@ -3039,8 +3070,11 @@ def segment_position_problems(loader=load_gate) -> list[str]:
     """The gate's exact_path_problem() passes the source that each place of POSITION_PLACES gives with each probe of
     POSITION_PROBES exactly when that source is an exact path (exact_source()), so that EXACT_SEGMENT, or the test that
     applies it, cannot be widened or narrowed for a probe in 1 segment of a source of up to POSITION_SEGMENTS segments,
-    at 1 position of a segment of up to POSITION_LENGTH characters, or beside 1 character, with every case passing. It
-    names at most the first 10 sources it gets wrong, by probe and then by place, and the number of the rest."""
+    at 1 position of a segment of up to POSITION_LENGTH characters, or beside 1 character, with every case passing,
+    where that widening or narrowing acts whatever else the source holds. Around the probe these sources hold only q,
+    z, qz and, beside it, that 1 character, so one that acts only beside other characters or segments is caught only
+    where loaded_path_problems() puts the probe. It names at most the first 10 sources it gets wrong, by probe and then
+    by place, and the number of the rest."""
     try:
         gate = loader()
         wrong = [(place, probe) for probe in POSITION_PROBES for place in POSITION_PLACES
@@ -3134,6 +3168,195 @@ def position_report_problems() -> list[str]:
         found = segment_position_problems(position_stand_in(allows, refuses))
         if found != expected:
             problems.append(f"segment_position_problems(), given {name}, returns {found!r}, not {expected!r}")
+    return problems
+
+
+# Check 7: the code points that loaded_path_problems() puts at each place of loaded_places(): those of POSITION_PROBES
+# and each other code point of U+0080 to U+00FF, the Latin-1 Supplement, among them letters such as U+00E0 that a
+# reader may take for ASCII letters.
+LOADED_PROBES = tuple(dict.fromkeys(POSITION_PROBES + tuple(map(chr, range(0x80, 0x100)))))
+
+
+def loaded_paths() -> tuple[str, ...]:
+    """Check 7: the path from the site's root of each file under site/assets/ in this tree, which the pages may load,
+    sorted."""
+    return tuple(sorted("/" + path.relative_to(REPO_ROOT / "site").as_posix()
+                        for path in (REPO_ROOT / "site" / "assets").rglob("*") if path.is_file()))
+
+
+def loaded_places(paths: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+    """The places of loaded_path_problems(), each as the text before the probe and the text after it, each once: in
+    each path of paths, and in that path written twice, as in /assets/a.css/assets/a.css, the probe in place of each
+    character of each segment, and directly before each character of each segment and after its last."""
+    places: list[tuple[str, str]] = []
+    for path in paths:
+        for source in (path, path + path):
+            segments = source.split("/")
+            for index in range(1, len(segments)):
+                head = "/".join(segments[:index]) + "/"
+                segment, tail = segments[index], "".join("/" + rest for rest in segments[index + 1:])
+                places += [(head + segment[:at], segment[at + 1:] + tail) for at in range(len(segment))]
+                places += [(head + segment[:at], segment[at:] + tail) for at in range(len(segment) + 1)]
+    return tuple(dict.fromkeys(places))
+
+
+def loaded_path_problems(loader=load_gate, paths: tuple[str, ...] | None = None) -> list[str]:
+    """The gate's exact_path_problem() passes the source that each place of loaded_places() gives, for paths or by
+    default for loaded_paths(), with each probe of LOADED_PROBES exactly when that source is an exact path
+    (exact_source()), so that EXACT_SEGMENT, or the test that applies it, cannot be widened or narrowed for a probe at a
+    place of a path that the pages may load, or of that path written twice, whatever the characters and segments of
+    that path around it, with every case passing. It names at most the first 10 sources it gets wrong, by probe and
+    then by place, and the number of the rest."""
+    try:
+        gate, places = loader(), loaded_places(loaded_paths() if paths is None else paths)
+        wrong = [(head, probe, tail) for probe in LOADED_PROBES for head, tail in places
+                 if (gate.exact_path_problem(source := head + probe + tail) is None) != exact_source(source)]
+    except (Exception, SystemExit) as error:
+        return [f"exact_path_problem() could not be read from tools/{GATE.name}: {error!r}"]
+    return ([f"exact_path_problem() {'refuses' if exact_source(head + probe + tail) else 'passes'} the source "
+             + head + f"<U+{ord(probe):04X}>" + tail for head, probe, tail in wrong[:10]]
+            + ([f"exact_path_problem() also gets {len(wrong) - 10} more sources wrong"] if len(wrong) > 10 else []))
+
+
+def loaded_stand_in(allows=None, refuses=None):
+    """A loader of a stand-in for the gate whose exact_path_problem() refuses a source for which refuses(source) is
+    true and otherwise passes it when it is an exact path (exact_source()) or allows(source) is true."""
+    def exact_path_problem(source: str) -> str | None:
+        if refuses is not None and refuses(source):
+            return "a stand-in refusal"
+        return None if exact_source(source) or (allows is not None and allows(source)) else "a stand-in refusal"
+    return lambda: types.SimpleNamespace(exact_path_problem=exact_path_problem)
+
+
+# The 2 paths, of files under site/assets/, on which loaded_report_problems() runs loaded_path_problems(); the install
+# pages load the first through site/assets/baseline/fonts.css.
+LOADED_REPORT_PATHS = ("/assets/baseline/fonts/dancing-script-wght-normal.ttf", "/assets/baseline/select.js")
+# The parts of the sources that LOADED_REPORT_CASES names, each written as {} around its key.
+LOADED_REPORT_PARTS = {"p": "/assets/baseline/fonts/dancing-script-wght-normal.ttf",
+                       "d": "dancing-script-wght-normal.ttf", "b": "/assets/baseline/",
+                       "f": "/assets/baseline/fonts/dancing-script-", "s": "/assets/baseline/select.js"}
+
+
+def loaded_report(verb: str, sources: tuple[str, ...], rest: int) -> list[str]:
+    """The problems that loaded_path_problems() returns when it gets sources wrong first, each written with the parts
+    of LOADED_REPORT_PARTS, and rest more after them; verb is passes or refuses."""
+    return ([f"exact_path_problem() {verb} the source " + source.format(**LOADED_REPORT_PARTS) for source in sources]
+            + ([f"exact_path_problem() also gets {rest} more sources wrong"] if rest else []))
+
+
+# Stand-ins for the gate that get sources wrong at places that neither SEGMENT_PLACES nor POSITION_PLACES holds, each
+# as the allows and the refuses of loaded_stand_in(), with the problems that loaded_path_problems() must return for it
+# on LOADED_REPORT_PATHS, in order, written out rather than made from loaded_places() or LOADED_PROBES: the first 4 are
+# widenings like those of 4 gates that passed every case before loaded_path_problems() was added, the 5th a narrowing
+# in a segment of more than POSITION_LENGTH characters, and the last passes every probe after the last character of
+# the last path written twice, so that neither the paths written twice nor the number of probes can shrink unnoticed.
+LOADED_REPORT_CASES = (
+    ("a gate that also passes a leading : or * in a segment that is not the last after a segment of 7 or more",
+     re.compile(r"/[^/]{7,}/[:*][^/]*/").search, None,
+     loaded_report("passes", ("{b}<U+002A>onts/{d}", "{b}<U+002A>fonts/{d}", "{b}<U+002A>onts/{d}{p}",
+                              "{b}<U+002A>fonts/{d}{p}", "{p}/<U+002A>ssets/baseline/fonts/{d}",
+                              "{p}/<U+002A>assets/baseline/fonts/{d}", "{p}{b}<U+002A>onts/{d}",
+                              "{p}{b}<U+002A>fonts/{d}", "{b}<U+002A>elect.js{s}", "{b}<U+002A>select.js{s}"), 14)),
+    ("a gate that also passes :, * or ! directly after w as the 3rd or a later character of a segment",
+     re.compile(r"/[^/]+w[:*!]").search, None,
+     loaded_report("passes", ("{f}w<U+0021>ht-normal.ttf", "{f}w<U+0021>ght-normal.ttf", "{f}w<U+0021>ht-normal.ttf{p}",
+                              "{f}w<U+0021>ght-normal.ttf{p}", "{p}{f}w<U+0021>ht-normal.ttf",
+                              "{p}{f}w<U+0021>ght-normal.ttf", "{f}w<U+002A>ht-normal.ttf",
+                              "{f}w<U+002A>ght-normal.ttf", "{f}w<U+002A>ht-normal.ttf{p}",
+                              "{f}w<U+002A>ght-normal.ttf{p}"), 8)),
+    ("a gate that also passes every code point in a 7th or later segment",
+     lambda source: source.count("/") >= 7 and exact_source("/".join(source.split("/")[:7])), None,
+     loaded_report("passes", ("{p}{b}<U+0000>onts/{d}", "{p}{b}f<U+0000>nts/{d}", "{p}{b}fo<U+0000>ts/{d}",
+                              "{p}{b}fon<U+0000>s/{d}", "{p}{b}font<U+0000>/{d}", "{p}{b}<U+0000>fonts/{d}",
+                              "{p}{b}f<U+0000>onts/{d}", "{p}{b}fo<U+0000>nts/{d}", "{p}{b}fon<U+0000>ts/{d}",
+                              "{p}{b}font<U+0000>s/{d}"), 13958)),
+    ("a gate that also passes U+00E0 as the 2nd character of a segment of 4 or more that is not the last",
+     re.compile("/[^/]" + chr(0xE0) + "[^/]{2,}/").search, None,
+     loaded_report("passes", ("/a<U+00E0>sets/baseline/fonts/{d}", "/a<U+00E0>ssets/baseline/fonts/{d}",
+                              "/assets/b<U+00E0>seline/fonts/{d}", "/assets/b<U+00E0>aseline/fonts/{d}",
+                              "{b}f<U+00E0>nts/{d}", "{b}f<U+00E0>onts/{d}", "/a<U+00E0>sets/baseline/fonts/{d}{p}",
+                              "/a<U+00E0>ssets/baseline/fonts/{d}{p}", "/assets/b<U+00E0>seline/fonts/{d}{p}",
+                              "/assets/b<U+00E0>aseline/fonts/{d}{p}"), 24)),
+    ("a gate that refuses ~ in a segment of 17 or more characters",
+     None, lambda source: any(len(segment) >= 17 and "~" in segment for segment in source.split("/")),
+     loaded_report("refuses", ("{b}fonts/<U+007E>ancing-script-wght-normal.ttf",
+                               "{b}fonts/d<U+007E>ncing-script-wght-normal.ttf",
+                               "{b}fonts/da<U+007E>cing-script-wght-normal.ttf",
+                               "{b}fonts/dan<U+007E>ing-script-wght-normal.ttf",
+                               "{b}fonts/danc<U+007E>ng-script-wght-normal.ttf",
+                               "{b}fonts/danci<U+007E>g-script-wght-normal.ttf",
+                               "{b}fonts/dancin<U+007E>-script-wght-normal.ttf",
+                               "{b}fonts/dancing<U+007E>script-wght-normal.ttf",
+                               "{b}fonts/dancing-<U+007E>cript-wght-normal.ttf",
+                               "{b}fonts/dancing-s<U+007E>ript-wght-normal.ttf"), 173)),
+    ("a gate that also passes every code point after the last character of /assets/baseline/select.js written twice",
+     lambda source: len(source) == 53 and source.startswith("/assets/baseline/select.js/assets/baseline/select.js"),
+     None, loaded_report("passes", tuple(f"{{s}}{{s}}<U+000{digit}>" for digit in range(10)), 184)),
+)
+
+
+def loaded_report_problems() -> list[str]:
+    """A problem for each case of LOADED_REPORT_CASES for which loaded_path_problems(), given the case's stand-in for
+    the gate and LOADED_REPORT_PATHS, does not return exactly the case's problems, so that its report cannot be dropped
+    or cut unnoticed, and nor can a place of loaded_places() or a probe of LOADED_PROBES that those cases need; 1 unless
+    it returns none for a stand-in that passes exactly the exact paths; and 1 unless loaded_paths() gives exactly the
+    files that os.walk() finds under site/assets/, LOADED_REPORT_PATHS among them."""
+    problems: list[str] = []
+    for name, allows, refuses, expected in (("a gate that passes exactly the exact paths", None, None, []),
+                                            *LOADED_REPORT_CASES):
+        found = loaded_path_problems(loaded_stand_in(allows, refuses), LOADED_REPORT_PATHS)
+        if found != expected:
+            problems.append(f"loaded_path_problems(), given {name}, returns {found!r}, not {expected!r}")
+    walked = sorted("/" + (Path(folder) / name).relative_to(REPO_ROOT / "site").as_posix()
+                    for folder, _, names in os.walk(REPO_ROOT / "site" / "assets") for name in names)
+    if list(loaded_paths()) != walked or not set(LOADED_REPORT_PATHS) <= set(walked):
+        problems.append(f"loaded_paths() gives {list(loaded_paths())!r}, not the files that os.walk() finds under "
+                        f"site/assets/, {walked!r}, with {list(LOADED_REPORT_PATHS)!r} among them")
+    return problems
+
+
+# Check 7: the statuses that status_problems() gives the gate's target_problem(): each text of 3 ASCII digits, and 301
+# with each code point of POSITION_PROBES that is not whitespace, which ends a field, before it, after it or in place
+# of 1 of its characters, and with 1 of its characters dropped.
+STATUS_PROBES = tuple(dict.fromkeys(
+    [f"{code:03d}" for code in range(1000)]
+    + [status for char in POSITION_PROBES if not char.isspace()
+       for status in (char + "301", "301" + char, *("301"[:at] + char + "301"[at + 1:] for at in range(3)))]
+    + ["301"[:at] + "301"[at + 1:] for at in range(3)]))
+
+
+def status_problems(loader=load_gate) -> list[str]:
+    """The gate's target_problem(), given the fields of a rule that sends a source to a pinned logo, passes exactly the
+    status 301 of STATUS_PROBES, so that its reading of the status cannot be widened to another text of 3 digits, to
+    301 with 1 code point of POSITION_PROBES but whitespace before or after it or in place of 1 of its characters, or
+    to 301 with 1 of its characters dropped, with every case passing, nor narrowed to refuse 301. It names each status
+    it gets wrong."""
+    try:
+        gate, fields = loader(), ["/assets/baseline/logos/aiqt-zz.svg", "/assets/baseline/logos/aiqt.svg"]
+        wrong = [status for status in STATUS_PROBES
+                 if (gate.target_problem([*fields, status]) is None) != (status == "301")]
+    except (Exception, SystemExit) as error:
+        return [f"target_problem() could not be read from tools/{GATE.name}: {error!r}"]
+    return [f"target_problem() {'refuses' if status == '301' else 'passes'} the status {status!r}" for status in wrong]
+
+
+def status_report_problems() -> list[str]:
+    """A problem unless status_problems() names exactly the status 201, given a stand-in for the gate whose
+    target_problem() also passes 201, and exactly 301, 301! and 301x, in that order, given 1 that passes 301! and 301x
+    in place of 301, so that a status of STATUS_PROBES or its report cannot be dropped unnoticed; and unless it names
+    none for 1 that passes exactly 301."""
+    problems: list[str] = []
+    for passes, expected in ((("301",), []), (("301", "201"), ["target_problem() passes the status '201'"]),
+                             (("301!", "301x"), ["target_problem() refuses the status '301'",
+                                                 "target_problem() passes the status '301!'",
+                                                 "target_problem() passes the status '301x'"])):
+        stand_in = types.SimpleNamespace(target_problem=lambda fields, passes=passes: (
+            None if fields[1:] == ["/assets/baseline/logos/aiqt.svg", fields[2]] and fields[2] in passes
+            else "a stand-in refusal"))
+        found = status_problems(lambda stand_in=stand_in: stand_in)
+        if found != expected:
+            problems.append(f"status_problems(), given a gate that passes exactly {list(passes)}, returns {found!r}, "
+                            f"not {expected!r}")
     return problems
 
 
@@ -3969,6 +4192,20 @@ def unrun_problems(unrun: list[tuple[str, str]], look=folds_on_second_look) -> l
     return failures
 
 
+def case_run_problems(run, wanted: list[str], loop=run_cases, look=folds_on_second_look):
+    """main()'s run of the cases of run through loop(), run_cases() by default: the failures that loop() gives, a
+    failure for each name of wanted, read apart from run, or of what loop() ran or left unrun, that it did not run or
+    leave unrun with a reason exactly as often as wanted holds it, and the failures of unrun_problems(), with look, on
+    what it left unrun; then the names of the cases it ran and the cases it left unrun, with their reasons."""
+    looped, tried, unrun = loop(run)
+    failures = list(looped)
+    held, counted = collections.Counter(tried + [name for name, _ in unrun]), collections.Counter(wanted)
+    failures += [f"{name}: main() ran it or left it unrun with a reason {held[name]} times, not {counted[name]}"
+                 for name in counted | held if held[name] != counted[name]]
+    failures += unrun_problems(unrun, look)
+    return failures, tried, unrun
+
+
 class StandInScratch:
     """A stand-in for tempfile.TemporaryDirectory for folds_on_second_look(): each use opens a new StandInFolder whose
     folding is folding and that refuses to make a name of refused, and keeps it in opened."""
@@ -4055,6 +4292,34 @@ def second_look_problems() -> list[str]:
             problems.append(f"unrun_problems() gives {found!r} for {unrun!r} with a look that gives {answer!r}, "
                             f"having looked {len(looks)} times, not the failures that start with {starts!r} after "
                             f"{count} looks")
+    # main()'s run of the cases, case_run_problems(), given stand-ins for run_cases() and the look: it passes on what
+    # the loop gives, fails a case run twice or neither run nor left unrun, and fails a case left unrun with FOLDED
+    # unless the look gives True, so that its call of unrun_problems() cannot be dropped unnoticed.
+    run = [(twinned[0], None, 0), (other, None, 0)]
+    for looped, tried, unrun, answer, starts in (
+            ([], [twinned[0], other], [], False, []),
+            ([], [other], [(twinned[0], FOLDED)], True, []),
+            ([], [other], [(twinned[0], FOLDED)], False,
+             [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"]),
+            (["a failure of the loop"], [twinned[0], other], [], False, ["a failure of the loop"]),
+            ([], [twinned[0], twinned[0], other], [], False,
+             [f"{twinned[0]}: main() ran it or left it unrun with a reason 2 times, not 1"]),
+            ([], [other], [], False, [f"{twinned[0]}: main() ran it or left it unrun with a reason 0 times, not 1"])):
+        given: list = []
+
+        def loop(cases, result=(looped, tried, unrun)):
+            given.append(cases)
+            return result
+        try:
+            found = case_run_problems(run, [twinned[0], other], loop, look(answer))
+        except Exception as error:
+            problems.append(f"case_run_problems() raises {error!r} for a loop that gives {(looped, tried, unrun)!r}")
+            continue
+        if (given != [run] or found[1:] != (tried, unrun) or len(found[0]) != len(starts)
+                or not all(map(str.startswith, found[0], starts))):
+            problems.append(f"case_run_problems() gives {found!r} for a loop that gives {(looped, tried, unrun)!r} "
+                            f"with a look that gives {answer!r}, having given the loop {given!r}, not the failures "
+                            f"that start with {starts!r}, {tried!r} and {unrun!r}, having given it {[run]!r}")
     return problems
 
 
@@ -4091,6 +4356,8 @@ def main() -> int:
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the segment characters: {problem}" for problem in segment_character_problems()]
     failures += [f"the segment positions: {problem}" for problem in segment_position_problems()]
+    failures += [f"the loaded paths: {problem}" for problem in loaded_path_problems()]
+    failures += [f"the statuses: {problem}" for problem in status_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
@@ -4105,16 +4372,14 @@ def main() -> int:
     failures += [f"the case loop: {problem}" for problem in case_loop_problems()]
     failures += [f"the second look: {problem}" for problem in second_look_problems()]
     failures += [f"the position report: {problem}" for problem in position_report_problems()]
+    failures += [f"the loaded report: {problem}" for problem in loaded_report_problems()]
+    failures += [f"the status report: {problem}" for problem in status_report_problems()]
     skipped = [(name, ROOT_READS) for name in SKIPPED]
     run = [] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]
-    looped, tried, unrun = run_cases(run)
-    failures += looped
     # Each case and each residual, read here apart from run, must be run, or left unrun with a reason, exactly once.
-    held = collections.Counter(tried + [name for name, _ in unrun])
-    wanted = collections.Counter([] if copied else [case[0] for case in CASES] + [name for name, _, _ in RESIDUALS])
-    failures += [f"{name}: main() ran it or left it unrun with a reason {held[name]} times, not {wanted[name]}"
-                 for name in wanted | held if held[name] != wanted[name]]
-    failures += unrun_problems(unrun)
+    wanted = [] if copied else [case[0] for case in CASES] + [name for name, _, _ in RESIDUALS]
+    looped, tried, unrun = case_run_problems(run, wanted)
+    failures += looped
     skipped += unrun
     for name, reason in skipped:
         print(f"test-install-page: skipped {name}: {reason}")
@@ -4133,8 +4398,11 @@ def main() -> int:
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
           f"redirect_break(), the segment characters of exact_path_problem() at {len(SEGMENT_PLACES)} places, the "
           f"{len(SEGMENT_REPORT_CASES) + 1} cases of its report, its {len(POSITION_PROBES)} probes at "
-          f"{len(POSITION_PLACES)} places, the {len(POSITION_REPORT_CASES) + 1} cases of that report, the "
-          f"letter-case guard, the case loop, the 2nd look, the "
+          f"{len(POSITION_PLACES)} places, the {len(POSITION_REPORT_CASES) + 1} cases of that report, its "
+          f"{len(LOADED_PROBES)} probes at the places of {len(loaded_paths())} loaded paths, the "
+          f"{len(LOADED_REPORT_CASES) + 1} cases of that report and its check of the paths, the "
+          f"{len(STATUS_PROBES)} statuses of target_problem(), the 3 cases of their report, the letter-case guard, "
+          f"the case loop, the 2nd look, the "
           f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
