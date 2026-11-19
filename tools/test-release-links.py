@@ -1137,17 +1137,15 @@ class RedirectHopTest(unittest.TestCase):
     host that applies any of them reaches the same file. Neither path form admits an upper-case letter, so a host
     that folds letter case cannot make a destination equal a source.
 
-    What the form gives up, none of which the committed file or redirects_body() in tools/set-release-links.py
-    uses. In a source, and in a destination that is not a documented target: a value that does not start with /,
-    such as a URL written in full, on this site's origin or on another, or a relative path; any character other than
-    a-z, 0-9, a dot, an underscore, a hyphen and /, such as a query, a fragment, an upper-case letter, a
-    percent-encoded byte, or the * or : of a splat or placeholder source; an empty segment, such as the first one of
-    a value that starts with // or the one in /downloads//a.md; a segment that starts with a dot, an underscore or a
-    hyphen, such as /.well-known/, /downloads/_a.md or /downloads/-a.md; and the root / alone. Also given up: a
-    status other than 301 and 302. Each can be admitted later by widening the form on purpose, with its own argument.
+    The test refuses what rules 1 to 6 do not admit, and nothing else; no line of the committed file, the output of
+    redirects_body() in tools/set-release-links.py, is refused. A rule they do not admit, such as one with a URL that
+    is not a documented target, a query, a splat source or another status, can be admitted later by widening a rule
+    on purpose, with its own argument.
 
     The argument holds for a host whose reading of site/_redirects and of a request path leaves such lines, and paths
-    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. Its residual, stated plainly:
+    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. Its residual, stated plainly, lists
+    what the test does not check. What the form refuses is the complement of the admitted form and is not part of
+    the residual.
 
     - The host is not observed. A host that changes a string in that alphabet, for example by serving `/a` for
       `/a.html` (the HTML check covers this), by redirecting `/x/` to `/x`, or by treating a `.` in a path specially,
@@ -1349,8 +1347,9 @@ class RedirectHopTest(unittest.TestCase):
         ])
 
     def test_a_source_outside_the_form_fails(self):
-        # A splat or placeholder source, a source in upper case, with a dot segment, a query, or as a URL, and the
-        # root / each fail, and the rules they would have made are not read. A source with a final / passes.
+        # These are examples: a splat or placeholder source, a source in upper case, with a dot segment, a query, or as
+        # a URL, and the root / each fail, and the rules they would have made are not read. A source with a final /
+        # passes. test_the_path_rule_is_read_as_the_docstring_states checks rule 3 on every short value.
         origin, source = self.origin(), REDIRECT_REASONS["source"]
         rules = (f"/old/* /new.md 301\n/old/:name /new.md 301\n/Old /new.md 301\n/./old /new.md 301\n"
                  f"/old?x=1 /new.md 301\n{origin}/old /new.md 301\n/ /new.md 301\n/older/ /new.md 301\n"
@@ -1380,11 +1379,11 @@ class RedirectHopTest(unittest.TestCase):
 
     def test_a_destination_outside_the_form_fails(self):
         # Each destination below is neither a documented target nor a path in the closed form, so it fails, though a
-        # file exists under its literal name where 1 can: URLs on another origin or on this site's origin, a query
-        # or fragment, a destination that starts with // or does not start with /, an empty, ., .. or percent-encoded
-        # segment, a backslash, an upper-case letter, a character outside a-z, 0-9, ., _, - and /, a segment that
-        # starts with a dot, an underscore or a hyphen, and the root /. The documented targets and 2 paths in the form
-        # pass.
+        # file exists under its literal name where 1 can. These are examples: URLs on another origin or on this site's
+        # origin, a query or fragment, a destination that starts with // or does not start with /, an empty, ., .. or
+        # percent-encoded segment, a backslash, an upper-case letter, a character outside a-z, 0-9, ., _, - and /, a
+        # segment that starts with a dot, an underscore or a hyphen, and the root /. The documented targets and 2 paths
+        # in the form pass, and test_the_path_rule_is_read_as_the_docstring_states checks rule 3 on every short value.
         origin = self.origin()
         zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
         plain, user = origin.replace("https://", "http://", 1), origin.replace("://", "://user@", 1)
@@ -1411,6 +1410,36 @@ class RedirectHopTest(unittest.TestCase):
             f"site/_redirects line {number}: /r{number} redirects to {destination}, {form}"
             for number, destination in enumerate(refused, 1)
         ])
+
+    def test_the_path_rule_is_read_as_the_docstring_states(self):
+        # Rule 3 of the class docstring, read segment by segment without a regular expression, is the oracle. For each
+        # value of length 1 to 4 over the alphabet below, failures() refuses it as a source, and as a destination,
+        # exactly when the oracle does. Residual: longer values and other characters are not run, and the oracle binds
+        # the segment-by-segment reading of rule 3, not every word of the docstring.
+        alphabet, first = "/a0._-A%*:?", "abcdefghijklmnopqrstuvwxyz0123456789"
+
+        def in_form(value: str) -> bool:
+            # 1 or more segments, each a / then a letter or digit and then any of those, a dot, an underscore or a
+            # hyphen, with an optional final /.
+            segments = value.removesuffix("/").split("/")
+            return len(segments) > 1 and segments[0] == "" and all(
+                segment and segment[0] in first and set(segment) <= set(first + "._-") for segment in segments[1:])
+
+        values, layer = [], [""]
+        for _ in range(4):
+            layer = [value + char for value in layer for char in alphabet]
+            values += layer
+        oracle = {value for value in values if not in_form(value)}
+
+        def refused(rules: list[str], files: tuple[str, ...], key: str) -> set[str]:
+            # 1 rule per value, so the line number that a failure names gives its value back.
+            found = self.failures_on("".join(f"{rule}\n" for rule in rules), files)
+            return {values[int(line.split()[2].rstrip(":")) - 1] for line in found
+                    if line.endswith(REDIRECT_REASONS[key])}
+
+        self.assertEqual(refused([f"{value} /a.md 301" for value in values], ("a.md",), "source"), oracle)
+        self.assertEqual(refused([f"/r{number} {value} 302" for number, value in enumerate(values, 1)], (), "form"),
+                         oracle)
 
     def test_a_destination_that_is_the_source_of_a_rule_fails(self):
         # A destination and a source are compared without a final /, so /f/ and /f, or /h and /h/, are 1 path, and a
