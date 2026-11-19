@@ -62,8 +62,11 @@ path longer than a socket address holds, as under a long TMPDIR, is raised,
 so the case errors.
 test_make_node_skips_only_on_refusal tests this policy. It names the 4
 refusal errors itself, not through REFUSAL_ERRNOS, and requires a skip on
-each of them whose message is, character for character, the one that names
-the kind, the path and the error. It requires make_node to raise, not skip,
+each of them, for a test node at cleanlanguage/node and for a FIFO at
+LICENSE.fifo in the fixture root, whose message is, character for
+character, the one that names the kind, the path and the error, so a
+message that drops any of the 3, names 1 fixed kind or puts every path
+under cleanlanguage/ fails. It requires make_node to raise, not skip,
 each error of a fixed set: for each other errno that the errno module names
 on the running platform (ENOSPC, EINVAL and EROFS among them) and for the
 number 1 above the highest that the module names, an OSError with that
@@ -87,9 +90,13 @@ These residuals remain:
   changes that route must update FakeNode.
 - Only a call of io.open, open, os.open, os.listdir or os.scandir whose path
   argument is the exact path string is recorded, with or without a dir_fd.
-  A read before the refusal through io.FileIO, a bytes path, another
-  spelling of the path (such as one relative to a dir_fd), a subprocess or
-  ctypes is not caught.
+  The seam does not catch a read before the refusal through io.FileIO, a
+  bytes path, another spelling of the path (such as one relative to a
+  dir_fd), a subprocess or ctypes. Where the OS lets the test make a FIFO,
+  the FIFO smoke cases catch such a read, since it opens the FIFO for
+  reading. One that lets the error of its open through also makes the case
+  for a missing copy error, on every runner. One that ignores that error
+  passes every case when the OS refuses to make every kind of node.
 - The seam case for a root file answers only os.stat and os.lstat called
   with the exact path string and no dir_fd, so it catches a gate that
   refuses a root symlink that such a call reports, including os.stat with
@@ -714,7 +721,10 @@ class AgentPluginManifestTest(unittest.TestCase):
         # make_node must skip on each of the 4 refusal errors, named here and
         # not read from REFUSAL_ERRNOS, so a change to that set fails too,
         # with a message equal to the one that names the kind, the path and
-        # the error, so a message that drops or changes any of the 3 fails.
+        # the error, for a test node at cleanlanguage/node and for a FIFO at
+        # LICENSE.fifo in the fixture root, so a message that drops any of
+        # the 3, names 1 fixed kind or puts every path under cleanlanguage/
+        # fails.
         # It must raise, not skip, each error of a fixed set, and the case
         # tries no other error for a raise: an OSError with a message and a
         # path for each other errno that the errno module names and for the
@@ -727,17 +737,23 @@ class AgentPluginManifestTest(unittest.TestCase):
         # outside that set is not, as the module docstring's residuals say.
         path = gate.REPO_ROOT / "cleanlanguage" / "node"
         refusals = {errno.EPERM, errno.EACCES, errno.EOPNOTSUPP, errno.ENOSYS}
+        # Each node: its kind, its path and the path that the message gives.
+        nodes = (
+            ("a test node", path, "cleanlanguage/node"),
+            ("a FIFO", gate.REPO_ROOT / "LICENSE.fifo", "LICENSE.fifo"),
+        )
 
         def raise_error(error):
             raise error
 
         for code in sorted(refusals):
-            with self.subTest(errno=errno.errorcode[code]):
-                refusal = OSError(code, os.strerror(code), str(path))
-                with self.assertRaises(unittest.SkipTest) as caught:
-                    self.make_node("a test node", path, raise_error, refusal)
-                self.assertEqual(str(caught.exception),
-                                 f"the OS refused to make a test node at cleanlanguage/node: {refusal}")
+            for kind, node, shown in nodes:
+                with self.subTest(errno=errno.errorcode[code], kind=kind):
+                    refusal = OSError(code, os.strerror(code), str(node))
+                    with self.assertRaises(unittest.SkipTest) as caught:
+                        self.make_node(kind, node, raise_error, refusal)
+                    self.assertEqual(str(caught.exception),
+                                     f"the OS refused to make {kind} at {shown}: {refusal}")
         others = [(errno.errorcode[code], OSError(code, os.strerror(code), str(path)))
                   for code in sorted(set(errno.errorcode) - refusals)]
         unnamed = max(errno.errorcode) + 1
