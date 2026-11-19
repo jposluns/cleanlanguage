@@ -367,8 +367,10 @@ allowlist admits the 2 paths, and the expected entry list drops them from
 the entries of the git tree. The reference still writes the root LICENSE
 and NOTICE.md into its layout, over the copies that git archive laid out
 there, and the packager under test refuses a copy whose git blob differs
-from its root file's, so for a tree that the packager under test accepts
-both builds zip the same bytes, which case 1 checks.
+from its root file's. Case 1 checks that both builds zip the same bytes
+for 1 tree only: the set-up builds the clone's HEAD with the adapted
+reference packager, and case 1 builds it with the packager under test.
+No case builds another tree with both packagers.
 
 Usage:
   python3 -I tools/test-release-package-dist.py

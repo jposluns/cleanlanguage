@@ -88,10 +88,15 @@ These residuals remain:
   os.stat with follow_symlinks=False. It cannot catch a gate that finds the
   symlink another way, such as os.readlink or a call with a dir_fd; the
   real-node case catches that where the OS lets the test make a symlink.
-- test_make_node_skips_only_on_refusal tries 1 errno number that the errno
-  module does not name and 1 exception that is not an OSError, a ValueError,
-  so a make_node that skips only on another such number or on another such
-  exception is not caught.
+- test_make_node_skips_only_on_refusal tries a fixed set of errors for a
+  raise: each errno that the errno module names other than the 4 refusal
+  errors and 1 errno number that it does not name, each as an OSError with
+  a message and a path; 1 OSError with no errno, whose message is "AF_UNIX
+  path too long"; and 1 exception that is not an OSError, a ValueError. A
+  make_node that skips only on an error outside that set is not caught,
+  such as another errno number that the errno module does not name, an
+  OSError with no errno and another message, an OSError with an errno of
+  the set but no path, or another exception that is not an OSError.
 - Where the OS refuses to make a kind of node, nothing on that runner checks
   that FakeNode describes that kind as the kernel does. No unprivileged run
   can make a block device, so that kind has no smoke case, and a character
