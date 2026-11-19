@@ -22,7 +22,10 @@ letter case, and it sends that source with the status 301 to a file under
 /assets/baseline/logos/ that tools/check-baseline-pin.py pins, with no
 query, fragment or further field, with a case for each of those
 conditions, the statuses 200, 201, 300 and 302 to 308, 404, 0301, 3010,
-301.0, +301 and 301! each in a case of its own, and that a header rule
+301.0, +301 and 301! each in a case of its own, a placeholder :d as the 3rd
+segment, and a splat * that ends a segment of 21 characters, in place of
+part of the path of the font that the install pages load, each in a case of
+its own, and that a header rule
 for such a path still fails; in this process it also calls the gate's redirect_break()
 on 1 character of each class that it refuses or allows
 (BREAK_CHARACTERS), the line feed among
@@ -43,35 +46,45 @@ a source of 1 to 6 segments, and directly before and after each character of
 SEGMENT_CHARACTERS as the whole of each segment of a source of 3, which must
 pass exactly where the source is an exact path (segment_position_problems()),
 and on sources that hold those code points and each other code point of
-U+0080 to U+00FF (LOADED_PROBES) in place of each character of the path of
-each file under site/assets/ (loaded_paths()) and of that path written
-twice, and directly before each such character and after the last of each
-segment, which must pass exactly where the source is an exact path
-(loaded_path_problems()). A widening or a narrowing that acts only where no
-check puts a code point is not caught: one that acts only where the
-characters and segments around the code point are neither those that
-segment_position_problems() puts there (q, z, qz or 1 given character) nor
-those of a path of loaded_paths() written once or twice, such as at a 17th
-character of a segment or in a 7th segment of another source, or beside 2
-given characters at once that no such path holds side by side or with 1
-character between them, and one for a code point beyond ASCII that
-POSITION_PROBES does not hold, at a place of neither SEGMENT_PLACES nor, for
-U+0080 to U+00FF, loaded_places().
+U+0080 to U+00FF (LOADED_PROBES) in place of each run of 1 or more
+characters of a segment of the path of each file under site/assets/
+(loaded_paths()) and of that path written twice, the whole segment
+included, directly before each character of each segment and after its
+last, and in place of the rest of the source from each character of a
+segment and from after its last, which must pass exactly where the source is
+an exact path (loaded_path_problems()). So the probe : or * stands in place
+of any part of a segment of such a path, as a placeholder or a splat may. A
+widening or a narrowing that acts only where no check puts a code point is
+not caught: one that acts only where the characters and segments around the
+code point are neither those that segment_position_problems() puts there (q,
+z, qz or 1 given character) nor those of a path of loaded_paths() written
+once or twice with 1 run of a segment, or the rest of the source, replaced
+or with 1 code point put between 2 of its characters, such as at a 17th
+character of a segment or in a 7th segment of another source, beside 2 given
+characters at once that no such path holds in 1 segment, the 1st before the
+2nd, or in place of a run that spans a / and does not end the source; one
+that acts only on a text of 2 or more code points, such as the placeholder
+:zz, that no source of these checks or of the cases holds; and one for a
+code point beyond ASCII that POSITION_PROBES does not hold, at a place of
+neither SEGMENT_PLACES nor, for U+0080 to U+00FF, loaded_places().
 position_report_problems() fails unless
 segment_position_problems(), given 7 stand-ins for the gate, names each of
 the first 10 sources it gets wrong and the number of the rest, as written out
 in POSITION_REPORT_CASES; loaded_report_problems() fails unless
-loaded_path_problems(), given 6 stand-ins for the gate on the 2 paths of
+loaded_path_problems(), given 9 stand-ins for the gate on the 2 paths of
 LOADED_REPORT_PATHS, does the same, as written out in LOADED_REPORT_CASES,
 and unless loaded_paths() gives exactly the files that os.walk() finds
 under site/assets/. status_problems() gives the gate's target_problem() each
-status of STATUS_PROBES, each text of 3 digits, 301 with 1 code point of
-POSITION_PROBES but whitespace before or after it or in place of 1 of its
-characters, and 301 with 1 of its characters dropped, and fails unless it
-passes exactly 301;
-status_report_problems() fails unless status_problems() names exactly the
-statuses that 2 stand-ins for the gate get wrong and none for 1 that passes
-exactly 301. It runs the gate there as a separate process
+status of STATUS_PROBES, each text of 3 ASCII digits, 301 with 1 code point
+of POSITION_PROBES but whitespace before or after it or in place of 1 of its
+characters, 301 with 1 of its characters dropped, 301 with 1 decimal digit
+beyond ASCII (DECIMAL_DIGITS) in place of 1 of its characters, and 301
+written in the digits of each set of 10 of them (DECIMAL_ZEROS), and fails
+unless it passes exactly 301; it gives no other status that holds a code
+point beyond ASCII. status_report_problems() fails unless status_problems()
+names exactly the statuses that 2 stand-ins for the gate get wrong, none for
+1 that passes exactly 301, and exactly 3917 statuses, 301 not among them,
+for 1 that passes every status. It runs the gate there as a separate process
 and asserts its exit code and, where a case gives them as (code, words),
 that its output holds those words, so that a crash, which also exits 1,
 does not pass for a
@@ -111,8 +124,12 @@ case of CASE_FOLDER_CASES with FOLDED whose look gives True, a look that
 raises an OSError included, and unless case_run_problems(), given stand-ins
 for run_cases() and the look, gives the failures of the loop, fails a case
 run twice or neither run nor left unrun and fails a case left unrun with
-FOLDED unless the look gives True. No case holds main()'s own use of what
-case_run_problems() returns, as none holds its use of any check it calls.
+FOLDED unless the look gives True. main_call_problems() fails unless
+case_run_problems() takes run_cases() and folds_on_second_look() by default
+and main() calls it exactly once, as case_run_problems(run, wanted), and
+calls none of run_cases(), unrun_problems() and folds_on_second_look()
+itself. No case holds main()'s own use of what case_run_problems() returns,
+as none holds its use of any check it calls.
 Where the file system holds both names, a case whose copy
 holds 2 names in 1 folder that differ only in letter case, 2 folders, 2
 files or a folder and a file (case_twins()), fails unless it is of
@@ -1713,6 +1730,15 @@ CASES = [
     ("a redirect of baseline.css under a placeholder in a segment that is not the last",
         append(REDIRECTS, "/assets/:d/baseline.css /assets/baseline/logos/aiqt.svg 301\n"),
         (1, "site/_redirects line 33 has the source /assets/:d/baseline.css, " + NOT_EXACT)),
+    # A placeholder as the whole of a segment after a segment of 7 or more characters, and a splat that ends a segment
+    # of 21, each in place of 2 or more characters of the path of the font that the install pages load through
+    # site/assets/baseline/fonts.css.
+    ("a redirect of the loaded font under a placeholder after a segment of 7 or more characters",
+        append(REDIRECTS, "/assets/baseline/:d/dancing-script-wght-normal.ttf /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "has the source /assets/baseline/:d/dancing-script-wght-normal.ttf, " + NOT_EXACT)),
+    ("a redirect of the loaded font under a splat that ends a segment of 21 characters",
+        append(REDIRECTS, "/assets/baseline/fonts/dancing-script-wght-* /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "has the source /assets/baseline/fonts/dancing-script-wght-*, " + NOT_EXACT)),
     ("a redirect of a logo the install pages load, beside the whole committed site",
         both(whole_site,
              append(REDIRECTS, "/assets/baseline/logos/cleanlanguage.svg /assets/baseline/logos/aiqt.svg 301\n")),
@@ -3187,7 +3213,11 @@ def loaded_paths() -> tuple[str, ...]:
 def loaded_places(paths: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
     """The places of loaded_path_problems(), each as the text before the probe and the text after it, each once: in
     each path of paths, and in that path written twice, as in /assets/a.css/assets/a.css, the probe in place of each
-    character of each segment, and directly before each character of each segment and after its last."""
+    run of 1 or more characters of each segment, the whole segment included, directly before each character of each
+    segment and after its last, and in place of the rest of the source from each character of each segment and from
+    after its last. So a probe : or * stands there for a placeholder or a splat in place of any part of a segment of
+    such a path, as in /assets/baseline/:s/dancing-script-wght-normal.ttf or
+    /assets/baseline/fonts/dancing-script-wght-*."""
     places: list[tuple[str, str]] = []
     for path in paths:
         for source in (path, path + path):
@@ -3195,8 +3225,9 @@ def loaded_places(paths: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
             for index in range(1, len(segments)):
                 head = "/".join(segments[:index]) + "/"
                 segment, tail = segments[index], "".join("/" + rest for rest in segments[index + 1:])
-                places += [(head + segment[:at], segment[at + 1:] + tail) for at in range(len(segment))]
-                places += [(head + segment[:at], segment[at:] + tail) for at in range(len(segment) + 1)]
+                places += [(head + segment[:start], segment[end:] + tail)
+                           for start in range(len(segment) + 1) for end in range(start, len(segment) + 1)]
+                places += [(head + segment[:start], "") for start in range(len(segment) + 1)]
     return tuple(dict.fromkeys(places))
 
 
@@ -3204,8 +3235,9 @@ def loaded_path_problems(loader=load_gate, paths: tuple[str, ...] | None = None)
     """The gate's exact_path_problem() passes the source that each place of loaded_places() gives, for paths or by
     default for loaded_paths(), with each probe of LOADED_PROBES exactly when that source is an exact path
     (exact_source()), so that EXACT_SEGMENT, or the test that applies it, cannot be widened or narrowed for a probe at a
-    place of a path that the pages may load, or of that path written twice, whatever the characters and segments of
-    that path around it, with every case passing. It names at most the first 10 sources it gets wrong, by probe and
+    place of a path that the pages may load, or of that path written twice, in place of a run of a segment or of the
+    rest of the source or between 2 characters, whatever the characters and segments of that path around it, with every
+    case passing. It names at most the first 10 sources it gets wrong, by probe and
     then by place, and the number of the rest."""
     try:
         gate, places = loader(), loaded_places(loaded_paths() if paths is None else paths)
@@ -3248,50 +3280,65 @@ def loaded_report(verb: str, sources: tuple[str, ...], rest: int) -> list[str]:
 # as the allows and the refuses of loaded_stand_in(), with the problems that loaded_path_problems() must return for it
 # on LOADED_REPORT_PATHS, in order, written out rather than made from loaded_places() or LOADED_PROBES: the first 4 are
 # widenings like those of 4 gates that passed every case before loaded_path_problems() was added, the 5th a narrowing
-# in a segment of more than POSITION_LENGTH characters, and the last passes every probe after the last character of
-# the last path written twice, so that neither the paths written twice nor the number of probes can shrink unnoticed.
+# in a segment of more than POSITION_LENGTH characters, the 6th and the 7th widenings like those of 2 gates that pass
+# a placeholder or a splat in place of 2 or more characters of a segment and that passed every case before
+# loaded_places() put the probe in place of each run of characters, and the last 2 pass, and refuse, every probe after
+# the last character of the last path written twice, so that neither the paths written twice nor a probe can be
+# dropped unnoticed: a dropped probe that makes the source an exact path there shrinks the number that the last case
+# gives, and any other the number that the case before it gives.
 LOADED_REPORT_CASES = (
     ("a gate that also passes a leading : or * in a segment that is not the last after a segment of 7 or more",
      re.compile(r"/[^/]{7,}/[:*][^/]*/").search, None,
-     loaded_report("passes", ("{b}<U+002A>onts/{d}", "{b}<U+002A>fonts/{d}", "{b}<U+002A>onts/{d}{p}",
-                              "{b}<U+002A>fonts/{d}{p}", "{p}/<U+002A>ssets/baseline/fonts/{d}",
-                              "{p}/<U+002A>assets/baseline/fonts/{d}", "{p}{b}<U+002A>onts/{d}",
-                              "{p}{b}<U+002A>fonts/{d}", "{b}<U+002A>elect.js{s}", "{b}<U+002A>select.js{s}"), 14)),
+     loaded_report("passes", ("{b}<U+002A>fonts/{d}", "{b}<U+002A>onts/{d}", "{b}<U+002A>nts/{d}", "{b}<U+002A>ts/{d}",
+                              "{b}<U+002A>s/{d}", "{b}<U+002A>/{d}", "{b}<U+002A>fonts/{d}{p}",
+                              "{b}<U+002A>onts/{d}{p}", "{b}<U+002A>nts/{d}{p}", "{b}<U+002A>ts/{d}{p}"), 74)),
     ("a gate that also passes :, * or ! directly after w as the 3rd or a later character of a segment",
      re.compile(r"/[^/]+w[:*!]").search, None,
-     loaded_report("passes", ("{f}w<U+0021>ht-normal.ttf", "{f}w<U+0021>ght-normal.ttf", "{f}w<U+0021>ht-normal.ttf{p}",
-                              "{f}w<U+0021>ght-normal.ttf{p}", "{p}{f}w<U+0021>ht-normal.ttf",
-                              "{p}{f}w<U+0021>ght-normal.ttf", "{f}w<U+002A>ht-normal.ttf",
-                              "{f}w<U+002A>ght-normal.ttf", "{f}w<U+002A>ht-normal.ttf{p}",
-                              "{f}w<U+002A>ght-normal.ttf{p}"), 8)),
+     loaded_report("passes", ("{f}w<U+0021>ght-normal.ttf", "{f}w<U+0021>ht-normal.ttf", "{f}w<U+0021>t-normal.ttf",
+                              "{f}w<U+0021>-normal.ttf", "{f}w<U+0021>normal.ttf", "{f}w<U+0021>ormal.ttf",
+                              "{f}w<U+0021>rmal.ttf", "{f}w<U+0021>mal.ttf", "{f}w<U+0021>al.ttf",
+                              "{f}w<U+0021>l.ttf"), 125)),
     ("a gate that also passes every code point in a 7th or later segment",
      lambda source: source.count("/") >= 7 and exact_source("/".join(source.split("/")[:7])), None,
-     loaded_report("passes", ("{p}{b}<U+0000>onts/{d}", "{p}{b}f<U+0000>nts/{d}", "{p}{b}fo<U+0000>ts/{d}",
-                              "{p}{b}fon<U+0000>s/{d}", "{p}{b}font<U+0000>/{d}", "{p}{b}<U+0000>fonts/{d}",
-                              "{p}{b}f<U+0000>onts/{d}", "{p}{b}fo<U+0000>nts/{d}", "{p}{b}fon<U+0000>ts/{d}",
-                              "{p}{b}font<U+0000>s/{d}"), 13958)),
+     loaded_report("passes", ("{p}{b}<U+0000>fonts/{d}", "{p}{b}<U+0000>onts/{d}", "{p}{b}<U+0000>nts/{d}",
+                              "{p}{b}<U+0000>ts/{d}", "{p}{b}<U+0000>s/{d}", "{p}{b}<U+0000>/{d}",
+                              "{p}{b}f<U+0000>onts/{d}", "{p}{b}f<U+0000>nts/{d}", "{p}{b}f<U+0000>ts/{d}",
+                              "{p}{b}f<U+0000>s/{d}"), 101455)),
     ("a gate that also passes U+00E0 as the 2nd character of a segment of 4 or more that is not the last",
      re.compile("/[^/]" + chr(0xE0) + "[^/]{2,}/").search, None,
-     loaded_report("passes", ("/a<U+00E0>sets/baseline/fonts/{d}", "/a<U+00E0>ssets/baseline/fonts/{d}",
-                              "/assets/b<U+00E0>seline/fonts/{d}", "/assets/b<U+00E0>aseline/fonts/{d}",
-                              "{b}f<U+00E0>nts/{d}", "{b}f<U+00E0>onts/{d}", "/a<U+00E0>sets/baseline/fonts/{d}{p}",
-                              "/a<U+00E0>ssets/baseline/fonts/{d}{p}", "/assets/b<U+00E0>seline/fonts/{d}{p}",
-                              "/assets/b<U+00E0>aseline/fonts/{d}{p}"), 24)),
+     loaded_report("passes", ("/a<U+00E0>ssets/baseline/fonts/{d}", "/a<U+00E0>sets/baseline/fonts/{d}",
+                              "/a<U+00E0>ets/baseline/fonts/{d}", "/a<U+00E0>ts/baseline/fonts/{d}",
+                              "/assets/b<U+00E0>aseline/fonts/{d}", "/assets/b<U+00E0>seline/fonts/{d}",
+                              "/assets/b<U+00E0>eline/fonts/{d}", "/assets/b<U+00E0>line/fonts/{d}",
+                              "/assets/b<U+00E0>ine/fonts/{d}", "/assets/b<U+00E0>ne/fonts/{d}"), 94)),
     ("a gate that refuses ~ in a segment of 17 or more characters",
      None, lambda source: any(len(segment) >= 17 and "~" in segment for segment in source.split("/")),
-     loaded_report("refuses", ("{b}fonts/<U+007E>ancing-script-wght-normal.ttf",
-                               "{b}fonts/d<U+007E>ncing-script-wght-normal.ttf",
-                               "{b}fonts/da<U+007E>cing-script-wght-normal.ttf",
-                               "{b}fonts/dan<U+007E>ing-script-wght-normal.ttf",
-                               "{b}fonts/danc<U+007E>ng-script-wght-normal.ttf",
-                               "{b}fonts/danci<U+007E>g-script-wght-normal.ttf",
-                               "{b}fonts/dancin<U+007E>-script-wght-normal.ttf",
-                               "{b}fonts/dancing<U+007E>script-wght-normal.ttf",
-                               "{b}fonts/dancing-<U+007E>cript-wght-normal.ttf",
-                               "{b}fonts/dancing-s<U+007E>ript-wght-normal.ttf"), 173)),
+     loaded_report("refuses", ("{b}fonts/<U+007E>{d}", "{b}fonts/<U+007E>ancing-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>ncing-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>cing-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>ing-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>ng-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>g-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>-script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>script-wght-normal.ttf",
+                               "{b}fonts/<U+007E>cript-wght-normal.ttf"), 1070)),
+    ("a gate that also passes a whole segment of : and 1 to 3 lower-case letters, not the last, after a segment of 7 "
+     "or more", re.compile(r"/[^/]{7,}/:[a-z]{1,3}/").search, None,
+     loaded_report("passes", ("{b}<U+003A>nts/{d}", "{b}<U+003A>ts/{d}", "{b}<U+003A>s/{d}", "{b}<U+003A>nts/{d}{p}",
+                              "{b}<U+003A>ts/{d}{p}", "{b}<U+003A>s/{d}{p}", "{p}/<U+003A>ets/baseline/fonts/{d}",
+                              "{p}/<U+003A>ts/baseline/fonts/{d}", "{p}/<U+003A>s/baseline/fonts/{d}",
+                              "{p}{b}<U+003A>nts/{d}"), 7)),
+    ("a gate that also passes a segment of 21 characters that ends in *",
+     re.compile(r"/[A-Za-z0-9._~-]{20}\*(/|$)").search, None,
+     loaded_report("passes", ("{f}wght-<U+002A>", "{f}wght-<U+002A>{p}", "{p}{f}wght-<U+002A>"), 0)),
     ("a gate that also passes every code point after the last character of /assets/baseline/select.js written twice",
      lambda source: len(source) == 53 and source.startswith("/assets/baseline/select.js/assets/baseline/select.js"),
      None, loaded_report("passes", tuple(f"{{s}}{{s}}<U+000{digit}>" for digit in range(10)), 184)),
+    ("a gate that refuses every code point after the last character of /assets/baseline/select.js written twice",
+     None, lambda source: len(source) == 53 and source.startswith("/assets/baseline/select.js/assets/baseline/select.js"),
+     loaded_report("refuses", ("{s}{s}<U+002D>", "{s}{s}<U+002E>", "{s}{s}<U+0030>", "{s}{s}<U+0031>",
+                               "{s}{s}<U+0032>", "{s}{s}<U+0033>", "{s}{s}<U+0034>", "{s}{s}<U+0035>",
+                               "{s}{s}<U+0036>", "{s}{s}<U+0037>"), 57)),
 )
 
 
@@ -3315,22 +3362,32 @@ def loaded_report_problems() -> list[str]:
     return problems
 
 
-# Check 7: the statuses that status_problems() gives the gate's target_problem(): each text of 3 ASCII digits, and 301
+# Check 7: the decimal digits beyond ASCII, each code point from U+0080 on that str.isdecimal() reads as a digit, such
+# as U+0661, which int() reads as 1, and the first digit, 0, of each set of 10 of them, which run from 0 to 9.
+DECIMAL_DIGITS = tuple(char for char in map(chr, range(0x80, 0x110000)) if char.isdecimal())
+DECIMAL_ZEROS = tuple(char for char in DECIMAL_DIGITS if int(char) == 0)
+# Check 7: the statuses that status_problems() gives the gate's target_problem(): each text of 3 ASCII digits; 301
 # with each code point of POSITION_PROBES that is not whitespace, which ends a field, before it, after it or in place
-# of 1 of its characters, and with 1 of its characters dropped.
+# of 1 of its characters; 301 with 1 of its characters dropped; 301 with each digit of DECIMAL_DIGITS in place of 1 of
+# its characters; and 301 written in the digits of each set of DECIMAL_ZEROS. No other status that holds a code point
+# beyond ASCII is given: none with a code point beyond ASCII that is neither of POSITION_PROBES nor of DECIMAL_DIGITS,
+# and none with 2 or 3 digits of DECIMAL_DIGITS but 301 written in 1 set.
 STATUS_PROBES = tuple(dict.fromkeys(
     [f"{code:03d}" for code in range(1000)]
     + [status for char in POSITION_PROBES if not char.isspace()
        for status in (char + "301", "301" + char, *("301"[:at] + char + "301"[at + 1:] for at in range(3)))]
-    + ["301"[:at] + "301"[at + 1:] for at in range(3)]))
+    + ["301"[:at] + "301"[at + 1:] for at in range(3)]
+    + ["301"[:at] + char + "301"[at + 1:] for char in DECIMAL_DIGITS for at in range(3)]
+    + [chr(ord(zero) + 3) + zero + chr(ord(zero) + 1) for zero in DECIMAL_ZEROS]))
 
 
 def status_problems(loader=load_gate) -> list[str]:
     """The gate's target_problem(), given the fields of a rule that sends a source to a pinned logo, passes exactly the
-    status 301 of STATUS_PROBES, so that its reading of the status cannot be widened to another text of 3 digits, to
-    301 with 1 code point of POSITION_PROBES but whitespace before or after it or in place of 1 of its characters, or
-    to 301 with 1 of its characters dropped, with every case passing, nor narrowed to refuse 301. It names each status
-    it gets wrong."""
+    status 301 of STATUS_PROBES, so that its reading of the status cannot be widened, with every case passing, to
+    another text of 3 ASCII digits, to 301 with 1 code point of POSITION_PROBES but whitespace before or after it or in
+    place of 1 of its characters, to 301 with 1 of its characters dropped, to 301 with 1 digit of DECIMAL_DIGITS in
+    place of 1 of its characters, or to 301 written in the digits of 1 set of DECIMAL_ZEROS, nor narrowed to refuse 301.
+    It names each status it gets wrong."""
     try:
         gate, fields = loader(), ["/assets/baseline/logos/aiqt-zz.svg", "/assets/baseline/logos/aiqt.svg"]
         wrong = [status for status in STATUS_PROBES
@@ -3343,9 +3400,15 @@ def status_problems(loader=load_gate) -> list[str]:
 def status_report_problems() -> list[str]:
     """A problem unless status_problems() names exactly the status 201, given a stand-in for the gate whose
     target_problem() also passes 201, and exactly 301, 301! and 301x, in that order, given 1 that passes 301! and 301x
-    in place of 301, so that a status of STATUS_PROBES or its report cannot be dropped unnoticed; and unless it names
-    none for 1 that passes exactly 301."""
+    in place of 301, so that its report cannot be dropped unnoticed; unless it names none for 1 that passes exactly 301;
+    and unless it names exactly 3917 statuses, each as passed, 301 not among them, for 1 that passes every status, so
+    that no status of STATUS_PROBES can be dropped unnoticed: the number of statuses cannot shrink."""
     problems: list[str] = []
+    found = status_problems(lambda: types.SimpleNamespace(target_problem=lambda fields: None))
+    if (len(found) != 3917 or "target_problem() passes the status '301'" in found
+            or not all(problem.startswith("target_problem() passes the status ") for problem in found)):
+        problems.append(f"status_problems(), given a gate that passes every status, names {len(found)} statuses, "
+                        f"beginning {found[:3]!r}, not 3917, each as passed, 301 not among them")
     for passes, expected in ((("301",), []), (("301", "201"), ["target_problem() passes the status '201'"]),
                              (("301!", "301x"), ["target_problem() refuses the status '301'",
                                                  "target_problem() passes the status '301!'",
@@ -4323,6 +4386,30 @@ def second_look_problems() -> list[str]:
     return problems
 
 
+def main_call_problems(source: str | None = None) -> list[str]:
+    """A problem unless case_run_problems() takes run_cases() and folds_on_second_look() by default, and unless main(),
+    in the syntax tree of source, this file by default, calls case_run_problems() exactly once, as
+    case_run_problems(run, wanted), and calls none of run_cases(), unrun_problems() and folds_on_second_look() itself,
+    so that main() cannot run the cases, or read those it left unrun, with another loop or look unnoticed. No case
+    holds main()'s own use of what that call returns."""
+    problems: list[str] = []
+    if case_run_problems.__defaults__ != (run_cases, folds_on_second_look):
+        problems.append(f"case_run_problems() takes {case_run_problems.__defaults__!r} by default, not run_cases() "
+                        "and folds_on_second_look()")
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8") if source is None else source)
+    mains = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    calls = [node for main_node in mains for node in ast.walk(main_node)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    runs = [ast.unparse(call) for call in calls if call.func.id == "case_run_problems"]
+    if len(mains) != 1 or runs != ["case_run_problems(run, wanted)"]:
+        problems.append(f"main() calls case_run_problems() as {runs!r} in {len(mains)} main(), not exactly once as "
+                        "case_run_problems(run, wanted) in 1")
+    others = sorted({call.func.id for call in calls} & {"run_cases", "unrun_problems", "folds_on_second_look"})
+    if others:
+        problems.append(f"main() calls {', '.join(others)} itself, not only through case_run_problems()")
+    return problems
+
+
 def main() -> int:
     if sys.argv[1:] == [PRINT_PIN]:
         held, problems = committed_rules()
@@ -4371,6 +4458,7 @@ def main() -> int:
     failures += [f"the segment report: {problem}" for problem in segment_report_problems()]
     failures += [f"the case loop: {problem}" for problem in case_loop_problems()]
     failures += [f"the second look: {problem}" for problem in second_look_problems()]
+    failures += [f"the case run: {problem}" for problem in main_call_problems()]
     failures += [f"the position report: {problem}" for problem in position_report_problems()]
     failures += [f"the loaded report: {problem}" for problem in loaded_report_problems()]
     failures += [f"the status report: {problem}" for problem in status_report_problems()]
@@ -4401,8 +4489,8 @@ def main() -> int:
           f"{len(POSITION_PLACES)} places, the {len(POSITION_REPORT_CASES) + 1} cases of that report, its "
           f"{len(LOADED_PROBES)} probes at the places of {len(loaded_paths())} loaded paths, the "
           f"{len(LOADED_REPORT_CASES) + 1} cases of that report and its check of the paths, the "
-          f"{len(STATUS_PROBES)} statuses of target_problem(), the 3 cases of their report, the letter-case guard, "
-          f"the case loop, the 2nd look, the "
+          f"{len(STATUS_PROBES)} statuses of target_problem(), the 4 cases of their report, the letter-case guard, "
+          f"the case loop, the 2nd look, main()'s call of case_run_problems(), the "
           f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
