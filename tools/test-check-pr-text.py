@@ -420,17 +420,21 @@ def code_texts(tree):
     """{label: set of texts} for each text of code that tree, the suite's source, holds.
 
     A text is a string constant, or a sum of string constants joined with +, at any depth of
-    tree; its label is the name of the innermost function that holds it, or "module". Each
-    string that the suite module binds is a text too, labelled with the name that binds it,
-    which also labels a constant or a sum equal to it. A sum with a part that is not a string
-    constant is not read whole, wherever that part is. A text built otherwise, such as by a
-    call, a format, an f-string included, or a join, is not read whole either; each string
-    constant in it is read as a text of its own.
+    tree; its label is the name of the innermost function or async function that holds it, or
+    "module", so a class body or a lambda gives no label of its own. Each string that the suite
+    module binds is a text too, labelled with each name that binds it, and those names, not
+    the function that holds it, also label a constant or a sum equal to it. A sum with a part
+    that is not a string constant is not read whole, wherever that part is, on the left or
+    the right of a + at any depth. A text built otherwise, such as by a call, a format, an
+    f-string included, or a join, is not read whole either; each string constant in it is
+    read as a text of its own.
     """
-    bound = {value: name for name, value in globals().items() if isinstance(value, str)}
+    bound = collections.defaultdict(set)
     texts = collections.defaultdict(set)
-    for value, name in bound.items():
-        texts[name].add(value)
+    for name, value in globals().items():
+        if isinstance(value, str):
+            bound[value].add(name)
+            texts[name].add(value)
 
     def joined(node):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -446,7 +450,8 @@ def code_texts(tree):
             owner = node.name
         text = joined(node)
         if text is not None:
-            texts[bound.get(text, owner)].add(text)
+            for label in bound.get(text) or {owner}:
+                texts[label].add(text)
         for child in ast.iter_child_nodes(node):
             visit(child, owner)
 
@@ -2258,12 +2263,17 @@ class OutputAndHonestTexts(GateCase):
     def test_texts_of_code_are_read_in_each_form(self):
         # code_texts() reads a string constant, and a sum of string constants joined with +, at
         # any depth, labelled with the innermost function or async function that holds it, or
-        # "module"; and each string that the suite module binds, labelled with the name that
-        # binds it, which also labels a constant or a sum equal to it, as its docstring states.
+        # "module", so not with a class or a lambda that holds it; and each string that the
+        # suite module binds, labelled with each name that binds it, 2 names in the case of a
+        # backtick, which also label a constant or a sum equal to it, as its docstring states.
         # A constant that is not a string, a sum with a part that is not a string constant,
         # first, last or between 2 constants, a text joined by another operator, a text built
         # by a call and an f-string are not read whole, though each string constant in them
-        # is. embedded_places() passes over a text that does not parse, with SyntaxError or
+        # is. A sum written left to right that ends in such a part, read without that part,
+        # gives a text that is already read on its own, so the last place is also tried in a
+        # sum nested on the right of a +, where reading it so gives a text of its own, beside
+        # a nested sum of constants that is read whole. embedded_places() passes over a text
+        # that does not parse, with SyntaxError or
         # with ValueError, leaves out a place that guarded gives and a label with no place,
         # and gives the places of the texts of 1 label in the sorted order of the texts, and
         # those of 1 text in the order that reached() gives them, so the 2 orders differ in a
@@ -2271,9 +2281,16 @@ class OutputAndHonestTexts(GateCase):
         # that holds no text.
         empty = code_texts(probe_tree("> pass\n"))
         self.assertEqual(empty["UNMUTATED_NAME"], {UNMUTATED_NAME})
+        with self.subTest(text="string that 2 names of the module bind"):
+            self.assertEqual({name for name, texts in empty.items() if "`" in texts},
+                             {"FENCE_OPENER_BREAKERS", "CODE_SPAN_MARKS"})
         head, tail = UNMUTATED_NAME[:len("unmutated-")], UNMUTATED_NAME[len("unmutated-"):]
         for label, text, expected in (
                 ("constant at module level", "> x = 'a'\n", {"module": {"a"}}),
+                ("constant in a class body", "> class C:\n>     x = 'a'\n", {"module": {"a"}}),
+                ("constant in a class body in a function",
+                 "> def f():\n>     class C:\n>         x = 'a'\n", {"f": {"a"}}),
+                ("constant in a lambda", "> g = lambda: 'a'\n", {"module": {"a"}}),
                 ("constant in a function", "> def f():\n>     x = 'a'\n", {"f": {"a"}}),
                 ("constant in an async function", "> async def f():\n>     x = 'a'\n",
                  {"f": {"a"}}),
@@ -2291,6 +2308,10 @@ class OutputAndHonestTexts(GateCase):
                  {"module": {"a", "b"}}),
                 ("sum with a part that is not a string constant between 2 constants",
                  "> x = 'a' + y + 'b'\n", {"module": {"a", "b"}}),
+                ("sum with a part that is not a string constant last, nested on the right",
+                 "> x = 'a' + ('b' + y)\n", {"module": {"a", "b"}}),
+                ("sum of constants nested on the right", "> x = 'a' + ('b' + 'c')\n",
+                 {"module": {"a", "b", "c", "bc", "abc"}}),
                 ("text joined by another operator", "> x = 'a' % 'b'\n", {"module": {"a", "b"}}),
                 ("text built by a call", "> x = str(['a', 'b'])\n", {"module": {"a", "b"}}),
                 ("f-string", "> x = f'a{y}b'\n", {"module": {"a", "b"}}),
@@ -2333,8 +2354,10 @@ class OutputAndHonestTexts(GateCase):
         # argument and a ** argument; in each, a reference outside every call is guarded, also
         # when an assignment expression binds it, and a call, which runs when addCleanup is
         # called, is not, nor is a call inside another call or in the body of a lambda, so each
-        # such removal is found. A removal given to a bare name addCleanup, or to another
-        # method, is not guarded either.
+        # such removal is found. uncalled() cuts a call whatever it calls, so a call is tried
+        # in 3 forms, of an attribute, of a bare name and of a value that is neither, with the
+        # removal in its arguments, and in the first 2 also as the function it calls. A removal
+        # given to a bare name addCleanup, or to another method, is not guarded either.
         for label, text, expected in (
                 ("function", "> self.addCleanup(os.unlink, path)\n", []),
                 ("function, addCleanup of another object", "> case.addCleanup(os.unlink, path)\n",
@@ -2366,6 +2389,18 @@ class OutputAndHonestTexts(GateCase):
                  "> self.addCleanup(print, (done := os.unlink(path)))\n", [("os", "unlink")]),
                 ("nested call", "> self.addCleanup(print, [str(os.unlink(path))])\n",
                  [("os", "unlink")]),
+                ("called function of a bare name",
+                 "> from os import unlink\n> self.addCleanup(unlink(path))\n",
+                 [("os", "unlink")]),
+                ("call of a bare name in a later argument",
+                 "> from os import unlink\n> self.addCleanup(print, unlink(path))\n",
+                 [("os", "unlink")]),
+                ("argument of a call of an attribute",
+                 "> self.addCleanup(print, handlers.get(os.unlink))\n", [("os", "unlink")]),
+                ("argument of a call of a bare name", "> self.addCleanup(print, str(os.unlink))\n",
+                 [("os", "unlink")]),
+                ("argument of a call of a value that is neither a name nor an attribute",
+                 "> self.addCleanup(print, handlers[0](os.unlink))\n", [("os", "unlink")]),
                 ("lambda", "> self.addCleanup(lambda: os.unlink(path))\n", [("os", "unlink")])):
             with self.subTest(removal=label):
                 tree = probe_tree(text)
@@ -2374,16 +2409,24 @@ class OutputAndHonestTexts(GateCase):
                                   if id(node) not in guarded], expected)
 
     def test_listed_row_is_killed_by_failures_alone(self):
-        # killed() kills a row that RUNAWAY_SITES lists only when its cases fail with failures
-        # alone and the child hit the listed limit, whatever other limit it hit, and a row that
-        # it does not list only when they fail with failures alone, with no limit hit; and it
-        # kills no row whose cases fail on a stop of the gate but the row listed with the
-        # memory limit, the only limit that can itself show as a stop. A row listed with the
-        # wall timeout is held by the stop rule, and the sweep's own timeout is not its limit.
-        # Failures alone means exit status 1 with a report of failures and no error, so a row,
-        # listed or not, whose cases end with another exit status or fail with an error is not
-        # killed, whatever their report says; a row not listed is not killed when its child
-        # hits any limit, the memory limit, the wall timeout or the sweep's own timeout.
+        # The forms of killed() are read from its code. It tells 3 kinds of row apart: the row
+        # that RUNAWAY_SITES lists with the memory limit, a row that it lists with the wall
+        # timeout and a row that it does not list. It makes 5 tests in turn, and the first that
+        # holds gives the result: a row not listed whose child hit any limit is not killed,
+        # with every limit hit named; a listed row whose child did not hit its limit is not
+        # killed; a row whose cases saw a stop is not killed, with every stop named, unless it
+        # is listed with the memory limit, the only limit that can itself show as a stop; a row
+        # whose cases end with exit status 1 and failures alone is killed; one whose cases end
+        # with exit status 1 and an error is not; and a row that no test holds for survived.
+        # A limit is the memory limit, the wall timeout or the CPU limit of a gate child, or
+        # the memory limit, the CPU limit or the timeout of the sweep child itself, and the
+        # sweep's own timeout is not the limit of a row listed with the wall timeout. The table
+        # tries each kind of row with failures alone, an error, failures and an error, a pass
+        # and another exit status; each listed kind with its limit and another, no limit, only
+        # another limit, the sweep's own timeout and a stop; the row listed with the wall
+        # timeout also with 2 stops and with a stop and no limit; and a row not listed with each
+        # kind of limit, 2 limits, a limit and a stop, a stop and 2 stops. So a kill rule that
+        # undoes the handling of 1 of these forms fails a subtest.
         sweep = MutantSweep("test_rows_are_well_formed")
         memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
@@ -2392,21 +2435,27 @@ class OutputAndHonestTexts(GateCase):
         hit = ["the memory limit of {} bytes".format(SWEEP_MEMORY)]
         timed = ["the wall timeout of {} s".format(SPAN_TIMEOUT)]
         swept = ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)]
+        cpu = [cpu_hit(-signal.SIGKILL, GATE_CPU)]
+        own_cpu = [cpu_hit(-signal.SIGXCPU, SWEEP_CPU)]
         stop = [STOP_MARK + "the gate stopped on an unexpected error in a case"]
+        stops = stop + [STOP_MARK + "NameError"]
+        failed = "FAILED (failures=1)"
         error = "its cases fail with an error, not an assertion: "
         unhit = "a runaway site whose cases did not fail by its {}: exit {}, {}"
-        on_stop = "its cases fail on a stop of the gate: " + stop[0]
+        not_runaway = "hit a limit but is not a runaway site: "
+        on_stop = "its cases fail on a stop of the gate: "
+        unlisted = "a row not listed"
         for label, words, result, expected in (
-                ("listed, failures", memory, (1, "FAILED (failures=1)", hit, []), None),
+                ("listed, failures", memory, (1, failed, hit, []), None),
                 ("listed, failures and another limit", memory,
-                 (1, "FAILED (failures=1)", sorted(hit + timed), []), None),
-                ("listed, failures and a stop", memory, (1, "FAILED (failures=1)", hit, stop),
-                 None),
-                ("listed, failures and no limit", memory, (1, "FAILED (failures=1)", [], []),
-                 unhit.format("memory limit", 1, "FAILED (failures=1)")),
-                ("listed, failures and only another limit", memory,
-                 (1, "FAILED (failures=1)", timed, []),
-                 unhit.format("memory limit", 1, "FAILED (failures=1)")),
+                 (1, failed, sorted(hit + timed), []), None),
+                ("listed, failures and a stop", memory, (1, failed, hit, stop), None),
+                ("listed, failures and no limit", memory, (1, failed, [], []),
+                 unhit.format("memory limit", 1, failed)),
+                ("listed, failures and only another limit", memory, (1, failed, timed, []),
+                 unhit.format("memory limit", 1, failed)),
+                ("listed, the sweep's timeout", memory, (None, "timed out", swept, []),
+                 unhit.format("memory limit", None, "timed out")),
                 ("listed, an error", memory, (1, "FAILED (errors=1)", hit, []),
                  error + "FAILED (errors=1)"),
                 ("listed, failures and an error", memory,
@@ -2414,35 +2463,59 @@ class OutputAndHonestTexts(GateCase):
                  error + "FAILED (failures=1, errors=1)"),
                 ("listed, passes", memory, (0, "OK", hit, []), "survived: exit 0, OK"),
                 ("listed, failures with another exit status", memory,
-                 (2, "FAILED (failures=1)", hit, []), "survived: exit 2, FAILED (failures=1)"),
-                ("listed by the wall timeout, failures", wall,
-                 (1, "FAILED (failures=1)", timed, []), None),
+                 (2, failed, hit, []), "survived: exit 2, FAILED (failures=1)"),
+                ("listed by the wall timeout, failures", wall, (1, failed, timed, []), None),
+                ("listed by the wall timeout, failures and another limit", wall,
+                 (1, failed, sorted(hit + timed), []), None),
                 ("listed by the wall timeout, failures and a stop", wall,
-                 (1, "FAILED (failures=1)", timed, stop), on_stop),
+                 (1, failed, timed, stop), on_stop + stop[0]),
+                ("listed by the wall timeout, failures and 2 stops", wall,
+                 (1, failed, timed, stops), on_stop + "; ".join(stops)),
+                ("listed by the wall timeout, failures and no limit", wall, (1, failed, [], []),
+                 unhit.format("wall timeout", 1, failed)),
+                ("listed by the wall timeout, failures, a stop and no limit", wall,
+                 (1, failed, [], stop), unhit.format("wall timeout", 1, failed)),
+                ("listed by the wall timeout, failures and only another limit", wall,
+                 (1, failed, hit, []), unhit.format("wall timeout", 1, failed)),
                 ("listed by the wall timeout, the sweep's timeout", wall,
                  (None, "timed out", swept, []), unhit.format("wall timeout", None, "timed out")),
-                ("not listed, failures", "a row not listed", (1, "FAILED (failures=1)", [], []),
-                 None),
-                ("not listed, failures and a limit", "a row not listed",
-                 (1, "FAILED (failures=1)", timed, []),
-                 "hit a limit but is not a runaway site: " + timed[0]),
-                ("not listed, failures and a stop", "a row not listed",
-                 (1, "FAILED (failures=1)", [], stop), on_stop),
-                ("not listed, failures and the memory limit", "a row not listed",
-                 (1, "FAILED (failures=1)", hit, []),
-                 "hit a limit but is not a runaway site: " + hit[0]),
-                ("not listed, the sweep's timeout", "a row not listed",
-                 (None, "timed out", swept, []),
-                 "hit a limit but is not a runaway site: " + swept[0]),
-                ("not listed, an error", "a row not listed", (1, "FAILED (errors=1)", [], []),
+                ("listed by the wall timeout, an error", wall, (1, "FAILED (errors=1)", timed, []),
                  error + "FAILED (errors=1)"),
-                ("not listed, failures and an error", "a row not listed",
+                ("listed by the wall timeout, failures and an error", wall,
+                 (1, "FAILED (failures=1, errors=1)", timed, []),
+                 error + "FAILED (failures=1, errors=1)"),
+                ("listed by the wall timeout, passes", wall, (0, "OK", timed, []),
+                 "survived: exit 0, OK"),
+                ("listed by the wall timeout, failures with another exit status", wall,
+                 (2, failed, timed, []), "survived: exit 2, FAILED (failures=1)"),
+                ("not listed, failures", unlisted, (1, failed, [], []), None),
+                ("not listed, failures and a limit", unlisted, (1, failed, timed, []),
+                 not_runaway + timed[0]),
+                ("not listed, failures and the memory limit", unlisted, (1, failed, hit, []),
+                 not_runaway + hit[0]),
+                ("not listed, failures and the CPU limit of a gate child", unlisted,
+                 (1, failed, cpu, []), not_runaway + cpu[0]),
+                ("not listed, failures and the CPU limit of the sweep child", unlisted,
+                 (1, failed, own_cpu, []), not_runaway + own_cpu[0]),
+                ("not listed, the sweep's timeout", unlisted, (None, "timed out", swept, []),
+                 not_runaway + swept[0]),
+                ("not listed, failures and 2 limits", unlisted,
+                 (1, failed, sorted(hit + timed), []),
+                 not_runaway + "; ".join(sorted(hit + timed))),
+                ("not listed, failures, a limit and a stop", unlisted, (1, failed, hit, stop),
+                 not_runaway + hit[0]),
+                ("not listed, failures and a stop", unlisted, (1, failed, [], stop),
+                 on_stop + stop[0]),
+                ("not listed, failures and 2 stops", unlisted, (1, failed, [], stops),
+                 on_stop + "; ".join(stops)),
+                ("not listed, an error", unlisted, (1, "FAILED (errors=1)", [], []),
+                 error + "FAILED (errors=1)"),
+                ("not listed, failures and an error", unlisted,
                  (1, "FAILED (failures=1, errors=1)", [], []),
                  error + "FAILED (failures=1, errors=1)"),
-                ("not listed, passes", "a row not listed", (0, "OK", [], []),
-                 "survived: exit 0, OK"),
-                ("not listed, failures with another exit status", "a row not listed",
-                 (2, "FAILED (failures=1)", [], []), "survived: exit 2, FAILED (failures=1)")):
+                ("not listed, passes", unlisted, (0, "OK", [], []), "survived: exit 0, OK"),
+                ("not listed, failures with another exit status", unlisted,
+                 (2, failed, [], []), "survived: exit 2, FAILED (failures=1)")):
             with self.subTest(row=label):
                 sweep.run_cases = lambda root, ids, result=result: result
                 self.assertEqual(sweep.killed(words, self.tmp / "gate.py", "", [], self.tmp),
