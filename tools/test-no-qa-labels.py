@@ -505,7 +505,7 @@ ALLOWLIST = {
         "arm whichever way P5 and P6 are decided.",
         "uid and cannot run here; T11 proves the declared path is the one consulted (spoof-recorded) and that a",
         "        which T6 and T12 add). drop removes keys; overrides replace or add them.\"\"\"",
-        "        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22823, `enum_status` 23095-23100).",
+        "        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22825, `enum_status` 23095-23100).",
         "# T1. Stop with one open granted unblocked item denies, naming the id (aiqt_hooks.py:23179-23210)",
         "# T2. Nothing actionable: Stop allows (`classify_backlog` :22977-22981, `decide_yield` :23167-23168)",
         "# T3. `human-decision` (aiqt_hooks.py:22999-23011) blockers against the pending-decisions record",
@@ -521,7 +521,7 @@ ALLOWLIST = {
         "# T12. mistakes_register (OPTIONAL KEY, open point P6; aiqt_hooks.py:33132-33148)",
         "# T13. TeammateIdle mirrors the Stop decision (aiqt_hooks.py:23635-23638)",
         "# T14. Runtime posture pins on malformed stage-2 values inside a registry the hook reads as ok",
-        "# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:22831-22835)",
+        "# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:22831-22836)",
     ),
 }
 

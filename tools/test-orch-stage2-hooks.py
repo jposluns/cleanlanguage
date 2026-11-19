@@ -131,7 +131,7 @@ mutation of each kind.
 The DoctorCheckpointWrites cases prove that the doctor previews the hook writes inside the context
 build whose failure changes the verdict, without making them: with an empty backlog, a live lease
 and no init marker, a failed marker write makes the real hook deny the Stop and the scheduling call
-(aiqt_hooks.py:23387-23397), and the doctor reports the same DENY (the failure is injected
+(aiqt_hooks.py:23387-23399), and the doctor reports the same DENY (the failure is injected
 identically into both, since the hook writer leaves no file arrangement in which the checkpoint
 rewrite succeeds and the marker write fails); an entry of any type at a legacy fixed temporary
 path (<name>.tmp) is ignored by the hook writer, which creates a randomly named file of its own,
@@ -153,6 +153,7 @@ names, and proves that it refuses one added write of each kind.
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import inspect
 import io
@@ -160,6 +161,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -170,6 +172,13 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# A process that ignores SIGCHLD cannot read a child's exit status: the kernel reaps each child as it
+# exits, so subprocess gives it the status 0, and each process that it starts keeps the ignored
+# disposition across exec. This file reads the exit status of the processes that it starts, and of
+# theirs, so it sets SIGCHLD to SIG_DFL before it starts any, whatever disposition it inherited
+# (T15EnumeratorTimeout.test_stage1_contrast_when_sigchld_is_ignored).
+signal.signal(signal.SIGCHLD, signal.SIG_DFL)
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -319,25 +328,59 @@ def tree_state(path):
 
 
 # Every time limit that a test of a Stage2Harness class sets on itself, which the comment above
-# Stage2Harness counts: for each class of this file that is Stage2Harness or derives from it, and
-# each function at the top level of this file, each distinct timeout argument of a call and bound of
-# an assertLess or assertLessEqual call, keyed by its class ("" at the top level), its function (""
-# in a class body) and the source text of the value, with the least value in seconds that it takes
-# when the file runs. Stage2TimeLimitProbe requires the keys to be exactly those of the code, and the
-# value of each entry whose source is a number, an attribute of self or of a class, or a sum or
-# product of them to be the value of the code; for an attribute of self it takes the least value
-# that a Stage2Harness class of this file gives that name, as a class can take a method of another
-# (DoctorScopeMargin takes Doctor._doctor_bounded). It does not check the value of an entry whose
-# source reads a parameter, which is stated here from the callers: run_reaped's wall_clock_bound is
-# STANDIN_WALL_CLOCK_BOUND, 60, in the 2 wrapper tests and is not passed, so WALL_CLOCK_BOUND, 240,
-# elsewhere; no caller passes DoctorCheckpointWrites._doctor a timeout, so it is TIMEOUT, 30. It does
-# not find a limit written in another form, such as an elapsed time compared in an if statement, or a
-# limit inside a program string of this file, such as the hook bound and the cleanup bound of
-# REAPER_PROG, which it reads from its arguments.
+# Stage2Harness counts, keyed by its class ("" at the top level), its function ("" in a class body)
+# and the source text of the value, with the least value in seconds that it takes when the file runs.
+# Stage2TimeLimitProbe reads them from this file's source, parsed and never run. It reads each
+# function at the top level of the file and each class of the file, at any depth, that is
+# Stage2Harness, derives from it through any of its bases, or is a class of the file that such a
+# class derives from; a base is a class of the file when its name, or a dotted name down through the
+# classes nested in one, names exactly 1 class of the file. In them it reads each distinct timeout
+# argument of a call: a timeout keyword; the "timeout" key of a dict display in a ** argument; a
+# positional argument that a call of a function of this file binds to a parameter named timeout,
+# for a top-level function called by its name, a method of a class that it reads called through self
+# or cls, or a method of a class of the file called through that class; and a positional argument at
+# the place that POSITIONAL_TIMEOUTS gives for a method named wait, communicate or join of anything
+# else. It also reads the bound of an assertLess or assertLessEqual call, its second argument by
+# position or the keyword second. Where the source of such a limit reads a parameter of a function of
+# the file, it also reads, as a limit of the function that holds the call, each argument other than
+# None that a call of that function binds to that parameter, by keyword, by position or as a key of a
+# dict display in a ** argument, as run_standin passes run_reaped its wall_clock_bound, and it takes
+# the value of the limit that reads the parameter as the least, over those calls, of its value with
+# the parameter bound as the call binds it, or to its default where the call binds none; it reads an
+# or of such values as Python does. It requires the keys to be exactly those of the code, and the value
+# of each entry whose source is a number, an attribute of self or of a class, or a sum or product of
+# them to be the value of the code. For an attribute of self it takes the least value that a class
+# that it reads gives that name in its body or by an assignment to self.<name> in it, as a class can
+# take a method of another (DoctorScopeMargin takes Doctor._doctor_bounded); for an attribute of a
+# class, the value that the first class of its method resolution order among the classes of the file
+# gives the name in its body. It refuses, rather than leaves unchecked: an entry whose value it cannot
+# read and whose source reads no parameter of a function that holds the call, such as one that reads
+# a local name, or an attribute that the file also binds in another form, such as an augmented or
+# tuple assignment, an assignment to that attribute of anything but self, a del, a setattr or delattr
+# in a scope that it reads, or any setattr or delattr there whose name is not a string literal; a **
+# argument that is neither a dict display nor a parameter of a function that holds the call, whose
+# timeouts it reads at the callers; a * argument at or before the place of a timeout or bound that it
+# reads, or of a parameter that such a limit reads; a ** argument that is not a dict display in a call
+# that can bind such a parameter; and a base that it cannot resolve to 1 class of the file or to a
+# name that the file imports or that Python builds in. So it checks run_reaped's limit, which is
+# STANDIN_WALL_CLOCK_BOUND, 60, in the 2 wrapper tests, through run_standin, and WALL_CLOCK_BOUND, 240,
+# where no wall_clock_bound is passed. It does not check the value of an entry whose source reads a
+# parameter that the function holding it also binds, or that no call that it finds binds, which is
+# stated here from the callers: DoctorCheckpointWrites._doctor binds its timeout to TIMEOUT, 30, when
+# it is None, and no caller passes it one. It does not find a limit written in
+# another form, such as an elapsed time compared in an if statement or bounded by another assertion,
+# such as assertGreater; the positional timeout of any other callable from outside the file, such as
+# select.select, signal.alarm or the get of a queue; a limit in a lambda or statement at the top
+# level of the file outside every function; a binding that the source does not spell, such as one
+# through __dict__ or exec; or a limit inside a program string of this file, such as the hook bound
+# and the cleanup bound of REAPER_PROG, which it reads from its arguments.
 TEST_TIME_LIMITS = {
     ("Stage2Harness", "run_hook", "120"): 120,
     ("Stage2Harness", "run_doctor", "120"): 120,
     ("T15EnumeratorTimeout", "run_reaped", "wall_clock_bound or self.WALL_CLOCK_BOUND"): 60,
+    ("T15EnumeratorTimeout", "run_standin", "self.STANDIN_WALL_CLOCK_BOUND"): 60,
+    ("T15EnumeratorTimeout", "test_stage1_contrast_when_sigchld_is_ignored",
+     "self.NESTED_WALL_CLOCK_BOUND"): 300,
     ("Doctor", "test_preflight_writes_nothing", "120"): 120,
     ("Doctor", "_doctor_bounded", "self.SPECIAL_TIMEOUT"): 30,
     ("Doctor", "test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib", "60"): 60,
@@ -360,16 +403,19 @@ TEST_TIME_LIMITS = {
 # Timeouts of the hook. A test of a Stage2Harness class that runs the hook, through run_hook or a
 # program of this file that loads the hook and calls its functions, or that runs the doctor, which
 # loads the hook too, runs the unchanged hook with its own timeouts, as the platform runs it; this
-# file does not shorten or remove them there. Such a test requires that none of them fires:
+# file does not shorten or remove them there. Such a test fails a correct hook when one of them fires
+# and that changes what the test checks, and passes when the test requires only what the hook also
+# does after that timeout, as T04NotBefore.test_future_blocks requires only exit 0, which the hook
+# also gives when the git call of _recovery_toplevel times out. The timeouts are:
 # - the 5 s timeout of the git call in _recovery_toplevel (aiqt_hooks.py:10540), which each orch_
 #   action that a test runs, and the doctor, make to find the repo root; on a timeout they get no
 #   root, which the hook takes as out of scope;
 # - the timeout of any other git call of the hook, such as the 5 s one in _orch_resume_probes
 #   (32780) and the 10 s ones in _orch_merge_pending_findings (32853) and _orch_register_authority
 #   (32938, 32947 and 32952), which the resume audit can reach;
-# - the timeout that the registry declares for the enumerator, 5 s in stage2() (60 s, the hook's
-#   fallback, where a T14PosturePins case declares "fast"), on which the hook reports
-#   ENUMERATOR_ERROR;
+# - the timeout that the registry declares for the enumerator, which the hook passes at
+#   aiqt_hooks.py:22833, 5 s in stage2() (60 s, the hook's fallback at aiqt_hooks.py:22831, where a
+#   T14PosturePins case declares "fast"), on which the hook reports ENUMERATOR_ERROR;
 # - for a PreToolUse action run through run_hook (orch_yield_tool and orch_ask_guard here), the 8 s
 #   deadline (PRETOOL_BUDGET_SECONDS, HOOK_TIMEOUT_SECONDS 10 less 2.0, aiqt_hooks.py:347-348) in
 #   which main() runs it and past which it fails closed, exit 2.
@@ -383,7 +429,8 @@ TEST_TIME_LIMITS = {
 # (Doctor.SPECIAL_TIMEOUT, which DoctorPrecheckSites and DoctorScopeMargin take too, and
 # DoctorCheckpointWrites.TIMEOUT), 60 s or 120 s on 1 call, and 60 s or 240 s on a wrapper call of
 # T15EnumeratorTimeout, whose REAPER_PROG also bounds the hook at 120 s, or 10 s for the stand-in
-# hook, and its own cleanup at 30 s. DoctorCheckpointWrites.PROMPT, 15, is read by no check.
+# hook, and its own cleanup at 30 s, and 300 s on its nested run of test_stage1_contrast.
+# DoctorCheckpointWrites.PROMPT, 15, is read by no check.
 # Bound, derived from the 2 lists: the least hook timeout above is 5 s and the least test limit is
 # 4.5 s. So such a test can fail a correct hook on a host slow enough that the doctor call of a
 # DoctorScopeMargin case, with the os.utime before it, takes 4.5 s, while its git call in
@@ -395,10 +442,11 @@ TEST_TIME_LIMITS = {
 # and whether any other fixture time is within reach of a slow host is not established. Whether a
 # timeout that fires can also let such a test pass a wrong hook is not established. A process that
 # the hook leaves running after a run_hook call is neither detected nor stopped. The 2 wrapper tests
-# of T15EnumeratorTimeout do not run the hook, and its other 3 tests run it through
+# of T15EnumeratorTimeout do not run the hook, and its other 4 tests run it through
 # RECORDING_HOOK_PROG under REAPER_PROG, so in them no timeout of the hook can fire but the
 # enumerator's in the enforcement test, and the wrapper kills what the hook leaves running, within
-# the limits that REAPER_PROG and run_reaped state.
+# the limits that REAPER_PROG and run_reaped state; a fifth runs test_stage1_contrast in a nested
+# process of this file that starts with SIGCHLD ignored.
 class Stage2Harness(unittest.TestCase):
     """A throwaway git repo, a temporary stand-in store, and a fixture enumerator, torn down per test."""
 
@@ -586,7 +634,7 @@ class Stage2Harness(unittest.TestCase):
         return [str(p) for p in self._tmp.rglob(name)]
 
     def assert_no_enumerator_deny(self, r):
-        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22823, `enum_status` 23095-23100).
+        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22825, `enum_status` 23095-23100).
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("NO_ENUMERATOR", r.stderr)
 
@@ -1016,7 +1064,7 @@ class T09AskGuard(Stage2Harness):
         # operating-mode record whose mode key names the mode (`_orch_mode_object_ok` at
         # aiqt_hooks.py:22395 and `_orch_mode_detail` at :22503), so a JSON record that says
         # unattended denies the question and records it as pending, as the text line does
-        # (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23840-23845).
+        # (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23840-23846).
         self.write_registry(self.stage2())
         Path(self._p("operating-mode.md")).write_text(
             '{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
@@ -1277,7 +1325,7 @@ class T14PosturePins(Stage2Harness):
 
 
 # =====================================================================================================
-# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:22831-22835)
+# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:22831-22836)
 # =====================================================================================================
 # The sleeping enumerator: 1 process that sleeps 3600 s, far past the 120 s hook bound, and does
 # nothing else. It writes nothing, so a test that uses it asks it to do nothing before the declared
@@ -1462,6 +1510,67 @@ sys.argv = [hook, action]
 runpy.run_path(hook, run_name="__main__")
 """
 
+# RECORDING_HOOK_PROG with a start that makes the first call of os.fork in the hook's process do what
+# CPython's os.fork does when fork() fails: raise the os.fork audit event, then BlockingIOError
+# (EAGAIN). Every later call forks. So main()'s first child-status probe refuses with "could not fork"
+# after 1 os.fork event, and main(), as orch_stop_guard fails open, restores SIGCHLD to SIG_DFL and
+# probes again, which forks.
+FIRST_FORK_FAILS_PROG = """
+import errno, os, sys
+
+real_fork = os.fork
+forks = []
+
+
+def first_fork_fails():
+    forks.append(1)
+    if len(forks) == 1:
+        sys.audit("os.fork")
+        raise BlockingIOError(errno.EAGAIN, os.strerror(errno.EAGAIN))
+    return real_fork()
+
+
+os.fork = first_fork_fails
+""" + RECORDING_HOOK_PROG
+
+# Runs in a separate python3 -I process: argv[1] is a Python executable and argv[2:] the arguments
+# that it runs with -I. It sets SIGCHLD to SIG_IGN, writes "SIGCHLD ignored" to stdout once
+# signal.getsignal reads that back, and execs the executable, which keeps the ignored disposition
+# across exec, as a process does that a parent that ignores SIGCHLD starts.
+SIGCHLD_IGNORED_PROG = """
+import os, signal, sys
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+if signal.getsignal(signal.SIGCHLD) is signal.SIG_IGN:
+    print("SIGCHLD ignored", flush=True)
+os.execv(sys.argv[1], [sys.argv[1], "-I"] + sys.argv[2:])
+"""
+
+# The end of the note that main() writes to stderr when its first child-status probe
+# (_child_status_refusal) has refused, it has restored SIGCHLD to SIG_DFL and its second probe has read
+# a child's status (aiqt_hooks.py:38211), after the reason that the first probe gave; and the reasons
+# that the first probe gives before it calls os.fork, as SIGCHLD is not at SIG_DFL (aiqt_hooks.py:38120
+# and 38121).
+PROBE_RESTORED_NOTE = ("; SIGCHLD restored to SIG_DFL for this hook process and the probe then read "
+                       "its child's status")
+PROBE_REFUSALS_BEFORE_FORK = ("SIGCHLD is ignored (SIG_IGN) in this process",
+                              "SIGCHLD is not at its default disposition in this process")
+
+
+def probe_forks(stderr):
+    """The os.fork events that main()'s child-status probes raise in a hook run, from the run's stderr:
+    1 when it holds no restore note, as the first probe then read its child's status; with 1 note, 1
+    for the second probe, and 1 more when the reason before the note is not one that the first probe
+    gives before it calls os.fork (it could not fork, its child was reaped before it, or its child's
+    status could not be read or was not 77); None when the note is there more than once."""
+    notes = [line for line in stderr.splitlines() if line.endswith(PROBE_RESTORED_NOTE)]
+    if not notes:
+        return ["os.fork"]
+    if len(notes) > 1:
+        return None
+    reason = notes[0][:-len(PROBE_RESTORED_NOTE)]
+    return ["os.fork"] if reason.endswith(PROBE_REFUSALS_BEFORE_FORK) else ["os.fork", "os.fork"]
+
 
 class T15EnumeratorTimeout(Stage2Harness):
     HOOK_BOUND = 120
@@ -1469,6 +1578,7 @@ class T15EnumeratorTimeout(Stage2Harness):
     WALL_CLOCK_BOUND = 240
     STANDIN_HOOK_BOUND = 10
     STANDIN_WALL_CLOCK_BOUND = 60
+    NESTED_WALL_CLOCK_BOUND = 300
     DECLARED_TIMEOUTS = (0.001, 1, 7.5, 600)
 
     def run_reaped(self, cmd, report, hook_bound=None, wall_clock_bound=None):
@@ -1597,9 +1707,10 @@ class T15EnumeratorTimeout(Stage2Harness):
         # test_declared_timeout_reaches_the_enumerator_call catches each such change to 0.001, 7.5
         # or 600. A stall after the timeout, or before the hook starts the enumerator, passes if the
         # hook still exits within 120 s; the 15 s bound on the whole call that this test had at
-        # d649a24 caught such a stall,
-        # and also failed the correct hook on a loaded host. A hook that starts the enumerator other
-        # than through subprocess.run records no call and fails here even if it stops the
+        # d649a24 caught such a stall only when the whole call then passed 15 s, which a 5 s stall
+        # after the 1 s timeout need not bring about, and it also failed the correct hook when a
+        # loaded host took the whole call past 15 s. A hook that starts the enumerator other than
+        # through subprocess.run records no call and fails here even if it stops the
         # enumerator at the declared time. The unchanged hook's timeout stops only the enumerator's
         # own process, and the sleeping enumerator is 1 process, so this test says nothing about
         # processes that an enumerator starts. This test declares only 1 s, so of the changes to the
@@ -1699,29 +1810,84 @@ class T15EnumeratorTimeout(Stage2Harness):
         # - that no process that the hook started was still running when it ended (logical);
         # - that the hook's only subprocess.run call was git rev-parse --show-toplevel in
         #   _recovery_toplevel, whose timeout argument the recorder dropped (logical);
-        # - that the process starts that the recorder's audit hook saw are that call's and 1 other:
-        #   1 subprocess.Popen event with the same argv and 1 os.posix_spawn or
-        #   _posixsubprocess.fork_exec event, and 1 os.fork event, which is the child that main()
+        # - that the process starts that the recorder's audit hook saw are that call's and the
+        #   child-status probes': 1 subprocess.Popen event with the same argv and 1 os.posix_spawn
+        #   or _posixsubprocess.fork_exec event, and the os.fork events of the children that main()
         #   forks to check that it can read a child's exit status (_child_status_refusal at
         #   aiqt_hooks.py:38112-38139; the child exits at once with status 77 and main() waits for
-        #   it), and no other (logical);
+        #   it), and no other (logical). Those are the events that probe_forks reads from stderr: 1
+        #   when the first probe reads its child's status; when it refuses, main() of this fail-open
+        #   mode restores SIGCHLD to SIG_DFL, probes again and notes the restore, and then 1 for
+        #   the second probe and 1 more when the first refused after it called os.fork, as when the
+        #   fork failed, and none more when it refused as SIGCHLD was not at SIG_DFL;
         # - exit 2, NO_ENUMERATOR and no 'failed to run' in stderr (logical).
-        # So the hook started no process but its git call and that child by subprocess, os.system,
-        # os.exec*, os.posix_spawn, os.spawn* or os.fork, and left none running. A hook that also
-        # starts a process by one of those routes, such as an enumerator, and leaves it running
-        # fails the "left_running" check, and one whose process has ended fails the start check.
-        # Run directly, the hook allows the stop when the git call's 5 s timeout fires, as it can
-        # on a loaded host, and the test would then fail a correct hook. Misses: a process that
-        # native code starts without an audit event passes the start check, though the
-        # "left_running" check still fails it if it outlives the hook; and a process that the hook
-        # gets another program, such as a service manager, to start is seen by neither check.
-        record = self._tmp / "run-calls-stage1.jsonl"
+        # So the hook started no process but its git call and those children by subprocess,
+        # os.system, os.exec*, os.posix_spawn, os.spawn* or os.fork, and left none running. A hook
+        # that also starts a process by one of those routes, such as an enumerator, and leaves it
+        # running fails the "left_running" check, and one whose process has ended fails the start
+        # check. test_stage1_contrast_after_the_first_probe_fork_fails makes the same checks when
+        # the first probe's fork fails, and test_stage1_contrast_when_sigchld_is_ignored runs this
+        # test in a process of this file that starts with SIGCHLD ignored. Run directly, the hook
+        # allows the stop when the git call's 5 s timeout fires, as it can on a loaded host, and the
+        # test would then fail a correct hook. Misses: a process that native code starts without an
+        # audit event passes the start check, though the "left_running" check still fails it if it
+        # outlives the hook; a process that the hook gets another program, such as a service
+        # manager, to start is seen by neither check; and the start check takes the hook's restore
+        # note as the account of what its first probe met, so it passes a hook that writes that note
+        # and forks as it states.
+        self._stage1_contrast(RECORDING_HOOK_PROG, "stage1")
+
+    def test_stage1_contrast_after_the_first_probe_fork_fails(self):
+        # Catches: a start check that counts 1 os.fork event of the child-status probes whatever the
+        # first probe met, which fails a correct hook whose first probe could not fork. The hook runs
+        # as in test_stage1_contrast, with RECORDING_HOOK_PROG started by FIRST_FORK_FAILS_PROG, so
+        # the first os.fork call of the hook's process raises its audit event and then
+        # BlockingIOError. The test makes the checks of test_stage1_contrast, under which the start
+        # check requires 2 os.fork events, and then requires the restore note after the reason
+        # "could not fork (BlockingIOError)" in stderr, so main() probed again and its second probe
+        # read the child's status.
+        r = self._stage1_contrast(FIRST_FORK_FAILS_PROG, "first-fork-fails")
+        self.assertIn("the child-status probe could not fork (BlockingIOError)" + PROBE_RESTORED_NOTE,
+                      r.stderr)
+
+    def test_stage1_contrast_when_sigchld_is_ignored(self):
+        # Catches: a test file that keeps the SIGCHLD disposition that it inherits. When the process
+        # that starts this file ignores SIGCHLD, so does the test process, which then reads the exit
+        # status of each process that it starts as 0, and so do the wrapper and the hook, as they
+        # keep it across exec; test_stage1_contrast then failed a correct hook, reading exit 0 for
+        # its exit 2 deny. The test runs test_stage1_contrast in a nested python3 -I process of this
+        # file, started through SIGCHLD_IGNORED_PROG, so it starts with SIGCHLD ignored, and
+        # requires, in this order, that the call ended within the 300 s NESTED_WALL_CLOCK_BOUND, 60 s
+        # past the 240 s bound of the nested test's wrapper call (temporal), that SIGCHLD_IGNORED_PROG
+        # read SIG_IGN back before the exec, and that the nested run ran 1 test and exited 0
+        # (logical). Misses: a start in which SIGCHLD is at SIG_DFL with SA_NOCLDWAIT set, which this
+        # test does not arrange.
+        try:
+            r = run_doctor_recorded(self, [sys.executable, "-I", "-c", SIGCHLD_IGNORED_PROG,
+                                           sys.executable, str(Path(__file__).resolve()),
+                                           "T15EnumeratorTimeout.test_stage1_contrast"],
+                                    capture_output=True, text=True,
+                                    timeout=self.NESTED_WALL_CLOCK_BOUND)
+        except subprocess.TimeoutExpired:
+            self.fail("the nested run hit the {} s wall-clock bound".format(
+                self.NESTED_WALL_CLOCK_BOUND))
+        self.assertEqual(r.stdout, "SIGCHLD ignored\n",
+                         "precondition: the nested run starts with SIGCHLD ignored; stderr: {}".format(
+                             r.stderr))
+        self.assertIn("Ran 1 test", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def _stage1_contrast(self, prog, name):
+        """Run the hook for the stage 1 registry through prog, which is RECORDING_HOOK_PROG or ends
+        with it, in its "strip" mode under REAPER_PROG, make the checks that test_stage1_contrast
+        states, in its order, and return the completed wrapper."""
+        record = self._tmp / "run-calls-{}.jsonl".format(name)
         starts_record = Path(str(record) + ".starts")
         self.write_registry(self.stage1())
         self.arm_lease()
-        r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
-                                  str(record), "orch_stop_guard", "strip"],
-                                 self._tmp / "reaper-report-stage1.json")
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", prog, str(HOOK), str(record),
+                                  "orch_stop_guard", "strip"],
+                                 self._tmp / "reaper-report-{}.json".format(name))
         self.assert_reaped(r, rep)
         self.assertFalse(rep["left_running"], "a process that the hook started was still running "
                          "when the hook call ended; exit {}, stderr: {}".format(r.returncode,
@@ -1741,11 +1907,12 @@ class T15EnumeratorTimeout(Stage2Harness):
         others = [row["event"] for row in starts
                   if row["event"] not in ("subprocess.Popen", "os.posix_spawn",
                                           "_posixsubprocess.fork_exec")]
-        self.assertEqual((popen, len(spawns), others), ([git_argv], 1, ["os.fork"]),
+        self.assertEqual((popen, len(spawns), others), ([git_argv], 1, probe_forks(r.stderr)),
                          "process starts of the hook for the stage 1 registry: {}; hook exit {}, "
                          "stderr: {}".format(starts, r.returncode, r.stderr))
         self.assert_no_enumerator_deny(r)
         self.assertNotIn("failed to run", r.stderr)
+        return r
 
 
 # =====================================================================================================
@@ -1913,7 +2080,7 @@ class Doctor(Stage2Harness):
     # `_orch_append_jsonl` at 22162, escape-spoof.json at 33212, forced-exit.jsonl at 33160 and
     # `_orch_read_jsonl` at 22173, and forced-exit-surfaced.json at 33172). Its rewrites open no fixed
     # temporary path: _orch_write_json_atomic, via 33191 and, with attestations declared, via 33124,
-    # opens a new random <name>.<16 hex>.tmp at 22266-22267, so the doctor checks neither old fixed
+    # opens a new random <name>.<16 hex>.tmp at 22266-22268, so the doctor checks neither old fixed
     # path (test_resume_audit_ignores_the_old_fixed_temporary_paths).
     AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
                          "forced-exit-surfaced.json")
@@ -1996,7 +2163,7 @@ class Doctor(Stage2Harness):
 
     def test_resume_audit_ignores_the_old_fixed_temporary_paths(self):
         # Contrast: the hook's _orch_write_json_atomic opens a new random <name>.<16 hex>.tmp with
-        # O_EXCL (aiqt_hooks.py:22266-22267), via 33124 for the attestation snapshot and via 33191
+        # O_EXCL (aiqt_hooks.py:22266-22268), via 33124 for the attestation snapshot and via 33191
         # for the surfaced set, so a FIFO at the old fixed attestations-validated.json.tmp or
         # forced-exit-surfaced.json.tmp neither blocks the audit nor makes the doctor refuse it.
         for name in ("attestations-validated.json.tmp", "forced-exit-surfaced.json.tmp"):
@@ -2642,12 +2809,12 @@ PRECHECK_SITES = {
         "preflight", True,
         "os.stat succeeds, the lease is non-empty and fresh, holder_is_session_id is set and a "
         "session id is given",
-        "_orch_scope_live 22611-22644: stat 22617, size and freshness 22618-22632, holder 22633, "
+        "_orch_scope_live 22611-22645: stat 22617, size and freshness 22618-22632, holder 22633, "
         "session_id 22637-22638, open 22640"),
     "scope.mode": (
         "preflight", True,
-        "no earlier return: not a live lease (st.st_size 22632-22644) and not an unstattable holder lease "
-        "(22649-22652)",
+        "no earlier return: not a live lease (st.st_size 22632-22649) and not an unstattable holder lease "
+        "(22650-22652)",
         "_orch_scope_live 22654, _orch_mode_read os.open 22445"),
     "ctx.turn_state": (
         "preflight", True,
@@ -2678,7 +2845,7 @@ PRECHECK_SITES = {
         "preflight", True,
         "as the register, and os.stat succeeds on the register (git tracking is not modelled)",
         "_orch_register_authority 32921-32924 hold on a failed register open, returned by "
-        "_orch_attestation_refs at 22948-22950; anchor os.open 32962-32968"),
+        "_orch_attestation_refs at 22948-22950; anchor os.open 32962-32969"),
     "ctx.guard_events": (
         "preflight", True,
         "as the anchor (the guard-events pointer in a register row is not modelled)",
@@ -2704,14 +2871,14 @@ PRECHECK_SITES = {
         "attestations is declared and os.stat succeeds on the register (git tracking is not "
         "modelled)",
         "_orch_register_authority 32921-32924 hold on a failed register open; "
-        "anchor os.open 32962-32968 via _orch_validate_attestations 33097"),
+        "anchor os.open 32962-32969 via _orch_validate_attestations 33097"),
     "audit.mistakes_register": (
         "--resume-audit", False, "mistakes_register is declared", "33132-33134, open 32876"),
     "audit.guard_events": (
         "--resume-audit", False,
         "always checked: both opens depend on file content (a guard-events pointer, findings to "
         "record)",
-        "_orch_pointer_resolves 33020 via 33111 and 33144; _orch_guard_event 22162 via 33333-33334"),
+        "_orch_pointer_resolves 33020 via 33111 and 33144; _orch_guard_event 22162 via 33333-33335"),
     "audit.escape_spoof": (
         "--resume-audit", False, "always (lexists, then open)",
         "_orch_pending_artefact_findings 33211-33212"),
@@ -3377,7 +3544,7 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
 
     def case_mode_behind_live_lease(self):
-        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22632-22644),
+        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22632-22649),
         # before _orch_mode.
         self._reg()
         self.arm_lease()
@@ -3608,7 +3775,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def _arrange_audit_finding(self):
         # No handoff: a declared handoff that cannot be read is a finding (aiqt_hooks.py:32763-32765),
-        # so the audit records a guard event (33333-33334).
+        # so the audit records a guard event (33333-33335).
         Path(self._p("session-handoff.md")).unlink(missing_ok=True)
 
     def _assert_hook_reader(self, site, args, payload, path):
@@ -4132,7 +4299,7 @@ class DoctorCheckpointWrites(Stage2Harness):
 
     def test_a_failed_marker_write_denies_as_the_hook_does(self):
         # The hook rewrites the checkpoint, finds no marker, and its marker write fails, so it
-        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23387-23397). The pack writer
+        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23387-23399). The pack writer
         # creates its temporary file under a random name and the two writes share one directory,
         # so no arrangement of files makes the checkpoint rewrite succeed and the marker write
         # fail; the failure is therefore injected, identically, into the doctor's prediction for
@@ -5561,87 +5728,483 @@ class DoctorSourceProbe(unittest.TestCase):
             self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
 
 
-def _time_limit_value(expr, cls, classes, stage2):
-    """The value in seconds of a time limit's source expr in class cls (None at the top level): a
-    number; an attribute of self, as the least value that a class of stage2 gives that name in its
-    body; an attribute of a class of this file, as that class or the nearest of its bases gives it;
-    a sum or product of such values. None for any other expr, such as one that reads a parameter."""
-    if isinstance(expr, ast.Constant) and type(expr.value) in (int, float):
-        return expr.value
-    if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mult)):
-        left = _time_limit_value(expr.left, cls, classes, stage2)
-        right = _time_limit_value(expr.right, cls, classes, stage2)
-        if left is None or right is None:
+# The methods of a callable from outside this file whose timeout stage2_time_limits reads when it is
+# passed by position, each with the place of that argument: wait, where subprocess.Popen.wait and the
+# wait methods of threading.Event, threading.Condition and threading.Barrier take it; communicate,
+# where subprocess.Popen.communicate takes it; and join, where threading.Thread.join and
+# multiprocessing.Process.join take it, other than a join called on a string literal or on os.path.
+POSITIONAL_TIMEOUTS = {"wait": 0, "communicate": 1, "join": 0}
+FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+# The value of a limit whose source is a parameter that a call binds to None, or an or of such values.
+NO_LIMIT = object()
+
+
+def _default(function, name):
+    """The default of the parameter name of the function node, or "unknown" when it has none."""
+    args = function.args
+    positional = [a.arg for a in args.posonlyargs + args.args]
+    defaults = dict(zip(positional[len(positional) - len(args.defaults):], args.defaults))
+    defaults.update((a.arg, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None)
+    return defaults.get(name, "unknown")
+
+
+def _local_bindings(node):
+    """The names that the statement node binds in the scope that holds it: the name of a def or class
+    statement, and each name that it binds outside the functions, lambdas, classes and comprehensions
+    nested in it."""
+    if isinstance(node, FUNCTION_NODES + (ast.ClassDef,)):
+        return {node.name}
+    names, stack = set(), [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, FUNCTION_NODES + (ast.ClassDef,)):
+            names.add(n.name)
+            continue
+        if isinstance(n, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            continue
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            names.add(n.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in n.names)
+        elif isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name:
+            names.add(n.name)
+        elif isinstance(n, ast.MatchMapping) and n.rest:
+            names.add(n.rest)
+        stack.extend(ast.iter_child_nodes(n))
+    return names
+
+
+def _self_attribute(node):
+    """The name of the attribute that node is when it is an attribute of the name self, else None."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self":
+        return node.attr
+    return None
+
+
+def _parameters(node):
+    """The names of the parameters of a function or lambda node."""
+    args = node.args
+    return {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs
+            + [a for a in (args.vararg, args.kwarg) if a is not None]}
+
+
+def _decorated(function, name):
+    return any(isinstance(d, ast.Name) and d.id == name for d in function.decorator_list)
+
+
+class _Stage2Limits:
+    """What stage2_time_limits reads from a source, parsed and never run, as the comment on
+    TEST_TIME_LIMITS states: found, {key: value in seconds or None}; parameter_keys, the keys whose
+    source reads a parameter of a function that holds the call; and problems, what the source holds
+    that the reading refuses."""
+
+    def __init__(self, source):
+        tree = ast.parse(source)
+        self.problems = []
+        self.classes = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                self.classes.setdefault(node.name, []).append(node)
+        self.functions = {}
+        self.imported, self.assigned = set(), set()
+        for node in tree.body:
+            if isinstance(node, FUNCTION_NODES):
+                self.functions.setdefault(node.name, []).append(node)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                self.imported |= _local_bindings(node)
+            elif not isinstance(node, ast.ClassDef):
+                self.assigned |= _local_bindings(node)
+        every = [node for nodes in self.classes.values() for node in nodes]
+        self.bases = {}
+        for node in every:
+            self.bases[id(node)] = []
+            for base in node.bases:
+                found = self.resolve(base)
+                if found == "unresolved":
+                    self.problems.append("a base of class {} that the probe cannot resolve to 1 class "
+                                         "of the file or to a name from outside it: {}".format(
+                                             node.name, ast.unparse(base)))
+                elif found is not None:
+                    self.bases[id(node)].append(found)
+        self.related = {}
+        for node in every:
+            if self._derives(node, frozenset()):
+                self._relate(node)
+        self.body_values, self.body_unread = {}, set()
+        for node in every:
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign) and stmt.value is None:
+                    continue
+                plain = []
+                if isinstance(stmt, ast.Assign):
+                    plain = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+                elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    plain = [stmt.target.id]
+                for name in plain:
+                    self.body_values.setdefault((id(node), name), []).append(stmt.value)
+                self.body_unread |= {(id(node), name) for name in _local_bindings(stmt) - set(plain)}
+        self.attribute_unread = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+                                 and isinstance(node.ctx, (ast.Store, ast.Del))
+                                 and _self_attribute(node) is None}
+        self.every_attribute_unread = False
+        self.self_values, self.claimed, self.exprs, self.parameter_keys = {}, set(), {}, set()
+        # The functions that hold the node being read, innermost last; for each key whose source
+        # reads a parameter, [(the function or lambda that has it, its name)]; for each such function,
+        # the names of those parameters; and for each function, the bindings of those parameters at
+        # each call of it: {name: the argument, the default, or "unknown"}.
+        self.holders, self.parameter_reads, self.bound, self.calls = [], {}, {}, {}
+        self.binding = False
+        self._walk(tree)
+        # Further walks, once every limit is read, read at each call of a function of the source the
+        # arguments that it binds to the parameters that a limit of that function reads, until a walk
+        # finds no further such parameter.
+        self.binding = True
+        while True:
+            before = {key: set(names) for key, names in self.bound.items()}
+            self.calls = {}
+            self._walk(tree)
+            if self.bound == before:
+                break
+        self.found = {key: self.parameter_value(key) if key in self.parameter_reads else self.value(expr)
+                      for key, expr in self.exprs.items()}
+
+    def _walk(self, tree):
+        for node in tree.body:
+            if isinstance(node, FUNCTION_NODES):
+                self._visit(node, None, node.name, _parameters(node), False)
+            elif isinstance(node, ast.ClassDef) and id(node) in self.related:
+                self._visit(node, node, "", frozenset(), True)
+            else:
+                self._hunt(node)
+
+    def resolve(self, expr):
+        """The class of the source that expr names; None for a name from outside the source, one that
+        it imports or a built-in name that it does not bind; "unresolved" for any other expr."""
+        if isinstance(expr, ast.Name):
+            nodes = self.classes.get(expr.id, [])
+            if expr.id in self.assigned or (nodes and expr.id in self.imported):
+                return "unresolved"
+            if len(nodes) == 1:
+                return nodes[0]
+            if not nodes and (expr.id in self.imported or hasattr(builtins, expr.id)):
+                return None
+            return "unresolved"
+        if isinstance(expr, ast.Attribute):
+            owner = self.resolve(expr.value)
+            if owner is None or owner == "unresolved":
+                return owner
+            nested = [n for n in owner.body if isinstance(n, ast.ClassDef) and n.name == expr.attr]
+            return nested[0] if len(nested) == 1 else "unresolved"
+        return "unresolved"
+
+    def _derives(self, node, seen):
+        if id(node) in seen:
+            return False
+        if node.name == "Stage2Harness" and len(self.classes["Stage2Harness"]) == 1:
+            return True
+        return any(self._derives(base, seen | {id(node)}) for base in self.bases[id(node)])
+
+    def _relate(self, node):
+        self.related[id(node)] = node
+        for base in self.bases[id(node)]:
+            if id(base) not in self.related:
+                self._relate(base)
+
+    def mro(self, node, seen=frozenset()):
+        """The method resolution order of node among the classes of the source, as Python's
+        linearization of bases gives it with every base from outside the source left out; None if
+        there is none."""
+        if id(node) in seen:
             return None
-        return left + right if isinstance(expr.op, ast.Add) else left * right
-    if not (isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name)):
-        return None
-    owners = ([classes[name] for name in stage2] if expr.value.id == "self"
-              else [classes[expr.value.id]] if expr.value.id in classes else [])
-    values = []
-    for owner in owners:
-        seen = set()
-        while owner is not None and owner.name not in seen:
-            seen.add(owner.name)
-            found = [node.value for node in owner.body if isinstance(node, ast.Assign)
-                     and any(isinstance(t, ast.Name) and t.id == expr.attr for t in node.targets)]
-            if found:
-                value = _time_limit_value(found[-1], owner, classes, stage2)
-                if value is not None:
-                    values.append(value)
-                break
-            if expr.value.id == "self":
-                break
-            owner = next((classes[b.id] for b in owner.bases
-                          if isinstance(b, ast.Name) and b.id in classes), None)
-    return min(values) if values else None
+        heads = [self.mro(base, seen | {id(node)}) for base in self.bases[id(node)]]
+        if any(head is None for head in heads):
+            return None
+        seqs = [list(head) for head in heads] + [list(self.bases[id(node)])]
+        out = [node]
+        while any(seqs):
+            seqs = [seq for seq in seqs if seq]
+            head = next((seq[0] for seq in seqs if not any(seq[0] in other[1:] for other in seqs)), None)
+            if head is None:
+                return None
+            out.append(head)
+            seqs = [seq[1:] if seq[0] is head else seq for seq in seqs]
+        return out
+
+    def _hunt(self, node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef) and id(child) in self.related:
+                self._visit(child, child, "", frozenset(), True)
+            else:
+                self._hunt(child)
+
+    def _visit(self, node, cls, function, params, body):
+        """Read node, which lies in class cls (None at the top level) and function function ("" in the
+        class body), with the parameters params of the functions that hold it, and each node in it;
+        body is True where a def defines a function of cls."""
+        holder = isinstance(node, FUNCTION_NODES + (ast.Lambda,))
+        if holder:
+            self.holders.append(node)
+        self._read(node, cls, function, params)
+        self._visit_children(node, cls, function, params, body)
+        if holder:
+            self.holders.pop()
+
+    def _visit_children(self, node, cls, function, params, body):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef) and id(child) in self.related:
+                self._visit(child, child, "", params, True)
+            elif isinstance(child, FUNCTION_NODES):
+                self._visit(child, cls, child.name if body else function, params | _parameters(child),
+                            False)
+            elif isinstance(child, ast.Lambda):
+                self._visit(child, cls, function, params | _parameters(child), False)
+            elif isinstance(child, ast.ClassDef):
+                self._visit(child, cls, function, params, False)
+            else:
+                self._visit(child, cls, function, params, body)
+
+    def _read(self, node, cls, function, params):
+        if self.binding:
+            if isinstance(node, ast.Call):
+                self._read_bindings(node, cls, function, params)
+            return
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                name = _self_attribute(target)
+                if name is not None:
+                    self.self_values.setdefault(name, []).append(node.value)
+                    self.claimed.add(id(target))
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)) \
+                and _self_attribute(node) is not None and id(node) not in self.claimed:
+            self.attribute_unread.add(node.attr)
+        elif isinstance(node, ast.Call):
+            self._read_call(node, cls, function, params)
+
+    def _read_call(self, node, cls, function, params):
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in ("setattr", "delattr") and len(node.args) >= 2:
+            if isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                self.attribute_unread.add(node.args[1].value)
+            else:
+                self.every_attribute_unread = True
+        exprs = [kw.value for kw in node.keywords if kw.arg == "timeout"]
+        for kw in node.keywords:
+            if kw.arg is None:
+                exprs += self._unpacked(kw.value, params)
+        callees = self._callees(func)
+        for callee, skip in callees:
+            names = [a.arg for a in callee.args.posonlyargs + callee.args.args][skip:]
+            if "timeout" in names:
+                exprs += self._positional(node, names.index("timeout"), callee.name)
+        if not callees and isinstance(func, ast.Attribute) and func.attr in POSITIONAL_TIMEOUTS and not (
+                func.attr == "join" and (ast.unparse(func.value) == "os.path" or (
+                    isinstance(func.value, ast.Constant) and isinstance(func.value.value, (str, bytes))))):
+            exprs += self._positional(node, POSITIONAL_TIMEOUTS[func.attr], func.attr)
+        if isinstance(func, ast.Attribute) and func.attr in ("assertLess", "assertLessEqual"):
+            exprs += self._positional(node, 1, func.attr)
+            exprs += [kw.value for kw in node.keywords if kw.arg == "second"]
+        self._add(exprs, cls, function, params)
+
+    def _add(self, exprs, cls, function, params):
+        for expr in exprs:
+            key = ("" if cls is None else cls.name, function, ast.unparse(expr))
+            self.exprs.setdefault(key, expr)
+            read = [n.id for n in ast.walk(expr)
+                    if isinstance(n, ast.Name) and n.id in params - {"self", "cls"}]
+            if read:
+                self.parameter_keys.add(key)
+            for name in read:
+                holder = next(h for h in reversed(self.holders) if name in _parameters(h))
+                if (holder, name) not in self.parameter_reads.setdefault(key, []):
+                    self.parameter_reads[key].append((holder, name))
+                self.bound.setdefault(id(holder), set()).add(name)
+
+    def _read_bindings(self, node, cls, function, params):
+        """Read at the call node, for each function of the source that it can run, the argument that
+        it binds to each parameter that a limit of that function reads, as a limit of the function
+        that holds the call; record the bindings of the call, with the default of each parameter
+        that it does not bind, for the value of that limit."""
+        for callee, skip in self._callees(node.func):
+            names = [a.arg for a in callee.args.posonlyargs + callee.args.args][skip:]
+            binding = {}
+            for name in sorted(self.bound.get(id(callee), ())):
+                exprs = [kw.value for kw in node.keywords if kw.arg == name]
+                for kw in node.keywords:
+                    if kw.arg is None and isinstance(kw.value, ast.Dict):
+                        exprs += [value for key, value in zip(kw.value.keys, kw.value.values)
+                                  if isinstance(key, ast.Constant) and key.value == name]
+                    elif kw.arg is None:
+                        self._refuse("a ** argument that can bind {} of {}: {}".format(
+                            name, callee.name, ast.unparse(node)))
+                        binding[name] = "unknown"
+                if name in names:
+                    place = names.index(name)
+                    if any(isinstance(arg, ast.Starred) for arg in node.args[:place + 1]):
+                        self._refuse("a * argument that can bind {} of {}: {}".format(
+                            name, callee.name, ast.unparse(node)))
+                        binding[name] = "unknown"
+                    elif place < len(node.args):
+                        exprs.append(node.args[place])
+                self._add([e for e in exprs if not (isinstance(e, ast.Constant) and e.value is None)],
+                          cls, function, params)
+                if name not in binding:
+                    binding[name] = exprs[0] if len(exprs) == 1 else (
+                        _default(callee, name) if not exprs else "unknown")
+            self.calls.setdefault(id(callee), []).append(binding)
+
+    def _refuse(self, problem):
+        if problem not in self.problems:
+            self.problems.append(problem)
+
+    def parameter_value(self, key):
+        """The value in seconds of the limit key, whose source reads a parameter: the least, over
+        each call of the source of each function that has such a parameter, of the value of the
+        source with each parameter bound as that call binds it; None when no call is found, when
+        the function also binds the parameter itself, or when a value cannot be read."""
+        reads = self.parameter_reads[key]
+        holders = {id(holder): holder for holder, _name in reads}
+        if len(holders) != 1:
+            return None
+        holder = next(iter(holders.values()))
+        names = {name for _holder, name in reads}
+        if any(isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)) and n.id in names
+               for n in ast.walk(holder)):
+            return None
+        values = [self._evaluate(self.exprs[key], binding) for binding in self.calls.get(id(holder), [])]
+        if not values or any(v is None or v is NO_LIMIT for v in values):
+            return None
+        return min(values)
+
+    def _evaluate(self, expr, binding):
+        """The value of expr with the parameters of binding bound: a number; NO_LIMIT for a parameter
+        bound to None, or an or of operands each NO_LIMIT or 0; None for what cannot be read."""
+        if isinstance(expr, ast.Name) and expr.id in binding:
+            bound = binding[expr.id]
+            if bound == "unknown":
+                return None
+            if isinstance(bound, ast.Constant) and bound.value is None:
+                return NO_LIMIT
+            return self.value(bound)
+        if isinstance(expr, ast.BoolOp) and isinstance(expr.op, ast.Or):
+            for operand in expr.values:
+                value = self._evaluate(operand, binding)
+                if value is None:
+                    return None
+                if value is not NO_LIMIT and value:
+                    return value
+            return NO_LIMIT
+        if any(isinstance(n, ast.Name) and n.id in binding for n in ast.walk(expr)):
+            return None
+        return self.value(expr)
+
+    def _unpacked(self, expr, params):
+        """The timeout values of the ** argument expr: the "timeout" value of a dict display, none for
+        a parameter of a function that holds the call, whose callers the probe reads."""
+        if isinstance(expr, ast.Dict):
+            out = []
+            for key, value in zip(expr.keys, expr.values):
+                if key is None:
+                    out += self._unpacked(value, params)
+                elif not isinstance(key, ast.Constant):
+                    self.problems.append("a key of a ** argument that the probe cannot read: {}".format(
+                        ast.unparse(key)))
+                elif key.value == "timeout":
+                    out.append(value)
+            return out
+        if isinstance(expr, ast.Name) and expr.id in params - {"self", "cls"}:
+            return []
+        self.problems.append("a ** argument that the probe cannot read: {}".format(ast.unparse(expr)))
+        return []
+
+    def _positional(self, node, place, name):
+        for arg in node.args[:place + 1]:
+            if isinstance(arg, ast.Starred):
+                self.problems.append("a * argument that can reach the timeout or bound of {}: {}".format(
+                    name, ast.unparse(node)))
+                return []
+        return [node.args[place]] if place < len(node.args) else []
+
+    def _callees(self, func):
+        """[(function, the number of leading parameters that the call fills itself)] for each function of
+        the source that a call of func can run: a top-level function by its name, a method of a related
+        class through self or cls, or a method of a class of the source through that class."""
+        if isinstance(func, ast.Name):
+            return [(f, 0) for f in self.functions.get(func.id, [])]
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+            return []
+        if func.value.id in ("self", "cls"):
+            return [(f, 0 if _decorated(f, "staticmethod") else 1) for owner in self.related.values()
+                    for f in owner.body if isinstance(f, FUNCTION_NODES) and f.name == func.attr]
+        owner = self.resolve(func.value)
+        for klass in (self.mro(owner) or []) if owner not in (None, "unresolved") else []:
+            defs = [f for f in klass.body if isinstance(f, FUNCTION_NODES) and f.name == func.attr]
+            if defs:
+                return [(f, 1 if _decorated(f, "classmethod") else 0) for f in defs]
+        return []
+
+    def value(self, expr, seen=frozenset()):
+        """The value in seconds of a time limit's source expr: a number; an attribute of self, as the
+        least value that a related class gives that name in its body or that a method of one assigns
+        to self.<name>; an attribute of a class of the source, as the first class of its method
+        resolution order that binds the name gives it in its body; a sum or product of such values.
+        None for any other expr, or for a name that the source also binds in a form that is not read."""
+        if isinstance(expr, ast.Constant) and type(expr.value) in (int, float):
+            return expr.value
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mult)):
+            left, right = self.value(expr.left, seen), self.value(expr.right, seen)
+            if left is None or right is None:
+                return None
+            return left + right if isinstance(expr.op, ast.Add) else left * right
+        if not (isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name)):
+            return None
+        name = expr.attr
+        if self.every_attribute_unread or name in self.attribute_unread:
+            return None
+        if expr.value.id == "self":
+            reading = ("self", name)
+            exprs = []
+            for owner in self.related.values():
+                if (id(owner), name) in self.body_unread:
+                    return None
+                exprs += self.body_values.get((id(owner), name), [])[-1:]
+            exprs += self.self_values.get(name, [])
+        else:
+            owner = self.resolve(expr.value)
+            order = None if owner in (None, "unresolved") else self.mro(owner)
+            if order is None:
+                return None
+            reading = (id(owner), name)
+            exprs = []
+            for klass in order:
+                if (id(klass), name) in self.body_unread:
+                    return None
+                if (id(klass), name) in self.body_values:
+                    exprs = self.body_values[(id(klass), name)][-1:]
+                    break
+        if reading in seen:
+            return None
+        values = [self.value(e, seen | {reading}) for e in exprs]
+        return min(values) if values and None not in values else None
 
 
 def stage2_time_limits(source):
     """{(class, function, source text of the value): value in seconds or None} for every time limit
     that TEST_TIME_LIMITS states it lists, found in source as that comment says."""
-    tree = ast.parse(source)
-    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-
-    def derives(cls):
-        seen = set()
-        while cls is not None and cls.name not in seen:
-            if cls.name == "Stage2Harness":
-                return True
-            seen.add(cls.name)
-            cls = next((classes[b.id] for b in cls.bases if isinstance(b, ast.Name) and b.id in classes),
-                       None)
-        return False
-
-    stage2 = [name for name, cls in classes.items() if derives(cls)]
-    scopes = [(None, node.name, node) for node in tree.body
-              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    for name in stage2:
-        for node in classes[name].body:
-            scopes.append((classes[name], node.name if isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "", node))
-    found = {}
-    for cls, function, scope in scopes:
-        for node in ast.walk(scope):
-            if not isinstance(node, ast.Call):
-                continue
-            exprs = [kw.value for kw in node.keywords if kw.arg == "timeout"]
-            if isinstance(node.func, ast.Attribute) and node.func.attr in ("assertLess", "assertLessEqual") \
-                    and len(node.args) >= 2:
-                exprs.append(node.args[1])
-            for expr in exprs:
-                key = ("" if cls is None else cls.name, function, ast.unparse(expr))
-                found[key] = _time_limit_value(expr, cls, classes, stage2)
-    return found
+    return _Stage2Limits(source).found
 
 
 def stage2_time_limit_mismatches(source, table):
-    """What differs between table, in the form of TEST_TIME_LIMITS, and the time limits of source, and
-    between the comment directly above class Stage2Harness and the least value of table: [] when
-    nothing does."""
-    found = stage2_time_limits(source)
-    out = ["not in the table: {!r}".format(key) for key in sorted(set(found) - set(table))]
+    """What differs between table, in the form of TEST_TIME_LIMITS, and the time limits of source, what
+    of source the probe refuses, and what differs between the comment directly above class
+    Stage2Harness and the least value of table: [] when nothing does."""
+    limits = _Stage2Limits(source)
+    found = limits.found
+    out = list(limits.problems)
+    out += ["not in the table: {!r}".format(key) for key in sorted(set(found) - set(table))]
     out += ["not in the code: {!r}".format(key) for key in sorted(set(table) - set(found))]
+    out += ["{!r}: the probe cannot read its value in the code".format(key)
+            for key in sorted(set(found) & set(table))
+            if found[key] is None and key not in limits.parameter_keys]
     out += ["{!r}: the table gives {}, the code {}".format(key, table[key], found[key])
             for key in sorted(set(found) & set(table))
             if found[key] is not None and found[key] != table[key]]
@@ -5697,6 +6260,157 @@ class Stage2TimeLimitProbe(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertNotEqual(text, source, "precondition: the change was made")
                 self.assertNotEqual(stage2_time_limit_mismatches(text, TEST_TIME_LIMITS), [])
+
+    def test_it_reads_each_form_and_refuses_what_it_cannot_read(self):
+        # For each form that the comment on TEST_TIME_LIMITS says the probe reads or refuses, a change
+        # planted into a copy of this file's source, parsed and never run, and 2 checks: the change
+        # must be refused under the first table, and the control must pass under the second. The
+        # control is the change itself under TEST_TIME_LIMITS with the key that the change adds and
+        # the value that the probe must read for it, or a copy that differs from the change only in
+        # the form, under a table that holds the same keys. So a probe that reads the form under
+        # another key or value, or not at all, or refuses it for another reason, fails a check.
+        source = Path(__file__).read_text(encoding="utf-8")
+        table = TEST_TIME_LIMITS
+
+        def plant(*lines):
+            return source + "\n\n" + "\n".join(lines) + "\n"
+
+        def method(cls, bases, *body):
+            return plant("class {}({}):".format(cls, bases), "    def test_planted(self):",
+                         *["        " + line for line in body])
+
+        def plus(**entries):
+            return {**table, **{tuple(key.split("|")): value for key, value in entries.items()}}
+
+        special = {key: 20 for key in table if key[2] == "self.SPECIAL_TIMEOUT"}
+        self.assertEqual(len(special), 3, "precondition: 3 limits read self.SPECIAL_TIMEOUT")
+        reaped = "T15EnumeratorTimeout|run_reaped|wall_clock_bound or self.WALL_CLOCK_BOUND"
+        self.assertEqual(table.get(tuple(reaped.split("|"))), 60,
+                         "precondition: run_reaped's wall-clock bound is a limit of 60 s")
+        in_setup = ("    def setUp(self):", "        super().setUp()")
+        two = ("", "")
+        local = method("PlantedLocal", "Stage2Harness", "limit = 7", "subprocess.run([], timeout=limit)")
+        forms = [
+            # (form, change, table that refuses it, control, table that passes the control)
+            ("a positional timeout of a method of this file",
+             method("PlantedPositional", "DoctorCheckpointWrites", "self._doctor('planted', 7)"), table,
+             None, plus(**{"PlantedPositional|test_planted|7": 7})),
+            ("a positional timeout of a top-level function of this file",
+             plant("def planted_run(argv, timeout):",
+                   "    return run_doctor_recorded(None, argv, timeout=timeout)", *two,
+                   "class PlantedPositional(Stage2Harness):", "    def test_planted(self):",
+                   "        planted_run([], 8)"),
+             plus(**{"|planted_run|timeout": 8}), None,
+             plus(**{"|planted_run|timeout": 8, "PlantedPositional|test_planted|8": 8})),
+            ("a timeout in a dict display of a ** argument",
+             method("PlantedKeywords", "Stage2Harness", "subprocess.run([], **{'timeout': 9})"), table,
+             None, plus(**{"PlantedKeywords|test_planted|9": 9})),
+            ("a key of a dict display in a ** argument that is not a literal",
+             method("PlantedKeywords", "Stage2Harness", "name = 'timeout'",
+                    "subprocess.run([], **{name: 9})"), table,
+             method("PlantedKeywords", "Stage2Harness", "name = 'timeout'",
+                    "subprocess.run([], **{'other': 9})"), table),
+            ("a ** argument that is neither a dict display nor a parameter",
+             method("PlantedKeywords", "Stage2Harness", "options = {}", "subprocess.run([], **options)"),
+             table, plant("class PlantedKeywords(Stage2Harness):", "    def planted(self, **options):",
+                          "        subprocess.run([], **options)"), table),
+            ("a positional timeout of wait",
+             method("PlantedWait", "Stage2Harness", "subprocess.Popen([]).wait(6)"), table,
+             None, plus(**{"PlantedWait|test_planted|6": 6})),
+            ("a positional timeout of communicate",
+             method("PlantedWait", "Stage2Harness", "subprocess.Popen([]).communicate(None, 6.5)"),
+             table, None, plus(**{"PlantedWait|test_planted|6.5": 6.5})),
+            ("a positional timeout of join",
+             method("PlantedWait", "Stage2Harness", "threading.Thread(target=print).join(5.5)"), table,
+             None, plus(**{"PlantedWait|test_planted|5.5": 5.5})),
+            ("a * argument that can reach a positional timeout",
+             method("PlantedWait", "Stage2Harness", "limits = [6]", "subprocess.Popen([]).wait(*limits)"),
+             table, method("PlantedWait", "Stage2Harness", "limits = [6]", "subprocess.Popen([]).wait()"),
+             table),
+            ("an assertLess bound passed by keyword",
+             method("PlantedBound", "Stage2Harness", "self.assertLess(1, second=8.5)"), table,
+             None, plus(**{"PlantedBound|test_planted|8.5": 8.5})),
+            ("a value that a method assigns to an attribute of self",
+             plant("class PlantedSelf(Doctor):", *in_setup, "        self.SPECIAL_TIMEOUT = 20"), table,
+             None, {**table, **special}),
+            ("an augmented assignment to an attribute of self",
+             plant("class PlantedSelf(Doctor):", *in_setup, "        self.SPECIAL_TIMEOUT += 1"), table,
+             plant("class PlantedSelf(unittest.TestCase):", "    def setUp(self):",
+                   "        self.SPECIAL_TIMEOUT += 1"), table),
+            ("setattr with the name of an attribute",
+             plant("class PlantedSelf(Doctor):", *in_setup,
+                   "        setattr(self, 'SPECIAL_TIMEOUT', 20)"), table,
+             plant("class PlantedSelf(unittest.TestCase):", "    def setUp(self):",
+                   "        setattr(self, 'SPECIAL_TIMEOUT', 20)"), table),
+            ("setattr with a name that is not a string literal",
+             plant("class PlantedSelf(Doctor):", *in_setup, "        name = 'SPECIAL_TIMEOUT'",
+                   "        setattr(self, name, 20)"), table,
+             plant("class PlantedSelf(unittest.TestCase):", "    def setUp(self):",
+                   "        name = 'SPECIAL_TIMEOUT'", "        setattr(self, name, 20)"), table),
+            ("an assignment to an attribute of a class outside its body",
+             plant("Doctor.SPECIAL_TIMEOUT = 20"), table, plant("Doctor.PLANTED_NAME = 20"), table),
+            ("a value that is not a number, an attribute, a sum or product of them, or a parameter",
+             local, plus(**{"PlantedLocal|test_planted|limit": 7}),
+             plant("class PlantedLocal(Stage2Harness):", "    def test_planted(self, limit=7):",
+                   "        subprocess.run([], timeout=limit)"),
+             plus(**{"PlantedLocal|test_planted|limit": 7})),
+            ("a second base",
+             plant("class PlantedMixin:", "    pass", *two, "class PlantedTwo(PlantedMixin, Stage2Harness):",
+                   "    def test_planted(self):", "        self.assertLess(1, 5.5)"), table,
+             None, plus(**{"PlantedTwo|test_planted|5.5": 5.5})),
+            ("a limit in a class that a Stage2Harness class derives from",
+             plant("class PlantedMixin:", "    def planted(self):", "        subprocess.run([], timeout=6)",
+                   *two, "class PlantedTwo(PlantedMixin, Stage2Harness):", "    pass"), table,
+             None, plus(**{"PlantedMixin|planted|6": 6})),
+            ("a class attribute that a later base gives",
+             plant("class PlantedBase:", "    LIMIT = 7", *two,
+                   "class PlantedTwo(Stage2Harness, PlantedBase):", "    def test_planted(self):",
+                   "        subprocess.run([], timeout=PlantedTwo.LIMIT)"),
+             plus(**{"PlantedTwo|test_planted|PlantedTwo.LIMIT": 8}),
+             None, plus(**{"PlantedTwo|test_planted|PlantedTwo.LIMIT": 7})),
+            ("a nested class",
+             plant("class PlantedOuter:", "    class PlantedInner(Stage2Harness):",
+                   "        def test_planted(self):", "            self.assertLess(1, 6.5)"), table,
+             None, plus(**{"PlantedInner|test_planted|6.5": 6.5})),
+            ("a base that 2 classes of the file share",
+             plant("class PlantedShared(Stage2Harness):", "    pass", *two, "class PlantedOuter:",
+                   "    class PlantedShared:", "        pass", *two, "class PlantedChild(PlantedShared):",
+                   "    def test_planted(self):", "        self.assertLess(1, 7.5)"),
+             plus(**{"PlantedChild|test_planted|7.5": 7.5}),
+             plant("class PlantedShared(Stage2Harness):", "    pass", *two, "class PlantedOuter:",
+                   "    class PlantedOther:", "        pass", *two, "class PlantedChild(PlantedShared):",
+                   "    def test_planted(self):", "        self.assertLess(1, 7.5)"),
+             plus(**{"PlantedChild|test_planted|7.5": 7.5})),
+            ("a base that the probe cannot resolve",
+             plant("PlantedBase = Stage2Harness", *two, "class PlantedAlias(PlantedBase):",
+                   "    def test_planted(self):", "        self.assertLess(1, 7.5)"), table,
+             plant("class PlantedAlias(Stage2Harness):", "    def test_planted(self):",
+                   "        self.assertLess(1, 7.5)"),
+             plus(**{"PlantedAlias|test_planted|7.5": 7.5})),
+            ("a value that a call binds by keyword to a parameter that a limit reads",
+             method("PlantedCaller", "T15EnumeratorTimeout",
+                    "self.run_reaped([], None, wall_clock_bound=5)"),
+             table, None, plus(**{"PlantedCaller|test_planted|5": 5, reaped: 5})),
+            ("a value that a call binds by position to a parameter that a limit reads",
+             method("PlantedCaller", "T15EnumeratorTimeout", "self.run_reaped([], None, None, 5.5)"),
+             table, None, plus(**{"PlantedCaller|test_planted|5.5": 5.5, reaped: 5.5})),
+            ("a * argument that can bind a parameter that a limit reads",
+             method("PlantedCaller", "T15EnumeratorTimeout", "bounds = [None, 5]",
+                    "self.run_reaped([], None, *bounds)"), table,
+             method("PlantedCaller", "T15EnumeratorTimeout", "bounds = [None, 5]",
+                    "self.run_reaped([], None, None, None, *bounds)"), table),
+            ("a ** parameter that can bind a parameter that a limit reads",
+             plant("class PlantedCaller(T15EnumeratorTimeout):", "    def planted(self, **options):",
+                   "        self.run_reaped([], None, **options)"), table,
+             plant("class PlantedCaller(T15EnumeratorTimeout):", "    def planted(self, **options):",
+                   "        self.run_reaped([], None, **{'other': options})"), table),
+        ]
+        for form, change, refusing, control, passing in forms:
+            with self.subTest(form=form):
+                self.assertNotEqual(change, source, "precondition: the change was made")
+                self.assertNotEqual(stage2_time_limit_mismatches(change, refusing), [])
+                self.assertEqual(stage2_time_limit_mismatches(change if control is None else control,
+                                                              passing), [])
 
 
 # Added once every definition of the module is made; an audit hook cannot be removed.
