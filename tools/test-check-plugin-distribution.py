@@ -10,9 +10,10 @@ the gate's REPO_ROOT pointed at it. expect runs the gate's main and requires
 the exit status, each text given and the lines of that status (assert_lines).
 test_gate_runs_as_a_command and the 2 cases named
 test_keys_outside_read_keys_change_no_output each run a copy of the gate as a
-command, test_loading_a_gate_that_raises_stops_the_test and
-test_loading_a_gate_that_prints_stops_the_test each run a copy of this test as
-a command, and RepositoryTreeTest runs the gate on the repository itself. The
+command, test_loading_a_gate_that_raises_stops_the_test,
+test_loading_a_gate_that_prints_stops_the_test and
+test_a_cached_gate_is_not_run each run a copy of this test as a command, and
+RepositoryTreeTest runs the gate on the repository itself. The
 permission cases are skipped when the test runs as root, the case of a file
 swapped for a FIFO where os.mkfifo or signal.SIGALRM is missing, and the case
 of a source that reaches a folder named like the plugin's own but for letter
@@ -23,8 +24,13 @@ and of tools/skill-version.py, the extractor, the 2 files of the repository
 that the gate's command executes, and compares their sha256 with
 EXECUTED_SHA256; on a mismatch it stops with exit 1 before any case runs,
 naming the file and both digests, so no byte of either file runs in this
-process. The comparison must stay before the load. Renew a digest only after
-reading the diff of its file since its last reviewed revision. What the
+process. The gate is then compiled from the bytes that were hashed and run as
+that code, never through the import system's loader, which runs a .pyc under
+tools/__pycache__ in place of the source whenever the .pyc's header passes the
+loader's check, and never compares the .pyc's code with the source;
+test_a_cached_gate_is_not_run holds this for a .pyc in each of the 3 modes of
+invalidation. The comparison must stay before the load. Renew a digest only
+after reading the diff of its file since its last reviewed revision. What the
 digest shows, and no more, is item 1 of the residual below.
 
 The gate's rule for keys is held where the gate decodes, not by watching
@@ -55,9 +61,12 @@ the text the gate shows of an object value lists only its kept pairs.
   object: every other letter-case spelling, the key with a trailing space,
   the key with a zero-width space after its first letter, and, for a key
   that holds a k or an s, the key with U+212A for its k, or else U+017F for
-  its first s. The run on the tree as it is must give the exit status and
-  the last line written out in the case, and the run on the perturbed tree
-  the same exit status and every line the same as that run. The trees:
+  its first s: 5 kinds, 4,571 spellings in each object, a count written out
+  in the case. The run on the tree as it is must give the exit status and
+  the last line written out in the case, on the repository's copy with the
+  version that the case reads from that copy's Claude plugin manifest, and
+  the run on the perturbed tree the same exit status and every line the same
+  as that run. The trees:
   setUp's, one whose vendored source is an object, and a copy of the files
   the gate reads in the repository, with the gate copied beside the
   extractor. E's own reach is held: each file it perturbs, read back, has
@@ -106,6 +115,7 @@ import importlib.util
 import io
 import itertools
 import json
+import marshal
 import os
 import shutil
 import signal
@@ -157,8 +167,10 @@ EXTRACTOR_SHA256 = "d8eda8734bd86c071bcc53662fbdf90cbbb6e9b2656674be1e37f24b97fb
 EXECUTED_SHA256 = {MODULE_PATH: GATE_SHA256, REAL_EXTRACTOR: EXTRACTOR_SHA256}
 # The digest check. It must stay before the load below, so that no byte of either file runs in this process
 # unless the file is the one a reviewer accepted.
+_executed = {}
 for _path, _reviewed in EXECUTED_SHA256.items():
-    _found = hashlib.sha256(_path.read_bytes()).hexdigest()
+    _executed[_path] = _path.read_bytes()
+    _found = hashlib.sha256(_executed[_path]).hexdigest()
     if _found != _reviewed:
         raise SystemExit(f"{_path} has the sha256 {_found}, not the reviewed {_reviewed}: read the diff of the "
                          "file since its last reviewed revision before renewing the digest")
@@ -167,7 +179,10 @@ gate = importlib.util.module_from_spec(spec)
 _loaded = io.StringIO()
 try:
     with contextlib.redirect_stdout(_loaded), contextlib.redirect_stderr(_loaded):
-        spec.loader.exec_module(gate)
+        # The code of the bytes hashed above, compiled here as the loader compiles a source, and never a .pyc
+        # under tools/__pycache__, which spec.loader.exec_module would run in their place without comparing
+        # its code with them.
+        exec(compile(_executed[MODULE_PATH], str(MODULE_PATH), "exec", dont_inherit=True), vars(gate))
 except BaseException as error:
     # A gate that raises while it loads would end this test before any case runs, with the gate's own
     # exit status; stop with exit 1 instead, whatever making the exception's name or message does.
@@ -875,7 +890,12 @@ class PluginDistributionTest(unittest.TestCase):
         # and every line the same as that run. The trees: setUp's, which passes, and one whose vendored
         # entry's source is an object, which fails and shows only the kept pairs of that object. E's own
         # reach is held too: each of the 6 files, read back once all are perturbed, has no shortfall against
-        # the file as it was.
+        # the file as it was. The count of other_spellings, written out: for each key, 2 to the power of
+        # its letters less 1 in other letter cases, 1 padded, 1 zero-width and, but for name, 1 outside
+        # ASCII, so 4,554, 6, 6 and 5, which make 4,571.
+        self.assertEqual({key: len(other_spellings(key)) for key in sorted(READ_KEYS)},
+                         {"dependencies": 4098, "name": 17, "plugins": 130, "site_key": 130, "source": 66,
+                          "version": 130})
         script = self.root / "tools" / "check-plugin-distribution.py"
         shutil.copyfile(MODULE_PATH, script)
         inputs = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*.json"))
@@ -2146,6 +2166,43 @@ class PluginDistributionTest(unittest.TestCase):
                 self.assertEqual(done.stdout, "", done.stdout + done.stderr)
                 self.assertEqual(done.stderr, f"loading {copy.resolve()} printed {printed}\n", done.stdout + done.stderr)
 
+    def test_a_cached_gate_is_not_run(self):
+        # A copy of this test beside an unchanged copy of the gate, with a .pyc of that gate under
+        # tools/__pycache__ compiled from the gate with a statement that prints as it loads, and a header
+        # that the import system's loader accepts for the source as it is: in turn a timestamp, a checked
+        # hash and an unchecked hash .pyc. The copy of the test must load the gate from its source, so the
+        # 1 case it runs passes and nothing prints. Control, in each mode: the loader of a spec for the copy
+        # of the gate, run as a command once the copy of the test has run, runs the .pyc and prints.
+        tools = self.root / "tools"
+        test = tools / Path(__file__).name
+        shutil.copyfile(Path(__file__).resolve(), test)
+        copy = tools / MODULE_PATH.name
+        shutil.copyfile(MODULE_PATH, copy)
+        source = copy.read_bytes()
+        code = compile(source + b"\nprint('cached')\n", str(copy.resolve()), "exec", dont_inherit=True)
+        info = copy.stat()
+        cached = Path(importlib.util.cache_from_source(str(copy)))
+        cached.parent.mkdir()
+        by_loader = ("import importlib.util, sys\n"
+                     "spec = importlib.util.spec_from_file_location('check_plugin_distribution', sys.argv[1])\n"
+                     "spec.loader.exec_module(importlib.util.module_from_spec(spec))\n")
+        for mode, flags, check in (
+                ("timestamp", 0, (int(info.st_mtime) & 0xFFFFFFFF).to_bytes(4, "little")
+                 + (info.st_size & 0xFFFFFFFF).to_bytes(4, "little")),
+                ("checked hash", 3, importlib.util.source_hash(source)),
+                ("unchecked hash", 1, importlib.util.source_hash(source))):
+            with self.subTest(mode=mode):
+                cached.write_bytes(importlib.util.MAGIC_NUMBER + flags.to_bytes(4, "little") + check
+                                   + marshal.dumps(code))
+                done = subprocess.run([sys.executable, "-I", str(test), *LOADED_ONLY], cwd=self.root,
+                                      capture_output=True, text=True, errors="backslashreplace", timeout=120)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                self.assertEqual(done.stdout, "", done.stdout + done.stderr)
+                self.assertNotIn("cached", done.stderr, done.stderr)
+                control = subprocess.run([sys.executable, "-I", "-c", by_loader, str(copy)], cwd=self.root,
+                                         capture_output=True, text=True, errors="backslashreplace", timeout=120)
+                self.assertEqual((control.returncode, control.stdout, control.stderr), (0, "cached\n", ""))
+
     def test_loader_helper_gives_a_plain_str_or_the_stand_in(self):
         # The helper the loader makes a name and a message with: a str subclass whose own methods raise
         # comes back a str of its own type, what the making prints is dropped, and making that raises an
@@ -2459,8 +2516,9 @@ class RepositoryTreeTest(unittest.TestCase):
     def test_keys_outside_read_keys_change_no_output(self):
         # E on a copy of the files the gate reads in the repository: each JSON input load_json reads,
         # SKILL.md and the extractor, with the gate copied beside the extractor and run only as a command,
-        # as CI runs it. The run on the copy must exit 0 with a last line that starts as OK_LINE, and the run
-        # on the copy with each JSON input perturbed must give the same exit status and every line the same.
+        # as CI runs it. The run on the copy must exit 0 with the last line OK_LINE followed by the version
+        # of the copy's Claude plugin manifest, as this case decodes it, and the run on the copy with each
+        # JSON input perturbed must give the same exit status and every line the same.
         # Each JSON input, read back once all are perturbed, has no shortfall against the input as it was.
         read: list = []
         real = gate.load_json
@@ -2490,7 +2548,8 @@ class RepositoryTreeTest(unittest.TestCase):
             after = run_command(script, root)
         self.assertEqual(before[0], 0, before)
         self.assertEqual(before[2], "", before)
-        self.assertTrue(before[1].splitlines()[-1].startswith(OK_LINE), before)
+        self.assertEqual(before[1].splitlines()[-1:], [f"{OK_LINE}{originals[gate.CLAUDE_MANIFEST]['version']}"],
+                         before)
         self.assertEqual(after, before)
 
 
