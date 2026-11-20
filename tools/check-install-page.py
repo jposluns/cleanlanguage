@@ -311,7 +311,12 @@ What it verifies
    ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
    301`` passes while no file occupies that path. Each logo redirect that
    ``redirects_body`` of ``tools/set-release-links.py``, the release
-   writer, writes is such a rule.
+   writer, writes is such a rule. ``tools/test-install-page.py`` pins the
+   code of this reading, ``redirect_problems`` and each function and
+   module-level name of this gate that it reads, directly or through those
+   functions, by sha256 (``READER_SHA256`` there), so that any change to
+   it fails that test until a reviewer, having read the change, records a
+   new digest.
    These residuals are accepted: a rule of either file that reaches an
    install page or a file the pages load through any matching behaviour
    of Pages beyond that reading passes, such as a handling of letter case,
@@ -320,7 +325,7 @@ What it verifies
    no file under ``site/`` occupies may be the source of such a rule, and a
    reader then gets a pinned logo in its place; a redirect of another path
    that a browser may request from the site's root without a link, such as
-   ``/apple-touch-icon.png``, which committed line 10 of
+   ``/apple-touch-icon.png``, which committed line 14 of
    ``site/_redirects`` redirects, passes, since the redirect reading
    judges only ``REQUESTED_FILES`` among such paths; and a rule of
    ``site/_headers`` for ``/favicon.ico`` is held only to the checks that
@@ -1166,7 +1171,7 @@ EXACT_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 # Check 7: the files that this gate judges among those that a browser may request from the site's root without a link,
 # as it requests /favicon.ico for a page, each named as the whole first segment of a path; a redirect source whose
 # first segment, after any https:// and host, is 1 of them, in any letter case, fails (redirect_problems()). It is
-# not every such file: a redirect of another, such as /apple-touch-icon.png, which committed line 10 of
+# not every such file: a redirect of another, such as /apple-touch-icon.png, which committed line 14 of
 # site/_redirects redirects, is not judged, a residual that the module docstring names.
 REQUESTED_FILES = ("favicon.ico",)
 # Check 7: the folder, as a path from the site's root, that holds every destination that a rule of site/_redirects
