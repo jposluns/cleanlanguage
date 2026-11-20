@@ -6237,7 +6237,7 @@ class TimeLimitSinkProbe(unittest.TestCase):
                              and repr(o).startswith("<function T15EnumeratorTimeout.run_reaped "))
                 found(test, *test.args(), wall_clock_bound=1)
 
-        @form("the method called through its class, by keyword (control)", reaped, False)
+        @form("the method called through its class, by keyword", reaped, False)
         class Plain(Reaped):
             def planted(test):
                 T15EnumeratorTimeout.run_reaped(test, *test.args(), wall_clock_bound=1)
@@ -6367,7 +6367,7 @@ class TimeLimitSinkProbe(unittest.TestCase):
         # does; the case runs in a thread of its own, so no frame of this test is on that stack either.
         # Such a limit has no site and only TIME_LIMIT_FLOOR applies: 60 s at Thread.join and at
         # assertLess must pass the case and be recorded as admitted at no site, and 4.4 s at
-        # Thread.join (control) must fail it with the refusal at that floor.
+        # Thread.join, a refusal, must fail it with the refusal at that floor.
         class Cleanup(unittest.TestCase):
             sink, value = None, None
 
