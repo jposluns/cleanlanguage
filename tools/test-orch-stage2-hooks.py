@@ -356,9 +356,10 @@ def tree_state(path):
 # raised before tearDownModule read TIME_LIMIT_REFUSALS; one raised later while no test runs, such as
 # in a thread that is still running once tearDownModule has run, is read by nothing, so it fails the
 # run only as its own TimeLimitViolation does, which in a thread stops only that thread, and the run's
-# result and exit status are then as they would be without it. Once every test that unittest finds
-# in this module has run in this process, tearDownModule also fails the run for each
-# entry whose site admitted no limit, and for each entry whose value is not the least value admitted at
+# result and exit status are then as they would be without it. Once every test of this module, as a
+# new unittest.TestLoader finds them, has run in this process (time_limit_full_run), so not in a run
+# that a -k option narrows, tearDownModule also fails the run for each entry whose site admitted no
+# limit, and for each entry whose value is not the least value admitted at
 # its site, so each value below is the least that its site applies in a whole run. Not checked: a limit
 # that reaches none of the 3 sinks, such as an elapsed time compared in an if statement or bounded by
 # another assertion, such as assertGreater, or the timeout of signal.alarm, select.select, the get of
@@ -545,22 +546,30 @@ def time_limit_table_mismatches(checks, table):
     return out
 
 
-def tearDownModule():
-    """Fail the run for each time limit refusal that no cleanup read, of those recorded before it reads
-    TIME_LIMIT_REFUSALS (one recorded later is read by nothing, as the comment on TEST_TIME_LIMITS
-    states) and, once every test that unittest finds in this module has run in this process, for each
-    entry of TEST_TIME_LIMITS that time_limit_table_mismatches reports."""
-    with TIME_LIMIT_LOCK:
-        problems = ["refused outside a test: {}".format(text) for text in TIME_LIMIT_REFUSALS]
-        del TIME_LIMIT_REFUSALS[:]
-    pending, ids = [unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])], set()
+def time_limit_full_run(module, run):
+    """Whether run, a set of test ids, holds every test of module as a new unittest.TestLoader finds
+    them, whatever name patterns unittest.defaultTestLoader has: a -k option of unittest.main gives it
+    its patterns, so in a run that -k narrows it finds only the tests that the run selects."""
+    pending, ids = [unittest.TestLoader().loadTestsFromModule(module)], set()
     while pending:
         for test in pending.pop():
             if isinstance(test, unittest.TestSuite):
                 pending.append(test)
             else:
                 ids.add(test.id())
-    if ids <= TESTS_RUN:
+    return ids <= run
+
+
+def tearDownModule():
+    """Fail the run for each time limit refusal that no cleanup read, of those recorded before it reads
+    TIME_LIMIT_REFUSALS (one recorded later is read by nothing, as the comment on TEST_TIME_LIMITS
+    states) and, once every test of this module has run in this process (time_limit_full_run), so not
+    in a run that a -k option narrows, for each entry of TEST_TIME_LIMITS that
+    time_limit_table_mismatches reports."""
+    with TIME_LIMIT_LOCK:
+        problems = ["refused outside a test: {}".format(text) for text in TIME_LIMIT_REFUSALS]
+        del TIME_LIMIT_REFUSALS[:]
+    if time_limit_full_run(sys.modules[__name__], TESTS_RUN):
         problems += time_limit_table_mismatches(TIME_LIMIT_CHECKS, TEST_TIME_LIMITS)
     if problems:
         raise AssertionError("time limits: {}".format(problems))
@@ -6036,6 +6045,38 @@ class Stage2TimeLimitProbe(unittest.TestCase):
         self.assertEqual(time_limit_table_mismatches(checks, table),
                          ["('A', 'g'): its site admitted no limit in this run",
                           "('A', 'h'): TEST_TIME_LIMITS gives 5, the least limit admitted at its site is 7"])
+
+    def test_only_a_full_run_holds_the_entries_to_their_sites(self):
+        # time_limit_full_run, which tells tearDownModule whether to apply time_limit_table_mismatches.
+        # A run that a -k option narrows gives unittest.defaultTestLoader its name patterns. With such
+        # a pattern on it, the 1 test that the pattern selects must not be a full run, and every test of
+        # the module must be one (control); with no pattern, the same 2 answers (controls).
+        module = sys.modules[__name__]
+
+        def found(loader):
+            pending, ids = [loader.loadTestsFromModule(module)], set()
+            while pending:
+                for test in pending.pop():
+                    if isinstance(test, unittest.TestSuite):
+                        pending.append(test)
+                    else:
+                        ids.add(test.id())
+            return ids
+
+        narrowed = unittest.TestLoader()
+        narrowed.testNamePatterns = ["*test_each_site_takes_its_floor*"]
+        selected, every = found(narrowed), found(unittest.TestLoader())
+        self.assertEqual(len(selected), 1, "precondition: the pattern selects 1 test")
+        self.assertTrue(selected < every, "precondition: the module holds other tests")
+        patterns = unittest.defaultTestLoader.testNamePatterns
+        for given in (narrowed.testNamePatterns, None):
+            with self.subTest(patterns=given):
+                unittest.defaultTestLoader.testNamePatterns = given
+                try:
+                    answers = time_limit_full_run(module, selected), time_limit_full_run(module, every)
+                finally:
+                    unittest.defaultTestLoader.testNamePatterns = patterns
+                self.assertEqual(answers, (False, True), "(the selected test, every test) as a full run")
 
 
 # The program that a planted case of TimeLimitSinkProbe runs through REAPER_PROG: it creates the file
