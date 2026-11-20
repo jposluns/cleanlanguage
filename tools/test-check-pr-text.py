@@ -425,9 +425,11 @@ def code_texts(tree):
     module binds is a text too, labelled with each name that binds it, and those names, not
     the function that holds it, also label a constant or a sum equal to it. A sum with a part
     that is not a string constant is not read whole, wherever that part is, on the left or
-    the right of a + at any depth. A text built otherwise, such as by a call, a format, an
-    f-string included, or a join, is not read whole either; each string constant in it is
-    read as a text of its own.
+    the right of a + at any depth, since 1 rule reads a sum at every depth. A text built
+    otherwise is not read whole either, and each string constant in it is read as a text of
+    its own: a text built by a call, of a name or of a method of a string constant; by a
+    format, by the method format, by % or as an f-string; or by a join, of a list, a tuple
+    or a string, whether or not each of its parts is a string constant.
     """
     bound = collections.defaultdict(set)
     texts = collections.defaultdict(set)
@@ -2269,23 +2271,28 @@ class OutputAndHonestTexts(GateCase):
         # suite module binds, labelled with each name that binds it, 2 names in the case of a
         # backtick, which also label a constant or a sum equal to it, as its docstring states.
         # A constant that is not a string, a sum with a part that is not a string constant,
-        # first, last or between 2 constants, a text joined by another operator, a text built
-        # by a call and an f-string are not read whole, though each string constant in them
-        # is. A sum written left to right that ends in such a part, read without that part,
-        # gives a text that is already read on its own, so the last place is also tried in a
-        # sum nested on the right of a +, where reading it so gives a text of its own, beside
-        # a nested sum of constants that is read whole. embedded_places() passes over a text
-        # that does not parse, with SyntaxError or
+        # first, last or between 2 constants, a text joined by another operator and each form
+        # of a text built otherwise that the docstring names are not read whole, though each
+        # string constant in them is: a call of a name and of a method of a string constant, a
+        # format by the method format, by % and as an f-string, and a join of a list, of a
+        # tuple and of a string, and one with a part that is not a string constant. A sum
+        # written left to right that ends in such a part, read without that part, gives a text
+        # that is already read on its own, so the last place is also tried in a sum nested on
+        # the right of a +, 1 deep and 2 deep, where reading it so gives a text of its own,
+        # beside a nested sum of constants that is read whole. joined() reads a sum by 1 rule
+        # at every depth, so a reader that drops that part from depth 1 or from depth 2 on
+        # fails a subtest; no finite table holds a reader that drops it only from a greater
+        # depth, or that reads whole only a call of a name or method that no subtest calls.
+        # embedded_places() passes over a text that does not parse, with SyntaxError or
         # with ValueError, leaves out a place that guarded gives and a label with no place,
         # and gives the places of the texts of 1 label in the sorted order of the texts, and
         # those of 1 text in the order that reached() gives them, so the 2 orders differ in a
         # subtest. Each subtest compares what a probe adds to what the helper gives for a probe
-        # that holds no text. A text built by a join, which the docstring names, is not read
-        # whole either, though each string constant in it is. A constant or a sum equal to a
-        # string the module binds is labelled with each name that binds it, but each of those
-        # names already labels that string, so that labelling changes no result, and no
-        # subtest can fail when it is undone; what the subtests pin is that such a text is not
-        # labelled with the function that holds it.
+        # that holds no text. A constant or a sum equal to a string the module binds is
+        # labelled with each name that binds it, but each of those names already labels that
+        # string, so that labelling changes no result, and no subtest can fail when it is
+        # undone; what the subtests pin is that such a text is not labelled with the function
+        # that holds it.
         empty = code_texts(probe_tree("> pass\n"))
         self.assertEqual(empty["UNMUTATED_NAME"], {UNMUTATED_NAME})
         with self.subTest(text="string that 2 names of the module bind"):
@@ -2317,12 +2324,25 @@ class OutputAndHonestTexts(GateCase):
                  "> x = 'a' + y + 'b'\n", {"module": {"a", "b"}}),
                 ("sum with a part that is not a string constant last, nested on the right",
                  "> x = 'a' + ('b' + y)\n", {"module": {"a", "b"}}),
+                ("sum with a part that is not a string constant last, nested 2 deep on the right",
+                 "> x = 'a' + ('b' + ('c' + y))\n", {"module": {"a", "b", "c"}}),
                 ("sum of constants nested on the right", "> x = 'a' + ('b' + 'c')\n",
                  {"module": {"a", "b", "c", "bc", "abc"}}),
                 ("text joined by another operator", "> x = 'a' % 'b'\n", {"module": {"a", "b"}}),
                 ("text built by a call", "> x = str(['a', 'b'])\n", {"module": {"a", "b"}}),
+                ("text built by a call of a method of a string constant", "> x = 'A'.lower()\n",
+                 {"module": {"A"}}),
+                ("text built by the method format", "> x = '{}b'.format('a')\n",
+                 {"module": {"{}b", "a"}}),
+                ("text built by a format with %", "> x = '%sb' % 'a'\n", {"module": {"%sb", "a"}}),
                 ("text built by a join", "> x = 'c'.join(['a', 'b'])\n",
                  {"module": {"a", "b", "c"}}),
+                ("text built by a join of a tuple", "> x = 'c'.join(('a', 'b'))\n",
+                 {"module": {"a", "b", "c"}}),
+                ("text built by a join of a string", "> x = 'c'.join('ab')\n",
+                 {"module": {"ab", "c"}}),
+                ("text built by a join with a part that is not a string constant",
+                 "> x = 'c'.join(['a', y, 'b'])\n", {"module": {"a", "b", "c"}}),
                 ("f-string", "> x = f'a{y}b'\n", {"module": {"a", "b"}}),
                 ("constant equal to a string the module binds",
                  "> def f():\n>     x = " + repr(UNMUTATED_NAME) + "\n", {}),
@@ -2436,8 +2456,11 @@ class OutputAndHonestTexts(GateCase):
         # and with only a CPU limit, each of a gate child and of the sweep child, since a CPU
         # limit is the limit of no listed row; the row listed with the wall timeout also with 2
         # stops and with a stop and no limit; and a row not listed with each kind of limit, 2
-        # limits, a limit and a stop, a stop and 2 stops. So a kill rule that undoes the
-        # handling of 1 of these forms fails a subtest.
+        # limits, a limit and a stop, a stop and 2 stops. A CPU limit ends a child by SIGXCPU
+        # at its soft limit and by SIGKILL at its hard one, which cpu_hit() names apart, so
+        # each row with a CPU limit is tried with each signal, for a gate child and for the
+        # sweep child alike. So a kill rule that undoes the handling of 1 of these forms fails
+        # a subtest.
         sweep = MutantSweep("test_rows_are_well_formed")
         memory = next(words for words, (limit, argument) in RUNAWAY_SITES.items()
                       if limit == "memory limit")
@@ -2446,8 +2469,6 @@ class OutputAndHonestTexts(GateCase):
         hit = ["the memory limit of {} bytes".format(SWEEP_MEMORY)]
         timed = ["the wall timeout of {} s".format(SPAN_TIMEOUT)]
         swept = ["the sweep timeout of {} s".format(SWEEP_TIMEOUT)]
-        cpu = [cpu_hit(-signal.SIGKILL, GATE_CPU)]
-        own_cpu = [cpu_hit(-signal.SIGXCPU, SWEEP_CPU)]
         stop = [STOP_MARK + "the gate stopped on an unexpected error in a case"]
         stops = stop + [STOP_MARK + "NameError"]
         failed = "FAILED (failures=1)"
@@ -2456,7 +2477,7 @@ class OutputAndHonestTexts(GateCase):
         not_runaway = "hit a limit but is not a runaway site: "
         on_stop = "its cases fail on a stop of the gate: "
         unlisted = "a row not listed"
-        for label, words, result, expected in (
+        rows = (
                 ("listed, failures", memory, (1, failed, hit, []), None),
                 ("listed, failures and another limit", memory,
                  (1, failed, sorted(hit + timed), []), None),
@@ -2465,14 +2486,6 @@ class OutputAndHonestTexts(GateCase):
                  unhit.format("memory limit", 1, failed)),
                 ("listed, failures and only another limit", memory, (1, failed, timed, []),
                  unhit.format("memory limit", 1, failed)),
-                ("listed, failures and the CPU limit of a gate child", memory,
-                 (1, failed, sorted(hit + cpu), []), None),
-                ("listed, failures and the CPU limit of the sweep child", memory,
-                 (1, failed, hit + own_cpu, []), None),
-                ("listed, failures and only the CPU limit of a gate child", memory,
-                 (1, failed, cpu, []), unhit.format("memory limit", 1, failed)),
-                ("listed, failures and only the CPU limit of the sweep child", memory,
-                 (1, failed, own_cpu, []), unhit.format("memory limit", 1, failed)),
                 ("listed, the sweep's timeout", memory, (None, "timed out", swept, []),
                  unhit.format("memory limit", None, "timed out")),
                 ("listed, an error", memory, (1, "FAILED (errors=1)", hit, []),
@@ -2496,14 +2509,6 @@ class OutputAndHonestTexts(GateCase):
                  (1, failed, [], stop), unhit.format("wall timeout", 1, failed)),
                 ("listed by the wall timeout, failures and only another limit", wall,
                  (1, failed, hit, []), unhit.format("wall timeout", 1, failed)),
-                ("listed by the wall timeout, failures and the CPU limit of a gate child", wall,
-                 (1, failed, sorted(timed + cpu), []), None),
-                ("listed by the wall timeout, failures and the CPU limit of the sweep child",
-                 wall, (1, failed, timed + own_cpu, []), None),
-                ("listed by the wall timeout, failures and only the CPU limit of a gate child",
-                 wall, (1, failed, cpu, []), unhit.format("wall timeout", 1, failed)),
-                ("listed by the wall timeout, failures and only the CPU limit of the sweep child",
-                 wall, (1, failed, own_cpu, []), unhit.format("wall timeout", 1, failed)),
                 ("listed by the wall timeout, the sweep's timeout", wall,
                  (None, "timed out", swept, []), unhit.format("wall timeout", None, "timed out")),
                 ("listed by the wall timeout, an error", wall, (1, "FAILED (errors=1)", timed, []),
@@ -2520,10 +2525,6 @@ class OutputAndHonestTexts(GateCase):
                  not_runaway + timed[0]),
                 ("not listed, failures and the memory limit", unlisted, (1, failed, hit, []),
                  not_runaway + hit[0]),
-                ("not listed, failures and the CPU limit of a gate child", unlisted,
-                 (1, failed, cpu, []), not_runaway + cpu[0]),
-                ("not listed, failures and the CPU limit of the sweep child", unlisted,
-                 (1, failed, own_cpu, []), not_runaway + own_cpu[0]),
                 ("not listed, the sweep's timeout", unlisted, (None, "timed out", swept, []),
                  not_runaway + swept[0]),
                 ("not listed, failures and 2 limits", unlisted,
@@ -2542,7 +2543,33 @@ class OutputAndHonestTexts(GateCase):
                  error + "FAILED (failures=1, errors=1)"),
                 ("not listed, passes", unlisted, (0, "OK", [], []), "survived: exit 0, OK"),
                 ("not listed, failures with another exit status", unlisted,
-                 (2, failed, [], []), "survived: exit 2, FAILED (failures=1)")):
+                 (2, failed, [], []), "survived: exit 2, FAILED (failures=1)"))
+        for signum in (signal.SIGXCPU, signal.SIGKILL):
+            cpu = [cpu_hit(-signum, GATE_CPU)]
+            own_cpu = [cpu_hit(-signum, SWEEP_CPU)]
+            by_cpu = (
+                ("listed, failures and the CPU limit of a gate child", memory,
+                 (1, failed, sorted(hit + cpu), []), None),
+                ("listed, failures and the CPU limit of the sweep child", memory,
+                 (1, failed, hit + own_cpu, []), None),
+                ("listed, failures and only the CPU limit of a gate child", memory,
+                 (1, failed, cpu, []), unhit.format("memory limit", 1, failed)),
+                ("listed, failures and only the CPU limit of the sweep child", memory,
+                 (1, failed, own_cpu, []), unhit.format("memory limit", 1, failed)),
+                ("listed by the wall timeout, failures and the CPU limit of a gate child", wall,
+                 (1, failed, sorted(timed + cpu), []), None),
+                ("listed by the wall timeout, failures and the CPU limit of the sweep child",
+                 wall, (1, failed, timed + own_cpu, []), None),
+                ("listed by the wall timeout, failures and only the CPU limit of a gate child",
+                 wall, (1, failed, cpu, []), unhit.format("wall timeout", 1, failed)),
+                ("listed by the wall timeout, failures and only the CPU limit of the sweep child",
+                 wall, (1, failed, own_cpu, []), unhit.format("wall timeout", 1, failed)),
+                ("not listed, failures and the CPU limit of a gate child", unlisted,
+                 (1, failed, cpu, []), not_runaway + cpu[0]),
+                ("not listed, failures and the CPU limit of the sweep child", unlisted,
+                 (1, failed, own_cpu, []), not_runaway + own_cpu[0]))
+            rows += tuple((label + ", " + signum.name, *row) for label, *row in by_cpu)
+        for label, words, result, expected in rows:
             with self.subTest(row=label):
                 sweep.run_cases = lambda root, ids, result=result: result
                 self.assertEqual(sweep.killed(words, self.tmp / "gate.py", "", [], self.tmp),

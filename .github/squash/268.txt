@@ -15,8 +15,9 @@ compare each class of characters that ends a mask or a URL with its
 set by enumeration, a mutant sweep whose sites are generated from the
 gate source, and subtests on fixed probes for each form, read from
 the code, that the suite's static helpers and the sweep's kill rule
-accept, but for 2 whose handling changes no result: a plain import
-in reached(), and in code_texts() the labelling of a text equal to a
+accept, each tried at the depths and with the names that its table
+holds, but for 2 whose handling changes no result: a plain import in
+reached(), and in code_texts() the labelling of a text equal to a
 string the module binds with each name that binds it, which already
 labels that string. Add the workflow .github/workflows/pr-text.yml,
 which runs the suite and the gate on every pull request with
