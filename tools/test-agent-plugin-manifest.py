@@ -10,8 +10,9 @@ The gate's refusal of each kind of licence copy is tested on every runner,
 with no skip, through a seam. FakeNode answers os.stat and os.lstat, called
 with the exact path string of 1 file and no dir_fd, with a stat result of the
 kind under test, while the file behind it stays a real, regular copy equal to
-its root file, and it records every io.open, open, os.open, os.listdir and
-os.scandir whose path argument is that exact path string.
+its root file. It records a call of io.open, open, os.open, os.listdir or
+os.scandir whose path argument is that exact path string only when the call
+looks that name up on io, builtins or os at the time of the call.
 The gate asks for the type of a copy through pathlib's is_symlink, exists and
 is_file, which look up os.lstat and os.stat when they are called, so the gate
 sees the fake's type. For each copy and each of the 11 kinds in COPY_KINDS (a
@@ -93,10 +94,14 @@ These residuals remain:
   with the exact path string: a false alarm on a correct refactor, never a
   silent pass, and whoever changes that route must update FakeNode.
 - Only a call of io.open, open, os.open, os.listdir or os.scandir whose path
-  argument is the exact path string is recorded, with or without a dir_fd.
-  The seam does not catch a read before the refusal through io.FileIO, a
-  bytes path, another spelling of the path (such as one relative to a
-  dir_fd), a subprocess or ctypes. Where the OS lets the test make a FIFO,
+  argument is the exact path string, with or without a dir_fd, and that
+  looks that name up on io, builtins or os at the time of the call is
+  recorded. The seam does not catch a read before the refusal through
+  io.FileIO, a bytes path, another spelling of the path (such as one
+  relative to a dir_fd), a reference to 1 of those 5 functions taken
+  before FakeNode is in place (such as a name bound at import), the same
+  function reached through another module (such as posix.open), a
+  subprocess or ctypes. Where the OS lets the test make a FIFO,
   the FIFO smoke cases catch such a read, since it opens the FIFO for
   reading. The cases for a missing copy and for a folder, on every runner,
   and the smoke cases for a socket and for a dangling symlink, where the OS
@@ -292,7 +297,8 @@ class FifoWitness:
 
 class FakeNode:
     """While in place, answer os.stat and os.lstat for 1 path with a stat
-    result of the given types, and record every access to that path.
+    result of the given types, and record the calls described below that
+    name that path.
 
     ``ltype`` is the type that os.lstat gives and ``ftype`` the type that
     os.stat gives when it follows a symlink; None means that the call finds
@@ -300,11 +306,16 @@ class FakeNode:
     for any other type, and its other fields come from the real file, which
     stays as it is. A stat or lstat call with a dir_fd, or with any path
     other than the exact path string, goes to the real function; every one
-    that the fake answered is recorded in ``answered``. Every io.open, open,
-    os.open, os.listdir and os.scandir whose path argument is the exact path
+    that the fake answered is recorded in ``answered``. The fake replaces
+    io.open, builtins.open, os.open, os.listdir and os.scandir on their
+    modules with recorders, so a call that looks 1 of those names up on its
+    module at the time of the call and whose path argument is the exact path
     string is recorded in ``touched`` before the real call, with or without
-    a dir_fd. Only the exact path string is matched: a bytes path or another
-    spelling of the path, such as one relative to a dir_fd, is not.
+    a dir_fd. A call through a reference taken before the fake is in place,
+    such as a name bound at import, or through another module, such as
+    posix.open, is not recorded. Only the exact path string is matched: a
+    bytes path or another spelling of the path, such as one relative to a
+    dir_fd, is not.
     """
 
     def __init__(self, path, ltype, ftype):
@@ -865,11 +876,14 @@ class AgentPluginManifestTest(unittest.TestCase):
                 self.expect_exit(1, f"cleanlanguage/{name} is not a regular file")
 
     def test_licence_copy_device_fails(self):
-        # A character device with the numbers of /dev/null reads as empty, so
-        # a gate that reads it before refusing it gives the message that the
-        # copy differs, not the one required here. Making it needs the
-        # CAP_MKNOD capability; where the OS refuses, each subtest skips,
-        # naming the kind, the path and the error.
+        # A character device with the numbers of /dev/null reads as empty
+        # with no error, so a gate that compares it with the root file before
+        # refusing it gives the message that the copy differs, not the one
+        # required here. A gate that only reads it before refusing it still
+        # gives the message required here, so this case does not catch that
+        # read. Making it needs the CAP_MKNOD capability; where the OS
+        # refuses, each subtest skips, naming the kind, the path and the
+        # error.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             with self.subTest(name):

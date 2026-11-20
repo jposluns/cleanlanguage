@@ -38,8 +38,11 @@ a way that the tests' fake answers: a false alarm on a correct change, never a
 silent pass, and the tests' fake must then follow the new route. A read
 before the refusal through a route the tests do not record (io.FileIO, a
 bytes path, another spelling of the path such as one relative to a dir_fd,
-a subprocess or ctypes) passes the seam. The FIFO smoke cases catch it where
-the OS lets them make a FIFO. The cases for a missing copy and for a folder,
+a reference to an open or listing function taken before the tests' fake
+replaces it, such as a name bound at import, the same function reached
+through another module, such as posix.open, a subprocess or ctypes) passes
+the seam. The FIFO smoke cases catch it where the OS lets them make a FIFO.
+The cases for a missing copy and for a folder,
 on every runner, and the smoke cases for a socket and for a dangling symlink,
 where the OS lets them make those, catch one that lets through an error that
 it meets on that copy. So when the OS refuses to make every kind of node, one
