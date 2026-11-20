@@ -311,12 +311,17 @@ What it verifies
    ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
    301`` passes while no file occupies that path. Each logo redirect that
    ``redirects_body`` of ``tools/set-release-links.py``, the release
-   writer, writes is such a rule. ``tools/test-install-page.py`` pins the
-   code of this reading, ``redirect_problems`` and each function and
-   module-level name of this gate that it reads, directly or through those
-   functions, by sha256 (``READER_SHA256`` there), so that any change to
-   it fails that test until a reviewer, having read the change, records a
-   new digest.
+   writer, writes is such a rule. ``tools/test-install-page.py`` reads
+   the bytes of this file once and stops, before any code of this file
+   runs in its process, unless their sha256 is the digest that it writes
+   (``GATE_SHA256`` there), so that any change to this file, a comment
+   included, fails that test until a reviewer, having read the change,
+   records a new digest. As a second layer it pins, by sha256
+   (``READER_SHA256`` there), ``redirect_problems`` and each function of
+   this gate that a ``def`` at its top level binds and that a pinned
+   function reads by name, with the module-level names that those
+   functions read; a function reached in another way, such as through an
+   alias, ``functools.partial`` or a class, is outside that second layer.
    These residuals are accepted: a rule of either file that reaches an
    install page or a file the pages load through any matching behaviour
    of Pages beyond that reading passes, such as a handling of letter case,

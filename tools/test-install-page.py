@@ -31,65 +31,102 @@ on 1 character of each class that it refuses or allows
 (BREAK_CHARACTERS), the line feed among
 them, which no run of the gate gives it. These cases of check 7 are
 examples of its contract. They do not show that no weakening of check 7
-passes them, which no finite set of inputs can show; what holds check 7's
-code is the reader pin below.
+passes them, which no finite set of inputs can show; check 7's code is
+held by the 2 layers below.
 
-The test loads the gate in this process only through load_gate(), which
-reads the bytes of tools/check-install-page.py, compiles them and runs that
-code as a new module, so that no cached bytecode of the gate stands in for
-them. reader_pin_problems() reads those bytes once, compiles them, runs that
-code through load_gate() and reads the gate it pins from that run. From the
-same bytes, by the gate's syntax tree and the symbol table that Python's
-compiler builds for it, reader_names() derives READER_NAMES, which are
-redirect_problems() and each function of the gate that it reads, and each
-that those read in turn, and READER_GLOBALS, which are the other names of the
-gate that those functions read and that a statement of the gate binds: its
-constants and imports. reader_pin_problems() fails unless the derived names
-are exactly those written, so that a new helper cannot fall outside the pin;
-unless each is bound exactly once in the whole gate, by a statement at its
-top level, so that a later binding of it, a local one, a parameter, a global
-statement or a star import fails; unless the gate as loaded binds each
-function to the function that its def makes, with that def's own code
-object; and unless, for each name, the sha256 of its statement, as the
-syntax tree gives it with any docstring left out, and of its value as the
-loaded gate holds it, equals READER_SHA256, and it names each name that
-differs. A reviewer records a new digest only after reading the change. Its
-residuals, stated once:
+The test holds the code of the gate by 2 layers.
 
-1. A change that edits a pinned function or value and records the new digest
-   in the same change passes. The test then guarantees that a reviewer sees
-   every change to check 7, not that no weakening can pass. Every pin here
-   carries this residual.
-2. A change outside the pinned set that alters what the reader does passes:
-   a helper that the reader calls but the list omits (a check of the list
-   must take the callees from the code, not from a text that names them),
-   `load_pin()` of tools/check-baseline-pin.py, which `pinned_files()`
-   reuses, and Python's `re` and `str`, held only by the version guard.
-3. An edit to tools/test-install-page.py itself passes when it also disables
-   the pin. The test cannot hold itself against its own edits; only review
-   can. This is the class of the edits to the test file that make `main()`
-   run the cases, or read those it left unrun, with another loop or look,
-   in `main()` or before `main_call_problems()` runs.
-4. The residuals of the gate's own guarantee, which its module docstring
+1. The digest of the gate's bytes. At the top of this file, before the test
+   runs any code of the gate or of a sibling tool, gate_bytes() reads the
+   bytes of tools/check-install-page.py once and stops the test with exit 1,
+   naming the file and both digests, unless their sha256 is GATE_SHA256, a
+   digest written in this file, which the gate cannot write. Every load of
+   the gate in this process, through load_gate(), then compiles and runs
+   exactly those bytes, GATE_BYTES, as a new module, never through the
+   import system, so that no cached bytecode stands in for them.
+   make_root() writes those bytes as the copy of the gate that each case
+   runs in a separate process. LOCK_PROBE and SORTED_PROBE, which load that
+   copy in such a process, start with CHECKED_LOAD, the same check: they
+   read its bytes once, stop with exit 1 unless their sha256 is
+   GATE_SHA256, and compile and run exactly those bytes as a new module.
+   checked_load_problems() fails unless gate_bytes() and CHECKED_LOAD each
+   stop on a copy of the gate with 1 byte added, naming the file and both
+   digests, and CHECKED_LOAD loads a copy of GATE_BYTES. Every other case,
+   and version_problems(), runs the copy as a script or through runpy,
+   which compile its source, with no digest check, since some of them
+   change the copy on purpose. What this layer adds: until a
+   reviewer records a new GATE_SHA256, any change to the gate, a comment
+   included, stops the test before any case and before any code of the
+   gate runs in its process, whatever route the change takes, such as a
+   helper reached through an alias, functools.partial or a class, a
+   rebinding through globals() while the gate loads, the gate's main(), or
+   code at its top level that rewrites this test's own values.
+2. The reader pin, reader_pin_problems(). From GATE_BYTES, by the gate's
+   syntax tree and the symbol table that Python's compiler builds for it,
+   reader_names() derives READER_NAMES, which are redirect_problems() and
+   each function that a def at the top level of the gate binds and that it
+   reads by name, and each that those read in turn, and READER_GLOBALS,
+   which are the other names of the gate that those functions read and that
+   a statement of the gate binds: its constants and imports.
+   reader_pin_problems() runs the code of those bytes through load_gate()
+   and fails unless the derived names are exactly those written; unless
+   each is bound exactly once in the whole gate, by a statement at its top
+   level, so that a later binding of it, a local one, a parameter, a global
+   statement or a star import fails; unless the gate as loaded binds each
+   function to the function that its def makes, with that def's own code
+   object; and unless, for each name, the sha256 of its statement, as the
+   syntax tree gives it with any docstring left out, and of its value as
+   the loaded gate holds it, equals READER_SHA256, and it names each name
+   that differs. What this layer adds to the 1st: a change to the gate
+   whose new GATE_SHA256 is recorded still fails, naming the function or
+   value, where it changes a statement that this layer holds, until its
+   own digest is renewed too, so that a change to check 7 does not pass
+   unnamed inside a change elsewhere in the gate. It follows only names
+   read directly, so a function that a pinned function reaches through an
+   alias, functools.partial, a class, a dict of functions or getattr() is
+   not derived and its code is in no digest here, and a rebinding through
+   globals() while the gate loads, of a builtin, of a module by another
+   module of the same name or of a function by a wrapper around it, is not
+   seen by its binding check.
+
+A reviewer records a new digest of either layer only after reading the
+change. The residuals, stated once:
+
+1. Renewing a digest accepts whatever the diff holds. A change that edits
+   the gate and records the new GATE_SHA256, and the new READER_SHA256
+   digests where it changes a statement of the reader pin, passes. The test
+   then guarantees that the bytes of the gate that run are those that a
+   reviewer accepted, not that they are right or that no weakening of
+   check 7 can pass.
+2. Once a new GATE_SHA256 is recorded, a change that alters what the reader
+   does by a route that the reader pin does not follow passes the test and
+   is held only by review of the gate's diff: a helper reached through an
+   alias, functools.partial, a class, a dict of functions or getattr(); a
+   rebinding through globals(), setattr or exec, while the gate loads or
+   when it runs as a command; the gate's main(), which reads
+   site/_redirects and gives it to redirect_problems() and is not pinned;
+   and code at the gate's top level that changes this test's values once
+   gate_bytes() has checked the bytes.
+3. Code outside the gate is pinned by neither layer and can change what the
+   gate does, such as tools/check-baseline-pin.py, which load_tool() runs
+   and whose load_pin() pinned_files() reuses, and which this test also
+   runs, through pinned_baseline(), in its own process; and Python's own
+   modules, such as re, held only by the version guard.
+4. An edit to tools/test-install-page.py itself is held only by review. An
+   edit that also changes GATE_SHA256, gate_bytes(), CHECKED_LOAD or the
+   reader pin passes, as does an edit that makes main() run the cases, or
+   read those it left unrun, with another loop or look, in main() or before
+   main_call_problems() runs. The test cannot hold itself against its own
+   edits.
+5. The residuals of the gate's own guarantee, which its module docstring
    accepts, are unchanged, including how Pages really matches `:name` and a
    splat across `/`, which has not been observed (an inference, made with
    no network).
-5. Any refactor of the reader needs a new digest. Docstrings are left out of
-   the digest, and `ast` drops comments, so prose fixes, such as the
-   correction of the line number of `/apple-touch-icon.png` in the gate's
-   docstring and in a comment, do not need one.
-
-Residual 2 as the derived names and the binding check change it: a helper
-of the gate that a pinned function reads by its name no longer falls outside
-the pin, since reader_names() derives it from the gate, and a later binding
-of a pinned name in the gate's source fails. A change that alters what the
-reader does by another route still passes: a rebinding that the source does
-not spell as a binding, such as one through globals(), setattr or exec, when
-it is made only after the loaded gate is read or only when the gate runs as
-a command; the gate's main(), which reads site/_redirects and gives it to
-redirect_problems() and is not pinned; and code that the reader reaches
-through an attribute or outside the gate, such as `load_pin()` of
-tools/check-baseline-pin.py and Python's own modules.
+6. Every edit of the gate, a comment or a docstring included, stops the test
+   before any case until GATE_SHA256 is renewed. Docstrings are left out of
+   the digests of the reader pin, and `ast` drops comments, so a prose fix
+   of the gate needs no new digest in READER_SHA256; a refactor of the
+   reader needs both.
 
 Each case runs the gate in its temporary repository as a separate process
 and asserts its exit code and, where a case gives them as (code, words),
@@ -383,6 +420,31 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-install-page.py"
+# The sha256 of the bytes of tools/check-install-page.py, recorded after a reviewer read them. gate_bytes() compares the
+# gate's bytes with it before this test runs any code of the gate. Record a new digest only after reading the diff of
+# the gate since the bytes that this digest names; a new digest accepts whatever that diff holds.
+GATE_SHA256 = "88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7"
+
+
+def gate_bytes(path: Path = GATE, digest: str = GATE_SHA256) -> bytes:
+    """The bytes of the gate at path, read once, if their sha256 is digest. Otherwise it raises SystemExit with a
+    message that names the file and both digests, so that the test stops with exit 1 before any code of the gate
+    runs in its process."""
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        raise SystemExit(f"test-install-page: tools/{path.name} could not be read: {error}")
+    found = hashlib.sha256(source).hexdigest()
+    if found != digest:
+        raise SystemExit(f"test-install-page: tools/{path.name} has the sha256 {found}, not {digest}, the digest that "
+                         f"GATE_SHA256 records; no code of it has run. Record a new digest only after reading the "
+                         f"diff of tools/{path.name}.")
+    return source
+
+
+# The bytes of the gate that every load of it in this process runs, read and checked here, before the test runs any
+# code of the gate or of a sibling tool.
+GATE_BYTES = gate_bytes()
 
 
 def pinned_baseline() -> str:
@@ -716,7 +778,7 @@ INLINE_UNSUPPORTED = "SUPPORTED_PYTHONS = ((2, 7),)"
 def make_root(scratch: Path, files: list[str] = FILES) -> Path:
     root = scratch / "repo"
     (root / "tools").mkdir(parents=True)
-    shutil.copyfile(GATE, root / "tools" / GATE.name)
+    (root / "tools" / GATE.name).write_bytes(GATE_BYTES)
     for relative in files:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / relative, root / relative)
@@ -2349,10 +2411,11 @@ def sheet_case_problems() -> list[str]:
 
 
 def load_gate(code: types.CodeType | None = None):
-    """The gate as a new module that runs code, by default the code that compiling the bytes of the gate, read now,
-    gives; never through the import system, so that no cached bytecode stands in for those bytes."""
+    """The gate as a new module that runs code, by default the code that compiling GATE_BYTES gives, the bytes that
+    gate_bytes() read and checked before this test ran any code of the gate; never through the import system, so
+    that no cached bytecode stands in for those bytes."""
     if code is None:
-        code = compile(GATE.read_bytes(), str(GATE), "exec", dont_inherit=True)
+        code = compile(GATE_BYTES, str(GATE), "exec", dont_inherit=True)
     gate = types.ModuleType("check_install_page")
     gate.__file__ = str(GATE)
     exec(code, gate.__dict__)
@@ -3141,14 +3204,14 @@ def reader_pin_text(statement: ast.stmt, value) -> str:
 
 
 def reader_pin_problems(source: bytes | None = None) -> list[str]:
-    """The reader pin of check 7. The bytes of the gate, or source if given, are read once: reader_names() reads their
+    """The reader pin of check 7. GATE_BYTES, or source if given, are read once: reader_names() reads their
     syntax tree and symbol table, and the code that compiling them gives runs as the gate in load_gate(). A problem
     unless the names that reader_names() gives are READER_NAMES and READER_GLOBALS; unless READER_SHA256 holds exactly
     those names; for a star import; for each name that the source binds other than exactly once, by a statement at its
     top level; for each function that the loaded gate binds to anything but the function that its def makes, with that
     def's own code object; and for each name whose reader_pin_text() does not hash to its digest in READER_SHA256."""
     try:
-        source = GATE.read_bytes() if source is None else source
+        source = GATE_BYTES if source is None else source
         tree, code = ast.parse(source), compile(source, str(GATE), "exec", dont_inherit=True)
         functions, others = reader_names(source)
         gate = load_gate(code)
@@ -3186,6 +3249,40 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
         if digest != READER_SHA256.get(name):
             problems.append(f"{name} of tools/{GATE.name} differs from its pin: its sha256 is {digest}, not "
                             f"{READER_SHA256.get(name)}; record the new digest only after reading the change")
+    return problems
+
+
+def checked_load_problems() -> list[str]:
+    """A problem unless gate_bytes(), given a copy of the gate with 1 byte added, raises SystemExit with a message that
+    names the file and both digests, and unless CHECKED_LOAD, run as a separate process on such a copy, exits 1 with
+    such a message, and, run on a copy of GATE_BYTES, loads the gate. It holds the check of the 1st layer as written,
+    not the gate."""
+    problems: list[str] = []
+    changed_bytes = GATE_BYTES + b"#\n"
+    changed_digest = hashlib.sha256(changed_bytes).hexdigest()
+    with tempfile.TemporaryDirectory() as scratch:
+        same, changed = Path(scratch) / "same", Path(scratch) / "changed"
+        for folder, source in ((same, GATE_BYTES), (changed, changed_bytes)):
+            folder.mkdir()
+            (folder / GATE.name).write_bytes(source)
+        try:
+            gate_bytes(changed / GATE.name)
+            problems.append("gate_bytes() returns the bytes of a copy of the gate with 1 byte added")
+        except SystemExit as stop:
+            words = str(stop.code)
+            if not isinstance(stop.code, str) or not all(part in words for part in (GATE.name, changed_digest,
+                                                                                     GATE_SHA256)):
+                problems.append(f"gate_bytes() stops on a copy of the gate with 1 byte added with {stop.code!r}, not "
+                                "a message that names the file and both digests")
+        probe = CHECKED_LOAD + "sys.exit(0 if callable(gate.redirect_problems) else 2)\n"
+        for folder, code, parts in ((same, 0, ()), (changed, 1, (str(changed / GATE.name), changed_digest,
+                                                                  GATE_SHA256))):
+            result = subprocess.run([sys.executable, "-I", "-c", probe, str(folder / GATE.name)], capture_output=True,
+                                    text=True)
+            if result.returncode != code or not all(part in result.stderr for part in parts):
+                problems.append(f"CHECKED_LOAD on the copy in {folder.name}: exit {result.returncode}, expected {code}"
+                                + (" and a message that names the file and both digests" if parts else "")
+                                + f": {(result.stdout + result.stderr).strip()[:300]}")
     return problems
 
 
@@ -3623,17 +3720,28 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: f
                (3, f"check-install-page: {INLINE_GATE} {words}"))
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
-# The folder that the case of LOCKED_CASES sets to mode 000, and the probe that runs the gate for it. The probe loads
-# the copy of the gate, wraps its occupied() to record each folder that it could not list, sets the folder's mode to
-# 000 and runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that folder, and
-# otherwise exits with main()'s code.
-LOCKED_FOLDER = "site/assets/old"
-LOCK_PROBE = """\
-import importlib.util, os, sys
+# The lines that start LOCK_PROBE and SORTED_PROBE, the checked load of the copy of the gate in a separate process:
+# they read the bytes of the copy once, stop with exit 1, naming the file and both digests, unless their sha256 is
+# GATE_SHA256, and then compile and run exactly those bytes as a new module, as load_gate() does, never through the
+# import system.
+CHECKED_LOAD = f"""\
+import hashlib, sys, types
 from pathlib import Path
-spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
-gate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gate)
+source = Path(sys.argv[1]).read_bytes()
+found = hashlib.sha256(source).hexdigest()
+if found != {GATE_SHA256!r}:
+    sys.exit(f'probe: {{sys.argv[1]}} has the sha256 {{found}}, not {GATE_SHA256}, the digest that GATE_SHA256 records')
+gate = types.ModuleType('check_install_page')
+gate.__file__ = sys.argv[1]
+exec(compile(source, sys.argv[1], 'exec', dont_inherit=True), gate.__dict__)
+"""
+# The folder that the case of LOCKED_CASES sets to mode 000, and the probe that runs the gate for it. The probe loads
+# the copy of the gate by CHECKED_LOAD, wraps its occupied() to record each folder that it could not list, sets the
+# folder's mode to 000 and runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that
+# folder, and otherwise exits with main()'s code.
+LOCKED_FOLDER = "site/assets/old"
+LOCK_PROBE = CHECKED_LOAD + """\
+import os
 refusals = []
 listed = gate.occupied
 def occupied(source):
@@ -3657,14 +3765,10 @@ LOCKED_CASES = [
         (1, "site/_redirects line 37 has the source /assets/old/aiqt-card.svg, " + UNEVALUATED
             + f"the folder {LOCKED_FOLDER} could not be listed")),
 ]
-# The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate, wraps its
-# list_folder() to give the entries of each folder sorted by name, so that site/assets/QZM is listed before
+# The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate by CHECKED_LOAD, wraps
+# its list_folder() to give the entries of each folder sorted by name, so that site/assets/QZM is listed before
 # site/assets/qzm wherever the copy holds both, and exits with main()'s code.
-SORTED_PROBE = """\
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location('check_install_page', sys.argv[1])
-gate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gate)
+SORTED_PROBE = CHECKED_LOAD + """\
 listed = gate.list_folder
 gate.list_folder = lambda folder: sorted(listed(folder), key=lambda entry: entry.name)
 sys.exit(gate.main())
@@ -4224,12 +4328,13 @@ def main() -> int:
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the reader pin: {problem}" for problem in reader_pin_problems()]
+    failures += [f"the checked load: {problem}" for problem in checked_load_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     if not copied:
         failures += [f"the Python version: {problem}" for problem in version_problems()]
-    doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
+    doc = " ".join((ast.get_docstring(ast.parse(GATE_BYTES.decode("utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
         if words not in doc:
             failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
@@ -4259,7 +4364,8 @@ def main() -> int:
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
-          f"redirect_break(), the reader pin of {len(READER_NAMES)} functions and {len(READER_GLOBALS)} other names "
+          f"redirect_break(), the sha256 of tools/{GATE.name} and its checked load, "
+          f"the reader pin of {len(READER_NAMES)} functions and {len(READER_GLOBALS)} other names "
           f"of check 7, the letter-case guard, "
           f"the case loop, the 2nd look, main()'s call of case_run_problems(), the "
           f"workflow's path lists, the Python version checks, the "
