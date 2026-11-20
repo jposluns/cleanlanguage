@@ -4,20 +4,20 @@
   Cross-Origin-Opener-Policy: same-origin
   Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 
-/downloads/cleanlanguage.md
-  Content-Disposition: attachment; filename="cleanlanguage.md"
+/downloads/cleanlanguage-instructions.md
+  Content-Disposition: attachment; filename="cleanlanguage-instructions.md"
   X-Robots-Tag: noindex
 
-/downloads/cleanlanguage-29k.md
-  Content-Disposition: attachment; filename="cleanlanguage-29k.md"
+/downloads/cleanlanguage-instructions-29k.md
+  Content-Disposition: attachment; filename="cleanlanguage-instructions-29k.md"
   X-Robots-Tag: noindex
 
-/downloads/cleanlanguage-11k.md
-  Content-Disposition: attachment; filename="cleanlanguage-11k.md"
+/downloads/cleanlanguage-instructions-11k.md
+  Content-Disposition: attachment; filename="cleanlanguage-instructions-11k.md"
   X-Robots-Tag: noindex
 
-/downloads/cleanlanguage-8k.md
-  Content-Disposition: attachment; filename="cleanlanguage-8k.md"
+/downloads/cleanlanguage-instructions-8k.md
+  Content-Disposition: attachment; filename="cleanlanguage-instructions-8k.md"
   X-Robots-Tag: noindex
 
 /images/cleanlanguage-card.png

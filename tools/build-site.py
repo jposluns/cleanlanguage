@@ -45,7 +45,7 @@ Sources
 - Generated from the skill's own files: the Examples pairs
   (``references/examples.md``), the By channel lists
   (``references/context-modes.md``), the checklist (``references/qa-checklist.md``)
-  and the Instructions block (``site/downloads/cleanlanguage.md``, exactly).
+  and the Instructions block (``site/downloads/cleanlanguage-instructions.md``, exactly).
 
 Every page loads ``scheme.js`` in ``<head>`` before the stylesheets, with
 ``data-cfasync="false"`` and no ``defer``, and ends ``header.mast`` with the
@@ -2871,7 +2871,7 @@ def build(
     examples_html, example_count = render_examples(root, commentary)
     _, channel_sections = parse_sections(read_text(root, REFS / "context-modes.md"), str(REFS / "context-modes.md"))
     _, checklist_sections = parse_sections(read_text(root, REFS / "qa-checklist.md"), str(REFS / "qa-checklist.md"))
-    instructions = read_text(root, DOWNLOADS / "cleanlanguage.md").rstrip("\n")
+    instructions = read_text(root, DOWNLOADS / "cleanlanguage-instructions.md").rstrip("\n")
     # Each AI family has its own setup page under install/; the home page counts them.
     families = sum(1 for page in pages if str(page.get("path", "")).startswith("install/") and page.get("path") != "install/")
     if families == 0:
@@ -2879,8 +2879,8 @@ def build(
     values = {
         "base": base,
         **release,
-        "size.full": file_kb(root, "cleanlanguage.md"),
-        "chars.full": file_chars(root, "cleanlanguage.md"),
+        "size.full": file_kb(root, "cleanlanguage-instructions.md"),
+        "chars.full": file_chars(root, "cleanlanguage-instructions.md"),
         "count.examples": str(example_count),
         "count.channels": str(len(channel_sections)),
         "count.modes": str(operating_mode_count(root)),

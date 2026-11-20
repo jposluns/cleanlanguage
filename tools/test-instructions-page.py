@@ -123,7 +123,7 @@ SUITE = Path(__file__).resolve()
 INNER = "--inner"
 SUITE_TIMEOUT = 600
 PAGE = "site/instructions/index.html"
-FILES = ["site/downloads/cleanlanguage.md", PAGE, "tools/check-inline-code.py"]
+FILES = ["site/downloads/cleanlanguage-instructions.md", PAGE, "tools/check-inline-code.py"]
 BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
 # Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS of tools/check-inline-code.py.
 VERSION_PROBE = (
@@ -442,7 +442,7 @@ CASES = [
     ("the stated count with a leading zero", edit(PAGE, f"saves ({SAVED} characters)", f"saves (0{SAVED} characters)"),
         (1, "", f"the page states 0{SAVED} characters for the full download")),
     ("the download undecodable",
-        lambda root: (root / "site/downloads/cleanlanguage.md").write_bytes(b"\xff"), (3, "could not be read")),
+        lambda root: (root / "site/downloads/cleanlanguage-instructions.md").write_bytes(b"\xff"), (3, "could not be read")),
     ("the page undecodable", lambda root: (root / PAGE).write_bytes(b"\xff"),
         (3, f"check-instructions-page: {PAGE} could not be read: 'utf-8' codec can't decode")),
     ("the text drifted and the stated count removed",

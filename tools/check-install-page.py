@@ -243,7 +243,7 @@ What it verifies
    ``/``, ``/*``,
    ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
    ``https://host`` and ``https://host/install/*`` can, and
-   ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
+   ``/downloads/cleanlanguage-instructions.md``, ``/images/cleanlanguage-card.png``,
    ``/sitemap.xml`` and ``/draft/*`` cannot. ``reaches_page`` reads a
    pattern the same way, and also as able to match a file the pages load
    when the first segment of its path is 1 of ``LOADED_SEGMENTS`` (check 6)
