@@ -3041,6 +3041,13 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
+# A comment that opens as <!--> or <!--->, as plain text, as tools/check-inline-code.py's check 9 reads it. HTML closes
+# such a comment at once; Python 3.14.4's HTMLParser reads it to the next --> or --!>, and Python 3.14.7's closed it at
+# once in the side-by-side run of TODO 255, so disclosure_d4_section() refuses it rather than read it as the running
+# interpreter does.
+SHORT_COMMENT = re.compile(r"<!---?>")
+
+
 def disclosure_d4_section(text: str) -> str | None:
     """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
     d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
@@ -3057,9 +3064,15 @@ def disclosure_d4_section(text: str) -> str | None:
     {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
     the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
-    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further;
-    for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this reading
-    skips a label or an h2 element between them."""
+    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further.
+    One such difference also differs between Python releases: a comment that opens as <!--> or <!--->, which HTML closes
+    at once and HTMLParser reads by release (SHORT_COMMENT). So that the reading does not depend on the interpreter, it
+    raises ValueError, before it parses, on any text that SHORT_COMMENT matches, wherever it stands, as the generator
+    refuses both."""
+    short = SHORT_COMMENT.search(text)
+    if short is not None:
+        raise ValueError(f"a comment that opens as {short.group(0)}, which HTML closes at once and HTMLParser reads by "
+                         "Python release")
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -3097,12 +3110,17 @@ def check_disclosure_states(failures: list[str]) -> int:
     note, published = phrases.values()
 
     def d4_failures(text: str, where: str) -> list[str]:
-        section = disclosure_d4_section(text)
+        try:
+            section = disclosure_d4_section(text)
+        except ValueError as error:
+            return [f"{where} holds {error}"]
         if section is None:
             return [f"{where} has no D-4 heading, an h2 element whose id attribute is d-4"]
         return [f"D-4 of {where} lacks {name}, {phrase!r}" for name, phrase in phrases.items() if phrase not in section]
 
     lacks_note = [f"D-4 of the test page lacks CHECKSUM_PENDING_NOTE, {note!r}"]
+    short = ("the test page holds a comment that opens as {}, which HTML closes at once and HTMLParser reads by Python "
+             "release")
     entry_4 = f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
     blocks = ('<p class="lbl blk">Your browser</p>\n<p>{}</p>\n<p class="lbl blk">Security</p>\n<p>Report.</p>\n'
               '<div class="next"><p class="lbl">Next</p><a class="start" href="/">Home</a>\n</div>\n')
@@ -3135,9 +3153,15 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
-        ("the note after <!--> and an Entry 5 label, which HTMLParser reads as 1 comment up to the next --> (the "
-         "generator refuses <!-->)", entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n'
-         '<h2 id="d-5">Five</h2>\n', []),
+        # HTMLParser reads <!--> and <!---> by Python release (SHORT_COMMENT), so the reading refuses both on every
+        # release; it still reads the empty comment <!---->, which SHORT_COMMENT does not match.
+        ("the note after <!--> and an Entry 5 label (the generator refuses <!-->)",
+         entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
+         [short.format("<!-->")]),
+        ("the note after <!---> and an Entry 5 label (the generator refuses <!--->)",
+         entry_4 + f'<!---><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
+         [short.format("<!--->")]),
+        ("the note after an empty comment <!---->", entry_4 + f'<!----><p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
         ("the note only after an Entry 5 label on a div element",
          entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
         ("the note directly before the next h2 heading on its line", entry_4 + f'{note}<h2 id="d-5">Five</h2>\n', []),
