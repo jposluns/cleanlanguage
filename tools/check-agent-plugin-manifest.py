@@ -30,15 +30,21 @@ a character device for real, check that it has the type they give that kind,
 and run the gate on it; where the OS refuses one, with EPERM, EACCES,
 EOPNOTSUPP or ENOSYS, that smoke case or subtest skips, and the run prints
 unittest's own record of each skip after its summary. A gate that asks for a
-file type another way sees the real regular copy, so every refusal case fails:
-a false alarm on a correct change, never a silent pass, and the tests' fake
-must then follow the new route. A read before the refusal through a route the
-tests do not record (io.FileIO, a bytes path, another spelling of the path such
-as one relative to a dir_fd, a subprocess or ctypes) passes the seam. The FIFO
-smoke cases catch it where the OS lets them make a FIFO, and the case for a
-missing copy catches it on every runner when it lets the error of its open
-through; one that ignores that error passes every case when the OS refuses to
-make every kind of node.
+file type another way sees the real regular copy through that query, so the
+refusal subtests for each kind that the query refuses fail, and so does the
+control when the gate no longer calls os.lstat, or no longer calls os.stat, in
+a way that the tests' fake answers: a false alarm on a correct change, never a
+silent pass, and the tests' fake must then follow the new route. A read
+before the refusal through a route the tests do not record (io.FileIO, a
+bytes path, another spelling of the path such as one relative to a dir_fd,
+a subprocess or ctypes) passes the seam. The FIFO smoke cases catch it where
+the OS lets them make a FIFO. The cases for a missing copy and for a folder,
+on every runner, and the smoke cases for a socket and for a dangling symlink,
+where the OS lets them make those, catch one that lets through an error that
+it meets on that copy. So when the OS refuses to make every kind of node, one
+that lets no such error through passes every case, such as one that ignores
+the errors of its open and of its read, or one that ignores the error of its
+open when its open of a folder fails, as that of io.FileIO does.
 
 The plugin installs the cleanlanguage/ tree and the skill zip takes these 2
 files from it, so a copy that drifted from the root file would ship a licence
@@ -126,8 +132,9 @@ def check_licence_copies() -> None:
     require exit 1, the kind's message and no open, read or listing of the
     copy before the refusal; real-node smoke cases, which skip where the OS
     refuses to make the node, check that each kind they can make has the
-    type the tests give it. If this route changes, every refusal case fails
-    until the tests' fake follows it.
+    type the tests give it. If is_symlink, exists or is_file is replaced by
+    a query that asks for the type another way, the tests fail for each kind
+    that the replaced check refuses until the tests' fake follows it.
     """
     for name in LICENCE_FILES:
         root = REPO_ROOT / name

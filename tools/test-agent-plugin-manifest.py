@@ -85,18 +85,25 @@ These residuals remain:
 
 - The seam reaches the gate only while the gate asks for a file type through
   os.stat or os.lstat looked up when it is called. A gate that asks another
-  way sees the real regular copy and accepts it, so every refusal subtest
-  fails: a false alarm on a correct refactor, never a silent pass, and whoever
-  changes that route must update FakeNode.
+  way sees the real regular copy through that query, so the refusal
+  subtests for each kind that the query refuses fail, and the control fails
+  too when the gate no longer calls os.lstat, or no longer calls os.stat,
+  with the exact path string: a false alarm on a correct refactor, never a
+  silent pass, and whoever changes that route must update FakeNode.
 - Only a call of io.open, open, os.open, os.listdir or os.scandir whose path
   argument is the exact path string is recorded, with or without a dir_fd.
   The seam does not catch a read before the refusal through io.FileIO, a
   bytes path, another spelling of the path (such as one relative to a
   dir_fd), a subprocess or ctypes. Where the OS lets the test make a FIFO,
   the FIFO smoke cases catch such a read, since it opens the FIFO for
-  reading. One that lets the error of its open through also makes the case
-  for a missing copy error, on every runner. One that ignores that error
-  passes every case when the OS refuses to make every kind of node.
+  reading. The cases for a missing copy and for a folder, on every runner,
+  and the smoke cases for a socket and for a dangling symlink, where the OS
+  lets the test make those, catch one that lets through an error that it
+  meets on that copy. So when the OS refuses to make every kind of node, one
+  that lets no such error through passes every case, such as one that
+  ignores the errors of its open and of its read, or one that ignores the
+  error of its open when its open of a folder fails, as that of io.FileIO
+  does.
 - The seam case for a root file answers only os.stat and os.lstat called
   with the exact path string and no dir_fd, so it catches a gate that
   refuses a root symlink that such a call reports, including os.stat with
