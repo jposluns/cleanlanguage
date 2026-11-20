@@ -25,11 +25,12 @@ character device, a dangling symlink, a missing copy, a folder, a FIFO, a
 socket, a character device, a block device and a type that Linux does not
 use), while the file behind it stays a regular, equal copy, and require exit
 1, the kind's message and no open, read or listing of the copy before the
-refusal. Where the OS lets them, they also make a symlink, a FIFO, a socket or
-a character device for real, check that it has the type they give that kind,
-and run the gate on it; where the OS refuses one, with EPERM, EACCES,
-EOPNOTSUPP or ENOSYS, that smoke case or subtest skips, and the run prints
-unittest's own record of each skip after its summary. A gate that asks for a
+refusal through a call that they record. Where the OS lets them, they also
+make a symlink, a FIFO, a socket or a character device for real, check that
+it has the type they give that kind, and run the gate on it; where the OS
+refuses one, with EPERM, EACCES, EOPNOTSUPP or ENOSYS, that smoke case or
+subtest skips, and the run prints unittest's own record of each skip after
+its summary. A gate that asks for a
 file type another way sees the real regular copy through that query, so the
 refusal subtests for each kind that the query refuses fail, and so does the
 control when the gate no longer calls os.lstat, or no longer calls os.stat, in
@@ -130,7 +131,9 @@ def check_licence_copies() -> None:
     which call os.lstat and os.stat. The tests answer those calls for 1 copy
     with the type of each kind, on every runner and with no skip, and
     require exit 1, the kind's message and no open, read or listing of the
-    copy before the refusal; real-node smoke cases, which skip where the OS
+    copy before the refusal through a call that they record, so a read
+    through a route that they do not record passes that requirement, as the
+    module docstring says; real-node smoke cases, which skip where the OS
     refuses to make the node, check that each kind they can make has the
     type the tests give it. If is_symlink, exists or is_file is replaced by
     a query that asks for the type another way, the tests fail for each kind

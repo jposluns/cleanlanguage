@@ -20,13 +20,15 @@ symlink, a missing copy, a folder, a FIFO, a socket, a character device, a
 block device and a type that Linux does not use),
 test_licence_copy_kind_refused_untouched requires exit 1, the message for that
 kind and no recorded access to the copy, so a gate that opens, reads or lists
-a copy before refusing it fails, whether or not it ignores the error. A
-control requires that a regular type through the same fake passes, that the
-fake answered the gate and that the recorder saw the gate read the copy, so a
-fake that no longer reaches the gate fails. A further seam case gives a root
-LICENSE or NOTICE.md the type of a symlink and requires that the gate read it
-through: it passes when its bytes equal the copy, and fails with the message
-that the copy differs when they do not.
+a copy before refusing it through a call that the fake records fails, whether
+or not it ignores the error; one that reads the copy before refusing it
+through a route that the fake does not record passes that case, as the
+residuals below say. A control requires that a regular type through the same
+fake passes, that the fake answered the gate and that the recorder saw the gate
+read the copy, so a fake that no longer reaches the gate fails. A further seam
+case gives a root LICENSE or NOTICE.md the type of a symlink and requires that
+the gate read it through: it passes when its bytes equal the copy, and fails
+with the message that the copy differs when they do not.
 
 Real-node smoke cases make, where the OS allows it, a copy that is a symlink
 (to the root file, to a FIFO, or to a path that does not exist), a FIFO, a
@@ -670,10 +672,13 @@ class AgentPluginManifestTest(unittest.TestCase):
 
     def test_licence_copy_kind_refused_untouched(self):
         # The seam: on every runner and with no skip, each kind of copy in
-        # COPY_KINDS must fail with exit 1 and its message before the gate
-        # opens, reads or lists the copy, which stays a real regular file
-        # equal to its root file, so a gate that accepts the kind, or reads
-        # the copy before refusing it, fails.
+        # COPY_KINDS must fail with exit 1 and its message, with no open,
+        # read or listing of the copy recorded before the refusal, while the
+        # copy stays a real regular file equal to its root file. So a gate
+        # that accepts the kind, or reads the copy before refusing it through
+        # a call that the fake records, fails; one that reads it through a
+        # route that the fake does not record passes here, as the module
+        # docstring's residuals say.
         self.write(valid_manifest())
         for name in COPIED_FILES:
             copy = gate.REPO_ROOT / "cleanlanguage" / name
