@@ -201,6 +201,15 @@ WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
     "path = sys.argv[1]\nwith open(sys.argv[2], \"a\", encoding=\"utf-8\") as mark:\n"
     "    mark.write(\"ran\\n\")\n", 1)
 
+# The enumerator timeout of every fixture registry whose enumerator should end normally. The hook starts
+# this clock when it starts the enumerator (`subprocess.run` at aiqt_hooks.py:22833), so it also covers
+# the interpreter start-up, which a loaded host can stretch past 5 seconds and turn a normal end into
+# ENUMERATOR_ERROR. 60 seconds is the hook's own default (aiqt_hooks.py:22831) and stays below the 120
+# second bound of run_hook, so an enumerator that hangs is still reported by the hook. The gate caps a
+# committed value at 8 seconds (ENUMERATOR_TIMEOUT_MAX); these registries are never gated. The timeout
+# test sets its own 1 second timeout for an enumerator that does not end.
+ENUM_TIMEOUT = 60
+
 # Runs in a separate python3 -I process: load the doctor by path, replace the hook resume audit with
 # a writer that rewrites the barrier with new content but a ts from before the run, and return the
 # doctor exit status for that audit.
@@ -380,7 +389,7 @@ class Stage2Harness(unittest.TestCase):
         reg = self.stage1()
         reg.update({
             "enumerator": {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)],
-                           "timeout": 5},
+                           "timeout": ENUM_TIMEOUT},
             "yield_tools": ["ScheduleWakeup", "CronCreate"],
             "mode": {"path": self._p("operating-mode.md")},
             "staleness": {"task_hours": 24, "external_hours": 72},
@@ -1200,8 +1209,11 @@ class T14PosturePins(Stage2Harness):
 # =====================================================================================================
 class T15EnumeratorTimeout(Stage2Harness):
     def test_sleeping_enumerator_times_out_and_denies(self):
+        # The bound is measured from before the hook starts, so it also covers the hook's own start-up,
+        # which a loaded host stretches. It stays below the enumerator's sleep, so a hook that waited the
+        # sleep out still fails it, and the sleep stays below the 120 second bound of run_hook.
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(30)"], "timeout": 1}))
+            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(60)"], "timeout": 1}))
         self.arm_lease()
         started = time.monotonic()
         r = self.stop()
@@ -1209,7 +1221,7 @@ class T15EnumeratorTimeout(Stage2Harness):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
-        self.assertLess(elapsed, 15, "the declared timeout bounds the hook")
+        self.assertLess(elapsed, 45, "the declared timeout bounds the hook")
 
     def test_stage1_contrast(self):
         self.write_registry(self.stage1())
@@ -1647,7 +1659,7 @@ class Doctor(Stage2Harness):
         marker = self._tmp / "enumerator-ran.txt"
         reg = self.stage2(enumerator={
             "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}, **overrides)
+            "timeout": ENUM_TIMEOUT}, **overrides)
         return reg, marker
 
     def test_preflight_out_of_scope_runs_no_enumerator(self):
@@ -1808,7 +1820,7 @@ class Doctor(Stage2Harness):
         marker = self._tmp / "enumerator-ran.txt"
         self.write_registry(self.stage2(enumerator={
             "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}))
+            "timeout": ENUM_TIMEOUT}))
         self.arm_lease()
         self.set_items([item("1", state="closed")])
         r = self.run_doctor("preflight", "stop")
