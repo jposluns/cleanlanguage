@@ -3070,7 +3070,7 @@ def disclosure_d4_section(text: str) -> str | None:
     {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
     the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
-    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further.
+    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the 2 can differ further.
     The generator refuses a comment that opens as <!--> or <!--->, and HTMLParser's reading of <!--> differs between
     Python releases (SHORT_COMMENT). This reading raises ShortCommentRefused, before it parses, on any text that
     SHORT_COMMENT matches, wherever it stands, so its result on such text does not come from HTMLParser. It reads all

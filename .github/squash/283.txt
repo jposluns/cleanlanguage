@@ -1,0 +1,48 @@
+Refuse short comment openers in the disclosure D-4 reader (#283)
+
+The disclosure case with '<!-->' in tools/test-build-site.py held only
+for Python 3.14.4's reading of that opener. HTMLParser in Python 3.14.4
+reads '<!-->' as 1 comment up to the next '-->' or '--!>', so the label
+after it is not read as a tag. On Python 3.14.7 the case fails, as the
+side-by-side run that TODO 255 records found.
+
+Add SHORT_COMMENT, re.compile(r"<!---?>"), the same pattern as check 9
+of tools/check-inline-code.py, and the exception ShortCommentRefused.
+disclosure_d4_section() raises it, before it parses, on any text that
+SHORT_COMMENT matches, so its result on these openers no longer comes
+from the interpreter's HTMLParser; it still reads all other markup
+with that parser. check_disclosure_states() catches only
+ShortCommentRefused and reports it as a failure line, so any other
+exception from the reader passes out instead of becoming a case
+result. The '<!-->' case now expects the refusal, a new '<!--->' case
+expects it too, and a new '<!---->' case expects no failure, as an
+empty comment is still parsed. The '<!-->' case is a fixture brought
+up to date with a deliberate contract change: the test's reader now
+refuses the openers that the generator's grammar and check 9 already
+refuse.
+
+A version-conditional expected result was declined. It would key on
+sys.version_info < (3, 14, 7), a boundary not confirmed in CPython,
+and it would fail on Python 3.14.4 under a simulated short-close
+reading, where the '<!-->' case gives the lacks-note failure. It also
+keeps the dependency on the interpreter's comment parsing and gives
+markup the generator refuses a meaning that changes by release.
+
+With only the refusal removed, the changed '<!-->' case and the new
+'<!--->' case fail on Python 3.14.4 and under the simulated
+short-close reading, and the new '<!---->' case passes under both.
+
+Add .github/squash/283.txt, which holds this message byte for byte and
+which CI's Pull request text check reads.
+
+The CPython change is not confirmed at source: the CPython source,
+NEWS and changelog were not consulted, so the release that changed the
+reading and the upstream issue remain unknown, and no run shows how
+Python 3.14.7 reads '<!--->'. .python-version is untouched; moving the
+pin to 3.14.7 stays the maintainer's decision.
+
+This message supersedes every earlier commit message on the branch.
+The pushed history is not rewritten, so those messages stay on the
+branch. The first of them says that the 2 new cases fail with only
+the refusal removed, which is false, as the '<!---->' case passes, and
+that Python 3.14.7 closes '<!-->' at once, which no run shows.
