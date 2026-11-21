@@ -2,18 +2,22 @@
 
 ## Scope
 
-Except where otherwise noted, all material in this repository, including the Clean Language skill and the cleanlanguage.ai website content, markup, and styles, is licensed under CC BY-SA 4.0. Adopted material is noted below, and any third-party material retains its original licence.
+Except where otherwise noted, all material in this repository, including the Clean Language skill, the cleanlanguage.ai website content, markup, and styles, and the code, is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`). The licence text is in [LICENSE](LICENSE). Adopted material is noted below, and any third-party material retains its original licence.
+
+This notice also ships in the skill zip and in the plugin, which hold only part of the repository. "This repository" means the source repository, https://github.com/jposluns/cleanlanguage. Apart from the baseline's own `tools/card-fonts/`, each path in this notice is a path in that repository, and the paths in the Site template section are under its `site/` folder.
 
 ## Clean Language
 
-The original Clean Language material in this repository is copyright 2026 Jeff Posluns and licensed under the Creative Commons Attribution-ShareAlike 4.0 International Public License (SPDX: `CC-BY-SA-4.0`).
+Copyright 2026 Jeff Posluns
+
+The original Clean Language material in this repository is licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`).
 
 Canonical licence:
-https://creativecommons.org/licenses/by-sa/4.0/
+https://www.apache.org/licenses/LICENSE-2.0
 
 Suggested attribution:
 
-> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under CC BY-SA 4.0.
+> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under the Apache License, Version 2.0.
 
 (Add "Changes were made." if you modified it.)
 
@@ -31,7 +35,7 @@ The Inter font files in `.baseline/card-fonts/` (Inter 4.000, Copyright 2016 The
 
 ## Adopted governance rules
 
-The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under the Apache License 2.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`.
+The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under the Apache License 2.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`. The pack ships no licence file of its own; the Apache License 2.0 text in [LICENSE](LICENSE) is the copy that covers it.
 
 ## Recommended, not embedded: AIQT
 

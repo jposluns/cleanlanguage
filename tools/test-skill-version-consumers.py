@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Cross-consumer contract: the packager and the two release gates select and
+"""Cross-consumer contract: the packager and the 2 release gates select and
 validate the SKILL.md ``Version:`` line by the same rule.
 
-The two gates (check-release-links.py, check-release-checksum-live.py) already
+The 2 gates (check-release-links.py, check-release-checksum-live.py) already
 apply a strict rule: the first ``Version:`` line must be a bare ``X.Y.Z``. This
 test pins that the packager (release-package.sh) selects and validates
-identically, so a malformed first line fails in all three, and a clean version
+identically, so a malformed first line fails in all 3, and a clean version
 still passes. It runs offline: the packager is exercised in a throwaway git
 worktree, and the gates are exercised through their own compiled regexes.
 The packager and the dry run read the Released line through
@@ -13,6 +13,12 @@ tools/skill-release-date-client.py (row 89), and each tells input the client
 could not read (client exit 14) apart from an extractor that failed inside or
 broke its contract (client exit 16), which is never read as malformed content;
 the dry run read is exercised from the block extracted from its real script.
+The packager is also built with cleanlanguage/LICENSE or cleanlanguage/NOTICE.md
+missing, differing from its root file, or differing from it only in CR LF line
+endings, in case or by a trailing space at HEAD, and must refuse each; it must
+refuse such a copy at HEAD even when the worktree's file equals the root file,
+and build when the copy at HEAD is equal even though the worktree's file
+differs or is missing.
 """
 
 from __future__ import annotations
@@ -68,7 +74,7 @@ LAUNCH_PROBES = (
 # the caller, each launch exactly "python3 -I tools/skill-release-date-
 # client.py" and its arguments, so any other line that names it fails:
 # a launch without -I, with another interpreter word, quoted or from a
-# variable, over a continuation line, by its shebang, or one more launch in
+# variable, over a continuation line, by its shebang, or 1 more launch in
 # the listed form. Residual: a launch that builds the name from parts or
 # reads it from a variable is not seen.
 CLIENT_NAME = 'skill-release-date-client.py'
@@ -489,14 +495,20 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     return proc.returncode, stdout, stderr
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = ()):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = (), tree_edit=None, checkout_edit=None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
     tools/skill-release-date-client.py (so the code under test, not HEAD's
     copy, is exercised), passing ``--release-date`` when ``release_date`` is
-    given and then ``extra_args``. ``extractor`` replaces the extractor and
-    ``client`` the client: ``"missing"`` deletes it, any other text is written
-    in its place. ``path_prefix`` is put first on the PATH of the packager,
+    given and then ``extra_args``. ``tree_edit``, when given, is called with
+    the worktree's path before the fixture commit, so the change it makes to
+    a tracked file, a deletion included, is at HEAD when the packager runs.
+    ``checkout_edit``, when given, is called with the worktree's path after
+    the fixture commit, so the change it makes is in the worktree's files
+    only and HEAD does not carry it.
+    ``extractor`` replaces the extractor and ``client`` the client:
+    ``"missing"`` deletes it, any other text is written in its place.
+    ``path_prefix`` is put first on the PATH of the packager,
     and ``bash_options`` are passed to the bash that runs it. The packager
     runs through ``run_bounded`` with its default timeout, so the wait for the
     run is bounded by ``SCRIPT_TIMEOUT`` and the run's process group is killed
@@ -519,11 +531,17 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             data = json.loads(pj.read_text(encoding="utf-8"))
             data["version"] = plugin_version
             pj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            if tree_edit is not None:
+                tree_edit(wt)
+            # core.autocrlf=false commits each file's bytes as written, so a
+            # copy given CR LF line endings keeps them in its blob.
             subprocess.run(
                 ["git", "-C", str(wt), "-c", "user.name=t", "-c", "user.email=t@t",
-                 "commit", "-qam", "fixture"],
+                 "-c", "core.autocrlf=false", "commit", "-qam", "fixture"],
                 capture_output=True, check=True,
             )
+            if checkout_edit is not None:
+                checkout_edit(wt)
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
             shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
@@ -595,6 +613,205 @@ class PackagerContractTest(unittest.TestCase):
         code, stderr = run_packager("", "1.0.14")
         self.assertEqual(code, 1, stderr)
         self.assertIn("no Version: line found", stderr)
+
+
+class PackagerLicenceCopyTest(unittest.TestCase):
+    """The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and its
+    entry list and byte check read them there too, so in the packager only its
+    licence-copy check ties each copy to its root file. The cases cover both
+    files, which the test names itself.
+
+    Most cases change 1 copy at HEAD of a throwaway worktree and require exit
+    1 and the message for that copy: a copy that is missing; a copy with 1
+    byte replaced past the first 64, the length kept; a copy whose every LF
+    is CR LF; and, from 1 loop, a copy with the case of every letter swapped,
+    with 1 space before its first line ending, with 1 space after its last
+    line ending, with 1 LF added at its end, or with its final LF removed.
+
+    1 case comes from SOURCE_ROWS: for each of the 4 paths the check reads
+    (each copy and each root file), and for the index and for the worktree's
+    files, 4 rows: the place differs or is missing while HEAD is good, which
+    must build (exit 0), and HEAD differs or is missing while the place is
+    good, which must fail (exit 1) with the message for HEAD's defect.
+
+    1 case, for each file, commits a .gitattributes that gives the copy the
+    attributes text and eol=crlf, so git archive writes the copy's zip entry
+    with CR LF while its blob, and the root file's, keep LF; the build must
+    fail (exit 1) with the byte check's message for that entry and its
+    cleanlanguage/ blob."""
+
+    # (path kind, place, change at HEAD, change at the place, expected exit)
+    SOURCE_ROWS = tuple(
+        (kind, place, head, there, code)
+        for kind in ("copy", "root")
+        for place in ("index", "worktree")
+        for head, there, code in ((None, "differs", 0), (None, "missing", 0),
+                                  ("differs", "restored", 1), ("missing", "restored", 1))
+    )
+
+    COPIED_FILES = ("LICENSE", "NOTICE.md")
+
+    def change_copy(self, copy: Path, change: str) -> None:
+        """Change the licence copy at ``copy`` in the way ``change`` names."""
+        if change == "missing":
+            copy.unlink()
+            return
+        if change == "restored":
+            # The root file's bytes, which the copy must hold.
+            copy.write_bytes((copy.parent.parent / copy.name).read_bytes())
+            return
+        data = copy.read_bytes()
+        if change == "crlf":
+            # Every LF becomes CR LF, so only the line endings differ.
+            self.assertIn(b"\n", data)
+            self.assertNotIn(b"\r", data)
+            changed = data.replace(b"\n", b"\r\n")
+        elif change == "case":
+            # Every letter changes case, so only the case differs.
+            changed = data.swapcase()
+            self.assertEqual(changed.lower(), data.lower())
+        elif change == "line-end space":
+            # 1 space before the first line ending.
+            end = data.index(b"\n")
+            changed = data[:end] + b" " + data[end:]
+        elif change == "text-end space":
+            # 1 space after the last line ending.
+            self.assertTrue(data.endswith(b"\n"))
+            changed = data + b" "
+        elif change == "final LF added":
+            changed = data + b"\n"
+        elif change == "final LF removed":
+            self.assertTrue(data.endswith(b"\n"))
+            changed = data[:-1]
+        elif change == "differs":
+            # 1 byte past the first 64 changed, the length kept.
+            index = len(data) // 2
+            self.assertGreaterEqual(index, 64)
+            replacement = b"x" if data[index:index + 1] != b"x" else b"y"
+            changed = data[:index] + replacement + data[index + 1:]
+        else:
+            raise ValueError(f"unknown change {change!r}")
+        self.assertNotEqual(changed, data)
+        copy.write_bytes(changed)
+
+    def build_with_copy(self, name: str, change: str | None, checkout_change: str | None = None):
+        """Build with ``change`` made to cleanlanguage/<name> at HEAD and then,
+        when given, ``checkout_change`` made to that copy in the worktree's
+        files only."""
+        def edit(wt: Path) -> None:
+            self.change_copy(wt / "cleanlanguage" / name, change)
+
+        def checkout_edit(wt: Path) -> None:
+            self.change_copy(wt / "cleanlanguage" / name, checkout_change)
+
+        return run_packager(None, HEAD_VERSION,
+                            tree_edit=edit if change is not None else None,
+                            checkout_edit=checkout_edit if checkout_change is not None else None)
+
+    def test_missing_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "missing")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE is missing at HEAD; it must be a copy of the root "
+                      "LICENSE", stderr)
+
+    def test_missing_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "missing")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md is missing at HEAD; it must be a copy of the root "
+                      "NOTICE.md", stderr)
+
+    def test_differing_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "differs")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE differs from the root LICENSE at HEAD", stderr)
+
+    def test_differing_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "differs")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
+
+    def test_line_ending_licence_copy_fails(self):
+        code, stderr = self.build_with_copy("LICENSE", "crlf")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/LICENSE differs from the root LICENSE at HEAD", stderr)
+
+    def test_line_ending_notice_copy_fails(self):
+        code, stderr = self.build_with_copy("NOTICE.md", "crlf")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: cleanlanguage/NOTICE.md differs from the root NOTICE.md at HEAD", stderr)
+
+    def test_copy_differing_only_in_case_or_trailing_spaces_fails(self):
+        # Each change keeps every byte but the ones it names: the case of the
+        # letters, 1 space at the end of a line or of the text, or 1 final LF.
+        for name in self.COPIED_FILES:
+            for change in ("case", "line-end space", "text-end space", "final LF added", "final LF removed"):
+                with self.subTest(name, change=change):
+                    code, stderr = self.build_with_copy(name, change)
+                    self.assertEqual(code, 1, stderr)
+                    self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD",
+                                  stderr)
+
+    def set_place(self, wt: Path, rel: str, place: str, change: str, good: bytes) -> None:
+        """Make the file ``rel`` at ``place`` (the index or the worktree's
+        files) hold the change ``change``, ``restored`` being ``good``, and
+        leave the other place as HEAD has it."""
+        path = wt / rel
+        head = path.read_bytes() if path.exists() else None
+        if change == "restored":
+            path.write_bytes(good)
+        else:
+            if not path.exists():
+                path.write_bytes(good)
+            self.change_copy(path, change)
+        if place == "worktree":
+            return
+        if change == "missing":
+            subprocess.run(["git", "-C", str(wt), "rm", "-q", "--cached", "--", rel], capture_output=True, check=True)
+        else:
+            subprocess.run(["git", "-C", str(wt), "add", "--", rel], capture_output=True, check=True)
+        if head is None:
+            if path.exists():
+                path.unlink()
+        else:
+            path.write_bytes(head)
+
+    def test_verdict_follows_head_not_the_index_or_the_worktree(self):
+        for name in self.COPIED_FILES:
+            for kind, place, head_change, there, expected in self.SOURCE_ROWS:
+                rel = f"cleanlanguage/{name}" if kind == "copy" else name
+                with self.subTest(name, kind=kind, place=place, head=head_change, there=there):
+                    good = {}
+
+                    def tree_edit(wt: Path) -> None:
+                        good["bytes"] = (wt / name).read_bytes()
+                        if head_change is not None:
+                            self.change_copy(wt / rel, head_change)
+
+                    def checkout_edit(wt: Path) -> None:
+                        self.set_place(wt, rel, place, there, good["bytes"])
+
+                    code, stderr = run_packager(None, HEAD_VERSION, tree_edit=tree_edit, checkout_edit=checkout_edit)
+                    self.assertEqual(code, expected, stderr)
+                    if head_change == "differs":
+                        self.assertIn(f"release-package: cleanlanguage/{name} differs from the root {name} at HEAD",
+                                      stderr)
+                    elif head_change == "missing":
+                        self.assertIn(f"release-package: {rel} is missing at HEAD", stderr)
+
+    def test_archived_copy_differing_from_its_blob_fails(self):
+        # The copy's blob equals the root file's, so the licence-copy check
+        # and the entry list pass; only the byte check sees the CR LF entry.
+        for name in self.COPIED_FILES:
+            with self.subTest(name):
+                def tree_edit(wt: Path) -> None:
+                    (wt / ".gitattributes").write_text(f"cleanlanguage/{name} text eol=crlf\n", encoding="utf-8")
+                    subprocess.run(["git", "-C", str(wt), "add", "--", ".gitattributes"],
+                                   capture_output=True, check=True)
+
+                code, stderr = run_packager(None, HEAD_VERSION, tree_edit=tree_edit)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(f"release-package: archived {name} differs from its git blob "
+                              f"(HEAD:cleanlanguage/{name})", stderr)
 
 
 class PackagerReleaseDateTest(unittest.TestCase):
@@ -1446,7 +1663,7 @@ class CallerLaunchTest(unittest.TestCase):
                     self.assertNotEqual(client_mentions(text + probe + "\n"), list(client))
 
 
-# Row 89: the two ways errexit can be inherited by a command substitution.
+# Row 89: the 2 ways errexit can be inherited by a command substitution.
 INHERITED_ERREXIT = (("inherit_errexit", ("-O", "inherit_errexit")), ("posix", ("-o", "posix")))
 
 

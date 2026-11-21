@@ -1,7 +1,10 @@
 name: Agent Plugins manifest
 
 # Validate cleanlanguage/plugin.json against the Agent Plugins 1.0.0 schema, so a
-# malformed or drifted root manifest cannot reach main. Structural, offline, and
+# malformed or drifted root manifest cannot reach main, and require
+# cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular files whose
+# bytes equal the root LICENSE and NOTICE.md, so a missing, non-regular or
+# drifted licence copy cannot reach main either. Structural, offline, and
 # stdlib-only; also runs the gate's own unit tests.
 #
 # Neither trigger carries a paths filter, so this gate reports on every pull
