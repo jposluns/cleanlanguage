@@ -1,0 +1,48 @@
+Widen the code_form() self-check of the flow-mode test (#285)
+
+Close TODOs 261, 262 and 263, residuals accepted when pull request 276
+merged. tools/test-check-flow-mode.py changes, and this message is
+added as .github/squash/285.txt. The check is unchanged, so CODE_SHA256
+keeps its value.
+
+TODO 261: some variants of code_form() that strip or rewrite more than
+the check's docstrings and the sha256 values of PARAGRAPHS passed the
+registry case, because no row tried the condition that they relax.
+FORM_PAIRS gains 10 pairs: a string first in the body of a for, a
+while, a with and a try; bytes, an assignment of a string and a return
+of a string, each first in a function; a string after the docstring of
+a function; 2 keyword arguments of a call swapped; and a sha256 in a
+list bound to PARAGRAPHS_OLD. MUTATIONS gains 3 rows on the check's own
+text: a comparison operator changed, the name __name__ changed and the
+upper bound of a slice changed.
+
+TODO 262: the 2 MUTATIONS rows that edited the name or the opening
+text of a row of PARAGRAPHS tried only the name of its first row and
+the opening text of its second. 28 rows built from NAMED replace them,
+4 for each of its 7 rows: a full stop put at the end of its name, a
+full stop put at the end of its opening text, a space put at the end
+of its opening text, and the first space inside its opening text
+doubled. The removed opening-text row deleted the space at the end of
+the opening text of the cycle steps; the 2 rows that edit white space
+make that kind of edit for every row.
+
+TODO 263: the squash message of pull request 276 says that every edit
+of the check's code fails the test until CODE_SHA256 is updated. Only
+an edit that changes the check's syntax tree, once its docstrings and
+the sha256 values of PARAGRAPHS are left out, does. The digest leaves
+out text that the tree does not hold, such as comments, layout, the
+quotes of a string, how a number is written and parentheses that
+change no grouping, so an edit of only such text keeps the digest. The
+test's module docstring, the comment on CODE_SHA256 and the docstring
+of code_form() now say this, and the comment of the registry case says
+that an edit that keeps that tree keeps the digest. PRESERVED gains 3
+rows that pin it: the quotes of a string changed, a number written in
+hexadecimal and parentheses that change no grouping added.
+
+Each row is evidence for its own edit only. A code_form() that hides
+or keeps only what no row edits still passes, such as one that also
+removes a string first in the body of an except clause or of an async
+for. An edit of the check that changes its bytes but not that syntax
+tree keeps the digest, by design. The digest's value depends on how
+the Python that runs the test unparses a syntax tree; .python-version
+names 3.14.4.
