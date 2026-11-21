@@ -12,7 +12,8 @@ test_gate_runs_as_a_command and the 2 cases named
 test_keys_outside_read_keys_change_no_output each run a copy of the gate as a
 command, test_loading_a_gate_that_raises_stops_the_test,
 test_loading_a_gate_that_prints_stops_the_test and
-test_a_cached_gate_is_not_run each run a copy of this test as a command, and
+test_a_cached_gate_is_not_run each run a copy of this test as a command,
+test_an_extractor_changed_after_the_digest_check_is_not_run runs both, and
 RepositoryTreeTest runs the gate on the repository itself. The
 permission cases are skipped when the test runs as root, the case of a file
 swapped for a FIFO where os.mkfifo or signal.SIGALRM is missing, and the case
@@ -29,9 +30,20 @@ that code, never through the import system's loader, which runs a .pyc under
 tools/__pycache__ in place of the source whenever the .pyc's header passes the
 loader's check, and never compares the .pyc's code with the source;
 test_a_cached_gate_is_not_run holds this for a .pyc in each of the 3 modes of
-invalidation. The comparison must stay before the load. Renew a digest only
-after reading the diff of its file since its last reviewed revision. What the
-digest shows, and no more, is item 1 of the residual below.
+invalidation. After the comparison the test reads neither file from the
+repository again: every copy of either file it writes, into a temporary
+tree, and the text its syntax-tree case parses come from the hashed bytes.
+The gate reads the extractor from its own REPO_ROOT and runs what it reads,
+so in the test's process it runs on each temporary tree the hashed bytes
+or a change a case writes into them; on the repository, in
+RepositoryTreeTest, the gate still reads the extractor there, and that read
+must give the hashed bytes, else the case fails, and the gate is given the
+hashed bytes to run.
+test_an_extractor_changed_after_the_digest_check_is_not_run holds this for
+an extractor changed after the comparison. The comparison must stay before
+the load. Renew a digest only after reading the diff of its file since its
+last reviewed revision. What the digest shows, and no more, is item 1 of the
+residual below.
 
 The gate's rule for keys is held where the gate decodes, not by watching
 what it does. The core is the gate's object_pairs_hook `_unique_object`,
@@ -484,7 +496,7 @@ class PluginDistributionTest(unittest.TestCase):
         self.write_json(gate.SITE_JSON, {"schema": 1, "site_key": "cleanlanguage"})
         self.write_text(gate.SKILL_MD, f"---\nname: cleanlanguage\n---\n\n# Clean Language\n\nVersion: {VERSION}  \n")
         (self.root / "tools").mkdir()
-        shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+        (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
 
     def tearDown(self):
         gate.REPO_ROOT = self._saved
@@ -897,7 +909,7 @@ class PluginDistributionTest(unittest.TestCase):
                          {"dependencies": 4098, "name": 17, "plugins": 130, "site_key": 130, "source": 66,
                           "version": 130})
         script = self.root / "tools" / "check-plugin-distribution.py"
-        shutil.copyfile(MODULE_PATH, script)
+        script.write_bytes(_executed[MODULE_PATH])
         inputs = sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*.json"))
         self.assertEqual(len(inputs), 6)
         source = ("FAIL D2: plugin/.claude-plugin/marketplace.json plugins[0].source {} is not a string, so this "
@@ -1194,7 +1206,7 @@ class PluginDistributionTest(unittest.TestCase):
     def test_extractor_without_a_pattern_exits_3(self):
         for name in ("VERSION_LINE", "SKILL_VERSION"):
             with self.subTest(name=name):
-                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
                 self.edit_extractor(f"{name} = re.compile", f"{name}_GONE = re.compile")
                 self.expect(3, f"the extractor tools/skill-version.py could not be used: it has no {name} "
                                "pattern of text")
@@ -1212,7 +1224,7 @@ class PluginDistributionTest(unittest.TestCase):
                                  ("raise RuntimeError('a\\nUNREADABLE: exit 3')", "RuntimeError: a\\nUNREADABLE: exit 3"),
                                  (unshowable, "Unshowable: (a message that cannot be shown)")):
             with self.subTest(statement=statement):
-                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
                 self.edit_extractor('PROG = "skill-version"\n', f'PROG = "skill-version"\n{statement}\n')
                 self.expect(3, f"the extractor tools/skill-version.py could not be loaded: {shown}")
 
@@ -1328,7 +1340,7 @@ class PluginDistributionTest(unittest.TestCase):
     def test_extractor_pattern_of_bytes_exits_3(self):
         for name in ("VERSION_LINE", "SKILL_VERSION"):
             with self.subTest(name=name):
-                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
                 self.edit_extractor(f'{name} = re.compile(r"', f'{name} = re.compile(rb"')
                 self.expect(3, f"the extractor tools/skill-version.py could not be used: it has no {name} "
                                "pattern of text")
@@ -1622,7 +1634,7 @@ class PluginDistributionTest(unittest.TestCase):
                 ('SKILL_VERSION = re.compile(r"^Version:', 'SKILL_VERSION = re.compile(r"^(unused)?Version:',
                  f"its SKILL_VERSION pattern matched 'Version: {VERSION}  ' with no text in group 1")):
             with self.subTest(new=new):
-                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
                 self.edit_extractor(old, new)
                 self.expect(3, f"the extractor tools/skill-version.py could not be used: {shown}")
 
@@ -2002,7 +2014,7 @@ class PluginDistributionTest(unittest.TestCase):
 
     def test_every_line_is_printed_through_emit(self):
         # No print call and no write or writelines call outside emit, which prints through one_line.
-        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+        tree = ast.parse(_executed[MODULE_PATH].decode("utf-8"))
         emit = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "emit")
         inside = {id(node) for node in ast.walk(emit)}
         outside = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and id(node) not in inside
@@ -2109,7 +2121,7 @@ class PluginDistributionTest(unittest.TestCase):
         for statement, shown in ((meta, f"{UNSHOWN_NAME}: x"), (unshowable, f"Unshowable: {UNSHOWN_MESSAGE}"),
                                  (loud, "Loud: loud")):
             with self.subTest(shown=shown):
-                shutil.copyfile(REAL_EXTRACTOR, self.root / EXTRACTOR_REL)
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
                 self.edit_extractor('PROG = "skill-version"\n', f'PROG = "skill-version"\n{statement}\n')
                 output = self.expect(3, f"check-plugin-distribution: the extractor tools/skill-version.py could not be "
                                         f"loaded: {shown}\nUNREADABLE: exit 3\n")
@@ -2140,7 +2152,7 @@ class PluginDistributionTest(unittest.TestCase):
                 ("class Meta(type):\n    @property\n    def __name__(cls):\n        return 42\n"
                  "class Raised(Exception, metaclass=Meta):\n    pass\nraise Raised('x')", f"{UNSHOWN_NAME}: x")):
             with self.subTest(shown=shown):
-                copy.write_text(MODULE_PATH.read_text(encoding="utf-8") + f"\n{statement}\n", encoding="utf-8")
+                copy.write_text(_executed[MODULE_PATH].decode("utf-8") + f"\n{statement}\n", encoding="utf-8")
                 renew_gate_digest(test, copy)
                 done = subprocess.run([sys.executable, "-I", str(test), *LOADED_ONLY], cwd=self.root,
                                       capture_output=True, text=True, errors="backslashreplace", timeout=120)
@@ -2158,7 +2170,7 @@ class PluginDistributionTest(unittest.TestCase):
         printed = repr("printed\n")
         for statement in ("print('printed')", "import sys\nprint('printed', file=sys.stderr)"):
             with self.subTest(statement=statement):
-                copy.write_text(MODULE_PATH.read_text(encoding="utf-8") + f"\n{statement}\n", encoding="utf-8")
+                copy.write_text(_executed[MODULE_PATH].decode("utf-8") + f"\n{statement}\n", encoding="utf-8")
                 renew_gate_digest(test, copy)
                 done = subprocess.run([sys.executable, "-I", str(test), *LOADED_ONLY], cwd=self.root,
                                       capture_output=True, text=True, errors="backslashreplace", timeout=120)
@@ -2177,7 +2189,7 @@ class PluginDistributionTest(unittest.TestCase):
         test = tools / Path(__file__).name
         shutil.copyfile(Path(__file__).resolve(), test)
         copy = tools / MODULE_PATH.name
-        shutil.copyfile(MODULE_PATH, copy)
+        copy.write_bytes(_executed[MODULE_PATH])
         source = copy.read_bytes()
         code = compile(source + b"\nprint('cached')\n", str(copy.resolve()), "exec", dont_inherit=True)
         info = copy.stat()
@@ -2202,6 +2214,40 @@ class PluginDistributionTest(unittest.TestCase):
                 control = subprocess.run([sys.executable, "-I", "-c", by_loader, str(copy)], cwd=self.root,
                                          capture_output=True, text=True, errors="backslashreplace", timeout=120)
                 self.assertEqual((control.returncode, control.stdout, control.stderr), (0, "cached\n", ""))
+
+    def test_an_extractor_changed_after_the_digest_check_is_not_run(self):
+        # A copy of this test beside a copy of the gate in this tree, which the copy of the test reads as the
+        # repository, with a statement after its digest check and its load of the gate that adds to the
+        # tree's extractor a statement that writes a marker file: a change made once the check has passed.
+        # No byte of the changed extractor may run in the copy's process. In PluginDistributionTest, whose
+        # trees take the extractor from the hashed bytes, its 1 case passes; in RepositoryTreeTest, whose
+        # gate reads the changed extractor in the tree, the case fails, naming the change. Neither writes the
+        # marker. Control, after each: the copy of the gate, run as a command, runs the changed extractor and
+        # writes the marker.
+        tools = self.root / "tools"
+        test = tools / Path(__file__).name
+        copy = tools / MODULE_PATH.name
+        copy.write_bytes(_executed[MODULE_PATH])
+        marker = self.root / "marker"
+        added = f"\nopen({str(marker)!r}, 'w').close()\n".encode()
+        anchor = f'\nVERSION = "{VERSION}"\n'
+        text = Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(text.count(anchor), 1)
+        test.write_text(text.replace(anchor, f"{anchor}REAL_EXTRACTOR.write_bytes(REAL_EXTRACTOR.read_bytes() + "
+                                             f"{added!r})\n"), encoding="utf-8")
+        for args, code in ((LOADED_ONLY, 0), (("RepositoryTreeTest.test_repository_is_consistent",), 1)):
+            with self.subTest(args=args):
+                (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
+                marker.unlink(missing_ok=True)
+                done = subprocess.run([sys.executable, "-I", str(test), *args], cwd=self.root,
+                                      capture_output=True, text=True, errors="backslashreplace", timeout=120)
+                self.assertEqual(done.returncode, code, done.stdout + done.stderr)
+                self.assertFalse(marker.exists(), done.stdout + done.stderr)
+                if code:
+                    self.assertIn(f"AssertionError: {EXTRACTOR_REL} changed after the digest check", done.stderr)
+                control = run_command(copy, self.root)
+                self.assertEqual(control[0], 0, control)
+                self.assertTrue(marker.exists(), control)
 
     def test_loader_helper_gives_a_plain_str_or_the_stand_in(self):
         # The helper the loader makes a name and a message with: a str subclass whose own methods raise
@@ -2469,7 +2515,7 @@ class PluginDistributionTest(unittest.TestCase):
     def test_gate_runs_as_a_command(self):
         # A copy of the gate in the tree, so its REPO_ROOT is the tree, run as CI runs it.
         script = self.root / "tools" / "check-plugin-distribution.py"
-        shutil.copyfile(MODULE_PATH, script)
+        script.write_bytes(_executed[MODULE_PATH])
 
         def command():
             done = subprocess.run([sys.executable, "-I", str(script)], cwd=self.root, capture_output=True,
@@ -2504,6 +2550,24 @@ class PluginDistributionTest(unittest.TestCase):
 
 
 class RepositoryTreeTest(unittest.TestCase):
+    def setUp(self):
+        # The gate's main, run in this process on the repository, reads the extractor there and runs what it
+        # reads. Each read of it must give the bytes the digest check hashed, else the gate stops on the
+        # AssertionError raised here and the case fails, and the gate is given those hashed bytes to run.
+        self.assertEqual(gate.REPO_ROOT / gate.EXTRACTOR, REAL_EXTRACTOR)
+        real = gate.read_bytes
+
+        def read_bytes(rel):
+            data = real(rel)
+            if rel != gate.EXTRACTOR:
+                return data
+            if data != _executed[REAL_EXTRACTOR]:
+                raise AssertionError(f"{rel} changed after the digest check")
+            return _executed[REAL_EXTRACTOR]
+        patch = mock.patch.object(gate, "read_bytes", read_bytes)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_repository_is_consistent(self):
         out, err = io.StringIO(), io.StringIO()
         code, problems = checked_main(out, err)
@@ -2514,11 +2578,12 @@ class RepositoryTreeTest(unittest.TestCase):
         self.assertNotIn("FAIL", output)
 
     def test_keys_outside_read_keys_change_no_output(self):
-        # E on a copy of the files the gate reads in the repository: each JSON input load_json reads,
-        # SKILL.md and the extractor, with the gate copied beside the extractor and run only as a command,
-        # as CI runs it. The run on the copy must exit 0 with the last line OK_LINE followed by the version
-        # of the copy's Claude plugin manifest, as this case decodes it, and the run on the copy with each
-        # JSON input perturbed must give the same exit status and every line the same.
+        # E on a copy of the files the gate reads in the repository: each JSON input load_json reads and
+        # SKILL.md, with the extractor and, beside it, the gate written from the bytes the digest check hashed,
+        # the gate run only as a command, as CI runs it. The run on the copy must exit 0 with the last line
+        # OK_LINE followed by the version of the copy's Claude plugin manifest, as this case decodes it, and
+        # the run on the copy with each JSON input perturbed must give the same exit status and every line
+        # the same.
         # Each JSON input, read back once all are perturbed, has no shortfall against the input as it was.
         read: list = []
         real = gate.load_json
@@ -2533,11 +2598,13 @@ class RepositoryTreeTest(unittest.TestCase):
         self.assertGreaterEqual(len(inputs), 6)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for rel in [*inputs, gate.SKILL_MD, gate.EXTRACTOR]:
+            for rel in [*inputs, gate.SKILL_MD]:
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(gate.REPO_ROOT / rel, root / rel)
+            (root / gate.EXTRACTOR).parent.mkdir(parents=True, exist_ok=True)
+            (root / gate.EXTRACTOR).write_bytes(_executed[REAL_EXTRACTOR])
             script = root / "tools" / MODULE_PATH.name
-            shutil.copyfile(MODULE_PATH, script)
+            script.write_bytes(_executed[MODULE_PATH])
             before = run_command(script, root)
             originals = {rel: json.loads((root / rel).read_bytes()) for rel in inputs}
             for rel in inputs:
