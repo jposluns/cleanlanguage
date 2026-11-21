@@ -38,29 +38,33 @@ The test holds the code of the gate by 2 layers.
 
 1. The digest of the gate's bytes. At the top of this file, before the test
    runs any code of the gate or of a sibling tool, gate_bytes() reads the
-   bytes of tools/check-install-page.py once and stops the test with exit 1,
-   naming the file and both digests, unless their sha256 is GATE_SHA256, a
-   digest written in this file, which the gate cannot write. Every load of
-   the gate in this process, through load_gate(), then compiles and runs
-   exactly those bytes, GATE_BYTES, as a new module, never through the
-   import system, so that no cached bytecode stands in for them.
+   bytes of tools/check-install-page.py once and stops the test with exit 1
+   unless their sha256 is GATE_SHA256, a digest written in this file, which
+   the gate cannot write. Its message names the file and both digests, or,
+   where the bytes cannot be read, the file, the error and the digest that
+   GATE_SHA256 records. Every load of the gate in this process, through
+   load_gate(), then compiles and runs exactly those bytes, GATE_BYTES, as
+   a new module, never through the import system, so that no cached
+   bytecode stands in for them.
    make_root() writes those bytes as the copy of the gate that each case
    runs in a separate process. LOCK_PROBE and SORTED_PROBE, which load that
    copy in such a process, start with CHECKED_LOAD, the same check: they
    read its bytes once, stop with exit 1 unless their sha256 is
-   GATE_SHA256, and compile and run exactly those bytes as a new module.
+   GATE_SHA256, with a message that names the file in the same way, and
+   compile and run exactly those bytes as a new module.
    checked_load_problems() fails unless gate_bytes() and CHECKED_LOAD each
    stop on a copy of the gate with 1 byte added, naming the file and both
-   digests, and CHECKED_LOAD loads a copy of GATE_BYTES. Every other case,
-   and version_problems(), runs the copy as a script or through runpy,
-   which compile its source, with no digest check, since some of them
-   change the copy on purpose. What this layer adds: until a
-   reviewer records a new GATE_SHA256, any change to the gate, a comment
-   included, stops the test before any case and before any code of the
-   gate runs in its process, whatever route the change takes, such as a
-   helper reached through an alias, functools.partial or a class, a
-   rebinding through globals() while the gate loads, the gate's main(), or
-   code at its top level that rewrites this test's own values.
+   digests, and on a copy that is missing or is a folder, naming the file
+   and the digest that GATE_SHA256 records, and unless CHECKED_LOAD loads a
+   copy of GATE_BYTES. Every other case, and version_problems(), runs the
+   copy as a script or through runpy, which compile its source, with no
+   digest check, since some of them change the copy on purpose. What this
+   layer adds: until a reviewer records a new GATE_SHA256, any change to
+   the gate, a comment included, stops the test before any case and before
+   any code of the gate runs in its process, whatever route the change
+   takes, such as a helper reached through an alias, functools.partial or a
+   class, a rebinding through globals() while the gate loads, the gate's
+   main(), or code at its top level that rewrites this test's own values.
 2. The reader pin, reader_pin_problems(). From GATE_BYTES, by the gate's
    syntax tree and the symbol table that Python's compiler builds for it,
    reader_names() derives READER_NAMES, which are redirect_problems() and
@@ -76,18 +80,32 @@ The test holds the code of the gate by 2 layers.
    function to the function that its def makes, with that def's own code
    object; and unless, for each name, the sha256 of its statement, as the
    syntax tree gives it with any docstring left out, and of its value as
-   the loaded gate holds it, equals READER_SHA256, and it names each name
-   that differs. What this layer adds to the 1st: a change to the gate
-   whose new GATE_SHA256 is recorded still fails, naming the function or
-   value, where it changes a statement that this layer holds, until its
-   own digest is renewed too, so that a change to check 7 does not pass
-   unnamed inside a change elsewhere in the gate. It follows only names
-   read directly, so a function that a pinned function reaches through an
-   alias, functools.partial, a class, a dict of functions or getattr() is
-   not derived and its code is in no digest here, and a rebinding through
-   globals() while the gate loads, of a builtin, of a module by another
-   module of the same name or of a function by a wrapper around it, is not
-   seen by its binding check.
+   the loaded gate holds it, in the text that pin_value() writes for it,
+   equals READER_SHA256, and it names each name that differs. That text
+   gives plain data by repr(), so a value of another type whose repr() is
+   the same gives the same digest. What this layer adds to the 1st: a
+   change to the gate whose new GATE_SHA256 is recorded still fails,
+   naming the function or value, where it changes a statement that this
+   layer holds, until its own digest is renewed too, so that a change to
+   check 7 does not pass unnamed inside a change elsewhere in the gate. It
+   follows only names read directly: a helper that a pinned function
+   reaches in any other way than by reading the name that a def at the
+   gate's top level binds is not derived, and its code is in no digest
+   here. Examples of that class, not a complete list, are a helper reached
+   through an alias, a lambda assigned at the top level, functools.partial,
+   a class or getattr(). A helper reached through a dict of functions, or
+   through another value that pin_value() writes by repr() and that holds
+   a function, is in that class too, but there the test fails closed: that
+   repr() holds each function's address, which changes from process to
+   process, so the reader pin fails on such a gate, the reviewed one
+   included. Its binding check does not see a rebinding made while the
+   gate loads that leaves each pinned statement and the text of each pinned
+   value as they were. Examples of that class, not a complete list, are a
+   rebinding through globals(), setattr or exec of a builtin, of a module
+   by another module of the same name, of a function by a wrapper around
+   it, of __file__, of a pinned value by a value of another type whose
+   repr() is the same, or of a function of a sibling tool, rebound and
+   restored around a call.
 
 A reviewer records a new digest of either layer only after reading the
 change. The residuals, stated once:
@@ -100,18 +118,26 @@ change. The residuals, stated once:
    check 7 can pass.
 2. Once a new GATE_SHA256 is recorded, a change that alters what the reader
    does by a route that the reader pin does not follow passes the test and
-   is held only by review of the gate's diff: a helper reached through an
-   alias, functools.partial, a class, a dict of functions or getattr(); a
-   rebinding through globals(), setattr or exec, while the gate loads or
-   when it runs as a command; the gate's main(), which reads
-   site/_redirects and gives it to redirect_problems() and is not pinned;
-   and code at the gate's top level that changes this test's values once
-   gate_bytes() has checked the bytes.
+   is held only by review of the gate's diff. Examples of such routes, not
+   a complete list: a helper of the class that the reader pin does not
+   derive (above), other than one reached through a value on which the
+   test fails closed, such as one reached through an alias, a lambda
+   assigned at the top level, functools.partial, a class or getattr(); a
+   rebinding through globals(), setattr or exec, while the gate loads, of
+   the class that its binding check does not see (above), or when the gate
+   runs as a command; the gate's main(), which reads site/_redirects and
+   gives it to redirect_problems() and is not pinned; and code at the
+   gate's top level that changes this test's values once gate_bytes() has
+   checked the bytes.
 3. Code outside the gate is pinned by neither layer and can change what the
-   gate does, such as tools/check-baseline-pin.py, which load_tool() runs
-   and whose load_pin() pinned_files() reuses, and which this test also
-   runs, through pinned_baseline(), in its own process; and Python's own
-   modules, such as re, held only by the version guard.
+   gate or this test does. Examples, not a complete list:
+   tools/check-baseline-pin.py, which load_tool() runs and whose load_pin()
+   pinned_files() reuses; the 2 sibling tools that this test loads in its
+   own process through the import system, tools/check-baseline-pin.py in
+   pinned_baseline() and tools/check-inline-code.py in version_problems(),
+   where a cached bytecode file of either can stand in for its source,
+   though both loads run only after gate_bytes() has checked the gate; and
+   Python's own modules, such as re, held only by the version guard.
 4. An edit to tools/test-install-page.py itself is held only by review. An
    edit that also changes GATE_SHA256, gate_bytes(), CHECKED_LOAD or the
    reader pin passes, as does an edit that makes main() run the cases, or
@@ -428,12 +454,13 @@ GATE_SHA256 = "88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7"
 
 def gate_bytes(path: Path = GATE, digest: str = GATE_SHA256) -> bytes:
     """The bytes of the gate at path, read once, if their sha256 is digest. Otherwise it raises SystemExit with a
-    message that names the file and both digests, so that the test stops with exit 1 before any code of the gate
-    runs in its process."""
+    message that names the file and both digests, or, where the bytes cannot be read, the file, the error and digest,
+    so that the test stops with exit 1 before any code of the gate runs in its process."""
     try:
         source = path.read_bytes()
     except OSError as error:
-        raise SystemExit(f"test-install-page: tools/{path.name} could not be read: {error}")
+        raise SystemExit(f"test-install-page: tools/{path.name} could not be read, so its sha256 could not be compared "
+                         f"with {digest}, the digest that GATE_SHA256 records; no code of it has run: {error}")
     found = hashlib.sha256(source).hexdigest()
     if found != digest:
         raise SystemExit(f"test-install-page: tools/{path.name} has the sha256 {found}, not {digest}, the digest that "
@@ -3254,34 +3281,40 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
 
 def checked_load_problems() -> list[str]:
     """A problem unless gate_bytes(), given a copy of the gate with 1 byte added, raises SystemExit with a message that
-    names the file and both digests, and unless CHECKED_LOAD, run as a separate process on such a copy, exits 1 with
-    such a message, and, run on a copy of GATE_BYTES, loads the gate. It holds the check of the 1st layer as written,
-    not the gate."""
+    names the file and both digests, and, given a copy that is missing or is a folder, so that no bytes can be read,
+    with 1 that names the file and the digest that GATE_SHA256 records; and unless CHECKED_LOAD, run as a separate
+    process on each such copy, exits 1 with such a message, and, run on a copy of GATE_BYTES, loads the gate. It holds
+    the check of the 1st layer as written, not the gate."""
     problems: list[str] = []
-    changed_bytes = GATE_BYTES + b"#\n"
+    changed_bytes = GATE_BYTES + b"#"
     changed_digest = hashlib.sha256(changed_bytes).hexdigest()
     with tempfile.TemporaryDirectory() as scratch:
-        same, changed = Path(scratch) / "same", Path(scratch) / "changed"
-        for folder, source in ((same, GATE_BYTES), (changed, changed_bytes)):
-            folder.mkdir()
-            (folder / GATE.name).write_bytes(source)
-        try:
-            gate_bytes(changed / GATE.name)
-            problems.append("gate_bytes() returns the bytes of a copy of the gate with 1 byte added")
-        except SystemExit as stop:
-            words = str(stop.code)
-            if not isinstance(stop.code, str) or not all(part in words for part in (GATE.name, changed_digest,
-                                                                                     GATE_SHA256)):
-                problems.append(f"gate_bytes() stops on a copy of the gate with 1 byte added with {stop.code!r}, not "
-                                "a message that names the file and both digests")
+        same, changed, missing, folder = (Path(scratch) / name for name in ("same", "changed", "missing", "folder"))
+        for place, source in ((same, GATE_BYTES), (changed, changed_bytes)):
+            place.mkdir()
+            (place / GATE.name).write_bytes(source)
+        missing.mkdir()
+        (folder / GATE.name).mkdir(parents=True)
+        named = {2: "the file and both digests", 1: "the file and the digest that GATE_SHA256 records"}
+        stops = (("with 1 byte added", changed, (changed_digest, GATE_SHA256)),
+                 ("that is missing", missing, (GATE_SHA256,)), ("that is a folder", folder, (GATE_SHA256,)))
+        for label, place, digests in stops:
+            try:
+                gate_bytes(place / GATE.name)
+                problems.append(f"gate_bytes() returns bytes for a copy of the gate {label}")
+            except SystemExit as stop:
+                if not isinstance(stop.code, str) or not all(part in stop.code for part in (GATE.name, *digests)):
+                    problems.append(f"gate_bytes() stops on a copy of the gate {label} with {stop.code!r}, not a "
+                                    f"message that names {named[len(digests)]}")
         probe = CHECKED_LOAD + "sys.exit(0 if callable(gate.redirect_problems) else 2)\n"
-        for folder, code, parts in ((same, 0, ()), (changed, 1, (str(changed / GATE.name), changed_digest,
-                                                                  GATE_SHA256))):
-            result = subprocess.run([sys.executable, "-I", "-c", probe, str(folder / GATE.name)], capture_output=True,
+        runs = [("that is unchanged", same, ())] + [(label, place, digests) for label, place, digests in stops]
+        for label, place, digests in runs:
+            code, parts = (1, (str(place / GATE.name), *digests)) if digests else (0, ())
+            result = subprocess.run([sys.executable, "-I", "-c", probe, str(place / GATE.name)], capture_output=True,
                                     text=True)
             if result.returncode != code or not all(part in result.stderr for part in parts):
-                problems.append(f"CHECKED_LOAD on the copy in {folder.name}: exit {result.returncode}, expected {code}"
-                                + (" and a message that names the file and both digests" if parts else "")
+                problems.append(f"CHECKED_LOAD on a copy of the gate {label}: exit {result.returncode}, expected {code}"
+                                + (f" and a message that names {named[len(digests)]}" if digests else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
     return problems
 
@@ -3721,13 +3754,17 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: f
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
 # The lines that start LOCK_PROBE and SORTED_PROBE, the checked load of the copy of the gate in a separate process:
-# they read the bytes of the copy once, stop with exit 1, naming the file and both digests, unless their sha256 is
-# GATE_SHA256, and then compile and run exactly those bytes as a new module, as load_gate() does, never through the
-# import system.
+# they read the bytes of the copy once, stop with exit 1 unless their sha256 is GATE_SHA256, naming the file and both
+# digests, or, where the bytes cannot be read, the file, the error and the digest that GATE_SHA256 records, and then
+# compile and run exactly those bytes as a new module, as load_gate() does, never through the import system.
 CHECKED_LOAD = f"""\
 import hashlib, sys, types
 from pathlib import Path
-source = Path(sys.argv[1]).read_bytes()
+try:
+    source = Path(sys.argv[1]).read_bytes()
+except OSError as error:
+    sys.exit(f'probe: {{sys.argv[1]}} could not be read, so its sha256 could not be compared with {GATE_SHA256}, the '
+             f'digest that GATE_SHA256 records: {{error}}')
 found = hashlib.sha256(source).hexdigest()
 if found != {GATE_SHA256!r}:
     sys.exit(f'probe: {{sys.argv[1]}} has the sha256 {{found}}, not {GATE_SHA256}, the digest that GATE_SHA256 records')

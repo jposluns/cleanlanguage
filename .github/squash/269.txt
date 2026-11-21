@@ -1,0 +1,193 @@
+Move the site template to baseline 1.13.0 (#269)
+
+Move the site template of cleanlanguage.ai from baseline 1.11.4 to
+1.13.0, after verifying the archive and its SHA256SUMS against the
+published digests, which .baseline/pin.toml records.
+
+- Copy the 1.13.0 files: baseline.css with its decrease-only spacing
+  tokens and flush download blocks, rail.js with its fragment fix, the
+  NodeKeeper palette, the upstream Dancing Script font, the builder and
+  the documents. The copy holds only the 9 logos that the pages load.
+- Name 1.13.0 in .baseline/site-card.toml, which adds the favicon key
+  from which the card builder writes the site's favicon.ico, and in the
+  docstring and comments of tools/build-site.py.
+- Regenerate the pages so that they load the baseline files with
+  ?v=1.13.0, with the sitemap, and add site/favicon.ico.
+- Name 1.13.0 and the project names and domain names in the Site
+  template entry of NOTICE.md, and the project names and domain names
+  on the Licence page.
+- Redirect the 22 logo URLs that the copy no longer holds to the logo
+  of each one's own project, written by tools/set-release-links.py.
+- Narrow check 7 of tools/check-install-page.py: a rule of
+  site/_redirects whose source lies under /assets/ passes only when
+  its source is an exact path that nothing under site/ occupies, in
+  any letter case, and the rule sends that source with the status 301
+  to a file under /assets/baseline/logos/ that
+  tools/check-baseline-pin.py pins, with no query, fragment or further
+  field. Every other rule under /assets/ fails, as before. A line of
+  site/_redirects ends only at a line feed and fails when it holds any
+  other control character, a line or paragraph separator, a byte order
+  mark or whitespace other than the space. A rule whose source, after
+  any https:// and host, starts with the segment favicon.ico, which a
+  browser may request without a link, fails whatever its destination
+  and status.
+- Word the refusals that the checks of tools/check-install-page.py
+  report, its pass message, docstrings and comments so that each
+  claims only what its check proves or, for the refusals that keep
+  their words, what holds for every case refused, and word the
+  docstrings, comments and expected words of tools/test-install-page.py
+  the same way. The gate's exit 3 messages are not reworded; the one
+  that says a file it reads does not exist is untrue whenever
+  something is at that path that is not a regular file once any link
+  is followed (a folder, a FIFO, a socket or a device), and whenever
+  the path cannot be examined for a reason other than that nothing is
+  there, such as a folder above it that cannot be searched.
+- Add site/** to both path lists of .github/workflows/install-page.yml,
+  so that check 7 runs on any change under site/.
+- Pin the logo list in tools/check-baseline-pin.py and copy only those
+  logos and no .ico file in tools/copy-baseline.py, with tests.
+- Update the rule pin in tools/install-page-rules.txt, which
+  tools/test-install-page.py reads, and the verify page pin of
+  tools/test-build-site.py, whose 2 digests change because the page's
+  5 ?v= tokens now read 1.13.0.
+- Check in tools/test-build-site.py that site/favicon.ico is listed in
+  static_files and hashes to the digest that .baseline/SHA256SUMS lists
+  for the favicon of the site that .baseline/site-card.toml names,
+  reading that file from its bytes, so that its line ended by a
+  carriage return or a CRLF fails.
+- Run the 2 cases of tools/test-install-page.py that need 2 folders
+  whose names differ only in letter case only where the file system of
+  the case's scratch folder holds both names, which the test probes
+  there, and name each as skipped with its reason elsewhere. Fail any
+  other case whose copy holds 2 such names in 1 folder, or a folder
+  that the test cannot list, and check the probe, the skip and that
+  reading with stand-ins.
+- Run every case in run_cases(), which the test checks with stand-ins,
+  and fail unless each case and each residual is run, or left unrun
+  with a reason, exactly once, and unless a 2nd look at a new scratch
+  folder bears out each skip; count only the cases run. Check that 2nd
+  look, and main()'s reading of it in case_run_problems(), with
+  stand-ins too, and check that main() runs the cases only through
+  case_run_problems(), passing it that loop and look itself, and
+  binds none of their names and sets no attribute, as those forms
+  read in its syntax tree. An edit to main() that runs the cases
+  another way, as through globals() or under another name, or an edit
+  that changes those functions before that check runs, rests on
+  review.
+- Add cases for a rule with the status 201, 300, 303, 304, 305, 306,
+  307, 308 or 404, or with 0301, 3010, 301.0, +301 or 301! as its
+  status, for a placeholder at the start of a segment that is not the
+  last, for a placeholder :d, :x or :zz or the splat ** as the whole
+  of a segment, and for a splat that ends a segment, each in place of
+  part of the path of the font that the install pages load. These
+  cases are examples of the contract of check 7: no finite set of
+  inputs can show that no weakening of check 7 passes them.
+- Hold the code of tools/check-install-page.py in
+  tools/test-install-page.py by 2 layers. First, before it runs any
+  code of the gate, the test reads the gate's bytes once and stops
+  with exit 1 unless their sha256 is GATE_SHA256, a digest written in
+  the test, which the gate cannot write; its message names the file
+  and both digests, or, where the bytes cannot be read, the file, the
+  error and the digest that GATE_SHA256 records. Every load of the
+  gate in the test's process compiles and runs exactly those bytes,
+  never through the import system, each case runs a copy written
+  from them, and the 2 probes that load that copy in a separate
+  process make the same check first and compile its bytes too. Until
+  a reviewer renews that digest, any change to the gate, a comment
+  included, stops the test before any case, whatever route the change
+  takes. Second, the reader pin: from the same bytes, by the gate's
+  syntax tree and symbol table, the test derives READER_NAMES, which
+  are redirect_problems() and each function that a def at the top
+  level of the gate binds and that it reads by name, in turn, and
+  READER_GLOBALS, the other names of the gate that those functions
+  read, and fails unless they are the names written, unless each is
+  bound exactly once in the gate, by a statement at its top level,
+  unless the loaded gate binds each function to the one that its def
+  makes, and unless the sha256 of each name's statement, with any
+  docstring left out, and of the text that the test writes for its
+  value equals the digest that READER_SHA256 records. That text gives
+  plain data by repr(), so a value of another type whose repr() is
+  the same gives the same digest. When the gate's digest is renewed,
+  a change to a statement that the reader pin holds still fails, by
+  name, until its own digest is renewed too. The reader pin follows
+  only names read directly: a helper that a pinned function reaches
+  in any other way than by reading the name that a def at the gate's
+  top level binds is not derived. Examples of that class, not a
+  complete list, are a helper reached through an alias, a lambda
+  assigned at the top level, functools.partial, a class or getattr().
+  A helper reached through a dict of functions, or through another
+  value that the test writes by repr() and that holds a function, is
+  in that class too, but there the test fails closed: that repr()
+  holds each function's address, which changes from process to
+  process, so the reader pin fails on such a gate, the reviewed one
+  included. Nor does the reader pin see a rebinding made while the
+  gate loads that leaves each pinned statement and the text of each
+  pinned value as they were. Examples of that class, not a complete
+  list, are a rebinding through globals(), setattr or exec of a
+  builtin, of a module by another module of the same name, of a
+  function by a wrapper around it, of __file__, of a pinned value by
+  a value of another type whose repr() is the same, or of a function
+  of a sibling tool, rebound and restored around a call. A reviewer
+  records a new digest of either layer only after reading the
+  change. The residuals, stated once:
+  1. Renewing a digest accepts whatever the diff holds. A change that
+     edits the gate and records the new digests passes. The test then
+     guarantees that the bytes of the gate that run are those that a
+     reviewer accepted, not that they are right or that no weakening
+     of check 7 can pass.
+  2. Once the gate's digest is renewed, a change that alters what the
+     reader does by a route that the reader pin does not follow
+     passes and is held only by review of the gate's diff. Examples,
+     not a complete list: the routes above on which the test does not
+     fail closed, a rebinding through globals(), setattr or exec when
+     the gate runs as a command, the gate's main(), which is not
+     pinned, and code at the gate's top level that changes the test's
+     values once the bytes are checked.
+  3. Code outside the gate is pinned by neither layer and can change
+     what the gate or the test does. Examples, not a complete list:
+     tools/check-baseline-pin.py, which the gate runs; the 2 sibling
+     tools that the test loads in its own process through the import
+     system, tools/check-baseline-pin.py and
+     tools/check-inline-code.py, where a cached bytecode file of
+     either can stand in for its source, though both loads run only
+     after the gate's digest is checked; and Python's own modules,
+     such as re, held only by the version guard.
+  4. An edit to tools/test-install-page.py itself is held only by
+     review. An edit that also changes the digests, the check or the
+     reader pin passes, as does an edit that makes main() run the
+     cases, or read those it left unrun, another way. The test cannot
+     hold itself against its own edits.
+  5. The residuals of the gate's own guarantee, which its module
+     docstring accepts, are unchanged, including how Pages really
+     matches :name and a splat across /, which has not been observed
+     (an inference, made with no network).
+  6. Every edit of the gate, a comment or a docstring included, stops
+     the test before any case until the gate's digest is renewed. A
+     prose fix of the gate needs no new digest in READER_SHA256, and a
+     refactor of the reader needs both.
+- Merge main into the branch. Git reported conflicts in
+  site-src/site.json and in 5 generated files: site/channels/index.html,
+  site/checklist/index.html, site/examples/index.html,
+  site/standard/index.html and site/sitemap.xml. site-src/site.json was
+  written from its 3 versions and is the branch's file unchanged. Of
+  its keys, only the modified dates of the standard, examples, channels
+  and checklist pages changed on both sides, and it keeps the branch's
+  2026-11-13 on them in place of main's 2026-11-12.
+  The 4 pages were regenerated with tools/build-site.py and the sitemap
+  with tools/generate-sitemap.py --write, not by hand.
+- Merge main again, with pull request 281, which renames the portable
+  instructions files to cleanlanguage-instructions and redirects their
+  old names. Git reported conflicts in 7 files. The docstring of
+  tools/test-release-links.py keeps this branch's pin of the 22 logo
+  redirects and main's pin of the closed form of every redirect rule
+  and of the old instructions names, and the count of redirect lines
+  is 14 + 22. The tests that this branch adds now follow main's 14
+  lines before the logo redirects: FIXED_LINES, RELEASE_LINES and the
+  line that an appended rule takes, now 37, and a docstring and a
+  comment of tools/check-install-page.py that named
+  /apple-touch-icon.png as line 10 now name line 14.
+  site-src/site.json keeps both sides' static files and main's later
+  dates, and the pages and the sitemap were regenerated, not edited by
+  hand.
+- Add .github/squash/269.txt with this squash message for the
+  Pull request text workflow.
