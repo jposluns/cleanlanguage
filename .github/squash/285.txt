@@ -8,23 +8,27 @@ keeps its value.
 TODO 261: some variants of code_form() that strip or rewrite more than
 the check's docstrings and the sha256 values of PARAGRAPHS passed the
 registry case, because no row tried the condition that they relax.
-FORM_PAIRS gains 10 pairs: a string first in the body of a for, a
+FORM_PAIRS gains 12 pairs: a string first in the body of a for, a
 while, a with and a try; bytes, an assignment of a string and a return
 of a string, each first in a function; a string after the docstring of
 a function; 2 keyword arguments of a call swapped; and a sha256 in a
-list bound to PARAGRAPHS_OLD. MUTATIONS gains 3 rows on the check's own
-text: a comparison operator changed, the name __name__ changed and the
-upper bound of a slice changed.
+list bound to PARAGRAPHS_OLD, in a list bound to PARAGRAPHS by an
+annotated assignment and in a list bound to an attribute named
+PARAGRAPHS. The last 2 try isinstance(node, ast.Assign) in code_form()
+and isinstance(node, ast.Name) in is_name(). MUTATIONS gains 3 rows on
+the check's own text: a comparison operator changed, the name __name__
+changed and the upper bound of a slice changed.
 
 TODO 262: the 2 MUTATIONS rows that edited the name or the opening
 text of a row of PARAGRAPHS tried only the name of its first row and
-the opening text of its second. 28 rows built from NAMED replace them,
-4 for each of its 7 rows: a full stop put at the end of its name, a
+the opening text of its second. 37 rows built from NAMED replace them.
+Each of its 7 rows gets 5: a full stop put at the end of its name, a
 full stop put at the end of its opening text, a space put at the end
-of its opening text, and the first space inside its opening text
-doubled. The removed opening-text row deleted the space at the end of
-the opening text of the cycle steps; the 2 rows that edit white space
-make that kind of edit for every row.
+of its opening text, the first space inside its opening text doubled,
+and that space deleted. Each of the 2 opening texts that end with a
+space gets 1 more row that deletes that space; the removed
+opening-text row made that deletion for the opening text of the cycle
+steps alone.
 
 TODO 263: the squash message of pull request 276 says that every edit
 of the check's code fails the test until CODE_SHA256 is updated. Only

@@ -224,8 +224,9 @@ tried on each sha256 that the check's PARAGRAPHS holds, and on no other value. M
 among its rows, a comparison operator changed, the name __name__ changed and the upper bound of
 a slice changed, and, for each of the 7 rows of PARAGRAPHS that NAMED lists, 1 row that puts a
 full stop at the end of its name, 1 that puts a full stop at the end of its opening text, 1 that
-puts a space at the end of its opening text and 1 that doubles the first space inside its
-opening text. FORM_PAIRS holds pairs of sources in forms that the check does not
+puts a space at the end of its opening text, 1 that doubles the first space inside its opening
+text and 1 that deletes that space, and, for each opening text that ends with a space, 1 row
+that deletes that space. FORM_PAIRS holds pairs of sources in forms that the check does not
 hold, each trying a condition of code_form() that the check's own source does not: code_form()
 must make 2 sources equal that differ only in the docstring of a class or of an async function,
 in a function of its docstring alone against one of pass alone, or in an empty module against a
@@ -233,10 +234,11 @@ blank line, and keep apart 2 that differ only in a string first in the body of a
 while, a with or a try, in a number, a call, bytes, an assignment of a string or a return of a
 string first in a function, in a string after the docstring of a function, in the order of 2
 keyword arguments of a call, in a sha256 that is the third item of a row in a form that
-code_form() must not rewrite, a row of a PARAGRAPHS bound together with a second name, bound to
-a tuple or bound inside a function, a row of a list bound to another name or to a longer name
-that starts with PARAGRAPHS, a row that is a list or a row of 4 items, or in a third item of a
-row of PARAGRAPHS that is a name, a number, or 63 or 65 hexadecimal digits. So a code_form() that
+code_form() must not rewrite, a row of a PARAGRAPHS bound together with a second name, bound by
+an annotated assignment, bound to a tuple or bound inside a function, a row of a list bound to
+an attribute named PARAGRAPHS, to another name or to a longer name that starts with PARAGRAPHS,
+a row that is a list or a row of 4 items, or in a third item of a row of PARAGRAPHS that is a
+name, a number, or 63 or 65 hexadecimal digits. So a code_form() that
 fails 1 of those rows fails the case. Each row is evidence for its own edit only: a code_form()
 that hides or keeps only what no row edits passes, such as one that also removes a string first
 in the body of an except clause or of an async for. The same case finds, in the
@@ -799,10 +801,11 @@ DIGEST = "<a sha256 of PARAGRAPHS>"
 # which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest and
 # each of PRESERVED must keep it, so a code_form() that keeps the digest for 1 of those mutations,
 # or changes it for 1 of those edits, fails. Each row is evidence for its own edit only. The rows
-# that edit the name or the opening text of a row of PARAGRAPHS are built from NAMED, 4 for each
+# that edit the name or the opening text of a row of PARAGRAPHS are built from NAMED, 5 for each
 # of its 7 rows: a full stop put at the end of its name, a full stop put at the end of its opening
-# text, a space put at the end of its opening text and the first space inside its opening text
-# doubled.
+# text, a space put at the end of its opening text, the first space inside its opening text
+# doubled and that space deleted; and 1 more for each opening text that ends with a space: that
+# space deleted.
 MUTATIONS = [
     ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
      "    match text[:8000000]:\n        case text:\n            pass\n"
@@ -842,7 +845,13 @@ MUTATIONS = [
      "\"{}\"".format(opening), "\"{} \"".format(opening)) for name, opening in NAMED] + [
     ("the first space inside the opening text of {} doubled, a row of PARAGRAPHS".format(name),
      "\"{}\"".format(opening), "\"{}\"".format(opening.replace(" ", "  ", 1)))
-    for name, opening in NAMED]
+    for name, opening in NAMED] + [
+    ("the first space inside the opening text of {} deleted, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening.replace(" ", "", 1)))
+    for name, opening in NAMED] + [
+    ("the space at the end of the opening text of {} deleted, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening[:-1]))
+    for name, opening in NAMED if opening.endswith(" ")]
 PRESERVED = [
     ("the module docstring reworded", "#!/usr/bin/env python3\n\"\"\"",
      "#!/usr/bin/env python3\n\"\"\"Reworded. "),
@@ -867,7 +876,7 @@ PRESERVED = [
 # False marks a pair that it must keep apart: its 2 sources differ only in a part that is
 # neither a docstring nor a sha256 of PARAGRAPHS, which is a constant of 64 lowercase hexadecimal
 # digits that is the third item of a 3-item tuple row of the list that an assignment at the top
-# level binds to the name PARAGRAPHS alone.
+# level, without an annotation, binds to the name PARAGRAPHS alone.
 FORM_PAIRS = [
     ("a class docstring reworded", b"class Note:\n    \"\"\"A.\"\"\"\n",
      b"class Note:\n    \"\"\"B.\"\"\"\n", True),
@@ -910,6 +919,12 @@ FORM_PAIRS = [
     ("a sha256 of a PARAGRAPHS bound inside a function changed",
      b"def note():\n    PARAGRAPHS = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
      b"def note():\n    PARAGRAPHS = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a PARAGRAPHS bound by an annotated assignment changed",
+     b"PARAGRAPHS: list = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"PARAGRAPHS: list = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a list bound to an attribute named PARAGRAPHS changed",
+     b"note.PARAGRAPHS = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"note.PARAGRAPHS = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
     ("a sha256 of a list bound to another name changed",
      b"TABLE = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
      b"TABLE = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
