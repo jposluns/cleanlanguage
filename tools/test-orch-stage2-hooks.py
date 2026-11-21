@@ -209,11 +209,12 @@ WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
 # test sets its own 1 second timeout for an enumerator that does not end.
 ENUM_TIMEOUT = 60
 
-# The bound on every test run that can start the enumerator of a fixture registry: run_hook, run_doctor
+# The bound on a test run that can start the enumerator of a fixture registry once: run_hook, run_doctor
 # and the bounded doctor and hook runs (Doctor.SPECIAL_TIMEOUT, DoctorCheckpointWrites.TIMEOUT and
 # DoctorStandInRestore.TIMEOUT). It exceeds ENUM_TIMEOUT by ENUM_MARGIN, so the hook's own timeout ends
 # an enumerator that hangs, and the case reads what the hook reports, before this bound ends the run.
-# EnumeratorBounds holds each of these bounds to that margin.
+# A run that can start it twice has twice this bound. EnumeratorBounds reads the bound of every launch
+# of a Stage2Harness case at its call site and holds it to that margin (see UNENUMERATED_RUNS).
 RUN_TIMEOUT = 120
 ENUM_MARGIN = 60
 
@@ -1238,25 +1239,169 @@ class T15EnumeratorTimeout(Stage2Harness):
         self.assertNotIn("failed to run", r.stderr)
 
 
+# The bounded launches of a Stage2Harness case that start no enumerator, which EnumeratorBounds does
+# not hold to ENUM_TIMEOUT: (class, function, the bound as written) -> (the number of such launches in
+# that function, the reason, read at the cited source).
+RESUME_AUDIT_STARTS_NO_ENUMERATOR = (
+    "a resume audit: no call path from orch_resume_audit (aiqt_hooks.py:33270) or from the doctor's "
+    "_resume_audit (tools/orch_doctor.py:1052) reaches _orch_enumerate (aiqt_hooks.py:22815)")
+UNENUMERATED_RUNS = {
+    ("Doctor", "test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib", "60"):
+        (1, "the probe imports the planted json module and runs neither the hook nor the doctor"),
+    ("Doctor", "test_a_failed_reexecution_exits_2_with_a_message", "60"):
+        (1, "the doctor is given --help and exits 2 when its re-execution fails"),
+    ("Doctor", "test_usage_error", "60"):
+        (1, "the doctor exits 2 on its usage before it loads the hook (main in tools/orch_doctor.py)"),
+    ("Doctor", "test_help_text_says_the_doctor_writes_nothing_and_the_enumerator_runs", "60"):
+        (1, "the doctor prints its usage for --help and exits"),
+    ("Doctor", "test_resume_audit_rewrite_with_a_ts_outside_the_run_is_unverified", "120"):
+        (1, RESUME_AUDIT_STARTS_NO_ENUMERATOR),
+    ("Doctor", "test_resume_audit_refuses_a_barrier_that_it_cannot_read_back", "120"):
+        (1, RESUME_AUDIT_STARTS_NO_ENUMERATOR),
+    ("Doctor", "_audit_bounded", "self.BARRIER_TIMEOUT"): (1, RESUME_AUDIT_STARTS_NO_ENUMERATOR),
+}
+
+# The bounded launches that can start the enumerator more than once, with that number: EnumeratorBounds
+# holds each to that many times ENUM_TIMEOUT, plus ENUM_MARGIN.
+REPEATED_ENUMERATOR_RUNS = {
+    # FAULT_PROG runs a preflight and then a hook call, and each runs the enumerator.
+    ("DoctorCheckpointWrites", "_faulted", "self.TIMEOUT * 2"): 2,
+}
+
+
+def bounded_launches(source):
+    """Each call in source that passes a timeout keyword, and each call of run_doctor_recorded that
+    passes keywords through **, as (class, function, bound, line, node): the class and the function
+    are the outermost ones that the call lies in (None outside one), the bound is the timeout as
+    written, or "**", and node is the timeout expression, or None."""
+    found = []
+
+    def visit(node, cls, function):
+        for child in ast.iter_child_nodes(node):
+            inner_cls, inner_function = cls, function
+            if isinstance(child, ast.ClassDef) and cls is None and function is None:
+                inner_cls = child.name
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) and function is None:
+                inner_function = getattr(child, "name", "<lambda>")
+            if isinstance(child, ast.Call):
+                keywords = {kw.arg: kw.value for kw in child.keywords}
+                if "timeout" in keywords:
+                    found.append((cls, function, ast.unparse(keywords["timeout"]), child.lineno,
+                                  keywords["timeout"]))
+                elif None in keywords and isinstance(child.func, ast.Name) \
+                        and child.func.id == "run_doctor_recorded":
+                    found.append((cls, function, "**", child.lineno, None))
+            visit(child, inner_cls, inner_function)
+
+    visit(ast.parse(source), None, None)
+    return found
+
+
+def _bound_value(node, holder, namespace):
+    """The value of a named bound: a module global, self.NAME on holder, or one of those times a
+    positive integer literal; None for a literal alone or anything else, such as a local name or a
+    parameter."""
+    if isinstance(node, ast.Name):
+        value = namespace.get(node.id)
+    elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" \
+            and holder is not None:
+        value = getattr(holder, node.attr, None)
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult) \
+            and isinstance(node.right, ast.Constant) and type(node.right.value) is int \
+            and node.right.value >= 1:
+        base = _bound_value(node.left, holder, namespace)
+        value = None if base is None else base * node.right.value
+    else:
+        return None
+    return value if type(value) in (int, float) else None
+
+
+def launch_bound_defects(source, namespace):
+    """The defects of the bounded launches that bounded_launches finds in source and that a
+    Stage2Harness case can make: a launch at module level, which a case can call, or in a Stage2Harness
+    class. A launch that UNENUMERATED_RUNS lists is not held; every other one must pass a named bound
+    (_bound_value) of at least ENUM_TIMEOUT for each enumerator run that it can hold
+    (REPEATED_ENUMERATOR_RUNS, else 1), plus ENUM_MARGIN, on each Stage2Harness class that holds its
+    function, or on its own class when none does, as for a function that only source holds. A row of
+    either table that does not match the launches found is a defect too. Names resolve in namespace,
+    the globals of this module."""
+    harness_base = namespace["Stage2Harness"]
+    harness = [obj for obj in namespace.values() if isinstance(obj, type) and issubclass(obj, harness_base)]
+    defects, unenumerated, repeated = [], {}, set()
+    for cls_name, function, bound, line, node in bounded_launches(source):
+        owner = namespace.get(cls_name) if cls_name is not None else None
+        if cls_name is not None and not (isinstance(owner, type) and issubclass(owner, harness_base)):
+            continue  # not a harness case: only Stage2Harness.setUp writes a fixture enumerator
+        key = (cls_name, function, bound)
+        where = "{}.{}, line {}: timeout={}".format(cls_name, function, line, bound)
+        if key in UNENUMERATED_RUNS:
+            unenumerated[key] = unenumerated.get(key, 0) + 1
+            continue
+        if node is None:
+            defects.append("{}: passes its keywords through **, so its bound is not seen".format(where))
+            continue
+        if isinstance(node, ast.Constant):
+            defects.append("{}: a literal bound; pass a named bound, such as RUN_TIMEOUT, or list a launch "
+                           "that starts no enumerator in UNENUMERATED_RUNS".format(where))
+            continue
+        runs = REPEATED_ENUMERATOR_RUNS.get(key, 1)
+        if key in REPEATED_ENUMERATOR_RUNS:
+            repeated.add(key)
+        need = runs * ENUM_TIMEOUT + ENUM_MARGIN
+        target = getattr(owner, function, None) if owner is not None and function is not None else None
+        holders = [k for k in harness if target is not None and getattr(k, function, None) is target]
+        for holder in holders or [owner]:
+            value = _bound_value(node, holder, namespace)
+            on = holder.__name__ if holder is not None else "module level"
+            if value is None:
+                defects.append("{}: the bound cannot be read at its call site on {}".format(where, on))
+            elif value < need:
+                defects.append("{}: {} s on {}, under {} enumerator run(s) of ENUM_TIMEOUT ({} s) plus "
+                               "ENUM_MARGIN ({} s)".format(where, value, on, runs, ENUM_TIMEOUT, ENUM_MARGIN))
+    for key, (count, _reason) in UNENUMERATED_RUNS.items():
+        if unenumerated.get(key, 0) != count:
+            defects.append("UNENUMERATED_RUNS lists {} launch(es) at {}, and the source has {}"
+                           .format(count, key, unenumerated.get(key, 0)))
+    for key in REPEATED_ENUMERATOR_RUNS:
+        if key not in repeated:
+            defects.append("REPEATED_ENUMERATOR_RUNS lists {}, and the source has no such launch".format(key))
+    return defects
+
+
 class EnumeratorBounds(unittest.TestCase):
-    """Every bound on a test run that can start the enumerator of a fixture registry exceeds ENUM_TIMEOUT
-    by at least ENUM_MARGIN, so the hook's own timeout ends an enumerator that hangs, and the case reads
-    what the hook reports, before the bound ends the run."""
+    """Every launch of a Stage2Harness case that passes a bound, found at its call site in the syntax
+    tree of this file, either starts no enumerator, as UNENUMERATED_RUNS records with its reason, or
+    passes a named bound that exceeds ENUM_TIMEOUT, for each enumerator run the launch can hold, by at
+    least ENUM_MARGIN, so the hook's own timeout ends an enumerator that hangs, and the case reads what
+    the hook reports, before the bound ends the run. A literal bound at any other launch fails it, as
+    do a bound that it cannot read at the call site, such as a local name or a parameter, and a launch
+    that passes its keywords through **. Not seen: a bound passed by position (run_doctor_recorded
+    takes it by keyword only), a launch other than through run_doctor_recorded, which _admit refuses,
+    and whether a launch that UNENUMERATED_RUNS lists starts no enumerator, which its reason cites at
+    source."""
+
+    def source(self):
+        return Path(__file__).read_text(encoding="utf-8")
 
     def test_every_run_bound_exceeds_the_enumerator_timeout_with_margin(self):
-        bounds = {
-            "RUN_TIMEOUT": RUN_TIMEOUT,
-            "Doctor.SPECIAL_TIMEOUT": Doctor.SPECIAL_TIMEOUT,
-            "DoctorPrecheckSites.SPECIAL_TIMEOUT": DoctorPrecheckSites.SPECIAL_TIMEOUT,
-            "DoctorScopeMargin.SPECIAL_TIMEOUT": DoctorScopeMargin.SPECIAL_TIMEOUT,
-            "DoctorCheckpointWrites.TIMEOUT": DoctorCheckpointWrites.TIMEOUT,
-            "DoctorStandInRestore.TIMEOUT": DoctorStandInRestore.TIMEOUT,
-        }
-        for name, bound in bounds.items():
-            with self.subTest(bound=name):
-                self.assertGreaterEqual(bound - ENUM_TIMEOUT, ENUM_MARGIN,
-                                        "{} is {} s, within {} s of ENUM_TIMEOUT ({} s)"
-                                        .format(name, bound, ENUM_MARGIN, ENUM_TIMEOUT))
+        self.assertEqual(launch_bound_defects(self.source(), globals()), [])
+
+    def test_a_new_launch_with_a_literal_bound_fails(self):
+        # The mutant adds a doctor launch with a literal bound to Doctor; the control names RUN_TIMEOUT.
+        source = self.source()
+        anchor = "class Doctor(Stage2Harness):\n"
+        self.assertEqual(source.count(anchor), 1, "precondition: 1 Doctor class")
+        added = ("    def _added_launch(self):\n"
+                 "        return run_doctor_recorded(self, [sys.executable, \"-I\", str(DOCTOR)],\n"
+                 "                                   capture_output=True, timeout={})\n\n")
+        baseline = launch_bound_defects(source, globals())
+        for bound, expected in (("30", 1), ("RUN_TIMEOUT", 0)):
+            with self.subTest(bound=bound):
+                mutated = source.replace(anchor, anchor + added.format(bound))
+                defects = launch_bound_defects(mutated, globals())
+                at_added = [defect for defect in defects if defect.startswith("Doctor._added_launch,")]
+                self.assertEqual(len(at_added), expected, defects)
+                self.assertEqual(len(defects) - len(at_added), len(baseline), defects)
 
 
 # =====================================================================================================
@@ -3578,18 +3723,18 @@ class DoctorCheckpointWrites(Stage2Harness):
         self.set_items([])
         self.state_dir().mkdir(parents=True, exist_ok=True)
 
-    def _doctor(self, kind, timeout=None):
+    def _doctor(self, kind):
+        # The bound is named at the call site, so that EnumeratorBounds reads it there.
         args = ["preflight", kind]
         if kind == "idle":
             args += ["--wake-text", "recheck the work queue"]
-        timeout = self.TIMEOUT if timeout is None else timeout
         try:
             return run_doctor_recorded(self, [sys.executable, "-I", str(DOCTOR), *args, "--root",
                                               str(self.repo)],
                                        capture_output=True, text=True, env=self._env(),
-                                       timeout=timeout)
+                                       timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the doctor did not exit within {} s".format(timeout))
+            self.fail("the doctor did not exit within {} s".format(self.TIMEOUT))
 
     def _hook(self, kind):
         r = self.stop() if kind == "stop" else self.schedule()

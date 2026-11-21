@@ -14,15 +14,27 @@ tools/test-orch-stage2-hooks.py:
   enumerator should end normally: stage2(), _arm_writing_enumerator
   and the doctor disclosure case. The 2 registries whose argv is
   malformed by design keep 5, since no child starts there.
-- RUN_TIMEOUT, 120 seconds, bounds every test run that can start the
-  enumerator of a fixture registry: run_hook, run_doctor, the 2 direct
-  preflight runs, Doctor.SPECIAL_TIMEOUT (was 30),
+- RUN_TIMEOUT, 120 seconds, bounds each test run that can start the
+  enumerator of a fixture registry once: run_hook, run_doctor, the 2
+  direct preflight runs, Doctor.SPECIAL_TIMEOUT (was 30),
   DoctorCheckpointWrites.TIMEOUT (was 30) and the new
-  DoctorStandInRestore.TIMEOUT (was 60). Each exceeds ENUM_TIMEOUT by
-  ENUM_MARGIN, 60 seconds, so the hook's own timeout ends an enumerator
-  that hangs before a test bound ends the run. The new case
-  EnumeratorBounds fails when any of those bounds comes within
-  ENUM_MARGIN of ENUM_TIMEOUT.
+  DoctorStandInRestore.TIMEOUT (was 60). The fault-injection run of
+  DoctorCheckpointWrites can start it twice and keeps twice the bound,
+  240 seconds. So every test bound around such a run is at least 120
+  seconds, and each exceeds ENUM_TIMEOUT, once for each enumerator run
+  it can hold, by at least ENUM_MARGIN, 60 seconds, so the hook's own
+  timeout ends an enumerator that hangs before a test bound ends the
+  run.
+- The new case EnumeratorBounds reads the syntax tree of the suite and
+  finds each call in a Stage2Harness case that passes a timeout. It
+  fails on a literal bound, a bound it cannot read at the call site, a
+  mapping passed through **, or a named bound under ENUM_TIMEOUT per
+  enumerator run plus ENUM_MARGIN, unless UNENUMERATED_RUNS lists the
+  launch, with its reason, as one that starts no enumerator. A second
+  case adds a launch with timeout=30 to Doctor in a copy of the source
+  and requires 1 new defect there, and none with RUN_TIMEOUT.
+  DoctorCheckpointWrites._doctor drops a timeout parameter that no
+  caller passes and names self.TIMEOUT at its call site.
 - In the enumerator timeout case the bound on the hook run goes from
   15 to 90 seconds and the sleep of its enumerator from 30 to 100
   seconds, so a hook that waited the sleep out still fails the case.
@@ -32,8 +44,8 @@ tools/test-orch-enumerate-backlog.py:
 - ENUMERATE_PROG runs the real enumerator under a 60 second timeout
   instead of 5.
 - The new case test_hook_ends_an_enumerator_that_does_not_end runs a
-  90 second sleep through ENUMERATE_PROG and requires ENUMERATOR_ERROR
-  with "timed out after 60 seconds".
+  90 second sleep through ENUMERATE_PROG under a 120 second bound and
+  requires ENUMERATOR_ERROR with "timed out after 60 seconds".
 - The stamp test, renamed
   test_generated_at_utc_is_stamped_while_the_enumerator_runs, requires
   that the stamp lie between the clock before the run, truncated to
@@ -56,17 +68,21 @@ neither with this change; a 50 s delay of the hook fails the
 enumerator timeout case's old 15 s bound and passes its 90 s bound.
 Controls: a 91 s hook delay fails the 90 s bound, an enumerator stamp
 3 s stale fails the new stamp test, a 100 s timeout in ENUMERATE_PROG
-fails the new hang case, and the earlier 30, 30 and 60 s bounds fail
-EnumeratorBounds. With a fixture enumerator that sleeps 70 s, no case
-of the stage-2 harness ends through a test bound; with the earlier
-bounds, 4 doctor cases do. Pinned to 1 CPU with 64 busy processes, the
-enumerator timeout case passed in each of 3 runs.
+fails the new hang case, the earlier 30, 30 and 60 s bounds fail
+EnumeratorBounds, and so does a new Doctor launch with timeout=30 or
+timeout=30 at a direct preflight run, while a new launch with
+timeout=RUN_TIMEOUT passes it. With a fixture enumerator that sleeps
+70 s, no case of the stage-2 harness ends through a test bound; with
+the earlier bounds, 4 doctor cases do. With 64 busy processes and the
+enumerator timeout case pinned to 1 CPU, the case is expected to end
+OK in each of 3 runs.
 
 Residuals: a wider bound makes a load failure rarer, not impossible.
 An enumerator that hangs holds a test run for up to 60 s, and a doctor
 or hook run that blocks fails after 120 s instead of 30. The new hang
-case adds 60 s to the enumerate-backlog suite. EnumeratorBounds checks
-only the bounds it names. The fixture value 60 is safe only while the
-test registries are never gated. The new stamp test fails on a
-backward clock step during the run. Load runs of other cases and load
-other than CPU contention were not run.
+case adds 60 s to the enumerate-backlog suite. EnumeratorBounds reads
+the stage-2 suite only and takes the reasons of UNENUMERATED_RUNS as
+reviewed; it does not see a bound passed by position. The fixture
+value 60 is safe only while the test registries are never gated. The
+new stamp test fails on a backward clock step during the run. The load
+check covers only the enumerator timeout case and CPU contention.
