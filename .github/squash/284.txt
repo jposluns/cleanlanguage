@@ -1,0 +1,65 @@
+Widen the orchestration test bounds that host load can exceed (#284)
+
+On a loaded host, 3 checks in the orchestration suites failed although
+the code under test ended normally. The hook starts the enumerator's
+timeout clock when it starts the child (subprocess.run at
+aiqt_hooks.py:22833), so the 5 second enumerator timeout of the test
+registries also covered interpreter start-up; the stamp test bounded
+the enumerator's whole-second stamp to 5 seconds from a clock read
+taken before the enumerator started; and the enumerator timeout case
+of the stage-2 suite bounded the whole hook run, start-up included, to
+15 seconds. This closes TODO 254.
+
+tools/test-orch-stage2-hooks.py adds the module constant ENUM_TIMEOUT,
+60 seconds, with a comment that gives its reason, and uses it in place
+of 5 at the 3 fixture registries whose enumerator should end normally:
+stage2(), _arm_writing_enumerator and the doctor disclosure case. 60
+is the hook's own fallback (aiqt_hooks.py:22831) and stays below the
+120 second bound of run_hook, so the hook still reports an enumerator
+that hangs. The 2 registries whose argv is malformed by design keep 5,
+since no child starts there. In the enumerator timeout case the bound
+on the hook run goes from 15 to 45 seconds and the sleep of its
+enumerator from 30 to 60 seconds, so a hook that waited the sleep out
+still fails the case.
+
+tools/test-orch-enumerate-backlog.py runs the real enumerator through
+ENUMERATE_PROG under a 60 second timeout instead of 5. The stamp test,
+renamed test_generated_at_utc_is_stamped_while_the_enumerator_runs,
+requires that the stamp lie between the clock before the run,
+truncated to the second, and the clock after it. The enumerator
+truncates its stamp to whole seconds, so the lower bound is exact, and
+the test now refuses a stale stamp that the old window accepted.
+
+tools/test-orchestration-registry.py is unchanged: its timeouts of 5
+are data that the registry gate checks, no child runs under them, and
+the gate refuses any timeout outside (0, 8]. The test registries of
+the 2 changed suites never reach the gate.
+
+Checks that fail without the change, each a fixed start-up delay in a
+scratch copy: a 6 s fixture enumerator start fails 4 stage-2 cases; a
+6 s real enumerator start fails the hook case and the stamp test of
+the enumerate-backlog suite; a 16 s hook start fails the enumerator
+timeout case at 17.57 s. Each passes with the change. Controls: a 46 s
+hook start still fails the 45 s bound, a 70 s enumerator is still cut
+at 60 s, and an enumerator stamp 3 s stale passes the old stamp test
+but fails the new one. Under load from busy processes pinned with the
+test to 1 CPU, the unchanged tree failed the enumerator timeout case at
+32-fold and 64-fold, test_stage2_allows at 128-fold and the hook case
+of the enumerate-backlog suite at 96-fold. With the change those cases
+passed at 64-fold, 128-fold and 96-fold; the 32-fold run was not
+repeated with the change. With the change and no added load,
+the stage-2 suite ran 142 tests OK, the enumerate-backlog suite 95 and
+the registry suite 177. The label suite failed the same 2 cases on the
+unchanged tree as with the change, both from git ls-files in a copy
+that is not a git repository.
+
+Residuals: a wider bound makes a load failure rarer, not impossible;
+at 128-fold the unchanged tree's enumerator timeout case took 71.15 s,
+over the new 45 s bound, and 1 stage-2 case exceeded the 120 s bound of
+run_hook, which this change leaves as it is. An enumerator that hangs
+now holds a test run for up to 60 s. The fixture value 60 is safe only
+while the test registries are never gated. The new stamp test fails on
+a backward clock step during the run. Each load run is 1 sample on a
+shared host. DoctorScopeMargin, the 8 second PreToolUse budget, the
+bounds of 20 seconds and more, load other than CPU contention and a
+run of the label suite in a git checkout are not covered.
