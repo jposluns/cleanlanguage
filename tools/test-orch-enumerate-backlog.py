@@ -928,17 +928,21 @@ class Isolation(EnumeratorHarness):
 
 class InputFileType(EnumeratorHarness):
     """The backlog path must be a regular file. A FIFO with no writer, a symlink to a
-    FIFO, a directory and /dev/null each exit 1 within a short timeout, naming the path and the file
+    FIFO, a directory and /dev/null each exit 1 within TIMEOUT, naming the path and the file
     type, in both modes; a regular file and a symlink to one still enumerate."""
 
-    TIMEOUT = 20
+    # The bound covers the whole enumerator run, interpreter start-up included, also where it must
+    # enumerate a file larger than one read chunk, so it is the 60 seconds that ENUMERATE_PROG gives the
+    # enumerator, not 20. A run that ends at this bound shows only that the enumerator did not exit in
+    # time, not why.
+    TIMEOUT = 60
 
     def run_bounded(self, *args):
         try:
             return subprocess.run([sys.executable, "-I", str(SCRIPT), *[str(a) for a in args]],
                                   capture_output=True, text=True, timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the enumerator did not exit within {} s for {!r}: the open blocked"
+            self.fail("the enumerator did not exit within {} s for {!r}"
                       .format(self.TIMEOUT, [str(a) for a in args]))
 
     def assert_type_refused(self, path, kind):
