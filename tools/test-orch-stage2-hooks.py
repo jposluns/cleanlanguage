@@ -6425,6 +6425,75 @@ class TimeLimitSinkProbe(unittest.TestCase):
             self.assertNotIn(name, TIME_LIMIT_SCOPE)
 
 
+class TimeLimitTeardownProbe(unittest.TestCase):
+    """Class probe: tearDownModule fails a full run for each entry of TEST_TIME_LIMITS that
+    time_limit_table_mismatches reports, and a run that is not full for none, and in a full run each
+    entry is the least limit admitted at its site. Its test is the last test of the file that a
+    unittest.TestLoader finds, so in a full run every other test of the file has run before it."""
+
+    def test_teardown_holds_the_entries_to_their_sites_only_in_a_full_run(self):
+        # tearDownModule, called with TESTS_RUN, TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for
+        # the call and restored after it, and TEST_TIME_LIMITS as it is: in a full run, with every
+        # test of the file in TESTS_RUN, it must fail with the mismatch of an entry whose site
+        # admitted a greater least limit and of an entry whose site admitted none; in a run that is
+        # not full, with 1 test of the file missing from TESTS_RUN or with this test only, it must
+        # fail for neither. Controls: limits that agree with the table must fail neither run. Then,
+        # once every test of the file has run in this process, as in a full run, where this test runs
+        # last, each entry must be the least limit admitted at its site, which tearDownModule checks
+        # only after this test.
+        module = sys.modules[__name__]
+
+        def ids(suite):
+            for test in suite:
+                if isinstance(test, unittest.TestSuite):
+                    yield from ids(test)
+                else:
+                    yield test.id()
+
+        every = list(ids(unittest.TestLoader().loadTestsFromModule(module)))
+        self.assertEqual(every[-1], self.id(), "precondition: this test is the last test of the file")
+        site = ("Doctor", "_audit_bounded")
+        value = TEST_TIME_LIMITS[site]
+        agree = [("launch", key, limit, None) for key, limit in TEST_TIME_LIMITS.items()]
+        missing = [check for check in agree if check[1] != site]
+        greater = missing + [("join", site, value + 30, None)]
+        stale = "{!r}: TEST_TIME_LIMITS gives {:g}, the least limit admitted at its site is {:g}".format(
+            site, value, value + 30)
+        unreached = "{!r}: its site admitted no limit in this run".format(site)
+        full, short, alone = set(every), set(every[1:]), {self.id()}
+
+        def teardown(run, checks):
+            names = ("TESTS_RUN", "TIME_LIMIT_CHECKS", "TIME_LIMIT_REFUSALS")
+            saved = {name: globals()[name] for name in names}
+            globals().update(TESTS_RUN=set(run), TIME_LIMIT_CHECKS=list(checks), TIME_LIMIT_REFUSALS=[])
+            try:
+                tearDownModule()
+            except AssertionError as error:
+                return str(error)
+            finally:
+                globals().update(saved)
+            return None
+
+        cases = {
+            "a full run whose limits agree with the table": (full, agree, None),
+            "a run without 1 test whose limits agree with the table": (short, agree, None),
+            "a full run whose least limit at a site is greater than its entry": (
+                full, greater, "time limits: {}".format([stale])),
+            "a full run in which a site admitted no limit": (full, missing, "time limits: {}".format([unreached])),
+            "a run without 1 test whose least limit at a site is greater than its entry": (short, greater, None),
+            "a run without 1 test in which a site admitted no limit": (short, missing, None),
+            "a run of this test alone in which a site admitted no limit": (alone, missing, None),
+        }
+        for kind, (run, checks, wanted) in cases.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(teardown(run, checks), wanted)
+        if time_limit_full_run(module, TESTS_RUN):
+            with TIME_LIMIT_LOCK:
+                checks = list(TIME_LIMIT_CHECKS)
+            self.assertEqual(time_limit_table_mismatches(checks, TEST_TIME_LIMITS), [],
+                             "an entry of TEST_TIME_LIMITS that is not the least limit admitted at its site")
+
+
 # The hook line ranges A-B that this file and tools/test-orch-stage1-hooks.py cite, as HOOK_CITATION
 # reads them, that do not start on the first line of a statement of the hook or end on the last line
 # of one, each with the lines that it cites on purpose. Every other range that the 2 files cite starts
