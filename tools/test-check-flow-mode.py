@@ -199,13 +199,14 @@ case below fails on that change of code until CODE_SHA256 is updated, and the ch
 states this limit.
 
 The registry cases hold the sites of the check that the cases above drive.
-test_every_site_has_a_driver compares the check's code, without its docstrings and the sha256
-values of PARAGRAPHS, with CODE_SHA256, so a change to that code's syntax tree fails until the
-digest is updated; the update in the diff is the reviewer's cue to check the registries. The
-digest is the sha256 of the syntax tree that the check's bytes parse to, unparsed, so text that
-the tree does not hold is left out too, such as comments, layout, the quotes of a string, how a
-number is written and parentheses that change no grouping. An edit of only such text changes the
-check's bytes but keeps the digest, so the CODE_SHA256 pin does not fail on it. The digest's
+test_every_site_has_a_driver compares a digest of the check's code with CODE_SHA256. The digest
+is the sha256 of the syntax tree that the check's bytes parse to, without its docstrings and the
+sha256 values of PARAGRAPHS, unparsed, and unparsing leaves out the line and column positions
+that the tree holds. So a change to that unparsed tree fails until the digest is updated; the
+update in the diff is the reviewer's cue to check the registries. An edit that leaves the
+unparsed tree as it is, such as an edit of a comment, of layout, of the quotes of a string, of how
+a number is written or of parentheses that change no grouping, changes the check's bytes but
+keeps the digest, so the CODE_SHA256 pin does not fail on it. The digest's
 value depends on how the Python that runs the test unparses a syntax tree. The case also requires
 the codec of the encoding that tokenize.detect_encoding finds for those bytes to be UTF-8, with
 or without a byte order mark. When Python runs a file, it reads the line
@@ -779,12 +780,13 @@ def space_at(paragraph, opening):
     return after(paragraph, opening, r"\w \w") + 1
 
 
-# The sha256 of code_form() of the check's bytes. test_every_site_has_a_driver compares the
-# check's code, without its docstrings and the sha256 values of PARAGRAPHS, with this value, so a
-# change to that code's syntax tree fails until this line is updated; the update in the diff is
-# the reviewer's cue to check the registries below against the new code. An edit that leaves that
-# syntax tree as it is keeps this value, such as an edit of a comment, of layout, of the quotes of
-# a string, of how a number is written or of parentheses that change no grouping. The value
+# The sha256 of code_form() of the check's bytes: the check's syntax tree, without its docstrings
+# and the sha256 values of PARAGRAPHS, unparsed, which leaves out the line and column positions
+# that the tree holds. test_every_site_has_a_driver compares that sha256 with this value, so a
+# change to that unparsed tree fails until this line is updated; the update in the diff is the
+# reviewer's cue to check the registries below against the new code. An edit that leaves the
+# unparsed tree as it is keeps this value, such as an edit of a comment, of layout, of the quotes
+# of a string, of how a number is written or of parentheses that change no grouping. The value
 # depends on how the Python that runs the test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS that it leaves out. It is
@@ -1243,9 +1245,10 @@ def code_form(source):
     as compile() parses bytes, with each docstring removed, which is the first statement of the
     module, of a function or of a class when that statement is a string constant, and with the
     third item of each row of PARAGRAPHS made PLACEHOLDER when that item is a constant of 64
-    lowercase hexadecimal digits, then unparsed. Text that the syntax tree does not hold is left
-    out too, such as comments, layout, the quotes of a string, how a number is written and
-    parentheses that change no grouping."""
+    lowercase hexadecimal digits, then unparsed. Unparsing leaves out the line and column
+    positions that the tree holds, so 2 sources whose trees differ only in those positions give
+    the same form, such as 2 that differ only in comments, layout, the quotes of a string, how a
+    number is written or parentheses that change no grouping."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -2287,10 +2290,12 @@ class Verdicts(unittest.TestCase):
                 os.close(folder)
 
     def test_every_site_has_a_driver(self):
-        # The case compares the check's code, parsed from its bytes, without its docstrings and
-        # the sha256 values of PARAGRAPHS, with CODE_SHA256, so a change to that code's syntax
-        # tree fails until the digest is updated; the update in the diff is the reviewer's cue to
-        # check the registries; an edit that keeps that tree keeps the digest. It requires the
+        # The case compares the digest of the check's syntax tree, parsed from its bytes, without
+        # its docstrings and the sha256 values of PARAGRAPHS, unparsed, with CODE_SHA256.
+        # Unparsing leaves out the line and column positions that the tree holds, so a change to
+        # that unparsed tree fails until the digest is updated; the update in the diff is the
+        # reviewer's cue to check the registries; an edit that keeps the unparsed tree keeps the
+        # digest. It requires the
         # codec that Python finds for those bytes to be UTF-8, with or
         # without a byte order mark, so that Python decodes the file that it runs as compile()
         # decodes the bytes. Python reads a carriage return and line feed pair, and any other

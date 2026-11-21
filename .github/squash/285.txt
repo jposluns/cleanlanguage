@@ -33,20 +33,22 @@ steps alone.
 TODO 263: the squash message of pull request 276 says that every edit
 of the check's code fails the test until CODE_SHA256 is updated. Only
 an edit that changes the check's syntax tree, once its docstrings and
-the sha256 values of PARAGRAPHS are left out, does. The digest leaves
-out text that the tree does not hold, such as comments, layout, the
-quotes of a string, how a number is written and parentheses that
-change no grouping, so an edit of only such text keeps the digest. The
-test's module docstring, the comment on CODE_SHA256 and the docstring
-of code_form() now say this, and the comment of the registry case says
-that an edit that keeps that tree keeps the digest. PRESERVED gains 3
-rows that pin it: the quotes of a string changed, a number written in
-hexadecimal and parentheses that change no grouping added.
+the sha256 values of PARAGRAPHS are left out and the tree is unparsed,
+does. Unparsing leaves out the line and column positions that the tree
+holds, so an edit that leaves the unparsed tree as it is keeps the
+digest, such as an edit of a comment, of layout, of the quotes of a
+string, of how a number is written or of parentheses that change no
+grouping. The test's module docstring, the comment on CODE_SHA256 and
+the docstring of code_form() now say this, and the comment of the
+registry case says that unparsing leaves out those positions and that
+an edit that keeps the unparsed tree keeps the digest. PRESERVED gains
+3 rows that pin it: the quotes of a string changed, a number written
+in hexadecimal and parentheses that change no grouping added.
 
 Each row is evidence for its own edit only. A code_form() that hides
 or keeps only what no row edits still passes, such as one that also
 removes a string first in the body of an except clause or of an async
-for. An edit of the check that changes its bytes but not that syntax
+for. An edit of the check that changes its bytes but not that unparsed
 tree keeps the digest, by design. The digest's value depends on how
 the Python that runs the test unparses a syntax tree; .python-version
 names 3.14.4.
