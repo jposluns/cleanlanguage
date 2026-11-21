@@ -7,7 +7,9 @@ subprocess under python3 -I against synthetic fixtures only, and validate every 
 enumeration with the hook function `validate_enumeration` (aiqt_hooks.py:22754-22812), imported from
 the vendored hook by path in a separate python3 -I process, so the contract under test is the one
 the hook enforces, not a copy of it. One test also runs the enumerator through the hook function
-`_orch_enumerate` with a relative script path and cwd = the repo root, as the registry declares it.
+`_orch_enumerate` with a relative script path and cwd = the repo root, as the registry declares it,
+and another runs an enumerator that does not end through the same function, to show that its timeout
+still ends a hang.
 
 Fail-closed cases assert exit 1, an empty stdout, and a stderr that names the offending line, since a
 non-zero exit is ENUMERATOR_ERROR in the hook (aiqt_hooks.py:22837-22839) and an empty enumeration
@@ -116,6 +118,7 @@ print(json.dumps({"items": items, "error": err}))
 # timeout is 60 seconds, the hook's own default (aiqt_hooks.py:22831), not 5: the hook starts
 # that clock when it starts the enumerator (`subprocess.run` at aiqt_hooks.py:22833), so it also covers
 # the interpreter start-up, and a loaded host must not turn a normal end into ENUMERATOR_ERROR.
+# test_hook_ends_an_enumerator_that_does_not_end shows that this timeout still ends a hang.
 ENUMERATE_PROG = """
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("aiqt_hooks_under_test", sys.argv[1])
@@ -419,6 +422,21 @@ class Golden(EnumeratorHarness):
         res = json.loads(r.stdout)
         self.assertEqual(res["status"], "ok", res["detail"])
         self.assertEqual([it["id"] for it in res["detail"]], [it["id"] for it in self.expected_items()])
+
+    def test_hook_ends_an_enumerator_that_does_not_end(self):
+        # The control for the 60 second timeout of ENUMERATE_PROG: the hook must end a 90 second sleep at
+        # 60 seconds and report it. A hook that waited the sleep out would report output that is not
+        # JSON instead, and it would still end before the 120 second bound on this run.
+        if not HOOK.exists():
+            self.fail("vendored hook not found: {}".format(HOOK))
+        argv = [sys.executable, "-I", "-c", "import time; time.sleep(90)"]
+        r = subprocess.run([sys.executable, "-I", "-c", ENUMERATE_PROG, str(HOOK), str(REPO_ROOT),
+                            json.dumps(argv)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = json.loads(r.stdout)
+        self.assertEqual(res["status"], "ENUMERATOR_ERROR", res["detail"])
+        self.assertIn("enumerator failed to run", res["detail"])
+        self.assertIn("timed out after 60 seconds", res["detail"])
 
     def test_hook_reports_enumerator_error_on_a_malformed_backlog(self):
         if not HOOK.exists():
