@@ -3044,9 +3044,9 @@ def check_release_near_placeholder(failures: list[str]) -> int:
 # A comment that opens as <!--> or <!--->, as plain text, as tools/check-inline-code.py's check 9 reads it. The
 # generator refuses both. Python 3.14.4's HTMLParser reads either one as a comment up to the next --> or --!>, when one
 # follows. The earlier <!--> case of check_disclosure_states(), which expected no failure, passes on Python 3.14.4 and
-# failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the 2 releases read <!--> differently; no
-# run shows how 3.14.7 reads <!--->. disclosure_d4_section() raises ShortCommentRefused on both rather than read them
-# as the running interpreter does.
+# failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the 2 releases read <!--> differently;
+# TODO 255 does not record how 3.14.7 reads <!--->. disclosure_d4_section() raises ShortCommentRefused on both rather
+# than read them as the running interpreter does.
 SHORT_COMMENT = re.compile(r"<!---?>")
 
 
@@ -3158,10 +3158,12 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
-        # The reading refuses <!--> and <!---> before it parses (SHORT_COMMENT). The <!----> case shows that it still
-        # parses an empty comment, which SHORT_COMMENT does not match, as a comment that closes at its own -->: the
-        # Entry 5 label after it ends D-4 only if the comment closes before the label, so a parse that reads the label
-        # as comment text puts the note in D-4 and gives no failure.
+        # The reading refuses <!--> and <!---> before it parses (SHORT_COMMENT). The <!----> case shows that it does
+        # not refuse an empty comment, which SHORT_COMMENT does not match, and that it reads the Entry 5 label after
+        # the empty comment as a tag that ends D-4: a reading that takes the label as comment text, such as one in
+        # which <!----> never closes, puts the note in D-4 and gives no failure. It does not show that the reading
+        # parses <!----> as a comment: the reading records only where start tags stand, so a reading that takes
+        # <!----> as text, and then reads the label as a tag, gives the same result.
         ("the note after <!--> and an Entry 5 label (the generator refuses <!-->)",
          entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
          [short.format("<!-->")]),
