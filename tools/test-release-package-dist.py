@@ -2276,20 +2276,25 @@ class TraceReaderTests(unittest.TestCase):
               "clone3": "100   clone3({flags=CLONE_VM|CLONE_VFORK, exit_signal=SIGCHLD, stack=0x7f0e,"
                         " stack_size=0x9000}, 88",
               "fork": "100   fork(", "vfork": "100   vfork("}
-    # 3 forms of CUT_SHORT, "detached", "resumed with ?" and "ended with ?",
-    # in which made writes a call of MAKERS.
-    MADE = ("that strace detached during", "resumed with ?", "that ended with ?")
+    # The forms in which made writes a call of MAKERS: 3 forms of CUT_SHORT,
+    # "detached", "resumed with ?" and "ended with ?", and the form
+    # ") = ? <unavailable>", which the reader reads as a call cut short with
+    # the result ?.
+    MADE = ("that strace detached during", "resumed with ?", "that ended with ?", "that ended as unavailable")
 
-    def made(self, form: str, name: str, *children: str) -> list:
-        """The lines of the call of MAKERS with the name name, cut short in
-        the form form of MADE, with children, the lines of other processes,
-        after its start: closed by <detached ...>; between <unfinished ...>
-        and <... name resumed>) = ?; or after ) = ?."""
-        start = self.MAKERS[name]
+    def made(self, form: str, name: str, *children: str, pid: int = 100) -> list:
+        """The lines of the call of MAKERS with the name name, made by
+        process pid, cut short in the form form of MADE, with children, the
+        lines of other processes, after its start: closed by <detached ...>;
+        between <unfinished ...> and <... name resumed>) = ?; after ) = ?;
+        or after ) = ? <unavailable>."""
+        start = self.MAKERS[name].replace("100", str(pid), 1)
         if form == "that strace detached during":
             return [start + TRACE_DETACHED, *children]
         if form == "resumed with ?":
-            return [start + TRACE_UNFINISHED, *children, "100   <... %s resumed>) = ?" % name]
+            return [start + TRACE_UNFINISHED, *children, "%d   <... %s resumed>) = ?" % (pid, name)]
+        if form == "that ended as unavailable":
+            return [start + ") = ? <unavailable>", *children]
         return [start + ") = ?", *children]
 
     @staticmethod
@@ -2319,7 +2324,8 @@ class TraceReaderTests(unittest.TestCase):
         "unfinished, exited after another line": ("{call} <unfinished ...>", OTHER, "+++ exited with 0 +++"),
         "resumed with ?": ("{call} <unfinished ...>", OTHER, "<... {name} resumed>) = ?",
                            "+++ killed by SIGKILL +++"),
-        "resumed unfinished with ?": ("{call} <unfinished ...>", OTHER, "<... {name} resumed> <unfinished ...>) = ?"),
+        "resumed with ? after <unfinished ...>": ("{call} <unfinished ...>", OTHER,
+                                                  "<... {name} resumed> <unfinished ...>) = ?"),
         "ended with ?": ("{call}) = ?", "+++ killed by SIGKILL +++"),
         "ended unfinished with ?": ("{call} <unfinished ...>) = ?",),
     }
@@ -2382,9 +2388,11 @@ class TraceReaderTests(unittest.TestCase):
         and the note <unavailable> in a shared folder is read; a process
         that a clone, clone3, fork or vfork made is read by its absolute
         paths when strace detached during that call, resumed it with the
-        result ? or ended it with the result ?, so that the call does not
-        name the process; and so is 1 such process for each of a fork and
-        a vfork that ended with the result ?."""
+        result ?, or ended it with the result ? alone or with the note
+        <unavailable>, so that the call does not name the process; and so
+        is 1 such process for each of 2 such calls of the same name in the
+        same form, and for each of a fork and a vfork that ended with the
+        result ?."""
         unlink = "%d   unlink(" + self.hexed("x") + ") = 0"
         chdir = "100   chdir(%s) = 0" % self.hexed("sub")
         traces = {
@@ -2398,7 +2406,7 @@ class TraceReaderTests(unittest.TestCase):
             "an fchdir": (("100   fchdir(3</clone/sub>) = 0", unlink % 100), "/clone/sub/x"),
             "a chdir that strace could not read, in a shared folder":
                 ((self.SHARED, "101   chdir( <detached ...>", unlink % 100), "/clone/x"),
-            "an absolute path in a child of a clone that strace cut short":
+            "an absolute path in a child of a clone resumed with ? after its last argument":
                 ((self.CLONE + " <unfinished ...>", "101   unlink(%s) = 0" % self.hexed("/clone/y"),
                   "100   <... clone resumed>, child_tidptr=0x7f0a) = ?"), "/clone/y"),
             "a child of fork, which takes no argument": ((chdir, "100   fork() = 101", unlink % 101), "/clone/sub/x"),
@@ -2417,6 +2425,13 @@ class TraceReaderTests(unittest.TestCase):
             with self.subTest(label):
                 removed, _ = self.removals(*lines)
                 self.assertEqual([removal[2] for removal in removed], [path])
+        for name in self.MAKERS:
+            for form in self.MADE:
+                with self.subTest("an absolute path in each child of 2 calls of %s %s" % (name, form)):
+                    removed, _ = self.removals(self.FORK, *self.made(form, name, *self.made(
+                        form, name, "102   unlink(%s) = 0" % self.hexed("/clone/y"),
+                        "103   unlink(%s) = 0" % self.hexed("/clone/z"), pid=101)))
+                    self.assertEqual([removal[2] for removal in removed], ["/clone/y", "/clone/z"])
         with self.subTest("an absolute path in each child of a fork and a vfork that ended with ?"):
             removed, _ = self.removals(self.FORK, "100   fork() = ?", "101   vfork() = ?",
                                        "102   unlink(%s) = 0" % self.hexed("/clone/y"),
@@ -2441,7 +2456,10 @@ class TraceReaderTests(unittest.TestCase):
         against, or comes from a process that such a call made. After a
         chdir that ends with the result ? and the note <unavailable> in a
         shared folder, the case ends at the relative path that follows it,
-        with the error that names that path."""
+        with the error that names that path. For a call of each name of
+        MAKERS in each form of MADE, the case ends at a relative path of
+        the process that the call made, and at a third process after 2
+        such calls, each with the error that names that path or process."""
         unlink = "100   unlink(%s) = 0" % self.hexed("x")
         later = "101   rmdir(%s) = 0" % self.hexed("z")
         cut = "101   unlink(%s <unfinished ...>) = " % self.hexed("y")
@@ -2466,12 +2484,12 @@ class TraceReaderTests(unittest.TestCase):
             "a chdir detached in a shared folder":
                 (self.SHARED, "101   chdir(%s <detached ...>" % self.hexed("sub"), unlink),
             "a chdir ended in a shared folder": (self.SHARED, "101   chdir(%s) = ?" % self.hexed("sub"), unlink),
-            "an unread call resumed as unavailable":
+            "an unread call resumed with ? and <unavailable>":
                 (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ? <unavailable>"),
-            "an unread call resumed twice":
+            "an unread call resumed with ? twice":
                 (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?",
                  "101   <... ??? resumed>) = ?"),
-            "a call after an unread call resumed":
+            "a call after an unread call resumed with ?":
                 (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?", later),
             "a call after an unread call that ended": (self.FORK, "101   ???() = ?", later),
             "a signal after an unfinished unread call":
@@ -2493,7 +2511,7 @@ class TraceReaderTests(unittest.TestCase):
             "an fchdir into a descriptor with no path": ("100   fchdir(3) = 0",),
             "an fchdir into a descriptor with a relative path": ("100   fchdir(3<gone>) = 0",),
             "a process that no call made": (unlink, "101   unlink(%s) = 0" % self.hexed("/clone/y")),
-            "a relative path in a child of a clone that strace cut short":
+            "a relative path in a child of a clone resumed with ? after its last argument":
                 (self.CLONE + " <unfinished ...>", "101   unlink(%s) = 0" % self.hexed("x"),
                  "100   <... clone resumed>, child_tidptr=0x7f0a) = ?"),
             "2 processes after 1 clone that strace cut short":
@@ -2516,6 +2534,19 @@ class TraceReaderTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "the relative path 'x' in a current folder that it does not "
                                                         "show"):
                 self.removals(self.SHARED, "101   chdir(%s) = ? <unavailable>" % self.hexed("sub"), unlink)
+        for name in self.MAKERS:
+            for form in self.MADE:
+                with self.subTest("a relative path in a child of a %s %s" % (name, form)):
+                    with self.assertRaisesRegex(AssertionError, "the relative path 'x' in a current folder that it "
+                                                                "does not show"):
+                        self.removals(*self.made(form, name, "101   unlink(%s) = 0" % self.hexed("x")))
+                with self.subTest("3 processes after 2 calls of %s %s" % (name, form)):
+                    with self.assertRaisesRegex(AssertionError, "the trace shows process 104, which no traced call "
+                                                                "made"):
+                        self.removals(self.FORK, *self.made(form, name, *self.made(
+                            form, name, "102   unlink(%s) = 0" % self.hexed("/clone/y"),
+                            "103   unlink(%s) = 0" % self.hexed("/clone/z"),
+                            "104   unlink(%s) = 0" % self.hexed("/clone/w"), pid=101)))
 
 
 if __name__ == "__main__":
