@@ -54,11 +54,12 @@ The test holds the code of the gate by 2 layers.
    compile and run exactly those bytes as a new module.
    checked_load_problems() fails unless gate_bytes() and CHECKED_LOAD each
    stop on a copy of the gate with 1 byte added, naming the file and both
-   digests, and on a copy that is missing or is a folder, naming the file
-   and the digest that GATE_SHA256 records, and unless CHECKED_LOAD loads a
-   copy of GATE_BYTES. Every other case, and version_problems(), runs the
-   copy as a script or through runpy, which compile its source, with no
-   digest check, since some of them change the copy on purpose. What this
+   digests, and on a copy that is missing or is a folder, naming the file,
+   the error that reading it raises and the digest that GATE_SHA256
+   records, and unless CHECKED_LOAD loads a copy of GATE_BYTES. Every
+   other case, and version_problems(), runs the copy as a script or
+   through runpy, which compile its source, with no digest check, since
+   some of them change the copy on purpose. What this
    layer adds: until a reviewer records a new GATE_SHA256, any change to
    the gate, a comment included, stops the test before any case and before
    any code of the gate runs in its process, whatever route the change
@@ -82,30 +83,40 @@ The test holds the code of the gate by 2 layers.
    syntax tree gives it with any docstring left out, and of its value as
    the loaded gate holds it, in the text that pin_value() writes for it,
    equals READER_SHA256, and it names each name that differs. That text
-   gives plain data by repr(), so a value of another type whose repr() is
-   the same gives the same digest. What this layer adds to the 1st: a
-   change to the gate whose new GATE_SHA256 is recorded still fails,
-   naming the function or value, where it changes a statement that this
-   layer holds, until its own digest is renewed too, so that a change to
-   check 7 does not pass unnamed inside a change elsewhere in the gate. It
-   follows only names read directly: a helper that a pinned function
-   reaches in any other way than by reading the name that a def at the
-   gate's top level binds is not derived, and its code is in no digest
-   here. Examples of that class, not a complete list, are a helper reached
-   through an alias, a lambda assigned at the top level, functools.partial,
-   a class or getattr(). A helper reached through a dict of functions, or
-   through another value that pin_value() writes by repr() and that holds
-   a function, is in that class too, but there the test fails closed: that
-   repr() holds each function's address, which changes from process to
-   process, so the reader pin fails on such a gate, the reviewed one
-   included. Its binding check does not see a rebinding made while the
-   gate loads that leaves each pinned statement and the text of each pinned
-   value as they were. Examples of that class, not a complete list, are a
-   rebinding through globals(), setattr or exec of a builtin, of a module
-   by another module of the same name, of a function by a wrapper around
-   it, of __file__, of a pinned value by a value of another type whose
-   repr() is the same, or of a function of a sibling tool, rebound and
-   restored around a call.
+   gives plain data by repr(), a pattern by its text and flags, and a
+   module, a class or a path by its name, so another module, class or path
+   of the same name gives the same digest. Plain data is a str, bytes,
+   int, float, bool or None, or a tuple, a list or a dict that holds only
+   plain data, each of exactly that type. For any other value, a subclass
+   of those types among them, pin_value() raises UnpinnableValue, and the
+   reader pin fails, naming the name, the reviewed gate included; so does
+   reader_pin_text() for a value with __wrapped__ that a def does not bind.
+   pin_value_problems() holds these refusals, and holds that the reader pin
+   fails on a gate whose REQUESTED_FILES is a subclass of tuple. What this
+   layer adds to the 1st: a change to the gate whose new GATE_SHA256 is
+   recorded still fails, naming the function or value, where it changes a
+   statement that this layer holds, until its own digest is renewed too,
+   so that a change to check 7 does not pass unnamed inside a change
+   elsewhere in the gate. It follows only names read directly: a helper
+   that a pinned function reaches in any other way than by reading the
+   name that a def at the gate's top level binds is not derived, and its
+   code is in no digest here. Examples of that class, not a complete list,
+   are a helper reached through an alias, a lambda assigned at the top
+   level, functools.partial, a class or getattr(), or through an attribute
+   of a module or a path that a pinned name holds. A helper reached
+   through the value of a pinned name for which pin_value() raises
+   UnpinnableValue, such as a dict or a list of functions or of classes, a
+   subclass of dict or tuple whose own repr() holds no address, or a set
+   of functions, is in that class too, but there the test fails closed:
+   the reader pin fails on such a gate, the reviewed one included. Its
+   binding check does not see a rebinding made while the gate loads that
+   leaves each pinned statement and the text of each pinned value as they
+   were. Examples of that class, not a complete list, are a rebinding
+   through globals(), setattr or exec of a builtin, of a module by another
+   module of the same name, of a function by a wrapper around it, of
+   __file__, of a pinned value by another module, class or path of the
+   same name, or of a function of a sibling tool, rebound and restored
+   around a call.
 
 A reviewer records a new digest of either layer only after reading the
 change. The residuals, stated once:
@@ -122,7 +133,8 @@ change. The residuals, stated once:
    a complete list: a helper of the class that the reader pin does not
    derive (above), other than one reached through a value on which the
    test fails closed, such as one reached through an alias, a lambda
-   assigned at the top level, functools.partial, a class or getattr(); a
+   assigned at the top level, functools.partial, a class or getattr(), or
+   through an attribute of a module or a path that a pinned name holds; a
    rebinding through globals(), setattr or exec, while the gate loads, of
    the class that its binding check does not see (above), or when the gate
    runs as a command; the gate's main(), which reads site/_redirects and
@@ -3194,9 +3206,36 @@ def top_statements(tree: ast.Module, name: str) -> list[ast.stmt]:
     return found
 
 
+# Check 7: the types of the plain data that pin_value() writes by repr(), each matched as the exact type of a value, so
+# that a subclass, which can write any repr(), is not plain data.
+PLAIN_TYPES = (str, bytes, int, float, bool, type(None))
+
+
+class UnpinnableValue(ValueError):
+    """A value of the gate that pin_value() does not write, since no text that it writes would hold what it reaches."""
+
+
+def plain_data(value) -> bool:
+    """Whether value is plain data: of exactly 1 of PLAIN_TYPES, or exactly a tuple or a list whose items are plain data,
+    or exactly a dict whose keys and values are plain data. A value that holds itself is not plain data."""
+    try:
+        if type(value) in PLAIN_TYPES:
+            return True
+        if type(value) in (tuple, list):
+            return all(plain_data(item) for item in value)
+        if type(value) is dict:
+            return all(plain_data(key) and plain_data(item) for key, item in value.items())
+    except RecursionError:
+        return False
+    return False
+
+
 def pin_value(value) -> str:
     """A value of the gate as reader_pin_text() writes it: a pattern by its text and flags, a module or a class by its
-    name, a path by its place in this repository, plain data by repr() and any other object by its type alone."""
+    name, a path by its place in this repository and plain data (plain_data()) by repr(). For any other value it
+    raises UnpinnableValue, so that the reader pin fails on it, the reviewed gate included: such a value can reach a
+    helper whose code no text of it holds, as a dict or a list of functions or of classes does, a subclass of dict or
+    tuple whose own repr() holds no address, or a set of functions."""
     if isinstance(value, re.Pattern):
         return f"re.compile({value.pattern!r}, {int(value.flags)})"
     if isinstance(value, types.ModuleType):
@@ -3205,20 +3244,24 @@ def pin_value(value) -> str:
         return f"class {value.__module__}.{value.__qualname__}"
     if isinstance(value, Path):
         return f"path {value.relative_to(REPO_ROOT)}" if value.is_relative_to(REPO_ROOT) else f"path {value}"
-    if isinstance(value, (str, bytes, int, float, tuple, list, dict, type(None))):
+    if plain_data(value):
         return repr(value)
-    return f"an object of {type(value).__module__}.{type(value).__qualname__}"
+    raise UnpinnableValue(f"its value, an object of {type(value).__module__}.{type(value).__qualname__}, is not plain "
+                          "data, a pattern, a module, a class or a path, so no text that the pin writes holds what it "
+                          "reaches")
 
 
 def reader_pin_text(statement: ast.stmt, value) -> str:
     """What READER_SHA256 holds for a pinned name: the syntax tree of the statement of the gate that binds it, with no
-    line numbers and with the docstring of a def or a class left out, and its value as the loaded gate holds it, a
-    function by the type of each wrapper around it and by its defaults."""
+    line numbers and with the docstring of a def or a class left out, and its value as the loaded gate holds it: the
+    value of a name that a def binds by the type of each wrapper around it and by its defaults, and any other value by
+    pin_value(), so that a value that a def does not bind does not pass as a function by having __wrapped__."""
     if (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             and ast.get_docstring(statement, clean=False) is not None):
         statement = copy.copy(statement)
         statement.body = statement.body[1:]
-    if isinstance(value, types.FunctionType) or hasattr(value, "__wrapped__"):
+    if (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and (isinstance(value, types.FunctionType) or hasattr(value, "__wrapped__"))):
         wrappers: list[str] = []
         while hasattr(value, "__wrapped__"):
             wrappers.append(f"{type(value).__module__}.{type(value).__qualname__}")
@@ -3236,7 +3279,8 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
     unless the names that reader_names() gives are READER_NAMES and READER_GLOBALS; unless READER_SHA256 holds exactly
     those names; for a star import; for each name that the source binds other than exactly once, by a statement at its
     top level; for each function that the loaded gate binds to anything but the function that its def makes, with that
-    def's own code object; and for each name whose reader_pin_text() does not hash to its digest in READER_SHA256."""
+    def's own code object; for each name whose value pin_value() refuses (UnpinnableValue); and for each name whose
+    reader_pin_text() does not hash to its digest in READER_SHA256."""
     try:
         source = GATE_BYTES if source is None else source
         tree, code = ast.parse(source), compile(source, str(GATE), "exec", dont_inherit=True)
@@ -3272,19 +3316,110 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
                     and function.__globals__ is vars(gate) and function.__closure__ is None):
                 problems.append(f"the loaded gate binds {name} to {value!r}, not to the function that its def at line "
                                 f"{statement.lineno} makes")
-        digest = hashlib.sha256(reader_pin_text(statement, value).encode("utf-8")).hexdigest()
+        try:
+            text = reader_pin_text(statement, value)
+        except UnpinnableValue as error:
+            problems.append(f"{name} of tools/{GATE.name} cannot be pinned: {error}")
+            continue
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if digest != READER_SHA256.get(name):
             problems.append(f"{name} of tools/{GATE.name} differs from its pin: its sha256 is {digest}, not "
                             f"{READER_SHA256.get(name)}; record the new digest only after reading the change")
     return problems
 
 
+# Check 7: the statement of the gate that pin_value_problems() replaces, and the 2 statements that it puts in its place:
+# REQUESTED_FILES made a subclass of tuple whose repr() is that of the plain value, and REQUESTED_FILES made by a call
+# of tuple(), a plain value whose statement differs.
+PIN_ANCHOR = 'REQUESTED_FILES = ("favicon.ico",)\n'
+PIN_SUBCLASS = ('class _QzTuple(tuple):\n    def __repr__(self):\n        return "(\'favicon.ico\',)"\n\n\n'
+                'REQUESTED_FILES = _QzTuple(("favicon.ico",))\n')
+PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))\n'
+
+
+def pin_value_problems() -> list[str]:
+    """A problem unless pin_value() writes each plain value below by its repr() and raises UnpinnableValue for each
+    other value below: a subclass of dict, of tuple and of str, each with its own repr(), a dict that holds a function
+    or a class or that a class keys, a list in a tuple that holds a function, a frozenset of functions and a list that
+    holds itself; unless reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def
+    binds; and unless reader_pin_problems(), given the gate with PIN_ANCHOR replaced by PIN_SUBCLASS, gives exactly 1
+    problem, which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which
+    gives the new digest of REQUESTED_FILES."""
+
+    class ConstantDict(dict):
+        def __repr__(self):
+            return "{}"
+
+    class ConstantTuple(tuple):
+        def __repr__(self):
+            return "()"
+
+    class ConstantStr(str):
+        def __repr__(self):
+            return "''"
+
+    class Wrapped(dict):
+        __wrapped__ = None
+
+    def helper(segment):
+        return segment
+
+    held = [1]
+    held.append(held)
+    plain = ("favicon.ico", b"#", 301, 0.5, True, None, ("assets",), ["assets", 301], {"check-baseline-pin.py":
+             ("load_pin", "Unreadable", "PREFIX")}, {"assets": [("baseline", None)]})
+    refused = (("a dict subclass with its own repr()", ConstantDict(ok=helper)),
+               ("a tuple subclass with its own repr()", ConstantTuple((helper,))),
+               ("a str subclass with its own repr()", ConstantStr("assets")),
+               ("a dict that holds a function", {"ok": helper}),
+               ("a dict that holds a class", {"ok": ConstantTuple}),
+               ("a dict that a class keys", {ConstantTuple: "ok"}),
+               ("a list in a tuple that holds a function", (("ok", [helper]),)),
+               ("a frozenset of functions", frozenset({helper})),
+               ("a list that holds itself", held))
+    problems: list[str] = []
+    for value in plain:
+        try:
+            written = pin_value(value)
+        except UnpinnableValue as error:
+            problems.append(f"pin_value() refuses {value!r}, which is plain data: {error}")
+            continue
+        if written != repr(value):
+            problems.append(f"pin_value() writes {value!r} as {written!r}, not by its repr()")
+    for label, value in refused:
+        try:
+            problems.append(f"pin_value() writes {label} as {pin_value(value)!r}, not raising UnpinnableValue")
+        except UnpinnableValue:
+            pass
+    try:
+        problems.append(f"reader_pin_text() writes a value with __wrapped__ that an assignment binds as "
+                        f"{reader_pin_text(ast.parse('X = 1').body[0], Wrapped(ok=helper))!r}, not raising "
+                        "UnpinnableValue")
+    except UnpinnableValue:
+        pass
+    source = GATE_BYTES.decode("utf-8")
+    if source.count(PIN_ANCHOR) != 1:
+        return problems + [f"tools/{GATE.name} holds {PIN_ANCHOR.strip()!r} {source.count(PIN_ANCHOR)} times, not once"]
+    for replacement, start in ((PIN_SUBCLASS, f"REQUESTED_FILES of tools/{GATE.name} cannot be pinned: "),
+                               (PIN_PLAIN, f"REQUESTED_FILES of tools/{GATE.name} differs from its pin: ")):
+        try:
+            found = reader_pin_problems(source.replace(PIN_ANCHOR, replacement).encode("utf-8"))
+        except Exception as error:
+            problems.append(f"reader_pin_problems() raised {error!r} on the gate with {replacement.strip()!r}")
+            continue
+        if len(found) != 1 or not found[0].startswith(start):
+            problems.append(f"reader_pin_problems() gives {found!r} on the gate with {replacement.strip()!r}, not 1 "
+                            f"problem that starts {start!r}")
+    return problems
+
+
 def checked_load_problems() -> list[str]:
     """A problem unless gate_bytes(), given a copy of the gate with 1 byte added, raises SystemExit with a message that
     names the file and both digests, and, given a copy that is missing or is a folder, so that no bytes can be read,
-    with 1 that names the file and the digest that GATE_SHA256 records; and unless CHECKED_LOAD, run as a separate
-    process on each such copy, exits 1 with such a message, and, run on a copy of GATE_BYTES, loads the gate. It holds
-    the check of the 1st layer as written, not the gate."""
+    with 1 that names the file, the error that reading it raises in this process, as str() writes it, and the digest
+    that GATE_SHA256 records; and unless CHECKED_LOAD, run as a separate process on each such copy, exits 1 with such
+    a message, and, run on a copy of GATE_BYTES, loads the gate. It holds the check of the 1st layer as written, not
+    the gate."""
     problems: list[str] = []
     changed_bytes = GATE_BYTES + b"#"
     changed_digest = hashlib.sha256(changed_bytes).hexdigest()
@@ -3295,26 +3430,36 @@ def checked_load_problems() -> list[str]:
             (place / GATE.name).write_bytes(source)
         missing.mkdir()
         (folder / GATE.name).mkdir(parents=True)
-        named = {2: "the file and both digests", 1: "the file and the digest that GATE_SHA256 records"}
-        stops = (("with 1 byte added", changed, (changed_digest, GATE_SHA256)),
-                 ("that is missing", missing, (GATE_SHA256,)), ("that is a folder", folder, (GATE_SHA256,)))
-        for label, place, digests in stops:
+        errors: dict[Path, str] = {}
+        for place in (missing, folder):
+            try:
+                (place / GATE.name).read_bytes()
+                problems.append(f"a copy of the gate at {place / GATE.name} can be read, so it stands for no copy "
+                                "that cannot")
+            except OSError as error:
+                errors[place] = str(error)
+        both = "the file and both digests"
+        unread = "the file, the error and the digest that GATE_SHA256 records"
+        stops = (("with 1 byte added", changed, (changed_digest, GATE_SHA256), both),
+                 ("that is missing", missing, (errors.get(missing, ""), GATE_SHA256), unread),
+                 ("that is a folder", folder, (errors.get(folder, ""), GATE_SHA256), unread))
+        for label, place, parts, named in stops:
             try:
                 gate_bytes(place / GATE.name)
                 problems.append(f"gate_bytes() returns bytes for a copy of the gate {label}")
             except SystemExit as stop:
-                if not isinstance(stop.code, str) or not all(part in stop.code for part in (GATE.name, *digests)):
+                if not isinstance(stop.code, str) or not all(part in stop.code for part in (GATE.name, *parts)):
                     problems.append(f"gate_bytes() stops on a copy of the gate {label} with {stop.code!r}, not a "
-                                    f"message that names {named[len(digests)]}")
+                                    f"message that names {named}")
         probe = CHECKED_LOAD + "sys.exit(0 if callable(gate.redirect_problems) else 2)\n"
-        runs = [("that is unchanged", same, ())] + [(label, place, digests) for label, place, digests in stops]
-        for label, place, digests in runs:
-            code, parts = (1, (str(place / GATE.name), *digests)) if digests else (0, ())
+        runs = [("that is unchanged", same, (), "")] + list(stops)
+        for label, place, parts, named in runs:
+            code, wanted = (1, (str(place / GATE.name), *parts)) if parts else (0, ())
             result = subprocess.run([sys.executable, "-I", "-c", probe, str(place / GATE.name)], capture_output=True,
                                     text=True)
-            if result.returncode != code or not all(part in result.stderr for part in parts):
+            if result.returncode != code or not all(part in result.stderr for part in wanted):
                 problems.append(f"CHECKED_LOAD on a copy of the gate {label}: exit {result.returncode}, expected {code}"
-                                + (f" and a message that names {named[len(digests)]}" if digests else "")
+                                + (f" and a message that names {named}" if parts else "")
                                 + f": {(result.stdout + result.stderr).strip()[:300]}")
     return problems
 
@@ -4365,6 +4510,7 @@ def main() -> int:
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the reader pin: {problem}" for problem in reader_pin_problems()]
+    failures += [f"the pinned values: {problem}" for problem in pin_value_problems()]
     failures += [f"the checked load: {problem}" for problem in checked_load_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
@@ -4403,7 +4549,7 @@ def main() -> int:
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
           f"redirect_break(), the sha256 of tools/{GATE.name} and its checked load, "
           f"the reader pin of {len(READER_NAMES)} functions and {len(READER_GLOBALS)} other names "
-          f"of check 7, the letter-case guard, "
+          f"of check 7 and its refusal of values that it cannot pin, the letter-case guard, "
           f"the case loop, the 2nd look, main()'s call of case_run_problems(), the "
           f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "

@@ -106,30 +106,37 @@ published digests, which .baseline/pin.toml records.
   makes, and unless the sha256 of each name's statement, with any
   docstring left out, and of the text that the test writes for its
   value equals the digest that READER_SHA256 records. That text gives
-  plain data by repr(), so a value of another type whose repr() is
-  the same gives the same digest. When the gate's digest is renewed,
-  a change to a statement that the reader pin holds still fails, by
-  name, until its own digest is renewed too. The reader pin follows
-  only names read directly: a helper that a pinned function reaches
-  in any other way than by reading the name that a def at the gate's
-  top level binds is not derived. Examples of that class, not a
-  complete list, are a helper reached through an alias, a lambda
-  assigned at the top level, functools.partial, a class or getattr().
-  A helper reached through a dict of functions, or through another
-  value that the test writes by repr() and that holds a function, is
-  in that class too, but there the test fails closed: that repr()
-  holds each function's address, which changes from process to
-  process, so the reader pin fails on such a gate, the reviewed one
-  included. Nor does the reader pin see a rebinding made while the
-  gate loads that leaves each pinned statement and the text of each
-  pinned value as they were. Examples of that class, not a complete
-  list, are a rebinding through globals(), setattr or exec of a
-  builtin, of a module by another module of the same name, of a
-  function by a wrapper around it, of __file__, of a pinned value by
-  a value of another type whose repr() is the same, or of a function
-  of a sibling tool, rebound and restored around a call. A reviewer
-  records a new digest of either layer only after reading the
-  change. The residuals, stated once:
+  plain data by repr(), a pattern by its text and flags, and a module,
+  a class or a path by its name, so another module, class or path of
+  the same name gives the same digest. Plain data is a str, bytes,
+  int, float, bool or None, or a tuple, a list or a dict that holds
+  only plain data, each of exactly that type. For any other value, a
+  subclass of those types among them, the reader pin fails, naming
+  the name, the reviewed gate included, as it does for a value with
+  __wrapped__ that a def does not bind, and a check of the test holds
+  these refusals. When the gate's digest is renewed, a change to a
+  statement that the reader pin holds still fails, by name, until its
+  own digest is renewed too. The reader pin follows only names read
+  directly: a helper that a pinned function reaches in any other way
+  than by reading the name that a def at the gate's top level binds
+  is not derived. Examples of that class, not a complete list, are a
+  helper reached through an alias, a lambda assigned at the top level,
+  functools.partial, a class or getattr(), or through an attribute of
+  a module or a path that a pinned name holds. A helper reached
+  through the value of a pinned name that the reader pin refuses, such
+  as a dict or a list of functions or of classes, a subclass of dict
+  or tuple whose own repr() holds no address, or a set of functions,
+  is in that class too, but there the test fails closed: the reader
+  pin fails on such a gate, the reviewed one included. Nor does the
+  reader pin see a rebinding made while the gate loads that leaves
+  each pinned statement and the text of each pinned value as they
+  were. Examples of that class, not a complete list, are a rebinding
+  through globals(), setattr or exec of a builtin, of a module by
+  another module of the same name, of a function by a wrapper around
+  it, of __file__, of a pinned value by another module, class or path
+  of the same name, or of a function of a sibling tool, rebound and
+  restored around a call. A reviewer records a new digest of either
+  layer only after reading the change. The residuals, stated once:
   1. Renewing a digest accepts whatever the diff holds. A change that
      edits the gate and records the new digests passes. The test then
      guarantees that the bytes of the gate that run are those that a
@@ -189,8 +196,11 @@ published digests, which .baseline/pin.toml records.
   site-src/site.json keeps both sides' static files and main's later
   dates, and the pages and the sitemap were regenerated, not edited by
   hand.
-- Merge main again, with pull request 279, which licenses the project
-  under Apache-2.0. Git reported conflicts in site-src/site.json,
+- Merge main again, with pull requests 268 and 279. Pull request 268
+  adds a CI gate for pull request texts, tools/check-pr-text.py, with
+  its tests and the Pull request text workflow; this branch changes
+  none of its 7 files. Pull request 279 licenses the project under
+  Apache-2.0. Git reported conflicts in site-src/site.json,
   site/license/index.html and site/sitemap.xml. Of the keys of
   site-src/site.json, only the modified date of the licence page
   changed on both sides, and it keeps main's later 2026-11-18; the
