@@ -1,0 +1,28 @@
+test-release-package-dist: pin trace-reader TODOs 269 to 273 (#286)
+
+Case 27 of tools/test-release-package-dist.py now holds the 5 gaps
+that TODOs 269 to 273 record for the trace reader, each with a case
+that fails without it. The packager and the reader are unchanged.
+
+- fork() = 101 is read as the call, and its child starts in the
+  folder of its maker.
+- For each of clone, clone3, fork and vfork that strace cut short,
+  with no result or with the result ?, 1 later process with no maker
+  is read by its absolute paths, and a second ends the case.
+- A call read with its arguments that ends as "= ? <unavailable>"
+  counts as cut short with the result ?: an unlink counts as a
+  removal, and a chdir leaves a shared folder unknown. That strace
+  writes this form for such a call is not verified, and the comment
+  and the module docstring say so. The refusal clause in 2 docstrings
+  now names the form it covers, a call cut short by <unfinished ...>
+  before the ) of its result.
+- fchdir into a descriptor with no path, or with a relative path,
+  ends the case.
+- renameat2 gives both of its paths, each read against its own
+  descriptor.
+
+Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
+gives 4 tests, OK, here and 3 tests, OK, on main. Each of the 8
+reader mutants that the pull request description lists passes case
+27 on main and fails it here. In a git checkout with strace, the full
+run leaves cases 1 to 26 as they are on main.
