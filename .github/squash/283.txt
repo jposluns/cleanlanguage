@@ -3,8 +3,8 @@ Refuse short comment openers in the disclosure D-4 reader (#283)
 The disclosure case with '<!-->' in tools/test-build-site.py held only
 for Python 3.14.4's reading of that opener. HTMLParser in Python 3.14.4
 reads '<!-->' as 1 comment up to the next '-->' or '--!>', so the label
-after it is not read as a tag. On Python 3.14.7 the case fails, as the
-side-by-side run that TODO 255 records found.
+after it is not read as a tag. TODO 255 records that the case fails
+under Python 3.14.7 in a side-by-side test.
 
 Add SHORT_COMMENT, re.compile(r"<!---?>"), the same pattern as check 9
 of tools/check-inline-code.py, and the exception ShortCommentRefused.
@@ -41,13 +41,15 @@ which CI's Pull request text check reads.
 
 The CPython change is not confirmed at source: the CPython source,
 NEWS and changelog were not consulted, so the release that changed the
-reading and the upstream issue remain unknown, and no run shows how
-Python 3.14.7 reads '<!--->'. .python-version is untouched; moving the
-pin to 3.14.7 stays the maintainer's decision.
+reading and the upstream issue remain unknown. TODO 255 does not
+record how Python 3.14.7 reads '<!--->', and this message states no
+Python 3.14.7 result other than the one TODO 255 records.
+.python-version is untouched; moving the pin to 3.14.7 stays the
+maintainer's decision.
 
-When the pull request is squash-merged, which is the repository
-practice, this message supersedes every earlier commit message on the
-branch. The pushed history is not rewritten, so those messages stay on
-the branch. The first of them says that the 2 new cases fail with only
-the refusal removed, which is false, as the '<!---->' case passes, and
-that Python 3.14.7 closes '<!-->' at once, which no run shows.
+When the pull request is squash-merged, this message supersedes every
+earlier commit message on the branch. The pushed history is not
+rewritten, so those messages stay on the branch. The first of them
+says that the 2 new cases fail with only the refusal removed, which is
+false, as the '<!---->' case passes, and that Python 3.14.7 closes
+'<!-->' at once, which TODO 255 does not record.
