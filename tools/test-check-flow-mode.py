@@ -204,9 +204,12 @@ is the sha256 of the syntax tree that the check's bytes parse to, without its do
 sha256 values of PARAGRAPHS, unparsed, and unparsing leaves out the line and column positions
 that the tree holds. So a change to that unparsed tree fails until the digest is updated; the
 update in the diff is the reviewer's cue to check the registries. An edit that leaves the
-unparsed tree as it is, such as an edit of a comment, of layout, of the quotes of a string, of how
-a number is written or of parentheses that change no grouping, changes the check's bytes but
-keeps the digest, so the CODE_SHA256 pin does not fail on it. The digest's
+unparsed tree as it is changes the check's bytes but keeps the digest, so the CODE_SHA256 pin
+does not fail on it. Most edits of a comment, of layout, of the quotes of a string, of how a
+number is written or of parentheses that change no grouping leave that tree as it is, but not
+all: such an edit can change it inside the = field of an f-string or inside an interpolation of
+a template string, whose source text the tree holds, and parentheses put around the name that an
+annotated assignment targets change it. The digest's
 value depends on how the Python that runs the test unparses a syntax tree. The case also requires
 the codec of the encoding that tokenize.detect_encoding finds for those bytes to be UTF-8, with
 or without a byte order mark. When Python runs a file, it reads the line
@@ -785,9 +788,10 @@ def space_at(paragraph, opening):
 # that the tree holds. test_every_site_has_a_driver compares that sha256 with this value, so a
 # change to that unparsed tree fails until this line is updated; the update in the diff is the
 # reviewer's cue to check the registries below against the new code. An edit that leaves the
-# unparsed tree as it is keeps this value, such as an edit of a comment, of layout, of the quotes
-# of a string, of how a number is written or of parentheses that change no grouping. The value
-# depends on how the Python that runs the test unparses a syntax tree.
+# unparsed tree as it is keeps this value. Most edits of a comment, of layout, of the quotes of a
+# string, of how a number is written or of parentheses that change no grouping leave that tree as
+# it is, but not all; the docstring of code_form() names cases where such an edit changes it. The
+# value depends on how the Python that runs the test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS that it leaves out. It is
 # 64 lowercase hexadecimal digits, as each value that it replaces is. A constant that code_form()
@@ -1243,12 +1247,16 @@ def pattern_sites(tree):
 def code_form(source):
     """The code in source, the bytes of a module, as CODE_SHA256 holds the check's: source parsed
     as compile() parses bytes, with each docstring removed, which is the first statement of the
-    module, of a function or of a class when that statement is a string constant, and with the
-    third item of each row of PARAGRAPHS made PLACEHOLDER when that item is a constant of 64
-    lowercase hexadecimal digits, then unparsed. Unparsing leaves out the line and column
-    positions that the tree holds, so 2 sources whose trees differ only in those positions give
-    the same form, such as 2 that differ only in comments, layout, the quotes of a string, how a
-    number is written or parentheses that change no grouping."""
+    module, of a function, of an async function or of a class when that statement is a string
+    constant, and with the third item of each row of PARAGRAPHS made PLACEHOLDER when that item
+    is a constant of 64 lowercase hexadecimal digits, then unparsed. Unparsing leaves out the
+    line and column positions that the tree holds, so 2 sources whose trees differ only in those
+    positions give the same form, and an edit that leaves the unparsed tree as it is keeps the
+    form, and so the digest. Most edits of a comment, of layout, of the quotes of a string, of
+    how a number is written or of parentheses that change no grouping leave that tree as it is,
+    but not all: such an edit can change it inside the = field of an f-string or inside an
+    interpolation of a template string, whose source text the tree holds, and parentheses put
+    around the name that an annotated assignment targets change it."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
