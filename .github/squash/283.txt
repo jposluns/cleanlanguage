@@ -25,12 +25,17 @@ fixture brought up to date with a deliberate contract change: the
 test's reader now refuses the openers that the generator's grammar and
 check 9 already refuse.
 
-A version-conditional expected result was declined. It would key on
-sys.version_info < (3, 14, 7), a boundary not confirmed in CPython,
-and it would fail on Python 3.14.4 under a simulated short-close
-reading, where the '<!-->' case gives the lacks-note failure. It also
-keeps the dependency on the interpreter's comment parsing and gives
-markup the generator refuses a meaning that changes by release.
+TODO 255 asks to make the case independent of the interpreter's
+comment parsing, or to state the version the reading needs, with a
+case that fails without the change. This change takes the first route.
+The second, a version-conditional expected result, was declined. It
+would key on sys.version_info < (3, 14, 7), a boundary not confirmed
+in CPython, and it would fail on Python 3.14.4 under a simulated
+short-close reading, where the '<!-->' case gives the lacks-note
+failure. It would leave the case's result to the interpreter's comment
+parsing, make the expected result depend on the version number too,
+and give markup the generator refuses a meaning that changes by
+release.
 
 With only the refusal removed, the changed '<!-->' case and the new
 '<!--->' case fail on Python 3.14.4 and under the simulated
@@ -56,4 +61,15 @@ earlier commit message on the branch. The pushed history is not
 rewritten, so those messages stay on the branch. The first of them
 says that the 2 new cases fail with only the refusal removed, which is
 false, as the '<!---->' case passes, and that Python 3.14.7 closes
-'<!-->' at once, which TODO 255 does not record.
+'<!-->' at once, which TODO 255 does not record. The second gives as a
+reason that no run shows how Python 3.14.7 reads '<!--->'; this
+message says only that TODO 255 does not record it. The third says
+that the squash message supersedes the earlier messages "as the pushed
+history is not rewritten"; that is why they stay on the branch, not
+why they are superseded, and only a squash merge supersedes them. The
+fourth calls squash merging the repository practice, which nothing in
+this pull request establishes. It also says that the '<!---->' case
+gives its failure only if the reader parses the empty comment as a
+comment that closes before the label, and that the comment on the
+cases says what the case shows; as said above, the case does not show
+that the reader parses '<!---->' as a comment.
