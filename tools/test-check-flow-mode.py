@@ -221,8 +221,11 @@ function docstring reworded, a comment reworded, a sha256 of PARAGRAPHS updated,
 added, the quotes of a string changed, a number written in hexadecimal and parentheses that
 change no grouping added, must keep it; a row of either that edits a sha256 of PARAGRAPHS is
 tried on each sha256 that the check's PARAGRAPHS holds, and on no other value. MUTATIONS holds,
-for each of the 7 rows of PARAGRAPHS that NAMED lists, 1 row that changes its name and 1 that
-changes its opening text. FORM_PAIRS holds pairs of sources in forms that the check does not
+among its rows, a comparison operator changed, the name __name__ changed and the upper bound of
+a slice changed, and, for each of the 7 rows of PARAGRAPHS that NAMED lists, 1 row that puts a
+full stop at the end of its name, 1 that puts a full stop at the end of its opening text, 1 that
+puts a space at the end of its opening text and 1 that doubles the first space inside its
+opening text. FORM_PAIRS holds pairs of sources in forms that the check does not
 hold, each trying a condition of code_form() that the check's own source does not: code_form()
 must make 2 sources equal that differ only in the docstring of a class or of an async function,
 in a function of its docstring alone against one of pass alone, or in an empty module against a
@@ -779,8 +782,8 @@ def space_at(paragraph, opening):
 # change to that code's syntax tree fails until this line is updated; the update in the diff is
 # the reviewer's cue to check the registries below against the new code. An edit that leaves that
 # syntax tree as it is keeps this value, such as an edit of a comment, of layout, of the quotes of
-# a string or of how a number is written. The value depends on how the Python that runs the test
-# unparses a syntax tree.
+# a string, of how a number is written or of parentheses that change no grouping. The value
+# depends on how the Python that runs the test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS that it leaves out. It is
 # 64 lowercase hexadecimal digits, as each value that it replaces is. A constant that code_form()
@@ -796,8 +799,10 @@ DIGEST = "<a sha256 of PARAGRAPHS>"
 # which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest and
 # each of PRESERVED must keep it, so a code_form() that keeps the digest for 1 of those mutations,
 # or changes it for 1 of those edits, fails. Each row is evidence for its own edit only. The rows
-# that change the name or the opening text of a row of PARAGRAPHS are built from NAMED, 1 of each
-# for each of its 7 rows, so a code_form() that leaves out that text of any 1 row fails.
+# that edit the name or the opening text of a row of PARAGRAPHS are built from NAMED, 4 for each
+# of its 7 rows: a full stop put at the end of its name, a full stop put at the end of its opening
+# text, a space put at the end of its opening text and the first space inside its opening text
+# doubled.
 MUTATIONS = [
     ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
      "    match text[:8000000]:\n        case text:\n            pass\n"
@@ -832,7 +837,12 @@ MUTATIONS = [
 ] + [("the name of {} changed, a row of PARAGRAPHS".format(name), "(\"{}\", ".format(name),
       "(\"{}.\", ".format(name)) for name, _ in NAMED] + [
     ("the opening text of {} changed, a row of PARAGRAPHS".format(name), "\"{}\"".format(opening),
-     "\"{}.\"".format(opening)) for name, opening in NAMED]
+     "\"{}.\"".format(opening)) for name, opening in NAMED] + [
+    ("a space put at the end of the opening text of {}, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{} \"".format(opening)) for name, opening in NAMED] + [
+    ("the first space inside the opening text of {} doubled, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening.replace(" ", "  ", 1)))
+    for name, opening in NAMED]
 PRESERVED = [
     ("the module docstring reworded", "#!/usr/bin/env python3\n\"\"\"",
      "#!/usr/bin/env python3\n\"\"\"Reworded. "),
@@ -1218,8 +1228,9 @@ def code_form(source):
     as compile() parses bytes, with each docstring removed, which is the first statement of the
     module, of a function or of a class when that statement is a string constant, and with the
     third item of each row of PARAGRAPHS made PLACEHOLDER when that item is a constant of 64
-    lowercase hexadecimal digits, then unparsed. Comments and layout are not in the syntax tree,
-    so they are left out too."""
+    lowercase hexadecimal digits, then unparsed. Text that the syntax tree does not hold is left
+    out too, such as comments, layout, the quotes of a string, how a number is written and
+    parentheses that change no grouping."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
