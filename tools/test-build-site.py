@@ -3158,15 +3158,18 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
-        # The reading refuses <!--> and <!---> before it parses (SHORT_COMMENT); the <!----> case shows that it still
-        # parses an empty comment, which SHORT_COMMENT does not match.
+        # The reading refuses <!--> and <!---> before it parses (SHORT_COMMENT). The <!----> case shows that it still
+        # parses an empty comment, which SHORT_COMMENT does not match, as a comment that closes at its own -->: the
+        # Entry 5 label after it ends D-4 only if the comment closes before the label, so a parse that reads the label
+        # as comment text puts the note in D-4 and gives no failure.
         ("the note after <!--> and an Entry 5 label (the generator refuses <!-->)",
          entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
          [short.format("<!-->")]),
         ("the note after <!---> and an Entry 5 label (the generator refuses <!--->)",
          entry_4 + f'<!---><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
          [short.format("<!--->")]),
-        ("the note after an empty comment <!---->", entry_4 + f'<!----><p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', []),
+        ("the note only after an empty comment <!----> and an Entry 5 label",
+         entry_4 + f'<!----><p class="lbl sec">Entry 5</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
         ("the note only after an Entry 5 label on a div element",
          entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
         ("the note directly before the next h2 heading on its line", entry_4 + f'{note}<h2 id="d-5">Five</h2>\n', []),
