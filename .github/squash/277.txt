@@ -1,0 +1,90 @@
+Rename marketplace to cleanlanguage, add distribution check (#277)
+
+Carry out unit 1 of the plugin distribution plan (TODO 234), which
+aligns the repository with the fleet plugin distribution standard,
+except its migration note. The maintainer dropped the note (Entry 128),
+so plan steps 2 and 3, the plan's smoke-test leg for the note and its
+pointer in unit 3 no longer apply.
+
+- The marketplace in .claude-plugin/marketplace.json is renamed from
+  jposluns to cleanlanguage, the project name.
+- README.md now ends with a newline. No install command is added or
+  changed.
+- tools/check-plugin-distribution.py, the gate, is a new offline check
+  of names, sources, versions and dependencies, with its unit tests in
+  tools/test-check-plugin-distribution.py. Its docstring states the
+  rules, the output and the exit statuses. Where the CLI's own rule
+  cannot be checked offline, the gate refuses. As it decodes, its
+  object_pairs_hook `_unique_object` refuses a key repeated among all
+  keys of a JSON object, then keeps only the pairs whose key is
+  exactly 1 of READ_KEYS, the 6 keys it reads, so another key reaches
+  the rest of the gate only when it is repeated, as the key the
+  refusal names, and the text it shows of an object value lists only
+  those pairs. That hook, `load_json` and READ_KEYS are the core, and
+  "the 6" are the keys of READ_KEYS. U, a case, gives the hook every
+  letter-case spelling of the 6 and every spelling with any number of
+  characters that case mapping maps onto their letters; every
+  in-process run fails on an object load_json gives that holds
+  another key; and E, a case, runs a copy of the gate only as a
+  command, as CI runs it, adds to every object 5 kinds of other
+  spelling of the 6 (each other letter case, a trailing space, a
+  zero-width space, and U+212A for a k or else U+017F for an s,
+  4,571 in all) and a key outside the 6, requires the exit status and
+  last line written out in the case, for the repository's files with
+  the version their Claude plugin manifest holds, and then the same
+  output, and checks its own reach.
+- Before it loads the gate, the test compares the sha256 of the gate
+  and of tools/skill-version.py, the 2 files of the repository that
+  the gate's command executes, with digests written in the test, and
+  on a mismatch stops with exit 1 before any case runs. It compiles
+  the gate from the bytes it hashed, so no .pyc runs in their place.
+  After the comparison it reads neither file from the repository
+  again: its copies of either file come from the hashed bytes, and in
+  its 2 cases on the repository the gate's own read of the extractor
+  must give those bytes, which the gate is then given to run. So the
+  extractor that runs in the test's process is the hashed bytes, or
+  a change that a case writes into a copy of them. A case shows that
+  an extractor changed after the comparison does not run there, and
+  runs every other case of a copy of the test with an audit hook that
+  records each open of either file after the comparison other than
+  the gate's own read; the copy must pass with no open recorded.
+  Residual:
+  1. The digest shows that the gate and the extractor are, byte for
+     byte, the files a reviewer accepted, not that they are right.
+     Rightness rests on that review, U, the structural check and the
+     outcome cases, and a renewal accepts whatever the diff holds.
+  2. The outcome cases see only the inputs they plant and the
+     environment they run in. Reviewed code that behaves otherwise on
+     other inputs, or that tells a test run from CI's run, is caught
+     only by review (RUN: a value-conditional mutant passed both steps
+     and every case).
+  3. The interpreter, its standard library and the runner image are
+     outside the repository and are not pinned. The workflow and
+     tools/run_all_checks.sh are outside this test; this note did not
+     examine what else holds them.
+  4. The test itself is held only by review of its diff. A weakening
+     of the digest check or of an outcome case is caught by no case,
+     as no test can hold its own text without a further test.
+  5. Cost: every edit of either file, a comment included, stops the
+     test before any case runs until the digest is renewed, and the
+     extractor is shared with other tools, so its edits need this
+     renewal too.
+- .github/workflows/plugin-distribution.yml runs both on every pull
+  request and push to main. It is not a required check.
+- tools/run_all_checks.sh mirrors the new workflow; the digest in
+  tools/test-run-all-checks.py and the workflow list in
+  tools/test-no-qa-labels.py follow.
+- Add .github/squash/277.txt as the committed squash message read by
+  the Pull request text gate.
+
+The branch merges main at pull request #273, "Write packager outputs
+to dist/ only after checks pass". Its only conflict was the
+SCRIPT_SHA256 pin in tools/test-run-all-checks.py, since both sides
+changed tools/run_all_checks.sh; the pin holds the merged script's
+sha256. It later merges main at pull request #268, "Add a CI gate for
+pull request texts". Its only conflict was again that pin. Both sides
+had changed the script's count of workflows from 17 to 18, which git
+merged without a conflict; the merged script now says 19, the count
+its test reports, and the pin holds its sha256.
+
+The required check set is unchanged.
