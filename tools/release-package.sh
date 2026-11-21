@@ -16,7 +16,7 @@
 #   1. Reads the version from the first Version: line in cleanlanguage/skills/cleanlanguage/SKILL.md
 #      at HEAD and requires a bare X.Y.Z, the same rule the release gates apply;
 #      with --tag, fails unless the tag is v<version>. Also requires the
-#      skill name line and at least one Markdown reference, the two structural
+#      skill name line and at least 1 Markdown reference, the 2 structural
 #      checks the previous inline validation enforced. Reads the Released line
 #      (item 26) through tools/skill-release-date.py, run in its --json mode by
 #      tools/skill-release-date-client.py, and fails on a malformed
@@ -25,31 +25,38 @@
 #      the check that the line is present, at any version, and names that date.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
 #      which rejects executable files (100755), symlinks (120000), and
-#      submodules (160000) in one comparison.
+#      submodules (160000) in 1 comparison.
 #   3. Requires every path to match the package allowlist by shape:
 #      skills/cleanlanguage/SKILL.md, the Claude manifest at
 #      .claude-plugin/plugin.json, the Agent Plugins manifest at plugin.json,
-#      agent configuration in agents/, the CL_icon files in assets/, and
-#      Markdown references in skills/cleanlanguage/references/. This checks path
-#      shape and git mode, not file content: a new flat Markdown reference under
+#      agent configuration in agents/, the CL_icon files in assets/, Markdown
+#      references in skills/cleanlanguage/references/, and the licence files
+#      LICENSE and NOTICE.md. This checks path shape and git mode, not file
+#      content: a new flat Markdown reference under
 #      skills/cleanlanguage/references/ is allowed, while a new directory, a
-#      script extension, or any other nested path fails.
+#      script extension, or any other nested path fails. Then requires
+#      cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to exist at HEAD with
+#      the same git blob as the root LICENSE and NOTICE.md, so the copies that
+#      the skill zip and the plugin, which installs the cleanlanguage/ tree,
+#      take from that tree hold the root files' bytes at HEAD; step 6 checks
+#      the zip's own LICENSE and NOTICE.md against those blobs.
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
 #   5. Lays out the package from git archive in src/ of its work folder,
 #      removes both plugin manifests, which ship through the marketplace
-#      rather than the zip, adds LICENSE and
-#      NOTICE.md, restores SKILL.md and references/ from skills/cleanlanguage/
-#      to the archive root, and zips the files at the archive ROOT (SKILL.md,
-#      agents/, assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
-#      prefix, so the zip holds exactly what git records, minus both manifests
-#      and the skills/cleanlanguage/ nesting, plus the two licence files,
-#      whatever state the checkout is in.
+#      rather than the zip, restores SKILL.md and references/ from
+#      skills/cleanlanguage/ to the archive root, and zips the files at the
+#      archive ROOT (SKILL.md, agents/, assets/, references/, LICENSE,
+#      NOTICE.md), with no cleanlanguage/ prefix, so the zip holds exactly
+#      what git records under cleanlanguage/, licence files included, minus
+#      both manifests and the skills/cleanlanguage/ nesting, whatever state
+#      the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, excluding the plugin manifest, and verifies every
-#      archived file's bytes against its git blob, so a git attribute such as
-#      export-subst cannot change the shipped bytes unnoticed.
+#      archived file's bytes against its git blob under cleanlanguage/, so a
+#      git attribute such as export-subst cannot change the shipped bytes
+#      unnoticed.
 #   7. Moves the 2 verified zips into dist/, then their .sha256 files. Steps 5
 #      and 6 run in 1 work folder that the build makes in dist/ with mktemp
 #      (dist/.release-package.XXXXXX, mode 0700), so no unverified output
@@ -306,9 +313,9 @@ if git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null; then
 fi
 skill="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md)" \
   || fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
-# Read the version exactly as the two release gates do, so all three consumers
+# Read the version exactly as the 2 release gates do, so all 3 consumers
 # agree on every input by construction instead of re-implementing the gates'
-# parse in shell (three QA rounds found byte-level divergences that a shell
+# parse in shell (3 QA rounds found byte-level divergences that a shell
 # re-implementation cannot fully reconcile: NUL location, invalid UTF-8, and CR
 # line endings). This decodes the blob as UTF-8 with universal newlines, exactly
 # as Path.read_text does, and applies the gates' own VERSION_LINE and
@@ -358,7 +365,7 @@ for path in dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip" \
     fail "${path} exists and is not a regular file that the packager wrote; move it out of dist/ and build again"
   fi
 done
-# The Released line (item 26), read from HEAD through the one shared strict
+# The Released line (item 26), read from HEAD through the 1 shared strict
 # extractor, tools/skill-release-date.py, run in its --json mode by
 # tools/skill-release-date-client.py (row 89). The client gives a content
 # verdict only from a reply that meets the contract: exit 0 prints the date,
@@ -372,13 +379,13 @@ done
 # is given. Both pipeline statuses are printed on a last line of their own and
 # read explicitly, so a failed blob read never surfaces as the client exit 13
 # (absent) that pipefail would otherwise report. A non-zero blob status is
-# reported as a failed blob read, with one exception: a blob status of 141
+# reported as a failed blob read, with 1 exception: a blob status of 141
 # (git show ended by SIGPIPE) beside a client exit that is not a content
 # verdict (0, 11 or 13) means the client ended before it read the whole blob,
 # so the client's own exit and reason are reported instead. A content verdict
 # is never taken beside a non-zero blob status, since it may rest on part of
 # the blob.
-# The client writes to one stream only: on exit 0 the value on stdout, and on
+# The client writes to 1 stream only: on exit 0 the value on stdout, and on
 # any other exit its message on stderr with nothing on stdout. The probe, the
 # check-date call, the first Released read and the requires-date call below
 # capture both streams, so 5 branches relay the line in which the client
@@ -487,7 +494,7 @@ fi
 grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
   || fail "cleanlanguage/skills/cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
-# The plugin manifests live in two places: marketplace.json at the repository
+# The plugin manifests live in 2 places: marketplace.json at the repository
 # root, which is what makes this repository a marketplace, and plugin.json
 # inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
 # root so a marketplace install copies only the skill tree. The plugin
@@ -534,12 +541,26 @@ files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 grep -Eq '^cleanlanguage/skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/skills/cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
-  '^cleanlanguage/(plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
+  '^cleanlanguage/(LICENSE|NOTICE\.md|plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"
 if [ -n "${unexpected}" ]; then
   printf 'release-package: paths outside the package allowlist:\n%s\n' "${unexpected}" >&2
   exit 1
 fi
+
+# The skill zip takes LICENSE and NOTICE.md from cleanlanguage/, and the plugin
+# installs that tree, so both install routes carry these copies. Each must be
+# present and hold the same git blob as the root file, which is the licence
+# text the repository states; a blob id is a digest of the bytes, so equal ids
+# mean equal bytes.
+for licence_file in LICENSE NOTICE.md; do
+  copy_blob="$(git rev-parse --verify --quiet "HEAD:cleanlanguage/${licence_file}")" \
+    || fail "cleanlanguage/${licence_file} is missing at HEAD; it must be a copy of the root ${licence_file}"
+  root_blob="$(git rev-parse --verify --quiet "HEAD:${licence_file}")" \
+    || fail "${licence_file} is missing at HEAD"
+  [ "${copy_blob}" = "${root_blob}" ] \
+    || fail "cleanlanguage/${licence_file} differs from the root ${licence_file} at HEAD; copy the root file over it"
+done
 
 # Any icon the ChatGPT interface config references must exist in the package,
 # so a shipped skill never points at a missing asset. The path may be quoted
@@ -549,7 +570,7 @@ if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
   # serialized through newline-delimited shell: parse the YAML, walk it at any
   # depth, reject a value that is missing, empty, or carries a control
   # character, resolve an optional ./, confirm the git blob exists at HEAD, and
-  # require at least one icon_ key so the check can never become vacuous.
+  # require at least 1 icon_ key so the check can never become vacuous.
   git show HEAD:cleanlanguage/agents/openai.yaml | python3 -I -c '
 import sys, subprocess
 try:
@@ -619,15 +640,19 @@ mv "${work}/src/cleanlanguage/skills/cleanlanguage/SKILL.md" "${work}/src/cleanl
 mv "${work}/src/cleanlanguage/skills/cleanlanguage/references" "${work}/src/cleanlanguage/references"
 rmdir "${work}/src/cleanlanguage/skills/cleanlanguage"
 rmdir "${work}/src/cleanlanguage/skills"
-git show HEAD:LICENSE > "${work}/src/cleanlanguage/LICENSE"
-git show HEAD:NOTICE.md > "${work}/src/cleanlanguage/NOTICE.md"
+# LICENSE and NOTICE.md need no step here: git archive laid them out in src/
+# from cleanlanguage/. It applies export attributes, so a copy in src/ can
+# differ from the blob that the licence-copy check above proved equal to the
+# root file (an eol=crlf attribute writes CR LF, for example). The byte check
+# below compares each zip entry with its cleanlanguage/ blob and fails the
+# build when they differ.
 
 # A byte-reproducible archive: stamp every path in src/ with the
 # commit's own timestamp, order the entries, and read the DOS times in UTC,
 # so the same commit always yields the same zip and therefore the same
-# checksum, on any machine and at any clock time. Without this the licence
-# files written to src/ would carry the build clock, so a
-# later rebuild of the same commit would not match.
+# checksum, on any machine and at any clock time. Without this a file
+# written to src/ by any step other than git archive would carry the build
+# clock, so a later rebuild of the same commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
 # files carry only regular content (the mode gate above rejects anything but
@@ -636,7 +661,6 @@ commit_epoch="$(git show -s --format=%ct HEAD)"
 # change the central-directory bytes and the checksum for the same commit.
 (
   cd -- "${work}/src"
-  chmod 644 cleanlanguage/LICENSE cleanlanguage/NOTICE.md
   find . -type d -exec chmod 755 {} +
   find . -type f -exec chmod 644 {} +
   find . -exec touch -h -d "@${commit_epoch}" {} +
@@ -669,7 +693,6 @@ expected="$(
       | grep -Fvx 'cleanlanguage/plugin.json' \
       | sed 's#^cleanlanguage/skills/cleanlanguage/#cleanlanguage/#' \
       | sed 's#^cleanlanguage/##'
-    printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
 actual="$(unzip -Z1 "${work}/cleanlanguage.zip" | grep -v '/$' | LC_ALL=C sort)"
@@ -720,8 +743,8 @@ fi
 while IFS= read -r entry; do
   [ -n "${entry}" ] || continue
   case "${entry}" in
-    LICENSE) blob="HEAD:LICENSE" ;;
-    NOTICE.md) blob="HEAD:NOTICE.md" ;;
+    LICENSE) blob="HEAD:cleanlanguage/LICENSE" ;;
+    NOTICE.md) blob="HEAD:cleanlanguage/NOTICE.md" ;;
     SKILL.md) blob="HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md" ;;
     references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;

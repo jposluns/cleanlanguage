@@ -189,5 +189,16 @@ published digests, which .baseline/pin.toml records.
   site-src/site.json keeps both sides' static files and main's later
   dates, and the pages and the sitemap were regenerated, not edited by
   hand.
+- Merge main again, with pull request 279, which licenses the project
+  under Apache-2.0. Git reported conflicts in site-src/site.json,
+  site/license/index.html and site/sitemap.xml. Of the keys of
+  site-src/site.json, only the modified date of the licence page
+  changed on both sides, and it keeps main's later 2026-11-18; the
+  page and the sitemap were regenerated, not edited by hand. NOTICE.md
+  and site-src/pages/license.html, merged without conflict, keep both
+  sides' changes. cleanlanguage/NOTICE.md now copies the merged
+  NOTICE.md, as tools/check-agent-plugin-manifest.py requires, and the
+  clause of its Scope section on the paths in the Site template
+  section, which now names none, is removed from both files.
 - Add .github/squash/269.txt with this squash message for the
   Pull request text workflow.

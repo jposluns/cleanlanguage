@@ -69,7 +69,7 @@
      "description": "Try Clean Language on your own writing: copy one prompt into ChatGPT, Claude, Gemini, or Copilot and compare the before and after."},
     {"id": "disclosure", "path": "disclosure/", "title": "Disclosure", "nav_label": "Disclosure", "source": "disclosure.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-13", "published": "2026-11-03",
      "description": "What the Clean Language project claims, the limit of each claim, and the evidence."},
-    {"id": "license", "path": "license/", "title": "Licence", "nav_label": "Licence", "source": "license.html", "scripts": ["copy.js"], "modified": "2026-11-13", "published": "2026-11-03",
+    {"id": "license", "path": "license/", "title": "Licence", "nav_label": "Licence", "source": "license.html", "scripts": ["copy.js"], "modified": "2026-11-18", "published": "2026-11-03",
      "description": "The licence of Clean Language and the cleanlanguage.ai site, CC BY-SA 4.0, summarized in plain language."},
     {"id": "404", "path": "404.html", "title": "Page not found", "nav_label": "404", "source": "404.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": null, "noindex": true,
      "description": ""}

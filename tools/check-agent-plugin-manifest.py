@@ -9,11 +9,65 @@ top-level keys (the schema is additionalProperties: false), field types, and the
 author object shape. It also cross-checks that the name and version agree with
 the Claude manifest, and that the name agrees with the marketplace entry (which
 carries no version). This gate requires the Agent Plugins version and requires it
-to equal the Claude manifest version, so the two manifests cannot drift.
+to equal the Claude manifest version, so the 2 manifests cannot drift.
+
+It also requires cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular
+files whose bytes equal the root LICENSE and NOTICE.md. A copy that is a symlink,
+is missing, or is a FIFO, a folder, a socket, a character or block device or
+any other file that is not regular fails with exit 1, and the code reads a copy
+only after those checks. The code asks for the type of a copy only through
+pathlib's is_symlink, exists and is_file, which call os.lstat and os.stat.
+
+The tests (tools/test-agent-plugin-manifest.py) check this on every runner,
+with no skip, through that route: they answer os.stat and os.lstat for 1 copy
+with the type of each kind (a symlink to a regular file, to a FIFO or to a
+character device, a dangling symlink, a missing copy, a folder, a FIFO, a
+socket, a character device, a block device and a type that Linux does not
+use), while the file behind it stays a regular, equal copy, and require exit
+1, the kind's message and no open, read or listing of the copy before the
+refusal through a call that they record. Where the OS lets them, they also
+make a symlink, a FIFO, a socket or a character device for real, check that
+it has the type they give that kind, and run the gate on it; where the OS
+refuses one, with EPERM, EACCES, EOPNOTSUPP or ENOSYS, that smoke case or
+subtest skips, and the run prints unittest's own record of each skip after
+its summary. A gate that asks for a
+file type another way sees the real regular copy through that query, so the
+refusal subtests for each kind that the query refuses fail, and so does the
+control when the gate no longer calls os.lstat, or no longer calls os.stat, in
+a way that the tests' fake answers: a false alarm on a correct change, never a
+silent pass, and the tests' fake must then follow the new route. A read
+before the refusal through a route the tests do not record (io.FileIO, a
+bytes path, another spelling of the path such as one relative to a dir_fd,
+a reference to an open or listing function taken before the tests' fake
+replaces it, such as a name bound at import, the same function reached
+through another module, such as posix.open, a subprocess or ctypes) passes
+the seam. The FIFO smoke cases catch it where the OS lets them make a FIFO.
+The cases for a missing copy and for a folder,
+on every runner, and the smoke cases for a socket and for a dangling symlink,
+where the OS lets them make those, catch one that lets through an error that
+it meets on that copy. So when the OS refuses to make every kind of node, one
+that lets no such error through passes every case, such as one that ignores
+the errors of its open and of its read, or one that ignores the error of its
+open when its open of a folder fails, as that of io.FileIO does.
+
+The plugin installs the cleanlanguage/ tree and the skill zip takes these 2
+files from it, so a copy that drifted from the root file would ship a licence
+text the repository does not state. The gate reads the working tree. It
+refuses a copy that is a symlink, but not a root LICENSE or NOTICE.md that is
+one: it reads such a root file through the link, so it compares the copy with
+the bytes of the file the link leads to. The tests pin this: a root file whose
+type is a symlink passes when its bytes equal the copy, and fails with the
+message that the copy differs when they do not.
+tools/release-package.sh compares the git blob of each copy with the git blob
+of its root file at HEAD, and the blob of a symlink holds the path it leads
+to, not that file's bytes, so a root file that is a symlink to a file equal to
+the copy passes this gate but fails that comparison, and one that leads to a
+different file fails both.
 
 Exit codes:
-  0  the manifest is valid and consistent
-  1  the manifest is invalid or inconsistent
+  0  the manifest is valid and consistent, and the licence copies equal the root files
+  1  the manifest is invalid or inconsistent, or a licence copy is missing, is not a
+     regular file or differs from its root file
   3  a required file could not be read
 """
 from __future__ import annotations
@@ -36,6 +90,8 @@ KNOWN_KEYS = {
     "homepage", "repository", "license", "keywords", "extensions",
 }
 AUTHOR_KEYS = {"name", "email", "url"}
+# The root files that cleanlanguage/ carries as byte-equal copies.
+LICENCE_FILES = ("LICENSE", "NOTICE.md")
 
 
 def die(message: str, code: int = 1) -> NoReturn:
@@ -59,6 +115,44 @@ def load(path: Path) -> dict:
     if not isinstance(data, dict):
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not a JSON object")
     return data
+
+
+def read_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}", 3)
+
+
+def check_licence_copies() -> None:
+    """Each file of LICENCE_FILES under cleanlanguage/ is a regular file equal to the root file.
+
+    A copy that is a symlink, is missing, or is a FIFO, a folder, a socket, a
+    character or block device or any other file that is not regular fails
+    with exit 1, and a copy is read only after it passes those checks. The
+    type of a copy is asked for only through is_symlink, exists and is_file,
+    which call os.lstat and os.stat. The tests answer those calls for 1 copy
+    with the type of each kind, on every runner and with no skip, and
+    require exit 1, the kind's message and no open, read or listing of the
+    copy before the refusal through a call that they record, so a read
+    through a route that they do not record passes that requirement, as the
+    module docstring says; real-node smoke cases, which skip where the OS
+    refuses to make the node, check that each kind they can make has the
+    type the tests give it. If is_symlink, exists or is_file is replaced by
+    a query that asks for the type another way, the tests fail for each kind
+    that the replaced check refuses until the tests' fake follows it.
+    """
+    for name in LICENCE_FILES:
+        root = REPO_ROOT / name
+        copy = REPO_ROOT / "cleanlanguage" / name
+        if copy.is_symlink():
+            die(f"cleanlanguage/{name} is a symlink; it must be a regular file that copies the root {name}")
+        if not copy.exists():
+            die(f"cleanlanguage/{name} is missing; it must be a copy of the root {name}")
+        if not copy.is_file():
+            die(f"cleanlanguage/{name} is not a regular file; it must be a regular file that copies the root {name}")
+        if read_bytes(copy) != read_bytes(root):
+            die(f"cleanlanguage/{name} differs from the root {name}; copy the root file over it")
 
 
 def main() -> int:
@@ -118,7 +212,10 @@ def main() -> int:
     if first.get("name") != name:
         die(f"name {name!r} does not match marketplace plugins[0].name {first.get('name')!r}")
 
-    print(f"check-agent-plugin-manifest: cleanlanguage/plugin.json is valid Agent Plugins {name!r} (schema 1.0.0).")
+    check_licence_copies()
+
+    print(f"check-agent-plugin-manifest: cleanlanguage/plugin.json is valid Agent Plugins {name!r} (schema 1.0.0), "
+          "and cleanlanguage/LICENSE and cleanlanguage/NOTICE.md equal the root files.")
     return 0
 
 
