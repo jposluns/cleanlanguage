@@ -433,35 +433,43 @@ CHECK_SECONDS = 10
 OWN_END_SECONDS = 90
 
 # The stub child of the group-kill check. It ignores SIGTERM, SIGINT and
-# SIGHUP, so only SIGKILL ends it early. Its leader forks 1 member into its
-# group and then writes 1 byte to the FIFO alive, so the member holds the
-# write end of alive when the test reads that byte, and the test reads end
-# of file on alive only once every process holding that write end, the
-# leader and the member, has ended. Each process then waits for end of file
-# on the FIFO lifeline, whose only write end the test holds, or for its own
-# end, and exits. The test closes lifeline when its check ends, and the
-# kernel closes it when the test process ends in any other way, SIGKILL
-# included. Both opens are non-blocking, so a stub that finds no reader of
-# alive fails at once rather than block. A stub that opens lifeline after
-# the test has closed it would see no end of file there, so it reads
-# lifeline once first: a read that returns, rather than fail with
-# BlockingIOError, finds no writer, and the stub exits at once.
+# SIGHUP, so only SIGKILL ends it early. It first reads its own end, in
+# seconds, with float from the file own_end, which the check writes beside
+# it, so its source is a constant and no value of own_end adds code to it.
+# A text that float does not take raises there, before the stub opens
+# either FIFO, so the stub never writes the ready byte. Its leader forks 1
+# member into its group and then writes 1 byte to the FIFO alive, so the
+# member holds the write end of alive when the test reads that byte, and
+# the test reads end of file on alive only once every process holding that
+# write end, the leader and the member, has ended. Each process then waits
+# for end of file on the FIFO lifeline, whose only write end the test
+# holds, or for its own end, and exits. The test closes lifeline when its
+# check ends, and the kernel closes it when the test process ends in any
+# other way, SIGKILL included. Both opens are non-blocking, so a stub that
+# finds no reader of alive fails at once rather than block. A stub that
+# opens lifeline after the test has closed it would see no end of file
+# there, so it reads lifeline once first: a read that returns, rather than
+# fail with BlockingIOError, finds no writer, and the stub exits at once.
 #
-# The bounds this order gives, derived from the source below: a process
-# reaches its wait only after interpreter start-up and the first read, and
-# the member only after the fork, so its own end comes own_end seconds after
-# it enters that wait, not after it starts, and nothing in the test bounds
-# start-up. After the release, a process past the first read sees end of
-# file at its wait and exits at once; a process not yet at that read exits
-# there when it gets to it, so it outlives the release by the rest of its
-# start-up, however long that is. The leader writes the ready byte only
-# after the first read and the fork, so once the test has read that byte,
-# both processes are past the read. test_the_check_sends_no_signal pins
-# this order.
+# The bounds this order gives, derived from the source below. Start-up
+# here and in the check means interpreter start-up and then the read of
+# own_end, both before the first read of lifeline. A process reaches
+# its wait only after start-up and the first read, and the member only
+# after the fork, so its own end comes own_end seconds after it enters that
+# wait, not after it starts, and nothing in the test bounds start-up. After
+# the release, a process past the first read sees end of file at its wait
+# and exits at once; a process not yet at that read exits there when it
+# gets to it, so it outlives the release by the rest of its start-up,
+# however long that is. The leader writes the ready byte only after the
+# first read and the fork, so once the test has read that byte, both
+# processes are past the read. test_the_check_names_no_signal_function
+# pins this order.
 GROUP_STUB = (
     "import os, select, signal\n"
     "for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):\n"
     "    signal.signal(number, signal.SIG_IGN)\n"
+    "with open('own_end') as file:\n"
+    "    own_end = float(file.read())\n"
     "lifeline = os.open('lifeline', os.O_RDONLY | os.O_NONBLOCK)\n"
     "try:\n"
     "    os.read(lifeline, 1)\n"
@@ -471,7 +479,7 @@ GROUP_STUB = (
     "alive = os.open('alive', os.O_WRONLY | os.O_NONBLOCK)\n"
     "if os.fork() != 0:\n"
     "    os.write(alive, b'r')\n"
-    "select.select([lifeline], [], [], {own_end})\n"
+    "select.select([lifeline], [], [], own_end)\n"
     "os._exit(0)\n"
 )
 
@@ -482,47 +490,19 @@ GROUP_STUB = (
 SIGNAL_NAMES = ("abort", "alarm", "kill", "killpg", "pidfd_send_signal", "pthread_kill", "raise_signal",
                 "send_signal", "setitimer", "terminate")
 
-# Every callee of check_group_kill, the functions it defines, end_of_file
-# and BoundsTest.stub, as the source spells it. None sends a signal.
-CHECK_CALLEES = (
-    "GROUP_STUB.format", "Path", "TypeError", "children.append", "client.run_extractor", "contextlib.suppress",
-    "end_of_file", "first_timeouts.append", "first_waits.append", "held.append", "mock.patch.object", "os.close",
-    "os.mkfifo", "os.open", "os.read", "path.write_text", "poll_began.append", "proc.wait", "ready",
-    "ready_at.append", "ready_seen.append", "real_popen", "real_wait", "reversed", "seen.add", "select.select",
-    "self.assertEqual", "self.assertGreaterEqual", "self.assertLess", "self.assertRaises", "self.fail", "self.stub",
-    "set", "tempfile.TemporaryDirectory", "time.monotonic", "type", "witness",
-)
-
-# The first statement of check_group_kill. It admits as check and own_end
-# only a value whose type is exactly int or float, compared by identity, so
-# no code of the caller's runs in the comparison. The text of such a value
-# is a number, inf or nan, with or without a minus sign, so own_end adds no
-# call to the stub's source, and the operators the check applies to either
-# are the built-in ones.
-CHECK_GUARD = (
-    "for value in (check, own_end):\n"
-    "    if type(value) is not int and type(value) is not float:\n"
-    "        raise TypeError('check and own_end must each be an int or a float')"
-)
-
-# The calls among those whose callee starts a process or writes the code
-# that one runs, pinned with their arguments.
-CHECK_RUNS = (
-    "client.run_extractor('baseline', {}, timeout=1, tool=tool)",
-    "real_popen(*args, **kwargs)",
-    "self.stub(tmp, GROUP_STUB.format(own_end=own_end))",
-)
-
-# The calls of GROUP_STUB with an own end of 1 second, in source order.
+# The calls of GROUP_STUB, in source order.
 STUB_CALLS = (
     "signal.signal(number, signal.SIG_IGN)",
+    "open('own_end')",
+    "float(file.read())",
+    "file.read()",
     "os.open('lifeline', os.O_RDONLY | os.O_NONBLOCK)",
     "os.read(lifeline, 1)",
     "os._exit(0)",
     "os.open('alive', os.O_WRONLY | os.O_NONBLOCK)",
     "os.fork()",
     "os.write(alive, b'r')",
-    "select.select([lifeline], [], [], 1)",
+    "select.select([lifeline], [], [], own_end)",
     "os._exit(0)",
 )
 
@@ -643,7 +623,8 @@ class BoundsTest(unittest.TestCase):
         # The stub child (GROUP_STUB) forks a member into its group and
         # writes the ready byte to the FIFO alive, and both its processes then
         # wait for the release, end of file on the FIFO lifeline, or for their
-        # own end, own_end seconds after each enters that wait. The client's
+        # own end, own_end seconds after each enters that wait, which the
+        # stub reads from the file own_end that this check writes. The client's
         # first wait is held back until the ready byte is read, polled for at
         # most POLL_SECONDS, so a busy host cannot fire the 1 second timeout
         # before the member exists, and a child that is not ready when the
@@ -686,16 +667,14 @@ class BoundsTest(unittest.TestCase):
         # witness, when given, is called with the path of alive before the
         # stub starts, so that a caller can open a reader of its own.
         #
-        # own_end is written into the stub's source, and check and own_end
-        # are added to clock readings, so a caller's value of either could
-        # otherwise run its own code: in the stub, through the text its
-        # __format__ returns, or here, through an operator method. Each must
-        # be exactly an int or a float (CHECK_GUARD); any other value, a
-        # subclass of either included, raises TypeError before anything
-        # starts.
-        for value in (check, own_end):
-            if type(value) is not int and type(value) is not float:
-                raise TypeError("check and own_end must each be an int or a float")
+        # own_end reaches the stub only as the text of the file own_end,
+        # written after witness is called, and the stub's source is the
+        # constant GROUP_STUB, so no value of own_end adds code to the stub.
+        # A text that float does not take raises in the stub before it opens
+        # either FIFO, so the check fails. Residual, not checked: the check
+        # takes that text with str and adds check and own_end to clock
+        # readings, so a value with methods of its own runs them here. The
+        # callers in this file pass numbers.
         real_wait = client.wait_child
         real_popen = subprocess.Popen
         children = []
@@ -723,7 +702,8 @@ class BoundsTest(unittest.TestCase):
                     os.close(reader)
                 if witness is not None:
                     witness(alive_path)
-                tool = self.stub(tmp, GROUP_STUB.format(own_end=own_end))
+                (Path(tmp) / "own_end").write_text(str(own_end), encoding="utf-8")
+                tool = self.stub(tmp, GROUP_STUB)
 
                 def popen(*args, **kwargs):
                     children.append(real_popen(*args, **kwargs))
@@ -873,9 +853,9 @@ class BoundsTest(unittest.TestCase):
         # writer and exit at once. A reader of alive is held, so that the
         # stub does not fail at that open instead. The own end is 10
         # seconds, so a stub that waits for it fails this test without
-        # being signalled. The 5 second bound is a margin for interpreter
-        # start-up, which the stub must finish before its first read and
-        # which the code does not bound.
+        # being signalled. The 5 second bound is a margin for start-up,
+        # interpreter start-up and the read of own_end, which the stub must
+        # finish before its first read and which the code does not bound.
         with tempfile.TemporaryDirectory() as tmp:
             os.mkfifo(Path(tmp) / "alive")
             os.mkfifo(Path(tmp) / "lifeline")
@@ -886,7 +866,8 @@ class BoundsTest(unittest.TestCase):
                     os.close(os.open(Path(tmp) / "lifeline", os.O_WRONLY | os.O_NONBLOCK))
                 finally:
                     os.close(reader)
-                tool = self.stub(tmp, GROUP_STUB.format(own_end=10))
+                (Path(tmp) / "own_end").write_text("10", encoding="utf-8")
+                tool = self.stub(tmp, GROUP_STUB)
                 started = time.monotonic()
                 proc = subprocess.run([sys.executable, "-I", str(tool)], cwd=tmp, capture_output=True)
                 elapsed = time.monotonic() - started
@@ -895,127 +876,39 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         self.assertLess(elapsed, 5)
 
-    def test_a_value_a_caller_passes_runs_no_code_of_its_own(self):
-        # check_group_kill writes own_end into the stub's source and adds
-        # check and own_end to clock readings. An own_end whose __format__
-        # returns code, which would have the stub create a marker file
-        # before its wait, and a check whose __radd__ records its call, must
-        # each run none of that code and raise TypeError before anything
-        # starts. The control passes the same bounds as plain floats, which
-        # the check admits, and must pass.
-        with tempfile.TemporaryDirectory() as tmp:
-            marker = Path(tmp) / "injected"
-            added = []
-
-            class CodeText(float):
-                def __format__(self, spec):
-                    return f"(open({str(marker)!r}, 'w').close(), {float(self)!r})[1]"
-
-            class RecordedSum(float):
-                def __radd__(self, other):
-                    added.append(other)
-                    return other + float(self)
-
-            for label, bounds, ran in (
-                    ("an own_end whose text is code", {"own_end": CodeText(OWN_END_SECONDS)}, marker.exists),
-                    ("a check whose sum runs code", {"check": RecordedSum(CHECK_SECONDS)}, lambda: added != []),
-            ):
-                with self.subTest(label):
-                    raised = []
-                    try:
-                        self.check_group_kill(**bounds)
-                    except TypeError as error:
-                        raised.append(error)
-                    self.assertFalse(ran(), f"{label}: the value ran code of its own")
-                    self.assertEqual(len(raised), 1, f"{label}: no TypeError was raised")
-            with self.subTest("control: plain floats"):
-                self.check_group_kill(check=float(CHECK_SECONDS), own_end=float(OWN_END_SECONDS))
-
-    def test_the_check_sends_no_signal(self):
-        # The check sees the group only through alive, so it never names a
-        # process by an id that may have been reused, and its verdict needs
-        # no cleanup. This reads the syntax tree of check_group_kill with the
-        # functions it defines, end_of_file, BoundsTest.stub and GROUP_STUB,
-        # and asserts:
-        # - every callee in all but GROUP_STUB is in CHECK_CALLEES, so a call
-        #   through any other, such as signal.pthread_kill, an alias bound to
-        #   os.kill, getattr, __import__, exec or os.system, fails;
-        # - the calls whose callee starts a process or writes the code that
-        #   one runs are exactly CHECK_RUNS, and GROUP_STUB makes exactly
-        #   STUB_CALLS, in that order, the order GROUP_STUB's bounds rest on;
-        # - the first statement of check_group_kill is CHECK_GUARD, and no
-        #   node in it rebinds check or own_end or binds either name in an
-        #   inner scope, so the own_end that a caller passes into the stub's
-        #   source, and the check and own_end the check adds to clock
-        #   readings, are each exactly an int or a float; and, for example
-        #   values of own_end, among them a negative number, inf and nan,
-        #   the stub makes STUB_CALLS with only the value in its wait
-        #   changed;
-        # - no name, attribute or import in them is in SIGNAL_NAMES, so a
-        #   signal function named as a value, such as os.kill handed to an
-        #   allowed callee, fails. Only names are compared, so a signal
-        #   function reached as a value without its name passes, such as
-        #   os.__dict__["kill"] or one read from an object that an allowed
-        #   callee returns;
-        # - every callee defined in this file is among the functions read.
-        # Residual, not read: the callees defined outside this file, which
-        # are the client (whose group kill is the one signal a run sends,
-        # and the behaviour under test), its wait_child, subprocess.Popen,
-        # Popen.wait and the mock, tempfile, contextlib, os, select and time
-        # modules; the implicit calls that operators, iteration and with
-        # statements make on the objects those callees return; a name bound,
-        # without a call, to another value that a pinned call then uses; and
-        # the class of values that a caller supplies and that the check uses
-        # as they are, other than check and own_end. Examples, not a complete
-        # list: the witness a caller passes, which the check calls and which
-        # can run any code; a method of self that a subclass overrides; and
-        # a module global or builtin that a caller rebinds, such as
-        # GROUP_STUB, POLL_SECONDS, type, or a function of os or the client,
-        # as the tests here rebind os.killpg.
+    def test_the_check_names_no_signal_function(self):
+        # A tripwire, not a proof. The check's design needs no signal: it
+        # sees the group only through alive and ends it by closing lifeline.
+        # This reads the syntax tree of check_group_kill with the functions
+        # it defines, end_of_file, BoundsTest.stub and GROUP_STUB, and
+        # asserts that GROUP_STUB makes exactly STUB_CALLS, in that order,
+        # the order its bounds rest on, and that no name, attribute or
+        # import in any of them is in SIGNAL_NAMES. It fails an edit that
+        # uses a signal function by one of those names there, such as
+        # os.kill(os.getpid(), 0) added to the check.
+        # Residual, the open class of every other route, which passes it.
+        # Examples, not a complete list: 2 known passes, os.__dict__["kill"]
+        # and getattr with a computed name, such as getattr(os, "ki" + "ll");
+        # a value a caller passes, such as the witness, which the check calls
+        # and which can run any code; a method of self that a subclass
+        # overrides; a module global or builtin that a caller rebinds, such
+        # as GROUP_STUB, or a function of os or the client, as the tests here
+        # rebind os.killpg; the body of a decorator; and the code outside
+        # these functions, the client, whose group kill is the one signal a
+        # run sends and the behaviour under test, and the standard library.
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
         roots = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
                  and node.name in ("check_group_kill", "end_of_file", "stub")]
         self.assertEqual(sorted(node.name for node in roots), ["check_group_kill", "end_of_file", "stub"])
-        group_kill = next(node for node in roots if node.name == "check_group_kill")
-        self.assertEqual(ast.unparse(group_kill.body[0]), CHECK_GUARD)
-        own = group_kill.args
-        bound = [node.id for node in ast.walk(group_kill) if isinstance(node, ast.Name)
-                 and not isinstance(node.ctx, ast.Load)]
-        bound += [node.arg for node in ast.walk(group_kill) if isinstance(node, ast.arg)
-                  and node not in own.posonlyargs + own.args + own.kwonlyargs]
-        bound += [name for node in ast.walk(group_kill) if isinstance(node, (ast.Global, ast.Nonlocal))
-                  for name in node.names]
-        bound += [node.name for node in ast.walk(group_kill)
-                  if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar))]
-        bound += [node.rest for node in ast.walk(group_kill) if isinstance(node, ast.MatchMapping)]
-        bound += [node.asname or node.name for node in ast.walk(group_kill) if isinstance(node, ast.alias)]
-        self.assertEqual(sorted({"check", "own_end"} & set(bound)), [])
-        for value in (1, OWN_END_SECONDS, 0.5, -1, 1e300, -0.0, float("inf"), float("nan")):
-            with self.subTest(own_end=value):
-                stub = ast.parse(GROUP_STUB.format(own_end=value))
-                found = sorted((node for node in ast.walk(stub) if isinstance(node, ast.Call)),
-                               key=lambda node: (node.lineno, node.col_offset))
-                self.assertEqual(tuple(ast.unparse(node) for node in found),
-                                 STUB_CALLS[:7] + (f"select.select([lifeline], [], [], {value!r})",) + STUB_CALLS[8:])
-        stub = ast.parse(GROUP_STUB.format(own_end=1))
-        nodes = [node for root in roots + [stub] for node in ast.walk(root)]
-        calls = [node for root in roots for node in ast.walk(root) if isinstance(node, ast.Call)]
-        callees = {ast.unparse(node.func) for node in calls}
-        self.assertEqual(sorted(callees - set(CHECK_CALLEES)), [])
-        runs = {"client.run_extractor", "real_popen", "self.stub"}
-        self.assertEqual(sorted(ast.unparse(node) for node in calls if ast.unparse(node.func) in runs),
-                         sorted(CHECK_RUNS))
+        stub = ast.parse(GROUP_STUB)
         stub_calls = sorted((node for node in ast.walk(stub) if isinstance(node, ast.Call)),
                             key=lambda node: (node.lineno, node.col_offset))
         self.assertEqual(tuple(ast.unparse(node) for node in stub_calls), STUB_CALLS)
+        nodes = [node for root in roots + [stub] for node in ast.walk(root)]
         names = [getattr(node, "id", None) or getattr(node, "attr", None) for node in nodes
                  if isinstance(node, (ast.Name, ast.Attribute))]
         names += [name for node in nodes if isinstance(node, ast.alias) for name in (node.name, node.asname)]
         self.assertEqual(sorted(set(names) & set(SIGNAL_NAMES)), [])
-        defined = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        read = {node.name for node in nodes if isinstance(node, ast.FunctionDef)}
-        self.assertEqual(sorted(name for name in (callee.removeprefix("self.") for callee in callees)
-                                if name in defined and name not in read), [])
 
     def test_bound_constants_equal_the_gates(self):
         gate = _load("crc_gate_bounds", GATE)
