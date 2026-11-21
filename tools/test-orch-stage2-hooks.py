@@ -47,8 +47,8 @@ cannot-evaluate, exit 2, within a short timeout and naming the path and the file
 is not run, and a class probe scans the doctor source so that every path it opens goes through its
 checked helper. Before any hook reader is called, a registry file or a declared read path
 (the mode and lease paths, the record paths, the enumerator operands) that exists and is not a regular
-file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within a
-short timeout, with no enumerator run and no hook state written. The writes-nothing test
+file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within
+RUN_TIMEOUT, with no enumerator run and no hook state written. The writes-nothing test
 runs a fresh copy of the doctor and the hook, in a tree that never held a __pycache__, and asserts no
 bytecode file appears anywhere under it. The fixed hook state files each command opens
 with a plain blocking open are checked the same way before the reader that opens them: for preflight
@@ -200,6 +200,22 @@ WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
     "path = sys.argv[1]\n",
     "path = sys.argv[1]\nwith open(sys.argv[2], \"a\", encoding=\"utf-8\") as mark:\n"
     "    mark.write(\"ran\\n\")\n", 1)
+
+# The enumerator timeout of every fixture registry whose enumerator should end normally. The hook starts
+# this clock when it starts the enumerator (`subprocess.run` at aiqt_hooks.py:22833), so it also covers
+# the interpreter start-up, which a loaded host can stretch past 5 seconds and turn a normal end into
+# ENUMERATOR_ERROR. 60 seconds is the hook's own default (aiqt_hooks.py:22831). The gate caps a
+# committed value at 8 seconds (ENUMERATOR_TIMEOUT_MAX); these registries are never gated. The timeout
+# test sets its own 1 second timeout for an enumerator that does not end.
+ENUM_TIMEOUT = 60
+
+# The bound on every test run that can start the enumerator of a fixture registry: run_hook, run_doctor
+# and the bounded doctor and hook runs (Doctor.SPECIAL_TIMEOUT, DoctorCheckpointWrites.TIMEOUT and
+# DoctorStandInRestore.TIMEOUT). It exceeds ENUM_TIMEOUT by ENUM_MARGIN, so the hook's own timeout ends
+# an enumerator that hangs, and the case reads what the hook reports, before this bound ends the run.
+# EnumeratorBounds holds each of these bounds to that margin.
+RUN_TIMEOUT = 120
+ENUM_MARGIN = 60
 
 # Runs in a separate python3 -I process: load the doctor by path, replace the hook resume audit with
 # a writer that rewrites the barrier with new content but a ts from before the run, and return the
@@ -380,7 +396,7 @@ class Stage2Harness(unittest.TestCase):
         reg = self.stage1()
         reg.update({
             "enumerator": {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)],
-                           "timeout": 5},
+                           "timeout": ENUM_TIMEOUT},
             "yield_tools": ["ScheduleWakeup", "CronCreate"],
             "mode": {"path": self._p("operating-mode.md")},
             "staleness": {"task_hours": 24, "external_hours": 72},
@@ -451,11 +467,11 @@ class Stage2Harness(unittest.TestCase):
         payload.setdefault("cwd", str(self.repo))
         return run_doctor_recorded(self, [sys.executable, "-I", str(HOOK), action],
                                    input=json.dumps(payload), capture_output=True, text=True,
-                                   env=self._env(), timeout=120)
+                                   env=self._env(), timeout=RUN_TIMEOUT)
 
     def run_doctor(self, *args):
         return run_doctor_recorded(self, [sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
-                                   capture_output=True, text=True, env=self._env(), timeout=120)
+                                   capture_output=True, text=True, env=self._env(), timeout=RUN_TIMEOUT)
 
     def stop(self, **payload):
         return self.run_hook("orch_stop_guard", payload)
@@ -1200,8 +1216,11 @@ class T14PosturePins(Stage2Harness):
 # =====================================================================================================
 class T15EnumeratorTimeout(Stage2Harness):
     def test_sleeping_enumerator_times_out_and_denies(self):
+        # The bound is measured from before the hook starts, so it also covers the hook's own start-up,
+        # which a loaded host stretches. It stays below the enumerator's sleep, so a hook that waited the
+        # sleep out still fails it, and the sleep stays below RUN_TIMEOUT, the bound of run_hook.
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(30)"], "timeout": 1}))
+            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(100)"], "timeout": 1}))
         self.arm_lease()
         started = time.monotonic()
         r = self.stop()
@@ -1209,7 +1228,7 @@ class T15EnumeratorTimeout(Stage2Harness):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
-        self.assertLess(elapsed, 15, "the declared timeout bounds the hook")
+        self.assertLess(elapsed, 90, "the declared timeout bounds the hook")
 
     def test_stage1_contrast(self):
         self.write_registry(self.stage1())
@@ -1217,6 +1236,27 @@ class T15EnumeratorTimeout(Stage2Harness):
         r = self.stop()
         self.assert_no_enumerator_deny(r)
         self.assertNotIn("failed to run", r.stderr)
+
+
+class EnumeratorBounds(unittest.TestCase):
+    """Every bound on a test run that can start the enumerator of a fixture registry exceeds ENUM_TIMEOUT
+    by at least ENUM_MARGIN, so the hook's own timeout ends an enumerator that hangs, and the case reads
+    what the hook reports, before the bound ends the run."""
+
+    def test_every_run_bound_exceeds_the_enumerator_timeout_with_margin(self):
+        bounds = {
+            "RUN_TIMEOUT": RUN_TIMEOUT,
+            "Doctor.SPECIAL_TIMEOUT": Doctor.SPECIAL_TIMEOUT,
+            "DoctorPrecheckSites.SPECIAL_TIMEOUT": DoctorPrecheckSites.SPECIAL_TIMEOUT,
+            "DoctorScopeMargin.SPECIAL_TIMEOUT": DoctorScopeMargin.SPECIAL_TIMEOUT,
+            "DoctorCheckpointWrites.TIMEOUT": DoctorCheckpointWrites.TIMEOUT,
+            "DoctorStandInRestore.TIMEOUT": DoctorStandInRestore.TIMEOUT,
+        }
+        for name, bound in bounds.items():
+            with self.subTest(bound=name):
+                self.assertGreaterEqual(bound - ENUM_TIMEOUT, ENUM_MARGIN,
+                                        "{} is {} s, within {} s of ENUM_TIMEOUT ({} s)"
+                                        .format(name, bound, ENUM_MARGIN, ENUM_TIMEOUT))
 
 
 # =====================================================================================================
@@ -1266,7 +1306,7 @@ class Doctor(Stage2Harness):
             with self.subTest(kind=kind):
                 r = run_doctor_recorded(self, [sys.executable, "-I", str(copy), "preflight", kind,
                                                "--root", str(self.repo)],
-                                        capture_output=True, text=True, env=self._env(), timeout=120)
+                                        capture_output=True, text=True, env=self._env(), timeout=RUN_TIMEOUT)
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
                 self.assertIn("judged verdict: DENY", r.stdout)
                 self.assertIn("verdict without the escape sentinel: DENY", r.stdout)
@@ -1275,7 +1315,8 @@ class Doctor(Stage2Harness):
         self.assertEqual(tree_state(self._tmp), before, "preflight changed a file or directory")
 
     # --- a declared read path that is not a regular file is cannot-evaluate, before any hook reader
-    SPECIAL_TIMEOUT = 30
+    # A preflight under this bound can run the stage-2 enumerator, so the bound is RUN_TIMEOUT.
+    SPECIAL_TIMEOUT = RUN_TIMEOUT
 
     def _doctor_bounded(self, *args):
         try:
@@ -1647,7 +1688,7 @@ class Doctor(Stage2Harness):
         marker = self._tmp / "enumerator-ran.txt"
         reg = self.stage2(enumerator={
             "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}, **overrides)
+            "timeout": ENUM_TIMEOUT}, **overrides)
         return reg, marker
 
     def test_preflight_out_of_scope_runs_no_enumerator(self):
@@ -1726,7 +1767,7 @@ class Doctor(Stage2Harness):
         self.set_items([item("1", state="closed")])
         r = run_doctor_recorded(self, [sys.executable, str(copy), "preflight", "stop", "--root",
                                        str(self.repo)],
-                                capture_output=True, text=True, env=env, timeout=120)
+                                capture_output=True, text=True, env=env, timeout=RUN_TIMEOUT)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("effective verdict: ALLOW", r.stdout)
 
@@ -1808,7 +1849,7 @@ class Doctor(Stage2Harness):
         marker = self._tmp / "enumerator-ran.txt"
         self.write_registry(self.stage2(enumerator={
             "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}))
+            "timeout": ENUM_TIMEOUT}))
         self.arm_lease()
         self.set_items([item("1", state="closed")])
         r = self.run_doctor("preflight", "stop")
@@ -3519,7 +3560,9 @@ class DoctorCheckpointWrites(Stage2Harness):
     writing, so its verdict equals that of the real hook on the same state. Each case arranges a
     fresh tree per kind, runs the doctor first (it writes nothing) and then the hook."""
 
-    TIMEOUT = 30
+    # Each preflight runs the stage-2 enumerator, so the bound is RUN_TIMEOUT. The fault-injection run,
+    # a preflight and then a hook call, runs it twice and has twice the bound.
+    TIMEOUT = RUN_TIMEOUT
     # A doctor that refuses a write that could block must do so well inside this bound.
     PROMPT = 15
 
@@ -3862,10 +3905,13 @@ class DoctorStandInRestore(Stage2Harness):
     hook._orch_guard_event for the context build only, and restores both however the build ends: a
     normal return, the not-previewed exception, or a KeyboardInterrupt raised inside the stand-in."""
 
+    # The context build runs the stage-2 enumerator, so the bound is RUN_TIMEOUT.
+    TIMEOUT = RUN_TIMEOUT
+
     def _run(self, case):
         r = run_doctor_recorded(self, [sys.executable, "-I", "-c", RESTORE_PROG, str(DOCTOR),
                                        str(self.repo), case],
-                                capture_output=True, text=True, env=self._env(), timeout=60)
+                                capture_output=True, text=True, env=self._env(), timeout=self.TIMEOUT)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout.strip().splitlines()[-1])
 
