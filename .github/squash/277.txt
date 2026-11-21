@@ -43,8 +43,11 @@ pointer in unit 3 no longer apply.
   its 2 cases on the repository the gate's own read of the extractor
   must give those bytes, which the gate is then given to run. So the
   extractor that runs in the test's process is the hashed bytes, or
-  a change that a case writes into a copy of them, and a case shows
-  that an extractor changed after the comparison does not run there.
+  a change that a case writes into a copy of them. A case shows that
+  an extractor changed after the comparison does not run there, and
+  runs every other case of a copy of the test with an audit hook that
+  records each open of either file after the comparison other than
+  the gate's own read; the copy must pass with no open recorded.
   Residual:
   1. The digest shows that the gate and the extractor are, byte for
      byte, the files a reviewer accepted, not that they are right.

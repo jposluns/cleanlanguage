@@ -40,10 +40,16 @@ RepositoryTreeTest, the gate still reads the extractor there, and that read
 must give the hashed bytes, else the case fails, and the gate is given the
 hashed bytes to run.
 test_an_extractor_changed_after_the_digest_check_is_not_run holds this for
-an extractor changed after the comparison. The comparison must stay before
-the load. Renew a digest only after reading the diff of its file since its
-last reviewed revision. What the digest shows, and no more, is item 1 of the
-residual below.
+an extractor changed after the comparison, and runs every other case of a
+copy of this test with an audit hook that the copy installs as soon as its
+comparison is done; the hook records each open of the gate or the
+extractor in the copy's tree other than the gate's own read through
+read_bytes, and the copy must pass with no open recorded. The hook does
+not see a read by a program other than a copy of this test, a read of
+either file by another name, such as a hard link, or a read in that case
+itself. The comparison must stay before the load. Renew a digest
+only after reading the diff of its file since its last reviewed revision.
+What the digest shows, and no more, is item 1 of the residual below.
 
 The gate's rule for keys is held where the gate decodes, not by watching
 what it does. The core is the gate's object_pairs_hook `_unique_object`,
@@ -2248,6 +2254,51 @@ class PluginDistributionTest(unittest.TestCase):
                 control = run_command(copy, self.root)
                 self.assertEqual(control[0], 0, control)
                 self.assertTrue(marker.exists(), control)
+        # Then every other case of a copy of this test that, once its digest check is done, installs an audit
+        # hook recording each open of the gate or the extractor in this tree, except the gate's own read
+        # through read_bytes, which RepositoryTreeTest compares with the hashed bytes. The copy must pass
+        # every case and record no open, so no case of the copy reads either file after the comparison.
+        # Control, first: the copy, with a read of each file once its hook is installed, runs its 1 case and
+        # records both reads, in order.
+        (self.root / EXTRACTOR_REL).write_bytes(_executed[REAL_EXTRACTOR])
+        record = self.root / "reads"
+        start = 'before renewing the digest")\n'
+        end = '\n\nif __name__ == "__main__":\n'
+        self.assertEqual((text.count(start), text.count(end)), (1, 1))
+        hook = ("def _record_read(event, args, watched=(MODULE_PATH, REAL_EXTRACTOR), gate_file=str(MODULE_PATH)):\n"
+                "    if event != 'open' or not isinstance(args[0], (str, bytes, os.PathLike)):\n"
+                "        return\n"
+                "    try:\n"
+                "        path = Path(os.fsdecode(args[0])).resolve()\n"
+                "    except (OSError, ValueError):\n"
+                "        return\n"
+                "    if path not in watched:\n"
+                "        return\n"
+                "    frame, lines = sys._getframe(1), []\n"
+                "    while frame is not None:\n"
+                "        if frame.f_code.co_filename == gate_file and frame.f_code.co_name == 'read_bytes':\n"
+                "            return\n"
+                "        if frame.f_code.co_filename == __file__:\n"
+                "            lines.append(frame.f_lineno)\n"
+                "        frame = frame.f_back\n"
+                f"    with open({str(record)!r}, 'a', encoding='utf-8') as file:\n"
+                "        file.write(f'{path}\\tline {lines[:1]}\\n')\n"
+                "sys.addaudithook(_record_read)")
+        others = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[type(self).__module__]).countTestCases() - 1
+        dropped = f"\n\ndel {type(self).__name__}.{self._testMethodName}{end}"
+        for extra, args, reads in (("MODULE_PATH.read_bytes()\nREAL_EXTRACTOR.read_bytes()\n", LOADED_ONLY,
+                                    [copy.resolve(), (self.root / EXTRACTOR_REL).resolve()]),
+                                   ("", (), [])):
+            with self.subTest(reads=len(reads)):
+                record.unlink(missing_ok=True)
+                test.write_text(text.replace(start, f"{start}{hook}\n{extra}").replace(end, dropped), encoding="utf-8")
+                done = subprocess.run([sys.executable, "-I", str(test), *args], cwd=self.root,
+                                      capture_output=True, text=True, errors="backslashreplace", timeout=600)
+                found = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
+                self.assertEqual([Path(line.split("\t")[0]) for line in found], reads, found)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                if not args:
+                    self.assertIn(f"\nRan {others} tests in ", done.stderr)
 
     def test_loader_helper_gives_a_plain_str_or_the_stand_in(self):
         # The helper the loader makes a name and a message with: a str subclass whose own methods raise
