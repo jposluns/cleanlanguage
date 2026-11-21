@@ -1,0 +1,46 @@
+Widen the code_form() self-check of the flow-mode test (#285)
+
+Close TODOs 261, 262 and 263, residuals accepted when pull request 276
+merged. Only tools/test-check-flow-mode.py changes. The check is
+unchanged, so CODE_SHA256 keeps its value.
+
+TODO 261: some variants of code_form() that strip or rewrite more than
+the check's docstrings and the sha256 values of PARAGRAPHS passed the
+registry case, because no row tried the condition that they relax.
+FORM_PAIRS gains 10 pairs: a string first in the body of a for, a
+while, a with and a try; bytes, an assignment of a string and a return
+of a string, each first in a function; a string after the docstring of
+a function; 2 keyword arguments of a call swapped; and a sha256 in a
+list bound to PARAGRAPHS_OLD. MUTATIONS gains 3 rows on the check's own
+text: a comparison operator changed, the name __name__ changed and the
+upper bound of a slice changed.
+
+TODO 262: the 2 MUTATIONS rows that edit PARAGRAPHS tried only the name
+of its first row and the opening text of its second. 14 rows built from
+NAMED replace them: for each of the 7 rows, 1 changes its name and 1
+changes its opening text.
+
+TODO 263: the squash message of pull request 276 says that every edit
+of the check's code fails the test until CODE_SHA256 is updated. Only
+an edit that changes the check's syntax tree does. The digest leaves
+out text that the tree does not hold, such as comments, layout, the
+quotes of a string, how a number is written and parentheses that
+change no grouping, so an edit of only such text keeps the digest. The
+test's module docstring, the comment on CODE_SHA256 and the comment of
+the registry case repeated the overstatement and now say this.
+PRESERVED gains 3 rows that pin it: the quotes of a string changed, a
+number written in hexadecimal and parentheses that change no grouping
+added.
+
+19 variants of code_form(), each given its own digest as CODE_SHA256,
+passed the unchanged registry case and fail the changed one, while the
+unchanged code_form() passes it. A copy of the check with its quotes,
+a number and parentheses edited keeps the digest and passes the whole
+unchanged suite, which reproduces TODO 263.
+
+Residuals include, for example: a code_form() that hides or keeps only
+what no row edits, such as one that also removes a string first in the
+body of an except clause or of an async for, each of which passes the
+changed case; an edit of the check that changes its bytes but not its
+syntax tree, which the pin does not catch by design; and a Python
+release other than 3.14.4, the only one on which the digests ran.
