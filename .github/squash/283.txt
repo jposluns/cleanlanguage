@@ -45,8 +45,7 @@ case is the only case of the disclosure group that fails. With it
 patched so that it reads '<!---->' as text, no case of the group
 fails.
 
-Add .github/squash/283.txt, which holds this message byte for byte and
-which CI's Pull request text check reads.
+Add .github/squash/283.txt, which holds this message byte for byte.
 
 The CPython change is not confirmed at source: the CPython source,
 NEWS and changelog were not consulted, so the release that changed the
@@ -55,21 +54,3 @@ record how Python 3.14.7 reads '<!--->', and this message states no
 Python 3.14.7 result other than the one TODO 255 records.
 .python-version is untouched; moving the pin to 3.14.7 stays the
 maintainer's decision.
-
-When the pull request is squash-merged, this message supersedes every
-earlier commit message on the branch. The pushed history is not
-rewritten, so those messages stay on the branch. The first of them
-says that the 2 new cases fail with only the refusal removed, which is
-false, as the '<!---->' case passes, and that Python 3.14.7 closes
-'<!-->' at once, which TODO 255 does not record. The second gives as a
-reason that no run shows how Python 3.14.7 reads '<!--->'; this
-message says only that TODO 255 does not record it. The third says
-that the squash message supersedes the earlier messages "as the pushed
-history is not rewritten"; that is why they stay on the branch, not
-why they are superseded, and only a squash merge supersedes them. The
-fourth calls squash merging the repository practice, which nothing in
-this pull request establishes. It also says that the '<!---->' case
-gives its failure only if the reader parses the empty comment as a
-comment that closes before the label, and that the comment on the
-cases says what the case shows; as said above, the case does not show
-that the reader parses '<!---->' as a comment.
