@@ -283,7 +283,7 @@ SHARED_CSP = (
     "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
-NEXT_RULE = "\n\n/downloads/cleanlanguage.md"
+NEXT_RULE = "\n\n/downloads/cleanlanguage-instructions.md"
 SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
@@ -1459,16 +1459,16 @@ CASES = [
         (1, INSTALL_HEADER)),
     ("a Refresh header on the sitemap only", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Refresh: 0; url=/\n"), 0),
     ("a Refresh header on a download only, under a full URL",
-        append(HEADERS, "\nhttps://cleanlanguage.ai/downloads/cleanlanguage.md\n  Refresh: 0; url=/\n"), 0),
+        append(HEADERS, "\nhttps://cleanlanguage.ai/downloads/cleanlanguage-instructions.md\n  Refresh: 0; url=/\n"), 0),
     # No rule of site/_redirects may have a source that can match an install page, read as reaches_install reads a
     # pattern of site/_headers: a redirect sends the reader away, and a rewrite (200) serves other content there.
     ("a redirect from every install page to the home page", append(REDIRECTS, "/install/* / 302\n"),
-        (1, "site/_redirects line 11 has the source /install/*, " + REDIRECT)),
+        (1, "site/_redirects line 15 has the source /install/*, " + REDIRECT)),
     ("a rewrite of a family page to the home page", append(REDIRECTS, "/install/claude/ / 200\n"), (1, REDIRECT)),
     ("a redirect under a placeholder", append(REDIRECTS, "/:page/* / 301\n"), (1, REDIRECT)),
     ("a redirect from /INSTALL to the home page, indented", append(REDIRECTS, "  /INSTALL / 302\n"), (1, REDIRECT)),
     ("a redirect from every page", edit(REDIRECTS, "/claude/download ", "/* / 302\n/claude/download "), (1, REDIRECT)),
-    ("a redirect between 2 downloads", append(REDIRECTS, "/downloads/old.md /downloads/cleanlanguage.md 301\n"), 0),
+    ("a redirect between 2 downloads", append(REDIRECTS, "/downloads/old.md /downloads/cleanlanguage-instructions.md 301\n"), 0),
     ("a redirect from the install pages only in a comment", append(REDIRECTS, "# /install/* / 302\n"), 0),
     ("the redirects file missing", remove(REDIRECTS), 3),
     ("the baseline pin missing", remove(".baseline/pin.toml"), (3, PIN_UNREAD)),
@@ -1477,7 +1477,7 @@ CASES = [
     # segment of LOADED_SEGMENTS (assets), in any letter case.
     ("a rewrite of baseline.css to fonts.css",
         append(REDIRECTS, "/assets/baseline/baseline.css /assets/baseline/fonts.css 200\n"),
-        (1, "site/_redirects line 11 has the source /assets/baseline/baseline.css, " + REDIRECT)),
+        (1, "site/_redirects line 15 has the source /assets/baseline/baseline.css, " + REDIRECT)),
     ("a redirect of copy.js to rail.js", append(REDIRECTS, "/assets/baseline/copy.js /assets/baseline/rail.js 302\n"),
         (1, REDIRECT)),
     ("a redirect of every asset, in capitals", append(REDIRECTS, "/ASSETS/* / 302\n"), (1, REDIRECT)),

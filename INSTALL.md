@@ -33,7 +33,7 @@ The matching checksum is available as [`cleanlanguage.zip.sha256`](https://githu
 
 Use this when Skills are unavailable.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.md).
 2. In Claude, click **Projects**, then **New Project**.
 3. Name the project **Clean Language**.
 4. Under **Project knowledge**, click **+** and upload the saved file.
@@ -66,7 +66,7 @@ Workspace administrators may need to allow members to use and upload Skills.
 
 Use this when your account cannot upload a skill.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md). It saves as `cleanlanguage.md`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.md). It saves as `cleanlanguage-instructions.md`.
 2. Open ChatGPT, click **Plugins**, then open **Skills**.
 3. Click **Create**, then **Create with chat**.
 4. Enter:
@@ -75,7 +75,7 @@ Use this when your account cannot upload a skill.
 Create a skill named Clean Language using the instructions in the file I am about to upload.
 ```
 
-5. Attach `cleanlanguage.md` and send the message.
+5. Attach `cleanlanguage-instructions.md` and send the message.
 6. When ChatGPT shows the completed Skill, click **Install**.
 
 When Plugins or Skills are unavailable, attach the instructions file to a normal chat and enter:
@@ -88,17 +88,17 @@ Follow these writing rules for this conversation.
 
 The easiest reusable Gemini method is a custom Gem.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md), then open the file and copy all of its text. It saves as `cleanlanguage.md`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.md), then open the file and copy all of its text. It saves as `cleanlanguage-instructions.md`.
 2. On a computer, open Gemini.
 3. Open the menu on the left.
 4. Click **Gems**. When necessary, click **Settings and help**, then **Gems**.
 5. Click **New Gem**.
 6. Name it **Clean Language**. For the description, you can use: `Applies the Clean Language writing standard so responses are precise, direct, and natural.`
-7. Paste the copied `cleanlanguage.md` text into the **Instructions** box.
+7. Paste the copied `cleanlanguage-instructions.md` text into the **Instructions** box.
 8. Set **no default tool**.
 9. Click **Save**.
 
-You can also add `cleanlanguage.md` as Gem knowledge: under **Knowledge**, click **Add files**, then **Upload files**, and select it. Pasting the instructions has given better responses than uploading alone, which Gemini sometimes ignores, so paste is the primary method. Using both together is an option.
+You can also add `cleanlanguage-instructions.md` as Gem knowledge: under **Knowledge**, click **Add files**, then **Upload files**, and select it. Pasting the instructions has given better responses than uploading alone, which Gemini sometimes ignores, so paste is the primary method. Using both together is an option.
 
 After saving it, open **Gems** and select **Clean Language** whenever you need it. Gems created on the website can also appear in the Gemini mobile app.
 
@@ -123,21 +123,21 @@ Whole company: an administrator can create the agent once in Copilot Studio, the
 
 Use this if you do not have Copilot Studio. A Microsoft 365 Copilot agent caps its instructions at 8000 characters, so paste the 8k file as the instructions and add the full standard as reference.
 
-1. Download the [8k instructions](https://cleanlanguage.ai/downloads/cleanlanguage-8k.md). It saves as `cleanlanguage-8k.md`.
+1. Download the [8k instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions-8k.md). It saves as `cleanlanguage-instructions-8k.md`.
 2. Open Microsoft 365 Copilot on a computer.
 3. Open the agents panel and click **New agent**. Copilot offers to build the agent for you or to let you set it up yourself; click **Skip** to customize it yourself.
 4. Name it Clean Language, and add a short description.
-5. Open `cleanlanguage-8k.md`, copy all of it, and paste it into the **Instructions** box.
-6. Find the option to add specific websites, and add `https://cleanlanguage.ai/downloads/cleanlanguage.md` as reference the agent can consult; the pasted instructions are what it follows.
+5. Open `cleanlanguage-instructions-8k.md`, copy all of it, and paste it into the **Instructions** box.
+6. Find the option to add specific websites, and add `https://cleanlanguage.ai/downloads/cleanlanguage-instructions.md` as reference the agent can consult; the pasted instructions are what it follows.
 7. Click **Create**, then select the Clean Language agent whenever you write.
 
-No agent access? Attach `cleanlanguage.md` to a normal Copilot chat and say: `Follow these writing rules for this conversation.`
+No agent access? Attach `cleanlanguage-instructions.md` to a normal Copilot chat and say: `Follow these writing rules for this conversation.`
 
 ## Other AI systems
 
 Clean Language works with local models, API-based assistants, and other systems that accept custom instructions, project knowledge, system prompts, or uploaded reference files.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.md).
 2. Save the file or copy its contents.
 3. Add it to the AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.
 4. Enter:
