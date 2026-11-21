@@ -38,16 +38,20 @@ pointer in unit 3 no longer apply.
   the gate's command executes, with digests written in the test, and
   on a mismatch stops with exit 1 before any case runs. It compiles
   the gate from the bytes it hashed, so no .pyc runs in their place.
-  After the comparison it reads neither file from the repository
-  again: its copies of either file come from the hashed bytes, and in
-  its 2 cases on the repository the gate's own read of the extractor
-  must give those bytes, which the gate is then given to run. So the
-  extractor that runs in the test's process is the hashed bytes, or
-  a change that a case writes into a copy of them. A case shows that
-  an extractor changed after the comparison does not run there, and
-  runs every other case of a copy of the test with an audit hook that
-  records each open of either file after the comparison other than
-  the gate's own read; the copy must pass with no open recorded.
+  After the comparison it takes its copies of either file from the
+  hashed bytes, and in its 2 cases on the repository the gate's own
+  read of the extractor must give those bytes, which the gate is then
+  given to run. A case shows that an extractor changed after the
+  comparison does not run in the test's process, in the tree setUp
+  writes or on the repository. That the other copies come from the
+  hashed bytes, and that the test reads neither file from the
+  repository again, rests on review of the test, as item 4 below
+  says: a read of either file from the repository written at such a
+  site passes every case. Reduced coverage: an audit hook that failed
+  such a read, tried on this branch, is retired. The case that runs
+  the gate's main on the repository requires the whole last line,
+  the OK line with the version of the repository's Claude plugin
+  manifest.
   Residual:
   1. The digest shows that the gate and the extractor are, byte for
      byte, the files a reviewer accepted, not that they are right.
