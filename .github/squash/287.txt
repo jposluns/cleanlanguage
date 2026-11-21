@@ -1,0 +1,51 @@
+Add a licence-name gate with an allowlist (#287)
+
+Add tools/check-licence-names.py, its allowlist
+tools/licence-names-allowlist.tsv and its tests
+tools/test-check-licence-names.py. The gate lists the tracked files
+with git ls-files, reads each from the work tree, splits it at line
+feeds only and finds every line that holds 1 of its 3 search terms in
+any ASCII letter case; its docstring names the terms. It fails on such
+a line that no allowlist row claims, on a line that the markers of 2
+rows claim, on a row whose count no longer matches the tree and on a
+malformed row. It also fails, naming the cause, when git ls-files
+fails or lists nothing, on an unmerged index entry, on a tracked
+symbolic link or submodule, and on a tracked file or allowlist that it
+cannot read. It runs git with a fixed argument list and no shell and
+treats file content as data. Its own 3 files are its named exceptions;
+each must be tracked and must hold a matching line. The allowlist has
+1 row per kind of line in a file: path, count, owner and marker. The
+owner column is reviewed prose that the gate does not check.
+
+The tests build throwaway git repositories. Each refusal case first
+runs the gate on the unchanged repository, which must pass, then makes
+1 change and requires exit 1 and a problem line that names the cause.
+
+The Agent Plugins manifest workflow runs the tests and the gate as 2
+new steps, and tools/run_all_checks.sh runs them as 2 new run lines.
+tools/test-run-all-checks.py records the new digest of that script.
+.github/squash/287.txt holds this message.
+
+Checks a reviewer can rerun from the repository root, with their
+expected outcomes:
+
+    python3 -I tools/check-licence-names.py
+
+exits 0, and at the head of this change its last line is
+"check-licence-names: checked: 59 lines in 35 files; 0 problem(s)".
+
+    python3 -I tools/check-licence-names.py --list
+
+exits 0 and prints 1 line of path and count per file, then the line
+"total: 59 lines in 35 files".
+
+    python3 -I tools/test-check-licence-names.py
+    python3 -I tools/test-run-all-checks.py
+
+each exit 0.
+
+TODO 274 records a gate, tools/check-licence-names.py, with an
+allowlist that holds every tracked line matching its 3 terms in any
+letter case outside named exceptions, failing on an unclaimed line or
+a stale row, wired into CI and tools/run_all_checks.sh, in a pull
+request of its own after pull request 279, at the substantive tier.

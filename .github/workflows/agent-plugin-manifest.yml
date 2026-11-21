@@ -5,7 +5,10 @@ name: Agent Plugins manifest
 # cleanlanguage/LICENSE and cleanlanguage/NOTICE.md to be regular files whose
 # bytes equal the root LICENSE and NOTICE.md, so a missing, non-regular or
 # drifted licence copy cannot reach main either. Structural, offline, and
-# stdlib-only; also runs the gate's own unit tests.
+# stdlib-only; also runs the gate's own unit tests. The job also runs the
+# licence-name gate and its tests: the gate fails when a tracked line that holds
+# one of its search terms has no allowlist row, or when an allowlist row's count
+# no longer matches the tree.
 #
 # Neither trigger carries a paths filter, so this gate reports on every pull
 # request and on every push to main and can be a required check: a path-filtered
@@ -56,3 +59,9 @@ jobs:
       - name: Validate the Agent Plugins manifest
         shell: bash
         run: python3 -I tools/check-agent-plugin-manifest.py
+      - name: Run the licence-name gate tests
+        shell: bash
+        run: python3 -I tools/test-check-licence-names.py
+      - name: Check that the allowlist claims every tracked line naming a licence term
+        shell: bash
+        run: python3 -I tools/check-licence-names.py
