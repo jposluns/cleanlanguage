@@ -12,18 +12,23 @@ run, parsed as code or printed.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
-tab: a repository-relative path, a count matching [1-9][0-9]*, an owner (unit-2, unit-3 or keep)
-and a marker, a literal text matched with its letter case. A row claims each matching line of its
-path that holds its marker. The gate fails on:
+tab: a repository-relative path, a count, an owner (unit-2, unit-3 or keep) and a marker, a
+literal text matched with its letter case. The count is canonical ASCII decimal: it matches
+[1-9][0-9]* in full, so a sign, a space, a leading zero, a digit outside ASCII or any other
+spelling is a bad count. It is compared as text with the decimal number of claimed lines, so a
+count of any length is read. A row claims each matching line of its path that holds its marker.
+The gate fails on:
 
 - a matching line that no row of its path claims (unclaimed);
 - a matching line that the markers of 2 or more rows of its path claim (ambiguous), so a broad
   marker cannot quietly take lines of another kind;
-- a row whose claimed lines differ in number from its count (stale), which includes a row whose
-  lines are gone;
+- a row whose claimed lines differ in number from its count (stale), fewer or more, which
+  includes a row whose lines are gone; a row of a path that cannot be read is not reported
+  stale, since its lines are unknown;
 - a malformed row: another number of fields, a carriage return, a bad count or owner, an empty
   marker, a path that is not tracked, a path of a named exception, or the path and marker of an
-  earlier row. A malformed row claims nothing.
+  earlier row that has 4 fields and no carriage return, whether or not that earlier row is well
+  formed. A malformed row claims nothing.
 
 The named exceptions are the gate's own 3 files, NAMED_EXCEPTIONS: this gate, the allowlist and
 tools/test-check-licence-names.py. Their lines are not compared, since they must hold the terms.
@@ -38,12 +43,19 @@ cannot be opened or read; and when the allowlist cannot be read or is not UTF-8.
 
 Output and exit codes. Each problem goes to standard error, prefixed "check-licence-names: ",
 then the line "check-licence-names: checked: N lines in M files; P problem(s)" goes to standard
-output, where N and M count the matching lines and files outside the named exceptions. Every
-character outside printable ASCII in a path or marker is written as a backslash escape. Exit 0
-when the allowlist and the tree agree; 1 on any problem; 2 on a bad invocation (argparse's own
-code). --list prints "path:count" for each file outside the named exceptions with a matching line,
-then "total: N lines in M files", and exits 1 on a listing or reading problem. --root PATH points
-the gate at another repository.
+output, where N and M count the matching lines and files outside the named exceptions. In every
+field that a problem line or --list shows (a path, count, owner, marker, mode, stage, git's
+message or an error's text), each character outside printable ASCII is written once as \\xHH,
+\\uHHHH or \\UHHHHHHHH, and a backslash as \\\\, so no control byte reaches the output. Exit 0 when
+the allowlist and the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown
+option (argparse's own code). --list prints "path:count" for each file outside the named
+exceptions with a matching line, then "total: N lines in M files". It does not parse the
+allowlist, so it reports no unclaimed or ambiguous line, no stale or malformed row and no
+allowlist that is not UTF-8. It exits 1 when git ls-files cannot run, fails or lists nothing; on
+an unmerged entry; on a tracked path with a mode other than 100644 or 100755; on a tracked path,
+the allowlist included, that is not a regular file in the work tree or cannot be read; and on a
+named exception that is not tracked or holds no matching line. --root PATH points the gate at
+another repository.
 
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
@@ -183,7 +195,7 @@ def scan(root: Path, entries: dict, problems: list):
 
 
 def read_allowlist(root: Path, entries: dict, problems: list) -> list:
-    """The well-formed rows of the allowlist, each (row line number, path, count, owner, marker)."""
+    """The well-formed rows of the allowlist, each (row line number, path, count text, owner, marker)."""
     data = read_file(root, ALLOWLIST, problems)
     if data is None:
         problems.append(f"{ALLOWLIST}: the allowlist cannot be read, so no line can be claimed")
@@ -206,21 +218,24 @@ def read_allowlist(root: Path, entries: dict, problems: list) -> list:
             problems.append(f"{where}: it has {len(fields)} tab-separated field(s), not 4")
             continue
         path, count, owner, marker = fields
+        earlier = seen.setdefault((path, marker), number)
+        if earlier == number:
+            earlier = None
         if not COUNT.fullmatch(count):
-            problems.append(f"{where}: the count {shown(count)!r} is not a number from 1 with no leading zero")
+            problems.append(f"{where}: the count '{shown(count)}' is not canonical ASCII decimal: digits 0 to 9 "
+                            "only, from 1, with no sign, space or leading zero")
         elif owner not in OWNERS:
-            problems.append(f"{where}: the owner {shown(owner)!r} is none of {', '.join(OWNERS)}")
+            problems.append(f"{where}: the owner '{shown(owner)}' is none of {', '.join(OWNERS)}")
         elif not marker:
             problems.append(f"{where}: the marker is empty")
         elif path in NAMED_EXCEPTIONS:
             problems.append(f"{where}: {shown(path)} is a named exception, whose lines are not compared")
         elif path not in entries:
             problems.append(f"{where}: {shown(path)} is not a tracked path")
-        elif (path, marker) in seen:
-            problems.append(f"{where}: it repeats the path and marker of row {seen[(path, marker)]}")
+        elif earlier is not None:
+            problems.append(f"{where}: it repeats the path and marker of row {earlier}")
         else:
-            seen[(path, marker)] = number
-            rows.append((number, path, int(count), owner, marker))
+            rows.append((number, path, count, owner, marker))
     return rows
 
 
@@ -244,9 +259,9 @@ def compare(found: dict, unreadable: set, rows: list, problems: list) -> None:
     for number, path, count, owner, marker in rows:
         if path in unreadable:
             continue
-        if claimed[number] != count:
-            problems.append(f"{shown(path)}: allowlist row {number} ({owner}, marker {shown(marker)!r}) is stale: "
-                            f"it claims {claimed[number]} line(s), the allowlist says {count}")
+        if str(claimed[number]) != count:
+            problems.append(f"{shown(path)}: allowlist row {number} ({shown(owner)}, marker '{shown(marker)}') is "
+                            f"stale: it claims {claimed[number]} line(s), the allowlist says {shown(count)}")
 
 
 def main(argv=None) -> int:

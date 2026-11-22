@@ -3,7 +3,7 @@
 # The count is the number of matching lines of that path that hold the marker, matched with
 # its letter case; every matching line of a path must hold the marker of exactly 1 row.
 # Owner: unit-2 or unit-3 changes the line in that unit of TODO 243; keep stays as it is.
-# The owner column is reviewed prose; the gate does not check it.
+# The gate refuses an owner other than unit-2, unit-3 or keep; whether the owner is right is reviewed.
 # path	count	owner	marker
 .aiqt/pin.toml	1	keep	license = "CC-BY-SA-4.0"
 .baseline/SPECIFICATION.md	1	keep	public domain or Creative Commons licences

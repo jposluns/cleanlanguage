@@ -7,19 +7,32 @@ with git ls-files, reads each from the work tree, splits it at line
 feeds only and finds every line that holds 1 of its 3 search terms in
 any ASCII letter case; its docstring names the terms. It fails on such
 a line that no allowlist row claims, on a line that the markers of 2
-rows claim, on a row whose count no longer matches the tree and on a
-malformed row. It also fails, naming the cause, when git ls-files
-fails or lists nothing, on an unmerged index entry, on a tracked
-symbolic link or submodule, and on a tracked file or allowlist that it
-cannot read. It runs git with a fixed argument list and no shell and
-treats file content as data. Its own 3 files are its named exceptions;
-each must be tracked and must hold a matching line. The allowlist has
-1 row per kind of line in a file: path, count, owner and marker. The
-owner column is reviewed prose that the gate does not check.
+rows claim, on a row whose count is lower or higher than the number of
+lines it claims, and on a malformed row, which includes a count that
+is not canonical ASCII decimal and a row that repeats the path and
+marker of an earlier row, malformed or not. It compares a count as
+text, so a count of any length gives a named problem. It also fails,
+naming the cause, when git ls-files fails or lists nothing, on an
+unmerged index entry, on a tracked symbolic link or submodule, and on
+a tracked file or allowlist that it cannot read. It runs git with a
+fixed argument list and no shell and treats file content as data. In
+each path, count, owner, marker and message that it shows, it writes a
+character outside printable ASCII once as a backslash escape. Its own
+3 files are its named exceptions; each must be tracked and must hold a
+matching line. The allowlist has 1 row per kind of line in a file:
+path, count, owner and marker. The gate refuses an owner other than
+unit-2, unit-3 or keep; whether a row's owner is the right one is
+reviewed prose that the gate does not check.
 
 The tests build throwaway git repositories. Each refusal case first
 runs the gate on the unchanged repository, which must pass, then makes
-1 change and requires exit 1 and a problem line that names the cause.
+1 change and requires exit 1, exactly 1 summary line on standard
+output, and problem lines that are exactly the cause and any
+consequence that the case names with its reason. No run may write a
+character outside printable ASCII. 3 cases load the gate in a separate
+process and call its file reader with os.lstat or os.fdopen replaced,
+to reach a descriptor that is not a regular file, a symbolic link that
+appears after the lstat check, and a read error.
 
 The Agent Plugins manifest workflow runs the tests and the gate as 2
 new steps, and tools/run_all_checks.sh runs them as 2 new run lines.
