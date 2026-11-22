@@ -1,0 +1,272 @@
+License under Apache-2.0 and add cleanlanguage/ licence copies (#279)
+
+Make Apache-2.0 the licence of the whole project, as the maintainer
+decided, starting with the legal texts. This is unit 1 of 3 of TODO 243.
+
+LICENSE holds the Apache License, Version 2.0 text byte for byte, with
+no project header. NOTICE.md carries the copyright, the scope and the
+suggested attribution under Apache-2.0, and states that the vendored
+AIQT pack, which ships no licence file of its own, is covered by the
+Apache-2.0 text in LICENSE, as the coordinator ruling requires. Its
+scope section says that the notice also ships in the skill zip and the
+plugin, and that the paths it names, apart from the baseline's own
+tools/card-fonts/, are paths of the source repository. README.md names
+Apache-2.0, points to LICENSE and gives the suggested attribution, and
+its sentence on the canonical skill definition now gives that quantity
+as a numeral.
+
+While this change was open, main added to NOTICE.md a new section,
+"Recommended, not embedded: AIQT", after the paragraph under Adopted
+governance rules, the paragraph to which this change adds the sentence
+on the AIQT pack's licence. The branch merged main, and git reported a
+conflict only in NOTICE.md, at that paragraph. The resolution keeps
+both this change's sentence and main's section. cleanlanguage/NOTICE.md
+copies the merged NOTICE.md, main's section included, because
+tools/check-agent-plugin-manifest.py requires the 2 files to be
+byte-equal.
+
+Main then changed tools/release-package.sh to lay out and check the
+package in a work folder in dist/ and to move the zips and their
+.sha256 files into dist/ only after every check passes (#273). The
+branch merged main again, and git reported a conflict only in that
+file. The resolution keeps main's work folder and this change's
+licence copies: LICENSE and NOTICE.md reach src/ of the work folder
+from cleanlanguage/ through git archive, so main's lines that wrote the
+root files there with git show, and its chmod 644 of them, are gone;
+the find that sets every file there to 0644 still covers both. Main's
+tools/test-release-package-dist.py builds a reference zip with the
+packager of its REFERENCE_COMMIT, which predates the copies: its
+allowlist refuses them, and its expected entry list would list LICENSE
+and NOTICE.md twice. The test now adapts that packager with 2 edits to
+its text, each of which must match exactly once: the allowlist admits
+the 2 paths, and the expected entry list drops them from the entries of
+the git tree. REFERENCE_COMMIT stays, since for 1 tree the packager
+under test zips the same bytes as the adapted reference packager: the
+set-up builds the clone's 1 tree with the adapted reference packager,
+and case 1 builds that tree with the packager under test and requires
+the digest of the set-up's build. Case 1 does not compare trees: a zip
+built from this change's tree differs from one built from main's, at
+least in its LICENSE and NOTICE.md entries, since this change rewrites
+the root files that those entries copy.
+
+This squash message replaces every commit message on the branch when
+the pull request merges. Where an earlier commit message differs from
+the pull request description or this squash message, those 2 are the
+record.
+
+After the second merge, the branch has 9 single-parent commits. The
+last adds only .github/squash/279.txt, byte for byte equal to this
+message, as the committed input that the Pull request text gate reads.
+The recorded failure reported that the file was missing and reported
+0 text defects. The coordinator check and a green text gate are still
+required before merge, with no further QA review, as the maintainer
+decided in Entry 165.
+
+The site's licence page names the notice file as the place of the
+suggested attribution and gives it as NOTICE.md does. Its modified
+date in site-src/site.json moves from 2026-11-03 to 2026-11-18, the
+day of that change, since tools/check-page-metadata.py fails a page
+whose article:modified_time is more than 7 days older than the last
+commit of the page's file. Regenerating changes 3 lines of
+site/license/index.html (the suggested-attribution line, the
+article:modified_time and the JSON-LD dateModified) and 1 line of
+site/sitemap.xml (the lastmod of /license/). No other generated line
+changes.
+
+cleanlanguage/LICENSE and cleanlanguage/NOTICE.md are new byte-equal
+copies of the root files, as the maintainer decided in Entry 74, so the
+skill zip and the plugin, which installs the cleanlanguage/ tree, both
+carry them. tools/release-package.sh accepts the 2 paths, fails unless
+each copy has the same git blob as its root file, and stages the zip's
+LICENSE and NOTICE.md from cleanlanguage/; the zip still holds each
+once, at its root, and the expected entry list and the byte check read
+them from the cleanlanguage/ blobs. Its comments now give as numerals
+11 quantities that they gave in words. The gate
+tools/check-agent-plugin-manifest.py fails when a copy is missing, is a
+symlink, is not a regular file (a FIFO, a folder, a socket or a
+device) or differs from its root file. It reads a copy only after
+those refusals, and asks for a copy's type only through pathlib's
+is_symlink, exists and is_file, which call os.lstat and os.stat. It
+does not refuse a root LICENSE or NOTICE.md that is a symlink: it
+reads it through the link, which the tests pin, while
+tools/release-package.sh compares the git blobs at HEAD, and the blob
+of a symlink holds the path it leads to, so a root file that is a
+symlink to a file equal to the copy passes the gate but fails the
+packager's comparison, and one that leads to a different file fails
+both. The gate's code adds the tuple LICENCE_FILES, which names the 2
+root files, the function read_bytes, which reads a file and ends with
+exit 3 when it cannot, and the function check_licence_copies, which
+main calls after the marketplace check and before its success line,
+which now also says that the 2 copies equal the root files; no other
+line of its code changes. Its module docstring now gives 1 quantity as
+a numeral. It also says how the tests check the refusals: they answer
+os.stat and os.lstat for 1 copy and require no open, read or listing
+of the copy before the refusal through a call that they record. It
+names 2 residuals, as given below: a gate that asks for a file type
+another way, and a read before the refusal through a route that the
+tests do not record, which the seam does not catch. The header of the
+Agent Plugins manifest workflow says that its job also checks the
+copies.
+
+tools/test-skill-version-consumers.py builds the package with a copy at
+HEAD that is missing, has 1 byte replaced, has CR LF line endings, has
+the case of its letters swapped, has 1 space before its first line
+ending or after its last, or has 1 LF added at its end or its final LF
+removed, for each file, and requires exit 1 with that copy's message.
+A table adds 16 rows for each file: for each copy and each root file,
+and for the index and for the working-tree files, the place differs or
+is missing while HEAD is good, which must build, and HEAD differs or is
+missing while the place is good, which must fail. A last case, for each
+file, commits a .gitattributes giving the copy text eol=crlf, so git
+archive writes its zip entry with CR LF while the blobs keep LF, and
+requires exit 1 with the byte check's message for that entry. Its
+module docstring now gives as numerals 3 quantities that it gave in
+words, and its comments 2 more.
+
+tools/test-agent-plugin-manifest.py tests the refusal of each kind of
+copy on every runner, with no skip, through the route by which the
+gate asks for a file type: a fake answers os.stat and os.lstat, called
+with the exact path string of 1 copy and no dir_fd, with the type of
+the kind under test, while the file behind it stays a regular, equal
+copy, and records each call of io.open, open, os.open, os.listdir or
+os.scandir whose path argument is that exact string, with or without
+a dir_fd, and that looks that name up on io, builtins or os at the
+time of the call. For each file and each of 11 kinds (a symlink to a
+regular file, to a FIFO or to a character device, a dangling symlink,
+a missing copy, a folder, a FIFO, a socket, a character device, a block
+device and a type that Linux does not use), the gate must exit 1 with
+that kind's message, and the fake must have recorded no open, read or
+listing of the copy before the refusal; a gate that reads the copy
+before refusing it through a route that the fake does not record passes
+that case, as the residuals below say. A control requires that a
+regular type through the fake passes, that the fake answered and that
+the gate read the copy. A seam case gives a root file the type of a
+symlink and requires that it be read through. A case tests make_node's
+policy: skip on EPERM, EACCES,
+EOPNOTSUPP or ENOSYS, which the case names itself, with a message
+equal to the one that names the kind of node, its path and the error,
+for a test node at cleanlanguage/node and for a FIFO at LICENSE.fifo
+in the fixture root, and raise, not skip, on each error of a fixed
+set: an OSError with a message and a path for each other errno that
+the errno module names (ENOSPC, EINVAL and EROFS among them) and for
+the number 1 above the highest it names; 1 OSError with no errno,
+whose message is "AF_UNIX path too long", which Python raises for a
+socket path too long for a socket address; and 1 ValueError, whose
+message is "embedded null character in path". A skip on any error of
+that set fails the case.
+
+A sweep makes each 1-byte edit of a copy (a space, a CR or an LF
+inserted, 1 byte deleted, a letter put in the other case or another
+byte replaced by x or y) at every offset of the fixture texts; in the
+real LICENSE and NOTICE.md it makes the replacement at every offset,
+and each edit at offset 0, at the last byte and at the end. The gate
+must refuse each with exit 1 and the differs message.
+
+Real-node smoke cases make, where the OS allows it, a copy that is a
+symlink to the root file, to a FIFO or to nothing, a FIFO, a Unix
+socket or a character device, and a root file that is a symlink; each
+checks that the node has the type the fake gives that kind, and runs
+the gate. A FIFO copy, or a link to one, is checked in a separate
+process that must exit 1 within 10 seconds while a thread waits to
+open the FIFO for writing, so a gate that opens the FIFO for reading
+before refusing the copy, with or without blocking, fails. Where the
+OS refuses a node with 1 of those 4 errors, the smoke case or subtest
+skips with a message that names the kind of node, its path and the
+error, and the seam still tests that kind; any other error makes it
+error. unittest counts a skip as skipped, not as failed, so such a run
+ends with OK (skipped=N) and exit 0 when nothing else fails, and the
+script then prints unittest's own record of each skip, whose test id
+carries the subtest's parameters. In an unprivileged run the 2 device
+subtests skip. The suite fails each of 13 mutants of the gate's
+refusal logic, each of 6 mutants of make_node's skip policy and each
+of 5 mutants of its skip message (without the path, without the kind,
+with only the error's strerror text, always naming a test node, or
+always putting cleanlanguage/ before the file name), both on this
+runner and with every kind of node refused.
+
+Residuals, each with any case that catches part of it: a gate that
+asks for a file type other than through os.stat or os.lstat looked up
+when called, which fails the refusal subtests for each kind that the
+changed query refuses, and the control when the gate no longer calls
+os.lstat, or no longer calls os.stat, with the exact path string, a
+false alarm until the fake follows it, never a silent pass; a read
+before the refusal through io.FileIO, a bytes path, another spelling of
+the path, such as one relative to a dir_fd, a reference to 1 of the 5
+recorded functions taken before the fake is in place, such as a name
+bound at import, the same function reached through another module,
+such as posix.open, a subprocess or ctypes, which the seam does not
+catch, since the fake records only a call whose path argument is the
+exact path string, with or without a dir_fd, and that looks the
+function's name up on io, builtins or os at the time of the call: the
+FIFO smoke cases catch it where a FIFO can be made, and the cases for a
+missing copy and for a folder on every runner, and the smoke cases for
+a socket and for a dangling symlink where those can be made, catch one
+that lets through an error that it meets on that copy, so when every
+kind of node is refused, one that lets no such error through passes
+every case, such as one that ignores the errors of its open and of its
+read, or one that ignores the error of its open when its open of a
+folder fails, as that of io.FileIO does; a gate that finds a root
+symlink other than through os.stat or os.lstat called with the exact
+path string and no dir_fd, which are the only calls the fake answers,
+such as through os.readlink, a call with a dir_fd, or os.stat, os.lstat
+or os.path.islink of a bytes path or of another spelling of the path,
+which only the real-node case catches, where symlinks can be made; any
+part of the fake's stat result other than its type bits, since the
+gate reads only those: a fake with other permission bits than 0o777
+for a symlink and 0o644 for any other type, or with other values in
+the fields it takes from the real file, passes; a make_node that skips
+only on an error outside the fixed set that the skip-policy case tries,
+such as another errno number that the errno module does not name, an
+OSError with no errno and another message, an OSError with an errno of
+the set but no path, a ValueError with another message, or another
+exception that is not an OSError (a mutant of make_node for each of
+those 5 passes the suite); on a runner that refuses a kind of node,
+whether the fake describes that kind as the kernel does, and for a
+block device on every unprivileged run, and a character device
+without the CAP_MKNOD capability; the deletion of the lines that print
+the skip records, though unittest's summary still reads skipped=N; a
+Python release other than 3.14.4, the only one run, that reaches a
+file's type another way, which fails closed; timing and flakiness,
+which no repeated run of a mutant measured; a comparison
+loose only for some edits of 2 or more bytes that no case makes, such
+as 2 bytes replaced at the same length (one loose for every such edit
+fails each case that makes a copy and its root file differ by more than
+1 byte, the real-node one where symlinks can be made), for 1-byte
+edits the sweep does not make, or for a 1-byte
+insertion or deletion inside the real files at a byte pattern absent
+from the fixtures; a prefix comparison longer than the real file; a
+packager comparison that ignores another difference, such as a blank
+line added between 2 lines (one that ignores every blank line, as
+diff -B does, fails the subtests that add a final LF to a copy); in
+the FIFO smoke cases, an open that the writer thread misses because it
+came before the thread began to wait or was not recorded within 0.2
+seconds; and a correct gate slower than 10 seconds on a FIFO copy,
+which fails its case.
+
+Landing the legal texts first makes every later statement that the
+licence text is in LICENSE true when it lands. Units 2 and 3 follow:
+unit 2 changes the skill, the plugin manifests and the portable
+renderings, and the licence line of the test input in
+tools/test-skill-release-date.py, which copies the skill's header, and
+regenerates the site's instructions page, which embeds the skill;
+unit 3 changes the rest of the site, including the rest of the licence
+page, which it rewrites, setting the page's modified date in
+site-src/site.json again.
+
+Places that still name CC BY-SA 4.0, the earlier licence, as the
+licence of the project or the site remain in the tree; this change
+leaves them as they are, and units 2 and 3 change those places. The
+search for them is this command, which counts, in each tracked file,
+the lines that hold any of the 3 terms in any letter case:
+
+    git grep -c -i -E 'BY-SA|ShareAlike|Creative Commons'
+
+The run recorded for the preceding commit counted 56 lines in 34 files.
+The new squash file adds 3 matching lines in 1 file, so the expected
+total is 59 lines in 35 files. This total is inferred from the recorded
+count and the draft file, not a new run of git grep. The lines counted
+also include lines that name Creative Commons but not as this
+project's licence, which stay as they are. A line that names the
+earlier licence in another spelling, which that search does not find,
+is a residual that no check of this change covers. The release is
+TODO 244.

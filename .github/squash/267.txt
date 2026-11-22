@@ -1,0 +1,197 @@
+Date a restored page at the merge base in the page-metadata gate (#267)
+
+The page-metadata gate now dates a page at the merge base of HEAD and
+refs/remotes/origin/main only when there is exactly 1 merge base, the
+page's mode and blob at HEAD equal its mode and blob at that base, and
+git hash-object of the working-tree path gives its blob at HEAD. git
+hash-object applies the attributes and filters that git reads and can
+apply, such as those set in the repository, in the user's or the
+system's attributes file, or in local, global, system or environment
+configuration, follows a symbolic link and does not compare the
+working-tree mode. An attribute or a filter that is not required and
+that git cannot apply makes git hash-object hash the bytes as they are.
+A branch whose own commits changed a page and then restored it exactly,
+with main's stamp kept, is then not asked to restamp it. Otherwise the
+gate reads the date at HEAD as before, and a committed date-only stamp
+change or committed mode-only change counts as a change. A failed git
+call stops the gate with exit 3, so it is not read as an absent blob or
+a match, and so does git that cannot be run, such as when it is not on
+PATH, and git output that the gate cannot use, such as a byte that is
+not ASCII in a date. Output of a form that git does not print for a
+reading stops the gate with exit 3, such as a shallow status other than
+the 1 line true or false, a merge base line that is not 1 object name or
+that repeats another line, object names of different lengths among those
+read for a page, the names in the ref listing, which hold the protected
+ref's tip, the merge bases, the names in the tree entries, whether blob,
+tree or gitlink, and the git hash-object result, as git prints the
+object names of a repository at 1 length, a ref listing line whose name
+neither is the protected ref nor starts with it and a slash, a tree
+entry that is not a mode and type pair that git prints and an object
+name at the page's path, or a date line that is not 1 calendar date; the
+name of a ref below the protected ref is not checked against the refname
+rules of git. Before, a shallow status other than true read as full
+history. The gate's docstring now lists each cause of exit 3.
+
+The gate reads git's output as bytes, with no decoding or newline
+translation. It splits the tree listing at each NUL byte, each entry at
+its first tab and the part before that tab at each single space, and
+compares the name after that tab, as bytes, with the page's path; it
+splits the ref listing at each line feed and each line at its first
+space, and compares the refname, as bytes, with the protected ref. So a
+CR in a page's folder or a Unicode line separator in a ref's name is
+read as it is. Dates, merge bases, object names and modes are decoded as
+ASCII, and the readings other than these 2 listings split the output at
+each line feed, with which it must end unless it is empty. git runs with
+GIT_LITERAL_PATHSPECS set and without the other pathspec variables, so a
+page path is read as that path and not as a glob; before, a page in a
+folder such as [ab] was dated by the commits of a page that the glob
+matched, such as site/a/index.html. The report prints each line with
+print(), with each byte of a page path that the file system encoding
+cannot decode shown as a backslash escape, such as \xff for 0xff, and
+every other character as main's gate prints it, so such a page no longer
+stops the gate with a traceback when stdout's error handler is strict.
+
+The page-metadata suite gains a class whose cases each run in a
+temporary git repository made with no template. Each folder that a test
+of the class makes sits in 1 temporary folder that is removed when the
+test ends. Each commit the class makes has a fixed date, and each check
+of a page in it passes a fixed today, including the checks that the
+gate's main() makes in it. Its git calls and the gate's read no system
+or global configuration, no configuration from GIT_ variables, no user
+attributes or ignore file and no system attributes file. Its cases plant
+configuration from GIT_ variables, a ~/.gitconfig, a system
+configuration file, and user attributes and ignore files at both default
+paths. No case plants a system attributes file, since git has no
+variable that moves it. No case checks dropping GIT_CONFIG_GLOBAL alone
+or HOME alone, since git reads a user's ~/.gitconfig only when both are
+dropped, and the ~/.gitconfig case fails when both are. Cases pin the
+date readings at merges: a branch restamp that main merges fails when
+the last-change reading follows only first parents or uses
+--full-history, a page added on a merged branch fails when the
+added-date reading follows only first parents, and a page added
+identically on both sides of a merge fails when that reading uses
+--full-history. Cases pin pages in folders named [ab], by a CR, by a TAB
+or by the byte 0xff, refs named across a Unicode line separator, the 4
+pathspec variables, each set to 1 and to a value that git refuses, and
+the report on a strict stdout, on io.StringIO, with no stdout and under
+an ascii file system encoding. Cases give the gate, through a git on
+PATH, output of a form that git does not print, and pin the escape of
+each lone surrogate from \udc80 to \udcff in the report, the number of
+git calls for a page, the fixed today that main() reads, a sibling tool
+that is a symbolic link, a sitemap configuration that the engine
+refuses, no content pages, git var naming no system attributes file, a
+git on PATH that cannot be executed, a page added, removed and added
+again, each required meta property missing, a ref listing line below the
+protected ref whose name git does not print, a tree entry with an empty
+name, a meta property with no content, an empty stamp, an empty meta
+author, an empty or false co-author entry, an author with no entry, an
+author name padded at its ends by each character for which str.isspace()
+is true, such as U+0085, U+00A0, U+3000 and U+001C to U+001F, which the
+gate removes, or by any other, such as U+200B or U+2060, which it keeps,
+checked over every code point, a null author entry beside the meta
+author, an ld+json type with ASCII white space at its ends or in
+capitals, which is collected, or with other white space, U+200B or
+U+2060 at its ends, which is not, an empty ld+json script left open at
+the end of a page, another element's end tag in a self-closed ld+json
+script, an @type list, an element other than a script with the ld+json
+type, the trim of git's stderr in the message of a failed git call,
+checked over every code point other than a surrogate, a page restored
+exactly in a SHA-256 repository, an added date followed by a line that
+is not a date, 2 pages that disagree on the author, a page with an
+absent or empty meta author beside 2 pages that agree, the gate run as a
+script, each primary JSON-LD type, each name that the gate needs from a
+sibling tool, a sibling tool that cannot be read or that exits, JSON-LD
+nested too deeply to parse, a page that is a folder, a JSON-LD member
+that is not an object, and the date checks on a stamp that is absent,
+malformed, of today or in Arabic-Indic digits, on a page with no history
+and on a page in the published overrides. The class still takes inputs
+from the machine, such as the git binary found on PATH and its built-in
+defaults.
+
+The suite drives the gate's ASCII, form and length checks from 1 table
+of 24 readings, chosen by the distinctions that the gate's code makes: a
+ref listing line, the protected ref's or one below it, at line 1, 2 or
+3, including a line below the protected ref listed first, before the
+protected ref's line, or second, after it; a merge base, at line 1 or 2;
+a tree entry of each of the 5 mode and type pairs, at HEAD and at the
+merge base; the git hash-object result; and the shallow status, the
+added date and the last-change date. 1 case gives the 21 object names in
+the table, in a SHA-1 and in a SHA-256 repository, the byte 0xff before
+the name, a name of the repository's length whose last digit is /, :, a
+backtick, g or A, and, where a length applies, a name of the other
+object format's length; it gives the 3 other readings the byte 0xff. It
+also gives each input that the per-site cases it replaces gave, in the
+object format and with the message of its case, to each reading that its
+case gave it, save a blob entry with 1 more digit, which answered every
+git ls-tree call and now answers the first, so it drops none of those
+inputs. It gives some to more readings than those cases did: they gave
+39, 41, 63 and 65 digits on a first line below the protected ref and as
+the git hash-object result, and 88 and 104 digits as the git hash-object
+result alone, and it gives all 6 to each listing's first line alone,
+where no length applies, and to the git hash-object result. It expects
+exit 3 and the message of the fault's check for the row's git call. A
+second case parses the gate and expects its 39 sites, each use or
+definition of a name that reads or checks git's output, to match the
+table's list of sites, each line that 2 searches for those names find
+outside a docstring or a comment to hold a site, each check that a row
+has to be applied at a site that the row reaches, and each check at a
+site to be driven by a row of the table, save the mode decode in
+blob_at(). So a site added to the gate, removed from it or moved to
+another function fails the suite until the table names it, as does a row
+that claims a check that is applied at none of the sites that the row
+names or reaches. For each of the table's 64 cells, a reading and a
+check that applies to it, a mutant of the gate that skips that check for
+that reading's output alone fails the first case.
+
+Residuals remain. History shapes that the cases do not build stay
+unpinned, such as a branch that merged main after main changed the page,
+a rebase, a squash merge of a branch with no net change, and a renamed
+page, since the date reading does not follow renames. With more than 1
+merge base, such as after a criss-cross merge, the gate reads at HEAD,
+so a page restored exactly there is asked to restamp. A protected ref
+that is absent, stale or not the remote's main changes the reading: in a
+clone without that ref, such as a remote-less clone or a CI checkout
+that does not create the ref, the gate reads at HEAD, as it does for a
+ref that git for-each-ref does not list, such as a dangling symbolic
+ref; in a clone of a fork, the base comes from the fork's main; and with
+a stale ref, the base is older main. The working-tree check can differ
+from what staging keeps: an exact restore of a page that is a symbolic
+link, or of a page committed with CRLF line ends under core.autocrlf, is
+asked to restamp; an uncommitted change can be exempt, such as an edit
+that a clean filter set in the repository or in global, system or
+environment configuration maps back to the committed blob, or an
+uncommitted mode-only change; and a page can be exempt where staging it
+would fail, such as under a working-tree-encoding attribute that git
+cannot apply to its bytes. Ambient inputs that git reads can change or
+redirect the gate's git calls, as on main, such as GIT_ variables other
+than the pathspec variables, such as GIT_DIR, which redirects its reads;
+git configuration, such as log.follow in the repository, global or XDG
+configuration, which makes the added-date reading follow renames; and
+replace refs, such as a replacement of main's tip, which the merge-base
+reading and the readings at the base also consume. The future-stamp
+check still reads today's date from the wall clock. When the exemption
+does not apply, the reading at HEAD still ignores the working tree, so
+an uncommitted edit of a page that is not an exact restore is dated by
+its last commit, such as an edit made after the last commit of a branch
+that changed the page. The report names a byte of a page path that the
+file system encoding cannot decode with a backslash escape, so it reads
+the same as a path that holds that escape's characters; under an ascii
+file system encoding that includes each byte of a UTF-8 path, such as
+\xc3\xa9, which main's gate writes as bytes to a stdout whose error
+handler is surrogateescape. A stdout whose encoding cannot encode a
+character of a line, such as an accented author name on an ASCII stdout
+with a strict error handler, still raises, as on main. While file
+descriptor 2 is open, an exit-3 message on stderr shows such a byte as a
+backslash escape; with it closed, die() writes to stdout, as on main,
+and raises on a stdout whose error handler is strict. Each page costs
+from 1 to 5 more git calls, such as a ref lookup and a merge base
+repeated per page. The object-name table's scope is its 24 readings and
+the faults that it gives them: a weakening limited to an input that the
+table does not vary, such as a listing's fourth line, can pass the
+suite, and a replacing decode of the mode in blob_at() passes it, since
+that mode is ASCII digits once TREE_ENTRIES admits it. The comparison of
+the gate with the table reads call sites, not data flow, so a new
+reading that uses none of the names it lists is not seen, and it takes
+the sites that a row names as given, so a row that names a site that its
+output does not pass through can claim a check that the gate does not
+apply to that output.

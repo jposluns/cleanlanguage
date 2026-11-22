@@ -114,8 +114,9 @@ takes fewer than 20 digits in a part, keeps a stale output, and a case
 fails.
 
 In its set-up, before any case, the test builds the clone with the packager
-of REFERENCE_COMMIT, which gives the reference digest. The cases, all in
-that clone:
+of REFERENCE_COMMIT, adapted by REFERENCE_EDITS to the licence copies
+cleanlanguage/LICENSE and cleanlanguage/NOTICE.md, which gives the
+reference digest. The cases, all in that clone:
 
 1. A good build with the checkout's packager exits 0, writes the 4 outputs,
    and gives the reference digest for both zips with matching .sha256 files;
@@ -355,6 +356,22 @@ change to the packager's output therefore makes case 1 fail by design.
 REFERENCE_COMMIT then moves to the commit that makes the change, in the
 same pull request.
 
+The packager of REFERENCE_COMMIT predates the licence copies
+cleanlanguage/LICENSE and cleanlanguage/NOTICE.md, which pull request #279
+adds to the git tree. Its allowlist
+refuses the 2 paths, and its expected entry list adds LICENSE and NOTICE.md
+by name to the entries of the git tree, so with the copies in the tree it
+would list each twice. REFERENCE_EDITS makes 2 edits to its text, each of
+which must match exactly once, or the set-up ends with an error: the
+allowlist admits the 2 paths, and the expected entry list drops them from
+the entries of the git tree. The reference still writes the root LICENSE
+and NOTICE.md into its layout, over the copies that git archive laid out
+there, and the packager under test refuses a copy whose git blob differs
+from its root file's. Case 1 checks that both builds zip the same bytes
+for 1 tree only: the set-up builds the clone's HEAD with the adapted
+reference packager, and case 1 builds it with the packager under test.
+No case builds another tree with both packagers.
+
 Usage:
   python3 -I tools/test-release-package-dist.py
 
@@ -382,6 +399,19 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = ("release-package.sh", "skill-release-date.py", "skill-release-date-client.py")
 REFERENCE_COMMIT = "8d6de113182691d313c7cb6bdfb01df7423d280c"
+# The 2 edits that adapt the packager of REFERENCE_COMMIT to the licence
+# copies, each as (text, replacement); each text must occur exactly once in
+# that packager. The first admits cleanlanguage/LICENSE and
+# cleanlanguage/NOTICE.md to its allowlist; the second drops them from the
+# entries of the git tree in its expected entry list, to which it adds
+# LICENSE and NOTICE.md by name.
+REFERENCE_EDITS = (
+    (b"'^cleanlanguage/(plugin\\.json|", b"'^cleanlanguage/(LICENSE|NOTICE\\.md|plugin\\.json|"),
+    (b"      | grep -Fvx 'cleanlanguage/plugin.json' \\\n",
+     b"      | grep -Fvx 'cleanlanguage/plugin.json' \\\n"
+     b"      | grep -Fvx 'cleanlanguage/LICENSE' \\\n"
+     b"      | grep -Fvx 'cleanlanguage/NOTICE.md' \\\n"),
+)
 KEEP = "keep.txt"
 KEEP_TEXT = b"a file the packager does not write\n"
 # The characters that the near misses insert or put in place of another: a
@@ -583,6 +613,18 @@ def git(*args: str) -> bytes:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def reference_packager(text: bytes) -> bytes:
+    """text, the packager of REFERENCE_COMMIT, with each edit of
+    REFERENCE_EDITS made; a text of an edit that does not occur exactly once
+    ends the set-up with an error."""
+    for old, new in REFERENCE_EDITS:
+        count = text.count(old)
+        if count != 1:
+            raise AssertionError("the packager of REFERENCE_COMMIT holds %r %d times, not once" % (old, count))
+        text = text.replace(old, new)
+    return text
 
 
 def edits(name: str) -> set:
@@ -955,7 +997,8 @@ class DistTests(unittest.TestCase):
                      "cleanlanguage.zip", "cleanlanguage.zip.sha256"]
         cls.output_misses = near_misses(cls.version)
         reference = cls.clone / "tools" / "release-package-reference.sh"
-        reference.write_bytes(git("-C", str(REPO), "show", REFERENCE_COMMIT + ":tools/release-package.sh"))
+        reference.write_bytes(reference_packager(
+            git("-C", str(REPO), "show", REFERENCE_COMMIT + ":tools/release-package.sh")))
         code, stderr = cls.run_packager(reference)
         if code != 0:
             raise AssertionError(f"the reference packager failed with exit {code}: {stderr}")

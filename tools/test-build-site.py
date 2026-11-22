@@ -19,7 +19,24 @@ the committed release (check_committed_render) load the generator, or a
 changed copy of it, and take that page from verify_page(), which runs the
 whole build() and writes nothing, so a fault that makes the generator refuse
 any page fails these cases too; the pin's comment names how to update it.
-The first case runs ``--check`` on this repository. Another reads this
+The first case runs ``--check`` on this repository. One checks that
+``site/favicon.ico``, listed in ``static_files``, is byte for byte the
+card builder's favicon that the baseline version publishes for this site:
+its SHA-256 is the digest that ``.baseline/SHA256SUMS`` lists for
+``logos/<site>-favicon.ico``, ``<site>`` read from
+``.baseline/site-card.toml``, and requires that check to refuse a changed,
+missing or unlisted favicon, a card data file that names another site or no
+site, and a SHA256SUMS without that line, with that name starting
+elsewhere in its line or with a character other than a space in its 65th
+place, or with that line ended other than by a line feed, the file read
+from its bytes so that a carriage return or a CRLF is not translated to
+a line feed. Another checks
+that the logos the built pages load are exactly the pin gate's ``LOGOS``,
+loading ``tools/check-baseline-pin.py`` from its path as
+``tools/copy-baseline.py`` does, that its comparison refuses a name
+added to ``LOGOS`` or dropped from it, a page that starts or stops
+loading a logo, and either set with 1 name swapped for another, and that
+the check, run again with a name added to ``LOGOS``, reports it. Another reads this
 file's own source and fails on any ``?v=`` token that starts with a digit
 apart from those KEPT_TOKENS names, since a case writes the current baseline
 version as BASELINE, read by the generator's load_pin(). Another reads the
@@ -74,6 +91,7 @@ INPUTS = [
     "site/.well-known",
     "site/README.md",
     "site/images",
+    "site/favicon.ico",
     ".baseline/pin.toml",
     "tools/sitemap-config.json",
     "tools/check-install-page.py",
@@ -3254,8 +3272,8 @@ PIN_VERSION = "9.8.7"
 PIN_CHECKSUM = "0123456789abcdef" * 4
 PIN_DATE = "2000-01-02"
 VERIFY_PAGE_PIN = {
-    "placeholder": "5b26485f5d2e1c8a1bfd46ea52db8cfb0de1bb582debbc24cbf427764465b5dc",
-    "published": "53603672aea6647e4fddfb93567daba7d341629be6d14557ab65bda4c1a204ce",
+    "placeholder": "8d07b3e5fabc9efedff2fa449322b604a3cce274110fbf383ac2d3eabf8887c6",
+    "published": "5a1197e156cb8d5f8fee89521d350099442f3e778908320d5926116f59e72a29",
 }
 SITE_CSS_PIN = None
 PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
@@ -3612,6 +3630,206 @@ def check_staged_build(failures: list[str]) -> int:
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"staged build: {page} links {value} outside /draft/ and /downloads/")
     return 1
+
+
+# The favicon that the site serves at its root as /favicon.ico, listed in site.json's static_files: the card builder's
+# <site>-favicon.ico for the site that .baseline/site-card.toml names, which the baseline version publishes and lists
+# in its SHA256SUMS, kept as .baseline/SHA256SUMS. The site commits those bytes, so favicon_problems() compares the
+# file's digest with that 1 line and reads nothing inside the file.
+FAVICON = "favicon.ico"
+# The files, from the root of a tree, that favicon_problems() reads.
+FAVICON_INPUTS = ("site-src/site.json", ".baseline/site-card.toml", ".baseline/SHA256SUMS", "site/" + FAVICON)
+SUMS_DIGEST = re.compile(r"[0-9a-f]{64}")
+# Each end of a line, other than the line feed, at which str.splitlines() ends a line: published_favicon_digest()
+# ends a line of SHA256SUMS only at a line feed, so it finds no digest in a line ended by any of these.
+SUMS_LINE_ENDS = ("\r", "\r\n", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", chr(0x2028), chr(0x2029))
+
+
+def published_favicon_digest(sums: str, site: str) -> str | None:
+    """The digest that sums, the text of a SHA256SUMS file, lists for logos/<site>-favicon.ico: the first 64
+    characters of the 1 line whose rest is 2 spaces and that name; None if no line is, if more than 1 is, or if those
+    64 characters are not lower-case hexadecimal digits (SUMS_DIGEST)."""
+    found = [line[:64] for line in sums.split("\n") if line[64:] == f"  logos/{site}-favicon.ico"]
+    return found[0] if len(found) == 1 and SUMS_DIGEST.fullmatch(found[0]) else None
+
+
+def favicon_problems(root: Path) -> list[str]:
+    """Why the tree at root does not serve the published favicon (none if it does): each of FAVICON_INPUTS can be
+    read and parsed; site-src/site.json's static_files lists favicon.ico; .baseline/site-card.toml names its site as
+    a string; .baseline/SHA256SUMS, decoded from its bytes so that no line end in it is translated, lists 1 digest
+    for that site's favicon (published_favicon_digest()); and site/favicon.ico hashes to that digest."""
+    try:
+        config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
+        site = tomllib.loads((root / ".baseline/site-card.toml").read_text(encoding="utf-8")).get("site")
+        sums = (root / ".baseline/SHA256SUMS").read_bytes().decode("utf-8")
+        actual = hashlib.sha256((root / "site" / FAVICON).read_bytes()).hexdigest()
+    except (OSError, ValueError) as error:
+        return [f"the favicon, site.json, the card data or the baseline's SHA256SUMS could not be read: {error}"]
+    problems: list[str] = []
+    if FAVICON not in config.get("static_files", []):
+        problems.append(f"site-src/site.json static_files does not list {FAVICON}, which the site serves at its root")
+    if not isinstance(site, str):
+        return problems + [f".baseline/site-card.toml names no site as a string: {site!r}"]
+    expected = published_favicon_digest(sums, site)
+    if expected is None:
+        problems.append(f".baseline/SHA256SUMS lists no single digest for logos/{site}-favicon.ico")
+    elif actual != expected:
+        problems.append(f"site/{FAVICON} hashes to {actual}, not to {expected}, the digest that .baseline/SHA256SUMS "
+                        f"lists for logos/{site}-favicon.ico")
+    return problems
+
+
+def replaced(relative: str, old: str, new: str):
+    """A fault that replaces the first old in the file at relative under a root with new; old must be there. It reads
+    and writes the file's bytes, so that no line end is translated either way."""
+    def apply(root: Path) -> None:
+        text = (root / relative).read_bytes().decode("utf-8")
+        if old not in text:
+            raise AssertionError(f"{old!r} is not in {relative}")
+        (root / relative).write_bytes(text.replace(old, new, 1).encode("utf-8"))
+    return apply
+
+
+def last_byte_changed(root: Path) -> None:
+    """A fault that changes the last byte of site/favicon.ico under a root."""
+    path = root / "site" / FAVICON
+    data = path.read_bytes()
+    path.write_bytes(data[:-1] + bytes([data[-1] ^ 0xFF]))
+
+
+# Faults to a copy of FAVICON_INPUTS that favicon_problems() must refuse, each with words that its refusal must hold.
+FAVICON_FAULTS = (
+    ("the favicon with its last byte changed", last_byte_changed, "hashes to"),
+    ("the favicon missing", lambda root: (root / "site" / FAVICON).unlink(), "could not be read"),
+    ("static_files without favicon.ico",
+     replaced("site-src/site.json", '"images/cleanlanguage-card.png",\n    "favicon.ico"',
+              '"images/cleanlanguage-card.png"'), "does not list favicon.ico"),
+    ("the card data naming another site whose favicon SHA256SUMS lists",
+     replaced(".baseline/site-card.toml", 'site = "cleanlanguage"', 'site = "aiqt"'), "hashes to"),
+    ("the card data naming its site by a number", replaced(".baseline/site-card.toml", 'site = "cleanlanguage"', "site = 1"),
+     "names no site as a string"),
+    ("SHA256SUMS without the line of the site's favicon",
+     replaced(".baseline/SHA256SUMS", "  logos/cleanlanguage-favicon.ico\n", "  logos/cleanlanguage-favicon.icx\n"),
+     "lists no single digest"),
+    # The file's own line of the site's favicon ended by each of SUMS_LINE_ENDS in place of its line feed, so that a
+    # reading of the file that translates a line end, as read_text() does a carriage return, fails.
+    *((f"SHA256SUMS with the line of the site's favicon ended by {' '.join(f'U+{ord(char):04X}' for char in end)}",
+       replaced(".baseline/SHA256SUMS", "  logos/cleanlanguage-favicon.ico\n", "  logos/cleanlanguage-favicon.ico" + end),
+       "lists no single digest") for end in SUMS_LINE_ENDS),
+)
+
+
+def check_favicon(failures: list[str]) -> int:
+    """favicon_problems() passes this repository and an unchanged copy of FAVICON_INPUTS, and refuses each of
+    FAVICON_FAULTS on such a copy with its words; published_favicon_digest() finds the digest of a sound line, and
+    none for another site's name, a digest in capitals, a name listed twice, a name with a further suffix, a name
+    marked as read in binary mode, a name that does not start at the 67th character of its line: after a 65th
+    digit, after a further character or a 3rd space between the digest and the name, or under a further folder, a
+    character other than a space in the 65th place, or a line ended by 1 of SUMS_LINE_ENDS in place of a line feed.
+    FAVICON_FAULTS hold the file's own line ended by each of SUMS_LINE_ENDS too, so that favicon_problems() refuses
+    it as read from the file's bytes. --check alone passes when the file and its listing are removed together, so
+    this case is what keeps them."""
+    failures += [f"favicon: {problem}" for problem in favicon_problems(REPO_ROOT)]
+    for name, fault, words in (("an unchanged copy", None, None),) + FAVICON_FAULTS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for relative in FAVICON_INPUTS:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO_ROOT / relative, root / relative)
+            if fault:
+                fault(root)
+            problems = favicon_problems(root)
+        if fault is None and problems:
+            failures.append(f"favicon: favicon_problems() refuses {name}: {problems}")
+        elif fault is not None and not any(words in problem for problem in problems):
+            failures.append(f"favicon: favicon_problems() does not refuse {name} with {words!r}: {problems}")
+    sound = f"{'a' * 64}  logos/x-favicon.ico\n"
+    if published_favicon_digest(sound, "x") != "a" * 64:
+        failures.append("favicon: published_favicon_digest() does not find the digest of a sound line")
+    faults = (("another site's name", sound, "y"),
+              ("a digest in capitals", sound.replace("a", "A", 64), "x"),
+              ("a name listed twice", sound * 2, "x"),
+              ("a name with a further suffix", sound.replace(".ico", ".ico.bak"), "x"),
+              ("a name marked as read in binary mode", sound.replace("  logos", " *logos"), "x"),
+              ("a 65th digit before the name", sound.replace("  logos", "a  logos"), "x"),
+              ("a further character between the digest and the name", sound.replace("  logos", "z  logos"), "x"),
+              ("a 3rd space between the digest and the name", sound.replace("  logos", "   logos"), "x"),
+              ("a name under a further folder", sound.replace("  logos", "  x/logos"), "x"),
+              ("a character other than a space in the 65th place", sound.replace("  logos", "z logos"), "x"),
+              *((f"the line ended by {' '.join(f'U+{ord(char):04X}' for char in end)} in place of a line feed",
+                 sound.replace("\n", end), "x") for end in SUMS_LINE_ENDS))
+    for name, sums, key in faults:
+        if published_favicon_digest(sums, key) is not None:
+            failures.append(f"favicon: published_favicon_digest() finds a digest in a SHA256SUMS with {name}")
+    return 3 + len(FAVICON_FAULTS) + len(faults)
+
+
+# The pin gate, whose LOGOS names the logos that tools/copy-baseline.py copies and the gate requires in the pin.
+PIN_GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
+LOGO_PATH = re.compile(r"assets/baseline/logos/([A-Za-z0-9._-]+)")
+
+
+def load_pin_gate():
+    """tools/check-baseline-pin.py as a module, loaded from its path and compiled from its source, as
+    tools/copy-baseline.py loads it, so no cached byte code for it is read."""
+    spec = importlib.util.spec_from_file_location("check_baseline_pin", PIN_GATE)
+    module = importlib.util.module_from_spec(spec)
+    exec(compile(PIN_GATE.read_bytes(), str(PIN_GATE), "exec", dont_inherit=True), module.__dict__)
+    return module
+
+
+def logo_set_problem(loaded: set[str], logos: set[str]) -> str | None:
+    """Why loaded, the names of the logos that the built pages load, is not exactly logos, the pin gate's LOGOS (None
+    if it is)."""
+    if loaded != logos:
+        return (f"the built pages load {sorted(loaded)}, but the pin gate's LOGOS is {sorted(logos)}; only in the "
+                f"pages: {sorted(loaded - logos)}, only in LOGOS: {sorted(logos - loaded)}")
+    return None
+
+
+def check_logo_set(failures: list[str], added: tuple[str, ...] = ()) -> int:
+    """The logos that the built pages load, the names of their assets/baseline/logos/ paths, are exactly the pin
+    gate's LOGOS, so a name added to the list or dropped from it, or a page that starts or stops loading a logo,
+    fails here; logo_set_problem() refuses each of those 4 changes made to what this build gives, and a page that loads
+    another logo in place of 1 of LOGOS, and LOGOS with another name in place of 1 of its own, which leave each set its
+    size. This check, run again on a new build with the names of added joined to LOGOS, must report the added name
+    (and then runs nothing more), so that its report of the built pages cannot be switched off with every case
+    passing."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"logo set: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        loaded = set()
+        for page in out.rglob("*.html"):
+            loaded.update(LOGO_PATH.findall(page.read_text(encoding="utf-8")))
+    logos = set(load_pin_gate().LOGOS) | set(added)
+    problem = logo_set_problem(loaded, logos)
+    if problem:
+        failures.append(f"logo set: {problem}")
+    if added:
+        return 1
+    reported: list[str] = []
+    check_logo_set(reported, ("zz-added.svg",))
+    if not any("only in LOGOS: ['zz-added.svg']" in failure for failure in reported):
+        failures.append(f"logo set: check_logo_set() does not report a name added to LOGOS: {reported}")
+    if not loaded or not logos:
+        failures.append(f"logo set: the built pages load {sorted(loaded)} and the pin gate's LOGOS is {sorted(logos)}, "
+                        "so a logo cannot be dropped from each")
+        return 1
+    faults = (("a name added to LOGOS", loaded, logos | {"zz-added.svg"}),
+              ("a name dropped from LOGOS", loaded, logos - {min(logos)}),
+              ("a page that starts loading a logo outside LOGOS", loaded | {"zz-loaded.svg"}, logos),
+              ("a page that stops loading a logo", loaded - {min(loaded)}, logos),
+              ("a page that loads another logo in place of 1 of LOGOS", (loaded - {min(loaded)}) | {"zz-loaded.svg"},
+               logos),
+              ("LOGOS with another name in place of 1 of its own", loaded, (logos - {min(logos)}) | {"zz-added.svg"}))
+    for name, pages, listed in faults:
+        if logo_set_problem(pages, listed) is None:
+            failures.append(f"logo set: logo_set_problem() does not refuse {name}")
+    return 2 + len(faults)
 
 
 def check_version_literals(failures: list[str]) -> int:
@@ -3985,6 +4203,8 @@ def main() -> int:
     ran += check_family_pages(failures)
     ran += check_stated_count(failures)
     ran += check_footer(failures)
+    ran += check_favicon(failures)
+    ran += check_logo_set(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
     ran += check_release_near_placeholder(failures)
