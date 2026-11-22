@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Runs on this machine the run text of the workflow steps that
-# tools/test-run-all-checks.py reads, the steps of the 18 workflows under
+# tools/test-run-all-checks.py reads, the steps of the 19 workflows under
 # .github/workflows that a pull_request or a push to main triggers, in the order
 # of their files and of their steps, a command that an earlier workflow already
 # runs being run once. Each distinct run text of those steps has a run line of
@@ -128,6 +128,9 @@ run python3 -I tools/check-page-metadata.py
 # pages-build.yml, after tools/check-python-version.py above
 run python3 -I tools/test-pages-build.py
 run bash tools/pages-build.sh
+# plugin-distribution.yml
+run python3 -I tools/test-check-plugin-distribution.py
+run python3 -I tools/check-plugin-distribution.py
 # plugin-validate.yml
 run plugin_manifests
 # portable-text-sync.yml, after tools/check-python-version.py above

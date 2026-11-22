@@ -7,13 +7,253 @@ changes or removes the install page, a family page, site/_headers,
 site/_redirects, .baseline/pin.toml, the copy of the gate,
 tools/check-headers.py or tools/check-inline-code.py (in 2 cases as another
 user and 1 as root, adding a cached file of it too), swaps 2 family pages, or
-adds a file that Cloudflare Pages runs or reads: package.json,
+adds a file that Cloudflare Pages may run or read: package.json,
 functions/_middleware.js, site/_worker.js, site/_worker.js/index.js,
 wrangler.json, wrangler.jsonc, wrangler.toml, runtime.txt, requirements.txt,
-Pipfile or Gemfile. It runs the gate there as a separate process and asserts
-its exit code and, where a case gives them as (code, words), that its output
-holds those words, so that a crash, which also exits 1, does not pass for a
-refusal. 3 cases put a ``</ script>``, markup in a ``title`` and a comment
+Pipfile or Gemfile. The copy holds the 3 stylesheets too. For check 7,
+cases add a page or a folder named as a source, a file, a folder or a link
+under site/assets/, copy the whole committed site/ over the copy, or add a
+rule to
+site/_redirects, among them a line that holds a character other than the
+line feed at which a reading may end a line or a field, and assert that such
+a line fails, that a rule whose source lies under /assets/ passes only when
+its source is an exact path that no file occupies or lies above, in any
+letter case, and it sends that source with the status 301 to a file under
+/assets/baseline/logos/ that tools/check-baseline-pin.py pins, with no
+query, fragment or further field, with a case for each of those
+conditions, the statuses 200, 201, 300 and 302 to 308, 404, 0301, 3010,
+301.0, +301 and 301! each in a case of its own, a placeholder :d, :x or :zz
+or the splat ** as the 3rd segment, and a splat * that ends a segment of 21
+characters, in place of part of the path of the font that the install pages
+load, each in a case of its own, and that a header rule
+for such a path still fails; in this process it also calls the gate's redirect_break()
+on 1 character of each class that it refuses or allows
+(BREAK_CHARACTERS), the line feed among
+them, which no run of the gate gives it. These cases of check 7 are
+examples of its contract. They do not show that no weakening of check 7
+passes them, which no finite set of inputs can show; check 7's code is
+held by the 2 layers below.
+
+The test holds the code of the gate by 2 layers.
+
+1. The digest of the gate's bytes. At the top of this file, before the test
+   runs any code of the gate or of a sibling tool, gate_bytes() reads the
+   bytes of tools/check-install-page.py once and stops the test with exit 1
+   unless their sha256 is GATE_SHA256, a digest written in this file, which
+   the gate cannot write. Its message names the file and both digests, or,
+   where the bytes cannot be read, the file, the error and the digest that
+   GATE_SHA256 records. Every load of the gate in this process, through
+   load_gate(), then compiles and runs exactly those bytes, GATE_BYTES, as
+   a new module, never through the import system, so that no cached
+   bytecode stands in for them.
+   make_root() writes those bytes as the copy of the gate that each case
+   runs in a separate process. LOCK_PROBE and SORTED_PROBE, which load that
+   copy in such a process, start with CHECKED_LOAD, the same check: they
+   read its bytes once, stop with exit 1 unless their sha256 is
+   GATE_SHA256, with a message that names the file in the same way, and
+   compile and run exactly those bytes as a new module.
+   checked_load_problems() fails unless gate_bytes() and CHECKED_LOAD each
+   stop on a copy of the gate with 1 byte added, naming the file and both
+   digests, and on a copy that is missing or is a folder, naming the file,
+   the error that reading it raises and the digest that GATE_SHA256
+   records, and unless CHECKED_LOAD loads a copy of GATE_BYTES. Every
+   other case, and version_problems(), runs the copy as a script or
+   through runpy, which compile its source, with no digest check, since
+   some of them change the copy on purpose. What this
+   layer adds: until a reviewer records a new GATE_SHA256, any change to
+   the gate, a comment included, stops the test before any case and before
+   any code of the gate runs in its process, whatever route the change
+   takes, such as a helper reached through an alias, functools.partial or a
+   class, a rebinding through globals() while the gate loads, the gate's
+   main(), or code at its top level that rewrites this test's own values.
+2. The reader pin, reader_pin_problems(). From GATE_BYTES, by the gate's
+   syntax tree and the symbol table that Python's compiler builds for it,
+   reader_names() derives READER_NAMES, which are redirect_problems() and
+   each function that a def at the top level of the gate binds and that it
+   reads by name, and each that those read in turn, and READER_GLOBALS,
+   which are the other names of the gate that those functions read and that
+   a statement of the gate binds: its constants and imports.
+   reader_pin_problems() runs the code of those bytes through load_gate()
+   and fails unless the derived names are exactly those written; unless
+   each is bound exactly once in the whole gate, by a statement at its top
+   level, so that a later binding of it, a local one, a parameter, a global
+   statement or a star import fails; unless the gate as loaded binds each
+   function to the function that its def makes, with that def's own code
+   object; and unless, for each name, the sha256 of its statement, as the
+   syntax tree gives it with any docstring left out, and of its value as
+   the loaded gate holds it, in the text that pin_value() writes for it,
+   equals READER_SHA256, and it names each name that differs. That text
+   gives plain data by repr(), a pattern by its text and flags, and a
+   module, a class or a path by its name, so another module, class or path
+   of the same name gives the same digest. Plain data is a str, bytes,
+   int, float, bool or None, or a tuple, a list or a dict that holds only
+   plain data. Each kind, plain data included, is matched as the exact
+   type of the value, compared by identity with a type that this test
+   captured when it was imported (PIN_KINDS, PLAIN_TYPES). For a value of
+   no such type, pin_value() raises UnpinnableValue, and the reader pin
+   fails, naming the name, the reviewed gate included; so does
+   reader_pin_text() for a value with __wrapped__ that a def does not bind.
+   pin_value_problems() holds these refusals for a subclass of a type that
+   pin_value() writes, a class with its own metaclass, an object whose
+   class gives a pattern, a module, a class or a path type as its
+   __class__, an object whose type compares equal to every type, and the
+   other values that its docstring names, and holds that the reader pin
+   fails on a gate whose REQUESTED_FILES is a subclass of tuple. The pin
+   holds the values that a reviewed gate defines in ordinary code. A value
+   built to pose as another kind in a way that pin_value() does not
+   refuse, and code at the gate's top level that changes this test's
+   functions or values, are held only by the reviewer who reads the gate's
+   diff, since the gate's code runs in this process before the pin reads
+   any value. The 1st layer is the control that makes every such gate
+   need that review. What this layer adds to the 1st: a change to the
+   gate whose new GATE_SHA256 is recorded still fails, naming the function
+   or value, where it changes a statement that this layer holds, until its
+   own digest is renewed too, so that a change to check 7 does not pass
+   unnamed inside a change elsewhere in the gate. It follows only names
+   read directly: a helper that a pinned function reaches in any other way
+   than by reading the name that a def at the gate's top level binds is
+   not derived, and its code is in no digest here. Examples of that class,
+   not a complete list, are a helper reached through a class or getattr(),
+   or through an attribute of a module or a path that a pinned name holds.
+   A helper reached through the value of a pinned name for which
+   pin_value() raises UnpinnableValue, such as an alias of a function, a
+   lambda assigned at the top level, functools.partial, a dict or a list
+   of functions or of classes, a subclass of dict or tuple, or a set of
+   functions, is in that class too, but there the test fails closed: the
+   reader pin fails on such a gate, the reviewed one included. Its
+   binding check does not see a rebinding made while the gate loads that
+   leaves each pinned statement and the text of each pinned value as they
+   were. Examples of that class, not a complete list, are a rebinding
+   through globals(), setattr or exec of a builtin, of a module by another
+   module of the same name, of a function by a wrapper around it, of
+   __file__, of a pinned value by another module, class or path of the
+   same name, or of a function of a sibling tool, rebound and restored
+   around a call.
+
+A reviewer records a new digest of either layer only after reading the
+change. The residuals, stated once:
+
+1. Renewing a digest accepts whatever the diff holds. A change that edits
+   the gate and records the new GATE_SHA256, and the new READER_SHA256
+   digests where it changes a statement of the reader pin, passes. The test
+   then guarantees that the bytes of the gate that run are those that a
+   reviewer accepted, not that they are right or that no weakening of
+   check 7 can pass.
+2. Once a new GATE_SHA256 is recorded, a change that alters what the reader
+   does by a route that the reader pin does not follow passes the test and
+   is held only by review of the gate's diff. Examples of such routes, not
+   a complete list: a helper of the class that the reader pin does not
+   derive (above), other than one reached through a value on which the
+   test fails closed, such as one reached through a class or getattr(), or
+   through an attribute of a module or a path that a pinned name holds; a
+   value built to pose as another kind in a way that pin_value() does not
+   refuse (above); a rebinding through globals(), setattr or exec, while
+   the gate loads, of the class that its binding check does not see
+   (above), or when the gate runs as a command; the gate's main(), which
+   reads site/_redirects and gives it to redirect_problems() and is not
+   pinned; and code at the gate's top level that changes this test's
+   functions or values, pin_value() among them, once gate_bytes() has
+   checked the bytes.
+3. Code outside the gate is pinned by neither layer and can change what the
+   gate or this test does. Examples, not a complete list:
+   tools/check-baseline-pin.py, which load_tool() runs and whose load_pin()
+   pinned_files() reuses; the 2 sibling tools that this test loads in its
+   own process through the import system, tools/check-baseline-pin.py in
+   pinned_baseline() and tools/check-inline-code.py in version_problems(),
+   where a cached bytecode file of either can stand in for its source,
+   though both loads run only after gate_bytes() has checked the gate; and
+   Python's own modules, such as re, held only by the version guard.
+4. An edit to tools/test-install-page.py itself is held only by review. An
+   edit that also changes GATE_SHA256, gate_bytes(), CHECKED_LOAD or the
+   reader pin passes, as does an edit that makes main() run the cases, or
+   read those it left unrun, with another loop or look, in main() or before
+   main_call_problems() runs. The test cannot hold itself against its own
+   edits.
+5. The residuals of the gate's own guarantee, which its module docstring
+   accepts, are unchanged, including how Pages really matches `:name` and a
+   splat across `/`, which has not been observed (an inference, made with
+   no network).
+6. Every edit of the gate, a comment or a docstring included, stops the test
+   before any case until GATE_SHA256 is renewed. Docstrings are left out of
+   the digests of the reader pin, and `ast` drops comments, so a prose fix
+   of the gate needs no new digest in READER_SHA256; a refactor of the
+   reader needs both.
+
+Each case runs the gate in its temporary repository as a separate process
+and asserts its exit code and, where a case gives them as (code, words),
+that its output holds those words, so that a crash, which also exits 1,
+does not pass for a
+refusal. 1 case, of LOCKED_CASES, runs the gate through LOCK_PROBE in place
+of the gate alone: the probe loads the copy of the gate, wraps its
+occupied() to record each folder it could not list, sets the folder
+LOCKED_FOLDER to mode 000 and runs the gate's main(). It exits 4 unless
+occupied() recorded the refusal that names that folder, and otherwise with
+main()'s code, and the case expects exit 1 and the refusal that names its
+redirect source and that folder. Root lists a folder whatever its mode, so
+under root that case is not run, and main() names it as skipped, as it names
+the 2 mode-000 load cases. 2 cases, of CASE_FOLDER_CASES, run the gate
+through SORTED_PROBE, which loads the copy of the gate, wraps its
+list_folder() to give the entries of each folder sorted by name, so that
+site/assets/QZM is listed before site/assets/qzm, and exits with main()'s
+code; the file that occupies their source lies in the folder listed last in
+1 case and in the folder listed first in the other, so occupied() must enter
+each folder whose name matches a segment in any letter case. They need 2
+folders whose names differ only in letter case, which a file system that
+treats such names as 1 cannot hold, so main() first probes the scratch
+folder of each of them (folds_letter_case()), not the platform's name, and
+where the file system there treats such names as 1, it does not run the
+case and names it as skipped with the reason FOLDED (letter_case_skip()).
+main() runs the cases in case_run_problems(), which runs them in run_cases()
+and fails unless it ran each case and
+each residual, or left it unrun with a reason, exactly once, each case it
+did not run is of CASE_FOLDER_CASES with FOLDED, and, for each such case,
+a folder made as qzcase in a new scratch folder is found as QZCASE
+(folds_on_second_look(), read by unrun_problems()); its count of the cases
+run is of those it ran. second_look_problems() fails unless
+folds_on_second_look() gives the answer of a new stand-in folder that treats
+such names as 1 and of 1 that does not, having made qzcase there alone, lets
+through the PermissionError of a stand-in folder that refuses to make it,
+and on this file system gives what folds_letter_case() gives, unless
+unrun_problems(), given stand-ins for the look, fails each unrun case but a
+case of CASE_FOLDER_CASES with FOLDED whose look gives True, a look that
+raises an OSError included, and unless case_run_problems(), given stand-ins
+for run_cases() and the look, gives the failures of the loop, fails a case
+run twice or neither run nor left unrun and fails a case left unrun with
+FOLDED unless the look gives True. main_call_problems() fails unless
+case_run_problems() takes run_cases() and folds_on_second_look() by default
+and main() calls it exactly once, as case_run_problems(run, wanted,
+run_cases, folds_on_second_look), calls none of run_cases(),
+unrun_problems() and folds_on_second_look() itself, binds none of the names
+of those 4 functions, declares no name global or nonlocal and sets or
+deletes no attribute. It reads only those forms in the syntax tree, so an
+edit to main() that runs the cases another way, as through globals() or
+under another name, or an edit that changes those functions before
+main_call_problems() runs, rests on review. No case holds main()'s own use
+of what case_run_problems() returns, as none holds its use of any check it
+calls.
+Where the file system holds both names, a case whose copy
+holds 2 names in 1 folder that differ only in letter case, 2 folders, 2
+files or a folder and a file (case_twins()), fails unless it is of
+CASE_FOLDER_CASES, a case of CASE_FOLDER_CASES whose copy holds none fails
+(twin_problems()), and a case whose copy holds a folder that case_twins()
+cannot list fails, so that no other case relies on such names unnoticed.
+letter_case_problems() fails unless folds_letter_case() gives the answer
+of a stand-in folder that treats such names as 1 and of 1 that does not,
+lets through the PermissionError of a stand-in folder that refuses to make
+QZCASE with it, and on the scratch folder the answer that a 2nd look at its
+names gives,
+letter_case_skip() skips exactly the cases of CASE_FOLDER_CASES whose
+probe finds folding, with FOLDED, and probes no other case, case_twins()
+finds folder, file and mixed twins and raises an OSError for a folder that
+it cannot list, and twin_problems() rejects twins outside
+CASE_FOLDER_CASES and a case of it without twins. case_loop_problems()
+fails unless run_cases(), given stand-ins for the probe, the copy, the
+reading of twins and the gate, skips exactly as the stand-in probe finds,
+runs every other case, fails a case outside CASE_FOLDER_CASES whose copy
+holds twins or a folder that cannot be listed and a case of it whose copy
+holds none, so that main()'s reading of the skip and of twins is held
+where main() makes it. 3 cases put
+a ``</ script>``, markup in a ``title`` and a comment
 ended by ``--!>`` on a family page, and 3 run a copy of the gate that expects
 the other reading of 1 of its ``READING_PROBES``, expecting exit 3 and the
 probe's name, as the gate gives them on a Python that reads that probe's
@@ -109,7 +349,10 @@ class, and in no li, such as the ChatGPT page's link to #get in its
 div.callout), and they must also pass with a further link back to #get in a
 Gemini step, which the gate passes. And it fails unless
 each of the 2 path lists of .github/workflows/install-page.yml covers every
-file the gate, this test and that workflow read and each path of the gate's SERVER_ENTRIES
+file the gate, this test and that workflow read (site_read_paths() among
+them: every file under site/, the path of each committed source of
+site/_redirects, which occupied() of check 7 lists, and a new file or entry
+anywhere under site/) and each path of the gate's SERVER_ENTRIES
 (check 10), as a file and at any depth under a directory, and holds no
 negative pattern (1 that starts with !, which GitHub reads in order as
 excluding what the patterns before it include; this check reads no order, so
@@ -118,12 +361,13 @@ written - "PATTERN" or - 'PATTERN', with no backslash or quote of that kind in
 it and nothing after the closing quote but spaces and a comment, so any other
 form fails, as does a list in any form it does not read as a list),
 and unless that check refuses the workflow with
-site/_redirects removed from 1 list or from both, with functions/** narrowed
+site/_redirects and site/** removed from 1 list or from both, with site/**
+alone removed from 1 list or from both, with functions/** narrowed
 to functions/* in 1 list or in both, or with !functions/** after
 functions/** in 1 list or in both, double-quoted, single-quoted, escaped as
 \\x21functions/** or followed by a comment, refuses those other forms, and
 passes it with a blank line and a comment line after functions/** in both, or
-with an item single-quoted or followed by a comment.
+with functions/** or site/** single-quoted or followed by a comment.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -208,6 +452,8 @@ names tools/check-inline-code.py.
 from __future__ import annotations
 
 import ast
+import collections
+import copy
 import difflib
 import hashlib
 import importlib.util
@@ -216,6 +462,7 @@ import py_compile
 import re
 import shutil
 import subprocess
+import symtable
 import sys
 import tempfile
 import types
@@ -224,6 +471,32 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-install-page.py"
+# The sha256 of the bytes of tools/check-install-page.py, recorded after a reviewer read them. gate_bytes() compares the
+# gate's bytes with it before this test runs any code of the gate. Record a new digest only after reading the diff of
+# the gate since the bytes that this digest names; a new digest accepts whatever that diff holds.
+GATE_SHA256 = "88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7"
+
+
+def gate_bytes(path: Path = GATE, digest: str = GATE_SHA256) -> bytes:
+    """The bytes of the gate at path, read once, if their sha256 is digest. Otherwise it raises SystemExit with a
+    message that names the file and both digests, or, where the bytes cannot be read, the file, the error and digest,
+    so that the test stops with exit 1 before any code of the gate runs in its process."""
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        raise SystemExit(f"test-install-page: tools/{path.name} could not be read, so its sha256 could not be compared "
+                         f"with {digest}, the digest that GATE_SHA256 records; no code of it has run: {error}")
+    found = hashlib.sha256(source).hexdigest()
+    if found != digest:
+        raise SystemExit(f"test-install-page: tools/{path.name} has the sha256 {found}, not {digest}, the digest that "
+                         f"GATE_SHA256 records; no code of it has run. Record a new digest only after reading the "
+                         f"diff of tools/{path.name}.")
+    return source
+
+
+# The bytes of the gate that every load of it in this process runs, read and checked here, before the test runs any
+# code of the gate or of a sibling tool.
+GATE_BYTES = gate_bytes()
 
 
 def pinned_baseline() -> str:
@@ -260,8 +533,12 @@ COPILOT = "site/install/copilot/index.html"
 OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
 REDIRECTS = "site/_redirects"
+# The 3 stylesheets are copied too, so that the copy holds the files under site/assets/baseline/ that the pages link,
+# and occupied() of check 7 finds them. The gate does not read their url(), and a stylesheet that a page links and the
+# copy lacks does not fail it.
 FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
-         "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml"]
+         "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml",
+         "site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # The meta and link elements, by the gate's head_key(), whose attribute here the gate's HEAD_PIN leaves free (None):
 # the page's own text, address and dates, which the gate treats as metadata only and which change with each page and
 # release, and the address of a stylesheet, which check 6 holds to its exact form. Any other value is pinned.
@@ -316,22 +593,50 @@ LATER_TAG = "a later html or body start tag carries attributes"
 OTHER_SHEET = "the only stylesheets that the rule pin reads"
 # The gate's messages for an html or body start tag with attributes that is not an ancestor of every checked element,
 # a page without the doctype, a Link header in site/_headers, and a header outside INSTALL_HEADERS under a URL pattern
-# that can match an install page; and the opening lines that the generator writes.
+# that the gate reads, failing closed, as able to match an install page; and the opening lines that the generator
+# writes.
 NOT_ANCESTOR = "an html or body start tag that is not an ancestor of every checked element carries attributes"
 NO_DOCTYPE = "the page does not begin with <!doctype html>"
 LINK_SET = "sets a Link header"
-INSTALL_HEADER = "which can match an install page"
+INSTALL_HEADER = "which this gate reads, failing closed, as able to match an install page"
 # The gate's messages for an attribute outside its ATTRIBUTE_PIN, a meta, link or base element outside its HEAD_PIN,
-# and a rule of site/_redirects whose source can match an install page or a file the pages load.
+# and a rule of site/_redirects whose source the gate reads, failing closed, as able to match an install page or a file
+# the pages load.
 GIVEN = "which the committed pages do not give"
 HEAD_PINNED = "(HEAD_PIN)"
-REDIRECT = "which can match an install page or a file the install pages load; a rule there can send the reader away"
+REDIRECT = ("which this gate reads, failing closed, as able to match an install page or a file the install pages load; "
+            "a rule that matches such a path can send the reader away")
+# The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, that a file of the
+# tree occupies or lies beneath, and that cannot be evaluated; for a rule there that does not send its source to a
+# pinned logo with the status 301, before the reason that target_problem() gives; and the 14 release lines of the
+# committed file, before its logo redirects.
+NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
+OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
+UNEVALUATED = "which could not be evaluated: "
+TARGET = (REDIRECT + " from the page or serve other content. Under a loaded segment a rule passes only when it sends "
+          "its source with the status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py "
+          "pins, and ")
+RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:14])
+# The gate's words for a line of site/_redirects that holds a character other than the line feed at which a reading
+# may end a line or a field, and each such character, named: str.splitlines() ends a line at each of the first 10, and
+# str.split() a field at each but the last 3, which are other control characters and a byte order mark.
+BREAK = ("site/_redirects line 37 holds the character U+{:04X}; a line of site/_redirects may hold no control "
+         "character, line or paragraph separator, byte order mark or whitespace but the space")
+BREAKS = (
+    ("a lone carriage return", "\r"), ("a carriage return before a line feed", "\r\n"), ("a vertical tab", "\x0b"),
+    ("a form feed", "\x0c"), ("U+001C", "\x1c"), ("U+001D", "\x1d"), ("U+001E", "\x1e"), ("U+0085", "\x85"),
+    ("U+2028", chr(0x2028)), ("U+2029", chr(0x2029)), ("a tab", "\t"), ("U+001F", "\x1f"), ("a no-break space", "\xa0"),
+    ("an ideographic space", chr(0x3000)), ("U+0000", "\x00"), ("U+007F", "\x7f"), ("a byte order mark", chr(0xFEFF)),
+)
+# The gate's words for a redirect source whose first segment is favicon.ico, which a browser may request without a link.
+REQUESTED = ("which this gate reads, failing closed, as able to match /favicon.ico, a file that a browser may request "
+             "from the site's root without a link for any page")
 # The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
 # LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
 TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
 NONE_GIVEN = "which the committed pages give no"
 OUTSIDE_LOADS = "(LOADED_SEGMENTS)"
-SERVER_ENTRY = "exists; Cloudflare Pages runs it, or reads it"
+SERVER_ENTRY = "exists; Cloudflare Pages may run it, or read it"
 PIN_UNREAD = "check-install-page: tools/check-baseline-pin.py could not read the baseline pin"
 # The gate's words for a load outside the baseline pin, an element of a tag that the committed pages do not use, a
 # family link whose label is not its family's name, and a switch that is not exactly the template's.
@@ -339,7 +644,7 @@ OUTSIDE_PIN = "which is not 1 of the files tools/check-baseline-pin.py pins"
 PAGE_TAG = "a tag that the committed pages do not use (PAGE_TAGS)"
 WRONG_LABEL = "the claude family link's visible label is not \"Claude\""
 SWITCH = "the page carries the light and dark switch 0 times"
-MISNESTED = "open inside it; a browser can keep that element open, reopen it or ignore the end tag"
+MISNESTED = "open inside it; a browser may keep that element open, reopen it or ignore the end tag"
 # The words of a Gemini step, which a case extends with a link; the step stays found when it holds 1 already.
 GEMINI_STEP = "<strong>New Gem</strong>"
 VERIFIED = '<p class="verified">'
@@ -525,7 +830,7 @@ INLINE_UNSUPPORTED = "SUPPORTED_PYTHONS = ((2, 7),)"
 def make_root(scratch: Path, files: list[str] = FILES) -> Path:
     root = scratch / "repo"
     (root / "tools").mkdir(parents=True)
-    shutil.copyfile(GATE, root / "tools" / GATE.name)
+    (root / "tools" / GATE.name).write_bytes(GATE_BYTES)
     for relative in files:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / relative, root / relative)
@@ -590,6 +895,42 @@ def create(relative: str, text: str):
             raise AssertionError(f"{relative} already exists")
         path.write_text(text, encoding="utf-8")
     return apply
+
+
+def write(relative: str, text: str):
+    """Replace a file of the copy with text."""
+    def apply(root: Path) -> None:
+        (root / relative).write_text(text, encoding="utf-8")
+    return apply
+
+
+def link(relative: str, to: str):
+    """Make a link at relative in the copy that points to to, which need not exist, and any folder it needs."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(to)
+    return apply
+
+
+def whole_site(root: Path) -> None:
+    """Copy the whole committed site/ over the copy's, so that occupied() of check 7 lists every file and folder of
+    the committed tree."""
+    shutil.copytree(REPO_ROOT / "site", root / "site", dirs_exist_ok=True, symlinks=True)
+
+
+def target(rest: str, source: str = "/assets/baseline/logos/aiqt-zz.svg"):
+    """A rule of source, an exact path that nothing in the copy occupies, followed by rest, after the committed
+    rules."""
+    return append(REDIRECTS, f"{source} {rest}\n")
+
+
+def break_cases() -> list[tuple]:
+    """A case for each character of BREAKS between a source and a destination: the gate reads the lines of
+    site/_redirects only at a line feed and refuses the character, so a destination after it cannot go unjudged."""
+    return [(f"a redirect whose source and destination {name} separates",
+             append(REDIRECTS, f"/foo{char}/assets/baseline/logos/aiqt-card.svg 301\n"),
+             (1, BREAK.format(ord(char[0])))) for name, char in BREAKS]
 
 
 def both(*faults):
@@ -969,7 +1310,7 @@ CASES = [
         STEPS + "<li>" + STEPS + "<li>Save the file.</li></ol></li></ol>")(root),
         (1, "an ol inside a step list carries the class 'steps'")),
     # Each checked element, each of its ancestors and each element it holds carries only the classes the committed
-    # pages give it there (the gate's CLASS_PIN), so no stylesheet rule outside the rule pin can reach it.
+    # pages give it there (the gate's CLASS_PIN), so that no stylesheet rule outside the rule pin reaches it by a class.
     ("the hero's h1 with a class", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="fresh">')),
         (1, "the hero's h1 carries the class 'fresh'")),
     ("the pick label with a further class", edit(PAGE, PICK, PICK.replace("lbl blk", "lbl blk fresh")),
@@ -1095,7 +1436,7 @@ CASES = [
     ("a family page heading with the class skip", edit(GEMINI, "<h1>", '<h1 class="skip">'), 1),
     ("a family page heading whose classes only contain only-dark or skip", edit(CHATGPT, "<h1>", '<h1 class="only-darker skip-link">'),
         (1, PINNED)),
-    ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>​</h1>"), 1),
+    ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>\u200b</h1>"), 1),
     ("a family page heading naming another family", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Gemini</h1>"), 1),
     ("a family page heading naming its family only in a vh span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Setup<span class="vh"> ChatGPT</span></h1>'), 1),
@@ -1410,6 +1751,13 @@ CASES = [
     ("the install page missing", remove(PAGE), 3),
     ("the headers file missing", remove(HEADERS), 3),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
+    # Under a pattern that reaches_page() does not read as able to match an install page, only the branches for
+    # X-Content-Security-Policy and for a detached policy refuse these lines.
+    ("an X-Content-Security-Policy line on the sitemap only",
+        edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  X-Content-Security-Policy: default-src 'none'\n"),
+        (1, "names X-Content-Security-Policy under /sitemap.xml; only Content-Security-Policy carries the policy")),
+    ("the policy detached on the sitemap only", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  ! Content-Security-Policy\n"),
+        (1, "detaches Content-Security-Policy under /sitemap.xml; only /draft/* may detach it")),
     ("the site-wide policy widened", edit(HEADERS, "frame-ancestors 'none'" + NEXT_RULE, "frame-ancestors 'none'; worker-src *" + NEXT_RULE), 1),
     ("the site-wide policy gaining unsafe-eval", edit(HEADERS,
         "Cross-Origin-Opener-Policy: same-origin\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'",
@@ -1439,8 +1787,9 @@ CASES = [
     ("a lower-case link header that only preloads a stylesheet, on every page",
         edit(HEADERS, SITE_LINE, SITE_LINE + "\n  link: </assets/baseline/fonts.css>; rel=preload; as=style"),
         (1, LINK_SET)),
-    # Under a URL pattern that can match an install page, /* included, only the headers and values of INSTALL_HEADERS
-    # may appear, and no detach; the gate reads a pattern from its text alone and fails closed (reaches_install).
+    # Under a URL pattern that the gate reads as able to match an install page, /* included, only the headers and values
+    # of INSTALL_HEADERS may appear, and no detach; the gate reads a pattern from its text alone and fails closed
+    # (reaches_install).
     ("a Refresh header that sends the reader away from the install pages",
         append(HEADERS, "\n/install/*\n  Refresh: 0; url=/\n"), (1, INSTALL_HEADER)),
     ("a Link header under a family page", append(HEADERS, "\n/install/claude/\n  Link: </>; rel=preload\n"),
@@ -1463,7 +1812,7 @@ CASES = [
     # No rule of site/_redirects may have a source that can match an install page, read as reaches_install reads a
     # pattern of site/_headers: a redirect sends the reader away, and a rewrite (200) serves other content there.
     ("a redirect from every install page to the home page", append(REDIRECTS, "/install/* / 302\n"),
-        (1, "site/_redirects line 15 has the source /install/*, " + REDIRECT)),
+        (1, "site/_redirects line 37 has the source /install/*, " + REDIRECT)),
     ("a rewrite of a family page to the home page", append(REDIRECTS, "/install/claude/ / 200\n"), (1, REDIRECT)),
     ("a redirect under a placeholder", append(REDIRECTS, "/:page/* / 301\n"), (1, REDIRECT)),
     ("a redirect from /INSTALL to the home page, indented", append(REDIRECTS, "  /INSTALL / 302\n"), (1, REDIRECT)),
@@ -1477,7 +1826,7 @@ CASES = [
     # segment of LOADED_SEGMENTS (assets), in any letter case.
     ("a rewrite of baseline.css to fonts.css",
         append(REDIRECTS, "/assets/baseline/baseline.css /assets/baseline/fonts.css 200\n"),
-        (1, "site/_redirects line 15 has the source /assets/baseline/baseline.css, " + REDIRECT)),
+        (1, "site/_redirects line 37 has the source /assets/baseline/baseline.css, " + REDIRECT)),
     ("a redirect of copy.js to rail.js", append(REDIRECTS, "/assets/baseline/copy.js /assets/baseline/rail.js 302\n"),
         (1, REDIRECT)),
     ("a redirect of every asset, in capitals", append(REDIRECTS, "/ASSETS/* / 302\n"), (1, REDIRECT)),
@@ -1488,7 +1837,193 @@ CASES = [
         append(REDIRECTS, "/images/old.png /images/cleanlanguage-card.png 301\n"), 0),
     ("a Content-Type header on the stylesheets",
         append(HEADERS, "\n/assets/baseline/*.css\n  Content-Type: text/plain\n"), (1, INSTALL_HEADER)),
-    # Every src on the 6 pages is a path under LOADED_SEGMENTS, so check 7 covers what it loads.
+    # Under LOADED_SEGMENTS a rule of site/_redirects passes only when its source is an exact path that nothing under
+    # site/ occupies and that lies beneath no file, compared in any letter case, and it sends that source with the
+    # status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py pins, as written, with no
+    # further field.
+    ("1 exact redirect of a dropped logo, after the 14 release lines alone",
+        write(REDIRECTS, RELEASE_LINES + "/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
+        0),
+    ("the committed redirects with all 22 logo lines, beside the whole committed site", whole_site, 0),
+    ("a redirect of every asset", append(REDIRECTS, "/assets/* /assets/baseline/logos/aiqt.svg 302\n"),
+        (1, "site/_redirects line 37 has the source /assets/*, " + REDIRECT)),
+    ("a redirect of every logo", append(REDIRECTS, "/assets/baseline/logos/* /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect of every logo under a placeholder",
+        append(REDIRECTS, "/assets/baseline/logos/:name /assets/baseline/logos/aiqt.svg 301\n"), (1, NOT_EXACT)),
+    ("a redirect with a wildcard inside a segment",
+        append(REDIRECTS, "/assets/baseline/logos/aiqt-*.svg /assets/baseline/logos/aiqt.svg 301\n"), (1, NOT_EXACT)),
+    ("a redirect with a splat", append(REDIRECTS, "/assets/baseline/logos/old/* /assets/baseline/logos/:splat 301\n"),
+        (1, NOT_EXACT)),
+    # A placeholder at the start of a segment that is not the last, which can match baseline.css's own folder.
+    ("a redirect of baseline.css under a placeholder in a segment that is not the last",
+        append(REDIRECTS, "/assets/:d/baseline.css /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "site/_redirects line 37 has the source /assets/:d/baseline.css, " + NOT_EXACT)),
+    # A placeholder as the whole of a segment after a segment of 7 or more characters, and a splat that ends a segment
+    # of 21, each in place of 2 or more characters of the path of the font that the install pages load through
+    # site/assets/baseline/fonts.css.
+    ("a redirect of the loaded font under a placeholder after a segment of 7 or more characters",
+        append(REDIRECTS, "/assets/baseline/:d/dancing-script-wght-normal.ttf /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "has the source /assets/baseline/:d/dancing-script-wght-normal.ttf, " + NOT_EXACT)),
+    ("a redirect of the loaded font under a splat that ends a segment of 21 characters",
+        append(REDIRECTS, "/assets/baseline/fonts/dancing-script-wght-* /assets/baseline/logos/aiqt.svg 301\n"),
+        (1, "has the source /assets/baseline/fonts/dancing-script-wght-*, " + NOT_EXACT)),
+    # A placeholder whose name no segment under site/assets/ ends in, :x or :zz, and a splat with 1 more, **, each as
+    # the whole of a segment after a segment of 7 or more characters, in place of the folder of that font.
+    *[(f"a redirect of the loaded font under {text} as the whole of a segment after a segment of 7 or more characters",
+       append(REDIRECTS, f"/assets/baseline/{text}/dancing-script-wght-normal.ttf "
+                         "/assets/baseline/logos/aiqt.svg 301\n"),
+       (1, f"has the source /assets/baseline/{text}/dancing-script-wght-normal.ttf, " + NOT_EXACT))
+      for text in (":x", ":zz", "**")],
+    ("a redirect of a logo the install pages load, beside the whole committed site",
+        both(whole_site,
+             append(REDIRECTS, "/assets/baseline/logos/cleanlanguage.svg /assets/baseline/logos/aiqt.svg 301\n")),
+        (1, "has the source /assets/baseline/logos/cleanlanguage.svg, at or above which "
+            "site/assets/baseline/logos/cleanlanguage.svg exists, " + OCCUPIED)),
+    ("a redirect of a logo the install pages load, in another letter case, beside the whole committed site",
+        both(whole_site,
+             append(REDIRECTS, "/Assets/Baseline/Logos/CleanLanguage.SVG /assets/baseline/logos/aiqt.svg 301\n")),
+        (1, "at or above which site/assets/baseline/logos/cleanlanguage.svg exists, " + OCCUPIED)),
+    ("a redirect of baseline.css in capitals", append(REDIRECTS, "/ASSETS/BASELINE/BASELINE.CSS / 302\n"),
+        (1, TARGET + "its status is 302, not 301")),
+    # 1 case for each condition on what follows the source (target_problem()), each with an exact source that nothing
+    # in the copy occupies, so that only that condition fails the rule.
+    ("a dropped logo sent to another host", target("https://other.example/x.svg 301"),
+        (1, "site/_redirects line 37 has the source /assets/baseline/logos/aiqt-zz.svg, " + TARGET
+            + "its destination https://other.example/x.svg is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo under a full URL",
+        target("https://cleanlanguage.ai/assets/baseline/logos/aiqt.svg 301"),
+        (1, TARGET + "its destination https://cleanlanguage.ai/assets/baseline/logos/aiqt.svg is not a path")),
+    ("a dropped logo sent to a pinned file that is not a logo", target("/assets/baseline/select.js 301"),
+        (1, TARGET + "its destination /assets/baseline/select.js is not under /assets/baseline/logos/")),
+    ("a dropped logo sent to an unpinned logo name", target("/assets/baseline/logos/aiqt-card.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt-card.svg is not 1 of the files that "
+            "tools/check-baseline-pin.py pins")),
+    ("a dropped logo sent to a pinned logo's name in another letter case", target("/assets/baseline/logos/AIQT.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/AIQT.svg is not 1 of the files")),
+    ("a dropped logo sent to a pinned logo with a query", target("/assets/baseline/logos/aiqt.svg?x=1 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt.svg?x=1 is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo with a fragment", target("/assets/baseline/logos/aiqt.svg#top 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/aiqt.svg#top is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo through a .. segment",
+        target("/assets/baseline/logos/../logos/aiqt.svg 301"),
+        (1, TARGET + "its destination /assets/baseline/logos/../logos/aiqt.svg is not a path from the site's root")),
+    ("a dropped logo sent to a pinned logo with a 4th field", target("/assets/baseline/logos/aiqt.svg 301 x"),
+        (1, TARGET + "the number of its fields after its source is 3, not 2")),
+    ("a dropped logo sent to a pinned logo with no status", target("/assets/baseline/logos/aiqt.svg"),
+        (1, TARGET + "the number of its fields after its source is 1, not 2")),
+    ("a dropped logo sent to a pinned logo with the status 302", target("/assets/baseline/logos/aiqt.svg 302"),
+        (1, TARGET + "its status is 302, not 301")),
+    ("a dropped logo sent to a pinned logo with the status 308", target("/assets/baseline/logos/aiqt.svg 308"),
+        (1, TARGET + "its status is 308, not 301")),
+    # Every other status of the HTTP redirect class, 300 to 307, the statuses 201 and 404, and texts that a reading of
+    # the status as a number, or by its first 3 characters, could take for 301, or that marks 301 as forced, each with
+    # an exact source that nothing in the copy occupies, so that only its status fails the rule: the gate passes the
+    # text 301 and no other. reader_pin_problems() pins the code of target_problem().
+    *[(f"a dropped logo sent to a pinned logo with the status {status}",
+       target(f"/assets/baseline/logos/aiqt.svg {status}"), (1, TARGET + f"its status is {status}, not 301"))
+      for status in ("300", "303", "304", "305", "306", "307", "201", "404", "0301", "3010", "301.0", "+301", "301!")],
+    ("a rewrite of a dropped logo to a pinned logo", target("/assets/baseline/logos/aiqt.svg 200"),
+        (1, TARGET + "its status is 200, not 301")),
+    ("a dropped logo sent to a pinned logo with the status 301", target("/assets/baseline/logos/aiqt.svg 301"), 0),
+    # The check holds no search of the site for the pages that load a source: a page that loads the source of a
+    # passing rule is sent to a pinned logo, so it passes.
+    ("a dropped logo that another page of the site loads",
+        create("site/about/index.html", '<!doctype html>\n<img src="/assets/baseline/logos/AIQT-CARD.svg" alt="">\n'),
+        0),
+    # What occupies a source: a page there that Pages serves without its .html or .htm, in any letter case, and a folder
+    # at its last segment; and a file above it in another letter case.
+    ("a redirect of a page's address without its .html",
+        both(create("site/assets/qzv.html", "<!doctype html>\n"), target("/assets/baseline/logos/aiqt.svg 301",
+                                                                         "/assets/qzv")),
+        (1, "at or above which site/assets/qzv.html exists, " + OCCUPIED)),
+    ("a redirect of a page's address without its .HTM",
+        both(create("site/assets/QZW.HTM", "<!doctype html>\n"), target("/assets/baseline/logos/aiqt.svg 301",
+                                                                        "/assets/qzw")),
+        (1, "at or above which site/assets/QZW.HTM exists, " + OCCUPIED)),
+    ("a redirect of a folder's address",
+        both(create("site/assets/qzf/keep.txt", "x\n"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzf")),
+        (1, "at or above which site/assets/qzf exists, " + OCCUPIED)),
+    ("a redirect beneath an existing file in another letter case",
+        target("/assets/baseline/logos/aiqt.svg 301", "/assets/baseline/BASELINE.CSS/old.svg"),
+        (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
+    ("a redirect with a backslash", append(REDIRECTS, "/assets/baseline/logos\\aiqt-old.svg /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a dropped logo that a file occupies", create("site/assets/baseline/logos/aiqt-card.svg", "<svg></svg>\n"),
+        (1, "at or above which site/assets/baseline/logos/aiqt-card.svg exists, " + OCCUPIED)),
+    ("a dropped logo that a file occupies in another letter case",
+        create("site/assets/baseline/logos/AIQT-Card.svg", "<svg></svg>\n"),
+        (1, "at or above which site/assets/baseline/logos/AIQT-Card.svg exists, " + OCCUPIED)),
+    ("a redirect beneath an existing file",
+        target("/assets/baseline/logos/aiqt.svg 301", "/assets/baseline/baseline.css/old.svg"),
+        (1, "at or above which site/assets/baseline/baseline.css exists, " + OCCUPIED)),
+    # A link occupies a source: at its path, whatever it points to, and at a leading part of its path, which the check
+    # does not follow, even when it points to a folder that holds nothing at the rest of the path.
+    ("a redirect beneath a link to a folder",
+        both(link("site/assets/qzl", "baseline"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzl/old.svg")),
+        (1, "at or above which site/assets/qzl exists, " + OCCUPIED)),
+    ("a redirect beneath a link that points to nothing",
+        both(link("site/assets/qzn", "nothing"), target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzn/old.svg")),
+        (1, "at or above which site/assets/qzn exists, " + OCCUPIED)),
+    ("a redirect of a link's address in another letter case, the link pointing to nothing",
+        both(link("site/assets/qzd.svg", "nothing.svg"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/QZD.svg")),
+        (1, "at or above which site/assets/qzd.svg exists, " + OCCUPIED)),
+    # An exact source may hold each character that the check allows in a segment: a capital, a digit, _ and ~.
+    ("a dropped logo whose source holds capitals", target("/assets/baseline/logos/aiqt.svg 301", "/assets/QZ-OLD.svg"),
+        0),
+    ("a dropped logo whose source holds a digit", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz-old2.svg"),
+        0),
+    ("a dropped logo whose source holds _", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz_old.svg"), 0),
+    ("a dropped logo whose source holds ~", target("/assets/baseline/logos/aiqt.svg 301", "/assets/qz~old.svg"), 0),
+    # It may hold no other character: not +, which a path may hold, nor a letter or a digit outside ASCII.
+    *((f"a dropped logo whose source holds {name}",
+       target("/assets/baseline/logos/aiqt.svg 301", f"/assets/qz{char}old.svg"),
+       (1, f"its segment qz{char}old.svg holds a character other than ASCII letters, digits"))
+      for name, char in (("+", "+"), ("a letter outside ASCII, U+00E9", chr(0xE9)),
+                         ("a digit outside ASCII, U+0663", chr(0x663)))),
+    ("a redirect of a dropped logo under a full URL",
+        append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/aiqt-old.svg /x.svg 301\n"),
+        (1, "it does not start with /, so it can carry a scheme and a host")),
+    ("a redirect of a dropped logo with a trailing /",
+        append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg/ /x.svg 301\n"), (1, "an empty segment or a trailing /")),
+    ("a redirect with a . segment", append(REDIRECTS, "/assets/baseline/./logos/aiqt-old.svg /x.svg 301\n"),
+        (1, 'it has the segment "."')),
+    ("a redirect with a .. segment", append(REDIRECTS, "/assets/baseline/logos/../aiqt-old.svg /x.svg 301\n"),
+        (1, 'it has the segment ".."')),
+    ("a redirect with an empty segment", append(REDIRECTS, "/assets//baseline/logos/aiqt-old.svg /x.svg 301\n"),
+        (1, "an empty segment or a trailing /")),
+    ("a redirect with a percent sign", append(REDIRECTS, "/assets/baseline/logos/aiqt%2Dold.svg /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect with a question mark", append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg?a=1 /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a redirect with a number sign", append(REDIRECTS, "/assets/baseline/logos/aiqt-old.svg#a /x.svg 301\n"),
+        (1, NOT_EXACT)),
+    ("a header rule for the source of a committed logo redirect",
+        append(HEADERS, "\n/assets/baseline/logos/aiqt-card.svg\n  X-Robots-Tag: noindex\n"), (1, INSTALL_HEADER)),
+    # site/_redirects ends a line only at a line feed, and a line that holds another character at which a reading may
+    # end a line or a field fails, so a destination after such a character cannot go unjudged.
+    *break_cases(),
+    # The ends of the control range U+007F to U+009F in a comment line, where no rule is read, so that only the
+    # refusal of the character can fail the file.
+    ("a comment line of site/_redirects that holds U+0080", append(REDIRECTS, "# note\x80\n"), (1, BREAK.format(0x80))),
+    ("a comment line of site/_redirects that holds U+009F", append(REDIRECTS, "# note\x9f\n"), (1, BREAK.format(0x9F))),
+    ("the committed redirects with a space and no other whitespace between fields",
+        append(REDIRECTS, "/downloads/old2.md   /downloads/cleanlanguage-instructions.md   301\n"), 0),
+    # A browser may request /favicon.ico from the site's root for any page without a link, so a redirect of that path
+    # fails, in any letter case, whatever its destination and status. The gate reads the first segment of the source,
+    # after any https:// and host, so a source below the file and a source on the site's own host fail too.
+    ("a redirect of /favicon.ico to another host", append(REDIRECTS, "/favicon.ico https://other.example/x.ico 301\n"),
+        (1, "site/_redirects line 37 has the source /favicon.ico, " + REQUESTED)),
+    ("a rewrite of /FAVICON.ICO to another file", append(REDIRECTS, "/FAVICON.ICO /x.ico 200\n"),
+        (1, "site/_redirects line 37 has the source /FAVICON.ICO, " + REQUESTED)),
+    ("a redirect of /favicon.ico/x, a path below the file", append(REDIRECTS, "/favicon.ico/x /y 301\n"),
+        (1, "site/_redirects line 37 has the source /favicon.ico/x, " + REQUESTED)),
+    ("a redirect of https://cleanlanguage.ai/favicon.ico, the file on a host",
+        append(REDIRECTS, "https://cleanlanguage.ai/favicon.ico /y 301\n"),
+        (1, "site/_redirects line 37 has the source https://cleanlanguage.ai/favicon.ico, " + REQUESTED)),
+    # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
+    # header and redirect rule.
     ("the rail's img loaded from another first segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
              'src="/images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_LOADS)),
@@ -1573,7 +2108,12 @@ CASES = [
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
         '<img src="/assets/install-illustration.svg" alt=""><p class="verified">'),
-        (1, "an img loads '/assets/install-illustration.svg', " + OUTSIDE_PIN)),
+        (1, "an img may load '/assets/install-illustration.svg', " + OUTSIDE_PIN)),
+    # A file that the pin holds outside assets/baseline/, such as a build tool under .baseline/, is not 1 of the files
+    # that the pages may load (pinned_files() keeps only the paths under assets/baseline/).
+    ("a family page img of a build tool that the pin holds", edit(CHATGPT, '<p class="verified">',
+        '<img src="/.baseline/build_card.js" alt=""><p class="verified">'),
+        (1, "an img may load '/.baseline/build_card.js', " + OUTSIDE_PIN)),
     ("the rail's img loaded through a .. segment",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
              'src="/assets/../images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_PIN)),
@@ -1587,7 +2127,7 @@ CASES = [
         edit(CLAUDE, 'src="/assets/baseline/copy.js?v=', 'src="/assets/baseline/copy2.js?v='), (1, OUTSIDE_PIN)),
     ("the rail's img loaded from another pinned file",
         edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
-             'src="/assets/baseline/logos/cleanlanguage-mono.svg" alt="A document'), 0),
+             'src="/assets/baseline/logos/cleanlanguage-favicon.svg" alt="A document'), 0),
     # Every element on the 6 pages, checked or not, shown or hidden, is of a tag that the committed pages use (the gate's
     # PAGE_TAGS).
     ("a marquee around the label after the button row", wrap(PAGE, SCOPE, SCOPE, "<marquee>", "</marquee>"),
@@ -1659,7 +2199,8 @@ HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
 WRAP_RULE = ".wrap { margin: 0; padding: 0 var(--pad); }"
 # A class name, a ] and a comma in a string count for no selector, and a quote after an even run of backslashes ends
-# its string: "\\" is 1 backslash. Each rule can match a pinned element, or sets a custom property a pinned rule uses.
+# its string: "\\" is 1 backslash. can_match() reads each rule as able to match a pinned element, or the rule sets a
+# custom property a pinned rule uses.
 STRING_RULE = 'h1[title="].fresh"] { display: none; }'
 QUOTE_RULE = 'h1[title="\\"].fresh"] { display: none; }'
 ESCAPE_RULE = '[title="\\\\"] .fresh, h1 { display: none; }'
@@ -1921,10 +2462,15 @@ def sheet_case_problems() -> list[str]:
     return problems
 
 
-def load_gate():
-    spec = importlib.util.spec_from_file_location("check_install_page", GATE)
-    gate = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gate)
+def load_gate(code: types.CodeType | None = None):
+    """The gate as a new module that runs code, by default the code that compiling GATE_BYTES gives, the bytes that
+    gate_bytes() read and checked before this test ran any code of the gate; never through the import system, so
+    that no cached bytecode stands in for those bytes."""
+    if code is None:
+        code = compile(GATE_BYTES, str(GATE), "exec", dont_inherit=True)
+    gate = types.ModuleType("check_install_page")
+    gate.__file__ = str(GATE)
+    exec(code, gate.__dict__)
     return gate
 
 
@@ -1957,8 +2503,8 @@ def committed_rules(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
 
 
 def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
-    """The rules of STYLESHEETS under root that can match an element the gate's CLASS_PIN names are exactly those of
-    PIN_FILE under root (RULE_PIN, for the committed tree)."""
+    """The rules of STYLESHEETS under root that can_match() reads as able to match an element the gate's CLASS_PIN
+    names are exactly those of PIN_FILE under root (RULE_PIN, for the committed tree)."""
     held, problems = committed_rules(root)
     try:
         pin = (root / PIN_FILE).read_text(encoding="utf-8").splitlines()
@@ -2008,8 +2554,9 @@ def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
             continue
         problems += [f"the stylesheets no longer give the pinned rule {line.partition(' ')[2]!r} there, or give it "
                      "changed." for line in pin[first:last]]
-        problems += [f"the stylesheets give the rule {text!r}, {ADDED}; it can match an element the gate's "
-                     "CLASS_PIN names, or sets a custom property that a pinned rule uses." for _, text in held[start:end]]
+        problems += [f"the stylesheets give the rule {text!r}, {ADDED}; can_match() reads it as able to "
+                     "match an element the gate's CLASS_PIN names, or it sets a custom property that a pinned rule "
+                     "uses." for _, text in held[start:end]]
     return problems
 
 
@@ -2143,7 +2690,8 @@ def header_pin_problems(loader=load_gate) -> list[str]:
     if ({pattern: sorted(held, key=repr) for pattern, held in recorded.items()}
             != {pattern: sorted(held, key=repr) for pattern, held in found.items()}):
         return [f"INSTALL_HEADERS of tools/{GATE.name} holds {recorded}; the committed {HEADERS} sets {found} under "
-                "the URL patterns that can match an install page or a file the install pages load."]
+                "the URL patterns that reaches_page() reads as able to match an install page or a file the install "
+                "pages load."]
     return []
 
 
@@ -2336,8 +2884,7 @@ def gate_exit_problems() -> list[str]:
 # gate_exit_problems().
 RUN_EXEMPT = {
     "pinned_baseline": "a loader: the module-level read of BASELINE runs it",
-    "load_gate": ("a loader: every load of the gate in this process calls it, apart from those in "
-                  "statement_problems() and version_problems(), which call exec_module() themselves"),
+    "load_gate": "a loader: every load of the gate in this process calls it",
     "exiting_gate": "a loader: the stand-in that gate_exit_problems() hands each check of its tuple",
     "gate_exit_problems": ("it loads exiting_gate() and runs its parse() only to check, under its own catch, that it "
                            "raises SystemExit(3)"),
@@ -2349,9 +2896,14 @@ RUN_EXEMPT = {
                                "which exiting_gate() leaves as the gate binds them"),
     "workflow_path_problems": ("of the gate, it reads only SERVER_ENTRIES, which exiting_gate() leaves as the gate "
                                "binds it"),
-    "statement_problems": "it loads the gate itself and reads only its docstring and ALLOWED_SCRIPTS",
-    "version_problems": (f"it loads the gate and {INLINE_GATE} itself and, of what it loads, reads only "
-                         "SUPPORTED_PYTHONS"),
+    "statement_problems": "it loads the gate with load_gate() and reads only its docstring and ALLOWED_SCRIPTS",
+    "version_problems": (f"it loads the gate with load_gate() and {INLINE_GATE} itself and, of what it loads, reads "
+                         "only SUPPORTED_PYTHONS"),
+    "redirect_break_problems": ("of the gate, it calls only redirect_break(), which calls neither parse() nor "
+                                "load_tool(), the functions that exiting_gate() replaces"),
+    "reader_pin_problems": ("it loads the gate with load_gate() from the code that it compiles from the bytes that it "
+                            "pins, which a stand-in cannot be, calls no function of the gate and reads only the names "
+                            "that it pins"),
 }
 
 
@@ -2515,6 +3067,496 @@ def run_rule_case_problems() -> list[str]:
     return problems
 
 
+# Check 7: for each class of character that redirect_break() of the gate refuses (True) or allows (False), 1 character
+# of it. The line feed is among them: redirect_problems() splits site/_redirects at each line feed, so no case that
+# runs the gate gives it one, and only this call checks that it is allowed.
+BREAK_CHARACTERS = (
+    ("\n", False), (" ", False), ("a", False), ("\x00", True), ("\t", True), ("\r", True), ("\x0b", True),
+    ("\x0c", True), ("\x1f", True), ("\x7f", True), ("\x85", True), ("\x9f", True), (chr(0x2028), True),
+    (chr(0x2029), True), (chr(0xFEFF), True), (chr(0xA0), True), (chr(0x3000), True),
+)
+
+
+def redirect_break_problems(loader=load_gate) -> list[str]:
+    """The gate's redirect_break() gives, for each character of BREAK_CHARACTERS, the answer given there."""
+    try:
+        gate = loader()
+        found = [(char, gate.redirect_break(char), expected) for char, expected in BREAK_CHARACTERS]
+    except (Exception, SystemExit) as error:
+        return [f"redirect_break() could not be read from tools/{GATE.name}: {error!r}"]
+    return [f"redirect_break() gives {got} for U+{ord(char):04X}, not {expected}"
+            for char, got, expected in found if got != expected]
+
+
+# Check 7: the function of the gate from which reader_names() reads the redirect reader that reader_pin_problems()
+# pins.
+READER_ROOT = "redirect_problems"
+# Check 7: the functions of the gate's redirect reader, redirect_problems() and each function of the gate that it
+# reads, and each that those read in turn, as reader_names() derives them from the gate.
+READER_NAMES = ("die", "exact_path_problem", "fold", "list_folder", "load_path", "load_tool", "occupied",
+                "path_segment", "pinned_files", "reaches_install", "redirect_break", "redirect_problems",
+                "target_problem")
+# Check 7: the other names of the gate that those functions read and that a statement of the gate binds, its constants
+# and imports, as reader_names() derives them.
+READER_GLOBALS = ("EXACT_SEGMENT", "LITERAL_SEGMENT", "LOADED_SEGMENTS", "Path", "REDIRECT_TARGETS", "REPO_ROOT",
+                  "REQUESTED_FILES", "REUSED_NAMES", "functools", "os", "re", "stat", "sys", "types")
+# Check 7: the sha256 of reader_pin_text() for each name of READER_NAMES and READER_GLOBALS, in UTF-8, recorded after a
+# reviewer read the code and the value of each. A reviewer records a new digest only after reading the change.
+READER_SHA256 = {
+    "die": "392efc718af6e835c89ca360001dc95775121092b3e10dd75c9050a821bcd97b",
+    "exact_path_problem": "b5267b698166b41e969641c17ccf3e9e65a84eefa5531a294a5f6c37c5d9ccd3",
+    "fold": "74d25268877834150b1e50a9999490a6ae7c3ab9d0042822b442f7200e694813",
+    "list_folder": "29368418d4f88c591b1cca2caca3ca78249da0286becc74689b5f76e277ab381",
+    "load_path": "59548c43b2d8c758f8b9e3fdfbec24f31a98afa82c493196e8927b650287091b",
+    "load_tool": "88e8cbae8e9db445cdc4e3bb185634f6a21f7140aa42aaa94941c4e0e7cdca46",
+    "occupied": "28ea039c437cae7e67c7b9d61bd398d60b9b136aded480afaa8c3b10a2a67190",
+    "path_segment": "5d9a1e5cbccfb7fb2823290a8dcaa4778e87c7b18f4f1ebddc7de6b9b6a0a861",
+    "pinned_files": "3bd69b5a098bac275f719dff08f9a3dcc7794db1372361a76e072a653c09517f",
+    "reaches_install": "be81c8b70d07bb5d0ac4db0b1d54f641558aae970eba6ab1a6d1e2f92c9cb8e7",
+    "redirect_break": "775340540fd3db064acb684840f4eb493f12474e564b8e70ab788f809d1d8cac",
+    "redirect_problems": "3c0fc6b777b51eabb2800c71eb768e1b5fd366b86f222b7302f61f56711a5390",
+    "target_problem": "9ab8d4bcd7a3c5ca07cc7aa9ec13f69d4e24e6fb087e6f5a27015101ae5a22cd",
+    "EXACT_SEGMENT": "8c6c96af990441a69281d416c0b374cdf4bc9351ab4cac03c0370b9b325e619d",
+    "LITERAL_SEGMENT": "da8c981cf383c8012d57b9730ef442cf3e9af548d13489a5aef74e8a711d90fd",
+    "LOADED_SEGMENTS": "f2d981503e02ea36966dbfb4b710c5e38aacc7bcc313d4b8df38349d8de5f61a",
+    "Path": "bfcf7cb24e3c30ca249a994d501cee4566fcd9d61ec865d109197e5bb0639a13",
+    "REDIRECT_TARGETS": "9881199e9b6f5a5d43e6faa34d3d95e874384448b5c2b138ac48b007f7e6e5fb",
+    "REPO_ROOT": "90dae4f82531739655839be072cc4cf2b75dc618f2510dcc6869b7bfc451ce60",
+    "REQUESTED_FILES": "6db6e4ea7c22ac56160ce68b0428994295b366bb6f9e126f996288c131716fc9",
+    "REUSED_NAMES": "e7d999ddfd0f78f61ba293d19993a1e62fdf3dedf06a77902f6eb27516420c5a",
+    "functools": "23782fd107279bee72053f76199cbf7d080a62779ec0fde39e6fb429ad5d5cf9",
+    "os": "eddb730fcb19a5fac643bd9cb42009da4c5dc66a210054342aa6afcf5ceb6cc7",
+    "re": "604fea19c04cea60b2382156730a1482fb90b98079cb2d8fd4af33d4b894b3a0",
+    "stat": "2e3e61b5369b7f8717edc2fd1410571c666e1c702c9ee0305774058d033d7d27",
+    "sys": "caa0420e550c5b448fe5209e61755d5f2cd73fe32e43059936b8fd599b5a0430",
+    "types": "6eb51196c4e129a6fc3d8dc8c0c695c9c193dea7a1647e35d5f2da0c8dd9b3d5",
+}
+
+
+def binding_sites(tree: ast.Module) -> dict[str, list[int]]:
+    """Each name that the source of tree binds or declares anywhere, with the line of each place that does: a def or a
+    class, a target of an assignment, a for, a with, a walrus or a del, an import, an except handler, a match capture,
+    a parameter, and a global or a nonlocal statement, at any depth and in any scope."""
+    found: dict[str, list[int]] = collections.defaultdict(list)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = [node.name]
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names = [node.id]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [alias.asname or alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = list(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            names = [node.name] if node.name else []
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest] if node.rest else []
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        else:
+            names = []
+        for name in names:
+            found[name].append(node.lineno)
+    return found
+
+
+def scope_reads(table: symtable.SymbolTable) -> set[str]:
+    """The names that the scope of table, or a scope inside it, reads as globals, as Python's compiler reads them."""
+    names = {symbol.get_name() for symbol in table.get_symbols() if symbol.is_global() and symbol.is_referenced()}
+    for child in table.get_children():
+        names |= scope_reads(child)
+    return names
+
+
+def reader_names(source: bytes) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """READER_NAMES and READER_GLOBALS as the gate's source gives them: from READER_ROOT, each name that a function
+    defined at the top level of the gate reads as a global, in its body by the symbol table that Python's compiler
+    builds and in its decorators and defaults by the syntax tree, and that the gate binds at its top level or declares
+    global; a function so read is read in turn, and each other such name is a global. A name that the gate binds
+    nowhere, such as a builtin or __file__, which the loader sets, is not read."""
+    tree = ast.parse(source)
+    table = symtable.symtable(importlib.util.decode_source(source), str(GATE), "exec")
+    defs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    tables = {(child.get_name(), child.get_lineno()): child for child in table.get_children()}
+    module = {name for name in table.get_identifiers()
+              if table.lookup(name).is_assigned() or table.lookup(name).is_imported()}
+    module |= {name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names}
+    functions: list[str] = []
+    others: list[str] = []
+    todo = [READER_ROOT]
+    while todo:
+        name = todo.pop()
+        if name in functions:
+            continue
+        functions.append(name)
+        node = defs[name]
+        reads = scope_reads(tables[(name, node.lineno)])
+        reads |= {child.id for part in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults)
+                  if part is not None for child in ast.walk(part) if isinstance(child, ast.Name)}
+        for read in sorted(reads & module):
+            if read in defs:
+                todo.append(read)
+            elif read not in others:
+                others.append(read)
+    return tuple(sorted(functions)), tuple(sorted(others))
+
+
+def top_statements(tree: ast.Module, name: str) -> list[ast.stmt]:
+    """The statements at the top level of tree that bind name: a def or a class, an assignment to it and an import."""
+    found: list[ast.stmt] = []
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = [statement.name]
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            names = [node.id for target in targets for node in ast.walk(target) if isinstance(node, ast.Name)]
+        elif isinstance(statement, (ast.Import, ast.ImportFrom)):
+            names = [alias.asname or alias.name.split(".")[0] for alias in statement.names]
+        else:
+            names = []
+        if name in names:
+            found.append(statement)
+    return found
+
+
+# Check 7: the types of the plain data that pin_value() writes by repr(), each matched as the exact type of a value, by
+# identity, so that a subclass, which can write any repr(), is not plain data, and nor is a value whose type compares
+# equal to 1 of them.
+PLAIN_TYPES = (str, bytes, int, float, bool, type(None))
+# Check 7: the other kinds of value that pin_value() writes, a pattern, a module, a class and a path, each matched as
+# the exact type of a value, by identity, and captured here, when this test is imported, before any code of the gate
+# runs. type(REPO_ROOT) is the type of a path on this platform; Path itself is not.
+PIN_KINDS = (re.Pattern, types.ModuleType, type, type(REPO_ROOT))
+
+
+class UnpinnableValue(ValueError):
+    """A value of the gate that pin_value() does not write, since no text that it writes would hold what it reaches."""
+
+
+def plain_data(value) -> bool:
+    """Whether value is plain data: of exactly 1 of PLAIN_TYPES, or exactly a tuple or a list whose items are plain data,
+    or exactly a dict whose keys and values are plain data, each type compared by identity. A value that holds itself
+    is not plain data."""
+    try:
+        if any(type(value) is kind for kind in PLAIN_TYPES):
+            return True
+        if type(value) is tuple or type(value) is list:
+            return all(plain_data(item) for item in value)
+        if type(value) is dict:
+            return all(plain_data(key) and plain_data(item) for key, item in value.items())
+    except RecursionError:
+        return False
+    return False
+
+
+def pin_value(value) -> str:
+    """A value of the gate as reader_pin_text() writes it: a pattern by its text and flags, a module or a class by its
+    name, a path by its place in this repository and plain data (plain_data()) by repr(), each kind matched as the
+    exact type of the value, compared by identity with 1 of PIN_KINDS or PLAIN_TYPES. For a value of no such type it
+    raises UnpinnableValue, so that the reader pin fails on it, the reviewed gate included: such a value can reach a
+    helper whose code no text of it holds, as a dict or a list of functions or of classes does, a set of functions, a
+    subclass of a type that it writes, a class with its own metaclass, an object whose class gives 1 of PIN_KINDS as
+    its __class__, or an object whose type compares equal to a type of plain data.
+    The pin holds the values that a reviewed gate defines in ordinary code. A value built to pose as another kind in a
+    way that this check does not refuse, and code at the gate's top level that changes this test's functions or
+    values, are held only by the reviewer who reads the gate's diff, since the gate's code runs in this process before
+    the pin reads any value. The digest of the gate's bytes (gate_bytes()) is the control that makes every such gate
+    need that review: no change to the gate runs before a reviewer records its GATE_SHA256."""
+    pattern, module, kind_of_class, path = PIN_KINDS
+    if type(value) is pattern:
+        return f"re.compile({value.pattern!r}, {int(value.flags)})"
+    if type(value) is module:
+        return f"module {value.__name__}"
+    if type(value) is kind_of_class:
+        return f"class {value.__module__}.{value.__qualname__}"
+    if type(value) is path:
+        return f"path {value.relative_to(REPO_ROOT)}" if value.is_relative_to(REPO_ROOT) else f"path {value}"
+    if plain_data(value):
+        return repr(value)
+    raise UnpinnableValue(f"its value, an object of {type(value).__module__}.{type(value).__qualname__}, is not plain "
+                          "data, a pattern, a module, a class or a path, so no text that the pin writes holds what it "
+                          "reaches")
+
+
+def reader_pin_text(statement: ast.stmt, value) -> str:
+    """What READER_SHA256 holds for a pinned name: the syntax tree of the statement of the gate that binds it, with no
+    line numbers and with the docstring of a def or a class left out, and its value as the loaded gate holds it: the
+    value of a name that a def binds by the type of each wrapper around it and by its defaults, and any other value by
+    pin_value(), so that a value that a def does not bind does not pass as a function by having __wrapped__."""
+    if (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and ast.get_docstring(statement, clean=False) is not None):
+        statement = copy.copy(statement)
+        statement.body = statement.body[1:]
+    if (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and (isinstance(value, types.FunctionType) or hasattr(value, "__wrapped__"))):
+        wrappers: list[str] = []
+        while hasattr(value, "__wrapped__"):
+            wrappers.append(f"{type(value).__module__}.{type(value).__qualname__}")
+            value = value.__wrapped__
+        shown = (f"wrapped by {wrappers}; defaults {getattr(value, '__defaults__', None)!r}, "
+                 f"{getattr(value, '__kwdefaults__', None)!r}")
+    else:
+        shown = pin_value(value)
+    return ast.dump(statement) + "\n" + shown + "\n"
+
+
+def reader_pin_problems(source: bytes | None = None) -> list[str]:
+    """The reader pin of check 7. GATE_BYTES, or source if given, are read once: reader_names() reads their
+    syntax tree and symbol table, and the code that compiling them gives runs as the gate in load_gate(). A problem
+    unless the names that reader_names() gives are READER_NAMES and READER_GLOBALS; unless READER_SHA256 holds exactly
+    those names; for a star import; for each name that the source binds other than exactly once, by a statement at its
+    top level; for each function that the loaded gate binds to anything but the function that its def makes, with that
+    def's own code object; for each name whose value pin_value() refuses (UnpinnableValue); and for each name whose
+    reader_pin_text() does not hash to its digest in READER_SHA256."""
+    try:
+        source = GATE_BYTES if source is None else source
+        tree, code = ast.parse(source), compile(source, str(GATE), "exec", dont_inherit=True)
+        functions, others = reader_names(source)
+        gate = load_gate(code)
+    except (Exception, SystemExit) as error:
+        return [f"the redirect reader of tools/{GATE.name} could not be read: {error!r}"]
+    problems: list[str] = []
+    for found, written, label in ((functions, READER_NAMES, "READER_NAMES"), (others, READER_GLOBALS, "READER_GLOBALS")):
+        if found != written:
+            problems.append(f"the gate gives {label} as {list(found)}, not as written: {label} lacks "
+                            f"{sorted(set(found) - set(written))} and holds {sorted(set(written) - set(found))} more")
+    if set(READER_SHA256) != {*READER_NAMES, *READER_GLOBALS}:
+        problems.append("READER_SHA256 does not hold exactly the names of READER_NAMES and READER_GLOBALS")
+    if any(alias.name == "*" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names):
+        problems.append(f"tools/{GATE.name} holds a star import, which can bind any name that the pin holds")
+    sites = binding_sites(tree)
+    for name in sorted({*functions, *others, *READER_NAMES, *READER_GLOBALS}):
+        statements = top_statements(tree, name)
+        if len(statements) != 1 or sites.get(name, []) != [statements[0].lineno]:
+            problems.append(f"tools/{GATE.name} binds {name} at lines {sites.get(name, [])}, not exactly once, by a "
+                            "statement at its top level, so the pin cannot hold the binding that runs")
+            continue
+        statement, value = statements[0], vars(gate).get(name)
+        if isinstance(statement, ast.FunctionDef):
+            first = statement.decorator_list[0].lineno if statement.decorator_list else statement.lineno
+            made = [constant for constant in code.co_consts if isinstance(constant, types.CodeType)
+                    and constant.co_name == name and constant.co_firstlineno == first]
+            function = value
+            while hasattr(function, "__wrapped__"):
+                function = function.__wrapped__
+            if not (len(made) == 1 and isinstance(function, types.FunctionType) and function.__code__ is made[0]
+                    and function.__globals__ is vars(gate) and function.__closure__ is None):
+                problems.append(f"the loaded gate binds {name} to {value!r}, not to the function that its def at line "
+                                f"{statement.lineno} makes")
+        try:
+            text = reader_pin_text(statement, value)
+        except UnpinnableValue as error:
+            problems.append(f"{name} of tools/{GATE.name} cannot be pinned: {error}")
+            continue
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if digest != READER_SHA256.get(name):
+            problems.append(f"{name} of tools/{GATE.name} differs from its pin: its sha256 is {digest}, not "
+                            f"{READER_SHA256.get(name)}; record the new digest only after reading the change")
+    return problems
+
+
+# Check 7: the name whose statement at the gate's top level pin_value_problems() replaces, found by the gate's syntax
+# tree, and the 2 statements that it puts in its place: REQUESTED_FILES made a subclass of tuple whose repr() is that of
+# the plain value, and REQUESTED_FILES made by a call of tuple(), a plain value whose statement differs.
+PIN_NAME = "REQUESTED_FILES"
+PIN_SUBCLASS = ('class _QzTuple(tuple):\n    def __repr__(self):\n        return "(\'favicon.ico\',)"\n\n\n'
+                'REQUESTED_FILES = _QzTuple(("favicon.ico",))')
+PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))'
+
+
+def pin_value_problems() -> list[str]:
+    """A problem unless pin_value() writes each plain value below by its repr() and raises UnpinnableValue for each
+    other value below: a subclass of dict, of tuple and of str, each with its own repr(), a dict that holds a function
+    or a class or that a class keys, a list in a tuple that holds a function, a frozenset of functions, a list that
+    holds itself, an object whose class gives each of PIN_KINDS as its __class__, an object whose type compares equal
+    to every type, a subclass of types.ModuleType and of the path type, a class with its own metaclass, and a subclass
+    of dict and of list that holds only plain data, so that each kind test of pin_value() and plain_data() must match
+    the exact type; unless reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def
+    binds; and unless the gate binds PIN_NAME by exactly 1 statement at its top level, and reader_pin_problems(), given
+    the gate with that statement, as its syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem,
+    which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which gives the
+    new digest of REQUESTED_FILES. A comment beside that statement stays outside the replaced span, and a reflow or a
+    reviewed change of it is replaced whole, so none of them fails this check."""
+
+    def posing(kind, **attributes):
+        """An object whose class gives kind as its __class__, with attributes that pin_value() reads for kind."""
+        return type("Posing", (), {"__class__": property(lambda self: kind), **attributes})()
+
+    class EqualMeta(type):
+        def __eq__(cls, other):
+            return True
+
+        __hash__ = type.__hash__
+
+    class EqualType(metaclass=EqualMeta):
+        def __repr__(self):
+            return "''"
+
+        def __iter__(self):
+            return iter(())
+
+        def items(self):
+            return ()
+
+    class ModuleSub(types.ModuleType):
+        pass
+
+    class PathSub(type(REPO_ROOT)):
+        pass
+
+    class OwnMeta(type):
+        pass
+
+    class WithMeta(metaclass=OwnMeta):
+        pass
+
+    class DictSub(dict):
+        pass
+
+    class ListSub(list):
+        pass
+
+    class ConstantDict(dict):
+        def __repr__(self):
+            return "{}"
+
+    class ConstantTuple(tuple):
+        def __repr__(self):
+            return "()"
+
+    class ConstantStr(str):
+        def __repr__(self):
+            return "''"
+
+    class Wrapped(dict):
+        __wrapped__ = None
+
+    def helper(segment):
+        return segment
+
+    held = [1]
+    held.append(held)
+    plain = ("favicon.ico", b"#", 301, 0.5, True, None, ("assets",), ["assets", 301], {"check-baseline-pin.py":
+             ("load_pin", "Unreadable", "PREFIX")}, {"assets": [("baseline", None)]})
+    refused = (("a dict subclass with its own repr()", ConstantDict(ok=helper)),
+               ("a tuple subclass with its own repr()", ConstantTuple((helper,))),
+               ("a str subclass with its own repr()", ConstantStr("assets")),
+               ("a dict that holds a function", {"ok": helper}),
+               ("a dict that holds a class", {"ok": ConstantTuple}),
+               ("a dict that a class keys", {ConstantTuple: "ok"}),
+               ("a list in a tuple that holds a function", (("ok", [helper]),)),
+               ("a frozenset of functions", frozenset({helper})),
+               ("a list that holds itself", held))
+    pattern, module, kind_of_class, path = PIN_KINDS
+    refused += (("an object whose class gives re.Pattern as its __class__", posing(pattern, pattern="x", flags=32)),
+                ("an object whose class gives types.ModuleType as its __class__", posing(module, __name__="re")),
+                ("an object whose class gives type as its __class__",
+                 posing(kind_of_class, __getattr__=lambda self, name: "Path")),
+                ("an object whose class gives the path type as its __class__",
+                 posing(path, is_relative_to=lambda self, other: False, __str__=lambda self: "/qz")),
+                ("an object whose type compares equal to every type", EqualType()),
+                ("a subclass of types.ModuleType", ModuleSub("qz")),
+                ("a subclass of the path type", PathSub(REPO_ROOT)),
+                ("a class with its own metaclass", WithMeta),
+                ("a dict subclass that holds only plain data", DictSub(assets=301)),
+                ("a list subclass that holds only plain data", ListSub(["assets", 301])))
+    problems: list[str] = []
+    for value in plain:
+        try:
+            written = pin_value(value)
+        except UnpinnableValue as error:
+            problems.append(f"pin_value() refuses {value!r}, which is plain data: {error}")
+            continue
+        if written != repr(value):
+            problems.append(f"pin_value() writes {value!r} as {written!r}, not by its repr()")
+    for label, value in refused:
+        try:
+            problems.append(f"pin_value() writes {label} as {pin_value(value)!r}, not raising UnpinnableValue")
+        except UnpinnableValue:
+            pass
+    try:
+        problems.append(f"reader_pin_text() writes a value with __wrapped__ that an assignment binds as "
+                        f"{reader_pin_text(ast.parse('X = 1').body[0], Wrapped(ok=helper))!r}, not raising "
+                        "UnpinnableValue")
+    except UnpinnableValue:
+        pass
+    try:
+        statements = top_statements(ast.parse(GATE_BYTES), PIN_NAME)
+    except (SyntaxError, ValueError) as error:
+        return problems + [f"tools/{GATE.name} could not be parsed, so its statement of {PIN_NAME} was not found: "
+                           f"{error!r}"]
+    if len(statements) != 1:
+        return problems + [f"tools/{GATE.name} binds {PIN_NAME} by {len(statements)} statements at its top level, "
+                           "not by 1"]
+    # The statement's span in GATE_BYTES: its lines as the syntax tree counts them, and its columns, which are offsets in
+    # the UTF-8 bytes of a line, so that a comment beside it stays outside the span.
+    lines = GATE_BYTES.splitlines(keepends=True)
+    first = sum(map(len, lines[:statements[0].lineno - 1])) + statements[0].col_offset
+    last = sum(map(len, lines[:statements[0].end_lineno - 1])) + statements[0].end_col_offset
+    for replacement, start in ((PIN_SUBCLASS, f"REQUESTED_FILES of tools/{GATE.name} cannot be pinned: "),
+                               (PIN_PLAIN, f"REQUESTED_FILES of tools/{GATE.name} differs from its pin: ")):
+        try:
+            found = reader_pin_problems(GATE_BYTES[:first] + replacement.encode("utf-8") + GATE_BYTES[last:])
+        except Exception as error:
+            problems.append(f"reader_pin_problems() raised {error!r} on the gate with {replacement!r}")
+            continue
+        if len(found) != 1 or not found[0].startswith(start):
+            problems.append(f"reader_pin_problems() gives {found!r} on the gate with {replacement!r}, not 1 problem "
+                            f"that starts {start!r}")
+    return problems
+
+
+def checked_load_problems() -> list[str]:
+    """A problem unless gate_bytes(), given a copy of the gate with 1 byte added, raises SystemExit with a message that
+    names the file and both digests, and, given a copy that is missing or is a folder, so that no bytes can be read,
+    with 1 that names the file, the error that reading it raises in this process, as str() writes it, and the digest
+    that GATE_SHA256 records; and unless CHECKED_LOAD, run as a separate process on each such copy, exits 1 with such
+    a message, and, run on a copy of GATE_BYTES, loads the gate. It holds the check of the 1st layer as written, not
+    the gate."""
+    problems: list[str] = []
+    changed_bytes = GATE_BYTES + b"#"
+    changed_digest = hashlib.sha256(changed_bytes).hexdigest()
+    with tempfile.TemporaryDirectory() as scratch:
+        same, changed, missing, folder = (Path(scratch) / name for name in ("same", "changed", "missing", "folder"))
+        for place, source in ((same, GATE_BYTES), (changed, changed_bytes)):
+            place.mkdir()
+            (place / GATE.name).write_bytes(source)
+        missing.mkdir()
+        (folder / GATE.name).mkdir(parents=True)
+        errors: dict[Path, str] = {}
+        for place in (missing, folder):
+            try:
+                (place / GATE.name).read_bytes()
+                problems.append(f"a copy of the gate at {place / GATE.name} can be read, so it stands for no copy "
+                                "that cannot")
+            except OSError as error:
+                errors[place] = str(error)
+        both = "the file and both digests"
+        unread = "the file, the error and the digest that GATE_SHA256 records"
+        stops = (("with 1 byte added", changed, (changed_digest, GATE_SHA256), both),
+                 ("that is missing", missing, (errors.get(missing, ""), GATE_SHA256), unread),
+                 ("that is a folder", folder, (errors.get(folder, ""), GATE_SHA256), unread))
+        for label, place, parts, named in stops:
+            try:
+                gate_bytes(place / GATE.name)
+                problems.append(f"gate_bytes() returns bytes for a copy of the gate {label}")
+            except SystemExit as stop:
+                if not isinstance(stop.code, str) or not all(part in stop.code for part in (GATE.name, *parts)):
+                    problems.append(f"gate_bytes() stops on a copy of the gate {label} with {stop.code!r}, not a "
+                                    f"message that names {named}")
+        probe = CHECKED_LOAD + "sys.exit(0 if callable(gate.redirect_problems) else 2)\n"
+        runs = [("that is unchanged", same, (), "")] + list(stops)
+        for label, place, parts, named in runs:
+            code, wanted = (1, (str(place / GATE.name), *parts)) if parts else (0, ())
+            result = subprocess.run([sys.executable, "-I", "-c", probe, str(place / GATE.name)], capture_output=True,
+                                    text=True)
+            if result.returncode != code or not all(part in result.stderr for part in wanted):
+                problems.append(f"CHECKED_LOAD on a copy of the gate {label}: exit {result.returncode}, expected {code}"
+                                + (f" and a message that names {named}" if parts else "")
+                                + f": {(result.stdout + result.stderr).strip()[:300]}")
+    return problems
+
+
 def end_tag_problems(loader=load_gate) -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
@@ -2624,6 +3666,19 @@ def glob_pattern(pattern: str) -> re.Pattern:
     return re.compile("".join({"**": ".*", "*": "[^/]*"}.get(part, re.escape(part)) for part in parts))
 
 
+def site_read_paths() -> list[str]:
+    """The paths under site/ that the workflow must cover: every committed file under site/, the path of each source
+    of the committed site/_redirects, which occupied() of check 7 lists in any letter case, a new page at the top of
+    site/ and at any depth, a new file under site/assets/ and a new entry at the top of site/."""
+    site = REPO_ROOT / "site"
+    paths = [str(path.relative_to(REPO_ROOT)) for path in sorted(site.rglob("*")) if path.is_file()]
+    for line in (REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("/") and not fields[0].startswith("#"):
+            paths.append("site" + fields[0])
+    return paths + ["site/new.html", "site/a/b/new.html", "site/assets/a/new.svg", "site/Assets"]
+
+
 def workflow_path_problems(text: str | None = None) -> list[str]:
     """Each of the 2 path lists of WORKFLOW (pull_request and push) covers every file the gate, this test and the
     workflow read, and every path of the gate's SERVER_ENTRIES, as a file and at any depth under a directory, so that a
@@ -2669,7 +3724,8 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     lists = [held for held in lists if held]
     if len(lists) != 2:
         return problems + [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
-    read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO]
+    read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO,
+            *site_read_paths()]
     for number, held in enumerate(lists, 1):
         problems += [f"path list {number} of {WORKFLOW} holds the negative pattern {pattern}; this test does not read "
                      "the order of the patterns, so it refuses every negative 1." for pattern in held if pattern[:1] == "!"]
@@ -2681,8 +3737,10 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
 
 
 def workflow_case_problems() -> list[str]:
-    """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
-    both, with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both, and with
+    """workflow_path_problems() refuses the committed workflow with site/_redirects and site/** removed from 1 path
+    list, or from both, and with site/** alone removed from 1 path list, or from both (site/** covers site/_redirects,
+    so site/_redirects removed alone leaves each list covering what it needs, and this check does not try that), with
+    functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both, and with
     !functions/**, which GitHub reads as excluding what functions/** before it includes, after functions/** in 1 path
     list or in both: double-quoted, single-quoted, written with the escape \\x21 for its !, or quoted either way and
     followed by a comment. It refuses, in the first path list or in both, each other form of an item that it does not
@@ -2690,16 +3748,27 @@ def workflow_case_problems() -> list[str]:
     and each form of a list that it does not read: a flow sequence, an anchored list, a comment on the paths: line and
     an indentless sequence, the last in both lists and the others in the first. It finds no problem in the committed
     workflow with a blank line and a comment line after functions/** in both path lists, with a further functions/**
-    single-quoted, followed by a comment, or both, or with site/_redirects itself written so in both, which GitHub
-    reads as it reads the committed 1; and that last shows that it reads those items, since each list needs them."""
+    single-quoted, followed by a comment, or both, or with site/** itself written so in both, which GitHub reads as
+    it reads the committed 1; and that last shows that it reads those items, since each list needs site/** (no other
+    item covers every file under site/) and so finds problems with site/** removed. site/_redirects written so no
+    longer shows it, since site/** covers that path whether or not the item is read, so it is not tried."""
     text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
         return [f"{WORKFLOW} lists site/_redirects {text.count(line)} times, not once in each path list."]
+    # site/** covers site/_redirects too, so the removal takes both lines out.
+    site_tree = '      - "site/**"\n'
+    if text.count(site_tree) != 2:
+        return [f"{WORKFLOW} lists site/** {text.count(site_tree)} times, not once in each path list."]
     problems: list[str] = []
-    for name, edited in (("from the first path list", text.replace(line, "", 1)), ("from both", text.replace(line, ""))):
+    for name, edited in (("from the first path list", text.replace(line, "", 1).replace(site_tree, "", 1)),
+                         ("from both", text.replace(line, "").replace(site_tree, ""))):
         if not workflow_path_problems(edited):
-            problems.append(f"site/_redirects removed {name}: workflow_path_problems() found no problem.")
+            problems.append(f"site/_redirects and site/** removed {name}: workflow_path_problems() found no problem.")
+    for name, edited in (("from the first path list", text.replace(site_tree, "", 1)),
+                         ("from both", text.replace(site_tree, ""))):
+        if not workflow_path_problems(edited):
+            problems.append(f"site/** removed {name}: workflow_path_problems() found no problem.")
     tree = '      - "functions/**"\n'
     if text.count(tree) != 2:
         return problems + [f"{WORKFLOW} lists functions/** {text.count(tree)} times, not once in each path list."]
@@ -2731,11 +3800,11 @@ def workflow_case_problems() -> list[str]:
         if found:
             problems.append(f"- {item} after functions/** in both: workflow_path_problems() found {found}, though GitHub "
                             "reads it as the same pattern.")
-    for item in ("'site/_redirects'", '"site/_redirects" # headers', "'site/_redirects' # headers"):
-        found = workflow_path_problems(text.replace(line, f"      - {item}\n"))
+    for item in ("'site/**'", '"site/**" # every file', "'site/**' # every file"):
+        found = workflow_path_problems(text.replace(site_tree, f"      - {item}\n"))
         if found:
-            problems.append(f"site/_redirects written {item} in both: workflow_path_problems() found {found}, though "
-                            "GitHub reads it as the committed item.")
+            problems.append(f"site/** written {item} in both: workflow_path_problems() found {found}, though GitHub "
+                            "reads it as the committed item.")
     return problems
 
 
@@ -2743,9 +3812,7 @@ def version_problems() -> list[str]:
     """The gate runs only on 3.14, and under another version, 3.9 or later, exits 3 before it prints a result line."""
     problems: list[str] = []
     try:
-        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
-        gate = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gate)
+        gate = load_gate()
         if gate.SUPPORTED_PYTHONS != ((3, 14),):
             problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} is {gate.SUPPORTED_PYTHONS!r}, not ((3, 14),).")
     except (Exception, SystemExit) as error:
@@ -2792,9 +3859,7 @@ def version_problems() -> list[str]:
 def statement_problems() -> list[str]:
     """The gate's docstring names exactly the scripts that ALLOWED_SCRIPTS holds."""
     try:
-        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = load_gate()
     except (Exception, SystemExit) as error:
         return [f"ALLOWED_SCRIPTS could not be read from tools/{GATE.name}: {error!r}"]
     listed = re.search(r"``ALLOWED_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
@@ -2926,10 +3991,584 @@ LOAD_CASES = [(f"tools/check-inline-code.py {name}", lambda root, fault=fault: f
                (3, f"check-install-page: {INLINE_GATE} {words}"))
               for name, fault, words in load_faults("def inline_code_problems(",
                                                     "def inline_code_problems_unused(", "inline_code_problems")]
-# Root reads a file whatever its mode, so under root a mode-000 case cannot fail to read: it is left out of CASES, and
-# main() names it as skipped.
-SKIPPED = [case[0] for case in LOAD_CASES if "mode 000" in case[0] and os.geteuid() == 0]
-CASES += [case for case in LOAD_CASES if case[0] not in SKIPPED]
+# The lines that start LOCK_PROBE and SORTED_PROBE, the checked load of the copy of the gate in a separate process:
+# they read the bytes of the copy once, stop with exit 1 unless their sha256 is GATE_SHA256, naming the file and both
+# digests, or, where the bytes cannot be read, the file, the error and the digest that GATE_SHA256 records, and then
+# compile and run exactly those bytes as a new module, as load_gate() does, never through the import system.
+CHECKED_LOAD = f"""\
+import hashlib, sys, types
+from pathlib import Path
+try:
+    source = Path(sys.argv[1]).read_bytes()
+except OSError as error:
+    sys.exit(f'probe: {{sys.argv[1]}} could not be read, so its sha256 could not be compared with {GATE_SHA256}, the '
+             f'digest that GATE_SHA256 records: {{error}}')
+found = hashlib.sha256(source).hexdigest()
+if found != {GATE_SHA256!r}:
+    sys.exit(f'probe: {{sys.argv[1]}} has the sha256 {{found}}, not {GATE_SHA256}, the digest that GATE_SHA256 records')
+gate = types.ModuleType('check_install_page')
+gate.__file__ = sys.argv[1]
+exec(compile(source, sys.argv[1], 'exec', dont_inherit=True), gate.__dict__)
+"""
+# The folder that the case of LOCKED_CASES sets to mode 000, and the probe that runs the gate for it. The probe loads
+# the copy of the gate by CHECKED_LOAD, wraps its occupied() to record each folder that it could not list, sets the
+# folder's mode to 000 and runs the gate's main(). It exits 4 unless occupied() recorded the refusal that names that
+# folder, and otherwise exits with main()'s code.
+LOCKED_FOLDER = "site/assets/old"
+LOCK_PROBE = CHECKED_LOAD + """\
+import os
+refusals = []
+listed = gate.occupied
+def occupied(source):
+    entry, unlisted = listed(source)
+    if unlisted is not None:
+        refusals.append(unlisted)
+    return entry, unlisted
+gate.occupied = occupied
+folder = Path(sys.argv[2]).resolve().relative_to(gate.REPO_ROOT)
+os.chmod(sys.argv[2], 0)
+code = gate.main()
+if not any(refusal.startswith(f'the folder {folder} could not be listed: ') for refusal in refusals):
+    print(f'lock probe: occupied() gave no refusal for the folder {folder}', file=sys.stderr)
+    sys.exit(4)
+sys.exit(code)
+"""
+LOCKED_CASES = [
+    ("a dropped logo that cannot be evaluated, its folder set to mode 000",
+        both(append(REDIRECTS, "/assets/old/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
+             lambda root: (root / LOCKED_FOLDER).mkdir()),
+        (1, "site/_redirects line 37 has the source /assets/old/aiqt-card.svg, " + UNEVALUATED
+            + f"the folder {LOCKED_FOLDER} could not be listed")),
+]
+# The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate by CHECKED_LOAD, wraps
+# its list_folder() to give the entries of each folder sorted by name, so that site/assets/QZM is listed before
+# site/assets/qzm wherever the copy holds both, and exits with main()'s code.
+SORTED_PROBE = CHECKED_LOAD + """\
+listed = gate.list_folder
+gate.list_folder = lambda folder: sorted(listed(folder), key=lambda entry: entry.name)
+sys.exit(gate.main())
+"""
+# 2 folders whose names differ only in letter case match the segment qzm of a source, and occupied() must enter each:
+# the file that occupies the source lies in the folder listed last, then in the folder listed first. A file system that
+# treats 2 such names as 1 cannot hold both folders, so main() runs these cases only where folds_letter_case() finds
+# that the file system of the case's own scratch folder holds both names; elsewhere it names each as skipped (FOLDED).
+CASE_FOLDER_CASES = [
+    ("a redirect of a file in the last listed of 2 folders whose names differ only in letter case",
+        both(create("site/assets/QZM/keep.txt", "x\n"), create("site/assets/qzm/old.svg", "<svg></svg>\n"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzm/old.svg")),
+        (1, "at or above which site/assets/qzm/old.svg exists, " + OCCUPIED)),
+    ("a redirect of a file in the first listed of 2 folders whose names differ only in letter case",
+        both(create("site/assets/QZM/old.svg", "<svg></svg>\n"), create("site/assets/qzm/keep.txt", "x\n"),
+             target("/assets/baseline/logos/aiqt.svg 301", "/assets/qzm/old.svg")),
+        (1, "at or above which site/assets/QZM/old.svg exists, " + OCCUPIED)),
+]
+CASES += CASE_FOLDER_CASES
+# Each case that main() runs through a probe in place of the gate alone: the probe, then the paths under the copy that
+# the probe is given after the copy of the gate.
+PROBED = {LOCKED_CASES[0][0]: (LOCK_PROBE, (LOCKED_FOLDER,)),
+          **{case[0]: (SORTED_PROBE, ()) for case in CASE_FOLDER_CASES}}
+# Root reads a file and lists a folder whatever its mode, so under root a mode-000 case cannot fail to read or list: it
+# is left out of CASES, and main() names it as skipped.
+SKIPPED = [case[0] for case in LOAD_CASES + LOCKED_CASES if "mode 000" in case[0] and os.geteuid() == 0]
+CASES += [case for case in LOAD_CASES + LOCKED_CASES if case[0] not in SKIPPED]
+ROOT_READS = "root reads a file and lists a folder whatever its mode"
+FOLDED = ("the file system of its scratch folder treats 2 names that differ only in letter case as 1, so the copy "
+          "cannot hold the 2 folders that the case needs")
+
+
+def folds_letter_case(folder: Path) -> bool:
+    """Whether the file system that holds folder treats 2 names that differ only in letter case as 1, probed in folder
+    and not read from the platform's name: it makes the folder qzcase there, then QZCASE, which only such a file
+    system refuses as already there, and removes what it made. Any other OSError passes through."""
+    lower, upper = folder / "qzcase", folder / "QZCASE"
+    lower.mkdir()
+    try:
+        upper.mkdir()
+    except FileExistsError:
+        lower.rmdir()
+        return True
+    upper.rmdir()
+    lower.rmdir()
+    return False
+
+
+TWINNED = frozenset(case[0] for case in CASE_FOLDER_CASES)
+
+
+def letter_case_skip(name: str, scratch: Path, probe=folds_letter_case) -> str | None:
+    """Why main() does not run the case name in its scratch folder, or None if it runs it: FOLDED when the case is of
+    CASE_FOLDER_CASES and probe(scratch) finds that the file system there treats 2 names that differ only in letter
+    case as 1. No other case is probed, and any OSError of the probe passes through."""
+    if name in TWINNED and probe(scratch):
+        return FOLDED
+    return None
+
+
+def raise_error(error: OSError) -> None:
+    """The onerror of case_twins()'s os.walk(): a folder that cannot be listed raises its OSError."""
+    raise error
+
+
+def case_twins(root: Path, walk=os.walk) -> list[str]:
+    """Each pair of entries of 1 folder under root whose names differ only in letter case, read with
+    str.casefold(), 2 folders, 2 files or a folder and a file, as their 2 paths from root; os.walk() enters no link.
+    A folder that cannot be listed raises its OSError, so that no twins below it go unread."""
+    twins: list[str] = []
+    for folder, folders, files in walk(root, onerror=raise_error):
+        first: dict[str, str] = {}
+        for name in sorted(folders + files):
+            kept = first.setdefault(name.casefold(), name)
+            if kept != name:
+                twins.append(f"{Path(folder, kept).relative_to(root)} and {Path(folder, name).relative_to(root)}")
+    return twins
+
+
+def twin_problems(name: str, twins: list[str]) -> list[str]:
+    """Why the case name, whose copy holds twins (case_twins()), does not hold to CASE_FOLDER_CASES: a case outside it
+    whose copy holds twins, or a case of it whose copy holds none."""
+    if twins and name not in TWINNED:
+        return [f"{name}: its copy holds {'; '.join(twins)}, whose names differ only in letter case, but it is not of "
+                "CASE_FOLDER_CASES, which main() skips where the file system treats such names as 1"]
+    if name in TWINNED and not twins:
+        return [f"{name}: its copy holds no 2 names that differ only in letter case"]
+    return []
+
+
+class StandInFolder:
+    """A stand-in for a folder for folds_letter_case() and folds_on_second_look(): it holds the names made in it, treats
+    2 names that differ only in letter case as 1 when folding is true, both in making a name and in finding it as a
+    folder, and refuses to make a name of refused with a PermissionError."""
+
+    def __init__(self, folding: bool, refused: tuple[str, ...] = ()):
+        self.folding = folding
+        self.refused = refused
+        self.names: set[str] = set()
+
+    def key(self, name: str) -> str:
+        return name.casefold() if self.folding else name
+
+    def __truediv__(self, name: str):
+        folder = self
+
+        class Entry:
+            def mkdir(self) -> None:
+                if name in folder.refused:
+                    raise PermissionError(13, "Permission denied", name)
+                if folder.key(name) in {folder.key(held) for held in folder.names}:
+                    raise FileExistsError(name)
+                folder.names.add(name)
+
+            def rmdir(self) -> None:
+                folder.names.remove(name)
+
+            def is_dir(self) -> bool:
+                return folder.key(name) in {folder.key(held) for held in folder.names}
+        return Entry()
+
+
+def stand_in_walk(*listings):
+    """A stand-in for os.walk() that yields each of listings, a (folder, folders, files) triple, and then, if it is
+    given an onerror, calls it with an OSError for a folder that it cannot list, as os.walk() does."""
+    def walk(root, onerror=None):
+        for folder, folders, files in listings:
+            yield str(root / folder), list(folders), list(files)
+        if onerror is not None:
+            onerror(PermissionError(13, "Permission denied", str(root / "locked")))
+    return walk
+
+
+def letter_case_problems() -> list[str]:
+    """A problem unless folds_letter_case() gives True for a stand-in folder that treats 2 names that differ only in
+    letter case as 1 and False for 1 that does not, leaving each as it was, lets through the PermissionError of a
+    stand-in folder that refuses to make QZCASE with it, and on a scratch folder of this file system gives what a 2nd
+    look gives: whether a folder made as qzcase is found as QZCASE; unless letter_case_skip()
+    gives FOLDED for each case of CASE_FOLDER_CASES with a probe that finds folding, None with a probe that does not,
+    lets a probe's OSError through, and gives None for a case outside it without calling the probe; unless
+    case_twins() finds 2 folders, 2 files, and a folder and a file whose names differ only in letter case, finds none
+    in names that differ otherwise, and raises the OSError of a folder that it cannot list; and unless twin_problems()
+    rejects twins outside CASE_FOLDER_CASES and a case of it without twins, and passes the others."""
+    problems: list[str] = []
+    for folding in (True, False):
+        folder = StandInFolder(folding)
+        try:
+            found = folds_letter_case(folder)
+        except OSError as error:
+            found = repr(error)
+        if found is not folding or folder.names:
+            problems.append(f"folds_letter_case() gives {found!r} for a stand-in folder whose folding is {folding} and "
+                            f"leaves it holding {sorted(folder.names)}")
+    try:
+        found = folds_letter_case(StandInFolder(False, ("QZCASE",)))
+        problems.append(f"folds_letter_case() gives {found!r} for a stand-in folder that refuses to make QZCASE with a "
+                        "PermissionError, not that error")
+    except PermissionError:
+        pass
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            found = folds_letter_case(Path(scratch))
+            left = sorted(os.listdir(scratch))
+            (Path(scratch) / "qzcase").mkdir()
+            seen = (Path(scratch) / "QZCASE").is_dir()
+        except OSError as error:
+            problems.append(f"folds_letter_case() could not be checked on a scratch folder: {error}")
+        else:
+            if found != seen or left:
+                problems.append(f"folds_letter_case() gives {found} for a scratch folder in which a folder made as "
+                                f"qzcase is{'' if seen else ' not'} found as QZCASE, and leaves it holding {left}")
+    twinned, other = sorted(TWINNED), CASES[0][0]
+    asked: list[Path] = []
+
+    def probe(answer):
+        def check(scratch: Path) -> bool:
+            asked.append(scratch)
+            return answer
+        return check
+
+    def failing(scratch: Path) -> bool:
+        raise PermissionError(13, "Permission denied", str(scratch))
+
+    for name, answer, expected in [(name, answer, FOLDED if answer else None) for name in twinned
+                                   for answer in (True, False)] + [(other, True, None)]:
+        asked.clear()
+        found = letter_case_skip(name, Path("scratch"), probe(answer))
+        if found != expected or asked != ([Path("scratch")] if name in TWINNED else []):
+            problems.append(f"letter_case_skip() gives {found!r} for {name} with a probe that gives {answer}, not "
+                            f"{expected!r}, having probed {asked}")
+    try:
+        letter_case_skip(twinned[0], Path("scratch"), failing)
+        problems.append(f"letter_case_skip() lets no OSError through from a probe that raises it for {twinned[0]}")
+    except PermissionError:
+        pass
+    root = Path("copy")
+    for listing, expected in (
+            (("site", ["QZM", "qzm"], []), ["site/QZM and site/qzm"]),
+            (("site", [], ["QZF.txt", "qzf.txt"]), ["site/QZF.txt and site/qzf.txt"]),
+            (("site", ["QZD"], ["qzd"]), ["site/QZD and site/qzd"]),
+            (("site", ["qzm", "qzn"], ["qzm.txt", "QZN.svg"]), [])):
+        walk = stand_in_walk(listing)
+        try:
+            found = case_twins(root, lambda root, onerror=None: walk(root))
+        except OSError as error:
+            found = repr(error)
+        if found != expected:
+            problems.append(f"case_twins() gives {found!r} for a folder that holds {listing[1:]}, not {expected!r}")
+    try:
+        found = case_twins(root, stand_in_walk(("site", ["qzm"], [])))
+        problems.append(f"case_twins() gives {found!r} where a folder cannot be listed, not its OSError")
+    except PermissionError:
+        pass
+    for name, twins, count in ((other, ["site/QZT and site/qzt"], 1), (other, [], 0),
+                               (twinned[0], ["site/assets/QZM and site/assets/qzm"], 0), (twinned[0], [], 1)):
+        found = twin_problems(name, twins)
+        if len(found) != count or not all(problem.startswith(f"{name}: its copy holds ") for problem in found):
+            problems.append(f"twin_problems() gives {found!r} for {name} with the twins {twins}, not {count} problem"
+                            f"{'' if count == 1 else 's'}")
+    return problems
+
+
+def run_gate(name: str, root: Path, expected) -> list[str]:
+    """The failure of the case name unless the gate, or the case's probe of PROBED, run on the copy at root as a
+    separate process, exits with expected's code and, where expected is (code, words), its output holds those words."""
+    command = [sys.executable, "-I", str(root / "tools" / GATE.name)]
+    if name in PROBED:
+        probe, paths = PROBED[name]
+        command[2:2] = ["-c", probe]
+        command += [str(root / path) for path in paths]
+    result = subprocess.run(command, capture_output=True, text=True)
+    code, words = expected if isinstance(expected, tuple) else (expected, "")
+    if result.returncode != code or words not in result.stdout + result.stderr:
+        return [f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
+                + f": {(result.stdout + result.stderr).strip()[:300]}"]
+    return []
+
+
+def run_cases(run, probe=folds_letter_case, make=make_root, twins_of=case_twins, gate=run_gate):
+    """main()'s loop: each case of run, a (name, fault, expected) triple, in a scratch folder of its own. Unless
+    letter_case_skip(), with probe, gives a reason not to run the case there, it makes the copy there with make,
+    applies the fault, fails the case if twins_of() cannot list a folder of the copy and otherwise by twin_problems(),
+    and runs the gate with gate. It returns the failures, the name of each case that it ran or stopped with a failure,
+    and each case that it did not run, with its reason."""
+    failures: list[str] = []
+    tried: list[str] = []
+    unrun: list[tuple[str, str]] = []
+    for name, fault, expected in run:
+        with tempfile.TemporaryDirectory() as scratch:
+            try:
+                reason = letter_case_skip(name, Path(scratch), probe)
+            except OSError as error:
+                failures.append(f"{name}: folds_letter_case() could not probe its scratch folder: {error}")
+                tried.append(name)
+                continue
+            if reason is not None:
+                unrun.append((name, reason))
+                continue
+            tried.append(name)
+            root = make(Path(scratch))
+            if fault:
+                fault(root)
+            try:
+                twins = twins_of(root)
+            except OSError as error:
+                failures.append(f"{name}: case_twins() could not list a folder of its copy: {error}")
+                continue
+            failures += twin_problems(name, twins)
+            failures += gate(name, root, expected)
+    return failures, tried, unrun
+
+
+def case_loop_problems() -> list[str]:
+    """A problem unless run_cases(), given stand-ins for the probe, the copy, the reading of twins and the gate, on a
+    case outside CASE_FOLDER_CASES and the cases of it, each with a fault that names the case to the stand-in reading
+    of twins: runs each case through the gate with a probe that finds no folding; with a probe that finds folding,
+    leaves each case of CASE_FOLDER_CASES unrun with FOLDED and runs the other; fails the other, and still runs the
+    gate for it, when its copy holds twins; fails it, without running the gate for it, when a folder of its copy cannot
+    be listed; and fails each case of CASE_FOLDER_CASES whose copy holds none. So main()'s reading of the skip, its loop
+    and its reading and refusal of twins cannot be changed unnoticed."""
+    twinned, other = sorted(TWINNED), CASES[0][0]
+    problems: list[str] = []
+    for title, folding, twins_for, failing, expected in (
+            ("a probe that finds no folding", False, twinned, [], ([], [other, *twinned], [], [other, *twinned])),
+            ("a probe that finds folding", True, twinned, [],
+             ([], [other], [(name, FOLDED) for name in twinned], [other])),
+            ("twins in the copy of the other case", False, [other, *twinned], [],
+             ([f"{other}: its copy holds "], [other, *twinned], [], [other, *twinned])),
+            ("a folder of the other case's copy that cannot be listed", False, twinned, [other],
+             ([f"{other}: case_twins() could not list a folder of its copy: "], [other, *twinned], [], twinned)),
+            ("no twins in any copy", False, [], [],
+             ([f"{name}: its copy holds no 2 names" for name in twinned], [other, *twinned], [],
+              [other, *twinned]))):
+        current: list[str] = []
+        gated: list[str] = []
+
+        def named(name):
+            return lambda root: current.append(name)
+
+        def twins_of(root: Path) -> list[str]:
+            if current[-1] in failing:
+                raise PermissionError(13, "Permission denied", str(root / "locked"))
+            return ["site/QZT and site/qzt"] if current[-1] in twins_for else []
+
+        def gate(name: str, root: Path, expected) -> list[str]:
+            gated.append(name)
+            return []
+
+        try:
+            failures, tried, unrun = run_cases([(name, named(name), 0) for name in (other, *twinned)],
+                                               lambda scratch: folding, lambda scratch: scratch, twins_of, gate)
+        except Exception as error:
+            problems.append(f"run_cases() raises {error!r} with {title}")
+            continue
+        starts, *rest = expected
+        if (len(failures) != len(starts) or not all(map(str.startswith, failures, starts))
+                or [tried, unrun, gated] != rest):
+            problems.append(f"run_cases() gives the failures {failures!r}, runs {tried!r}, leaves {unrun!r} unrun and "
+                            f"runs the gate for {gated!r} with {title}, not the failures that start with {starts!r}, "
+                            f"{rest[0]!r}, {rest[1]!r} and {rest[2]!r}")
+    return problems
+
+
+def folds_on_second_look(new_folder=tempfile.TemporaryDirectory, folder=Path) -> bool:
+    """Whether a folder made as qzcase in a new scratch folder, which new_folder() opens and folder() reads, is found as
+    QZCASE: a look, apart from folds_letter_case(), at whether the file system there treats 2 names that differ only in
+    letter case as 1. Any OSError passes through."""
+    with new_folder() as scratch:
+        (folder(scratch) / "qzcase").mkdir()
+        return (folder(scratch) / "QZCASE").is_dir()
+
+
+def unrun_problems(unrun: list[tuple[str, str]], look=folds_on_second_look) -> list[str]:
+    """main()'s reading of each case that run_cases() left unrun, with its reason: a failure unless the case is of
+    CASE_FOLDER_CASES, its reason is FOLDED and look(), a 2nd look at a new scratch folder, gives True; an OSError of
+    the look fails it too."""
+    failures: list[str] = []
+    for name, reason in unrun:
+        if name not in TWINNED or reason != FOLDED:
+            failures.append(f"{name}: main() did not run it, with the reason {reason!r}, but only a case of "
+                            "CASE_FOLDER_CASES may go unrun, with the reason FOLDED")
+            continue
+        try:
+            folds = look()
+        except OSError as error:
+            folds = f"not known: {error}"
+        if folds is not True:
+            failures.append(f"{name}: main() did not run it, with the reason FOLDED, but whether a folder made as "
+                            f"qzcase in a new scratch folder is found as QZCASE is {folds}")
+    return failures
+
+
+def case_run_problems(run, wanted: list[str], loop=run_cases, look=folds_on_second_look):
+    """main()'s run of the cases of run through loop(), run_cases() by default: the failures that loop() gives, a
+    failure for each name of wanted, read apart from run, or of what loop() ran or left unrun, that it did not run or
+    leave unrun with a reason exactly as often as wanted holds it, and the failures of unrun_problems(), with look, on
+    what it left unrun; then the names of the cases it ran and the cases it left unrun, with their reasons."""
+    looped, tried, unrun = loop(run)
+    failures = list(looped)
+    held, counted = collections.Counter(tried + [name for name, _ in unrun]), collections.Counter(wanted)
+    failures += [f"{name}: main() ran it or left it unrun with a reason {held[name]} times, not {counted[name]}"
+                 for name in counted | held if held[name] != counted[name]]
+    failures += unrun_problems(unrun, look)
+    return failures, tried, unrun
+
+
+class StandInScratch:
+    """A stand-in for tempfile.TemporaryDirectory for folds_on_second_look(): each use opens a new StandInFolder whose
+    folding is folding and that refuses to make a name of refused, and keeps it in opened."""
+
+    def __init__(self, folding: bool, refused: tuple[str, ...] = ()):
+        self.folding = folding
+        self.refused = refused
+        self.opened: list[StandInFolder] = []
+
+    def __call__(self):
+        return self
+
+    def __enter__(self) -> StandInFolder:
+        self.opened.append(StandInFolder(self.folding, self.refused))
+        return self.opened[-1]
+
+    def __exit__(self, *details) -> None:
+        return None
+
+
+def second_look_problems() -> list[str]:
+    """A problem unless folds_on_second_look() gives True in a new stand-in folder that treats 2 names that differ only
+    in letter case as 1 and False in 1 that does not, having opened exactly 1 such folder and made qzcase in it alone,
+    lets through the PermissionError of a stand-in folder that refuses to make qzcase, and on this file system gives
+    what folds_letter_case() gives on a scratch folder; and unless unrun_problems() passes a case of CASE_FOLDER_CASES
+    left unrun with FOLDED only when its look gives True, fails it when the look gives False or raises an OSError,
+    fails a case outside it or another reason without a look, and gives nothing, with no look, when no case is left
+    unrun. So the 2nd look, and main()'s reading of it, cannot be changed unnoticed."""
+    problems: list[str] = []
+    for folding in (True, False):
+        scratch = StandInScratch(folding)
+        try:
+            found = folds_on_second_look(scratch, lambda folder: folder)
+        except OSError as error:
+            found = repr(error)
+        made = [sorted(folder.names) for folder in scratch.opened]
+        if found is not folding or made != [["qzcase"]]:
+            problems.append(f"folds_on_second_look() gives {found!r} in a stand-in folder whose folding is {folding}, "
+                            f"having made {made} in the folders it opened, not {folding} and [['qzcase']]")
+    try:
+        found = folds_on_second_look(StandInScratch(False, ("qzcase",)), lambda folder: folder)
+        problems.append(f"folds_on_second_look() gives {found!r} in a stand-in folder that refuses to make qzcase "
+                        "with a PermissionError, not that error")
+    except PermissionError:
+        pass
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            first = folds_letter_case(Path(scratch))
+            second = folds_on_second_look()
+        except OSError as error:
+            problems.append(f"folds_on_second_look() could not be checked on this file system: {error}")
+        else:
+            if second is not first:
+                problems.append(f"folds_on_second_look() gives {second!r} on this file system, where "
+                                f"folds_letter_case() gives {first!r}")
+    twinned, other = sorted(TWINNED), CASES[0][0]
+    looks: list[bool | OSError] = []
+
+    def look(answer):
+        def second() -> bool:
+            looks.append(answer)
+            if isinstance(answer, OSError):
+                raise answer
+            return answer
+        return second
+
+    denied = PermissionError(13, "Permission denied", "scratch")
+    for unrun, answer, starts, count in (
+            ([(twinned[0], FOLDED)], True, [], 1),
+            ([(twinned[0], FOLDED)], False, [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"], 1),
+            ([(twinned[0], FOLDED)], denied, [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"], 1),
+            ([(other, FOLDED)], True, [f"{other}: main() did not run it, with the reason {FOLDED!r}, but only"], 0),
+            ([(twinned[0], ROOT_READS)], True,
+             [f"{twinned[0]}: main() did not run it, with the reason {ROOT_READS!r}, but only"], 0),
+            ([], False, [], 0)):
+        looks.clear()
+        try:
+            found = unrun_problems(unrun, look(answer))
+        except Exception as error:
+            problems.append(f"unrun_problems() raises {error!r} for {unrun!r} with a look that gives {answer!r}")
+            continue
+        if (len(found) != len(starts) or not all(map(str.startswith, found, starts)) or len(looks) != count
+                or (isinstance(answer, OSError) and "not known: " not in "".join(found))):
+            problems.append(f"unrun_problems() gives {found!r} for {unrun!r} with a look that gives {answer!r}, "
+                            f"having looked {len(looks)} times, not the failures that start with {starts!r} after "
+                            f"{count} looks")
+    # main()'s run of the cases, case_run_problems(), given stand-ins for run_cases() and the look: it passes on what
+    # the loop gives, fails a case run twice or neither run nor left unrun, and fails a case left unrun with FOLDED
+    # unless the look gives True, so that its call of unrun_problems() cannot be dropped unnoticed.
+    run = [(twinned[0], None, 0), (other, None, 0)]
+    for looped, tried, unrun, answer, starts in (
+            ([], [twinned[0], other], [], False, []),
+            ([], [other], [(twinned[0], FOLDED)], True, []),
+            ([], [other], [(twinned[0], FOLDED)], False,
+             [f"{twinned[0]}: main() did not run it, with the reason FOLDED, but"]),
+            (["a failure of the loop"], [twinned[0], other], [], False, ["a failure of the loop"]),
+            ([], [twinned[0], twinned[0], other], [], False,
+             [f"{twinned[0]}: main() ran it or left it unrun with a reason 2 times, not 1"]),
+            ([], [other], [], False, [f"{twinned[0]}: main() ran it or left it unrun with a reason 0 times, not 1"])):
+        given: list = []
+
+        def loop(cases, result=(looped, tried, unrun)):
+            given.append(cases)
+            return result
+        try:
+            found = case_run_problems(run, [twinned[0], other], loop, look(answer))
+        except Exception as error:
+            problems.append(f"case_run_problems() raises {error!r} for a loop that gives {(looped, tried, unrun)!r}")
+            continue
+        if (given != [run] or found[1:] != (tried, unrun) or len(found[0]) != len(starts)
+                or not all(map(str.startswith, found[0], starts))):
+            problems.append(f"case_run_problems() gives {found!r} for a loop that gives {(looped, tried, unrun)!r} "
+                            f"with a look that gives {answer!r}, having given the loop {given!r}, not the failures "
+                            f"that start with {starts!r}, {tried!r} and {unrun!r}, having given it {[run]!r}")
+    return problems
+
+
+def main_call_problems(source: str | None = None) -> list[str]:
+    """A problem unless case_run_problems() takes run_cases() and folds_on_second_look() by default, and unless main(),
+    in the syntax tree of source, this file by default, calls case_run_problems() exactly once, as
+    case_run_problems(run, wanted, run_cases, folds_on_second_look), calls none of run_cases(), unrun_problems() and
+    folds_on_second_look() itself, binds none of the names of those 4 functions, declares no name global or nonlocal,
+    and sets or deletes no attribute, as those forms read in the syntax tree: main() passes the loop and the look
+    itself, so a change of the defaults after this check reads them does not reach its call. It reads no other form,
+    so an edit to main() that runs the cases, or reads those it left unrun, with another loop or look in such a form,
+    as through globals() or under another name, and an edit that changes those functions or their defaults before this
+    check runs, as in a check that main() calls first, are not caught and rest on review; so does a name of those 4
+    functions bound again, or 1 of them changed, outside main() after this check runs. No case holds main()'s own use
+    of what that call returns."""
+    problems: list[str] = []
+    if case_run_problems.__defaults__ != (run_cases, folds_on_second_look):
+        problems.append(f"case_run_problems() takes {case_run_problems.__defaults__!r} by default, not run_cases() "
+                        "and folds_on_second_look()")
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8") if source is None else source)
+    mains = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    calls = [node for main_node in mains for node in ast.walk(main_node)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    runs = [ast.unparse(call) for call in calls if call.func.id == "case_run_problems"]
+    if len(mains) != 1 or runs != ["case_run_problems(run, wanted, run_cases, folds_on_second_look)"]:
+        problems.append(f"main() calls case_run_problems() as {runs!r} in {len(mains)} main(), not exactly once as "
+                        "case_run_problems(run, wanted, run_cases, folds_on_second_look) in 1")
+    others = sorted({call.func.id for call in calls} & {"run_cases", "unrun_problems", "folds_on_second_look"})
+    if others:
+        problems.append(f"main() calls {', '.join(others)} itself, not only through case_run_problems()")
+    names = {"case_run_problems", "run_cases", "unrun_problems", "folds_on_second_look"}
+    bound = sorted({node.id for main_node in mains for node in ast.walk(main_node)
+                    if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) and node.id in names}
+                   | {alias.asname or alias.name for main_node in mains for node in ast.walk(main_node)
+                      if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
+                   & names)
+    if bound:
+        problems.append(f"main() binds {', '.join(bound)}")
+    if any(isinstance(node, (ast.Global, ast.Nonlocal)) for main_node in mains for node in ast.walk(main_node)):
+        problems.append("main() declares a name global or nonlocal")
+    if any(isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load)
+           or isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("setattr", "delattr")
+           for main_node in mains for node in ast.walk(main_node)):
+        problems.append("main() sets or deletes an attribute, such as the defaults or the code of a function")
+    return problems
 
 
 def main() -> int:
@@ -2962,39 +4601,50 @@ def main() -> int:
     failures += [f"the probe names: {problem}" for problem in probe_name_problems()]
     failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
+    failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
+    failures += [f"the reader pin: {problem}" for problem in reader_pin_problems()]
+    failures += [f"the pinned values: {problem}" for problem in pin_value_problems()]
+    failures += [f"the checked load: {problem}" for problem in checked_load_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     if not copied:
         failures += [f"the Python version: {problem}" for problem in version_problems()]
-    doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
+    doc = " ".join((ast.get_docstring(ast.parse(GATE_BYTES.decode("utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
         if words not in doc:
             failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
-    for name, fault, expected in ([] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]):
-        with tempfile.TemporaryDirectory() as scratch:
-            root = make_root(Path(scratch))
-            if fault:
-                fault(root)
-            result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            code, words = expected if isinstance(expected, tuple) else (expected, "")
-            if result.returncode != code or words not in result.stdout + result.stderr:
-                failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
-                                + f": {(result.stdout + result.stderr).strip()[:300]}")
-    for name in SKIPPED:
-        print(f"test-install-page: skipped {name}: root reads a file whatever its mode")
+    failures += [f"the letter-case guard: {problem}" for problem in letter_case_problems()]
+    failures += [f"the case loop: {problem}" for problem in case_loop_problems()]
+    failures += [f"the second look: {problem}" for problem in second_look_problems()]
+    failures += [f"the case run: {problem}" for problem in main_call_problems()]
+    skipped = [(name, ROOT_READS) for name in SKIPPED]
+    run = [] if copied else CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]
+    # Each case and each residual, read here apart from run, must be run, or left unrun with a reason, exactly once.
+    wanted = [] if copied else [case[0] for case in CASES] + [name for name, _, _ in RESIDUALS]
+    looped, tried, unrun = case_run_problems(run, wanted, run_cases, folds_on_second_look)
+    failures += looped
+    skipped += unrun
+    for name, reason in skipped:
+        print(f"test-install-page: skipped {name}: {reason}")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
+    # The cases that main() ran: every name that it ran but the residuals, each of which it ran once.
+    cases_run = len(tried) - len(RESIDUALS)
+    print(f"test-install-page: all {cases_run} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
           f"ALLOWED_SCRIPTS, the scan of this file for literal versions, version_binding_problems(), "
           f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
-          f"the end tags, LOADED_SEGMENTS and the pinned loads, the workflow's path "
-          f"lists, the Python version checks, the "
+          f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
+          f"redirect_break(), the sha256 of tools/{GATE.name} and its checked load, "
+          f"the reader pin of {len(READER_NAMES)} functions and {len(READER_GLOBALS)} other names "
+          f"of check 7 and its refusal of values that it cannot pin, the letter-case guard, "
+          f"the case loop, the 2nd look, main()'s call of case_run_problems(), the "
+          f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
           "stylesheets passed.")

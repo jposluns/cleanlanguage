@@ -58,8 +58,9 @@ What it verifies
    (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
    leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
    ``NOTICE.md`` and
-   ``marks/NOTICE.md``, and every build tool key in ``TOOLS``, so a copy that
-   drops one, such as ``rail.js`` or ``.baseline/build_card.js``, fails even
+   ``marks/NOTICE.md``, the 9 logos in ``LOGOS`` under ``logos/``, and every
+   build tool key in ``TOOLS``, so a copy that drops one, such as ``rail.js``,
+   ``logos/vendorreplies.png`` or ``.baseline/build_card.js``, fails even
    when the files present match.
 6. The pin's version is the version that ``SHA256SUMS`` belongs to:
    ``SHA256SUMS`` lines carry no version, so the gate reads it from the
@@ -98,6 +99,19 @@ What it verifies
    ``<blockquote``, or if that form's line directly follows the entry. The
    README is read only when it matches its digest, and a README that holds
    a carriage return anywhere is refused (exit 3).
+8. The copy holds only the logos the site's pages load and no ``.ico`` file.
+   From baseline 1.12.2 the README's step 2 copies from ``logos/`` only the
+   files the site's pages load and those its card builder reads, and never
+   an ``.ico`` file: the site builds its own ``favicon.ico`` with the card
+   builder and serves it at its root. ``LOGOS`` names those files for this
+   site: the 6 full-colour family logos and ``vendorreplies.png`` that the
+   footer loads, and the site's own ``cleanlanguage-favicon.svg`` and
+   ``cleanlanguage-touch.png`` that the head links; the card builder's
+   ``favicon`` key reads the first. ``tools/test-build-site.py`` holds the list equal
+   to the logos the built pages load. A pinned key under
+   ``assets/baseline/logos/`` whose name is not in ``LOGOS``, and a pinned
+   key or a copied file under ``assets/baseline/`` whose name ends in
+   ``.ico`` in any letter case, in any folder, fails.
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -125,7 +139,9 @@ learn the new form.
 Exit codes:
   0  every copied file matches the pin
   1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; a
-     file of the runtime and licence set or a build tool is not pinned; a
+     file of the runtime and licence set, a logo in LOGOS or a build tool
+     is not pinned; a pinned logo is not in LOGOS; a pinned key or a copied
+     file under the copy folder is an .ico file; a
      file or link under site/ has a pinned build tool's file name; a
      checked folder is a link or not a folder, or a link is under site/ or
      .baseline/card-fonts/; the pin's version is not the README's; or
@@ -194,6 +210,24 @@ TOOLS = {
     ".baseline/card-fonts/Inter-Regular.otf": "tools/card-fonts/Inter-Regular.otf",
     ".baseline/card-fonts/inter-LICENSE.txt": "tools/card-fonts/inter-LICENSE.txt",
 }
+# The logos the site's pages load, by their names under logos/ in the version and under assets/baseline/logos/ in the
+# copy (item 8): the 6 full-colour family logos and vendorreplies.png of the footer, and the site's own favicon and
+# touch icon of the head; the card builder's favicon key also reads the favicon. tools/copy-baseline.py copies exactly
+# these from logos/, and tools/test-build-site.py fails unless they are exactly the logos the built pages load.
+LOGOS = (
+    "aiqt.svg",
+    "auditthis.svg",
+    "cleanlanguage-favicon.svg",
+    "cleanlanguage-touch.png",
+    "cleanlanguage.svg",
+    "grclibrary.svg",
+    "opfiles.svg",
+    "secureconfig.svg",
+    "vendorreplies.png",
+)
+LOGO_PREFIX = PREFIX + "logos/"
+# The suffix of a file that the copy never holds, in any letter case and any folder (item 8).
+ICO = ".ico"
 # The card builder's font folder, which must hold no unpinned file (item 4).
 CARD_FONTS = Path(".baseline/card-fonts")
 # Folders the gate reads from or lists, each checked before anything is read through it: a linked folder would let the
@@ -205,7 +239,7 @@ REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
                  "scheme.js", "LICENSE", "NOTICE.md", "marks/NOTICE.md")
-] + list(TOOLS)
+] + [LOGO_PREFIX + name for name in LOGOS] + list(TOOLS)
 
 # Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
 # would accept a value that ends in one.
@@ -446,14 +480,26 @@ def check(root: Path) -> list[str]:
     for path in REQUIRED:
         if path not in files:
             problems.append(f"{path} is part of the baseline's runtime and licence set but is not pinned.")
+    for path in sorted(files):
+        if path.startswith(LOGO_PREFIX) and path[len(LOGO_PREFIX):] not in LOGOS:
+            problems.append(f"{path} is pinned, but it is not 1 of the logos the site's pages load (LOGOS); copy "
+                            "only those from logos/.")
 
     copied = out / PREFIX
     if not copied.is_dir():
         raise Unreadable(f"{shown}/{PREFIX} is missing")
     # A link at or under the copy folder is reported below with every link under site/, which holds the folder.
-    for name in list_tree(copied)[0]:
+    copied_files = list_tree(copied)[0]
+    for name in copied_files:
         if PREFIX + name not in files:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
+    # An .ico file under the copy folder, pinned or copied, in any folder and any letter case: the site builds its own
+    # favicon.ico and serves it at its root, outside the copy (item 8). Each name is reported once.
+    icons = {path[len(PREFIX):] for path in files if path.startswith(PREFIX)} | set(copied_files)
+    for name in sorted(icons):
+        if name.casefold().endswith(ICO):
+            problems.append(f"{PREFIX}{name} is an .ico file under the copy folder, pinned or copied; the copy holds "
+                            "no .ico, since the site builds its own favicon.ico.")
 
     # folder_problems() has refused a font folder that is a link or a file; a missing one is already reported above,
     # as each pinned file in it missing.
