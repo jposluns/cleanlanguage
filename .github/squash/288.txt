@@ -17,6 +17,11 @@ Add this message as .github/squash/288.txt. No other file changes.
 
 Checks, each run from the repository root; each exits 0.
 
+python3 -I tools/check-page-metadata.py prints this on 1 line:
+
+    All 17 content pages carry author and date metadata consistent
+    with git history. Author: Jeff Posluns.
+
 python3 -I tools/build-site.py --check prints this on 1 line:
 
     The committed site/ matches a fresh build (18 files, beside 12
@@ -25,6 +30,24 @@ python3 -I tools/build-site.py --check prints this on 1 line:
 python3 -I tools/generate-sitemap.py prints:
 
     generate-sitemap: site/sitemap.xml matches the 17 pages; no drift
+
+python3 -I tools/test-page-metadata.py reports Ran 154 tests and
+ends with:
+
+    OK
+
+python3 -I tools/test-build-site.py prints:
+
+    test-build-site: all 1122 cases passed.
+
+python3 -I tools/test-web-metadata.py reports Ran 65 tests and ends
+with:
+
+    OK
+
+python3 -I tools/test-sitemap.py reports Ran 41 tests and ends with:
+
+    OK
 
 python3 -I tools/check-pr-text.py --squash .github/squash/288.txt
 --number 288 prints:
