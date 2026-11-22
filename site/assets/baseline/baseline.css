@@ -1,4 +1,4 @@
-/* baseline.css 1.11.4: the shared stylesheet of the 7 project sites (the Atrium direction).
+/* baseline.css 1.13.0: the shared stylesheet of the sites that use this template (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
@@ -243,11 +243,16 @@ a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 .region ol.num { padding-left: 0; list-style: none; counter-reset: c; margin: 0; }
 .region ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
 .region ol.num > li::before { content: counter(c); position: absolute; left: 0; top: 0.12rem; font: 400 0.95rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
-:is(.doc, .doc > section, .doc > article) > details { margin: 0 0 1.1rem; }
+/* --para-gap (from 1.13.0, D-097): the space under a paragraph, list, definition list, quotation or details block in a
+   document, default 1.1rem. A site may lower it in its site.css; max(0px, min()) keeps every spacing token between 0
+   and its default, so a larger value has no effect and a negative one gives 0. Unset, nothing changes. --file-line-gap
+   is set by the template only, on the file line of a download block (below), so that a paragraph rule that sets the
+   file line's margin reads --download-line-gap there; it is kept between 0 and the paragraph gap. */
+:is(.doc, .doc > section, .doc > article) > details { margin: 0 0 max(0px, min(var(--para-gap, 1.1rem), 1.1rem)); }
 details summary { cursor: pointer; font-weight: 600; padding: 0.4rem 0; }
 details p, details ul { margin: 0.4rem 0 0.8rem; }
 details ul ul { margin: 0.2rem 0 0.4rem; }
-.doc p, .doc ul, .doc ol, .doc dl { margin: 0 0 1.1rem; }
+.doc p, .doc ul, .doc ol, .doc dl { margin: 0 0 max(0px, min(var(--para-gap, 1.1rem), var(--file-line-gap, 1.1rem), 1.1rem)); }
 .doc .meta { font: 400 1.05rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 1.6rem; max-width: var(--measure, 66ch); }
 .doc .lead { margin-bottom: 1.4rem; }
 .doc ul { padding-left: 1.2rem; }
@@ -259,7 +264,7 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
 .doc ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
 .doc ol.num > li::before { content: counter(c); position: absolute; left: 0; top: 0.12rem; font: 400 0.95rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
 .doc ol.num ol { list-style: lower-alpha; padding-left: 1.4rem; margin-top: 0.5rem; }
-.doc blockquote { margin: 0 0 1.1rem; padding-left: 1.4rem; font-style: italic; color: var(--text-muted); }
+.doc blockquote { margin: 0 0 max(0px, min(var(--para-gap, 1.1rem), 1.1rem)); padding-left: 1.4rem; font-style: italic; color: var(--text-muted); }
 
 /* Contents rail */
 .rail { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; --logo-inset: 0.115; }
@@ -475,12 +480,22 @@ dl.record.cols div { break-inside: avoid; }
 .pair-stack .before:has(> .msg) { background: var(--pair-after-bg); }
 
 /* Download and checksum block */
-.download { margin: 0.4rem 0 1.6rem; }
+/* Spacing (from 1.13.0, D-097). In the document grid the block is a grid item, so until 1.12.4 the margin under its
+   last line did not collapse into the margin under the block and the 2 added up (43.2 px under a file line). The last
+   line now ends flush with the block, so the space under the block is --download-after alone (default 1.6rem, kept
+   between 0 and that default); the space under the file line, where more lines follow it, is --download-line-gap (its
+   default and its ceiling are the paragraph gap in effect, its floor 0). The file line rule sets no margin itself: it
+   passes the token to the paragraph rule (.doc p, above), so it applies wherever that rule sets the file line's
+   margin, at any depth of a document, and a box with its own paragraph margin (a callout, a pair) keeps it. A site may
+   lower either token in its site.css; a larger value has no effect and a negative one gives 0. */
+.download { margin: 0.4rem 0 0; margin-bottom: max(0px, min(var(--download-after, 1.6rem), 1.6rem)); }
 .download .file { font-size: 1.333rem; line-height: 1.4; }
+.download > p.file:not(:last-child) { --file-line-gap: var(--download-line-gap, 1.1rem); }
 .download .file a { text-decoration-color: var(--brand); text-decoration-thickness: 2px; }
 .download .size { margin: 0.3rem 0 0.9rem; }
 .download code.sum { display: block; background: var(--code-bg); padding: 0.9rem 1rem; border-radius: 0.3rem; font-size: 0.85rem; overflow-wrap: anywhere; white-space: normal; margin: 0 0 0.9rem; }
 .download pre { margin: 0; font-size: 0.8rem; padding: 0.9rem 1rem; }
+.doc .download > :last-child { margin-bottom: 0; }
 
 /* Install selector: 6 tracked labels in a row */
 .picker { display: flex; flex-wrap: wrap; gap: 0.4rem 1.8rem; margin: 0.4rem 0 1.4rem; padding: 0; list-style: none; }
