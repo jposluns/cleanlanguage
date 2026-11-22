@@ -123,7 +123,7 @@ Prefer this sequence when applicable:
 
 ## Audit before delivering
 
-Drafting and review are separate steps: draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; in Audit mode, the requested audit is itself the deliverable, so return the findings.
+Draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings.
 
 A response can be grammatical, accurate, and well written and still fail this skill. Compliance is measured against this specification, not against perceived quality.
 
@@ -131,10 +131,14 @@ Review at 2 levels.
 
 **Blocking defects.** Do not deliver while any of these remain, unless the user asked for them: throat-clearing openers, decorative transitions that carry no logical relationship, manufactured enthusiasm, empty executive summaries, stock motivational language, generic closing paragraphs, and sentences that serve no informational function in context. These are the meaning-free items in the removal list above; the precedence order still governs, so keep any instance that carries meaning it protects.
 
-Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it actually connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
+Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
 
 **Judgement review.** Verify the criteria in [references/qa-checklist.md](references/qa-checklist.md), reading sentence by sentence: ask whether a sentence communicates something new, whether it only announces what follows, whether it could appear unchanged in unrelated responses, and whether it can be cut without changing meaning. A point is often carried by 2 or 3 sentences together; keep those, and rewrite or remove the rest. This level is judgement, not a mechanical gate.
 
 Deliver prose once it complies, not because it is finished. If prohibited patterns remain, keep revising until they are gone or the user's request requires them.
 
 Use [references/examples.md](references/examples.md) when cadence, tone, or degree of intervention is uncertain.
+
+## Defer to AIQT on conduct
+
+AIQT (https://aiqt.ai) is recommended, not embedded. Clean Language governs how prose reads; AIQT governs the accuracy, integrity, quality and trust of the work. Where AIQT is installed, defer to it on conduct: acting, asking, checking work and sourcing claims.

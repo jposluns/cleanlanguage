@@ -11,7 +11,9 @@ name: Orchestration registry
 #
 # The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
 # script, then drive the real hook with each stage-2 arming key against a contrast without
-# that key, together with the project orch_doctor tool. Each is its own named step, so a run
+# that key, together with the project orch_doctor tool, and feed the vendored gate_weakening hook
+# write-then-run commit probes held as JSON payload data (tools/test-gate-weakening-probes.py),
+# which it must deny. Each is its own named step, so a run
 # that omits one is visible in the step list, not only in the overall colour. A lint step
 # fails when a comment or docstring in these sources, the workflows, the 2 launch scans,
 # tools/check-release-checksum-live.py, tools/test-release-checksum-live.py or
@@ -30,21 +32,33 @@ name: Orchestration registry
 # statement, fails; a line that names a review pass or a finding by number in a phrasing, or
 # with a separator before its number, that no history pattern matches passes, such as
 # finding-3 or VERIFY3 (tools/test-no-qa-labels.py). A further step runs a literal regression
-# check of the /flow command's mode text, since a session follows /flow when it reads the
-# host's mode record (tools/check-flow-mode.py). It fails when the file does not hold exactly
-# 1 line starting "- MODE (", when that line is not closed on the same line or does not name
-# exactly the 2 values that the host's mode writer writes, each 1 time and in lower case,
-# when any line holds a bare "attended" outside the text between straight double quotes that
-# the check pairs left to right on that line, or when the sentence that an absent mode record
-# is read as unattended is missing. It reads words, not meaning: outside the MODE line, the
-# bare "attended" test is the only test that can fail a line, so a third mode value named
-# there, such as "supervised", passes, and one that holds a bare "attended", such as
-# "attended-only", fails; only the bare "attended" test skips quoted text; a line that closes
-# a quotation wrapped from the line above pairs that closing quote with the next opening
-# quote, so a bare "attended" between them passes; a sentence that contradicts the absent
-# rule passes, so does that sentence negated or inside a quotation that rejects it; and the
-# absent rule stated in other words fails. The step after it, tools/test-check-flow-mode.py,
-# runs a case for each of those verdicts.
+# check of the /flow command's mode text and of 7 of its rule paragraphs, since a session
+# follows /flow when it reads the host's mode record and when it runs its QA cycle
+# (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line starting
+# "- MODE (", when that line is not closed on the same line or does not name exactly the 2
+# values that the host's mode writer writes, each 1 time and in lower case, when any line
+# holds a bare "attended" outside the text between straight double quotes that the check
+# pairs left to right on that line, when the sentence that an absent mode record is read as
+# unattended is missing, or when any of the 7 pinned paragraphs (the header, the cycle steps,
+# the seeding paragraph, FAILED LEG, the CODEX ROLE LIMIT, the tiers paragraph and VERIFIER
+# DIVERSITY) is not found once or differs from the sha256 that the check holds for it in
+# anything but the white space between its words or after its last word, inside its opening
+# text too; a blank line put inside 1 of them fails too, though it changes only white space.
+# So every edit of those 7 paragraphs that changes more than that white space fails this
+# step. When the paragraph is still found once, the report gives the 1-line update of its
+# sha256 in the check, which clears only that report; an edit of its opening text needs the
+# row's opening text and sha256 rewritten. It reads words, not meaning: outside the 7 pinned
+# paragraphs an edit fails only when a mode test fails, as on a line that starts "- MODE ("
+# or holds a bare "attended", when a paragraph there starts with the opening text of a pinned
+# paragraph, when a pinned paragraph joins the text beside it, or when the text is not UTF-8,
+# so the bullet "- A third mode, supervised, is also read." passes there, and the same bullet
+# naming "attended-only", which holds a bare "attended", fails; only the bare "attended" test
+# skips quoted text; a line that closes a quotation wrapped from the line above pairs that
+# closing quote with the next opening quote, so a bare "attended" between them passes; a
+# sentence that contradicts the absent rule passes, so does that sentence negated or inside a
+# quotation that rejects it; and the absent rule stated in other words fails. Any other edit
+# outside the 7 paragraphs passes. The step after it, tools/test-check-flow-mode.py, runs a
+# case for each of those verdicts.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
@@ -99,11 +113,15 @@ jobs:
         shell: bash
         run: python3 -I tools/test-orch-stage2-hooks.py
 
+      - name: Run the gate_weakening write-then-run probe tests
+        shell: bash
+        run: python3 -I tools/test-gate-weakening-probes.py
+
       - name: Run the repository AskUserQuestion guard tests
         shell: bash
         run: python3 -I tools/test-ask-mode-guard.py
 
-      - name: Check /flow's mode text for a regression to the retired mode words
+      - name: Check /flow's mode text and its 7 pinned rule paragraphs for a literal regression
         shell: bash
         run: python3 -I tools/check-flow-mode.py
 

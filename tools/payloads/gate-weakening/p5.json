@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "probe",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "cat > /tmp/probe-p5.py <<'EOF'\nimport subprocess\nsubprocess.run([\"git\", \"commit\", \"--no-verify\", \"-m\", \"probe\"])\nEOF\npython3 /tmp/probe-p5.py"
+  }
+}

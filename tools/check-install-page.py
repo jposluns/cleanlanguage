@@ -131,27 +131,32 @@ What it verifies
    parser can read them differently from a browser; and, by that same check 7,
    exactly 1 element with ``data-scheme-toggle``, the light and dark switch of
    template specification 7.33, in its place.
-6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
-   ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
-   as a script with ``defer`` outside every element of ``INERT_ELEMENTS``,
-   from ``/assets/baseline/`` with ``?v=X.Y.Z``,
-   and no other stylesheet loads: every stylesheet the page loads, and every
-   ``<link>`` start tag naming ``stylesheet`` that a text match finds, a tag in
-   a comment included, is 1 of those 3 in exactly the form
-   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, so, with
-   check 7's refusal of a ``Link`` header, the rule pin of
-   ``tools/test-install-page.py`` reads every stylesheet that the 6 pages'
-   markup or ``site/_headers`` loads; a header that Cloudflare adds outside
-   that file is not read. ``/assets/site.css``, which none of them loads, fails, so a
-   ``site-src/assets/site.css``, which ``tools/build-site.py`` adds to the head
-   of every page it builds, needs this check and that pin changed with it. ``scheme.js`` loads
-   exactly once, as
-   exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
-   with no ``defer`` or ``async``, before the first stylesheet, and it and every
-   stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
-   the first head or body the page opens (template specification 7.33, baseline
-   1.6.0), before the head ends where HTML5 ends it: at the first text other
-   than whitespace, start tag other than those HTML5 allows in a head
+6. Versioned asset tokens and the script and stylesheet tags on each of the
+   6 pages: the page must hold a stylesheet link to each of ``fonts.css``,
+   ``palettes.css`` and ``baseline.css``, and a script tag for ``copy.js``
+   with ``defer`` outside every element of ``INERT_ELEMENTS``, from
+   ``/assets/baseline/`` with ``?v=X.Y.Z``, and no other stylesheet link:
+   every ``<link>`` element whose ``rel`` names ``stylesheet``, read as the
+   parsed element, and every ``<link>`` start tag naming ``stylesheet`` that
+   a text match finds, a tag in a comment included, must be 1 of those 3
+   written in exactly the form
+   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, the only
+   form in which the gate reads a stylesheet as loaded, so, with check 7's
+   refusal of a ``Link`` header, the rule pin of
+   ``tools/test-install-page.py`` reads every stylesheet that a link in the
+   6 pages' markup or a ``Link`` header in ``site/_headers`` names; a header
+   that Cloudflare adds outside that file is not read. A stylesheet link to
+   ``/assets/site.css``, which no committed page holds, fails, so a
+   ``site-src/assets/site.css``, which ``tools/build-site.py`` adds to the
+   head of every page it builds, needs this check and that pin changed with
+   it. The page must hold exactly 1 ``scheme.js`` tag, written as exactly
+   ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
+   with no ``defer`` or ``async``, before the first stylesheet link, and it
+   and every stylesheet link must start inside ``<head>``, read as parsed
+   elements: ``html > head``, the first head or body the page opens
+   (template specification 7.33, baseline 1.6.0), before the head ends where
+   HTML5 ends it: at the first text other than whitespace, start tag other
+   than those HTML5 allows in a head
    (``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``. A self-closing tag
    leaves an element that is neither void nor in ``<svg>`` open, as a
    browser may; in ``<svg>`` this reading closes it, also where a browser may move it
@@ -159,16 +164,21 @@ What it verifies
    reading fails closed where it does not model HTML5: such a
    start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
    head, and a self-closing tag in ``<math>`` leaves its element open. Every
-   other ``<script>`` the page loads is 1 of the baseline scripts this site uses
+   other ``<script>`` with a ``src`` on the page is 1 of the baseline
+   scripts this site uses
    (``ALLOWED_SCRIPTS``: ``copy.js``, ``search.js``, ``rail.js``) from
    ``/assets/baseline/``, with the same token and ``defer``, as exactly
    ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``;
    ``select.js`` is refused, and the baseline's ``matrix.js`` is left out, by
    the owner's decision. Every ``src`` on the 6 pages is a path from the
    site's root whose first segment is 1 of ``LOADED_SEGMENTS`` (``assets``,
-   in any letter case), the first segments of every file the committed pages
-   load, so check 7 refuses every header and redirect rule that can match
-   what they load (``src="/images/a.png"`` and ``src="logo.svg"`` fail).
+   in any letter case), the first segments of every file that
+   ``tools/test-install-page.py`` reads the committed pages as loading
+   (below), so check 7 refuses each header but those of ``INSTALL_HEADERS``,
+   with their values, under a header pattern that it reads as able to match
+   a path under them, and every redirect rule whose source it reads so but
+   1 that sends an exact, unoccupied source to a pinned logo with the
+   status 301 (``src="/images/a.png"`` and ``src="logo.svg"`` fail).
    Every ``src``, and every ``href`` of a ``link`` other than the canonical
    link, is also 1 of the files under ``assets/baseline/`` that
    ``tools/check-baseline-pin.py`` pins in ``.baseline/pin.toml``, read with
@@ -185,10 +195,11 @@ What it verifies
    other than the canonical link, and every ``url()`` of the 3 stylesheets,
    read from the stylesheet's address, and unless ``load_path`` reads each of
    them as a pinned file; the gate itself does not read the stylesheets'
-   ``url()``. Each load is read as the parsed element, so a tag
-   inside a comment loads nothing, and a ``<script>`` or stylesheet written in
-   another spelling (letter case, a character reference, attribute order or
-   spacing) is still counted. Any tag that carries an attribute twice fails: a
+   ``url()``. Each ``<script>`` and stylesheet link is read as the parsed
+   element, so the gate reads no tag inside a comment as a load, and a
+   ``<script>`` or stylesheet link written in another spelling (letter
+   case, a character reference, attribute order or spacing) is still
+   counted. Any tag that carries an attribute twice fails: a
    browser may read the first value, and the load reading would take the last. Every
    ``<script>`` start tag with a ``src`` that a text match finds, a tag in a
    comment included, is ``scheme.js`` in its exact form or 1 of
@@ -209,8 +220,9 @@ What it verifies
    header, which a browser can read as a stylesheet load that check 6 and the
    rule pin do not see; it refuses every ``Link`` header, one that only
    preloads included, because it does not read the header's value. Under a
-   URL pattern that can match an install page or a file the pages load
-   (``reaches_page``, below), ``/*`` included, only the
+   URL pattern that the gate reads, failing closed, as able to match an
+   install page or a file the pages load (``reaches_page``, below), ``/*``
+   included, only the
    headers and values that the committed file sets there may appear
    (``INSTALL_HEADERS``: under ``/*``, ``X-Frame-Options``,
    ``Permissions-Policy``, ``Cross-Origin-Opener-Policy`` and
@@ -224,34 +236,107 @@ What it verifies
    fails unless ``INSTALL_HEADERS`` holds exactly what the committed file
    sets under those patterns. The gate reads a pattern from its text alone,
    not with Cloudflare Pages' matcher, and fails closed (``reaches_install``):
-   a pattern can match an install page unless the first segment of its path,
-   after any ``https://`` and host, is not empty, is made only of ASCII
-   letters and digits, ``.``, ``_``, ``~`` and ``-``, is neither ``.`` nor
-   ``..``, and is not ``install`` in any letter case. So ``/``, ``/*``,
+   it reads a pattern as able to match an install page unless the first
+   segment of its path, after any ``https://`` and host, is not empty, is
+   made only of ASCII letters and digits, ``.``, ``_``, ``~`` and ``-``, is
+   neither ``.`` nor ``..``, and is not ``install`` in any letter case. So
+   ``/``, ``/*``,
    ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
    ``https://host`` and ``https://host/install/*`` can, and
-   ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
+   ``/downloads/cleanlanguage-instructions.md``, ``/images/cleanlanguage-card.png``,
    ``/sitemap.xml`` and ``/draft/*`` cannot. ``reaches_page`` reads a
    pattern the same way, and also as able to match a file the pages load
    when the first segment of its path is 1 of ``LOADED_SEGMENTS`` (check 6)
    in any letter case: ``/assets/*``, ``/ASSETS/baseline/copy.js`` and
-   ``https://host/assets/baseline/baseline.css`` can. ``site/_redirects`` is
-   read with it: no rule there may have a source, its first field, that
-   ``reaches_page`` reads as able to match an install page or a file the
-   pages load, whatever its
-   destination and status, because a redirect sends the reader away from the
-   page and a rewrite (status 200) serves other content at its address, and
-   the same holds for a stylesheet, a script, a font or an image; a
-   blank line, and a line whose first field starts with ``#``, is skipped. So
+   ``https://host/assets/baseline/baseline.css`` can. Every rule of
+   ``site/_headers`` is read with ``reaches_page``, so a header rule under
+   ``/assets/`` fails, 1 for an exact path that the redirect reading below
+   accepts as a source included.
+   ``site/_redirects`` is read by ``redirect_problems``, rule by rule,
+   because a redirect of an install page can send the reader away from the
+   page and a rewrite (status 200) can serve other content at its address,
+   and a redirect or a rewrite of a stylesheet, a script, a font or an
+   image that a page loads can make the browser load other content in its
+   place, while the reader stays on the page; a blank line, and a
+   line whose first field starts with ``#``, is skipped. Its lines end only
+   at a line feed, and a line that holds a control character other than the
+   line feed (a carriage return, a vertical tab and a form feed among them),
+   U+2028, U+2029, a byte order mark or whitespace other than the space
+   fails, as ``tools/check-headers.py`` holds ``site/_headers`` but with no
+   carriage return allowed before a line feed (``redirect_break``), since
+   ``str.splitlines()`` would end a line at some of them, so that a field
+   after one would go unjudged, and the gate does not know how Cloudflare
+   Pages reads each. A rule whose source ``reaches_install`` reads as able
+   to match an install page fails, and so does a rule whose source's first
+   segment, after any ``https://`` and host, is 1 of ``REQUESTED_FILES``
+   (``favicon.ico``) in any letter case, the files that this gate judges
+   among those that a browser may request from the site's root without a
+   link, whatever its destination and status
+   (``/favicon.ico https://other.example/x.ico 301``,
+   ``/FAVICON.ICO /x.ico 200``, ``/favicon.ico/x /y 301`` and
+   ``https://cleanlanguage.ai/favicon.ico /y 301`` fail). A rule whose
+   source's first segment is 1 of ``LOADED_SEGMENTS`` in any letter case
+   passes only when all of these hold, and fails otherwise: its source is an
+   exact path (``exact_path_problem``: it starts with ``/``, so it carries
+   no scheme or host, and each of its segments is not empty, is neither
+   ``.`` nor ``..`` and holds only ASCII letters and digits, ``.``, ``_``,
+   ``~`` and ``-``, so it holds no ``*``, splat, ``:`` placeholder, ``%``,
+   ``?``, ``#`` or backslash and ends in no ``/``); it has exactly 2 fields
+   after its source, a destination that is ``/`` and the path of a file
+   under ``REDIRECT_TARGETS`` (``assets/baseline/logos/``) that
+   ``tools/check-baseline-pin.py`` pins, as written, with no scheme, host,
+   query, fragment, ``.`` or ``..`` segment, and then the status ``301``
+   (``target_problem``, which reads the path with ``load_path``);
+   and nothing under ``site/`` occupies its source, as a file, a folder, a
+   link or a page that Pages serves there without its ``.html`` or
+   ``.htm``, and no leading part of it is a file or a link, each compared in
+   any letter case (``occupied``), while every folder under ``site/`` that
+   this search enters can be listed; a folder that cannot be listed fails
+   the rule and is named. A rule whose source matches none of these, such
+   as ``/foo /assets/baseline/baseline.css 301``, is not judged further. So
+   a request for a source under ``LOADED_SEGMENTS`` that passes, as this
+   reading reads it, is sent to a pinned logo with the status 301, and the
+   gate needs no search of the site for what loads that source. So
    ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
-   ``/* / 302``, ``/assets/baseline/baseline.css /assets/baseline/fonts.css
-   200`` and ``/assets/baseline/copy.js /assets/baseline/rail.js 302`` fail.
-   No committed source can match an install page or a file the pages load,
-   nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the release
-   writer, writes. These residuals are accepted: a rule of either file that
-   reaches an install page or a file the pages load through any matching
-   behaviour of Pages beyond that
-   reading passes. ``tools/test-release-links.py`` pins ``site/_redirects`` to
+   ``/* / 302``, ``/assets/* / 302``, ``/assets/baseline/logos/aiqt-*.svg
+   /assets/baseline/logos/aiqt.svg 301``,
+   ``/assets/baseline/baseline.css /assets/baseline/fonts.css 200``,
+   ``/assets/baseline/copy.js /assets/baseline/rail.js 302``,
+   ``/assets/baseline/logos/aiqt-card.svg https://other.example/x.svg
+   301``, ``/assets/baseline/logos/aiqt-card.svg
+   /assets/baseline/select.js 301``,
+   ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
+   302`` and ``/assets/baseline/logos/aiqt-card.svg
+   /assets/baseline/logos/aiqt.svg?x=1 301`` fail, and
+   ``/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg
+   301`` passes while no file occupies that path. Each logo redirect that
+   ``redirects_body`` of ``tools/set-release-links.py``, the release
+   writer, writes is such a rule. ``tools/test-install-page.py`` reads
+   the bytes of this file once and stops, before any code of this file
+   runs in its process, unless their sha256 is the digest that it writes
+   (``GATE_SHA256`` there), so that any change to this file, a comment
+   included, fails that test until a reviewer, having read the change,
+   records a new digest. As a second layer it pins, by sha256
+   (``READER_SHA256`` there), ``redirect_problems`` and each function of
+   this gate that a ``def`` at its top level binds and that a pinned
+   function reads by name, with the module-level names that those
+   functions read; a function reached in another way, such as through an
+   alias, ``functools.partial`` or a class, is outside that second layer.
+   These residuals are accepted: a rule of either file that reaches an
+   install page or a file the pages load through any matching behaviour
+   of Pages beyond that reading passes, such as a handling of letter case,
+   of a trailing slash, of percent-encoding or of ``.html`` other than the
+   one read here; a path that a page, script or stylesheet loads but that
+   no file under ``site/`` occupies may be the source of such a rule, and a
+   reader then gets a pinned logo in its place; a redirect of another path
+   that a browser may request from the site's root without a link, such as
+   ``/apple-touch-icon.png``, which committed line 14 of
+   ``site/_redirects`` redirects, passes, since the redirect reading
+   judges only ``REQUESTED_FILES`` among such paths; and a rule of
+   ``site/_headers`` for ``/favicon.ico`` is held only to the checks that
+   apply to every rule, since ``reaches_page`` does not read it as able to
+   match an install page or a file the pages load.
+   ``tools/test-release-links.py`` pins ``site/_redirects`` to
    the release writer's output, so a hand edit that adds such a rule fails that
    test, but a change to the writer, with the file written again, does not. Nor
    does the gate read a header that Cloudflare adds outside ``site/_headers``
@@ -287,8 +372,9 @@ What it verifies
    around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
    all fail, while a ``span`` without a class in a step passes.
    ``tools/test-install-page.py`` fails unless ``CLASS_PIN`` holds exactly the
-   classes the committed pages give, and pins every stylesheet rule that can
-   match an element with those names and classes (see below). No checked
+   classes the committed pages give, and pins every stylesheet rule that it
+   reads, conservatively, as able to match an element with those names and
+   classes (see below). No checked
    element, ancestor or element it holds carries an attribute that an
    attribute selector of a pinned rule names (``RULE_ATTRIBUTES``), so ``data-preset`` on a family page's ``h1``,
    for which the print rules of baseline.css set ``display: none``
@@ -541,8 +627,9 @@ It does not apply any stylesheet or run any script, and it does NOT judge
 whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
 checked element, such as a ``clip-path`` or a height with overflow that cuts it
 off: check 8 and the rule pin of ``tools/test-install-page.py`` keep the rules
-that can reach one to those a reviewer has pinned (see below). Of the elements
-that the HTML standard's rendering rules may hide with no stylesheet, it does
+that they read as able to reach one to those a reviewer has pinned (see
+below). Of the elements that the HTML standard's rendering rules may hide with
+no stylesheet, it does
 not list the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``), which the parser
 never holds open, so none can hold a checked element or its text, nor ``head``,
@@ -763,11 +850,13 @@ FAMILY_NAMES = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "c
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
-# scheme.js loads in exactly this form, with no defer, before the stylesheets (specification 7.33).
+# The scheme.js tag must be written in exactly this form, with no defer, before the stylesheet links (specification
+# 7.33).
 SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
-# Every other script loads in exactly this form.
+# Every other script tag with a src must be written in exactly this form.
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
-# Every stylesheet loads in exactly this form, 1 of the 3 that the rule pin of tools/test-install-page.py reads.
+# Every stylesheet link must be written in exactly this form, naming 1 of the 3 stylesheets that the rule pin of
+# tools/test-install-page.py reads.
 SHEET_TAG = re.compile(r'<link rel="stylesheet" href="/assets/baseline/(fonts|palettes|baseline)\.css\?v=[0-9]+\.[0-9]+\.[0-9]+">')
 # Each page begins with exactly this, as tools/build-site.py writes it: the doctype that can keep a browser in
 # standards mode, where class selectors match class names with regard to case, as the class pin and the rule pin read
@@ -794,7 +883,8 @@ SHARED_CSP = (
     "frame-ancestors 'none'"
 )
 # The headers, by name in lower case, and the values that the committed site/_headers sets under each URL pattern
-# that can match an install page or a file the pages load (check 7, reaches_page). Under such a pattern any other
+# that reaches_page reads, failing closed, as able to match an install page or a file the pages load (check 7). Under
+# such a pattern any other
 # header, another value or a detach fails. tools/test-install-page.py fails unless this holds exactly what the
 # committed file sets there.
 INSTALL_HEADERS = {
@@ -977,9 +1067,9 @@ HIDING_ELEMENTS = (
 # Check 8: for each kind of checked element, the classes the 6 committed pages give, by tag, that element (the first
 # map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no class
 # on those pages, so it may carry none. tools/test-install-page.py fails unless these are exactly the sets the
-# committed pages give, and pins every stylesheet rule that can match an element with these names and classes. A link
-# back's div may also carry callout: the committed pages put a link with no class in a paragraph in a div.callout
-# (tools/test-install-page.py reads each such link, paragraph_links).
+# committed pages give, and pins every stylesheet rule that it reads, conservatively, as able to match an element with
+# these names and classes. A link back's div may also carry callout: the committed pages put a link with no class in a
+# paragraph in a div.callout (tools/test-install-page.py reads each such link, paragraph_links).
 PIN_ANCESTORS = {"html": ("site-cleanlanguage",), "div": ("doc", "wrap")}
 CLASS_PIN = {
     "the hero's h1": ({}, PIN_ANCESTORS, {}),
@@ -1076,10 +1166,22 @@ PAGE_TAGS = (
 )
 # Checks 6 and 7: the first path segment of every file the 6 committed pages load (each src, each href of a link other
 # than the canonical link, and each url() of the 3 stylesheets, read from the stylesheet's address). Every src on the 6
-# pages must be a path under 1 of them (check 6), and no rule of site/_headers or site/_redirects may have a pattern or a
-# source that can match a path under 1 of them (check 7, reaches_page), so neither file can change, redirect or replace
-# what the pages load. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
+# pages must be a path under 1 of them (check 6). No rule of site/_headers may have a pattern that reaches_page reads,
+# failing closed, as able to match a path under 1 of them, and a rule of site/_redirects whose source lies under 1 of
+# them passes only as redirect_problems() states (check 7).
+# tools/test-install-page.py fails unless this is exactly what the committed tree loads.
 LOADED_SEGMENTS = ("assets",)
+# Check 7: a segment of an exact source of site/_redirects under 1 of LOADED_SEGMENTS (exact_path_problem()).
+EXACT_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+# Check 7: the files that this gate judges among those that a browser may request from the site's root without a link,
+# as it requests /favicon.ico for a page, each named as the whole first segment of a path; a redirect source whose
+# first segment, after any https:// and host, is 1 of them, in any letter case, fails (redirect_problems()). It is
+# not every such file: a redirect of another, such as /apple-touch-icon.png, which committed line 14 of
+# site/_redirects redirects, is not judged, a residual that the module docstring names.
+REQUESTED_FILES = ("favicon.ico",)
+# Check 7: the folder, as a path from the site's root, that holds every destination that a rule of site/_redirects
+# whose source lies under 1 of LOADED_SEGMENTS may have (redirect_problems()).
+REDIRECT_TARGETS = "assets/baseline/logos/"
 # Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
 # file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
@@ -1475,21 +1577,23 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     # Without the doctype a browser may match class names without regard to case, so .DOC could match div.doc.
     if not text.startswith(DOCTYPE):
         problems.append(f"{where}: the page does not begin with <!doctype html> on its own line, as tools/build-site.py "
-                        "writes it; without it a browser matches class names without regard to case, which the rule "
+                        "writes it; without it a browser may match class names without regard to case, which the rule "
                         "pin does not.")
     for closure in parser.misnested:
-        problems.append(f"{where}: {closure}; a browser can keep that element open, reopen it or ignore the end tag, "
-                        "so what it hides is not what this gate reads, and tools/build-site.py refuses it too, unless "
-                        "a self-closing tag in an svg opened that element.")
+        problems.append(f"{where}: {closure}; a browser may keep that element open, reopen it or ignore the end tag, "
+                        "so what it hides may not be what this gate reads, and tools/build-site.py refuses it too, "
+                        "unless a self-closing tag in an svg opened that element.")
     loads = LoadScan(text)
     loads.feed(text)
     loads.close()
     for tag in loads.repeats:
-        problems.append(f"{where}: {tag} carries an attribute twice; a browser reads the first, this gate the last.")
+        problems.append(f"{where}: {tag} carries an attribute twice; a browser may read the first, and this gate's "
+                        "load check the last.")
     for name in ("fonts.css", "palettes.css", "baseline.css"):
         sheet = re.compile(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)))
         if not any(sheet.match(text, at) for at, _, _ in loads.sheets):
-            problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token.")
+            problems.append(f'{where}: no stylesheet link starts <link rel="stylesheet" href="/assets/baseline/{name}'
+                            '?v=X.Y.Z", the only form in which this gate reads that file as loaded.')
     scheme_tags = [at for at, _, _ in loads.scripts if SCHEME_TAG.match(text, at)]
     deferred = []
     for at, attrs, tag in loads.scripts:
@@ -1505,8 +1609,9 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
             deferred.append(name.group(1))
     if "copy.js" not in deferred:
         problems.append(
-            f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer, "
-            "outside every element of INERT_ELEMENTS."
+            f'{where}: no script tag outside every element of INERT_ELEMENTS is written as <script '
+            'src="/assets/baseline/copy.js?v=X.Y.Z" defer></script>, the only form in which this gate reads copy.js '
+            "as loaded."
         )
     # The text match also finds a tag that the parser reads as a comment or as text.
     for match in re.finditer(r"<script\b[^>]*\bsrc=[^>]*>", text):
@@ -1522,13 +1627,14 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     first_sheet = min((at for at, _, _ in loads.sheets), default=-1)
     if len(scheme_tags) != 1:
         problems.append(
-            f'{where}: scheme.js loads {len(scheme_tags)} times as <script data-cfasync="false" '
+            f'{where}: the page holds {len(scheme_tags)} script tags written as <script data-cfasync="false" '
             'src="/assets/baseline/scheme.js?v=X.Y.Z"></script>; exactly 1 is required.'
         )
     elif first_sheet == -1 or scheme_tags[0] > first_sheet:
-        problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
+        problems.append(f"{where}: the scheme.js tag does not come before the first stylesheet link, or the page has "
+                        "none.")
     elif scheme_tags[0] in loads.outside_head or any(at in loads.outside_head for at, _, _ in loads.sheets):
-        problems.append(f"{where}: scheme.js or a stylesheet does not load inside <head>.")
+        problems.append(f"{where}: the scheme.js tag or a stylesheet link starts outside <head>.")
     # Every stylesheet is 1 of the 3 the rule pin reads; the text match also finds a tag in a comment or in text.
     sheet_tags = [tag for _, _, tag in loads.sheets]
     sheet_tags += [match.group(0) for match in re.finditer(r"<link\b[^>]*>", text, re.I)
@@ -1539,8 +1645,8 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
                             "with a ?v=X.Y.Z token, the only stylesheets that the rule pin reads.")
     # Check 8: a browser may add the attributes of a later html or body start tag to the page's own element.
     for tag in parser.later_attrs:
-        problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
-                        "the page's own element, around every checked element.")
+        problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser may add "
+                        "to the page's own element, around every checked element.")
     return problems + page_attribute_problems(where, parser) + head_problems(where, text, parser)
 
 
@@ -1575,25 +1681,27 @@ def page_attribute_problems(where: str, parser: PageParser) -> list[str]:
     for element in parser.elements:
         tag = ("an " if element["tag"][:1] in "aeiou" else "a ") + element["tag"]
         if element["tag"] not in PAGE_TAGS:
-            problems[f"{where}: the page holds {tag}, a tag that the committed pages do not use (PAGE_TAGS); a browser "
-                     "can hide, scroll, reorder or move what it holds by it."] = None
+            problems[f"{where}: the page holds {tag}, a tag that the committed pages do not use (PAGE_TAGS); by a tag "
+                     "outside that list a browser may hide, scroll, reorder or move what it holds."] = None
         targets = [element["values"].get("src")]
         if element["tag"] == "link" and element["values"].get("rel") != "canonical":
             targets.append(element["values"].get("href"))
         for target in targets:
             if target is not None and load_path(target) not in pinned_files():
-                problems[f"{where}: {tag} loads {target!r}, which is not 1 of the files tools/check-baseline-pin.py "
+                problems[f"{where}: {tag} may load {target!r}, which is not 1 of the files tools/check-baseline-pin.py "
                          "pins, read as a path from the site's root with no . or .. segment (load_path); no check here "
                          "reads what another file holds."] = None
         for name in element["attrs"]:
             if name not in PAGE_ATTRIBUTES.get(element["tag"], ()):
                 problems[f"{where}: {tag} carries the attribute {name!r}, which the committed pages give no "
-                         f"{element['tag']} (PAGE_ATTRIBUTES); a browser can hide, size or move it or what is near it "
-                         "by it."] = None
+                         f"{element['tag']} (PAGE_ATTRIBUTES); by an attribute outside that list a browser may hide, "
+                         "size or move the element or what is near it."] = None
         src = element["values"].get("src")
         if src is not None and (not src.startswith("/") or path_segment(src).lower() not in LOADED_SEGMENTS):
-            problems[f"{where}: {tag} loads {src!r}, which is not under /{'/, /'.join(LOADED_SEGMENTS)}/ "
-                     "(LOADED_SEGMENTS), where check 7 refuses every header and redirect rule."] = None
+            problems[f"{where}: {tag} may load {src!r}, which is not under /{'/, /'.join(LOADED_SEGMENTS)}/ "
+                     "(LOADED_SEGMENTS), where check 7 refuses each header but those of INSTALL_HEADERS and every "
+                     "redirect rule but 1 that sends an exact, unoccupied source to a pinned logo with the status "
+                     "301."] = None
     return list(problems)
 
 
@@ -1612,10 +1720,10 @@ def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[st
     problems: list[str] = []
     if names:
         problems.append(f"{where}: an element that starts before {what} ends is a bdo or carries dir ({names}); either "
-                        f"can show {what}, or the text above it, in another order.")
+                        f"may show {what}, or the text above it, in another order.")
     if parser.page_dir:
-        problems.append(f"{where}: an html or body start tag carries dir, which a browser adds to the page's own "
-                        "element; it can show the page's text in another order.")
+        problems.append(f"{where}: an html or body start tag carries dir, which a browser may apply to the page's own "
+                        "element; it may show the page's text in another order.")
     return problems
 
 
@@ -1684,7 +1792,7 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
             what = (kind, f"{tag} around {kind}", f"{tag} inside {kind}")[position]
             if other["tag"] not in TAG_PIN[kind][position]:
                 problems[f"{where}: {what} is {tag}, a tag that the committed pages do not give an element there "
-                         f"(TAG_PIN); a browser can hide, scroll or move {kind} by it."] = None
+                         f"(TAG_PIN); by a tag outside that pin a browser may hide, scroll or move {kind}."] = None
             for name in other["classes"]:
                 if name not in allowed:
                     problems[f"{where}: {what} carries the class {name!r}, which the committed pages do not give "
@@ -1692,10 +1800,11 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
             for name in other["attrs"]:
                 if name in RULE_ATTRIBUTES:
                     problems[f"{where}: {what} carries the attribute {name!r}, which a pinned stylesheet rule names "
-                             f"(RULE_ATTRIBUTES); that rule can hide or move {kind}."] = None
+                             f"(RULE_ATTRIBUTES); that rule may hide or move {kind}."] = None
                 elif name not in given:
                     problems[f"{where}: {what} carries the attribute {name!r}, which the committed pages do not give "
-                             f"{tag} there (ATTRIBUTE_PIN); a browser can hide, colour or move {kind} by it."] = None
+                             f"{tag} there (ATTRIBUTE_PIN); by an attribute outside that pin a browser may hide, "
+                             f"colour or move {kind}."] = None
     return list(problems)
 
 
@@ -1741,29 +1850,161 @@ def head_problems(where: str, text: str, parser: PageParser) -> list[str]:
                 value is not None and values[name] != value for name, value in pinned.items()):
             shown = "".join(f' {name}="{value}"' for name, value in values.items())
             problems[f"{where}: <{tag}{shown}> is not 1 of the meta, link and base elements that the committed pages "
-                     "carry, with their attributes and values (HEAD_PIN); another can send the reader away from the "
-                     "page, replace its content or hide it."] = None
+                     "carry, with their attributes and values (HEAD_PIN); an element outside that pin may send the "
+                     "reader away from the page, replace its content or hide it."] = None
     return list(problems)
 
 
+def fold(path: str) -> str:
+    """Check 7: a path as the redirect reading compares it, in any letter case."""
+    return path.lower()
+
+
+def redirect_break(char: str) -> bool:
+    """Check 7: whether site/_redirects may not hold a character, as tools/check-headers.py holds site/_headers but
+    with no carriage return allowed before a line feed: a control character (U+0000 to U+001F and U+007F to U+009F)
+    other than the line feed, every carriage return included,
+    U+2028, U+2029, a byte order mark, or whitespace other than the space and the line feed. str.splitlines() ends a
+    line, and str.split() a field, at some of these, and this gate does not know how Cloudflare Pages reads each, so
+    each fails closed."""
+    code = ord(char)
+    return char != "\n" and (code < 0x20 or 0x7F <= code <= 0x9F or code in (0x2028, 0x2029, 0xFEFF)
+                             or (char.isspace() and char != " "))
+
+
+def exact_path_problem(source: str) -> str | None:
+    """Check 7: why a source of site/_redirects is not an exact path (None if it is 1): it starts with "/", so it
+    carries no scheme or host, and each of its segments is EXACT_SEGMENT and neither "." nor "..", so it holds no *, no
+    splat, no : placeholder, no %, ?, # or backslash, no empty segment and no trailing "/"."""
+    if not source.startswith("/"):
+        return "it does not start with /, so it can carry a scheme and a host"
+    for segment in source.split("/")[1:]:
+        if not segment:
+            return "it has an empty segment or a trailing /"
+        if segment in (".", ".."):
+            return f'it has the segment "{segment}"'
+        if not EXACT_SEGMENT.fullmatch(segment):
+            return (f"its segment {segment} holds a character other than ASCII letters, digits, ., _, ~ and -, such as "
+                    "*, a : placeholder, %, ?, # or a backslash")
+    return None
+
+
+def list_folder(folder: Path) -> list[os.DirEntry]:
+    """Check 7: the entries of a folder; an OSError passes through, so a folder that cannot be listed is named."""
+    with os.scandir(folder) as entries:
+        return list(entries)
+
+
+def occupied(source: str) -> tuple[str | None, str | None]:
+    """Check 7: what under site/ occupies an exact source, compared in any letter case: an entry at its path, as a
+    file, a folder or a link, or a page there that Pages serves without its .html or .htm; or an entry at a leading
+    part of its path that is not a folder (a file or a link). It returns the entry found and the folder that could not
+    be listed, each None if there is none."""
+    segments = source.split("/")[1:]
+    folders = [REPO_ROOT / "site"]
+    for depth, segment in enumerate(segments):
+        last = depth == len(segments) - 1
+        names = {fold(segment)} | ({fold(segment) + ".html", fold(segment) + ".htm"} if last else set())
+        found: list[Path] = []
+        for folder in folders:
+            try:
+                entries = list_folder(folder)
+            except OSError as error:
+                return None, f"the folder {folder.relative_to(REPO_ROOT)} could not be listed: {error}"
+            for entry in entries:
+                if fold(entry.name) not in names:
+                    continue
+                if last or not entry.is_dir(follow_symlinks=False):
+                    return str(Path(entry.path).relative_to(REPO_ROOT)), None
+                found.append(Path(entry.path))
+        if not found:
+            return None, None
+        folders = found
+    return None, None
+
+
+def target_problem(fields: list[str]) -> str | None:
+    """Check 7: why a rule of site/_redirects, its fields after the source, does not send its source to a pinned logo
+    (None if it does): it has exactly 2 fields after its source, a destination and the status 301; and its destination
+    is "/" and a path that load_path() reads, as written, so it carries no scheme, host, query or fragment, under
+    REDIRECT_TARGETS, and 1 of pinned_files()."""
+    if len(fields) != 3:
+        return f"the number of its fields after its source is {len(fields) - 1}, not 2"
+    destination, status = fields[1], fields[2]
+    if status != "301":
+        return f"its status is {status}, not 301"
+    target = load_path(destination)
+    if target is None or destination != "/" + target:
+        return (f"its destination {destination} is not a path from the site's root, as load_path() reads it, with no "
+                "query or fragment")
+    if not target.startswith(REDIRECT_TARGETS):
+        return f"its destination {destination} is not under /{REDIRECT_TARGETS}"
+    if target not in pinned_files():
+        return f"its destination {destination} is not 1 of the files that tools/check-baseline-pin.py pins"
+    return None
+
+
 def redirect_problems(redirects: str) -> list[str]:
-    """Check 7: each rule of site/_redirects whose source can match an install page or a file the pages load, read
-    with reaches_page."""
+    """Check 7: each line of site/_redirects that holds a character that redirect_break() refuses, and each rule whose
+    source fails, whatever its destination and status, when reaches_install reads it as able to match an install page
+    or when its first segment, after any https:// and host, is 1 of REQUESTED_FILES in any letter case. A rule whose
+    source's first segment is 1 of LOADED_SEGMENTS, in any letter case, passes only when its source is an exact path
+    (exact_path_problem()), nothing under site/ occupies it (occupied()) and target_problem() finds nothing; it fails
+    otherwise. A rule whose source's first segment is none of these is not judged further. The lines end only at a
+    line feed."""
     problems: list[str] = []
-    for number, line in enumerate(redirects.splitlines(), 1):
+    reach = ("which this gate reads, failing closed, as able to match an install page or a file the install pages "
+             "load; a rule that matches such a path can send the reader away from the page or serve other content.")
+    for number, line in enumerate(redirects.split("\n"), 1):
+        for char in dict.fromkeys(char for char in line if redirect_break(char)):
+            problems.append(f"site/_redirects line {number} holds the character U+{ord(char):04X}; a line of "
+                            "site/_redirects may hold no control character, line or paragraph separator, byte order "
+                            "mark or whitespace but the space, and ends only at a line feed, so that this gate reads "
+                            "its lines and fields as Cloudflare Pages may read them.")
         fields = line.split()
-        if fields and not fields[0].startswith("#") and reaches_page(fields[0]):
-            problems.append(f"site/_redirects line {number} has the source {fields[0]}, which can match an install "
-                            "page or a file the install pages load; a rule there can send the reader away from the "
-                            "page or serve other content.")
+        if not fields or fields[0].startswith("#"):
+            continue
+        source = fields[0]
+        head = f"site/_redirects line {number} has the source {source}, "
+        if reaches_install(source):
+            problems.append(head + reach)
+            continue
+        requested = fold(path_segment(source))
+        if requested in REQUESTED_FILES:
+            problems.append(head + f"which this gate reads, failing closed, as able to match /{requested}, a file "
+                            "that a browser may request from the site's root without a link for any page, the "
+                            "install pages included; a rule that matches it can send the browser elsewhere or serve "
+                            "other content there.")
+            continue
+        if fold(path_segment(source)) not in LOADED_SEGMENTS:
+            continue
+        inexact = exact_path_problem(source)
+        if inexact:
+            problems.append(head + reach + f" Under a loaded segment only an exact path passes, and {inexact}.")
+            continue
+        why = target_problem(fields)
+        if why:
+            problems.append(head + reach + f" Under a loaded segment a rule passes only when it sends its source with "
+                            f"the status 301 to a file under /{REDIRECT_TARGETS} that tools/check-baseline-pin.py pins, "
+                            f"and {why}.")
+            continue
+        entry, unlisted = occupied(source)
+        if unlisted:
+            problems.append(head + f"which could not be evaluated: {unlisted}. A source under a loaded segment passes "
+                            "only when every folder on its path can be listed.")
+        elif entry is not None:
+            problems.append(head + f"at or above which {entry} exists, compared in any letter case; under a loaded "
+                            "segment only a path that no file, folder or link of the tree occupies, and that lies "
+                            "beneath no file, passes, so that a rule there does not hide or replace a file of the "
+                            "site.")
     return problems
 
 
 def server_entry_problems() -> list[str]:
     """Check 10: each of SERVER_ENTRIES that exists, as a file, a directory or a link."""
-    return [f"{name} exists; Cloudflare Pages runs it, or reads it as the project's configuration or, by an inference "
-            "not verified here, before the build command, and it can change what Pages serves at an install page or "
-            "for a file the pages load, which no check here reads."
+    return [f"{name} exists; Cloudflare Pages may run it, or read it as the project's configuration or, by an "
+            "inference not verified here, before the build command, and so may change what Pages serves at an install "
+            "page or for a file the pages load, which no check here reads."
             for name in SERVER_ENTRIES if (REPO_ROOT / name).exists() or (REPO_ROOT / name).is_symlink()]
 
 
@@ -1780,8 +2021,8 @@ def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dic
             if element["tag"] in ("html", "body") and element["attrs"] and element["order"] not in (shared or set())]
     if tags:
         return [f"{where}: an html or body start tag that is not an ancestor of every checked element carries "
-                f"attributes ({', '.join(tags)}), which a browser adds to the page's own element, around every checked "
-                "element."]
+                f"attributes ({', '.join(tags)}), which a browser may add to the page's own element, around every "
+                "checked element."]
     return []
 
 
@@ -1809,10 +2050,10 @@ def outside_problems(where: str, parser: PageParser) -> list[str]:
     problems: list[str] = []
     if names:
         problems.append(f"{where}: the elements {names} sit outside the head and the body, or in the head, which may "
-                        "not hold them; a browser can move them into the body, above the family links.")
+                        "not hold them; a browser may move them into the body, above the family links.")
     if any(parent is None or parent in html or (parent in head and parent not in raw) for parent, _ in parser.texts):
         problems.append(f"{where}: text other than whitespace sits outside the head and the body, or in the head; a "
-                        "browser can move it into the body, above the family links.")
+                        "browser may move it into the body, above the family links.")
     return problems
 
 
@@ -1866,17 +2107,17 @@ def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[
         problems.append(f"{where}: the hero's h1 reads as hidden or has no text that reads as visible.")
     else:
         if any(char in BIDI_CONTROLS for char in hero["chars"]):
-            problems.append(f"{where}: the hero's h1 holds a bidi control, which can show its letters in another "
+            problems.append(f"{where}: the hero's h1 holds a bidi control, which may show its letters in another "
                             "order.")
         if hero["bidi"]:
-            problems.append(f"{where}: the hero's h1 holds a bdo element or a dir attribute, which can show its "
+            problems.append(f"{where}: the hero's h1 holds a bdo element or a dir attribute, which may show its "
                             "letters in another order.")
     if doc[4]["hidden"]:
         problems.append(f'{where}: the "pick" label reads as hidden in the static markup.')
     elif not doc[4]["text"]:
         problems.append(f'{where}: the "pick" label has no text that reads as visible.')
     elif any(char in BIDI_CONTROLS for char in doc[4]["chars"]) or doc[4]["bidi"]:
-        problems.append(f'{where}: the "pick" label holds a bidi control, a bdo element or a dir attribute, which can '
+        problems.append(f'{where}: the "pick" label holds a bidi control, a bdo element or a dir attribute, which may '
                         "show its letters in another order.")
     return problems + reorderers(where, parser, doc[-1], "the paragraph of family links")
 
@@ -1910,7 +2151,7 @@ def check_install_page(text: str) -> list[str]:
                             "family's name in FAMILY_NAMES.")
         if any(char in BIDI_CONTROLS for char in link["chars"]) or link["bidi"]:
             problems.append(f"{where}: the {fam} family link's label holds a bidi control, a bdo element or a dir "
-                            "attribute, which can show its letters in another order.")
+                            "attribute, which may show its letters in another order.")
         if get_at is not None and link["order"] > get_at:
             problems.append(f'{where}: the {fam} family link comes after the "get" id; the family links sit at the top.')
     if len(found) == len(FAMILIES):
@@ -1947,9 +2188,9 @@ def check_family_page(fam: str, text: str) -> list[str]:
         if name_text(FAMILY_NAMES[fam]) not in name_text(parser.h1[0]["chars"]):
             problems.append(f'{where}: the <h1> does not name "{FAMILY_NAMES[fam]}" in text that reads as visible.')
         if any(char in BIDI_CONTROLS for char in parser.h1[0]["chars"]):
-            problems.append(f"{where}: the <h1> holds a bidi control, which can show its letters in another order.")
+            problems.append(f"{where}: the <h1> holds a bidi control, which may show its letters in another order.")
         if parser.h1[0]["bidi"]:
-            problems.append(f"{where}: the <h1> holds a bdo element or a dir attribute, which can show its letters in "
+            problems.append(f"{where}: the <h1> holds a bdo element or a dir attribute, which may show its letters in "
                             "another order.")
         heading = next(element for element in parser.elements if element["order"] == parser.h1[0]["order"])
         problems += reorderers(where, parser, heading, "the <h1>")
@@ -2018,15 +2259,15 @@ def reaches_install(pattern: str) -> bool:
 
 
 def reaches_page(pattern: str) -> bool:
-    """Whether a URL pattern of site/_headers or a source of site/_redirects can match an install page or a file the
-    pages load (check 7): reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any letter
-    case."""
+    """Whether this gate reads a URL pattern of site/_headers, failing closed, as able to match an install page or a
+    file the pages load (check 7): reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any
+    letter case. Every rule of site/_headers is read with it; site/_redirects is read by redirect_problems()."""
     return reaches_install(pattern) or path_segment(pattern).lower() in LOADED_SEGMENTS
 
 
 def check_headers(headers: str) -> list[str]:
-    """Check 7: the site-wide policy and the headers that can reach an install page, read with the parser of
-    tools/check-headers.py."""
+    """Check 7: the site-wide policy and the headers under each URL pattern that reaches_page() reads as able to match
+    an install page or a file the pages load, read with the parser of tools/check-headers.py."""
     problems: list[str] = []
     entries = load_tool("check-headers.py").parse(headers)
     site_csp = [
@@ -2047,7 +2288,7 @@ def check_headers(headers: str) -> list[str]:
     for number, pattern, kind, name, _ in entries:
         if name.lower() == "link" and kind == "set":
             problems.append(
-                f"site/_headers line {number} sets a Link header under {pattern}, which can load a stylesheet that "
+                f"site/_headers line {number} sets a Link header under {pattern}, which may load a stylesheet that "
                 "the rule pin does not read; no rule may set one."
             )
         elif name.lower() == "x-content-security-policy":
@@ -2070,8 +2311,8 @@ def check_headers(headers: str) -> list[str]:
         if reaches_page(pattern) and (name.lower(), value) not in INSTALL_HEADERS.get(pattern, ()):
             problems.append(
                 f"site/_headers line {number} {'sets' if kind == 'set' else 'detaches'} {name} under {pattern}, which "
-                "can match an install page or a file the install pages load; there only the headers and values of "
-                "INSTALL_HEADERS may appear."
+                "this gate reads, failing closed, as able to match an install page or a file the install pages load; "
+                "there only the headers and values of INSTALL_HEADERS may appear."
             )
     return problems
 
@@ -2096,7 +2337,8 @@ def main() -> int:
         page_text = PAGE.read_text(encoding="utf-8")
         family_texts = {fam: path.read_text(encoding="utf-8") for fam, path in FAMILY_PAGES.items()}
         headers = HEADERS.read_text(encoding="utf-8")
-        redirects = REDIRECTS.read_text(encoding="utf-8")
+        # Read with no translation of line endings, so that redirect_problems() sees each carriage return.
+        redirects = REDIRECTS.read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as error:
         die(f"a file could not be read: {error}")
 
@@ -2136,12 +2378,22 @@ def main() -> int:
         "every checked element, each page begins with the doctype, no end tag closes an element other than the "
         "innermost open one but 1 whose end tag the page may omit there, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
-        "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
-        "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
+        "light and dark switch included, hold the links of the baseline's versioned stylesheets and the copy.js tag "
+        "in the only forms in which the gate reads them as loaded, hold the scheme.js tag once in the head before the "
+        "first stylesheet "
+        "link, and hold no other stylesheet link or script tag with a src but those of the baseline files the gate "
+        "allows, and "
         "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
-        "rule that can match an install page or a file the pages load sets or detaches any header but those of "
-        "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
-        "or a file the pages load, and no Pages Function, site/_worker.js, Wrangler configuration or root "
+        "rule whose pattern the gate reads, failing closed, as able to match an install page or a file the pages "
+        "load sets or detaches any header but those of INSTALL_HEADERS, with their values, no line of "
+        "site/_redirects holds a control character, a line or paragraph separator, a byte order mark or whitespace "
+        "but the space and the line feed, no rule of "
+        "site/_redirects has a source that the gate reads, failing closed, as able to match an install page or "
+        "/favicon.ico, and each rule whose source is under the loaded segments sends an exact path that nothing "
+        "under site/ occupies, compared in any letter case, to a file under /assets/baseline/logos/ that the "
+        "baseline pin holds, with the status 301 and no other field (any matching of Cloudflare Pages beyond this "
+        "reading is not read), "
+        "and no Pages Function, site/_worker.js, Wrangler configuration or root "
         "package.json, runtime.txt, requirements.txt, Pipfile or Gemfile exists."
     )
     return 0

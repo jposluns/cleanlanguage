@@ -3,7 +3,7 @@ name: Portable text sync
 # Three related checks on the portable instructions text.
 #
 # The first flags when the packaged skill changes without the portable text at
-# the size-labelled portable renderings (generated cleanlanguage.md and its
+# the size-labelled portable renderings (generated cleanlanguage-instructions.md and its
 # byte-equal 29k twin, and the hand-maintained 11k and 8k) being reconciled with
 # the skill. See
 # tools/check-portable-text-sync.sh for what it does and does not prove.

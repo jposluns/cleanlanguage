@@ -13,7 +13,14 @@ the verify page's 2 states (a published checksum, or the zero placeholder with
 the not-yet-published note), each held to the download block tools/build-site.py
 renders for it (the verify page fixtures carry that block), the refusal of a page
 that mixes them, hides or moves the block, and the writer's round trip from the
-placeholder to a published checksum. They run
+placeholder to a published checksum. They pin the writer's redirects of the
+22 logo files the site no longer serves: exactly those 22, none of them a logo
+the pages load (the pin gate's LOGOS), each sent to the logo of its own project
+in LOGOS, after every line the writer wrote before them. They also pin that
+every rule of the committed ``site/_redirects`` keeps the closed form that the
+docstring of RedirectHopTest states, and that no scanned file names an old
+name of a portable instructions file outside the redirect rule that answers
+for it. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -22,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -950,9 +958,12 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(self.gate_code(), 0)
         self.assertEqual(self.apply(ZEROS), pending)
 
-    def write_links(self, checksum: str) -> tuple[int, str]:
-        """Run set-release-links.py's main on the copy for ``checksum``, returning its exit code and stderr."""
-        argv = ["set-release-links.py", "--version", self.next, "--checksum", checksum, "--date", "2026-11-04"]
+    def write_links(self, checksum: str, version: str | None = None, date: str = "2026-11-04") -> tuple[int, str]:
+        """Run set-release-links.py's main on the copy for ``checksum``, ``version`` (the next release when it is None;
+        any other value, the empty string included, is passed as given) and ``date``, returning its exit code and
+        stderr."""
+        version = self.next if version is None else version
+        argv = ["set-release-links.py", "--version", version, "--checksum", checksum, "--date", date]
         err = io.StringIO()
         with unittest.mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(err):
@@ -984,6 +995,51 @@ class WriterTest(unittest.TestCase):
                            encoding="utf-8")
         self.assertEqual(self.gate_code(), 1)
 
+    def test_a_version_or_date_with_a_final_newline_is_refused(self):
+        # --version and --date are checked with a full match, so a value with a final LF is refused (exit 2) with
+        # the reason of its form, before anything is written. A $ anchor would admit that LF past the form check, so
+        # the value would be refused later, if at all, and with another reason.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        with_lf = self.next + "\n"
+        for version, date, reason in ((with_lf, "2026-11-04", f"{with_lf!r} is not a version number"),
+                                      (None, "2026-11-04\n", "'2026-11-04\\n' is not a YYYY-MM-DD date")):
+            with self.subTest(version=version, date=date):
+                code, err = self.write_links(ZEROS, version, date)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {reason}", err)
+                self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
+
+    def test_an_empty_version_is_passed_to_the_writer_and_refused(self):
+        # write_links passes an empty version to the writer as given, not as the next release, so the writer refuses
+        # it (exit 2) with the reason of its form before anything is written. An omitted version is the next release.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        code, err = self.write_links(ZEROS, "")
+        self.assertEqual(code, 2, err)
+        self.assertIn("set-release-links: '' is not a version number", err)
+        self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
+        self.assertEqual(json.loads(release.read_text(encoding="utf-8"))["version"], self.next)
+
+    def test_a_date_in_digits_outside_ascii_is_refused_for_its_form(self):
+        # The --date form takes only the ASCII digits 0-9, so a date written wholly or partly in other Unicode digits
+        # (Arabic-Indic, fullwidth or Devanagari here) is refused (exit 2) as not a YYYY-MM-DD date before anything is
+        # written. Without re.ASCII, \d admits those digits, and the date is refused later with another reason.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        # 2026-11-04 in each of those digits, and with only its last digit Arabic-Indic.
+        dates = ["".join(chr(zero + int(c)) if c.isdigit() else c for c in "2026-11-04")
+                 for zero in (0x660, 0xFF10, 0x966)]
+        for date in dates + ["2026-11-0" + chr(0x664)]:
+            with self.subTest(date=date):
+                code, err = self.write_links(ZEROS, None, date)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {date!r} is not a YYYY-MM-DD date", err)
+                self.assertEqual(release.read_bytes(), before)
+        self.assertEqual(self.write_links(ZEROS), (0, ""))
+
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()
         pages = {page["id"]: page for page in json.loads(planned["site-src/site.json"])["pages"]}
@@ -1004,10 +1060,15 @@ class WriterTest(unittest.TestCase):
         for line in ("/privacy https://posluns.ca/privacy/ 301", "/privacy/ https://posluns.ca/privacy/ 301",
                      "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301",
                      "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301",
-                     "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301",
+                     "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301",
+                     "/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302",
+                     "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302",
+                     "/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302",
+                     "/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302",
                      f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{self.next}/cleanlanguage-{self.next}.zip 302"):
             self.assertIn(line + "\n", redirects)
-        self.assertEqual(len(redirects.splitlines()), 10)
+        # The 14 fixed and release lines, and 1 line for each of the 22 logo files the site no longer serves.
+        self.assertEqual(len(redirects.splitlines()), 14 + 22)
 
     def test_the_committed_redirects_match_the_writer(self):
         # The committed file is exactly what the writer writes for the current release, so a release keeps it.
@@ -1021,6 +1082,677 @@ class WriterTest(unittest.TestCase):
         release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
         planned = writer.rewrite(release["version"], release["tag"], release["checksum"], "2026-11-04")
         self.assertNotIn(self.root / "site-src/site.json", planned)
+
+
+# The closed form of a source, and of a destination on this site: 1 or more segments, each a / then a lower-case
+# ASCII letter or digit and then any of those, a dot, an underscore or a hyphen, with an optional final /.
+REDIRECT_PATH = re.compile(r"(?:/[a-z0-9][a-z0-9._-]*)+/?", re.ASCII)
+# The closed form of a documented target on another origin.
+REDIRECT_TARGET = re.compile(r"https://[a-z0-9.-]+(?:/[A-Za-z0-9._-]+)+/?", re.ASCII)
+# The closed form of a line of site/_redirects: bytes 0x20 to 0x7E only.
+REDIRECT_LINE = re.compile(rb"[\x20-\x7e]*")
+# Each reason RedirectHopTest gives, by key. Its class docstring lists every reason with the case that covers it, and
+# test_the_docstring_lists_every_reason fails when the 2 lists differ or when a named case does not use its key.
+REDIRECT_REASONS = {
+    "alphabet": "holds a byte outside 0x20 to 0x7E, the space and printable ASCII",
+    "fields": "is not 'source destination status'",
+    "status": "has a status other than 301 or 302",
+    "source": "has a source that is not a path in the closed form",
+    "empty": "holds no rule",
+    "target": "is not an https URL in the closed form, so no rule may name it",
+    "form": "which is neither a documented target nor a path in the closed form",
+    "hop": "which is a source, with or without a final /: 2 hops",
+    "html": "which names an HTML file that the host may redirect: 2 hops",
+    "file": "which is not a file under site/",
+    "outside": "whose file resolves outside site/",
+}
+
+
+class RedirectHopTest(unittest.TestCase):
+    """Every rule of the committed site/_redirects is in a closed form that every reader of it reads alike, and each
+    rule that stays on this site reaches a file under site/ in 1 hop (Entry 133).
+
+    The test refuses every line, rule and documented target outside this form:
+
+    1. Every line, blank lines and comments included, holds only bytes 0x20 to 0x7E (the space and printable ASCII),
+       and a line ends only at LF (REDIRECT_LINE). So no tab, CR, other control character, non-ASCII character or
+       byte order mark can occur, and every reader ends lines and fields at the same places.
+    2. A line that is neither blank nor a comment (a line whose first field starts with #) holds 3 fields split at
+       runs of U+0020: source, destination and status. The status is 301 or 302.
+    3. The source is a path in the closed form (REDIRECT_PATH): 1 or more segments, each a / then a lower-case ASCII
+       letter or digit and then any of those, a dot, an underscore or a hyphen, with an optional final /. So no
+       splat (*) or placeholder (:name) source can occur.
+    4. The destination is byte-equal to a documented target, or is a path in the closed form. The documented targets
+       are the release zip and its checksum for the version in site-src/release.json, and the privacy page. Each
+       must itself be an https URL in the closed form of REDIRECT_TARGET, so a malformed release.json cannot widen
+       the set. Every pattern is checked with re.fullmatch, since a $ anchor admits a final LF.
+    5. A destination path is not a source, both read without a final /, since that takes a second hop. It does not
+       end in .html or .htm, since the site serves each page at its folder path and the host may answer a path that
+       names the HTML file with a redirect of its own. It names a file under site/, not a folder, the path itself or
+       its index.html when the path ends with /, and that file resolves inside site/, so a symbolic link cannot point
+       elsewhere.
+       tools/build-site.py writes the generated pages into site/ and the rest of site/ is committed, so the
+       committed tree is the tree the site serves.
+    6. The file holds at least 1 rule.
+
+    Why a path in the closed form is read alike: it starts with / and a letter or digit, so a browser resolving it
+    on a page of this site keeps this site's host. It holds no character that a browser percent-encodes or reads as
+    /, and no segment that a browser reads as a dot segment, so the browser asks for the path as written.
+    Percent-decoding, Unicode normalization, lower-casing and trimming of white space each leave it unchanged, so a
+    host that applies any of them reaches the same file. Neither path form admits an upper-case letter, so a host
+    that folds letter case cannot make a destination equal a source.
+
+    The test refuses what rules 1 to 6 do not admit, and nothing else; no line of the committed file, the output of
+    redirects_body() in tools/set-release-links.py, is refused. A rule they do not admit, such as one with a URL that
+    is not a documented target, a query, a splat source or another status, can be admitted later by widening a rule
+    on purpose, with its own argument.
+
+    The argument holds for a host whose reading of site/_redirects and of a request path leaves such lines, and paths
+    in the alphabet a-z, 0-9, a dot, an underscore, a hyphen and /, as written. Its residual, stated plainly, lists
+    what the test does not check. What the form refuses is the complement of the admitted form and is not part of
+    the residual.
+
+    - The host is not observed. A host that changes a string in that alphabet, for example by serving `/a` for
+      `/a.html` (the HTML check covers this), by redirecting `/x/` to `/x`, or by treating a `.` in a path specially,
+      is outside the argument. Unknown: Cloudflare Pages behaviour, which cannot be observed offline.
+    - The 5 off-site rules are checked only as exact strings. The test does not follow them, so their hops at GitHub
+      and posluns.ca stay unchecked.
+    - The test reads the committed file. Whether the deployed file equals it is outside this test.
+    - The closed form narrows the contract on purpose. An earlier version of this test read each destination as a
+      browser would, and accepted URLs on this site's origin written in full and paths with a query or fragment.
+      The inputs of the cases that pinned that wider reading were kept, and the cases of this class now expect each
+      of them to be refused.
+
+    Each reason the test gives, with the case that covers it (REDIRECT_REASONS holds the same reasons):
+
+    - test_a_line_outside_printable_ascii_fails: holds a byte outside 0x20 to 0x7E, the space and printable ASCII
+    - test_a_line_without_3_fields_fails: is not 'source destination status'
+    - test_a_status_other_than_301_or_302_fails: has a status other than 301 or 302
+    - test_a_source_outside_the_form_fails: has a source that is not a path in the closed form
+    - test_a_file_with_no_rule_fails: holds no rule
+    - test_a_documented_target_outside_its_form_fails: is not an https URL in the closed form, so no rule may name it
+    - test_a_destination_outside_the_form_fails: which is neither a documented target nor a path in the closed form
+    - test_a_destination_that_is_the_source_of_a_rule_fails: which is a source, with or without a final /: 2 hops
+    - test_a_destination_that_names_an_html_file_fails: which names an HTML file that the host may redirect: 2 hops
+    - test_a_destination_with_no_file_fails: which is not a file under site/
+    - test_a_destination_that_resolves_outside_the_site_fails: whose file resolves outside site/
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+
+    def off_site_targets(self) -> set[str]:
+        release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
+        zip_url = (f"https://github.com/jposluns/cleanlanguage/releases/download/{release['tag']}"
+                   f"/cleanlanguage-{release['version']}.zip")
+        return {zip_url, zip_url + ".sha256", "https://posluns.ca/privacy/"}
+
+    def origin(self) -> str:
+        return json.loads((self.REPO / "site-src/site.json").read_text(encoding="utf-8"))["origin"]
+
+    def failures(self, site: Path) -> list[str]:
+        """Each documented target outside its form, then each line of site/_redirects under ``site`` outside the form
+        above, with its first reason (REDIRECT_REASONS)."""
+        found, rules, targets = [], [], set()
+        for target in sorted(self.off_site_targets()):
+            if REDIRECT_TARGET.fullmatch(target):
+                targets.add(target)
+            else:
+                found.append(f"the documented target {target!r} {REDIRECT_REASONS['target']}")
+        # The alphabet is checked on the bytes, before any decoding, and a line ends only at LF.
+        for number, line in enumerate((site / "_redirects").read_bytes().split(b"\n"), 1):
+            if not REDIRECT_LINE.fullmatch(line):
+                found.append(f"site/_redirects line {number} {REDIRECT_REASONS['alphabet']}")
+                continue
+            fields = [field for field in line.decode("ascii").split(" ") if field]
+            if not fields or fields[0].startswith("#"):
+                continue
+            if len(fields) != 3:
+                found.append(f"site/_redirects line {number} {REDIRECT_REASONS['fields']}")
+            elif fields[2] not in ("301", "302"):
+                found.append(f"site/_redirects line {number} {REDIRECT_REASONS['status']}")
+            elif not REDIRECT_PATH.fullmatch(fields[0]):
+                found.append(f"site/_redirects line {number} {REDIRECT_REASONS['source']}")
+            else:
+                rules.append((number, fields[0], fields[1]))
+        if not rules:
+            found.append(f"site/_redirects {REDIRECT_REASONS['empty']}")
+        sources = {source.removesuffix("/") for _, source, _ in rules}
+        root = site.resolve()
+        for number, source, destination in rules:
+            if destination in targets:
+                continue
+            if not REDIRECT_PATH.fullmatch(destination):
+                reason = "form"
+            elif destination.removesuffix("/") in sources:
+                reason = "hop"
+            elif destination.endswith((".html", ".htm")):
+                reason = "html"
+            else:
+                target = site.joinpath(*destination.strip("/").split("/"))
+                if destination.endswith("/"):
+                    target = target / "index.html"
+                if not target.is_file():
+                    reason = "file"
+                elif not target.resolve().is_relative_to(root):
+                    reason = "outside"
+                else:
+                    continue
+            found.append(f"site/_redirects line {number}: {source} redirects to {destination}, "
+                         f"{REDIRECT_REASONS[reason]}")
+        return found
+
+    def test_every_committed_redirect_keeps_the_rule(self):
+        self.assertEqual(self.failures(self.REPO / "site"), [])
+
+    def test_a_destination_that_names_an_html_file_fails(self):
+        origin = self.origin()
+        with tempfile.TemporaryDirectory() as tmp:
+            site = Path(tmp)
+            (site / "install").mkdir()
+            for name in ("install/index.html", "about.html", "About.HTM"):
+                (site / name).write_text("<p>page</p>\n", encoding="utf-8")
+            (site / "_redirects").write_text("/get /install/index.html 301\n/old-about /about.html 301\n"
+                                             "/older-about /About.HTM 301\n/go /install/ 301\n"
+                                             f"/origin-about {origin}/about.html 301\n/oldest /about.htm 301\n",
+                                             encoding="utf-8")
+            (site / "about.htm").write_text("<p>page</p>\n", encoding="utf-8")
+            # /About.HTM and the URL on the origin are outside the closed form, so they fail on the form first.
+            html, form = REDIRECT_REASONS["html"], REDIRECT_REASONS["form"]
+            self.assertEqual(self.failures(site), [
+                f"site/_redirects line 1: /get redirects to /install/index.html, {html}",
+                f"site/_redirects line 2: /old-about redirects to /about.html, {html}",
+                f"site/_redirects line 3: /older-about redirects to /About.HTM, {form}",
+                f"site/_redirects line 5: /origin-about redirects to {origin}/about.html, {form}",
+                f"site/_redirects line 6: /oldest redirects to /about.htm, {html}",
+            ])
+
+    def failures_on(self, redirects: str, files: tuple[str, ...]) -> list[str]:
+        """failures() on a site under $TMPDIR with ``redirects`` as its _redirects and a file at each of ``files``,
+        each a path relative to the site folder, which sits 1 folder below the temporary folder."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        site = Path(tmp.name) / "site"
+        site.mkdir()
+        for name in files:
+            (site / name).parent.mkdir(parents=True, exist_ok=True)
+            (site / name).write_text("file\n", encoding="utf-8")
+        (site / "_redirects").write_text(redirects, encoding="utf-8")
+        return self.failures(site)
+
+    def test_a_line_without_3_fields_fails(self):
+        # A field ends only at a space, and a run of spaces is 1 split. Fields split by tabs or by U+00A0 fail on the
+        # line's alphabet before they are counted.
+        fields, alphabet = REDIRECT_REASONS["fields"], REDIRECT_REASONS["alphabet"]
+        self.assertEqual(self.failures_on("/a /a.md\n/b /b.md 301 extra\n# a comment line\n\n/c /c.md 301\n"
+                                          "/d\t/d.md\t301\n/e\xa0/e.md\xa0301\n/f   /f.md  301  \n",
+                                          ("a.md", "b.md", "c.md", "d.md", "e.md", "f.md")), [
+            f"site/_redirects line 1 {fields}",
+            f"site/_redirects line 2 {fields}",
+            f"site/_redirects line 6 {alphabet}",
+            f"site/_redirects line 7 {alphabet}",
+        ])
+
+    def test_a_field_ends_only_at_a_space(self):
+        # Every byte that a line may hold, other than the space, belongs to a field, so a line whose 3 parts are
+        # joined by any of them is 1 field and fails. A rule whose fields are split at a space passes.
+        joiners = [chr(code) for code in range(0x21, 0x7F)]
+        lines = [f"/a{joiner}/a.md{joiner}301" for joiner in joiners] + ["/b /b.md 301"]
+        fields = REDIRECT_REASONS["fields"]
+        self.assertEqual(self.failures_on("\n".join(lines) + "\n", ("a.md", "b.md")), [
+            f"site/_redirects line {number} {fields}" for number in range(1, len(joiners) + 1)
+        ])
+
+    def test_a_line_whose_first_field_starts_with_a_hash_is_a_comment(self):
+        # A line is a comment when its first field starts with #: the # alone or joined to text, with or without
+        # spaces before it. A # in a later field does not make a line a comment, so that line fails.
+        lines = ["# a comment line", "#a comment", "#", "##", "   # after spaces", " #after a space",
+                 "#/c /a.md 301 extra", "/a /a.md 301", "/b /a.md 301 #not a comment"]
+        self.assertEqual(self.failures_on("\n".join(lines) + "\n", ("a.md",)), [
+            f"site/_redirects line {len(lines)} {REDIRECT_REASONS['fields']}",
+        ])
+
+    def test_a_file_with_no_rule_fails(self):
+        self.assertEqual(self.failures_on("# a comment line\n\n", ()), [f"site/_redirects {REDIRECT_REASONS['empty']}"])
+
+    def test_a_line_outside_printable_ascii_fails(self):
+        # Every byte outside 0x20 to 0x7E fails its line, wherever it stands: in a destination (controls, a tab, CR
+        # before LF, U+0085, U+00A0, U+2028, U+2029, U+3000 and a non-ASCII letter), between fields, in a comment, and
+        # as a byte order mark or a byte that is not UTF-8. A blank line and a printable rule pass.
+        destinations = ("\x01//example.com/a.md", "\x08//example.com/downloads/a.md", "\x00//example.com/a.md",
+                        "/a.md\x01", "/downloads/\x1ba.md", "/a.md\t", "/downloads/\ra.md", "/a.md\x0b", "/a.md\x1f",
+                        "/a.md\x7f", "/a.md\x85", "/a.md\x9f", "/a.md\xa0", "/a.md\u2028", "/a.md\u2029",
+                        "/a.md\u3000", "/\xe9.md")
+        lines = [f"/r{number} {destination} 301" for number, destination in enumerate(destinations, 1)]
+        lines += ["/s\t/a.md\t301", "/t /a.md\x1f301", "# a comment with \xe9", "", "/plain /a.md 301",
+                  "/u /a.md 301\r"]
+        files = ("a.md", "downloads/a.md", "a.md\x01", "downloads/\x1ba.md", "a.md\x0b", "a.md\x1f", "a.md\x7f",
+                 "a.md\x85", "a.md\x9f", "a.md\xa0", "a.md\u2028", "a.md\u2029", "a.md\u3000", "\xe9.md")
+        alphabet = REDIRECT_REASONS["alphabet"]
+        self.assertEqual(self.failures_on("\n".join(lines) + "\n", files), [
+            f"site/_redirects line {number} {alphabet}" for number, line in enumerate(lines, 1)
+            if line not in ("", "/plain /a.md 301")
+        ])
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        site = Path(tmp.name)
+        (site / "a.md").write_text("file\n", encoding="utf-8")
+        for body in (b"\xef\xbb\xbf/a /a.md 301\n", b"/a /a.md\xff 301\n"):
+            (site / "_redirects").write_bytes(body)
+            self.assertEqual(self.failures(site), [f"site/_redirects line 1 {alphabet}",
+                                                   f"site/_redirects {REDIRECT_REASONS['empty']}"])
+
+    def test_a_status_other_than_301_or_302_fails(self):
+        status = REDIRECT_REASONS["status"]
+        self.assertEqual(self.failures_on("/a /a.md 200\n/b /a.md 301\n/c /a.md 302\n/d /a.md 308\n/e /a.md 301!\n"
+                                          "/f /a.md 404\n", ("a.md",)), [
+            f"site/_redirects line 1 {status}",
+            f"site/_redirects line 4 {status}",
+            f"site/_redirects line 5 {status}",
+            f"site/_redirects line 6 {status}",
+        ])
+
+    def test_a_source_outside_the_form_fails(self):
+        # These are examples: a splat or placeholder source, a source in upper case, with a dot segment, a query, or as
+        # a URL, and the root / each fail, and the rules they would have made are not read. A source with a final /
+        # passes. test_the_path_rule_is_read_as_the_docstring_states checks rules 1 to 3, as a source, on each value
+        # that its comment lists.
+        origin, source = self.origin(), REDIRECT_REASONS["source"]
+        rules = (f"/old/* /new.md 301\n/old/:name /new.md 301\n/Old /new.md 301\n/./old /new.md 301\n"
+                 f"/old?x=1 /new.md 301\n{origin}/old /new.md 301\n/ /new.md 301\n/older/ /new.md 301\n"
+                 f"/a /old/file.md 301\n")
+        self.assertEqual(self.failures_on(rules, ("old/file.md", "new.md")), [
+            f"site/_redirects line {number} {source}" for number in range(1, 8)
+        ])
+
+    def test_a_documented_target_outside_its_form_fails(self):
+        # A documented target that is not an https URL in the closed form fails, so a malformed release.json cannot
+        # widen the set, and a rule that names it fails on the form; one with a final LF fails, since the check is a
+        # full match. The privacy page passes, and only byte-equal to the target, not in other letter case.
+        targets = {"https://posluns.ca/privacy/", "https://github.com/a/b/v1.0.15/c.zip\n", "http://github.com/a/c.zip",
+                   "https://github.com/a/b/v1.0.15/c.zip?x=1", "https://GitHub.com/a/c.zip"}
+        rules = ("/privacy https://posluns.ca/privacy/ 301\n/a https://github.com/a/b/v1.0.15/c.zip 302\n"
+                 "/b http://github.com/a/c.zip 302\n/c https://POSLUNS.ca/privacy/ 301\n")
+        with unittest.mock.patch.object(self, "off_site_targets", return_value=targets):
+            found = self.failures_on(rules, ())
+        target, form = REDIRECT_REASONS["target"], REDIRECT_REASONS["form"]
+        self.assertEqual(found, [
+            f"the documented target {name!r} {target}" for name in sorted(targets - {"https://posluns.ca/privacy/"})
+        ] + [
+            f"site/_redirects line 2: /a redirects to https://github.com/a/b/v1.0.15/c.zip, {form}",
+            f"site/_redirects line 3: /b redirects to http://github.com/a/c.zip, {form}",
+            f"site/_redirects line 4: /c redirects to https://POSLUNS.ca/privacy/, {form}",
+        ])
+
+    def test_a_destination_outside_the_form_fails(self):
+        # Each destination below is neither a documented target nor a path in the closed form, so it fails, though a
+        # file exists under its literal name where 1 can. These are examples: URLs on another origin or on this site's
+        # origin, a query or fragment, a destination that starts with // or does not start with /, an empty, ., .. or
+        # percent-encoded segment, a backslash, an upper-case letter, a character outside a-z, 0-9, ., _, - and /, a
+        # segment that starts with a dot, an underscore or a hyphen, and the root /. The documented targets and 2 paths
+        # in the form pass. test_the_path_rule_is_read_as_the_docstring_states checks rules 1 and 2 and the path form of
+        # rule 4, as a destination, on each value that its comment lists.
+        origin = self.origin()
+        zip_url = sorted(url for url in self.off_site_targets() if url.endswith(".zip"))[0]
+        plain, user = origin.replace("https://", "http://", 1), origin.replace("://", "://user@", 1)
+        refused = ("https://example.com/privacy/", f"{plain}/a.md", f"{origin}.example.com/a.md", f"{origin}:8443/a.md",
+                   f"{user}/a.md", "//downloads/a.md", "//example.com/a.md", f"{origin}/downloads/a.md",
+                   f"{origin.upper()}/downloads/a.md", f"{origin}/page/", origin, f"{origin}?x=1", f"{origin}#top",
+                   f"{origin}/downloads/a.md?x=1#top", f"{origin.partition(':')[2]}/downloads/a.md",
+                   "/downloads/a.md?x=1", "/downloads/a.md#top", f"/downloads/a.md?from={origin}",
+                   f"/downloads/a.md#{origin}", "/?x=1", "/b.md?x=1", "http://[x/a.md", "downloads/a.md",
+                   "/downloads//a.md", "/downloads/./a.md", f"{origin}//downloads/a.md", "/", "/../outside.md",
+                   f"{origin}/../outside.md", "/downloads/%2e/a.md", "/downloads/%2E/a.md", "/%2e%2e/outside.md",
+                   "/downloads/.%2E/a.md", "/downloads/%2e./a.md", f"{origin}/%2E%2e/outside.md", "/\\example.com/a.md",
+                   "/downloads\\a.md", "/Downloads/a.md", "/a~b.md", "/a+b.md", "/.well-known/x.txt", "/a%2emd",
+                   "/downloads%2fa.md", "/downloads/_a.md", "/downloads/-a.md")
+        passed = (zip_url, f"{zip_url}.sha256", "https://posluns.ca/privacy/", "/downloads/a.md", "/page/")
+        destinations = refused + passed
+        rules = "".join(f"/r{number} {destination} 302\n" for number, destination in enumerate(destinations, 1))
+        files = ("a.md", "downloads/a.md", "page/index.html", "index.html", "../outside.md", "downloads/%2e/a.md",
+                 "downloads/%2E/a.md", "%2e%2e/outside.md", "downloads/.%2E/a.md", "downloads/%2e./a.md",
+                 "%2E%2e/outside.md", "\\example.com/a.md", "downloads\\a.md", "Downloads/a.md", "a~b.md", "a+b.md",
+                 ".well-known/x.txt", "a%2emd", "downloads%2fa.md", "downloads/_a.md", "downloads/-a.md")
+        form = REDIRECT_REASONS["form"]
+        self.assertEqual(self.failures_on(rules, files), [
+            f"site/_redirects line {number}: /r{number} redirects to {destination}, {form}"
+            for number, destination in enumerate(refused, 1)
+        ])
+
+    def test_the_path_rule_is_read_as_the_docstring_states(self):
+        # The oracle reads rules 1 and 2 of the class docstring without a regular expression, and the closed path form,
+        # which rule 3 applies to a source and rule 4 to a destination, segment by segment. The values are each value
+        # of length 1 to 4 over the 11 characters /a0._-A%*:?; each value of length 1 or 2 over the 98 characters of
+        # wide, 0x20 to 0x7E (the space and printable ASCII) and U+00E9, U+0430 and U+FF0F; and, for x of a or 0 and
+        # each character w of wide, /xw, /xwx and /x/w, so that each of the 98 is run first in a segment, last after
+        # its first character, between 2 others, and first in a second segment: 26196 values. failures() gives the
+        # line of each value, as a source and as a destination, a reason of rule 1, of rule 2 or of the path form
+        # exactly when the oracle does, and the same one. Residual: a value longer than 4 characters, a value of length
+        # 3 or 4 that holds a character outside the 11 and is not 1 of those 3 forms, and a value that holds a
+        # character outside 0x20 to 0x7E other than those 3 are not run; a destination in the path form is read on by
+        # the rest of rules 4 and 5, which this case does not check; and the oracle binds this reading of rules 1 to 4,
+        # not every word of the docstring.
+        narrow, first = "/a0._-A%*:?", "abcdefghijklmnopqrstuvwxyz0123456789"
+        wide = "".join(chr(code) for code in (*range(0x20, 0x7F), 0xE9, 0x430, 0xFF0F))
+
+        def in_form(value: str) -> bool:
+            # 1 or more segments, each a / then a letter or digit and then any of those, a dot, an underscore or a
+            # hyphen, with an optional final /.
+            segments = value.removesuffix("/").split("/")
+            return len(segments) > 1 and segments[0] == "" and all(
+                segment and segment[0] in first and set(segment) <= set(first + "._-") for segment in segments[1:])
+
+        def strings(alphabet: str, longest: int) -> list[str]:
+            # Each value of length 1 to longest over alphabet, shortest first.
+            found, layer = [], [""]
+            for _ in range(longest):
+                layer = [value + char for value in layer for char in alphabet]
+                found += layer
+            return found
+
+        placed = [value for x in "a0" for w in wide for value in (f"/{x}{w}", f"/{x}{w}{x}", f"/{x}/{w}")]
+        values = list(dict.fromkeys(strings(narrow, 4) + strings(wide, 2) + placed))
+        self.assertEqual(len(values), 26196)
+
+        def reason(line: str, index: int, key: str) -> str | None:
+            # Rule 1: only the space and printable ASCII. Rule 2: a comment, or 3 fields split at runs of spaces; each
+            # line here ends with a status of 301 or 302. Rules 3 and 4: field ``index`` is a path in the closed form.
+            if not all(" " <= char <= "~" for char in line):
+                return "alphabet"
+            fields = [field for field in line.split(" ") if field]
+            if fields[0].startswith("#"):
+                return None
+            if len(fields) != 3:
+                return "fields"
+            return None if in_form(fields[index]) else key
+
+        def given(rules: list[str], files: tuple[str, ...], key: str) -> set[tuple[str, str]]:
+            # 1 rule per value, so the line number that a failure names gives its value back.
+            names = ("alphabet", "fields", key)
+            return {(values[int(line.split()[2].rstrip(":")) - 1], name)
+                    for line in self.failures_on("".join(f"{rule}\n" for rule in rules), files)
+                    for name in names if line.endswith(REDIRECT_REASONS[name])}
+
+        sources = [f"{value} /a.md 301" for value in values]
+        destinations = [f"/r{number} {value} 302" for number, value in enumerate(values, 1)]
+        for rules, files, index, key in ((sources, ("a.md",), 0, "source"), (destinations, (), 1, "form")):
+            with self.subTest(key=key):
+                oracle = {(value, reason(rule, index, key)) for value, rule in zip(values, rules)}
+                self.assertEqual(given(rules, files, key), {pair for pair in oracle if pair[1]})
+
+    def test_a_destination_that_is_the_source_of_a_rule_fails(self):
+        # A destination and a source are compared without a final /, so /f/ and /f, or /h and /h/, are 1 path, and a
+        # rule to its own source fails as well. The URL on the origin fails on the form first.
+        origin, hop = self.origin(), REDIRECT_REASONS["hop"]
+        rules = ("/a /b.md 301\n/b.md /c.md 301\n/e /f/ 301\n/f /c.md 301\n/g /h 301\n/h/ /c.md 301\n/i /i 301\n"
+                 f"/d {origin}/b.md 301\n")
+        self.assertEqual(self.failures_on(rules, ("b.md", "c.md", "f/index.html", "h", "i")), [
+            f"site/_redirects line 1: /a redirects to /b.md, {hop}",
+            f"site/_redirects line 3: /e redirects to /f/, {hop}",
+            f"site/_redirects line 5: /g redirects to /h, {hop}",
+            f"site/_redirects line 7: /i redirects to /i, {hop}",
+            f"site/_redirects line 8: /d redirects to {origin}/b.md, {REDIRECT_REASONS['form']}",
+        ])
+
+    def test_a_destination_that_resolves_outside_the_site_fails(self):
+        # A symbolic link under site/ to a file, or to a folder, outside site/ fails; one to a file inside passes.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        site = Path(tmp.name) / "site"
+        site.mkdir()
+        (site.parent / "elsewhere").mkdir()
+        for path in (site.parent / "outside.md", site.parent / "elsewhere" / "a.md", site / "real.md"):
+            path.write_text("file\n", encoding="utf-8")
+        (site / "link.md").symlink_to(site.parent / "outside.md")
+        (site / "folder").symlink_to(site.parent / "elsewhere", target_is_directory=True)
+        (site / "alias.md").symlink_to(site / "real.md")
+        (site / "_redirects").write_text("/a /link.md 301\n/b /folder/a.md 301\n/c /alias.md 301\n/d /real.md 301\n",
+                                         encoding="utf-8")
+        outside = REDIRECT_REASONS["outside"]
+        self.assertEqual(self.failures(site), [
+            f"site/_redirects line 1: /a redirects to /link.md, {outside}",
+            f"site/_redirects line 2: /b redirects to /folder/a.md, {outside}",
+        ])
+
+    # Rule lines on which a browser, urllib.parse and a host have been seen or shown to read a destination or the
+    # fields differently, each with the key of the reason it fails with: URLs on this site's origin, with a query,
+    # a fragment, user details, an empty, dot or percent-encoded dot segment, or under a splat source; destinations
+    # that start with //; a percent-encoded slash or dot in a name; a segment that starts with a dot; and controls,
+    # separators, invisible characters and letters outside ASCII, in a destination or between fields.
+    DISAGREEMENTS = (
+        ("/r https://cleanlanguage.ai/downloads/cleanlanguage-instructions-8k.md 302", "form"),
+        ("/r https://cleanlanguage.ai?x=1 301", "form"),
+        ("/r https://cleanlanguage.ai#top 301", "form"),
+        ("/r https://cleanlanguage.ai/downloads/a.md?x=1 301", "form"),
+        ("/r /downloads/a.md?x=1 301", "form"),
+        ("/r /downloads/a.md#top 301", "form"),
+        ("/r /downloads/a.md?from=https://cleanlanguage.ai 301", "form"),
+        ("/r /downloads/a.md#https://x 301", "form"),
+        ("/r //cleanlanguage.ai/downloads/a.md 301", "form"),
+        ("/r //example.com/downloads/a.md 301", "form"),
+        ("/r //downloads/a.md 301", "form"),
+        ("/r https://user@cleanlanguage.ai/downloads/a.md 301", "form"),
+        ("/r https://cleanlanguage.ai//downloads/a.md 301", "form"),
+        ("/r https://cleanlanguage.ai/old/file.md 301", "form"),
+        ("/r \x01//example.com/a.md 301", "alphabet"),
+        ("/r \x08//example.com/downloads/a.md 302", "alphabet"),
+        ("/r https://cleanlanguage.ai/about.html 301", "form"),
+        ("/r https://cleanlanguage.ai/../outside.md 301", "form"),
+        ("/a /a.md\x1f301", "alphabet"),
+        ("/a /a.md\x1f 301", "alphabet"),
+        ("/a /a.md\xa0301", "alphabet"),
+        ("/a /a.md\N{IDEOGRAPHIC SPACE}301", "alphabet"),
+        ("/a /a.md\N{EM SPACE}301", "alphabet"),
+        ("/a /a.md\N{NARROW NO-BREAK SPACE}301", "alphabet"),
+        ("/a /a.md\N{PARAGRAPH SEPARATOR}301", "alphabet"),
+        ("/a /a.md\N{OGHAM SPACE MARK}301", "alphabet"),
+        ("/a /a.md\x0b301", "alphabet"),
+        ("/a /a.md\x0c301", "alphabet"),
+        ("/a /a.md\r301", "alphabet"),
+        ("/a /a.md\x1c301", "alphabet"),
+        ("/a /a.md\x1d301", "alphabet"),
+        ("/a /a.md\x1e301", "alphabet"),
+        ("/r\t/a.md\t301", "alphabet"),
+        ("/r /%2e%2e/outside.md 301", "form"),
+        ("/r /downloads/%2E/a.md 301", "form"),
+        ("/r https://cleanlanguage.ai/.%2e/outside.md 301", "form"),
+        ("/r /downloads/%2e%2e 301", "form"),
+        ("/r /a.md\x7f 301", "alphabet"),
+        ("/r /a.md\N{ZERO WIDTH NO-BREAK SPACE} 301", "alphabet"),
+        ("/r /\xe9.md 301", "alphabet"),
+        ("/r //\N{FULLWIDTH LATIN SMALL LETTER C}leanlanguage.ai 301", "alphabet"),
+        ("/r \x7f//example.com/a.md 301", "alphabet"),
+        ("/r \N{ZERO WIDTH NO-BREAK SPACE}//example.com/a.md 301", "alphabet"),
+        ("/r //ex\xe4mple.com 301", "alphabet"),
+        ("/r https://cleanlanguag\xe9.ai 301", "alphabet"),
+        ("/r //example.com\N{FULLWIDTH SOLIDUS}a.md 301", "alphabet"),
+        ("/r /a.md\xad 301", "alphabet"),
+        ("/r /a.md\N{ZERO WIDTH SPACE} 301", "alphabet"),
+        ("/r /downloads%2fa.md 301", "form"),
+        ("/r /a%2emd 301", "form"),
+        ("/r /.well-known/x.txt 301", "form"),
+    )
+
+    def test_every_known_disagreement_is_refused(self):
+        # Each line is refused on its own, with a file under its literal name where 1 can exist, so no other rule and
+        # no missing file can be what refuses it.
+        files = ("a.md", "downloads/a.md", "old/file.md", "about.html", "%2e%2e/outside.md", "downloads/%2E/a.md",
+                 "downloads/%2e%2e", "a.md\x7f", "a.md\N{ZERO WIDTH NO-BREAK SPACE}", "\xe9.md", "a.md\xad",
+                 "a.md\N{ZERO WIDTH SPACE}", "downloads%2fa.md", "a%2emd", ".well-known/x.txt",
+                 "downloads/cleanlanguage-instructions-8k.md")
+        for line, key in self.DISAGREEMENTS:
+            with self.subTest(line=line):
+                if key == "alphabet":
+                    expected = [f"site/_redirects line 1 {REDIRECT_REASONS['alphabet']}",
+                                f"site/_redirects {REDIRECT_REASONS['empty']}"]
+                else:
+                    source, destination, _ = line.split(" ")
+                    expected = [f"site/_redirects line 1: {source} redirects to {destination}, "
+                                f"{REDIRECT_REASONS['form']}"]
+                self.assertEqual(self.failures_on(line + "\n", files), expected)
+
+    def test_the_docstring_lists_every_reason(self):
+        # The class docstring lists each reason of REDIRECT_REASONS once, with a case that exists and whose source
+        # names the key of that reason. Residual: this binds the reason strings and the case names, not the meaning of
+        # the prose around them.
+        rows = re.findall(r"^- (test_\w+): (.+)$", inspect.cleandoc(type(self).__doc__), re.MULTILINE)
+        self.assertEqual(sorted(reason for _, reason in rows), sorted(REDIRECT_REASONS.values()))
+        keys = {reason: key for key, reason in REDIRECT_REASONS.items()}
+        for name, reason in rows:
+            case = getattr(type(self), name, None)
+            self.assertTrue(callable(case), name)
+            source = inspect.getsource(case)
+            self.assertTrue(f'REDIRECT_REASONS["{keys[reason]}"]' in source
+                            or f"REDIRECT_REASONS['{keys[reason]}']" in source, name)
+
+    def test_a_destination_with_no_file_fails(self):
+        # A destination names a file, so a missing file fails, and so does a folder: /folder/ with no index.html,
+        # /folder itself, which exists without a final /, and /nested/, whose index.html is a folder. /page/ passes.
+        origin = self.origin()
+        self.assertEqual(self.failures_on(f"/a /missing.md 301\n/b /folder/ 301\n/c /page/ 301\n"
+                                          f"/d {origin}/missing.md 301\n/e /folder 301\n/f /nested/ 301\n",
+                                          ("folder/other.md", "page/index.html", "nested/index.html/other.md")), [
+            f"site/_redirects line 1: /a redirects to /missing.md, {REDIRECT_REASONS['file']}",
+            f"site/_redirects line 2: /b redirects to /folder/, {REDIRECT_REASONS['file']}",
+            f"site/_redirects line 4: /d redirects to {origin}/missing.md, {REDIRECT_REASONS['form']}",
+            f"site/_redirects line 5: /e redirects to /folder, {REDIRECT_REASONS['file']}",
+            f"site/_redirects line 6: /f redirects to /nested/, {REDIRECT_REASONS['file']}",
+        ])
+
+
+class OldNameTest(unittest.TestCase):
+    """No scanned file names an old name of a portable instructions file outside the redirect rule that answers
+    for it.
+
+    The old names are the sources of the 302 rules in the committed site/_redirects that send a path under
+    /downloads/ to a cleanlanguage-instructions file, so this test does not write them out. Each may appear only
+    inside the text of its own rule, '<old path> <new path> 302', as site/_redirects, redirects_body() in
+    tools/set-release-links.py and test_the_redirects_keep_every_fixed_path write it. A name counts where no letter,
+    digit, underscore, dot or hyphen comes directly before it and no letter, digit, underscore or hyphen comes
+    directly after it, as in a path, a URL, a link or an attachment filename. The scan reads every file under
+    SCANNED outside a __pycache__ folder: the hand-edited files that carry links and references to the instructions
+    files (INSTALL.md, .aiqt/gensrc.json, the workflows, site/_headers, site/README.md, the page sources and
+    site-src/site.json), the generated pages and the downloads beside them, and the tools. A missing entry of
+    SCANNED fails. Residual: a file outside SCANNED, and an old name written in another form, such as
+    percent-encoded or in other letter case, pass unseen.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent
+    SCANNED = ("INSTALL.md", ".aiqt/gensrc.json", ".github/workflows", "site", "site-src", "tools")
+
+    @staticmethod
+    def renames(root: Path) -> list[tuple[str, str, str]]:
+        """The rule text, old file name and new file name of each 302 rule for a renamed instructions file."""
+        found = []
+        for line in (root / "site/_redirects").read_text(encoding="utf-8").splitlines():
+            fields = line.split()
+            if (len(fields) == 3 and fields[2] == "302" and fields[0].startswith("/downloads/")
+                    and fields[1].startswith("/downloads/cleanlanguage-instructions")):
+                found.append((" ".join(fields), fields[0].rsplit("/", 1)[1], fields[1].rsplit("/", 1)[1]))
+        return found
+
+    def references(self, root: Path) -> list[str]:
+        """Each old name a scanned file under ``root`` holds outside its rule, as 'path:line: name'."""
+        renames = self.renames(root)
+        if not renames:
+            return ["site/_redirects: no 302 rule for a renamed instructions file"]
+        names = re.compile(r"(?<![\w.-])(" + "|".join(re.escape(old) for _, old, _ in renames) + r")(?![\w-])")
+        found = []
+        for entry in self.SCANNED:
+            start = root / entry
+            if start.is_file():
+                paths = [start]
+            elif start.is_dir():
+                paths = sorted(path for path in start.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+            else:
+                found.append(f"{entry}: missing")
+                continue
+            for path in paths:
+                for number, line in enumerate(path.read_bytes().decode("utf-8", "replace").split("\n"), 1):
+                    for rule, _, _ in renames:
+                        line = line.replace(rule, "")
+                    found.extend(f"{path.relative_to(root).as_posix()}:{number}: {match.group(1)}"
+                                 for match in names.finditer(line))
+        return found
+
+    def fixture(self, files: dict[str, str]) -> Path:
+        """A tree under $TMPDIR with every SCANNED entry, the committed site/_redirects and ``files``."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for entry in self.SCANNED:
+            if entry.endswith((".md", ".json")):
+                (root / entry).parent.mkdir(parents=True, exist_ok=True)
+                (root / entry).write_text("\n", encoding="utf-8")
+            else:
+                (root / entry).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.REPO / "site/_redirects", root / "site/_redirects")
+        for relative, text in files.items():
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text(text, encoding="utf-8")
+        return root
+
+    def old(self) -> dict[str, str]:
+        return {new: old for _, old, new in self.renames(self.REPO)}
+
+    def test_no_committed_file_names_an_old_name(self):
+        self.assertEqual(len(self.renames(self.REPO)), 4)
+        self.assertEqual(self.references(self.REPO), [])
+
+    def test_an_old_name_outside_its_rule_fails(self):
+        old = self.old()
+        whole, n29 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-29k.md"]
+        n11, n8 = old["cleanlanguage-instructions-11k.md"], old["cleanlanguage-instructions-8k.md"]
+        blob = "https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/"
+        raw = "https://raw.githubusercontent.com/jposluns/cleanlanguage/main/site/downloads/"
+        root = self.fixture({
+            "site/_headers": f"/downloads/{n8}\n  Content-Disposition: attachment; filename=\"{n11}\"\n",
+            "INSTALL.md": f"1. Download the [instructions](https://cleanlanguage.ai/downloads/{whole}).\n",
+            "site-src/pages/demo.html": f"<p>Read {raw}{n8} first.</p>\n",
+            "site-src/pages/install.html": f"<a href=\"{blob}{whole}\">source</a>\n",
+            ".aiqt/gensrc.json": f"{{\"target\": \"site/downloads/{n29}\"}}\n",
+            ".github/workflows/sync.yml": f"# Keeps {n29} current.\n",
+            "tools/writer.py": f"RULE = \"/downloads/{n11} /downloads/cleanlanguage-instructions-11k.md 301\"\n",
+        })
+        # The rule text in tools/writer.py carries 301, not 302, so it is not the rule that answers for the name.
+        self.assertEqual(self.references(root), [
+            f"INSTALL.md:1: {whole}",
+            f".aiqt/gensrc.json:1: {n29}",
+            f".github/workflows/sync.yml:1: {n29}",
+            f"site/_headers:1: {n8}",
+            f"site/_headers:2: {n11}",
+            f"site-src/pages/demo.html:1: {n8}",
+            f"site-src/pages/install.html:1: {whole}",
+            f"tools/writer.py:1: {n11}",
+        ])
+
+    def test_the_rule_text_and_the_new_names_pass(self):
+        rules = "".join(f"    f\"{rule}\\n\"\n" for rule, _, _ in self.renames(self.REPO))
+        news = "".join(f"/downloads/{new}\n  Content-Disposition: attachment; filename=\"{new}\"\n"
+                       for new in self.old())
+        root = self.fixture({"tools/writer.py": f"BODY = (\n{rules})\n", "site/_headers": news})
+        self.assertEqual(self.references(root), [])
+
+    def test_a_missing_scanned_entry_fails(self):
+        root = self.fixture({})
+        shutil.rmtree(root / "site-src")
+        self.assertEqual(self.references(root), ["site-src: missing"])
+
+    def test_a_name_counts_only_at_a_name_boundary(self):
+        whole = self.old()["cleanlanguage-instructions.md"]
+        lines = [
+            (f"Download {whole}.", True), (f"<a href=\"/downloads/{whole}?v=1\">", True), (whole, True),
+            (f"x{whole}", False), (f"1{whole}", False), (f"_{whole}", False), (f".{whole}", False), (f"-{whole}", False),
+            (f"{whole}x", False), (f"{whole}1", False), (f"{whole}_", False), (f"{whole}-", False),
+        ]
+        root = self.fixture({"INSTALL.md": "".join(text + "\n" for text, _ in lines)})
+        self.assertEqual(self.references(root),
+                         [f"INSTALL.md:{number}: {whole}" for number, (_, counts) in enumerate(lines, 1) if counts])
+
+    def test_a_pycache_folder_is_not_scanned(self):
+        n11 = self.old()["cleanlanguage-instructions-11k.md"]
+        root = self.fixture({"tools/__pycache__/writer.cpython-312.pyc": f"/downloads/{n11}\n",
+                             "tools/writer.py": f"/downloads/{n11}\n"})
+        self.assertEqual(self.references(root), [f"tools/writer.py:1: {n11}"])
 
 
 class WholePageTest(unittest.TestCase):
@@ -1249,6 +1981,63 @@ class WorkflowPathsTest(unittest.TestCase):
             for relative, pattern in self.COVERING.items():
                 with self.subTest(f"{name}: {relative}"):
                     self.assertIn(f'      - "{pattern}"\n', part)
+
+
+# The pin gate, whose LOGOS names the logos the pages load and the copy holds.
+PIN_GATE_PATH = Path(__file__).resolve().parent / "check-baseline-pin.py"
+pin_gate_spec = importlib.util.spec_from_file_location("check_baseline_pin", PIN_GATE_PATH)
+pin_gate = importlib.util.module_from_spec(pin_gate_spec)
+pin_gate_spec.loader.exec_module(pin_gate)
+# The family keys whose logo files the site served at baseline 1.11.4 and stopped serving with the move to baseline
+# 1.13.0, whose copy holds only the logos the pages load: each served <key>-card.svg, -favicon.svg, -mono.svg and
+# -touch.png beside <key>.svg; cleanlanguage keeps its own favicon and touch icon.
+DROPPED_KEYS = ("aiqt", "auditthis", "grclibrary", "opfiles", "secureconfig")
+DROPPED_NAMES = ({f"{key}-{form}" for key in DROPPED_KEYS
+                  for form in ("card.svg", "favicon.svg", "mono.svg", "touch.png")}
+                 | {"cleanlanguage-card.svg", "cleanlanguage-mono.svg"})
+# The lines redirects_body() wrote before the logo redirects, for release URLs zip_url and sum_url, written out here
+# so that a change to any of them fails.
+FIXED_LINES = ("/claude/download {zip_url} 302\n"
+               "/download {zip_url} 302\n"
+               "/download/checksum {sum_url} 302\n"
+               "/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-instructions-11k.md 301\n"
+               "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions-11k.md 301\n"
+               "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301\n"
+               "/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302\n"
+               "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302\n"
+               "/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302\n"
+               "/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302\n"
+               "/privacy https://posluns.ca/privacy/ 301\n"
+               "/privacy/ https://posluns.ca/privacy/ 301\n"
+               "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301\n"
+               "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301\n")
+
+
+class DroppedLogoRedirectTest(unittest.TestCase):
+    """The writer's DROPPED_LOGOS: the 22 logo files the site no longer serves, each redirected to a logo the pages
+    load, and redirects_body() keeps the lines it wrote before them."""
+
+    def test_the_constant_holds_exactly_the_22_dropped_logos(self):
+        self.assertEqual(len(writer.DROPPED_LOGOS), 22)
+        self.assertEqual(set(writer.DROPPED_LOGOS), DROPPED_NAMES)
+
+    def test_no_dropped_logo_is_a_logo_the_pages_load(self):
+        self.assertEqual(sorted(set(writer.DROPPED_LOGOS) & set(pin_gate.LOGOS)), [])
+
+    def test_each_target_is_the_logo_of_its_own_project_that_the_pages_load(self):
+        for name, target in writer.DROPPED_LOGOS.items():
+            with self.subTest(name):
+                self.assertIn(target, pin_gate.LOGOS)
+                self.assertEqual(target, name.rsplit("-", 1)[0] + ".svg")
+
+    def test_redirects_body_keeps_every_line_and_adds_1_per_dropped_logo(self):
+        zip_url, sum_url = "https://example.org/x.zip", "https://example.org/x.zip.sha256"
+        body = writer.redirects_body(zip_url, sum_url)
+        fixed = FIXED_LINES.format(zip_url=zip_url, sum_url=sum_url)
+        self.assertTrue(body.startswith(fixed), body)
+        added = body[len(fixed):].splitlines()
+        self.assertEqual(added, [f"/assets/baseline/logos/{name} /assets/baseline/logos/{target} 301"
+                                 for name, target in writer.DROPPED_LOGOS.items()])
 
 
 def load_faults(defined: str, renamed: str) -> list[tuple[str, object, str, type]]:
