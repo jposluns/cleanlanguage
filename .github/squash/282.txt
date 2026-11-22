@@ -78,12 +78,17 @@ code of its own.
 Residual: the tripwire's name scan misses every route to a signal
 other than a signal-sending name in the functions it reads, and such
 an edit passes the tripwire unless it also changes the stub's calls,
-which the pin rejects. Passes of the name scan include, in the check,
-getattr(os, "kill") with a literal name, getattr with a computed
-name, os.__dict__["kill"], vars(os)["kill"] and a shell kill through
-os.system, and also the witness a caller passes, a module global a
-caller rebinds, a decorator's body and the client itself. A value of
-check or own_end with methods of its own runs them in the test.
+which the pin rejects. Passes of the name scan, examples, not a
+complete list: in the check, getattr(os, "kill") with a literal name,
+getattr with a computed name, such as getattr(os, "ki" + "ll"),
+os.__dict__["kill"], vars(os)["kill"] and a shell kill through
+os.system; a value a caller passes, such as the witness, which the
+check calls; a method of self that a subclass overrides, such as
+assertLess; a module global or builtin that a caller rebinds, such as
+GROUP_STUB, or a function of os or the client, as the tests rebind
+os.killpg; the body of a decorator; and the code outside those
+functions, the client and the standard library. A value of check or
+own_end with methods of its own runs them in the test.
 
 A stub process that the release finds before its first read of
 lifeline outlives the release by the rest of its start-up. While the
