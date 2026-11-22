@@ -2,37 +2,44 @@ test-release-package-dist: pin trace-reader TODOs 269 to 273 (#286)
 
 Case 27 of tools/test-release-package-dist.py now holds the 5 gaps
 that TODOs 269 to 273 record for the trace reader, each with a case
-that fails without it. The packager and the reader are unchanged.
+that fails without it, and its docstrings state the refusals of the
+reader as its code makes them. The packager and the reader are
+unchanged.
 
 - fork() = 101 is read as the call, and its child starts in the
   folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
   that folder when its maker enters another by chdir after the call.
-- For each of clone, clone3, fork and vfork that strace detached
-  during, resumed with the result ?, or ended with the result ?
-  alone or with the note <unavailable>, 1 later process with no
-  maker is read by its absolute paths, and a second ends the case,
-  as does a relative path in that process. After 2 such calls of
-  the same name in the same form, and after a fork and a vfork that
-  each ended with the result ?, 2 such processes are read and a
-  third ends the case.
+- For each of clone, clone3, fork and vfork, in each of the 9 forms
+  in which strace cuts a call short and when it ends with the result
+  ? and the note <unavailable>, 1 later process with no maker is
+  read by its absolute paths, and a second ends the case, as does a
+  relative path in that process. After 2 such calls of the same name
+  in the same form, and after a fork and a vfork that each ended with
+  the result ?, 2 such processes are read and a third ends the case.
 - An unlink read with its arguments that ends as "= ? <unavailable>"
-  counts as a removal. After a chdir that ends that way in a shared
-  folder, an absolute path is read and a relative path ends the case
-  with the error that names it. That strace writes this form for a
-  call whose arguments it read is not verified, and the comment and
-  the module docstring say so. The refusal clause in 2 docstrings
-  now names the form it covers, a call cut short by <unfinished ...>
-  before the ) of its result.
+  counts as a removal, in its line and in its resumption. After a
+  chdir that ends that way in a shared folder, an absolute path is
+  read and a relative path ends the case with the error that names
+  it. That strace writes this form for a call whose arguments it
+  read is not verified, and the comment and the module docstring say
+  so.
 - fchdir into a descriptor with no path, or with a relative path,
   ends the case.
 - renameat2 gives both of its paths, each read against its own
-  descriptor.
+  descriptor, in a case where the 2 descriptors and the folder of
+  the process name 3 different folders.
+- New subtests hold the refusals that no case held: a trace with no
+  call, a resumption with no call open or under another name, a
+  result after <unfinished ...> in a resumption, a call read with
+  its arguments and cut short while another call of its process is
+  open, a relative path after an fchdir that strace cut short, and a
+  call that the test did not ask strace for.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 4 tests, OK, here and 3 tests, OK, on main. Each
-of the 18 reader mutants that the pull request description lists is
+of the 30 reader mutants that the pull request description lists is
 expected to pass case 27 on main and to fail it here. In a git
 checkout with strace, the full run is expected to leave cases 1 to
 26 as they are on main.
