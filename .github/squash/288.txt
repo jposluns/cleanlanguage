@@ -1,0 +1,55 @@
+Restamp 9 pages re-dated by the pull request 269 squash (#288)
+
+Move the modified date of 9 pages in site-src/site.json from
+2026-11-13 to 2026-11-22: home, standard, examples, patterns,
+install-other-ai, verify, channels, checklist and disclosure.
+
+Regenerate the 9 pages with tools/build-site.py: site/index.html and
+the index.html under site/standard, site/examples, site/patterns,
+site/install/other-ai, site/verify, site/channels, site/checklist and
+site/disclosure. Each page changes in 2 generated lines, the
+article:modified_time meta tag and the JSON-LD dateModified.
+
+Regenerate site/sitemap.xml with tools/generate-sitemap.py --write;
+it changes in the 9 matching lastmod values.
+
+Add this message as .github/squash/288.txt. No other file changes.
+
+Checks, each run from the repository root; each exits 0.
+
+python3 -I tools/check-page-metadata.py prints this on 1 line:
+
+    All 17 content pages carry author and date metadata consistent
+    with git history. Author: Jeff Posluns.
+
+python3 -I tools/build-site.py --check prints this on 1 line:
+
+    The committed site/ matches a fresh build (18 files, beside 12
+    listed static files) and every internal link resolves inside /.
+
+python3 -I tools/generate-sitemap.py prints:
+
+    generate-sitemap: site/sitemap.xml matches the 17 pages; no drift
+
+python3 -I tools/test-page-metadata.py reports Ran 154 tests and
+ends with:
+
+    OK
+
+python3 -I tools/test-build-site.py prints:
+
+    test-build-site: all 1122 cases passed.
+
+python3 -I tools/test-web-metadata.py reports Ran 65 tests and ends
+with:
+
+    OK
+
+python3 -I tools/test-sitemap.py reports Ran 41 tests and ends with:
+
+    OK
+
+python3 -I tools/check-pr-text.py --squash .github/squash/288.txt
+--number 288 prints:
+
+    pr-text: 0 defect(s)
