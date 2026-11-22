@@ -1,23 +1,32 @@
 Restamp 9 pages re-dated by the pull request 269 squash (#288)
 
-Set the modified date of the 9 pages that pull request 269 stamped
-2026-11-13 to 2026-11-22, the day its squash merge landed on main, in
-site-src/site.json: home, standard, examples, patterns,
+Move the modified date of 9 pages in site-src/site.json from
+2026-11-13 to 2026-11-22: home, standard, examples, patterns,
 install-other-ai, verify, channels, checklist and disclosure.
-Regenerate the 9 pages with tools/build-site.py and the sitemap with
-tools/generate-sitemap.py --write, never by hand. Each page changes in
-2 generated lines, the article:modified_time meta tag and the JSON-LD
-dateModified, and site/sitemap.xml changes in the 9 matching lastmod
-values. No other file changes.
 
-The page metadata gate dates each page by its last commit on main, so
-the squash moved the 9 pages 9 days past their stamps, beyond the
-7-day tolerance of tools/check-page-metadata.py. On the pull request
-the gate dated each page by the branch's own commits, so it passed
-there. The gate, its tolerance and every test fixture stay as they
-are, because the fault is in the stamps.
+Regenerate the 9 pages with tools/build-site.py: site/index.html and
+the index.html under site/standard, site/examples, site/patterns,
+site/install/other-ai, site/verify, site/channels, site/checklist and
+site/disclosure. Each page changes in 2 generated lines, the
+article:modified_time meta tag and the JSON-LD dateModified.
 
-If this change lands after 2026-11-29, the new stamps fail the same
-way; restamp to the landing day and regenerate before merging.
-Preventing the class, a pull request whose stamps are more than 7 days
-older than its landing day, is left to a separate TODO entry.
+Regenerate site/sitemap.xml with tools/generate-sitemap.py --write;
+it changes in the 9 matching lastmod values.
+
+Add this message as .github/squash/288.txt. No other file changes.
+
+Checks, each run from the repository root; each exits 0.
+
+python3 -I tools/build-site.py --check prints this on 1 line:
+
+    The committed site/ matches a fresh build (18 files, beside 12
+    listed static files) and every internal link resolves inside /.
+
+python3 -I tools/generate-sitemap.py prints:
+
+    generate-sitemap: site/sitemap.xml matches the 17 pages; no drift
+
+python3 -I tools/check-pr-text.py --squash .github/squash/288.txt
+--number 288 prints:
+
+    pr-text: 0 defect(s)
