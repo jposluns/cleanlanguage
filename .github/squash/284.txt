@@ -33,25 +33,36 @@ tools/test-orch-stage2-hooks.py:
   write_registry first runs ENUM_RUN_MARK, which adds 1 line to that
   file. However the launch ends, the recorder counts the lines, and a
   launch whose timeout is under ENUM_TIMEOUT for each start plus
-  ENUM_MARGIN fails its case in its cleanup, or at once when no case is
-  running, with any exception that the launch raised as the cause. A
-  launch with no start, or with no timeout, is not held.
+  ENUM_MARGIN fails its case in its cleanup, while any exception that
+  the launch raised goes on to the case unchanged. With no case
+  running, the launch fails at once instead, with any exception that
+  the launch raised as the cause. A launch with no start, or with no
+  timeout, is not held.
 - Stage2Harness.write_registry refuses an enumerator that the hook
   would start unless this interpreter runs it with -I on a program file
   or a -c program whose first statements, read from its syntax tree,
-  are those of ENUM_RUN_MARK, and unless its timeout, as the hook reads
-  it, is at most ENUM_TIMEOUT. A program that holds ENUM_RUN_MARK only
-  as text, or after other statements, is refused.
+  are those of ENUM_RUN_MARK and which compiles, and unless its
+  timeout, as the hook reads it, is at most ENUM_TIMEOUT. It reads a
+  relative program file from the repository root, from which the hook
+  runs the enumerator (cwd=root at aiqt_hooks.py:22833), not from the
+  working directory of the test. A program that holds ENUM_RUN_MARK
+  only as text, or after other statements, is refused, and so is one
+  that begins with it but does not compile, such as one with a
+  top-level return, a top-level break or a misplaced future import
+  after it, since the interpreter refuses such a program before the
+  record runs.
 - The reading of launch bounds from the syntax tree is removed, with
   UNENUMERATED_RUNS and REPEATED_ENUMERATOR_RUNS. EnumeratorBounds
   requires that a stage-2 Stop and preflight each record 1 start and a
   stage-1 Stop none; that a launch 1 second under its bound fails its
   case and a launch at its bound passes, for 1 start and for 2, also
   when check=True fails, and that one with no running case fails at
-  once, with the launch's exception as the cause; and that
-  write_registry refuses an enumerator without the record, one that
-  holds it only as text or after an exit, one run without -I or by
-  another interpreter, and a timeout over ENUM_TIMEOUT.
+  once, with the launch's exception as the cause; that write_registry
+  refuses an enumerator without the record, one that holds it only as
+  text or after an exit, one that begins with it but does not compile,
+  one run without -I or by another interpreter, and a timeout over
+  ENUM_TIMEOUT; and that it reads a relative program file from the
+  repository root, not from the working directory of the test.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -77,52 +88,79 @@ tools/test-orch-enumerate-backlog.py:
   the enumerator, and the failure message of InputFileType says only
   that the enumerator did not exit within that bound.
 
-tools/test-orchestration-registry.py is unchanged: its timeouts of 5
+tools/test-orchestration-registry.py: SpecialFileInputs.TIMEOUT, the
+bound on each gate run of that class, start-up included, replaces the
+literal 20 with 60 seconds, and its failure message says only that the
+gate did not exit within that bound, not that it blocked on a special
+file. The timeouts of 5 in the suite's registries do not change: they
 are data that the registry gate checks, no child runs under them, and
 the gate refuses any timeout outside (0, 8]. The test registries of
-the 2 changed suites never reach the gate.
+the stage-2 and enumerate-backlog suites never reach the gate.
+
+tools/test-orch-migrate-todo.py: InputFileType.TIMEOUT,
+ErrorPosition.TIMEOUT and RuntimeGuard.TIMEOUT, the bounds on each
+migration run of those classes, start-up included, go from 20 to 60
+seconds, and the failure message of InputFileType says only that the
+migration did not exit within that bound, not that the open blocked.
 
 Checks, run from the repository root with python3 -I: the stage-2,
-enumerate-backlog and registry suites each end OK, and the label suite
-ends OK in a git checkout. With 1 edit in a copy of the tree, a 6 s
-start-up delay of the fixture enumerator fails 4 stage-2 cases on
-main's test files and none with this change; a 6 s delay of the real
-enumerator fails the hook case and the stamp test on main's files and
-neither with this change; a 21 s delay of the real enumerator fails
-the large-input InputFileType case on main's files and not with this
-change, and a 61 s delay fails it with this change; the same 21 s
-delay fails 2 ErrorPosition and 2 RuntimeGuard cases at their 20 s
-bounds on main's files and none with this change, and a 61 s delay
-fails ErrorPosition.test_missing_input with this change; a 50 s delay
-of the hook fails the enumerator timeout case's old 15 s bound and
-passes its 90 s bound. Controls: a 91 s hook delay fails the 90 s
-bound, an enumerator stamp 3 s stale fails the new stamp test, and a
-100 s timeout in ENUMERATE_PROG fails the new hang case. With this
-change, a new Doctor case whose preflight launch has a timeout of 30,
-through a local RUN_TIMEOUT, through an alias of run_doctor_recorded
-with a mapping, or in a class outside the harness, fails, and passes
-with RUN_TIMEOUT; DoctorStandInRestore fails with self.TIMEOUT set to
-30 before its launch, and the planted-module case fails with the
-bounds of its 2 launches swapped. A new Doctor case that declares an
-enumerator holding ENUM_RUN_MARK only as text fails at write_registry,
-and with the fixture enumerator fails its timeout of 30.
-EnumeratorBounds fails when the check never reports, drops ENUM_MARGIN
-or ignores the number of starts, when the recorder names the file in
-another variable, when write_registry skips its check, tests the mark
-as text or takes any interpreter, and when the failure with no running
-case drops its cause. With a fixture enumerator that sleeps 70 s, no
-case of the stage-2 harness ends through a test bound; with the
-earlier bounds, 4 doctor cases do. With 64 busy processes and the
-enumerator timeout case pinned to 1 CPU, the case is expected to end
-OK in each of 3 runs.
+enumerate-backlog, registry and migrate-todo suites each end OK, and
+the label suite ends OK in a git checkout. With 1 edit in a copy of
+the tree, a 6 s start-up delay of the fixture enumerator, on a line
+before its import json line, which with this change follows
+ENUM_RUN_MARK, fails 4 stage-2 cases on main's test files and none
+with this change; a 6 s delay of the real enumerator fails the hook
+case and the stamp test on main's files and neither with this change;
+a 21 s delay of the real enumerator fails the large-input
+InputFileType case on main's files and not with this change, and a
+61 s delay fails it with this change; the same 21 s delay fails 2
+ErrorPosition and 2 RuntimeGuard cases at their 20 s bounds on main's
+files and none with this change, and a 61 s delay fails
+ErrorPosition.test_missing_input with this change; a 50 s delay of the
+hook fails the enumerator timeout case's old 15 s bound and passes its
+90 s bound. A 21 s start-up delay of the registry gate fails the 3
+SpecialFileInputs cases at their 20 s bound on main's files and none
+with this change, and a 61 s delay fails
+test_fifo_registry_fails_promptly at its 60 s bound. A 21 s start-up
+delay of the migration fails 1 case of each of InputFileType,
+ErrorPosition and RuntimeGuard in the migrate-todo suite at its 20 s
+bound on main's files and none with this change, and a 61 s delay
+fails all 3 at their 60 s bound. Controls: a 91 s hook delay fails the
+90 s bound, an enumerator stamp 3 s stale fails the new stamp test,
+and a 100 s timeout in ENUMERATE_PROG fails the new hang case. With
+this change, a new Doctor case whose preflight launch has a timeout of
+30, through a local RUN_TIMEOUT, through an alias of
+run_doctor_recorded with a mapping, or in a class outside the harness,
+fails, and passes with RUN_TIMEOUT; DoctorStandInRestore fails with
+self.TIMEOUT set to 30 before its launch, and the planted-module case
+fails with the bounds of its 2 launches swapped. A new Doctor case
+that declares an enumerator holding ENUM_RUN_MARK only as text fails
+at write_registry, and with the fixture enumerator fails its timeout
+of 30. A new case whose launch with a timeout of 119 starts the
+fixture enumerator once and then fails check=True errors with that
+CalledProcessError and fails in its cleanup with a failure that has no
+cause. EnumeratorBounds fails when the check never reports, drops
+ENUM_MARGIN or ignores the number of starts, when the recorder names
+the file in another variable, when write_registry skips its check,
+tests the mark as text, takes any interpreter, skips the compile step
+or reads a relative program file from the working directory of the
+test, and when the failure with no running case drops its cause. With
+a fixture enumerator that sleeps 70 s, from the same line as the 6 s
+delay, neither the present-marker case of DoctorCheckpointWrites nor
+the DoctorStandInRestore case ends through a test bound, on main or
+with this change; with this change and the earlier bounds, each does.
+With 64 busy processes and the enumerator timeout case pinned to 1
+CPU, the case is expected to end OK in each of 3 runs.
 
 Residuals: a wider bound makes a load failure rarer, not impossible.
 An enumerator that hangs holds a test run for up to 60 s, a doctor or
 hook run that blocks fails after 120 s instead of 30, and an
-enumerator run of InputFileType, ErrorPosition or RuntimeGuard that
-blocks fails after 60 s instead of 20. The new hang case adds 60 s to
-the enumerate-backlog suite. The bound check counts only starts that
-an enumerator records: a registry written other than through
+enumerator run of InputFileType, ErrorPosition or RuntimeGuard, a gate
+run of SpecialFileInputs, or a migration run of InputFileType,
+ErrorPosition or RuntimeGuard in the migrate-todo suite, that blocks
+fails after 60 s instead of 20. The new hang case adds 60 s to the
+enumerate-backlog suite. The bound check counts only starts that an
+enumerator records: a registry written other than through
 write_registry, a program changed after it, and a child that drops
 ORCH_STAGE2_ENUMERATOR_RUNS from its environment are not seen. It
 holds only the starts a launch made when a case ran it, not a start

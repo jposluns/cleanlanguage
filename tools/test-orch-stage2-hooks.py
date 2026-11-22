@@ -186,8 +186,8 @@ NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator wa
 # starts the enumerator with the hook's own environment (`subprocess.run` at aiqt_hooks.py:22833 passes
 # no env), and the doctor runs the hook in its own process, so a launch of either passes the file on to
 # the enumerator. write_registry refuses an enumerator whose program, read from its syntax tree, does
-# not begin with these statements (runs_enum_run_mark_first); the residuals are stated above
-# enumerator_bound_defect.
+# not begin with these statements, or that does not compile (runs_enum_run_mark_first); the residuals
+# are stated above enumerator_bound_defect.
 ENUM_RUNS_VAR = "ORCH_STAGE2_ENUMERATOR_RUNS"
 ENUM_RUN_MARK = """import os
 _runs = os.environ.get("ORCH_STAGE2_ENUMERATOR_RUNS")
@@ -199,11 +199,15 @@ if _runs:
 
 def runs_enum_run_mark_first(program):
     """Whether the first statements of program, read from its syntax tree, are those of ENUM_RUN_MARK,
-    so that the program records its start before any other statement runs. A program that holds the
-    mark only as text, or that runs other statements before it, does not; neither does one that does
-    not parse."""
+    and the program compiles, so that the program records its start before any other statement runs.
+    A program that holds the mark only as text, or that runs other statements before it, does not;
+    neither does one that does not parse, or one that parses but does not compile, such as the mark
+    followed by a top-level return, a top-level break or a misplaced future import, since the
+    interpreter refuses it before any of its statements runs. program is source text (str) or the
+    bytes of a program file, which the interpreter decodes as it would."""
     try:
         body = ast.parse(program).body
+        compile(program, "<enumerator>", "exec", dont_inherit=True)
     except (SyntaxError, ValueError):
         return False
     mark = ast.parse(ENUM_RUN_MARK).body
@@ -452,18 +456,21 @@ class Stage2Harness(unittest.TestCase):
         """Fail unless an enumerator that the hook would start (an argv list of non-empty strings,
         aiqt_hooks.py:22826-22829) runs this interpreter (sys.executable) with -I on a program file, or
         on a -c program, whose first statements, read from its syntax tree, are those of ENUM_RUN_MARK
-        (runs_enum_run_mark_first), so it records each of its starts before any other statement runs
-        and run_doctor_recorded counts them, and has a timeout, as the hook reads it
-        (aiqt_hooks.py:22830-22831), of at most ENUM_TIMEOUT, so enumerator_bound_defect holds a launch
-        to enough. An argv that the hook refuses starts no enumerator and is not held."""
+        and which compiles (runs_enum_run_mark_first), so it records each of its starts before any
+        other statement runs and run_doctor_recorded counts them, and has a timeout, as the hook reads
+        it (aiqt_hooks.py:22830-22831), of at most ENUM_TIMEOUT, so enumerator_bound_defect holds a
+        launch to enough. The hook runs argv from the repository root (cwd=root at
+        aiqt_hooks.py:22833), the directory that holds the .aiqt/ written here, so a relative program
+        file is read from self.repo, not from the working directory of this test. An argv that the
+        hook refuses starts no enumerator and is not held."""
         argv = enumerator.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
             return
         program, ours = None, argv[0] == sys.executable
         if ours and argv[1:3] == ["-I", "-c"] and len(argv) > 3:
             program = argv[3]
-        elif ours and argv[1:2] == ["-I"] and len(argv) > 2 and Path(argv[2]).is_file():
-            program = Path(argv[2]).read_text(encoding="utf-8")
+        elif ours and argv[1:2] == ["-I"] and len(argv) > 2 and (self.repo / argv[2]).is_file():
+            program = (self.repo / argv[2]).read_bytes()
         self.assertTrue(program is not None and runs_enum_run_mark_first(program),
                         "the enumerator {!r} does not record its runs (ENUM_RUN_MARK)".format(argv))
         timeout = enumerator.get("timeout")
@@ -1307,8 +1314,9 @@ class EnumeratorBounds(Stage2Harness):
     with no running case fails at once, with the exception that the launch raised as the cause, and
     that write_registry refuses an enumerator that this interpreter does not run with -I, whose program
     does not begin with the statements of ENUM_RUN_MARK, also one that holds them only as text or after
-    an exit, or whose timeout is over ENUM_TIMEOUT. What the check does not see is stated above
-    enumerator_bound_defect."""
+    an exit, whose program begins with them but does not compile, or whose timeout is over
+    ENUM_TIMEOUT, and that it reads a relative program file from the root that the hook runs it from.
+    What the check does not see is stated above enumerator_bound_defect."""
 
     # A child that runs the program that its operands name twice, and one that runs it once and exits 1.
     TWICE = ("import subprocess, sys\n"
@@ -1384,6 +1392,15 @@ class EnumeratorBounds(Stage2Harness):
         after_exit = "import sys\nsys.exit(0)\n" + ENUM_RUN_MARK
         for program in (as_text, after_exit):
             self.assertIn(ENUM_RUN_MARK, program, "precondition: the record is in the program text")
+        # 3 programs whose syntax tree begins with the statements of ENUM_RUN_MARK but that do not
+        # compile, so the interpreter refuses each before the record runs.
+        uncompiled = {name: ENUM_RUN_MARK + tail for name, tail in (
+            ("a top-level return", "return\n"), ("a top-level break", "break\n"),
+            ("a misplaced future import", "from __future__ import annotations\n"))}
+        mark = [ast.dump(node) for node in ast.parse(ENUM_RUN_MARK).body]
+        for program in uncompiled.values():
+            self.assertEqual([ast.dump(node) for node in ast.parse(program).body][:len(mark)], mark,
+                             "precondition: the syntax tree begins with the record")
         fixture = [sys.executable, "-I", str(self.enum_script), str(self.backlog)]
         rows = (("a program file without the record", [sys.executable, "-I", str(silent), str(self.backlog)],
                  ENUM_TIMEOUT, "does not record its runs"),
@@ -1398,6 +1415,8 @@ class EnumeratorBounds(Stage2Harness):
                 ("a program run by another interpreter", ["python3"] + fixture[1:], ENUM_TIMEOUT,
                  "does not record its runs"),
                 ("a timeout over ENUM_TIMEOUT", fixture, ENUM_TIMEOUT + 1, "over ENUM_TIMEOUT"))
+        rows += tuple(("the record followed by " + name, [sys.executable, "-I", "-c", program], ENUM_TIMEOUT,
+                       "does not record its runs") for name, program in uncompiled.items())
         for name, argv, timeout, wanted in rows:
             with self.subTest(enumerator=name):
                 with self.assertRaisesRegex(self.failureException, wanted):
@@ -1409,6 +1428,39 @@ class EnumeratorBounds(Stage2Harness):
             "argv": [sys.executable, "-I", "-c", ENUM_RUN_MARK + "import time\ntime.sleep(100)\n"],
             "timeout": 1}))
         self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 600}))
+
+    def test_write_registry_reads_a_relative_program_where_the_hook_runs_it(self):
+        # The hook runs the enumerator from the repository root (cwd=root at aiqt_hooks.py:22833), so a
+        # relative program file is the one under self.repo. This test runs from another directory that
+        # holds a file of the same name: write_registry must read the file under self.repo.
+        name = "enum_relative.py"
+        elsewhere = self._tmp / "elsewhere"
+        elsewhere.mkdir()
+        relative = {"argv": [sys.executable, "-I", name, str(self.backlog)], "timeout": ENUM_TIMEOUT}
+        cwd = os.getcwd()
+        os.chdir(elsewhere)
+        try:
+            with self.subTest(root="a recording program", here="an unrecording one"):
+                # Accepted, and the hook runs the program under the root, which records its start.
+                (self.repo / name).write_text(ENUM_FIXTURE, encoding="utf-8")
+                (elsewhere / name).write_text(ENUM_FIXTURE.replace(ENUM_RUN_MARK, ""), encoding="utf-8")
+                self.write_registry(self.stage2(enumerator=relative))
+                self.arm_lease()
+                take_enumerator_launches(self)
+                self.assertEqual(self.stop().returncode, 0)
+                self.assertEqual([runs for _argv, _timeout, runs in take_enumerator_launches(self)], [1])
+            with self.subTest(root="an unrecording program", here="a recording one"):
+                # Refused, since the hook would run the program that does not record its start.
+                (self.repo / name).write_text(ENUM_FIXTURE.replace(ENUM_RUN_MARK, ""), encoding="utf-8")
+                (elsewhere / name).write_text(ENUM_FIXTURE, encoding="utf-8")
+                with self.assertRaisesRegex(self.failureException, "does not record its runs"):
+                    self.write_registry(self.stage2(enumerator=relative))
+            with self.subTest(root="no program", here="a recording one"):
+                (self.repo / name).unlink()
+                with self.assertRaisesRegex(self.failureException, "does not record its runs"):
+                    self.write_registry(self.stage2(enumerator=relative))
+        finally:
+            os.chdir(cwd)
 
 
 # =====================================================================================================
@@ -2754,7 +2806,8 @@ def _env_naming_starts(env, folder):
 # The residuals of the bound check that run_doctor_recorded makes. It counts only the starts that an
 # enumerator records: Stage2Harness.write_registry refuses a declared enumerator that this interpreter
 # does not run with -I, or whose program, read from its syntax tree, does not begin with the statements
-# of ENUM_RUN_MARK (runs_enum_run_mark_first), but a registry written another way, or a program changed
+# of ENUM_RUN_MARK or does not compile (runs_enum_run_mark_first), reading a relative program file from
+# the root that the hook runs it from, but a registry written another way, or a program changed
 # after write_registry read it, is not seen, and a child that starts the enumerator with an environment
 # that drops ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that the hook and the doctor pass it
 # on). It holds a launch only for the starts that it made when a case ran it: a launch that could start
