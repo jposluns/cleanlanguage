@@ -207,10 +207,14 @@ update in the diff is the reviewer's cue to check the registries. An edit that l
 unparsed tree as it is changes the check's bytes but keeps the digest, so the CODE_SHA256 pin
 does not fail on it. Most edits of a comment, of layout, of the quotes of a string, of how a
 number is written or of parentheses that change no grouping leave that tree as it is, but not
-all: such an edit can change it inside the = field of an f-string or inside an interpolation of
-a template string, whose source text the tree holds, and parentheses put around the name that an
-annotated assignment targets change it. The digest's
-value depends on how the Python that runs the test unparses a syntax tree. The case also requires
+all. The edits that change it form a class, and these are examples of it, not a complete list:
+such an edit can change it inside the = field of an f-string or inside an interpolation of a
+template string, whose source text the tree holds, though on Python 3.14.4 an edit of a comment
+there leaves it as it is; parentheses put around the name that an annotated assignment targets,
+or around the targets of a del, change it; an edit of an encoding declaration, which is a
+comment, can change it when a string in the source is not ASCII; and re-indenting a block that
+holds a string written over more than 1 line can change it. The digest's value depends on how
+the Python that runs the test unparses a syntax tree. The case also requires
 the codec of the encoding that tokenize.detect_encoding finds for those bytes to be UTF-8, with
 or without a byte order mark. When Python runs a file, it reads the line
 that holds an encoding declaration, and any line before it, before it applies the declaration,
@@ -790,8 +794,9 @@ def space_at(paragraph, opening):
 # reviewer's cue to check the registries below against the new code. An edit that leaves the
 # unparsed tree as it is keeps this value. Most edits of a comment, of layout, of the quotes of a
 # string, of how a number is written or of parentheses that change no grouping leave that tree as
-# it is, but not all; the docstring of code_form() names cases where such an edit changes it. The
-# value depends on how the Python that runs the test unparses a syntax tree.
+# it is, but not all; the edits that change it form a class, and the docstring of code_form()
+# names examples of it, not a complete list. The value depends on how the Python that runs the
+# test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS that it leaves out. It is
 # 64 lowercase hexadecimal digits, as each value that it replaces is. A constant that code_form()
@@ -1254,9 +1259,14 @@ def code_form(source):
     positions give the same form, and an edit that leaves the unparsed tree as it is keeps the
     form, and so the digest. Most edits of a comment, of layout, of the quotes of a string, of
     how a number is written or of parentheses that change no grouping leave that tree as it is,
-    but not all: such an edit can change it inside the = field of an f-string or inside an
-    interpolation of a template string, whose source text the tree holds, and parentheses put
-    around the name that an annotated assignment targets change it."""
+    but not all. The edits that change it form a class, and these are examples of it, not a
+    complete list: such an edit can change it inside the = field of an f-string or inside an
+    interpolation of a template string, whose source text the tree holds, though on Python
+    3.14.4 an edit of a comment there leaves it as it is; parentheses put around the name that
+    an annotated assignment targets, or around the targets of a del, change it; an edit of an
+    encoding declaration, which is a comment, can change it when a string in the source is not
+    ASCII; and re-indenting a block that holds a string written over more than 1 line can
+    change it."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
