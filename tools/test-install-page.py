@@ -87,28 +87,40 @@ The test holds the code of the gate by 2 layers.
    module, a class or a path by its name, so another module, class or path
    of the same name gives the same digest. Plain data is a str, bytes,
    int, float, bool or None, or a tuple, a list or a dict that holds only
-   plain data, each of exactly that type. For any other value, a subclass
-   of those types among them, pin_value() raises UnpinnableValue, and the
-   reader pin fails, naming the name, the reviewed gate included; so does
+   plain data. Each kind, plain data included, is matched as the exact
+   type of the value, compared by identity with a type that this test
+   captured when it was imported (PIN_KINDS, PLAIN_TYPES). For a value of
+   no such type, pin_value() raises UnpinnableValue, and the reader pin
+   fails, naming the name, the reviewed gate included; so does
    reader_pin_text() for a value with __wrapped__ that a def does not bind.
-   pin_value_problems() holds these refusals, and holds that the reader pin
-   fails on a gate whose REQUESTED_FILES is a subclass of tuple. What this
-   layer adds to the 1st: a change to the gate whose new GATE_SHA256 is
-   recorded still fails, naming the function or value, where it changes a
-   statement that this layer holds, until its own digest is renewed too,
-   so that a change to check 7 does not pass unnamed inside a change
-   elsewhere in the gate. It follows only names read directly: a helper
-   that a pinned function reaches in any other way than by reading the
-   name that a def at the gate's top level binds is not derived, and its
-   code is in no digest here. Examples of that class, not a complete list,
-   are a helper reached through an alias, a lambda assigned at the top
-   level, functools.partial, a class or getattr(), or through an attribute
-   of a module or a path that a pinned name holds. A helper reached
-   through the value of a pinned name for which pin_value() raises
-   UnpinnableValue, such as a dict or a list of functions or of classes, a
-   subclass of dict or tuple whose own repr() holds no address, or a set
-   of functions, is in that class too, but there the test fails closed:
-   the reader pin fails on such a gate, the reviewed one included. Its
+   pin_value_problems() holds these refusals for a subclass of a type that
+   pin_value() writes, a class with its own metaclass, an object whose
+   class gives a pattern, a module, a class or a path type as its
+   __class__, an object whose type compares equal to every type, and the
+   other values that its docstring names, and holds that the reader pin
+   fails on a gate whose REQUESTED_FILES is a subclass of tuple. The pin
+   holds the values that a reviewed gate defines in ordinary code. A value
+   built to pose as another kind in a way that pin_value() does not
+   refuse, and code at the gate's top level that changes this test's
+   functions or values, are held only by the reviewer who reads the gate's
+   diff, since the gate's code runs in this process before the pin reads
+   any value. The 1st layer is the control that makes every such gate
+   need that review. What this layer adds to the 1st: a change to the
+   gate whose new GATE_SHA256 is recorded still fails, naming the function
+   or value, where it changes a statement that this layer holds, until its
+   own digest is renewed too, so that a change to check 7 does not pass
+   unnamed inside a change elsewhere in the gate. It follows only names
+   read directly: a helper that a pinned function reaches in any other way
+   than by reading the name that a def at the gate's top level binds is
+   not derived, and its code is in no digest here. Examples of that class,
+   not a complete list, are a helper reached through a class or getattr(),
+   or through an attribute of a module or a path that a pinned name holds.
+   A helper reached through the value of a pinned name for which
+   pin_value() raises UnpinnableValue, such as an alias of a function, a
+   lambda assigned at the top level, functools.partial, a dict or a list
+   of functions or of classes, a subclass of dict or tuple, or a set of
+   functions, is in that class too, but there the test fails closed: the
+   reader pin fails on such a gate, the reviewed one included. Its
    binding check does not see a rebinding made while the gate loads that
    leaves each pinned statement and the text of each pinned value as they
    were. Examples of that class, not a complete list, are a rebinding
@@ -132,14 +144,15 @@ change. The residuals, stated once:
    is held only by review of the gate's diff. Examples of such routes, not
    a complete list: a helper of the class that the reader pin does not
    derive (above), other than one reached through a value on which the
-   test fails closed, such as one reached through an alias, a lambda
-   assigned at the top level, functools.partial, a class or getattr(), or
+   test fails closed, such as one reached through a class or getattr(), or
    through an attribute of a module or a path that a pinned name holds; a
-   rebinding through globals(), setattr or exec, while the gate loads, of
-   the class that its binding check does not see (above), or when the gate
-   runs as a command; the gate's main(), which reads site/_redirects and
-   gives it to redirect_problems() and is not pinned; and code at the
-   gate's top level that changes this test's values once gate_bytes() has
+   value built to pose as another kind in a way that pin_value() does not
+   refuse (above); a rebinding through globals(), setattr or exec, while
+   the gate loads, of the class that its binding check does not see
+   (above), or when the gate runs as a command; the gate's main(), which
+   reads site/_redirects and gives it to redirect_problems() and is not
+   pinned; and code at the gate's top level that changes this test's
+   functions or values, pin_value() among them, once gate_bytes() has
    checked the bytes.
 3. Code outside the gate is pinned by neither layer and can change what the
    gate or this test does. Examples, not a complete list:
@@ -3206,9 +3219,14 @@ def top_statements(tree: ast.Module, name: str) -> list[ast.stmt]:
     return found
 
 
-# Check 7: the types of the plain data that pin_value() writes by repr(), each matched as the exact type of a value, so
-# that a subclass, which can write any repr(), is not plain data.
+# Check 7: the types of the plain data that pin_value() writes by repr(), each matched as the exact type of a value, by
+# identity, so that a subclass, which can write any repr(), is not plain data, and nor is a value whose type compares
+# equal to 1 of them.
 PLAIN_TYPES = (str, bytes, int, float, bool, type(None))
+# Check 7: the other kinds of value that pin_value() writes, a pattern, a module, a class and a path, each matched as
+# the exact type of a value, by identity, and captured here, when this test is imported, before any code of the gate
+# runs. type(REPO_ROOT) is the type of a path on this platform; Path itself is not.
+PIN_KINDS = (re.Pattern, types.ModuleType, type, type(REPO_ROOT))
 
 
 class UnpinnableValue(ValueError):
@@ -3217,11 +3235,12 @@ class UnpinnableValue(ValueError):
 
 def plain_data(value) -> bool:
     """Whether value is plain data: of exactly 1 of PLAIN_TYPES, or exactly a tuple or a list whose items are plain data,
-    or exactly a dict whose keys and values are plain data. A value that holds itself is not plain data."""
+    or exactly a dict whose keys and values are plain data, each type compared by identity. A value that holds itself
+    is not plain data."""
     try:
-        if type(value) in PLAIN_TYPES:
+        if any(type(value) is kind for kind in PLAIN_TYPES):
             return True
-        if type(value) in (tuple, list):
+        if type(value) is tuple or type(value) is list:
             return all(plain_data(item) for item in value)
         if type(value) is dict:
             return all(plain_data(key) and plain_data(item) for key, item in value.items())
@@ -3232,17 +3251,25 @@ def plain_data(value) -> bool:
 
 def pin_value(value) -> str:
     """A value of the gate as reader_pin_text() writes it: a pattern by its text and flags, a module or a class by its
-    name, a path by its place in this repository and plain data (plain_data()) by repr(). For any other value it
+    name, a path by its place in this repository and plain data (plain_data()) by repr(), each kind matched as the
+    exact type of the value, compared by identity with 1 of PIN_KINDS or PLAIN_TYPES. For a value of no such type it
     raises UnpinnableValue, so that the reader pin fails on it, the reviewed gate included: such a value can reach a
-    helper whose code no text of it holds, as a dict or a list of functions or of classes does, a subclass of dict or
-    tuple whose own repr() holds no address, or a set of functions."""
-    if isinstance(value, re.Pattern):
+    helper whose code no text of it holds, as a dict or a list of functions or of classes does, a set of functions, a
+    subclass of a type that it writes, a class with its own metaclass, an object whose class gives 1 of PIN_KINDS as
+    its __class__, or an object whose type compares equal to a type of plain data.
+    The pin holds the values that a reviewed gate defines in ordinary code. A value built to pose as another kind in a
+    way that this check does not refuse, and code at the gate's top level that changes this test's functions or
+    values, are held only by the reviewer who reads the gate's diff, since the gate's code runs in this process before
+    the pin reads any value. The digest of the gate's bytes (gate_bytes()) is the control that makes every such gate
+    need that review: no change to the gate runs before a reviewer records its GATE_SHA256."""
+    pattern, module, kind_of_class, path = PIN_KINDS
+    if type(value) is pattern:
         return f"re.compile({value.pattern!r}, {int(value.flags)})"
-    if isinstance(value, types.ModuleType):
+    if type(value) is module:
         return f"module {value.__name__}"
-    if isinstance(value, type):
+    if type(value) is kind_of_class:
         return f"class {value.__module__}.{value.__qualname__}"
-    if isinstance(value, Path):
+    if type(value) is path:
         return f"path {value.relative_to(REPO_ROOT)}" if value.is_relative_to(REPO_ROOT) else f"path {value}"
     if plain_data(value):
         return repr(value)
@@ -3328,23 +3355,66 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
     return problems
 
 
-# Check 7: the statement of the gate that pin_value_problems() replaces, and the 2 statements that it puts in its place:
-# REQUESTED_FILES made a subclass of tuple whose repr() is that of the plain value, and REQUESTED_FILES made by a call
-# of tuple(), a plain value whose statement differs.
-PIN_ANCHOR = 'REQUESTED_FILES = ("favicon.ico",)\n'
+# Check 7: the name whose statement at the gate's top level pin_value_problems() replaces, found by the gate's syntax
+# tree, and the 2 statements that it puts in its place: REQUESTED_FILES made a subclass of tuple whose repr() is that of
+# the plain value, and REQUESTED_FILES made by a call of tuple(), a plain value whose statement differs.
+PIN_NAME = "REQUESTED_FILES"
 PIN_SUBCLASS = ('class _QzTuple(tuple):\n    def __repr__(self):\n        return "(\'favicon.ico\',)"\n\n\n'
-                'REQUESTED_FILES = _QzTuple(("favicon.ico",))\n')
-PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))\n'
+                'REQUESTED_FILES = _QzTuple(("favicon.ico",))')
+PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))'
 
 
 def pin_value_problems() -> list[str]:
     """A problem unless pin_value() writes each plain value below by its repr() and raises UnpinnableValue for each
     other value below: a subclass of dict, of tuple and of str, each with its own repr(), a dict that holds a function
-    or a class or that a class keys, a list in a tuple that holds a function, a frozenset of functions and a list that
-    holds itself; unless reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def
-    binds; and unless reader_pin_problems(), given the gate with PIN_ANCHOR replaced by PIN_SUBCLASS, gives exactly 1
-    problem, which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which
-    gives the new digest of REQUESTED_FILES."""
+    or a class or that a class keys, a list in a tuple that holds a function, a frozenset of functions, a list that
+    holds itself, an object whose class gives each of PIN_KINDS as its __class__, an object whose type compares equal
+    to every type, a subclass of types.ModuleType and of the path type, a class with its own metaclass, and a subclass
+    of dict and of list that holds only plain data, so that each kind test of pin_value() and plain_data() must match
+    the exact type; unless reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def
+    binds; and unless the gate binds PIN_NAME by exactly 1 statement at its top level, and reader_pin_problems(), given
+    the gate with that statement, as its syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem,
+    which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which gives the
+    new digest of REQUESTED_FILES. A comment beside that statement stays outside the replaced span, and a reflow or a
+    reviewed change of it is replaced whole, so none of them fails this check."""
+
+    def posing(kind, **attributes):
+        """An object whose class gives kind as its __class__, with attributes that pin_value() reads for kind."""
+        return type("Posing", (), {"__class__": property(lambda self: kind), **attributes})()
+
+    class EqualMeta(type):
+        def __eq__(cls, other):
+            return True
+
+        __hash__ = type.__hash__
+
+    class EqualType(metaclass=EqualMeta):
+        def __repr__(self):
+            return "''"
+
+        def __iter__(self):
+            return iter(())
+
+        def items(self):
+            return ()
+
+    class ModuleSub(types.ModuleType):
+        pass
+
+    class PathSub(type(REPO_ROOT)):
+        pass
+
+    class OwnMeta(type):
+        pass
+
+    class WithMeta(metaclass=OwnMeta):
+        pass
+
+    class DictSub(dict):
+        pass
+
+    class ListSub(list):
+        pass
 
     class ConstantDict(dict):
         def __repr__(self):
@@ -3377,6 +3447,19 @@ def pin_value_problems() -> list[str]:
                ("a list in a tuple that holds a function", (("ok", [helper]),)),
                ("a frozenset of functions", frozenset({helper})),
                ("a list that holds itself", held))
+    pattern, module, kind_of_class, path = PIN_KINDS
+    refused += (("an object whose class gives re.Pattern as its __class__", posing(pattern, pattern="x", flags=32)),
+                ("an object whose class gives types.ModuleType as its __class__", posing(module, __name__="re")),
+                ("an object whose class gives type as its __class__",
+                 posing(kind_of_class, __getattr__=lambda self, name: "Path")),
+                ("an object whose class gives the path type as its __class__",
+                 posing(path, is_relative_to=lambda self, other: False, __str__=lambda self: "/qz")),
+                ("an object whose type compares equal to every type", EqualType()),
+                ("a subclass of types.ModuleType", ModuleSub("qz")),
+                ("a subclass of the path type", PathSub(REPO_ROOT)),
+                ("a class with its own metaclass", WithMeta),
+                ("a dict subclass that holds only plain data", DictSub(assets=301)),
+                ("a list subclass that holds only plain data", ListSub(["assets", 301])))
     problems: list[str] = []
     for value in plain:
         try:
@@ -3397,19 +3480,29 @@ def pin_value_problems() -> list[str]:
                         "UnpinnableValue")
     except UnpinnableValue:
         pass
-    source = GATE_BYTES.decode("utf-8")
-    if source.count(PIN_ANCHOR) != 1:
-        return problems + [f"tools/{GATE.name} holds {PIN_ANCHOR.strip()!r} {source.count(PIN_ANCHOR)} times, not once"]
+    try:
+        statements = top_statements(ast.parse(GATE_BYTES), PIN_NAME)
+    except (SyntaxError, ValueError) as error:
+        return problems + [f"tools/{GATE.name} could not be parsed, so its statement of {PIN_NAME} was not found: "
+                           f"{error!r}"]
+    if len(statements) != 1:
+        return problems + [f"tools/{GATE.name} binds {PIN_NAME} by {len(statements)} statements at its top level, "
+                           "not by 1"]
+    # The statement's span in GATE_BYTES: its lines as the syntax tree counts them, and its columns, which are offsets in
+    # the UTF-8 bytes of a line, so that a comment beside it stays outside the span.
+    lines = GATE_BYTES.splitlines(keepends=True)
+    first = sum(map(len, lines[:statements[0].lineno - 1])) + statements[0].col_offset
+    last = sum(map(len, lines[:statements[0].end_lineno - 1])) + statements[0].end_col_offset
     for replacement, start in ((PIN_SUBCLASS, f"REQUESTED_FILES of tools/{GATE.name} cannot be pinned: "),
                                (PIN_PLAIN, f"REQUESTED_FILES of tools/{GATE.name} differs from its pin: ")):
         try:
-            found = reader_pin_problems(source.replace(PIN_ANCHOR, replacement).encode("utf-8"))
+            found = reader_pin_problems(GATE_BYTES[:first] + replacement.encode("utf-8") + GATE_BYTES[last:])
         except Exception as error:
-            problems.append(f"reader_pin_problems() raised {error!r} on the gate with {replacement.strip()!r}")
+            problems.append(f"reader_pin_problems() raised {error!r} on the gate with {replacement!r}")
             continue
         if len(found) != 1 or not found[0].startswith(start):
-            problems.append(f"reader_pin_problems() gives {found!r} on the gate with {replacement.strip()!r}, not 1 "
-                            f"problem that starts {start!r}")
+            problems.append(f"reader_pin_problems() gives {found!r} on the gate with {replacement!r}, not 1 problem "
+                            f"that starts {start!r}")
     return problems
 
 

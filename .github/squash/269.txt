@@ -110,24 +110,33 @@ published digests, which .baseline/pin.toml records.
   a class or a path by its name, so another module, class or path of
   the same name gives the same digest. Plain data is a str, bytes,
   int, float, bool or None, or a tuple, a list or a dict that holds
-  only plain data, each of exactly that type. For any other value, a
-  subclass of those types among them, the reader pin fails, naming
+  only plain data. Each kind is matched as the exact type of the
+  value, by identity with a type that the test captures when it is
+  imported. For a value of no such type the reader pin fails, naming
   the name, the reviewed gate included, as it does for a value with
   __wrapped__ that a def does not bind, and a check of the test holds
-  these refusals. When the gate's digest is renewed, a change to a
-  statement that the reader pin holds still fails, by name, until its
-  own digest is renewed too. The reader pin follows only names read
-  directly: a helper that a pinned function reaches in any other way
-  than by reading the name that a def at the gate's top level binds
-  is not derived. Examples of that class, not a complete list, are a
-  helper reached through an alias, a lambda assigned at the top level,
-  functools.partial, a class or getattr(), or through an attribute of
-  a module or a path that a pinned name holds. A helper reached
-  through the value of a pinned name that the reader pin refuses, such
-  as a dict or a list of functions or of classes, a subclass of dict
-  or tuple whose own repr() holds no address, or a set of functions,
-  is in that class too, but there the test fails closed: the reader
-  pin fails on such a gate, the reviewed one included. Nor does the
+  these refusals, among them a subclass, a class with its own
+  metaclass and objects built to pose as a pattern, a module, a
+  class, a path or plain data. The pin holds the values that a
+  reviewed gate defines in ordinary code. A value built to pose as
+  another kind in a way that the test does not refuse, and code at
+  the gate's top level that changes the test's functions or values,
+  are held only by review of the gate's diff; the gate's digest is
+  the control that makes every such gate need that review. When the
+  gate's digest is renewed, a change to a statement that the reader
+  pin holds still fails, by name, until its own digest is renewed
+  too. The reader pin follows only names read directly: a helper
+  that a pinned function reaches in any other way than by reading
+  the name that a def at the gate's top level binds is not derived.
+  Examples of that class, not a complete list, are a helper reached
+  through a class or getattr(), or through an attribute of a module
+  or a path that a pinned name holds. A helper reached through the
+  value of a pinned name that the reader pin refuses, such as an
+  alias of a function, a lambda assigned at the top level,
+  functools.partial, a dict or a list of functions or of classes, a
+  subclass of dict or tuple, or a set of functions, is in that class
+  too, but there the test fails closed: the reader pin fails on such
+  a gate, the reviewed one included. Nor does the
   reader pin see a rebinding made while the gate loads that leaves
   each pinned statement and the text of each pinned value as they
   were. Examples of that class, not a complete list, are a rebinding
@@ -146,10 +155,11 @@ published digests, which .baseline/pin.toml records.
      reader does by a route that the reader pin does not follow
      passes and is held only by review of the gate's diff. Examples,
      not a complete list: the routes above on which the test does not
-     fail closed, a rebinding through globals(), setattr or exec when
-     the gate runs as a command, the gate's main(), which is not
-     pinned, and code at the gate's top level that changes the test's
-     values once the bytes are checked.
+     fail closed, a value built to pose as another kind in a way that
+     the test does not refuse, a rebinding through globals(), setattr
+     or exec when the gate runs as a command, the gate's main(), which
+     is not pinned, and code at the gate's top level that changes the
+     test's functions or values once the bytes are checked.
   3. Code outside the gate is pinned by neither layer and can change
      what the gate or the test does. Examples, not a complete list:
      tools/check-baseline-pin.py, which the gate runs; the 2 sibling
