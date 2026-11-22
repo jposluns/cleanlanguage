@@ -151,6 +151,7 @@ run python3 -I tools/test-skill-version-consumers.py
 run python3 -I tools/test-release-skill-workflow.py
 run python3 -I tools/test-release-package-dist.py
 run bash tools/test-version-selectors.sh
+run python3 -I tools/test-release-dry-run-refs.py
 run tools/release-dry-run.sh
 # site-draft.yml
 run python3 -I tools/test-baseline-pin.py

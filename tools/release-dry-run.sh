@@ -10,7 +10,19 @@
 # are deliberately absent here: the tag push and gh release stay in the workflow,
 # the site checksum flip and its pull request are performed by the orchestrator
 # out of band after the release publishes, and this script contains no gh call
-# and no git push, proving at exit that no repository ref moved.
+# and no git push. At exit it proves, reading the main worktree, that it moved
+# no tag, no note, and not the main worktree's HEAD (the branch HEAD names and
+# the commit HEAD resolves to), and that no ref of any namespace contains the
+# dry-run commit. A ref that another worktree moves during the run is outside
+# that proof and does not fail it, unless it is a tag or a note.
+#
+# Residual: the proof does not catch the deletion of a branch other than the
+# one the main worktree has checked out; a move or creation of a branch, a
+# remote-tracking ref, refs/stash, refs/replace/ or any other ref outside tags
+# and notes, at a commit that does not contain the dry-run commit; or such a
+# ref written by a commit hook, which the dry-run commit runs. It also does not
+# see the throwaway worktree's own per-worktree refs, anything the exit cleanup
+# does, or a ref moved and then restored between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -46,6 +58,40 @@ fail() {
   exit 1
 }
 
+# ref_snapshot: print, reading the main worktree at repo_root, the refs that
+# step 6 compares: the branch HEAD names, or "detached"; the commit HEAD
+# resolves to; and every tag and note with its object name. An empty tag and
+# note listing is legitimate. Any git error fails the run, so an error is never
+# read as an empty listing.
+ref_snapshot() {
+  local head_ref head_rc=0 head_commit listing
+  head_ref="$(git -C "${repo_root}" symbolic-ref -q HEAD)" || head_rc=$?
+  case "${head_rc}" in
+    0) ;;
+    1) head_ref="detached" ;;
+    *) fail "could not read the branch HEAD names in ${repo_root} (git symbolic-ref exit ${head_rc})" ;;
+  esac
+  head_commit="$(git -C "${repo_root}" rev-parse --verify -q HEAD)" \
+    || fail "could not resolve HEAD to a commit in ${repo_root}"
+  listing="$(git -C "${repo_root}" for-each-ref --format='%(objectname) %(refname)' refs/tags refs/notes)" \
+    || fail "could not list the tags and notes of ${repo_root}"
+  printf 'HEAD ref: %s\nHEAD commit: %s\n%s\n' "${head_ref}" "${head_commit}" "${listing}"
+}
+
+# ref_leak_check COMMIT: fail unless no ref of any namespace in repo_root
+# contains COMMIT, the dry-run commit, so a branch, tag, note or
+# remote-tracking ref created or moved onto it, or onto a descendant of it,
+# fails the run. A failing git call fails the run and is never read as an
+# empty listing.
+ref_leak_check() {
+  local holders
+  holders="$(git -C "${repo_root}" for-each-ref --contains "$1" --format='%(refname)')" \
+    || fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"
+  [ -z "${holders}" ] \
+    || fail "the dry run changed a git ref, which it must never do; these refs contain its commit $1:
+${holders}"
+}
+
 dry_date="${DRY_DATE:-$(date -u +%F)}"
 case "${dry_date}" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
@@ -55,7 +101,7 @@ esac
 # cannot pass by leaving the existing dates in place.
 seed_date="2020-01-01"
 
-refs_before="$(git for-each-ref | sha256sum)"
+refs_before="$(ref_snapshot)"
 
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
 # strict rule the release gates apply; a malformed first line is rejected here,
@@ -151,6 +197,9 @@ python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/p
 GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
   git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
   commit -q -am "Dry run: version ${dry_version}"
+# The dry-run commit, for the leak check of step 6. Its object is in the store
+# the worktree shares with repo_root, so repo_root resolves it.
+dry_commit="$(git rev-parse --verify HEAD)"
 
 # Seed the modified-date fields with an old sentinel so the writer must restamp
 # them for the gates and assertions to pass: the modified dates of the install
@@ -311,9 +360,16 @@ done
 python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}" --check
 
-# 6. Prove nothing here moved a repository ref.
-refs_after="$(git -C "${repo_root}" for-each-ref | sha256sum)"
+# 6. Prove that the dry run moved no tag, no note and not the main worktree's
+#    HEAD, and that no ref of any namespace contains the dry-run commit. Other
+#    refs that another worktree moves do not fail it; the header states the
+#    residual.
+refs_after="$(ref_snapshot)"
 [ "${refs_before}" = "${refs_after}" ] \
-  || fail "the dry run changed a git ref, which it must never do"
+  || fail "the dry run changed a git ref, which it must never do; the main worktree's HEAD, tags and notes before:
+${refs_before}
+and after:
+${refs_after}"
+ref_leak_check "${dry_commit}"
 
 echo "release-dry-run: every step, gate, and assertion passed for ${dry_tag} (nothing was published)."
