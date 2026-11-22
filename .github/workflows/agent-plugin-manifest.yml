@@ -6,9 +6,10 @@ name: Agent Plugins manifest
 # bytes equal the root LICENSE and NOTICE.md, so a missing, non-regular or
 # drifted licence copy cannot reach main either. Structural, offline, and
 # stdlib-only; also runs the gate's own unit tests. The job also runs the
-# licence-name gate and its tests: the gate fails when a tracked line that holds
-# one of its search terms has no allowlist row, or when an allowlist row's count
-# no longer matches the tree.
+# licence-name gate and its tests. The licence-name gate fails, for example, when
+# a tracked line that holds 1 of its 3 search terms has no allowlist row, or when
+# an allowlist row's count no longer matches the tree; the docstring of
+# tools/check-licence-names.py states every cause.
 #
 # Neither trigger carries a paths filter, so this gate reports on every pull
 # request and on every push to main and can be a required check: a path-filtered

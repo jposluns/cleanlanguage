@@ -10,13 +10,15 @@ configuration of the machine and of the user left out and the search for a repos
 the temporary folder, so the result depends on the case alone.
 
 Every refusal case first runs the gate on the unchanged repository, a control that must exit 0
-and print exactly the summary line, then makes 1 change (a case with subtests undoes each change
-before the next) and requires exit 1, a standard output of exactly 1 summary line whose problem
-count is the number of problem lines, and problem lines that are exactly the cause and any
-consequence the case names, each consequence with the reason it follows. So each case fails when
-the gate does not refuse the change, when it names another cause or an extra problem, and when it
-refuses the unchanged repository. Every run of the gate must also write nothing outside printable
-ASCII, so a control byte in a path, count, owner or marker that reaches the output fails the case.
+and print exactly the summary line, then makes 1 change (test_line_ends_only_at_a_line_feed makes
+2: it tracks 2 files) and requires exit 1, a standard output of exactly 1 summary line whose
+problem count is the number of problem lines, and problem lines that are exactly the cause and any
+consequence the case names, each consequence with the reason it follows. Each subtest makes its 1
+change to the unchanged repository, since it undoes or overwrites the change of the subtest before
+it. So each case fails when the gate does not refuse the change, when it names another cause or
+an extra problem, and when it refuses the unchanged repository. Every run of the gate must also
+write nothing outside printable ASCII, so a control byte in a path, count, owner or marker that
+reaches the output fails the case.
 
 The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a

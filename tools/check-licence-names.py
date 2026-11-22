@@ -2,9 +2,13 @@
 """Check that the allowlist claims every tracked line that names a licence term, and no more.
 
 The search. A line names a licence term when it holds BY-SA, ShareAlike or Creative Commons in
-any ASCII letter case, as git grep -i -E reads that 3-way alternation. Each tracked file is read
-from the work tree as bytes and split at each line feed only, so a carriage return stays in its
-line and each line has the number git grep -n gives it, and a file need not be UTF-8 to be read.
+any ASCII letter case, as LC_ALL=C git grep -a -i -E reads that 3-way alternation. Each tracked
+file is read from the work tree as bytes and split at each line feed only, so a carriage return
+stays in its line, each line has the number that LC_ALL=C git grep -a -n gives it, and a file need
+not be UTF-8 to be read. The comparison with git grep needs both settings: under a UTF-8 locale
+git grep -i also matches non-ASCII forms that this gate does not, such as a long s (U+017F) in
+place of an s, and without -a git grep reports a match in a file it treats as binary, such as one
+that holds a NUL byte, with no line number.
 
 The tracked files are the entries that git ls-files --stage -z lists for the repository at the
 root, run with a fixed argument list and no shell. File content is data: no line of a file is

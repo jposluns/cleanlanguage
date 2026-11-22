@@ -26,9 +26,11 @@ reviewed prose that the gate does not check.
 
 The tests build throwaway git repositories. Each refusal case first
 runs the gate on the unchanged repository, which must pass, then makes
-1 change and requires exit 1, exactly 1 summary line on standard
+1 change, or 2 in the case that tracks a file of control bytes and a
+binary file, and requires exit 1, exactly 1 summary line on standard
 output, and problem lines that are exactly the cause and any
-consequence that the case names with its reason. No run may write a
+consequence that the case names with its reason. Each subtest makes
+its 1 change to the unchanged repository. No run may write a
 character outside printable ASCII. 3 cases load the gate in a separate
 process and call its file reader with os.lstat or os.fdopen replaced,
 to reach a descriptor that is not a regular file, a symbolic link that
