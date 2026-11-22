@@ -433,10 +433,11 @@ CHECK_SECONDS = 10
 OWN_END_SECONDS = 90
 
 # The stub child of the group-kill check. It ignores SIGTERM, SIGINT and
-# SIGHUP, so only SIGKILL ends it early. It first reads its own end, in
-# seconds, with float from the file own_end, which the check writes beside
-# it, so its source is a constant and no value of own_end adds code to it.
-# A text that float does not take raises there, before the stub opens
+# SIGHUP. A signal it does not ignore whose default action ends a process,
+# such as SIGKILL or SIGUSR1, still ends it early. It first reads its own
+# end, in seconds, with float from the file own_end, which the check writes
+# beside it, so its source is a constant and no value of own_end adds code
+# to it. A text that float does not take raises there, before the stub opens
 # either FIFO, so the stub never writes the ready byte. Its leader forks 1
 # member into its group and then writes 1 byte to the FIFO alive, so the
 # member holds the write end of alive when the test reads that byte, and
@@ -446,10 +447,13 @@ OWN_END_SECONDS = 90
 # holds, or for its own end, and exits. The test closes lifeline when its
 # check ends, and the kernel closes it when the test process ends in any
 # other way, SIGKILL included. Both opens are non-blocking, so a stub that
-# finds no reader of alive fails at once rather than block. A stub that
-# opens lifeline after the test has closed it would see no end of file
-# there, so it reads lifeline once first: a read that returns, rather than
-# fail with BlockingIOError, finds no writer, and the stub exits at once.
+# finds no reader of alive fails at once rather than block. On Linux,
+# select reports nothing for a FIFO read end opened while no writer has it
+# open, so a stub that opens lifeline after the test has closed it would
+# wait at its select until its own end. It therefore reads lifeline once
+# first: a read that returns, as a read does with end of file when no
+# writer has the FIFO open, rather than fail with BlockingIOError, finds no
+# writer, and the stub exits at once.
 #
 # The bounds this order gives, derived from the source below. Start-up
 # here and in the check means interpreter start-up and then the read of
@@ -510,8 +514,11 @@ STUB_CALLS = (
 def end_of_file(fd: int, deadline: float) -> float | None:
     """Wait until ``deadline``, a time.monotonic value, for end of file on
     ``fd``, the non-blocking read end of a FIFO whose writers have opened it,
-    and return the time it came, or None if it did not come. A byte read on
-    the way is dropped."""
+    and return the time it was seen, a clock reading taken after the read
+    that returned it, or None if it was not seen by the deadline. A reading
+    later than the deadline counts as not seen, so an end of file that came
+    late, or that the process saw late because it was not scheduled, is
+    never taken. A byte read on the way is dropped."""
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -520,7 +527,8 @@ def end_of_file(fd: int, deadline: float) -> float | None:
         if readable:
             try:
                 if os.read(fd, 1) == b"":
-                    return time.monotonic()
+                    seen = time.monotonic()
+                    return seen if seen <= deadline else None
             except BlockingIOError:
                 pass
 
@@ -606,12 +614,13 @@ class BoundsTest(unittest.TestCase):
         # can take. Derived: started is read before the client starts the
         # stub, so each stub process enters its wait after started, and its
         # own end comes after started + OWN_END_SECONDS. The check takes end
-        # of file only when select reports it before returned +
+        # of file only as end_of_file returns it, a clock reading taken
+        # after the read that saw it and no later than returned +
         # CHECK_SECONDS, and before that it asserts that returned - started,
         # less the poll, is under RUN_SECONDS. The poll lasts POLL_SECONDS
         # at most, plus its last step, 1 real wait of 0.05 seconds and 1
         # read, whose length the code does not bound. So the check takes no
-        # end of file after started + POLL_SECONDS + RUN_SECONDS +
+        # end of file seen after started + POLL_SECONDS + RUN_SECONDS +
         # CHECK_SECONDS, 85 seconds, plus that step, and the 5 seconds left
         # before the own end cover the step. Should the step take longer,
         # the own-end assertion fails a group that ended on its own rather
@@ -642,13 +651,14 @@ class BoundsTest(unittest.TestCase):
         # read after it. The code bounds none of these, so a client that
         # gives up early by more than the 2 clock reads take can still pass,
         # by a margin that the host sets. The client's
-        # run, less the poll that holds its first wait, must end within
-        # RUN_SECONDS.
+        # run, from started to returned, less the poll that holds its first
+        # wait, must end within RUN_SECONDS.
         #
         # The client's reason is checked first, so a client that fails for
         # another reason is reported with that reason. alive must then read
-        # end of file within check seconds after the client returns, which
-        # shows that no process of the group still holds it: the client
+        # end of file, seen by a clock reading no later than check seconds
+        # after the client returns, which shows that no process of the
+        # group still holds it: the client
         # killed the member too, not only the leader. That end of file must
         # also come less than own_end seconds after the client's start, so
         # however late the child gets ready, the group's own end is never
@@ -743,7 +753,7 @@ class BoundsTest(unittest.TestCase):
                 self.assertEqual(ready_seen, [True], "the child was not ready when the poll ended")
                 self.assertEqual(first_timeouts, [1], "the client's first wait was not its 1 second timeout")
                 self.assertGreaterEqual(first_waits[0], 1, "the client's first wait gave up before its 1 second timeout")
-                self.assertLess(time.monotonic() - started - (ready_at[0] - poll_began[0]), RUN_SECONDS)
+                self.assertLess(returned - started - (ready_at[0] - poll_began[0]), RUN_SECONDS)
                 ended = end_of_file(alive, returned + check)
                 if ended is None:
                     self.fail(f"a process of the child's group outlived the client's kill: alive did not reach "
@@ -774,9 +784,10 @@ class BoundsTest(unittest.TestCase):
         # Derived: only a stub process past its first read of lifeline opens
         # alive, and such a process exits as soon as the release comes, so
         # the 5 seconds is a margin for that exit. A stub not past that read
-        # at the release exits there without opening alive, and a FIFO
-        # reader that no writer has opened since it was opened sees no end
-        # of file on Linux, so this assertion then fails rather than pass.
+        # at the release exits there without opening alive, and on Linux
+        # select reports nothing for a FIFO reader that no writer has opened
+        # since it was opened, so end_of_file sees no end of file and this
+        # assertion then fails rather than pass.
         real_killpg = os.killpg
         for label, kill, message in (
             ("a kill of the leader only", lambda group, sig: os.kill(group, sig),
@@ -848,9 +859,10 @@ class BoundsTest(unittest.TestCase):
 
     def test_a_stub_started_after_the_release_ends_at_once(self):
         # A stub that opens lifeline only after the test has closed it, as
-        # when an interrupt ends the check before the stub starts, would see
-        # no end of file there and live until its own end. It must find no
-        # writer and exit at once. A reader of alive is held, so that the
+        # when an interrupt ends the check before the stub starts, would get
+        # no report from select at its wait and live until its own end. Its
+        # first read sees end of file there, so it must find no writer and
+        # exit at once. A reader of alive is held, so that the
         # stub does not fail at that open instead. The own end is 10
         # seconds, so a stub that waits for it fails this test without
         # being signalled. The 5 second bound is a margin for start-up,
@@ -876,6 +888,38 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         self.assertLess(elapsed, 5)
 
+    def test_an_end_of_file_seen_after_its_deadline_is_not_taken(self):
+        # end_of_file reads the clock after the read that returns end of
+        # file, and must return None when that reading is past the deadline,
+        # since a time after the deadline would let a late end of file pass
+        # the check. A select that returns 0.2 seconds late stands in for
+        # the scheduling delay of a busy host. End of file is there from the
+        # start, so with a 0.05 second deadline the reading is past it. The
+        # control, the same delay with a 5 second deadline, must give a time
+        # no later than that deadline.
+        real_select = select.select
+
+        def late_select(*args):
+            result = real_select(*args)
+            time.sleep(0.2)
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fifo"
+            os.mkfifo(path)
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+                with mock.patch.object(select, "select", late_select):
+                    self.assertIsNone(end_of_file(fd, time.monotonic() + 0.05),
+                                      "an end of file seen after the deadline was taken")
+                    deadline = time.monotonic() + 5
+                    ended = end_of_file(fd, deadline)
+                self.assertIsNotNone(ended, "an end of file seen before the deadline was not taken")
+                self.assertLessEqual(ended, deadline)
+            finally:
+                os.close(fd)
+
     def test_the_check_names_no_signal_function(self):
         # A tripwire, not a proof. The check's design needs no signal: it
         # sees the group only through alive and ends it by closing lifeline.
@@ -886,9 +930,15 @@ class BoundsTest(unittest.TestCase):
         # import in any of them is in SIGNAL_NAMES. It fails an edit that
         # uses a signal function by one of those names there, such as
         # os.kill(os.getpid(), 0) added to the check.
-        # Residual, the open class of every other route, which passes it.
-        # Examples, not a complete list: 2 known passes, os.__dict__["kill"]
-        # and getattr with a computed name, such as getattr(os, "ki" + "ll");
+        # Residual: the name scan misses every route to a signal other than
+        # a name in SIGNAL_NAMES in the functions it reads. Such an edit
+        # passes this test unless it also changes the stub's calls, which
+        # the STUB_CALLS pin rejects, as it rejects
+        # os.__dict__["kill"](os.getppid(), 0) added to the stub. Passes of
+        # the name scan, examples, not a complete list: in the check,
+        # getattr(os, "kill") with a literal name, getattr with a computed
+        # name, such as getattr(os, "ki" + "ll"), os.__dict__["kill"],
+        # vars(os)["kill"] and a shell kill through os.system;
         # a value a caller passes, such as the witness, which the check calls
         # and which can run any code; a method of self that a subclass
         # overrides; a module global or builtin that a caller rebinds, such
