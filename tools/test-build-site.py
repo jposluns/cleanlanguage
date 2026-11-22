@@ -3041,12 +3041,13 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
-# A comment that opens as <!--> or <!--->, as plain text, as tools/check-inline-code.py's check 9 reads it. The
-# generator refuses both. Python 3.14.4's HTMLParser reads either one as a comment up to the next --> or --!>, when one
-# follows. The earlier <!--> case of check_disclosure_states(), which expected no failure, passes on Python 3.14.4 and
-# failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the 2 releases read <!--> differently;
-# TODO 255 does not record how 3.14.7 reads <!--->. disclosure_d4_section() raises ShortCommentRefused on both rather
-# than read them as the running interpreter does.
+# The text <!--> or <!--->, found as plain text wherever it stands, such as inside an attribute value, as
+# tools/check-inline-code.py's check 9 finds it. The generator refuses both, wherever they stand. In text, Python
+# 3.14.4's HTMLParser reads either one as the start of a comment up to the next --> or --!>, when one follows; inside
+# an attribute value, it reads either one as part of the value. The earlier <!--> case of check_disclosure_states(),
+# which expected no failure, passes on Python 3.14.4 and failed on Python 3.14.7 in the side-by-side run that TODO 255
+# records, so the 2 releases read <!--> differently; TODO 255 does not record how 3.14.7 reads <!--->.
+# disclosure_d4_section() raises ShortCommentRefused on both rather than read them as the running interpreter does.
 SHORT_COMMENT = re.compile(r"<!---?>")
 
 
@@ -3071,11 +3072,11 @@ def disclosure_d4_section(text: str) -> str | None:
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
     the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
     source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the 2 can differ further.
-    The generator refuses a comment that opens as <!--> or <!--->, and HTMLParser's reading of <!--> differs between
-    Python releases (SHORT_COMMENT). This reading raises ShortCommentRefused, before it parses, on any text that
-    SHORT_COMMENT matches, wherever it stands, so its result on such text does not come from HTMLParser. It reads all
-    other markup with the running interpreter's HTMLParser, whose reading of some other markup also changes between
-    releases (tools/check-inline-code.py, "Python versions")."""
+    The generator refuses the text <!--> or <!---> wherever it stands, and HTMLParser's reading of <!--> differs
+    between Python releases (SHORT_COMMENT). This reading raises ShortCommentRefused, before it parses, on any text
+    that SHORT_COMMENT matches, wherever it stands, so its result on such text does not come from HTMLParser. It reads
+    all other markup with the running interpreter's HTMLParser, whose reading of some other markup also changes
+    between releases (tools/check-inline-code.py, "Python versions")."""
     short = SHORT_COMMENT.search(text)
     if short is not None:
         raise ShortCommentRefused(f"the text {short.group(0)}, which the generator refuses")

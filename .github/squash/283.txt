@@ -29,6 +29,17 @@ the same result. The '<!-->' case is a fixture brought up to date with
 a deliberate contract change: the test's reader now refuses the
 openers that the generator's grammar and check 9 already refuse.
 
+The comment on SHORT_COMMENT and the docstring of
+disclosure_d4_section() also name the text '<!-->' or '<!--->'
+wherever it stands. Check 9 of tools/check-inline-code.py searches a
+page's whole text with the same pattern, so its message now names the
+text found, as "the text '<!-->' in an HTML page", in place of "a
+comment that opens as '<!-->'". Its docstring entry says that it
+refuses that text wherever it stands, such as inside an attribute
+value; what check 9 refuses is unchanged. A new case in
+tools/test-inline-code.py puts '<!-->' in an attribute value and
+requires that message, so it fails with the earlier one.
+
 TODO 255 asks to make the case independent of the interpreter's
 comment parsing, or to state the version the reading needs, with a
 case that fails without the change. This change takes the first route.

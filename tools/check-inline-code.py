@@ -83,7 +83,8 @@ every HTML page it refuses:
    the switch its child; a self-closing tag in ``<math>``, which a browser
    would close, also stays open here, so such a page fails.
 8. Any ``<![CDATA[`` in the text, ignoring case.
-9. Any comment that opens as ``<!-->`` or ``<!--->``.
+9. The text ``<!-->`` or ``<!--->``, wherever it stands, such as inside an
+   attribute value, and not only where it opens a comment.
 10. On every page, a ``<script>`` element whose first ``src`` is not a
     same-origin path: after the URL clean-up of check 3, it must start with
     ``/`` and not with ``//`` or ``/\\``. This check reads the committed source
@@ -504,7 +505,7 @@ def markup_problems(text: str) -> list[str]:
     for match in RAW_CDATA.finditer(text):
         problems.append(f"line {line_of(text, match.start())}: a <![CDATA[ section in an HTML page")
     for match in RAW_SHORT_COMMENT.finditer(text):
-        problems.append(f"line {line_of(text, match.start())}: a comment that opens as {match.group(0)!r}")
+        problems.append(f"line {line_of(text, match.start())}: the text {match.group(0)!r} in an HTML page")
     return problems
 
 
