@@ -10,9 +10,11 @@
   if (!rail || !window.requestAnimationFrame) { return; }
   var items = [];
   Array.prototype.forEach.call(rail.querySelectorAll('a[href^="#"]'), function (link) {
-    var id = decodeURIComponent(link.getAttribute("href").slice(1));
-    var target = id ? document.getElementById(id) : null;
     link.removeAttribute("aria-current");
+    // From 1.13.0: a link whose fragment is not valid percent-encoding (href="#%E0") is skipped; the rest still work.
+    var id;
+    try { id = decodeURIComponent(link.getAttribute("href").slice(1)); } catch (e) { return; }
+    var target = id ? document.getElementById(id) : null;
     if (target) { items.push({ link: link, target: target }); }
   });
   if (!items.length) { return; }
@@ -55,8 +57,11 @@
     if (!queued) { queued = true; window.requestAnimationFrame(update); }
   }
 
+  // From 1.13.0: an address fragment that is not valid percent-encoding (#%E0) makes decodeURIComponent throw; it
+  // matches no section, so the reading line decides, as for any other unknown fragment.
   function fromHash() {
-    var id = decodeURIComponent(window.location.hash.slice(1));
+    var id;
+    try { id = decodeURIComponent(window.location.hash.slice(1)); } catch (e) { return false; }
     for (var i = 0; i < items.length; i += 1) {
       if (items[i].target.id === id) { mark(items[i]); pinnedUntil = Date.now() + 400; return true; }
     }
