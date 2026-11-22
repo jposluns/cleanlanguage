@@ -932,7 +932,7 @@ class InputFileType(EnumeratorHarness):
     type, in both modes; a regular file and a symlink to one still enumerate."""
 
     # The bound covers the whole enumerator run, interpreter start-up included, also where it must
-    # enumerate a file larger than one read chunk, so it is the 60 seconds that ENUMERATE_PROG gives the
+    # enumerate a file larger than 1 read chunk, so it is the 60 seconds that ENUMERATE_PROG gives the
     # enumerator, not 20. A run that ends at this bound shows only that the enumerator did not exit in
     # time, not why.
     TIMEOUT = 60
@@ -1207,7 +1207,9 @@ class ErrorPosition(EnumeratorHarness):
     """Every failure the enumerator can produce names its position. In the table()
     fixture the header is line 5 and the first row line 7."""
 
-    TIMEOUT = 20
+    # The bound covers the whole enumerator run, interpreter start-up included, as in InputFileType, so
+    # it is the 60 seconds that ENUMERATE_PROG gives the enumerator, not 20.
+    TIMEOUT = 60
 
     def run_bounded(self, *args):
         try:
@@ -1828,7 +1830,10 @@ class RuntimeGuard(EnumeratorHarness):
     until the whole input is read, then the end of input. A KeyboardInterrupt gets the same
     positioned line with exit 130."""
 
-    TIMEOUT = 20
+    # The bound covers the whole run of the enumerator or of the harness that loads it, interpreter
+    # start-up included, as in InputFileType, so it is the 60 seconds that ENUMERATE_PROG gives the
+    # enumerator, not 20.
+    TIMEOUT = 60
 
     def assert_guarded(self, code, stderr, position, needle):
         self.assertEqual(code, 1, "expected exit 1: {!r}".format(stderr))

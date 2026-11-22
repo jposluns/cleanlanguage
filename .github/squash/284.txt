@@ -29,24 +29,29 @@ tools/test-orch-stage2-hooks.py:
   that each launch was given, however the case bound it, to the
   enumerator starts that the launch made. It names a new file of the
   launch's own in ORCH_STAGE2_ENUMERATOR_RUNS in the launch's
-  environment, and every enumerator that a case declares first runs
-  ENUM_RUN_MARK, which adds 1 line to that file. However the launch
-  ends, the recorder counts the lines, and a launch whose timeout is
-  under ENUM_TIMEOUT for each start plus ENUM_MARGIN fails its case in
-  its cleanup, or at once when no case is running. A launch with no
-  start, or with no timeout, is not held.
+  environment, and every enumerator that a case declares through
+  write_registry first runs ENUM_RUN_MARK, which adds 1 line to that
+  file. However the launch ends, the recorder counts the lines, and a
+  launch whose timeout is under ENUM_TIMEOUT for each start plus
+  ENUM_MARGIN fails its case in its cleanup, or at once when no case is
+  running, with any exception that the launch raised as the cause. A
+  launch with no start, or with no timeout, is not held.
 - Stage2Harness.write_registry refuses an enumerator that the hook
-  would start unless it runs python3 -I on a program file or a -c
-  program that holds ENUM_RUN_MARK, and unless its timeout, as the
-  hook reads it, is at most ENUM_TIMEOUT.
+  would start unless this interpreter runs it with -I on a program file
+  or a -c program whose first statements, read from its syntax tree,
+  are those of ENUM_RUN_MARK, and unless its timeout, as the hook reads
+  it, is at most ENUM_TIMEOUT. A program that holds ENUM_RUN_MARK only
+  as text, or after other statements, is refused.
 - The reading of launch bounds from the syntax tree is removed, with
   UNENUMERATED_RUNS and REPEATED_ENUMERATOR_RUNS. EnumeratorBounds
   requires that a stage-2 Stop and preflight each record 1 start and a
   stage-1 Stop none; that a launch 1 second under its bound fails its
   case and a launch at its bound passes, for 1 start and for 2, also
   when check=True fails, and that one with no running case fails at
-  once; and that write_registry refuses an enumerator without the
-  record, one run without -I, and a timeout over ENUM_TIMEOUT.
+  once, with the launch's exception as the cause; and that
+  write_registry refuses an enumerator without the record, one that
+  holds it only as text or after an exit, one run without -I or by
+  another interpreter, and a timeout over ENUM_TIMEOUT.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -66,10 +71,11 @@ tools/test-orch-enumerate-backlog.py:
   the second, and the clock after it. The enumerator truncates its
   stamp to whole seconds, so the lower bound is exact, and the test
   refuses a stale stamp that the old window accepted.
-- InputFileType.TIMEOUT, the bound on each direct enumerator run of
-  that class, goes from 20 to 60 seconds, the timeout ENUMERATE_PROG
-  gives the enumerator, and its failure message says only that the
-  enumerator did not exit within that bound.
+- InputFileType.TIMEOUT, ErrorPosition.TIMEOUT and
+  RuntimeGuard.TIMEOUT, the bounds on each enumerator run of those
+  classes, go from 20 to 60 seconds, the timeout ENUMERATE_PROG gives
+  the enumerator, and the failure message of InputFileType says only
+  that the enumerator did not exit within that bound.
 
 tools/test-orchestration-registry.py is unchanged: its timeouts of 5
 are data that the registry gate checks, no child runs under them, and
@@ -84,36 +90,44 @@ main's test files and none with this change; a 6 s delay of the real
 enumerator fails the hook case and the stamp test on main's files and
 neither with this change; a 21 s delay of the real enumerator fails
 the large-input InputFileType case on main's files and not with this
-change, and a 61 s delay fails it with this change; a 50 s delay of
-the hook fails the enumerator timeout case's old 15 s bound and passes
-its 90 s bound. Controls: a 91 s hook delay fails the 90 s bound, an
-enumerator stamp 3 s stale fails the new stamp test, and a 100 s
-timeout in ENUMERATE_PROG fails the new hang case. With this change, a
-new Doctor case whose preflight launch has a timeout of 30, through a
-local RUN_TIMEOUT, through an alias of run_doctor_recorded with a
-mapping, or in a class outside the harness, fails, and passes with
-RUN_TIMEOUT; DoctorStandInRestore fails with self.TIMEOUT set to 30
-before its launch, and the planted-module case fails with the bounds
-of its 2 launches swapped. EnumeratorBounds fails when the check never
-reports, drops ENUM_MARGIN or ignores the number of starts, when the
-recorder names the file in another variable, and when write_registry
-skips its check. With a fixture enumerator that sleeps 70 s, no case
-of the stage-2 harness ends through a test bound; with the earlier
-bounds, 4 doctor cases do. With 64 busy processes and the enumerator
-timeout case pinned to 1 CPU, the case is expected to end OK in each
-of 3 runs.
+change, and a 61 s delay fails it with this change; the same 21 s
+delay fails 2 ErrorPosition and 2 RuntimeGuard cases at their 20 s
+bounds on main's files and none with this change, and a 61 s delay
+fails ErrorPosition.test_missing_input with this change; a 50 s delay
+of the hook fails the enumerator timeout case's old 15 s bound and
+passes its 90 s bound. Controls: a 91 s hook delay fails the 90 s
+bound, an enumerator stamp 3 s stale fails the new stamp test, and a
+100 s timeout in ENUMERATE_PROG fails the new hang case. With this
+change, a new Doctor case whose preflight launch has a timeout of 30,
+through a local RUN_TIMEOUT, through an alias of run_doctor_recorded
+with a mapping, or in a class outside the harness, fails, and passes
+with RUN_TIMEOUT; DoctorStandInRestore fails with self.TIMEOUT set to
+30 before its launch, and the planted-module case fails with the
+bounds of its 2 launches swapped. A new Doctor case that declares an
+enumerator holding ENUM_RUN_MARK only as text fails at write_registry,
+and with the fixture enumerator fails its timeout of 30.
+EnumeratorBounds fails when the check never reports, drops ENUM_MARGIN
+or ignores the number of starts, when the recorder names the file in
+another variable, when write_registry skips its check, tests the mark
+as text or takes any interpreter, and when the failure with no running
+case drops its cause. With a fixture enumerator that sleeps 70 s, no
+case of the stage-2 harness ends through a test bound; with the
+earlier bounds, 4 doctor cases do. With 64 busy processes and the
+enumerator timeout case pinned to 1 CPU, the case is expected to end
+OK in each of 3 runs.
 
 Residuals: a wider bound makes a load failure rarer, not impossible.
 An enumerator that hangs holds a test run for up to 60 s, a doctor or
-hook run that blocks fails after 120 s instead of 30, and a direct
-enumerator run of InputFileType that blocks fails after 60 s instead
-of 20. The new hang case adds 60 s to the enumerate-backlog suite.
-The bound check counts only starts that an enumerator records: a
-registry written other than through write_registry, a program changed
-after it, and a child that drops ORCH_STAGE2_ENUMERATOR_RUNS from its
-environment are not seen. It holds only the starts a launch made when
-a case ran it, not a start recorded after the launch returned, and not
-a launch with no timeout. The fixture value 60 is safe only while the
-test registries are never gated. The new stamp test fails on a
-backward clock step during the run. The load check covers only the
-enumerator timeout case and CPU contention.
+hook run that blocks fails after 120 s instead of 30, and an
+enumerator run of InputFileType, ErrorPosition or RuntimeGuard that
+blocks fails after 60 s instead of 20. The new hang case adds 60 s to
+the enumerate-backlog suite. The bound check counts only starts that
+an enumerator records: a registry written other than through
+write_registry, a program changed after it, and a child that drops
+ORCH_STAGE2_ENUMERATOR_RUNS from its environment are not seen. It
+holds only the starts a launch made when a case ran it, not a start
+recorded after the launch returned, and not a launch with no timeout.
+The fixture value 60 is safe only while the test registries are never
+gated. The new stamp test fails on a backward clock step during the
+run. The load check covers only the enumerator timeout case and CPU
+contention.
