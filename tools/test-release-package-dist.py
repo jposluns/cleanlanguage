@@ -340,24 +340,18 @@ reference digest. The cases, all in that clone:
     of its paths. A relative path is read against the folder of its
     process, which a child made without CLONE_FS takes from its maker
     when it is made and 1 made with CLONE_FS shares, or against the
-    folder that its descriptor names. The reader ends the case when the
-    trace holds no call; when a record differs from those forms in any
-    character; when the process of a call that strace detached during or
-    of an unread call shows any later line but its end and, for an unread
-    call that <unfinished ...> left open, its resumption; when an unread
-    call has a result other than ? alone, in its line or in its
-    resumption; when <unfinished ...> comes just before the ) of a result
-    other than ? alone, in the line of a call or in its resumption; when
-    a process resumes a call while it has none open, or under another
-    name; when a call whose line ends in <unfinished ...> or
-    <detached ...> starts while another call of its process is open;
-    when a descriptor has no path, a relative path or that of a removed
-    folder; when a process that no call made shows a line, beyond 1 for
-    each call that makes a process and that strace cut short; when a
-    relative path follows a chdir or fchdir that strace cut short in the
-    folder that the path is read against, or comes from a process that
-    the trace shows with no maker; and when the trace holds a call that
-    the test did not ask strace for.
+    folder that its descriptor names. The reader is written to end the
+    case rather than guess. Its refusals are the raise statements of
+    trace_string, trace_folder, trace_call, trace_records, traced_path
+    and traced_removals; that code, not this docstring, is the full
+    list, and a trace that fits none of the forms these functions take
+    can also end the case with another error, such as an IndexError.
+    For example, it ends the case when the trace holds no call, when a
+    process shows a call after the call at which strace detached from
+    it, when a process resumes a call that it did not start, and when a
+    relative path comes from a process that the trace shows with no
+    maker. The subtests of test_trace_refuses_what_it_cannot_read name
+    further examples in their labels.
 
 Each case starts with no dist/ in the clone.
 
@@ -2316,10 +2310,12 @@ class TraceReaderTests(unittest.TestCase):
         log.write_bytes("".join(line + "\n" for line in lines).encode("latin-1"))
         return traced_removals(log, "/clone")
 
-    # The forms in which strace cuts a call short, as the lines of process
-    # 101 after the start of the call, given as {call}, which the test puts
-    # in place of the call's name and arguments: OTHER stands for a line of
-    # another process, which comes last where a form does not place it.
+    # The forms in which strace cuts a call short, as the lines of the
+    # process of the call after the start of the call, given as {call},
+    # which the test puts in place of the call's name and arguments;
+    # cut_short writes them as lines of process 101, and made as lines of
+    # process pid. OTHER stands for a line of another process, which comes
+    # last where a form does not place it.
     OTHER = None
     CUT_SHORT = {
         "detached": ("{call} <detached ...>",),
@@ -2452,32 +2448,16 @@ class TraceReaderTests(unittest.TestCase):
             self.assertEqual([removal[2] for removal in removed], ["/clone/y", "/clone/z"])
 
     def test_trace_refuses_what_it_cannot_read(self):
-        """The reader ends the case, rather than let a removal or a change of
-        folder pass unseen, when the trace holds no call; when a process
-        shows any line but the end of the process after a call that strace
-        detached during or could not read at entry, and any line but its
-        resumption with the result ? alone after such an unread call that
-        another line interrupted; when such an unread call has any other
-        result, in its line or in its resumption; when <unfinished ...>
-        comes just before the ) of a result other than ? alone, in the line
-        of a call or in its resumption; when a process resumes a call while
-        it has none open, or under another name; when a call whose line
-        ends in <unfinished ...> or <detached ...> starts while another call
-        of its process is open; when a record differs from TRACE_UNREAD and
-        its ending in any character; when a descriptor has no path, a
-        relative path or the path of a removed folder; when a process that
-        no call made shows a line, beyond 1 for each call that makes a
-        process and that strace cut short; when a relative path follows a
-        chdir or fchdir that strace cut short in the folder that the path
-        is read against, or comes from a process that the trace shows with
-        no maker; and when the trace holds a call that the test did not ask
-        strace for. After a chdir that ends with the result ? and the note
-        <unavailable> in a shared folder, the case ends at the relative path
-        that follows it, with the error that names that path. For a call of
-        each name of MAKERS in each form of MADE, the case ends at a
-        relative path of the process that the call made, and at a third
-        process after 2 such calls, each with the error that names that
-        path or process."""
+        """Each trace below ends the case. The labels name the condition of
+        each; the reader functions are the full list of refusals. Each
+        trace of pinned ends it with an error that starts with the text
+        that pinned gives for it. After a chdir that ends with the result ?
+        and the note <unavailable> in a shared folder, the case ends at the
+        relative path that follows it, with the error that names that path.
+        For a call of each name of MAKERS in each form of MADE, the case
+        ends at a relative path of the process that the call made, and at a
+        third process after 2 such calls, each with the error that names
+        that path or process."""
         unlink = "100   unlink(%s) = 0" % self.hexed("x")
         later = "101   rmdir(%s) = 0" % self.hexed("z")
         cut = "101   unlink(%s <unfinished ...>) = " % self.hexed("y")
@@ -2564,6 +2544,29 @@ class TraceReaderTests(unittest.TestCase):
         for label, lines in traces.items():
             with self.subTest(label):
                 with self.assertRaises(AssertionError):
+                    self.removals(*lines)
+        pinned = {
+            "a path not in hex escapes":
+                (('100   unlink("x") = 0',),
+                 "the trace gives the path '\"x\"', which is not 1 whole string in hex escapes"),
+            "a descriptor that the test cannot read":
+                (("100   unlinkat(foo, %s, 0) = 0" % self.hexed("x"),),
+                 "the trace gives the descriptor 'foo', which the test cannot read"),
+            "a line with no process id":
+                ((unlink, "unlink(%s) = 0" % self.hexed("y")), "the trace holds a line that the test cannot read"),
+            "a call resumed under a shorter name":
+                ((self.FORK, "101   unlinkat(AT_FDCWD</clone>, %s <unfinished ...>" % self.hexed("y"), unlink,
+                  "101   <... unlink resumed>, 0) = 0"), "the trace resumes a call that it did not start"),
+            "an unread call resumed with ? under a name":
+                ((self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... unlink resumed>) = ?"),
+                 "the trace resumes a call that it did not start"),
+            "an unread call cut short while a call is open":
+                ((self.FORK, opened, "101   ???( <unfinished ...>"),
+                 "the trace starts a call of process 101 before it resumes the last"),
+        }
+        for label, (lines, start) in pinned.items():
+            with self.subTest(label):
+                with self.assertRaisesRegex(AssertionError, "^" + re.escape(start)):
                     self.removals(*lines)
         with self.subTest("a chdir ended as unavailable in a shared folder"):
             with self.assertRaisesRegex(AssertionError, "the relative path 'x' in a current folder that it does not "
