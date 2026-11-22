@@ -38,13 +38,14 @@ temporary tree the copy written there, the hashed bytes or a change a case
 writes into them; on the repository, in RepositoryTreeTest, the gate's read
 of the extractor must give the hashed bytes, else the case fails, and the
 gate is given those bytes to run.
-test_an_extractor_changed_after_the_digest_check_is_not_run holds this for
-an extractor changed after the comparison at 2 places: the tree setUp
-writes and the repository. No case holds that the other copies come from
-the hashed bytes, or that no line of this test reads either file from the
-repository again: that rests on review of this test, as item 4 of the
-residual says, and a read of either file from the repository put back at
-such a site passes every case. The comparison must stay before the load.
+test_an_extractor_changed_after_the_digest_check_is_not_run holds this only
+for an extractor changed after the test has loaded the gate, at 2 places:
+the tree setUp writes and the repository. No case holds that the other
+copies come from the hashed bytes, or that no line of this test reads
+either file from the repository again: that rests on review of this test,
+as item 4 of the residual says, and a read of either file from the
+repository put back at such a site passes every case. The comparison must
+stay before the load.
 Renew a digest only after reading the diff of its file since its last
 reviewed revision. What the digest shows, and no more, is item 1 of the
 residual below.
@@ -108,6 +109,10 @@ Residual:
 5. Cost: every edit of either file, a comment included, stops the test
    before any case runs until the digest is renewed, and the extractor is
    shared with other tools, so its edits need this renewal too.
+6. test_repository_is_consistent compares the last line of the gate's
+   output as str.splitlines gives it, which drops a carriage return at the
+   end of the line, so one written there is not caught (RUN: a gate that
+   writes one only when its tree holds .github passed every case).
 
 Loading the gate must write nothing to sys.stdout or sys.stderr and raise
 nothing; a gate that does either while this test loads it stops the test with
@@ -2222,12 +2227,12 @@ class PluginDistributionTest(unittest.TestCase):
     def test_an_extractor_changed_after_the_digest_check_is_not_run(self):
         # A copy of this test beside a copy of the gate in this tree, which the copy of the test reads as the
         # repository, with a statement after its digest check and its load of the gate that adds to the
-        # tree's extractor a statement that writes a marker file: a change made once the check has passed.
-        # No byte of the changed extractor may run in the copy's process. In PluginDistributionTest, whose
-        # trees take the extractor from the hashed bytes, its 1 case passes; in RepositoryTreeTest, whose
-        # gate reads the changed extractor in the tree, the case fails, naming the change. Neither writes the
-        # marker. Control, after each: the copy of the gate, run as a command, runs the changed extractor and
-        # writes the marker.
+        # tree's extractor a statement that writes a marker file: a change made once the check has passed and
+        # the gate has loaded; the case plants no earlier change. No byte of the changed extractor may run in
+        # the copy's process. In PluginDistributionTest, whose trees take the extractor from the hashed bytes,
+        # its 1 case passes; in RepositoryTreeTest, whose gate reads the changed extractor in the tree, the case
+        # fails, naming the change. Neither writes the marker. Control, after each: the copy of the gate, run as
+        # a command, runs the changed extractor and writes the marker.
         tools = self.root / "tools"
         test = tools / Path(__file__).name
         copy = tools / MODULE_PATH.name
@@ -2573,9 +2578,10 @@ class RepositoryTreeTest(unittest.TestCase):
         self.addCleanup(patch.stop)
 
     def test_repository_is_consistent(self):
-        # The gate's main on the repository must exit 0 with the last line OK_LINE followed by the version of
-        # the repository's Claude plugin manifest, as this case decodes it, the whole line, as the repository's
-        # E requires of its copy.
+        # The gate's main on the repository must exit 0 with the last line, as str.splitlines gives it, equal
+        # to OK_LINE followed by the version of the repository's Claude plugin manifest, as this case decodes
+        # it, as the repository's E compares the last line of its copy. str.splitlines drops a carriage return
+        # at the end of the line, so one written there is not caught (residual item 6).
         out, err = io.StringIO(), io.StringIO()
         code, problems = checked_main(out, err)
         output = out.getvalue() + err.getvalue()

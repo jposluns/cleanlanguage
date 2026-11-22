@@ -41,17 +41,19 @@ pointer in unit 3 no longer apply.
   After the comparison it takes its copies of either file from the
   hashed bytes, and in its 2 cases on the repository the gate's own
   read of the extractor must give those bytes, which the gate is then
-  given to run. A case shows that an extractor changed after the
-  comparison does not run in the test's process, in the tree setUp
-  writes or on the repository. That the other copies come from the
-  hashed bytes, and that the test reads neither file from the
-  repository again, rests on review of the test, as item 4 below
-  says: a read of either file from the repository written at such a
-  site passes every case. Reduced coverage: an audit hook that failed
-  such a read, tried on this branch, is retired. The case that runs
-  the gate's main on the repository requires the whole last line,
-  the OK line with the version of the repository's Claude plugin
-  manifest.
+  given to run. A case shows that an extractor changed after the test
+  has loaded the gate does not run in the test's process, in the tree
+  setUp writes or on the repository; it plants no earlier change.
+  That the other copies come from the hashed bytes, and that the test
+  reads neither file from the repository again, rests on review of
+  the test, as item 4 below says: a read of either file from the
+  repository written at such a site passes every case. Reduced
+  coverage: an audit hook that failed such a read, tried on this
+  branch, is retired. The case that runs the gate's main on the
+  repository compares the last line, as str.splitlines gives it, with
+  the OK line and the version of the repository's Claude plugin
+  manifest, so a carriage return at the end of that line is not
+  caught, as item 6 below says.
   Residual:
   1. The digest shows that the gate and the extractor are, byte for
      byte, the files a reviewer accepted, not that they are right.
@@ -73,6 +75,11 @@ pointer in unit 3 no longer apply.
      test before any case runs until the digest is renewed, and the
      extractor is shared with other tools, so its edits need this
      renewal too.
+  6. test_repository_is_consistent compares the last line of the
+     gate's output as str.splitlines gives it, which drops a carriage
+     return at the end of the line, so one written there is not caught
+     (RUN: a gate that writes one only when its tree holds .github
+     passed every case).
 - .github/workflows/plugin-distribution.yml runs both on every pull
   request and push to main. It is not a required check.
 - tools/run_all_checks.sh mirrors the new workflow; the digest in
