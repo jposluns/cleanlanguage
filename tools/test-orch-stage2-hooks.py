@@ -185,9 +185,9 @@ NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator wa
 # begins, so that it records each of its starts in that file before anything else runs. The hook
 # starts the enumerator with the hook's own environment (`subprocess.run` at aiqt_hooks.py:22833 passes
 # no env), and the doctor runs the hook in its own process, so a launch of either passes the file on to
-# the enumerator. write_registry refuses an enumerator whose program, read from its syntax tree, does
-# not begin with these statements, or that does not compile (runs_enum_run_mark_first); the residuals
-# are stated above enumerator_bound_defect.
+# the enumerator. write_registry accepts only an enumerator that is this interpreter, -I, -c and a
+# program that, read from its syntax tree, begins with these statements and that compiles
+# (runs_enum_run_mark_first); the residuals are stated above enumerator_bound_defect.
 ENUM_RUNS_VAR = "ORCH_STAGE2_ENUMERATOR_RUNS"
 ENUM_RUN_MARK = """import os
 _runs = os.environ.get("ORCH_STAGE2_ENUMERATOR_RUNS")
@@ -203,8 +203,8 @@ def runs_enum_run_mark_first(program):
     A program that holds the mark only as text, or that runs other statements before it, does not;
     neither does one that does not parse, or one that parses but does not compile, such as the mark
     followed by a top-level return, a top-level break or a misplaced future import, since the
-    interpreter refuses it before any of its statements runs. program is source text (str) or the
-    bytes of a program file, which the interpreter decodes as it would."""
+    interpreter refuses it before any of its statements runs. program is the source text (str) of a
+    -c program, the argv element that the interpreter compiles."""
     try:
         body = ast.parse(program).body
         compile(program, "<enumerator>", "exec", dont_inherit=True)
@@ -214,9 +214,9 @@ def runs_enum_run_mark_first(program):
     return [ast.dump(node) for node in body[:len(mark)]] == [ast.dump(node) for node in mark]
 
 
-# The fixture enumerator: argv[1] is a JSON file holding the items list. It records its start
-# (ENUM_RUN_MARK), prints 1 AEI v1 envelope that validate_enumeration accepts
-# (aiqt_hooks.py:22754-22812) and exits 0.
+# The fixture enumerator, a -c program (so sys.argv[0] is "-c"): sys.argv[1] is a JSON file holding the
+# items list. It records its start (ENUM_RUN_MARK), prints 1 AEI v1 envelope that validate_enumeration
+# accepts (aiqt_hooks.py:22754-22812) and exits 0.
 ENUM_FIXTURE = ENUM_RUN_MARK + """import json
 import sys
 from datetime import datetime, timezone
@@ -229,7 +229,7 @@ print(json.dumps({"version": 1, "generated_at_utc": datetime.now(timezone.utc).i
 """
 
 
-# The fixture enumerator, also appending one line to the file named by argv[2] each time it runs, so
+# The fixture enumerator, also appending one line to the file named by sys.argv[2] each time it runs, so
 # a test can observe that the declared enumerator ran and that its write is its own.
 WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
     "path = sys.argv[1]\n",
@@ -249,7 +249,7 @@ ENUM_TIMEOUT = 60
 # DoctorStandInRestore.TIMEOUT). It exceeds ENUM_TIMEOUT by ENUM_MARGIN, so the hook's own timeout ends
 # an enumerator that hangs, and the case reads what the hook reports, before this bound ends the run.
 # A run that can start it twice has twice this bound. run_doctor_recorded holds the timeout of every
-# launch to that margin for each enumerator run that the launch started (enumerator_bound_defect).
+# launch to that margin for each enumerator run that the launch recorded (enumerator_bound_defect).
 RUN_TIMEOUT = 120
 ENUM_MARGIN = 60
 
@@ -389,8 +389,6 @@ class Stage2Harness(unittest.TestCase):
         # (`_orch_pointer_resolves` at aiqt_hooks.py:33009-33032).
         (self.repo / "docs").mkdir()
         (self.repo / "docs" / "evidence.md").write_text("evidence\n", encoding="utf-8")
-        self.enum_script = self._tmp / "enum_fixture.py"
-        self.enum_script.write_text(ENUM_FIXTURE, encoding="utf-8")
         self.backlog = self._tmp / "backlog.json"
         self.set_items([])
         self.write_mode("attended")
@@ -431,7 +429,7 @@ class Stage2Harness(unittest.TestCase):
         which T6 and T12 add). drop removes keys; overrides replace or add them."""
         reg = self.stage1()
         reg.update({
-            "enumerator": {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)],
+            "enumerator": {"argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)],
                            "timeout": ENUM_TIMEOUT},
             "yield_tools": ["ScheduleWakeup", "CronCreate"],
             "mode": {"path": self._p("operating-mode.md")},
@@ -454,25 +452,23 @@ class Stage2Harness(unittest.TestCase):
 
     def assert_enumerator_records_its_runs(self, enumerator):
         """Fail unless an enumerator that the hook would start (an argv list of non-empty strings,
-        aiqt_hooks.py:22826-22829) runs this interpreter (sys.executable) with -I on a program file, or
-        on a -c program, whose first statements, read from its syntax tree, are those of ENUM_RUN_MARK
-        and which compiles (runs_enum_run_mark_first), so it records each of its starts before any
-        other statement runs and run_doctor_recorded counts them, and has a timeout, as the hook reads
-        it (aiqt_hooks.py:22830-22831), of at most ENUM_TIMEOUT, so enumerator_bound_defect holds a
-        launch to enough. The hook runs argv from the repository root (cwd=root at
-        aiqt_hooks.py:22833), the directory that holds the .aiqt/ written here, so a relative program
-        file is read from self.repo, not from the working directory of this test. An argv that the
-        hook refuses starts no enumerator and is not held."""
+        aiqt_hooks.py:22826-22829) is this interpreter (sys.executable), -I, -c and a program whose
+        first statements, read from its syntax tree, are those of ENUM_RUN_MARK and which compiles
+        (runs_enum_run_mark_first), so it records each of its starts before any other statement runs
+        and run_doctor_recorded counts them, and has a timeout, as the hook reads it
+        (aiqt_hooks.py:22830-22831), of at most ENUM_TIMEOUT, so enumerator_bound_defect holds a
+        launch to enough. The program is the argv element itself, so the check reads the text that the
+        interpreter compiles; no file is read. Every other shape is refused, every program file
+        included, since what the interpreter runs for a file operand depends on the operand's name and
+        content, on how the path resolves, and on the file at each run, not only on the text that a
+        check reads. An argv that the hook refuses starts no enumerator and is not held."""
         argv = enumerator.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
             return
-        program, ours = None, argv[0] == sys.executable
-        if ours and argv[1:3] == ["-I", "-c"] and len(argv) > 3:
-            program = argv[3]
-        elif ours and argv[1:2] == ["-I"] and len(argv) > 2 and (self.repo / argv[2]).is_file():
-            program = (self.repo / argv[2]).read_bytes()
-        self.assertTrue(program is not None and runs_enum_run_mark_first(program),
-                        "the enumerator {!r} does not record its runs (ENUM_RUN_MARK)".format(argv))
+        self.assertTrue(argv[0] == sys.executable and argv[1:3] == ["-I", "-c"] and len(argv) > 3
+                        and runs_enum_run_mark_first(argv[3]),
+                        "the enumerator {!r} is not this interpreter, -I, -c and a program that records "
+                        "its runs first (ENUM_RUN_MARK)".format(argv))
         timeout = enumerator.get("timeout")
         timeout = timeout if isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60
         self.assertLessEqual(timeout, ENUM_TIMEOUT, "the enumerator timeout is over ENUM_TIMEOUT")
@@ -1230,7 +1226,7 @@ class T14PosturePins(Stage2Harness):
         # A malformed timeout silently becomes 60 (`timeout <= 600 else 60` at
         # aiqt_hooks.py:22831); the enumerator still runs.
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)], "timeout": "fast"}))
+            "argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)], "timeout": "fast"}))
         self.arm_lease()
         self.set_items([item("42")])
         r = self.stop()
@@ -1311,12 +1307,14 @@ class EnumeratorBounds(Stage2Harness):
     was given, however the case bound it. These cases prove that a start reaches the record through the
     hook and through the doctor, that a launch 1 second under its bound fails its case and a launch at
     its bound passes, for 1 start and for 2, also when check=True fails after the start, that a launch
-    with no running case fails at once, with the exception that the launch raised as the cause, and
-    that write_registry refuses an enumerator that this interpreter does not run with -I, whose program
+    with no running case fails at once, with the exception that the launch raised as the cause, that
+    write_registry refuses a -c enumerator that this interpreter does not run with -I, whose program
     does not begin with the statements of ENUM_RUN_MARK, also one that holds them only as text or after
     an exit, whose program begins with them but does not compile, or whose timeout is over
-    ENUM_TIMEOUT, and that it reads a relative program file from the root that the hook runs it from.
-    What the check does not see is stated above enumerator_bound_defect."""
+    ENUM_TIMEOUT, and that it refuses every program-file form found so far, each with a recording file
+    in place. This suite no longer drives a program-file enumerator through the hook: the hook passes
+    the argv to subprocess.run unchanged (aiqt_hooks.py:22833), so what the hook does with it does not
+    depend on its form. What the check does not see is stated above enumerator_bound_defect."""
 
     # A child that runs the program that its operands name twice, and one that runs it once and exits 1.
     TWICE = ("import subprocess, sys\n"
@@ -1340,7 +1338,7 @@ class EnumeratorBounds(Stage2Harness):
                          [(RUN_TIMEOUT, 1), (RUN_TIMEOUT, 1), (RUN_TIMEOUT, 0)])
 
     def test_a_launch_under_its_bound_fails_its_case(self):
-        once = [sys.executable, "-I", str(self.enum_script), str(self.backlog)]
+        once = [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)]
         twice = [sys.executable, "-I", "-c", self.TWICE] + once
         fails = [sys.executable, "-I", "-c", self.FAILS] + once
         need_once, need_twice = ENUM_TIMEOUT + ENUM_MARGIN, 2 * ENUM_TIMEOUT + ENUM_MARGIN
@@ -1382,10 +1380,11 @@ class EnumeratorBounds(Stage2Harness):
                                     check=True)
             self.assertIsInstance(caught.exception.__cause__, subprocess.CalledProcessError)
 
+    # The words of the refusal of a declared enumerator that is not this interpreter, -I, -c and a program
+    # that records its runs first (assert_enumerator_records_its_runs).
+    REFUSED = "is not this interpreter, -I, -c and a program that records its runs first"
+
     def test_write_registry_refuses_an_enumerator_that_would_not_be_held(self):
-        silent = self._tmp / "enum_silent.py"
-        silent.write_text(ENUM_FIXTURE.replace(ENUM_RUN_MARK, ""), encoding="utf-8")
-        self.assertNotIn(ENUM_RUN_MARK, silent.read_text(encoding="utf-8"), "precondition: no record")
         # 2 programs that hold ENUM_RUN_MARK as text but do not run it first: as a string constant, and
         # after an exit.
         as_text = "_text = '''" + ENUM_RUN_MARK + "'''\n"
@@ -1401,22 +1400,19 @@ class EnumeratorBounds(Stage2Harness):
         for program in uncompiled.values():
             self.assertEqual([ast.dump(node) for node in ast.parse(program).body][:len(mark)], mark,
                              "precondition: the syntax tree begins with the record")
-        fixture = [sys.executable, "-I", str(self.enum_script), str(self.backlog)]
-        rows = (("a program file without the record", [sys.executable, "-I", str(silent), str(self.backlog)],
-                 ENUM_TIMEOUT, "does not record its runs"),
-                ("a -c program without the record", [sys.executable, "-I", "-c", "pass"], ENUM_TIMEOUT,
-                 "does not record its runs"),
+        fixture = [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)]
+        rows = (("a -c program without the record", [sys.executable, "-I", "-c", "pass"], ENUM_TIMEOUT,
+                 self.REFUSED),
                 ("a -c program that holds the record only as text", [sys.executable, "-I", "-c", as_text],
-                 ENUM_TIMEOUT, "does not record its runs"),
+                 ENUM_TIMEOUT, self.REFUSED),
                 ("a -c program that holds the record after an exit",
-                 [sys.executable, "-I", "-c", after_exit], ENUM_TIMEOUT, "does not record its runs"),
-                ("a program run without -I", [sys.executable, str(self.enum_script), str(self.backlog)],
-                 ENUM_TIMEOUT, "does not record its runs"),
-                ("a program run by another interpreter", ["python3"] + fixture[1:], ENUM_TIMEOUT,
-                 "does not record its runs"),
+                 [sys.executable, "-I", "-c", after_exit], ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program run without -I", [sys.executable] + fixture[2:], ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program run by another interpreter", ["python3"] + fixture[1:], ENUM_TIMEOUT,
+                 self.REFUSED),
                 ("a timeout over ENUM_TIMEOUT", fixture, ENUM_TIMEOUT + 1, "over ENUM_TIMEOUT"))
         rows += tuple(("the record followed by " + name, [sys.executable, "-I", "-c", program], ENUM_TIMEOUT,
-                       "does not record its runs") for name, program in uncompiled.items())
+                       self.REFUSED) for name, program in uncompiled.items())
         for name, argv, timeout, wanted in rows:
             with self.subTest(enumerator=name):
                 with self.assertRaisesRegex(self.failureException, wanted):
@@ -1429,38 +1425,35 @@ class EnumeratorBounds(Stage2Harness):
             "timeout": 1}))
         self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 600}))
 
-    def test_write_registry_reads_a_relative_program_where_the_hook_runs_it(self):
-        # The hook runs the enumerator from the repository root (cwd=root at aiqt_hooks.py:22833), so a
-        # relative program file is the one under self.repo. This test runs from another directory that
-        # holds a file of the same name: write_registry must read the file under self.repo.
-        name = "enum_relative.py"
-        elsewhere = self._tmp / "elsewhere"
-        elsewhere.mkdir()
-        relative = {"argv": [sys.executable, "-I", name, str(self.backlog)], "timeout": ENUM_TIMEOUT}
-        cwd = os.getcwd()
-        os.chdir(elsewhere)
-        try:
-            with self.subTest(root="a recording program", here="an unrecording one"):
-                # Accepted, and the hook runs the program under the root, which records its start.
-                (self.repo / name).write_text(ENUM_FIXTURE, encoding="utf-8")
-                (elsewhere / name).write_text(ENUM_FIXTURE.replace(ENUM_RUN_MARK, ""), encoding="utf-8")
-                self.write_registry(self.stage2(enumerator=relative))
-                self.arm_lease()
-                take_enumerator_launches(self)
-                self.assertEqual(self.stop().returncode, 0)
-                self.assertEqual([runs for _argv, _timeout, runs in take_enumerator_launches(self)], [1])
-            with self.subTest(root="an unrecording program", here="a recording one"):
-                # Refused, since the hook would run the program that does not record its start.
-                (self.repo / name).write_text(ENUM_FIXTURE.replace(ENUM_RUN_MARK, ""), encoding="utf-8")
-                (elsewhere / name).write_text(ENUM_FIXTURE, encoding="utf-8")
-                with self.assertRaisesRegex(self.failureException, "does not record its runs"):
-                    self.write_registry(self.stage2(enumerator=relative))
-            with self.subTest(root="no program", here="a recording one"):
-                (self.repo / name).unlink()
-                with self.assertRaisesRegex(self.failureException, "does not record its runs"):
-                    self.write_registry(self.stage2(enumerator=relative))
-        finally:
-            os.chdir(cwd)
+    def test_write_registry_refuses_every_program_file(self):
+        # What the interpreter runs for a file operand depends on the operand's name and content, on how
+        # the path resolves, and on the file at each run, so write_registry refuses every program file.
+        # Each row has a recording program file in place, so a check that read that file would accept
+        # it, and the refusal is of the form, not of the file. The rows are the forms found so far: a
+        # plain file, a relative file under the root, an option word (-u, -- or -) in the operand
+        # position, a directory, a .pyc name and a trailing slash.
+        recording = self.repo / "enum_recording.py"
+        pyc = self.repo / "enum_recording.pyc"
+        package = self.repo / "enum_package"
+        package.mkdir()
+        for path in (recording, pyc, package / "__main__.py"):
+            path.write_text(ENUM_FIXTURE, encoding="utf-8")
+            self.assertTrue(runs_enum_run_mark_first(path.read_text(encoding="utf-8")),
+                            "precondition: {} records its runs".format(path.name))
+        rest = [str(self.backlog)]
+        rows = (("a plain recording program file", [str(recording)] + rest),
+                ("a relative recording program file under the root", [recording.name] + rest),
+                ("-u before a recording program file", ["-u", str(recording)] + rest),
+                ("-- before a recording program file", ["--", str(recording)] + rest),
+                ("- before a recording program file", ["-", str(recording)] + rest),
+                ("a directory that holds a recording __main__.py", [str(package)] + rest),
+                ("a recording source file with a .pyc name", [str(pyc)] + rest),
+                ("a recording program file with a trailing slash", [str(recording) + "/"] + rest))
+        for name, operands in rows:
+            with self.subTest(enumerator=name):
+                with self.assertRaisesRegex(self.failureException, self.REFUSED):
+                    self.write_registry(self.stage2(enumerator={
+                        "argv": [sys.executable, "-I"] + operands, "timeout": ENUM_TIMEOUT}))
 
 
 # =====================================================================================================
@@ -1606,7 +1599,7 @@ class Doctor(Stage2Harness):
     def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
         # The hook runs the enumerator (`subprocess.run` at aiqt_hooks.py:22833), which takes the
         # backlog as an operand; the hook itself never opens it, so the refusal names no hook reader.
-        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[3]", str(self.backlog),
+        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[4]", str(self.backlog),
                                      "fifo", "preflight", "stop")
 
     def test_resume_audit_special_handoff_is_cannot_evaluate(self):
@@ -1767,7 +1760,7 @@ class Doctor(Stage2Harness):
         self.assertFalse(marker.exists(), "the audit ran the enumerator")
         p = self._doctor_bounded("preflight", "stop")
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
-        assert_refusal(self, p.stdout, "ctx.enumerator_operand", "declared enumerator.argv[3]",
+        assert_refusal(self, p.stdout, "ctx.enumerator_operand", "declared enumerator.argv[4]",
                        self.backlog, "FIFO")
         self.assertFalse(marker.exists(), "the refused preview ran the enumerator")
 
@@ -1887,11 +1880,9 @@ class Doctor(Stage2Harness):
 
     # --- the doctor decides scope first and, out of scope, runs no enumerator ----------------
     def _arm_writing_enumerator(self, **overrides):
-        script = self._tmp / "enum_writing.py"
-        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         marker = self._tmp / "enumerator-ran.txt"
         reg = self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
+            "argv": [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(marker)],
             "timeout": ENUM_TIMEOUT}, **overrides)
         return reg, marker
 
@@ -2048,11 +2039,9 @@ class Doctor(Stage2Harness):
     # --- the doctor writes nothing itself; the declared enumerator runs as the hook runs it ---
     def test_preflight_discloses_that_the_declared_enumerator_runs(self):
         self.assertIn("mark.write", WRITING_ENUM_FIXTURE, "precondition: the fixture writes")
-        script = self._tmp / "enum_writing.py"
-        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         marker = self._tmp / "enumerator-ran.txt"
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
+            "argv": [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(marker)],
             "timeout": ENUM_TIMEOUT}))
         self.arm_lease()
         self.set_items([item("1", state="closed")])
@@ -2537,13 +2526,14 @@ PRECHECK_OPENS = {
 
 # The words with which the doctor names the path of each pre-check site in its refusal ("cannot
 # evaluate: the <label> <path> ..."), which the reach case of each site checks. An enumerator operand is
-# named by its index in the declared argv, and the fixture enumerator takes the backlog as argv[3].
+# named by its index in the declared argv, and the fixture enumerator, a -c program in argv[3], takes
+# the backlog as argv[4].
 PRECHECK_LABELS = {
     "registry.file": "registry file",
     "scope.lease": "declared lease.path",
     "scope.mode": "declared mode.path",
     "ctx.turn_state": "hook state file turn-state.json",
-    "ctx.enumerator_operand": "declared enumerator.argv[3]",
+    "ctx.enumerator_operand": "declared enumerator.argv[4]",
     "ctx.ledger": "hook state file dispatch-ledger.jsonl",
     "ctx.pending_decisions": "declared record.pending_decisions",
     "ctx.attestation_snapshot": "hook state file attestations-validated.json",
@@ -2804,18 +2794,19 @@ def _env_naming_starts(env, folder):
 
 
 # The residuals of the bound check that run_doctor_recorded makes. It counts only the starts that an
-# enumerator records: Stage2Harness.write_registry refuses a declared enumerator that this interpreter
-# does not run with -I, or whose program, read from its syntax tree, does not begin with the statements
-# of ENUM_RUN_MARK or does not compile (runs_enum_run_mark_first), reading a relative program file from
-# the root that the hook runs it from, but a registry written another way, or a program changed
-# after write_registry read it, is not seen, and a child that starts the enumerator with an environment
-# that drops ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that the hook and the doctor pass it
-# on). It holds a launch only for the starts that it made when a case ran it: a launch that could start
-# the enumerator but did not in that run, or that no case runs, is not held, and a start recorded after
-# the recorder has read the file, by an enumerator that outlives a launch whose timeout ended it, is not
-# counted. A launch with no timeout is not held, since no bound of the test can end it before the
-# hook's own timeout does. The bound is ENUM_TIMEOUT for each start, and write_registry refuses a
-# declared enumerator timeout over ENUM_TIMEOUT, as the hook reads it.
+# enumerator records: Stage2Harness.write_registry accepts only a declared enumerator that is this
+# interpreter, -I, -c and a program that, read from its syntax tree, begins with the statements of
+# ENUM_RUN_MARK and that compiles (runs_enum_run_mark_first), and refuses every program file. Code that
+# the interpreter runs before any program under -I (site: .pth import lines and sitecustomize) is not
+# seen, a registry written another way is not seen, a child that starts the enumerator with an
+# environment that drops ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that the hook and the
+# doctor pass it on), and a start that ends before its program runs is not counted. It holds a launch
+# only for the starts that it made when a case ran it: a launch that could start the enumerator but did
+# not in that run, or that no case runs, is not held, and a start recorded after the recorder has read
+# the file, by an enumerator that outlives a launch whose timeout ended it, is not counted. A launch
+# with no timeout is not held, since no bound of the test can end it before the hook's own timeout
+# does. The bound is ENUM_TIMEOUT for each start, and write_registry refuses a declared enumerator
+# timeout over ENUM_TIMEOUT, as the hook reads it.
 def enumerator_bound_defect(argv, timeout, starts):
     """The defect of a launch with argv that was given timeout (None for none) and in which an
     enumerator recorded starts starts: a timeout under starts times ENUM_TIMEOUT, plus ENUM_MARGIN;
@@ -3131,7 +3122,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def _argv_cannot_run(self):
         # A non-string element: _orch_enumerate returns ENUMERATOR_ERROR unrun (aiqt_hooks.py:22827-22829).
-        return {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog), 5],
+        return {"argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog), 5],
                 "timeout": 5}
 
     def _rows_file(self, path, rows):
