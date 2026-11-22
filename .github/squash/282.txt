@@ -38,16 +38,17 @@ never taken for the kill.
 
 The test sends no signal. Each stub process waits for end of file on
 a second FIFO, lifeline, whose only write end the test holds, and
-ignores SIGTERM, SIGINT and SIGHUP. The check's finally clause closes
-lifeline and reaps a child the client left unreaped, and the kernel
-closes lifeline when the test process ends in any other way. The stub
-reads lifeline once before it forks, a read the planned design did not
-have. On Linux, select reports nothing for a FIFO reader opened with
-no writer, so a stub that starts after the release would otherwise
-wait out its 90 seconds; that read returns end of file, so with the
-read it exits at once. A stub process past that read ends at once on
-the release; one not yet there ends when it reaches it, after the rest
-of its start-up, which the test does not bound.
+ignores SIGTERM, SIGINT and SIGHUP, among other signals. The check's
+finally clause closes lifeline and reaps a child the client left
+unreaped, and the kernel closes lifeline when the test process ends
+in any other way. The stub reads lifeline once before it forks, a
+read the planned design did not have. On Linux, select reports
+nothing for a FIFO reader opened with no writer, so a stub that
+starts after the release would otherwise wait out its 90 seconds;
+that read returns end of file, so with the read it exits at once. A
+stub process past that read ends at once on the release; one not yet
+there ends when it reaches it, after the rest of its start-up, which
+the test does not bound.
 
 The stub's source is a constant. The stub first reads its own end with
 float from a file, own_end, that the check writes, so no value of
@@ -108,7 +109,9 @@ alive open and fails the check. A leader that has not ended within
 the 5 second reap grace of the finally clause, or one left when the
 test process ends without unwinding, stays unreaped until Python's
 own collection of finished children or the process that adopts it
-reaps it. The stub ignores SIGTERM, SIGINT and SIGHUP; a signal it
+reaps it. The stub's source ignores SIGTERM, SIGINT and SIGHUP,
+Python ignores SIGPIPE and SIGXFSZ at start-up, and the stub also
+ignores any other signal that the test process ignores; a signal it
 does not ignore whose default action ends a process, such as SIGKILL
 or SIGUSR1, still ends it early. A correct client still fails if the
 child is not ready within 60 seconds. The design needs FIFOs, select

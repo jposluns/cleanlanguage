@@ -432,28 +432,28 @@ RUN_SECONDS = 15
 CHECK_SECONDS = 10
 OWN_END_SECONDS = 90
 
-# The stub child of the group-kill check. It ignores SIGTERM, SIGINT and
-# SIGHUP. A signal it does not ignore whose default action ends a process,
-# such as SIGKILL or SIGUSR1, still ends it early. It first reads its own
-# end, in seconds, with float from the file own_end, which the check writes
-# beside it, so its source is a constant and no value of own_end adds code
-# to it. A text that float does not take raises there, before the stub opens
-# either FIFO, so the stub never writes the ready byte. Its leader forks 1
-# member into its group and then writes 1 byte to the FIFO alive, so the
-# member holds the write end of alive when the test reads that byte, and
-# the test reads end of file on alive only once every process holding that
-# write end, the leader and the member, has ended. Each process then waits
-# for end of file on the FIFO lifeline, whose only write end the test
-# holds, or for its own end, and exits. The test closes lifeline when its
-# check ends, and the kernel closes it when the test process ends in any
-# other way, SIGKILL included. Both opens are non-blocking, so a stub that
-# finds no reader of alive fails at once rather than block. On Linux,
-# select reports nothing for a FIFO read end opened while no writer has it
-# open, so a stub that opens lifeline after the test has closed it would
-# wait at its select until its own end. It therefore reads lifeline once
-# first: a read that returns, as a read does with end of file when no
-# writer has the FIFO open, rather than fail with BlockingIOError, finds no
-# writer, and the stub exits at once.
+# The stub child of the group-kill check. Its source ignores SIGTERM, SIGINT
+# and SIGHUP, Python ignores SIGPIPE and SIGXFSZ at start-up, and it keeps any
+# signal it inherits as ignored. A signal it does not ignore whose default
+# action ends a process, such as SIGKILL or SIGUSR1, still ends it early. It
+# first reads its own end, in seconds, with float from the file own_end, which
+# the check writes beside it, so its source is a constant and no value of
+# own_end adds code to it. A text that float does not take raises there, before
+# the stub opens either FIFO, so the stub never writes the ready byte. Its
+# leader forks 1 member into its group and then writes 1 byte to the FIFO
+# alive, so the member holds the write end of alive when the test reads that
+# byte, and the test reads end of file on alive only once every process holding
+# that write end, the leader and the member, has ended. Each process then waits
+# for end of file on the FIFO lifeline, whose only write end the test holds, or
+# for its own end, and exits. The test closes lifeline when its check ends, and
+# the kernel closes it when the test process ends in any other way, SIGKILL
+# included. Both opens are non-blocking, so a stub that finds no reader of
+# alive fails at once rather than block. On Linux, select reports nothing for a
+# FIFO read end opened while no writer has it open, so a stub that opens
+# lifeline after the test has closed it would wait at its select until its own
+# end. It therefore reads lifeline once first: a read that returns, as a read
+# does with end of file when no writer has the FIFO open, rather than fail with
+# BlockingIOError, finds no writer, and the stub exits at once.
 #
 # The bounds this order gives, derived from the source below. Start-up
 # here and in the check means interpreter start-up and then the read of
@@ -938,12 +938,12 @@ class BoundsTest(unittest.TestCase):
         # the name scan, examples, not a complete list: in the check,
         # getattr(os, "kill") with a literal name, getattr with a computed
         # name, such as getattr(os, "ki" + "ll"), os.__dict__["kill"],
-        # vars(os)["kill"] and a shell kill through os.system;
-        # a value a caller passes, such as the witness, which the check calls
-        # and which can run any code; a method of self that a subclass
-        # overrides; a module global or builtin that a caller rebinds, such
-        # as GROUP_STUB, or a function of os or the client, as the tests here
-        # rebind os.killpg; the body of a decorator; and the code outside
+        # vars(os)["kill"] and a shell kill through os.system; a value a
+        # caller passes, such as the witness, which the check calls and which
+        # can run any code; a method of self that a subclass overrides, such
+        # as assertLess; a module global or builtin that a caller rebinds,
+        # such as GROUP_STUB, or a function of os or the client, as the tests
+        # here rebind os.killpg; the body of a decorator; and the code outside
         # these functions, the client, whose group kill is the one signal a
         # run sends and the behaviour under test, and the standard library.
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
