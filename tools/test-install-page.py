@@ -89,17 +89,28 @@ The test holds the code of the gate by 2 layers.
    int, float, bool or None, or a tuple, a list or a dict that holds only
    plain data. Each kind, plain data included, is matched as the exact
    type of the value, compared by identity with a type that this test
-   captured when it was imported (PIN_KINDS, PLAIN_TYPES). For a value of
-   no such type, pin_value() raises UnpinnableValue, and the reader pin
-   fails, naming the name, the reviewed gate included; so does
+   captured when it was imported (PLAIN_TYPES, PLAIN_CONTAINERS,
+   PIN_KINDS). capture_problems() holds the capture: with re.Pattern,
+   types.ModuleType, this test's REPO_ROOT, tuple, list or dict rebound to
+   a stand-in, pin_value() still writes a real value of that kind as
+   before and refuses an instance of the stand-in. The exact type of a
+   value is read with the builtin type(), which a rebinding of a builtin
+   can change, a class that the reader pin does not see (residual 2). For
+   a value of no such type, pin_value() raises UnpinnableValue, and the
+   reader pin fails, naming the name, the reviewed gate included; so does
    reader_pin_text() for a value with __wrapped__ that a def does not bind.
-   pin_value_problems() holds these refusals for a subclass of a type that
-   pin_value() writes, a class with its own metaclass, an object whose
-   class gives a pattern, a module, a class or a path type as its
-   __class__, an object whose type compares equal to every type, and the
-   other values that its docstring names, and holds that the reader pin
-   fails on a gate whose REQUESTED_FILES is a subclass of tuple. The pin
-   holds the values that a reviewed gate defines in ordinary code. A value
+   pin_value_problems() holds these refusals for each kind of PLAIN_TYPES,
+   PLAIN_CONTAINERS and PIN_KINDS, for an instance of a subclass, where
+   Python allows one, and an object whose class gives the kind as its
+   __class__, so that each kind test of pin_value() and plain_data() must
+   match the exact type, and for a class with its own metaclass, an object
+   whose type compares equal to every type and the other values that its
+   docstring names. It also holds that the reader pin fails on a gate
+   whose REQUESTED_FILES is a subclass of tuple, on the committed gate and
+   on 2 built from it by the syntax tree: 1 in which that statement shares
+   its line with LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and 1
+   in which it spans 3 lines. The pin holds the values that a reviewed
+   gate defines in ordinary code. A value
    built to pose as another kind in a way that pin_value() does not
    refuse, and code at the gate's top level that changes this test's
    functions or values, are held only by the reviewer who reads the gate's
@@ -452,6 +463,7 @@ names tools/check-inline-code.py.
 from __future__ import annotations
 
 import ast
+import builtins
 import collections
 import copy
 import difflib
@@ -3223,9 +3235,14 @@ def top_statements(tree: ast.Module, name: str) -> list[ast.stmt]:
 # identity, so that a subclass, which can write any repr(), is not plain data, and nor is a value whose type compares
 # equal to 1 of them.
 PLAIN_TYPES = (str, bytes, int, float, bool, type(None))
+# Check 7: the containers of plain data, a tuple, a list and a dict, each matched by plain_data() as the exact type of a
+# value, by identity, and captured here, when this test is imported, before any code of the gate runs, so that a
+# rebinding of the builtin name does not change what plain_data() accepts. capture_problems() holds it.
+PLAIN_CONTAINERS = (tuple, list, dict)
 # Check 7: the other kinds of value that pin_value() writes, a pattern, a module, a class and a path, each matched as
 # the exact type of a value, by identity, and captured here, when this test is imported, before any code of the gate
-# runs. type(REPO_ROOT) is the type of a path on this platform; Path itself is not.
+# runs; capture_problems() holds it for each kind but type. type(REPO_ROOT) is the type of a path on this platform;
+# Path itself is not.
 PIN_KINDS = (re.Pattern, types.ModuleType, type, type(REPO_ROOT))
 
 
@@ -3235,14 +3252,15 @@ class UnpinnableValue(ValueError):
 
 def plain_data(value) -> bool:
     """Whether value is plain data: of exactly 1 of PLAIN_TYPES, or exactly a tuple or a list whose items are plain data,
-    or exactly a dict whose keys and values are plain data, each type compared by identity. A value that holds itself
-    is not plain data."""
+    or exactly a dict whose keys and values are plain data, each type compared by identity with 1 of PLAIN_TYPES or
+    PLAIN_CONTAINERS. A value that holds itself is not plain data."""
+    plain_tuple, plain_list, plain_dict = PLAIN_CONTAINERS
     try:
         if any(type(value) is kind for kind in PLAIN_TYPES):
             return True
-        if type(value) is tuple or type(value) is list:
+        if type(value) is plain_tuple or type(value) is plain_list:
             return all(plain_data(item) for item in value)
-        if type(value) is dict:
+        if type(value) is plain_dict:
             return all(plain_data(key) and plain_data(item) for key, item in value.items())
     except RecursionError:
         return False
@@ -3252,12 +3270,17 @@ def plain_data(value) -> bool:
 def pin_value(value) -> str:
     """A value of the gate as reader_pin_text() writes it: a pattern by its text and flags, a module or a class by its
     name, a path by its place in this repository and plain data (plain_data()) by repr(), each kind matched as the
-    exact type of the value, compared by identity with 1 of PIN_KINDS or PLAIN_TYPES. For a value of no such type it
-    raises UnpinnableValue, so that the reader pin fails on it, the reviewed gate included: such a value can reach a
-    helper whose code no text of it holds, as a dict or a list of functions or of classes does, a set of functions, a
-    subclass of a type that it writes, a class with its own metaclass, an object whose class gives 1 of PIN_KINDS as
-    its __class__, or an object whose type compares equal to a type of plain data.
-    The pin holds the values that a reviewed gate defines in ordinary code. A value built to pose as another kind in a
+    exact type of the value, compared by identity with a type that this test captured when it was imported
+    (PLAIN_TYPES, PLAIN_CONTAINERS, PIN_KINDS). The exact type of a value is read with the builtin type(), which a
+    rebinding of a builtin can change, a class that the reader pin does not see (residual 2 of the module docstring).
+    For a value of no such type it raises UnpinnableValue, so that the reader pin fails on it, the reviewed gate
+    included: such a value can reach a helper whose code no text of it holds. For example, not a complete list: a dict
+    or a list of functions or of classes, a set of functions, a subclass of a type that it writes, a class with its
+    own metaclass, an object whose class gives 1 of PIN_KINDS as its __class__, or an object whose type compares equal
+    to a type of plain data. pin_value_problems() names the values that it holds.
+    The pin holds the values that a reviewed gate defines in ordinary code. It writes a module, a class or a path by
+    its name, so a helper that one of them carries, as an attribute, through getattr() or in a slot, is in no digest
+    here (the module docstring, residual 2). A value built to pose as another kind in a
     way that this check does not refuse, and code at the gate's top level that changes this test's functions or
     values, are held only by the reviewer who reads the gate's diff, since the gate's code runs in this process before
     the pin reads any value. The digest of the gate's bytes (gate_bytes()) is the control that makes every such gate
@@ -3357,11 +3380,65 @@ def reader_pin_problems(source: bytes | None = None) -> list[str]:
 
 # Check 7: the name whose statement at the gate's top level pin_value_problems() replaces, found by the gate's syntax
 # tree, and the 2 statements that it puts in its place: REQUESTED_FILES made a subclass of tuple whose repr() is that of
-# the plain value, and REQUESTED_FILES made by a call of tuple(), a plain value whose statement differs.
+# the plain value, and REQUESTED_FILES made by a call of tuple(), a plain value whose statement differs. Each is 1
+# simple statement, so that it can stand in the place of a statement that shares its line with others, where a
+# compound statement such as a class cannot follow a semicolon.
 PIN_NAME = "REQUESTED_FILES"
-PIN_SUBCLASS = ('class _QzTuple(tuple):\n    def __repr__(self):\n        return "(\'favicon.ico\',)"\n\n\n'
-                'REQUESTED_FILES = _QzTuple(("favicon.ico",))')
+PIN_SUBCLASS = ('REQUESTED_FILES = type("_QzTuple", (tuple,), {"__repr__": lambda self: "(\'favicon.ico\',)"})'
+                '(("favicon.ico",))')
 PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))'
+# Check 7: the 2 pinned names of the gate whose statements pin_shared_gate() moves onto the line of PIN_NAME's
+# statement, the 1st before it and the 2nd after it, so that a replaced span that reaches past PIN_NAME's statement
+# on its line removes a pinned statement.
+PIN_NEIGHBOURS = ("LOADED_SEGMENTS", "REDIRECT_TARGETS")
+
+
+def pin_shared_gate(source: bytes) -> bytes:
+    """source with the statements of PIN_NEIGHBOURS moved from their own lines onto the line of the statement of
+    PIN_NAME, the 1st before it and the 2nd after it, joined by "; ", with a comment after them, each statement found
+    by the syntax tree. It raises ValueError unless each of the 3 names is bound by exactly 1 statement at the top level
+    of source, and each such statement is a simple statement on 1 line, alone on the lines of PIN_NEIGHBOURS."""
+    tree = ast.parse(source)
+    found = {}
+    for name in (PIN_NAME, *PIN_NEIGHBOURS):
+        statements = top_statements(tree, name)
+        if (len(statements) != 1 or not isinstance(statements[0], (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                or statements[0].lineno != statements[0].end_lineno):
+            raise ValueError(f"{name} is not bound by exactly 1 simple statement on 1 line at the top level")
+        found[name] = statements[0]
+    rows = source.splitlines(keepends=True)
+    texts = {}
+    for name, statement in found.items():
+        row = rows[statement.lineno - 1]
+        texts[name] = row[statement.col_offset:statement.end_col_offset]
+        if name != PIN_NAME and row[:statement.col_offset].strip() + row[statement.end_col_offset:].strip():
+            raise ValueError(f"the statement of {name} does not stand alone on its line")
+    before, after = PIN_NEIGHBOURS
+    statement = found[PIN_NAME]
+    row = rows[statement.lineno - 1]
+    rows[statement.lineno - 1] = (row[:statement.col_offset] + texts[before] + b"; " + texts[PIN_NAME] + b"; "
+                                  + texts[after] + b"  # moved here by pin_shared_gate()"
+                                  + row[statement.end_col_offset:])
+    for name in PIN_NEIGHBOURS:
+        rows[found[name].lineno - 1] = b"\n"
+    return b"".join(rows)
+
+
+def pin_reflowed_gate(source: bytes) -> bytes:
+    """source with the statement of PIN_NAME, an assignment to that name alone, spread over 3 lines, its value in
+    parentheses on a line of its own, with a comment after it, the statement found by the syntax tree. It raises
+    ValueError unless PIN_NAME is bound by exactly 1 such statement at the top level of source."""
+    tree = ast.parse(source)
+    statements = top_statements(tree, PIN_NAME)
+    if len(statements) != 1 or not isinstance(statements[0], ast.Assign) or len(statements[0].targets) != 1:
+        raise ValueError(f"{PIN_NAME} is not bound by exactly 1 assignment to it alone at the top level")
+    statement = statements[0]
+    value = ast.get_source_segment(source.decode("utf-8"), statement.value)
+    rows = source.splitlines(keepends=True)
+    head = sum(map(len, rows[:statement.lineno - 1])) + statement.col_offset
+    tail = sum(map(len, rows[:statement.end_lineno - 1])) + statement.end_col_offset
+    return (source[:head] + f"{PIN_NAME} = (\n    {value}\n)  # reflowed by pin_reflowed_gate()".encode("utf-8")
+            + source[tail:])
 
 
 def pin_value_problems() -> list[str]:
@@ -3369,14 +3446,20 @@ def pin_value_problems() -> list[str]:
     other value below: a subclass of dict, of tuple and of str, each with its own repr(), a dict that holds a function
     or a class or that a class keys, a list in a tuple that holds a function, a frozenset of functions, a list that
     holds itself, an object whose class gives each of PIN_KINDS as its __class__, an object whose type compares equal
-    to every type, a subclass of types.ModuleType and of the path type, a class with its own metaclass, and a subclass
-    of dict and of list that holds only plain data, so that each kind test of pin_value() and plain_data() must match
-    the exact type; unless reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def
-    binds; and unless the gate binds PIN_NAME by exactly 1 statement at its top level, and reader_pin_problems(), given
-    the gate with that statement, as its syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem,
-    which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which gives the
-    new digest of REQUESTED_FILES. A comment beside that statement stays outside the replaced span, and a reflow or a
-    reviewed change of it is replaced whole, so none of them fails this check."""
+    to every type, a subclass of types.ModuleType and of the path type, a class with its own metaclass, a subclass of
+    dict and of list that holds only plain data, and, for each kind of PLAIN_TYPES, PLAIN_CONTAINERS and PIN_KINDS, an
+    instance of a subclass, where Python allows one, and an object whose class gives the kind as its __class__, so
+    that each kind test of pin_value() and plain_data() must match the exact type; unless reader_pin_text() raises it
+    for a value with __wrapped__ that a statement other than a def binds; and unless, on each of 3 base gates, the
+    committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME by exactly 1
+    statement at its top level, and reader_pin_problems(), given the gate with that statement, any statement that
+    binds PIN_NAME, as the syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem, which says that
+    REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1, which gives the new digest of
+    REQUESTED_FILES. Before it replaces a statement of the 2 built base gates, it requires that reader_pin_problems()
+    gives no problem on that base gate, which is otherwise no faithful stand-in for the committed one. A comment or
+    another statement on the line of that statement stays outside the replaced span, and a reflow of it is replaced
+    whole; the check holds both on a gate in which the statement shares its line with LOADED_SEGMENTS and
+    REDIRECT_TARGETS and a comment, and on one in which it spans 3 lines."""
 
     def posing(kind, **attributes):
         """An object whose class gives kind as its __class__, with attributes that pin_value() reads for kind."""
@@ -3461,6 +3544,24 @@ def pin_value_problems() -> list[str]:
                 ("a dict subclass that holds only plain data", DictSub(assets=301)),
                 ("a list subclass that holds only plain data", ListSub(["assets", 301])))
     problems: list[str] = []
+    # For each kind that pin_value() or plain_data() matches, an instance of a bare subclass of it, where Python allows
+    # one, and an object whose class gives the kind as its __class__, so that a kind added to 1 of the 3 tuples gets
+    # both cases with no further edit. A subclass that cannot be made from the arguments here fails, never a skip.
+    made_from = {types.ModuleType: ("qz",), kind_of_class: ("QzClass", (), {})}
+    common = {"pattern": "x", "flags": 32, "__name__": "re", "__getattr__": lambda self, name: "Path",
+              "is_relative_to": lambda self, other: False, "__str__": lambda self: "/qz",
+              "__iter__": lambda self: iter(()), "items": lambda self: ()}
+    for kind in (*PLAIN_TYPES, *PLAIN_CONTAINERS, *PIN_KINDS):
+        named = f"{kind.__module__}.{kind.__qualname__}"
+        refused += ((f"an object whose class gives {named} as its __class__", posing(kind, **common)),)
+        try:
+            subclass = type(f"QzSub_{kind.__name__}", (kind,), {})
+        except TypeError:
+            continue
+        try:
+            refused += ((f"an instance of a bare subclass of {named}", subclass(*made_from.get(kind, ()))),)
+        except Exception as error:
+            problems.append(f"an instance of a bare subclass of {named} could not be made: {error!r}")
     for value in plain:
         try:
             written = pin_value(value)
@@ -3480,29 +3581,126 @@ def pin_value_problems() -> list[str]:
                         "UnpinnableValue")
     except UnpinnableValue:
         pass
-    try:
-        statements = top_statements(ast.parse(GATE_BYTES), PIN_NAME)
-    except (SyntaxError, ValueError) as error:
-        return problems + [f"tools/{GATE.name} could not be parsed, so its statement of {PIN_NAME} was not found: "
-                           f"{error!r}"]
-    if len(statements) != 1:
-        return problems + [f"tools/{GATE.name} binds {PIN_NAME} by {len(statements)} statements at its top level, "
-                           "not by 1"]
-    # The statement's span in GATE_BYTES: its lines as the syntax tree counts them, and its columns, which are offsets in
-    # the UTF-8 bytes of a line, so that a comment beside it stays outside the span.
-    lines = GATE_BYTES.splitlines(keepends=True)
-    first = sum(map(len, lines[:statements[0].lineno - 1])) + statements[0].col_offset
-    last = sum(map(len, lines[:statements[0].end_lineno - 1])) + statements[0].end_col_offset
-    for replacement, start in ((PIN_SUBCLASS, f"REQUESTED_FILES of tools/{GATE.name} cannot be pinned: "),
-                               (PIN_PLAIN, f"REQUESTED_FILES of tools/{GATE.name} differs from its pin: ")):
+    bases = [("the committed gate", GATE_BYTES)]
+    for label, build in (("the shared-line gate", pin_shared_gate), ("the reflowed gate", pin_reflowed_gate)):
         try:
-            found = reader_pin_problems(GATE_BYTES[:first] + replacement.encode("utf-8") + GATE_BYTES[last:])
+            base = build(GATE_BYTES)
+            found = reader_pin_problems(base)
         except Exception as error:
-            problems.append(f"reader_pin_problems() raised {error!r} on the gate with {replacement!r}")
+            problems.append(f"{label}, {build.__name__}() of tools/{GATE.name}, could not be built or read: {error!r}")
             continue
-        if len(found) != 1 or not found[0].startswith(start):
-            problems.append(f"reader_pin_problems() gives {found!r} on the gate with {replacement!r}, not 1 problem "
-                            f"that starts {start!r}")
+        if found:
+            problems.append(f"reader_pin_problems() gives {found!r} on {label}, so it is no faithful stand-in for "
+                            f"tools/{GATE.name}")
+            continue
+        bases.append((label, base))
+    for label, base in bases:
+        try:
+            statements = top_statements(ast.parse(base), PIN_NAME)
+        except (SyntaxError, ValueError) as error:
+            problems.append(f"{label} could not be parsed, so its statement of {PIN_NAME} was not found: {error!r}")
+            continue
+        if len(statements) != 1:
+            problems.append(f"{label} binds {PIN_NAME} by {len(statements)} statements at its top level, not by 1")
+            continue
+        # The statement's span in the base gate: its lines as the syntax tree counts them, and its columns, which are
+        # offsets in the UTF-8 bytes of a line, so that a comment or another statement beside it stays outside the span.
+        lines = base.splitlines(keepends=True)
+        first = sum(map(len, lines[:statements[0].lineno - 1])) + statements[0].col_offset
+        last = sum(map(len, lines[:statements[0].end_lineno - 1])) + statements[0].end_col_offset
+        for replacement, start in ((PIN_SUBCLASS, f"REQUESTED_FILES of tools/{GATE.name} cannot be pinned: "),
+                                   (PIN_PLAIN, f"REQUESTED_FILES of tools/{GATE.name} differs from its pin: ")):
+            try:
+                found = reader_pin_problems(base[:first] + replacement.encode("utf-8") + base[last:])
+            except Exception as error:
+                problems.append(f"reader_pin_problems() raised {error!r} on {label} with {replacement!r}")
+                continue
+            if len(found) != 1 or not found[0].startswith(start):
+                problems.append(f"reader_pin_problems() gives {found!r} on {label} with {replacement!r}, not 1 "
+                                f"problem that starts {start!r}")
+    return problems
+
+
+def capture_problems() -> list[str]:
+    """A problem unless the kinds that pin_value() and plain_data() match are those captured when this test was
+    imported: with re.Pattern, types.ModuleType, this test's REPO_ROOT (the path kind is type(REPO_ROOT)), tuple, list
+    or dict rebound to a stand-in, 1 name at a time, pin_value() still writes a real value of that kind as before and
+    refuses an instance of the stand-in, and each name is restored afterwards. It holds no rebinding of type: the exact
+    type of a value is read with the builtin type(), and a stand-in for it breaks that reading itself, so the capture
+    of type, and of the reading of type(), rests on review (residual 2 of the module docstring)."""
+
+    def stand_in(**attributes):
+        """A class that is none of the kinds, with attributes that pin_value() reads for each kind."""
+        return type("QzStandIn", (), {"pattern": "qz", "flags": 2, "__name__": "re", "__iter__": lambda self: iter(()),
+                                      "items": lambda self: (), **attributes})
+
+    root = REPO_ROOT
+    path_stand_in = stand_in(__fspath__=lambda self: str(root), is_relative_to=lambda self, other: False)()
+    held = (("re.Pattern", vars(re), "Pattern", re.compile("qz", re.I), stand_in()),
+            ("types.ModuleType", vars(types), "ModuleType", types, stand_in()),
+            ("REPO_ROOT", globals(), "REPO_ROOT", REPO_ROOT / "tools", path_stand_in),
+            ("tuple", vars(builtins), "tuple", ("favicon.ico", ("assets",)), stand_in()),
+            ("list", vars(builtins), "list", ["assets", 301], stand_in()),
+            ("dict", vars(builtins), "dict", {"assets": [("baseline", None)]}, stand_in()))
+    problems: list[str] = []
+    for label, space, name, real, rebound in held:
+        instance = rebound if label == "REPO_ROOT" else rebound()
+        original = space[name]
+        try:
+            before = pin_value(real)
+        except Exception as error:
+            problems.append(f"pin_value() does not write a real value of {label}'s kind: {error!r}")
+            continue
+        try:
+            space[name] = rebound
+            try:
+                after = pin_value(real)
+            except Exception as error:
+                after = f"an error, {error!r}"
+            try:
+                written = f"writes it as {pin_value(instance)!r}"
+            except UnpinnableValue:
+                written = ""
+            except Exception as error:
+                written = f"raises {error!r}"
+        finally:
+            space[name] = original
+        if space[name] is not original:
+            problems.append(f"{label} was not restored after it was rebound")
+        if after != before:
+            problems.append(f"with {label} rebound to a stand-in, pin_value() gives {after!r} for {real!r}, not "
+                            f"{before!r} as before")
+        if written:
+            problems.append(f"with {label} rebound to a stand-in, pin_value() {written} for an instance of the "
+                            "stand-in, not raising UnpinnableValue")
+    return problems
+
+
+# The sentence on the scope of the reader pin, and the words that each docstring of this file that holds it must also
+# hold, so that the scope is not stated without the residual of a module, a class or a path written by its name.
+SCOPE_SENTENCE = "The pin holds the values that a reviewed gate defines in ordinary code."
+SCOPE_RESIDUAL = "a module, a class or a path by its name"
+
+
+def scope_sentence_problems(source: str | None = None) -> list[str]:
+    """A problem for each docstring of source, this file by default, the module's or that of a def or a class, that
+    holds SCOPE_SENTENCE but not SCOPE_RESIDUAL, each read with its white space runs as 1 space; and a problem unless
+    at least 1 docstring holds SCOPE_SENTENCE, so that a check that reads none does not pass."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8") if source is None else source)
+    nodes = [node for node in ast.walk(tree)
+             if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    problems: list[str] = []
+    holding = 0
+    for node in nodes:
+        doc = " ".join((ast.get_docstring(node, clean=False) or "").split())
+        if SCOPE_SENTENCE not in doc:
+            continue
+        holding += 1
+        if SCOPE_RESIDUAL not in doc:
+            where = "the module docstring" if isinstance(node, ast.Module) else f"the docstring of {node.name}()"
+            problems.append(f"{where} states the scope of the reader pin without the words {SCOPE_RESIDUAL!r}")
+    if not holding:
+        problems.append(f"no docstring of this file holds {SCOPE_SENTENCE!r}")
     return problems
 
 
@@ -4604,6 +4802,8 @@ def main() -> int:
     failures += [f"the characters of site/_redirects: {problem}" for problem in redirect_break_problems()]
     failures += [f"the reader pin: {problem}" for problem in reader_pin_problems()]
     failures += [f"the pinned values: {problem}" for problem in pin_value_problems()]
+    failures += [f"the captured kinds: {problem}" for problem in capture_problems()]
+    failures += [f"the scope sentence: {problem}" for problem in scope_sentence_problems()]
     failures += [f"the checked load: {problem}" for problem in checked_load_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
@@ -4642,7 +4842,8 @@ def main() -> int:
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the {len(BREAK_CHARACTERS)} characters of "
           f"redirect_break(), the sha256 of tools/{GATE.name} and its checked load, "
           f"the reader pin of {len(READER_NAMES)} functions and {len(READER_GLOBALS)} other names "
-          f"of check 7 and its refusal of values that it cannot pin, the letter-case guard, "
+          f"of check 7 and its refusal of values that it cannot pin, the capture of the kinds that it matches, the "
+          f"scope sentence of this file's docstrings, the letter-case guard, "
           f"the case loop, the 2nd look, main()'s call of case_run_problems(), the "
           f"workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
