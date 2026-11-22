@@ -3078,7 +3078,7 @@ def disclosure_d4_section(text: str) -> str | None:
     releases (tools/check-inline-code.py, "Python versions")."""
     short = SHORT_COMMENT.search(text)
     if short is not None:
-        raise ShortCommentRefused(f"a comment that opens as {short.group(0)}, which the generator refuses")
+        raise ShortCommentRefused(f"the text {short.group(0)}, which the generator refuses")
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -3110,14 +3110,16 @@ def check_disclosure_states(failures: list[str]) -> int:
     in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
     D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
-    follow the entries, and a page with no D-4 heading, among others."""
+    follow the entries, and a page with no D-4 heading, among others. A stand-in reader checks that the reading's
+    ShortCommentRefused becomes a failure, and that any other exception from the reader, such as a ValueError, passes
+    out of this function instead of becoming a case result."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
 
-    def d4_failures(text: str, where: str) -> list[str]:
+    def d4_failures(text: str, where: str, read=disclosure_d4_section) -> list[str]:
         try:
-            section = disclosure_d4_section(text)
+            section = read(text)
         except ShortCommentRefused as error:
             return [f"{where} holds {error}"]
         if section is None:
@@ -3125,7 +3127,7 @@ def check_disclosure_states(failures: list[str]) -> int:
         return [f"D-4 of {where} lacks {name}, {phrase!r}" for name, phrase in phrases.items() if phrase not in section]
 
     lacks_note = [f"D-4 of the test page lacks CHECKSUM_PENDING_NOTE, {note!r}"]
-    short = "the test page holds a comment that opens as {}, which the generator refuses"
+    short = "the test page holds the text {}, which the generator refuses"
     entry_4 = f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
     blocks = ('<p class="lbl blk">Your browser</p>\n<p>{}</p>\n<p class="lbl blk">Security</p>\n<p>Report.</p>\n'
               '<div class="next"><p class="lbl">Next</p><a class="start" href="/">Home</a>\n</div>\n')
@@ -3184,6 +3186,28 @@ def check_disclosure_states(failures: list[str]) -> int:
             failures.append(f"disclosure states: the test page with {case} gave {got}, expected {expected}")
     text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
     failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
+    # A stand-in for disclosure_d4_section() that raises shows that d4_failures() catches only ShortCommentRefused: the
+    # ShortCommentRefused that it raises becomes the failure line, and a ValueError that it raises passes out of
+    # d4_failures() unchanged instead of becoming a case result. With a wider catch, such as except Exception, the
+    # ValueError becomes a failure line and this case fails.
+    def raising(error: Exception):
+        def read(text: str) -> str | None:
+            raise error
+        return read
+
+    refused = d4_failures("", "the test page", raising(ShortCommentRefused("a planted refusal")))
+    if refused != ["the test page holds a planted refusal"]:
+        failures.append(f"disclosure states: a stand-in reader that raises ShortCommentRefused gave {refused}, "
+                        "expected ['the test page holds a planted refusal']")
+    stray = ValueError("a planted error")
+    try:
+        got = d4_failures("", "the test page", raising(stray))
+    except ValueError as error:
+        if error is not stray:
+            raise
+    else:
+        failures.append(f"disclosure states: a stand-in reader that raises a ValueError gave {got}, expected the "
+                        "ValueError to pass out")
     sum_url = generator.release_tokens(PIN_VERSION, f"v{PIN_VERSION}", PIN_CHECKSUM)["release.sum_url"]
     states = (("placeholder", generator.PLACEHOLDER_CHECKSUM, "CHECKSUM_PENDING_NOTE"),
               ("published", PIN_CHECKSUM, "CHECKSUM_PUBLISHED_PHRASE"))
@@ -3205,7 +3229,7 @@ def check_disclosure_states(failures: list[str]) -> int:
         failures.append(f"disclosure states: a stand-in rendering empty in both states gave {planted}, expected "
                         f"{expected}")
     failures.extend(f"disclosure states: {failure}" for failure in state_failures(generator.sum_tokens))
-    return 2 + len(cases)
+    return 3 + len(cases)
 
 
 # The pin of the whole verify page: the sha256 of each state's rendering by
