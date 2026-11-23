@@ -36,27 +36,32 @@ tools/test-orch-stage2-hooks.py:
   ENUM_MARGIN fails its case in its cleanup, while any exception that
   the launch raised goes on to the case unchanged. With no case
   running, the launch fails at once instead, with any exception that
-  the launch raised as the cause. A launch with no start, or with no
-  timeout, is not held.
-- Stage2Harness.write_registry accepts a declared enumerator that the
-  hook would start only when its argv is this interpreter
-  (sys.executable), -I, -c and a program whose first statements, read
-  from its syntax tree, are those of ENUM_RUN_MARK and which compiles,
-  and when its timeout, as the hook reads it, is at most ENUM_TIMEOUT.
-  The program is the argv element itself, so the check reads the text
-  that the interpreter compiles; no file is read. It refuses every
-  other shape, including every program file, since what the
+  the launch raised as the cause, also when the launch printed a
+  doctor refusal as well, whose failed registration is then the
+  context. A launch with no start, or with no timeout, is not held.
+- Stage2Harness.write_registry checks the declared enumerator as the
+  hook reads it, from the JSON text that it writes, so a tuple is
+  checked as the list that json writes and a str subclass as its
+  text, in 1 place, declared_enumerator_defect. It accepts an
+  enumerator that the hook would start only when its argv is exactly
+  this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS,
+  each a separate element, and when its timeout, as the hook reads
+  it, is at most ENUM_TIMEOUT. ENUM_PROGRAMS holds ENUM_FIXTURE,
+  WRITING_ENUM_FIXTURE and SLEEPING_ENUM_FIXTURE, the sleeping
+  enumerator of the enumerator timeout case. Each begins with
+  ENUM_RUN_MARK and compiles, and after the mark it names neither the
+  record nor the environment and opens, removes or writes no path but
+  its own operands. The program is the argv element itself, so the
+  check reads the text that the interpreter compiles; no file is
+  read. It refuses every other shape, including every other program
+  and every program file: a check of a program's text cannot see
+  every way in which the program could reach the record, and what the
   interpreter runs for a file operand depends on the operand's name
   and content, on how the path resolves, and on the file at each run,
-  not only on the text that a check reads. A program that holds
-  ENUM_RUN_MARK only as text, or after other statements, is refused,
-  and so is one that begins with it but does not compile, such as one
-  with a top-level return, a top-level break or a misplaced future
-  import after it, since the interpreter refuses such a program before
-  the record runs. It refuses some enumerators that record their
-  start, such as a program file that begins with the mark, a program
-  that begins with a docstring or a future import, or an indented -c
-  program that Python 3.14 dedents; each refusal fails safe.
+  not only on the text that a check reads. It refuses some
+  enumerators that record their start and leave the record alone,
+  such as a program file that begins with the mark or any program
+  outside ENUM_PROGRAMS; each refusal fails safe.
 - Every fixture enumerator is declared in that form, with ENUM_FIXTURE
   or WRITING_ENUM_FIXTURE as the program, so the backlog moves from
   argv[3] to argv[4], and the doctor operand label that the cases
@@ -65,21 +70,34 @@ tools/test-orch-stage2-hooks.py:
   hook: apart from requiring a list of non-empty strings, the hook
   passes the argv to subprocess.run unchanged (aiqt_hooks.py:22833),
   so the hook behaviour under test does not depend on its form. The
-  project's own file enumerator keeps its own suite.
-- The reading of launch bounds from the syntax tree is removed, with
-  UNENUMERATED_RUNS and REPEATED_ENUMERATOR_RUNS. EnumeratorBounds
-  requires that a stage-2 Stop and preflight each record 1 start and a
-  stage-1 Stop none; that a launch 1 second under its bound fails its
-  case and a launch at its bound passes, for 1 start and for 2, also
-  when check=True fails, and that one with no running case fails at
-  once, with the launch's exception as the cause; that write_registry
-  refuses a -c enumerator without the record, one that holds it only
-  as text or after an exit, one that begins with it but does not
-  compile, one run without -I or by another interpreter, and a timeout
-  over ENUM_TIMEOUT; and that it refuses each program-file form found
-  so far, each with a recording file in place: a plain file, a
-  relative file under the root, -u, -- or - before the file, a
-  directory, a .pyc name and a trailing slash.
+  doctor's operand pre-check does: it checks each element from
+  argv[2] on as a path, as for a committed registry, whose argv[2] the
+  registry gate requires to be a script, so for these registries it
+  also checks -c and the program, and it refuses a special file at
+  <root>/-c, running no enumerator, where the hook runs the
+  enumerator. A new Doctor case pins that refusal. The project's own
+  file enumerator keeps its own suite.
+- EnumeratorBounds requires that a stage-2 Stop and preflight each
+  record 1 start and a stage-1 Stop none; that a launch 1 second under
+  its bound fails its case and a launch at its bound passes, for 1
+  start and for 2, also when check=True fails, and that one with no
+  running case fails at once, with the launch's exception as the
+  cause, also when it printed a doctor refusal as well; that each of
+  ENUM_PROGRAMS begins with the record and names neither the record
+  nor the environment after it, and that the 2 fixture programs that
+  end each record exactly 1 start through the hook; that
+  write_registry refuses a -c enumerator without the record, a tuple
+  argv, a str subclass that json writes as -cpass, a joined -cpass or
+  -Ic, -c before -I, another option in place of -I, an option between
+  -I and -c, a program that begins with the record and then removes
+  it, adds a start, opens the file that the environment names or
+  removes the record that it finds by the name of its folder, one
+  that holds the record only as text or after an exit, one that
+  begins with it but does not compile, one run without -I or by
+  another interpreter, and a timeout over ENUM_TIMEOUT; and that it
+  refuses each program-file form found so far, each with a recording
+  file in place: a plain file, a relative file under the root, -u, --
+  or - before the file, a directory, a .pyc name and a trailing slash.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -159,10 +177,14 @@ CalledProcessError and fails in its cleanup with a failure that has no
 cause. EnumeratorBounds fails when the check never reports, drops
 ENUM_MARGIN or ignores the number of starts, when the recorder names
 the file in another variable, when write_registry skips its check,
-tests the mark as text, takes any interpreter, skips the compile step
-or also accepts a recording program file, when ENUM_FIXTURE lacks
-ENUM_RUN_MARK, and when the failure with no running case drops its
-cause. With
+checks the object that it is given rather than the text read back,
+takes any interpreter, does not compare argv[1] or argv[2], accepts
+any program that begins with the record, with or without the name
+check, or also accepts a recording program file, when the name check
+finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK, and when the
+failure with no running case drops its cause or takes the failed
+registration of a doctor refusal as its cause. The new doctor case
+fails when the doctor skips an argv element that is exactly -c. With
 a fixture enumerator that sleeps 70 s, from the same line as the 6 s
 delay, neither the present-marker case of DoctorCheckpointWrites nor
 the DoctorStandInRestore case ends through a test bound, on main or
@@ -178,14 +200,22 @@ run of SpecialFileInputs, or a migration run of InputFileType,
 ErrorPosition or RuntimeGuard in the migrate-todo suite, that blocks
 fails after 60 s instead of 20. The new hang case adds 60 s to the
 enumerate-backlog suite. The bound check counts only starts that an
-enumerator records: code that the interpreter runs before any program
-under -I (site: .pth import lines and sitecustomize) and a registry
-written other than through write_registry are not seen, and a child
-that drops ORCH_STAGE2_ENUMERATOR_RUNS from its environment and a
-start that ends before its program runs are not counted. It
-holds only the starts a launch made when a case ran it, not a start
-recorded after the launch returned, and not a launch with no timeout.
-The fixture value 60 is safe only while the test registries are never
-gated. The new stamp test fails on a backward clock step during the
-run. The load check covers only the enumerator timeout case and CPU
-contention.
+enumerator records. The record is a file that any process of this
+user can write, so its count rests on reading the 3 programs of
+ENUM_PROGRAMS, and a program that the launcher starts directly is
+trusted as the suite's own code is. Code that the interpreter runs
+before any program under -I (site: .pth import lines and
+sitecustomize) and a registry written other than through
+write_registry are not seen, and a child that drops
+ORCH_STAGE2_ENUMERATOR_RUNS from its environment and a start that
+ends before its program runs are not counted. It holds only the
+starts a launch made when a case ran it, not a start recorded after
+the launch returned, and not a launch with no timeout. The doctor
+refuses a special file at <root>/-c for the -c registries of the
+stage-2 suite, where the hook runs the enumerator; the refusal runs no
+enumerator, a registry that the gate accepts never has -c at argv[2],
+and changing the doctor's operand model is product work outside this
+change. The fixture value 60 is safe only while the test registries
+are never gated. The new stamp test fails on a backward clock step
+during the run. The load check covers only the enumerator timeout case
+and CPU contention.
