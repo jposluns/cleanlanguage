@@ -435,12 +435,15 @@ OWN_END_SECONDS = 90
 # The stub child of the group-kill check. Its source ignores SIGTERM, SIGINT
 # and SIGHUP, and Python ignores SIGPIPE and SIGXFSZ at start-up. When the
 # client starts it, it keeps every signal that the test thread blocks as
-# blocked, and every signal other than SIGPIPE and SIGXFSZ that the test
-# process ignores as ignored: the client's Popen, with its default
-# restore_signals, resets SIGPIPE and SIGXFSZ to their default action before
-# exec. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ can end the
-# stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can end it
-# before its source ignores it if the test process does not ignore it.
+# blocked, and every signal other than SIGCHLD, SIGPIPE and SIGXFSZ that the
+# test process ignores as ignored. The client changes those 3 dispositions
+# before exec: its reset_sigchld resets SIGCHLD to its default in its own
+# process, the test process, before it starts the child, and its Popen, with
+# its default restore_signals, resets SIGPIPE and SIGXFSZ to their default
+# action in the child. SIGCHLD's default action, like ignoring it, leaves the
+# stub running. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ can
+# end the stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can end
+# it before its source ignores it if the test process does not ignore it.
 # Examples of a signal that ends it early, not a complete list: SIGKILL, and
 # SIGUSR1 when the test neither ignores nor blocks SIGUSR1. It first reads
 # its own end, in seconds, with float from the file own_end, which the check
@@ -460,10 +463,10 @@ OWN_END_SECONDS = 90
 # finds no reader of alive fails at once rather than block. On Linux, select
 # reports nothing for a FIFO read end opened while no writer has it open, so a
 # stub that opens lifeline after the test has closed it would wait at its
-# select until its own end. It therefore reads lifeline once first: a read
-# that returns, as a read does with end of file when no writer has the FIFO
-# open, rather than fail with BlockingIOError, finds no writer, and the stub
-# exits at once.
+# select until its own end. It therefore makes 1 read of lifeline first: a
+# read that returns, as a read does with end of file when no writer has the
+# FIFO open, rather than fail with BlockingIOError, finds no writer, and the
+# stub exits at once.
 #
 # The bounds this order gives, derived from the source below. Start-up
 # here and in the check means interpreter start-up and then the read of
@@ -937,16 +940,22 @@ class BoundsTest(unittest.TestCase):
         # sees the group only through alive and ends it by closing lifeline.
         # This reads the syntax tree of check_group_kill with the functions
         # it defines, end_of_file, BoundsTest.stub and GROUP_STUB, and
-        # asserts that GROUP_STUB makes exactly STUB_CALLS, in that order,
-        # the order its bounds rest on, and that no name, attribute or
-        # import in any of them is in SIGNAL_NAMES. It fails an edit that
-        # uses a signal function by one of those names there, such as
-        # os.kill(os.getpid(), 0) added to the check.
+        # asserts, in this order: that the test file has exactly 1 def
+        # statement for each of the names check_group_kill, end_of_file and
+        # stub; that GROUP_STUB makes exactly STUB_CALLS, in that order, the
+        # order its bounds rest on; and that no name, attribute or import in
+        # any of them is in SIGNAL_NAMES. It fails an edit that adds or
+        # removes a def statement for 1 of those 3 names, such as a subclass
+        # that overrides stub, and an edit that uses a signal function by 1
+        # of the names in SIGNAL_NAMES there, such as os.kill(os.getpid(), 0)
+        # added to the check.
         # Residual: the name scan misses every route to a signal other than
         # a name in SIGNAL_NAMES in the functions it reads. Such an edit
-        # passes this test unless it also changes the stub's calls, which
-        # the STUB_CALLS pin rejects, as it rejects
-        # os.__dict__["kill"](os.getppid(), 0) added to the stub. Passes of
+        # passes this test unless it also fails 1 of its other 2 assertions:
+        # it changes the stub's calls, which the STUB_CALLS pin rejects, as
+        # it rejects os.__dict__["kill"](os.getppid(), 0) added to the stub,
+        # or it adds or removes a def statement for check_group_kill,
+        # end_of_file or stub, which the first assertion rejects. Passes of
         # the name scan, examples, not a complete list: in the check,
         # getattr(os, "kill") with a literal name, getattr with a computed
         # name, such as getattr(os, "ki" + "ll"), os.__dict__["kill"],

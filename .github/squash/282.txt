@@ -33,22 +33,27 @@ a second FIFO, lifeline, whose only write end the test holds. The
 check's finally clause closes lifeline and reaps a child the client
 left unreaped if it ends within the 5 second reap grace, and the
 kernel closes lifeline when the test process ends in any other way.
-The stub reads lifeline once before it forks. On Linux, select reports
-nothing for a FIFO reader opened with no writer, and that read returns
-end of file, so a stub that starts after the release exits at once
-rather than wait out its 90 seconds. A stub process past that read
-ends at once on the release; one not yet there ends when it reaches
-it, after the rest of its start-up, which the test does not bound.
+The stub makes 1 read of lifeline before it forks. On Linux, select
+reports nothing for a FIFO reader opened with no writer, and that read
+returns end of file, so a stub that starts after the release exits at
+once rather than wait out its 90 seconds. A stub process past that
+read ends at once on the release; one not yet there ends when it
+reaches it, after the rest of its start-up, which the test does not
+bound.
 
 The stub's source ignores SIGTERM, SIGINT and SIGHUP, and Python
 ignores SIGPIPE and SIGXFSZ at start-up. The stub keeps every signal
 that the test thread that starts it blocks as blocked, and every
-signal other than SIGPIPE and SIGXFSZ that the test process ignores as
-ignored: the client's Popen, with its default restore_signals, resets
-SIGPIPE and SIGXFSZ to their default action before exec. So, unless
-the test thread blocks it, SIGPIPE or SIGXFSZ can end the stub before
-Python ignores it, and SIGTERM, SIGINT or SIGHUP can end it before its
-source ignores it if the test process does not ignore it.
+signal other than SIGCHLD, SIGPIPE and SIGXFSZ that the test process
+ignores as ignored. The client changes those 3 dispositions before
+exec: it resets SIGCHLD to its default in its own process, the test
+process, before it starts the child, and its Popen, with its default
+restore_signals, resets SIGPIPE and SIGXFSZ to their default action
+in the child. SIGCHLD's default action, like ignoring it, leaves the
+stub running. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ
+can end the stub before Python ignores it, and SIGTERM, SIGINT or
+SIGHUP can end it before its source ignores it if the test process
+does not ignore it.
 
 The stub's source is a constant, GROUP_STUB. The stub first reads its
 own end with float from a file, own_end, that the check writes with
@@ -70,12 +75,13 @@ Another runs it against a stub whose own end falls inside the check
 and asserts that it fails at the own-end assertion, another asserts
 that a stub started after the release exits at once, and another
 asserts that an end of file seen after its deadline is not taken. A
-tripwire test asserts that the stub makes its pinned calls in order
-and that no name in SIGNAL_NAMES, a list of example names through
-which Python code sends a signal, appears in the check, its helpers
-or the stub, so a direct os.kill there fails it. The group-kill test
-asserts nothing about the client's reap; its docstring names the 2
-tests that do.
+tripwire test asserts that the test file has exactly 1 def statement
+for each of check_group_kill, end_of_file and stub, that the stub
+makes its pinned calls in order, and that no name in SIGNAL_NAMES, a
+list of example names through which Python code sends a signal,
+appears in the check, its helpers or the stub, so a direct os.kill
+there fails it. The group-kill test asserts nothing about the client's
+reap; its docstring names the 2 tests that do.
 
 Unchanged from main: the 1 second timeout, the reason string, the
 real wait, kill and reap, and a 10 second window for the group to end
@@ -91,8 +97,10 @@ code of its own.
 Residual: the tripwire's name scan misses every route to a signal
 other than a name in SIGNAL_NAMES in the functions it reads, and such
 an edit passes the tripwire unless it also changes the stub's calls,
-which the pin rejects. Passes of the name scan, examples, not a
-complete list: in the check, getattr(os, "kill") with a literal name,
+which the pin rejects, or adds or removes a def statement for
+check_group_kill, end_of_file or stub, which its first assertion
+rejects. Passes of the name scan, examples, not a complete list: in
+the check, getattr(os, "kill") with a literal name,
 getattr with a computed name, such as getattr(os, "ki" + "ll"),
 os.__dict__["kill"], vars(os)["kill"] and a shell kill through
 os.system; a value a caller passes, such as the witness, which the
