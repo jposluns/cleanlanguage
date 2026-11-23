@@ -94,7 +94,12 @@ tools/test-orch-stage2-hooks.py:
   removes the record that it finds by the name of its folder, one
   that holds the record only as text or after an exit, one that
   begins with it but does not compile, one run without -I or by
-  another interpreter, and a timeout over ENUM_TIMEOUT; and that it
+  another interpreter, and a timeout over ENUM_TIMEOUT; that for each
+  of the interpreter, -I, -c and the program it refuses a value that
+  begins with, ends with or holds an accepted value, and a value that
+  an accepted value begins or ends with, such as a command joined
+  to -I, -X-I, an accepted program followed by a removal of the
+  record, and an accepted program without its record; and that it
   refuses each program-file form found so far, each with a recording
   file in place: a plain file, a relative file under the root, -u, --
   or - before the file, a directory, a .pyc name and a trailing slash.
@@ -178,19 +183,21 @@ cause. EnumeratorBounds fails when the check never reports, drops
 ENUM_MARGIN or ignores the number of starts, when the recorder names
 the file in another variable, when write_registry skips its check,
 checks the object that it is given rather than the text read back,
-takes any interpreter, does not compare argv[1] or argv[2], accepts
-any program that begins with the record, with or without the name
-check, or also accepts a recording program file, when the name check
-finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK, and when the
-failure with no running case drops its cause or takes the failed
-registration of a doctor refusal as its cause. The new doctor case
-fails when the doctor skips an argv element that is exactly -c. With
-a fixture enumerator that sleeps 70 s, from the same line as the 6 s
-delay, neither the present-marker case of DoctorCheckpointWrites nor
-the DoctorStandInRestore case ends through a test bound, on main or
-with this change; with this change and the earlier bounds, each does.
-With 64 busy processes and the enumerator timeout case pinned to 1
-CPU, the case is expected to end OK in each of 3 runs.
+takes any interpreter, does not compare argv[1] or argv[2], takes the
+interpreter, -I, -c or 1 of ENUM_PROGRAMS as a prefix, a suffix or a
+part of its argv element, or that element as a prefix, a suffix or a
+part of it, accepts any program that begins with the record, with or
+without the name check, or also accepts a recording program file, when
+the name check finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK,
+and when the failure with no running case drops its cause or takes the
+failed registration of a doctor refusal as its cause. The new doctor
+case fails when the doctor skips an argv element that is exactly -c.
+With a fixture enumerator that sleeps 70 s, from the same line as the
+6 s delay, neither the present-marker case of DoctorCheckpointWrites
+nor the DoctorStandInRestore case ends through a test bound, on main
+or with this change; with this change and the earlier bounds, each
+does. With 64 busy processes and the enumerator timeout case pinned to
+1 CPU, the case is expected to end OK in each of 3 runs.
 
 Residuals: a wider bound makes a load failure rarer, not impossible.
 An enumerator that hangs holds a test run for up to 60 s, a doctor or

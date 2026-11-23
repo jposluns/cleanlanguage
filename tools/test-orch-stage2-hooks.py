@@ -1351,11 +1351,13 @@ class EnumeratorBounds(Stage2Harness):
     as separate elements, whose program is not 1 of ENUM_PROGRAMS (one without the statements of
     ENUM_RUN_MARK, one that holds them only as text or after an exit, one that begins with them but
     does not compile, and one that begins with them and then removes the record or adds a start), or
-    whose timeout is over ENUM_TIMEOUT, and that it refuses every program-file form found so far, each
-    with a recording file in place. This suite no longer drives a program-file enumerator through the
-    hook: the hook passes the argv to subprocess.run unchanged (aiqt_hooks.py:22833), so what the hook
-    does with it does not depend on its form. What the check does not see is stated above
-    enumerator_bound_defect."""
+    whose timeout is over ENUM_TIMEOUT, that it compares the interpreter, -I, -c and the program each
+    exactly, so for each it refuses a value that begins with, ends with or holds an accepted value,
+    and a value that an accepted value begins or ends with, and that it refuses every program-file
+    form found so far, each with a recording file in place. This suite no longer drives a program-file
+    enumerator through the hook: the hook passes the argv to subprocess.run unchanged
+    (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
+    does not see is stated above enumerator_bound_defect."""
 
     # A child that runs the program that its operands name twice, and one that runs it once and exits 1.
     TWICE = ("import subprocess, sys\n"
@@ -1537,6 +1539,42 @@ class EnumeratorBounds(Stage2Harness):
                 ("a timeout over ENUM_TIMEOUT", fixture, ENUM_TIMEOUT + 1, "over ENUM_TIMEOUT"))
         rows += tuple(("the record followed by " + name, [sys.executable, "-I", "-c", program], ENUM_TIMEOUT,
                        self.REFUSED) for name, program in uncompiled.items())
+        # declared_enumerator_defect compares each of the interpreter, -I, -c and the program exactly. For
+        # each of the 4, these rows hold a value that begins with, ends with or holds an accepted value,
+        # and a value that an accepted value begins or ends with, so a check that took an accepted value
+        # as a prefix, a suffix or a part of the value, or the value as a prefix, a suffix or a part of
+        # an accepted value, accepts at least 1 of these rows.
+        first_line = ENUM_FIXTURE.split("\n", 1)[0] + "\n"
+        unmarked = ENUM_FIXTURE[len(ENUM_RUN_MARK):]
+        interpreter_name = os.path.basename(sys.executable)
+        self.assertTrue(os.path.isabs(sys.executable) and interpreter_name != sys.executable,
+                        "precondition: the interpreter path has a directory")
+        self.assertTrue(ENUM_FIXTURE.startswith(first_line) and first_line != ENUM_FIXTURE
+                        and not runs_enum_run_mark_first(first_line),
+                        "precondition: the first line is a part of the fixture without the record")
+        self.assertTrue(ENUM_FIXTURE.endswith(unmarked) and not runs_enum_run_mark_first(unmarked),
+                        "precondition: the rest is a part of the fixture without the record")
+        rest = fixture[2:]
+        loose = (
+            ("a path that begins with this interpreter's path", [sys.executable + "-other"] + fixture[1:]),
+            ("a relative path that ends with this interpreter's path", ["." + sys.executable] + fixture[1:]),
+            ("a path with which this interpreter's path begins", [sys.executable[:-1]] + fixture[1:]),
+            ("the name of this interpreter without its directory", [interpreter_name] + fixture[1:]),
+            ("a command joined to -I before -c and an accepted program",
+             [sys.executable, "-Icpass"] + rest),
+            ("an -X option whose value is -I, which leaves isolation off", [sys.executable, "-X-I"] + rest),
+            ("- in place of -I", [sys.executable, "-"] + rest),
+            ("I in place of -I", [sys.executable, "I"] + rest),
+            ("an -X option whose value is -c, in place of -c", fixture[:2] + ["-X-c"] + fixture[3:]),
+            ("- in place of -c", fixture[:2] + ["-"] + fixture[3:]),
+            ("c in place of -c", fixture[:2] + ["c"] + fixture[3:]),
+            ("an accepted program followed by a removal of the record",
+             fixture[:3] + [ENUM_FIXTURE + "os.remove(_runs)\n"] + fixture[4:]),
+            ("an exit followed by an accepted program",
+             fixture[:3] + ["import sys\nsys.exit(0)\n" + ENUM_FIXTURE] + fixture[4:]),
+            ("the first line of an accepted program alone", fixture[:3] + [first_line] + fixture[4:]),
+            ("an accepted program without its record", fixture[:3] + [unmarked] + fixture[4:]))
+        rows += tuple((name, argv, ENUM_TIMEOUT, self.REFUSED) for name, argv in loose)
         for name, argv, timeout, wanted in rows:
             with self.subTest(enumerator=name):
                 with self.assertRaisesRegex(self.failureException, wanted):
