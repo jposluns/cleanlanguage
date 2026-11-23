@@ -48,8 +48,8 @@ tools/test-orch-stage2-hooks.py:
   each a separate element, and when its timeout, as the hook reads
   it, is at most ENUM_TIMEOUT. ENUM_PROGRAMS holds ENUM_FIXTURE,
   WRITING_ENUM_FIXTURE and SLEEPING_ENUM_FIXTURE, the sleeping
-  enumerator of the enumerator timeout case, and the pin case of
-  EnumeratorBounds requires exactly those 3, by the sha256 of each.
+  enumerator of the enumerator timeout case, and the 2 pin cases of
+  EnumeratorBounds require exactly those 3, by the sha256 of each.
   Each begins with ENUM_RUN_MARK and compiles, and after the mark it
   names neither the record nor the environment and opens, removes or
   writes no path but its own operands. The program is the argv element
@@ -86,8 +86,10 @@ tools/test-orch-stage2-hooks.py:
   cause, also when it printed a doctor refusal as well; that each of
   ENUM_PROGRAMS begins with the record and names neither the record
   nor the environment after it, that each branch of those 2 checks
-  refuses a program of its own, and that the 2 fixture programs that
-  end each record exactly 1 start through the hook; that
+  refuses a program of its own, a row for each name and attribute
+  that program_leaves_record looks for, os.environ included, each
+  holding that member alone, and that the 2 fixture programs that end
+  each record exactly 1 start through the hook; that
   write_registry refuses a -c enumerator without the record, a tuple
   argv, a str subclass that json writes as -cpass, a joined -cpass or
   -Ic, -c before -I, another option in place of -I, an option between
@@ -113,18 +115,24 @@ tools/test-orch-stage2-hooks.py:
   declared_enumerator_defect in full, its timeout statements included,
   runs_enum_run_mark_first and program_leaves_record each have exactly
   the body that PINNED_CHECKS holds, compared as syntax trees, that
-  every Stage2Harness class resolves write_registry and fail to the
-  functions of Stage2Harness and unittest.TestCase, that the names
-  those bodies read keep their meaning, and that ENUM_RUN_MARK and the
-  3 programs of ENUM_PROGRAMS have the sha256 that the case holds, so
-  any edit to those bodies or to that set fails; and that
+  every Stage2Harness class resolves write_registry and fail, as class
+  attributes, to the functions of Stage2Harness and unittest.TestCase,
+  and that ENUM_RUN_MARK and the 3 programs of ENUM_PROGRAMS have the
+  sha256 that the case holds, as the test process holds them when the
+  case runs, so any edit to the text of those bodies or that set
+  fails; that the same holds in a new python3 -I process that reads
+  only the text of the file (PIN_PROGRAM, the fresh pin), since code
+  of the file can rebind those names at run time in ways that no check
+  in the test process sees, and that the file binds each name that
+  the path reads, and the attributes write_registry and fail, only at
+  its definition; and that
   write_registry refuses every near miss that near_misses generates
   from each element, 5,412 values on the test host: each character
   dropped, changed, case-swapped, made full-width or preceded by a
   space, the whole value case-changed or wrapped in whitespace, and
   each other path to this interpreter's file. The named values and the
-  near misses are finite and catch only the values they hold; the pin
-  is what requires the exact checks.
+  near misses are finite and catch only the values they hold; the 2
+  pins are what require the exact checks.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -215,20 +223,27 @@ name check, or also accepts a recording program file, when the name
 check finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK, and when
 the failure with no running case drops its cause or takes the failed
 registration of a doctor refusal as its cause. Each of those edits to
-the comparison of the argv also fails the pin and the near-miss case;
+the comparison of the argv also fails both pins and the near-miss case;
 a strip, case fold, resolution or dropped line feed made in
 PINNED_CHECKS as well still fails the near-miss case, and so does
 a write_registry that strips the first 3 argv elements before its
-check, which also fails the pin. EnumeratorBounds also fails, at the
-pin and at a named row, when the timeout statements accept up to 61
-or only whole numbers, when write_registry checks only an enumerator
-that has a timeout, when runs_enum_run_mark_first drops its compile
-call, and when program_leaves_record drops its test of strings or of
-the names _record, getenv and putenv, each also with the same edit
-made in PINNED_CHECKS; and at the pin alone when write_registry
-ignores a defect that names '-J' or ENUM_PROGRAMS gains a 4th
-program. The new doctor case fails when the doctor skips an argv
-element that is exactly -c.
+check, which also fails both pins. EnumeratorBounds also fails, at
+both pins and at a named row, when the timeout statements accept up to
+61 or only whole numbers, when write_registry checks only an
+enumerator that has a timeout, when runs_enum_run_mark_first drops its
+compile call, and when program_leaves_record drops its test of strings
+or of the names _record, getenv and putenv, each also with the same
+edit made in PINNED_CHECKS; and at both pins alone when write_registry
+ignores a defect that names '-J' or ENUM_PROGRAMS gains a 4th program.
+It fails at the fresh pin alone when the file replaces
+declared_enumerator_defect by assignment with a function of the same
+body that closes over another ENUM_PROGRAMS, binds write_registry on
+an instance, rebinds ENUM_PROGRAMS through globals() or a global
+statement, replaces the code of declared_enumerator_defect, or rebinds
+unittest.TestCase.fail, and at a named row when program_leaves_record
+drops environ from its attribute names, also in PINNED_CHECKS. The new
+doctor case fails when the doctor skips an argv element that is
+exactly -c.
 With a fixture enumerator that sleeps 70 s, from the same line as the
 6 s delay, neither the present-marker case of DoctorCheckpointWrites
 nor the DoctorStandInRestore case ends through a test bound, on main
@@ -260,11 +275,18 @@ stage-2 suite, where the hook runs the enumerator; the refusal runs no
 enumerator, a registry that the gate accepts never has -c at argv[2],
 and changing the doctor's operand model is product work outside this
 change. The fixture value 60 is safe only while the test registries
-are never gated. The pin of the checks does not see an edit made to
-the pin and to the code together, such as a write_registry that
-ignores a defect that names '-J' or a 4th program of ENUM_PROGRAMS
-with its sha256 added, or a change outside the file to a name that
-the pinned bodies read, and the named rows and the near-miss case
-refuse only the finite values that they hold. The new stamp test
-fails on a backward clock step during the run. The load check covers
-only the enumerator timeout case and CPU contention.
+are never gated. No check in the test process can hold the names that
+the pinned checks read, since code of the file can rebind them at run
+time; the fresh pin reads the text of the file in a new process, and
+does not see a binding that names its target only at run time (a built
+name, a variable passed to setattr, exec or eval of a built string, or
+a mapping built elsewhere), a store through another name bound to a
+check, native code, or a run-time edit of the fresh pin case itself,
+of what it starts or of how it reads the result. Neither pin sees an
+edit made to the pin and to the code together, such as a
+write_registry that ignores a defect that names '-J' or a 4th program
+of ENUM_PROGRAMS with its sha256 added, or a change outside the file
+to a name that the pinned bodies read, and the named rows and the
+near-miss case refuse only the finite values that they hold. The new
+stamp test fails on a backward clock step during the run. The load
+check covers only the enumerator timeout case and CPU contention.

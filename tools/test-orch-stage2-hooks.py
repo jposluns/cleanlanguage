@@ -1359,12 +1359,15 @@ class EnumeratorBounds(Stage2Harness):
     an accepted value, and a named value that an accepted value begins or ends with, that it refuses
     every program-file form found so far, each with a recording file in place, that write_registry,
     declared_enumerator_defect, runs_enum_run_mark_first and program_leaves_record each have exactly
-    the body of PINNED_CHECKS, that the names those bodies read keep their meaning, and that
-    ENUM_PROGRAMS is its 3 reviewed programs, by sha256, and that write_registry refuses every near
+    the body of PINNED_CHECKS, and that ENUM_PROGRAMS is its 3 reviewed programs, by sha256, both in
+    the test process and in a new python3 -I process that reads only the text of this file
+    (PIN_PROGRAM), which also requires that the file binds each name that those bodies read only at its
+    definition, and that write_registry refuses every near
     miss that near_misses generates for each element and every path alias of the interpreter. The
     named rows and the near misses are finite: each refuses the values it holds and shows nothing about
     any other value. The exact checks are required by the pin of PINNED_CHECKS, and what the pin does
-    not see is stated there. This suite no longer drives a program-file enumerator through the hook:
+    not see, among it a rebinding that names its target only at run time, is stated above
+    PIN_PROGRAM. This suite no longer drives a program-file enumerator through the hook:
     the hook passes the argv to subprocess.run unchanged
     (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
     does not see is stated above enumerator_bound_defect."""
@@ -1464,17 +1467,36 @@ class EnumeratorBounds(Stage2Harness):
         self.assertNotIn(self.SEARCHES, ENUM_PROGRAMS)
         # Each branch of the 2 checks refuses a program of its own: runs_enum_run_mark_first refuses
         # the record followed by a statement that does not compile, and program_leaves_record refuses
-        # the record followed by each other name and attribute that it looks for and by a string that
-        # holds ENUM_RUNS_VAR.
+        # the record followed by a program that holds exactly 1 of the names, 1 of the attributes or a
+        # string that holds ENUM_RUNS_VAR, a row for each member of each list. The lists are written
+        # here, not read from the check, so a member dropped from the check fails its row.
         for tail in ("return\n", "break\n", "from __future__ import annotations\n"):
             self.assertFalse(runs_enum_run_mark_first(ENUM_RUN_MARK + tail), tail)
-        for tail in ("_record.close()\n", "from os import environ\nenviron.clear()\n",
-                     "from os import getenv\ngetenv(\"HOME\")\n",
-                     "from os import putenv\nputenv(\"A\", \"1\")\n", "os.getenv(\"HOME\")\n",
-                     "os.putenv(\"A\", \"1\")\n", "_name = \"" + ENUM_RUNS_VAR + "\"\n"):
+        names = ("_runs", "_record", "environ", "getenv", "putenv")
+        attributes = ("environ", "getenv", "putenv")
+        rows = ((("name", "_runs"), "_runs.strip()\n"), (("name", "_record"), "_record.close()\n"),
+                (("name", "environ"), "from os import environ\nenviron.clear()\n"),
+                (("name", "getenv"), "from os import getenv\ngetenv(\"HOME\")\n"),
+                (("name", "putenv"), "from os import putenv\nputenv(\"A\", \"1\")\n"),
+                (("attribute", "environ"), "os.environ.clear()\n"),
+                (("attribute", "getenv"), "os.getenv(\"HOME\")\n"),
+                (("attribute", "putenv"), "os.putenv(\"A\", \"1\")\n"),
+                (("string", ENUM_RUNS_VAR), "_name = \"" + ENUM_RUNS_VAR + "\"\n"))
+        self.assertEqual({member for member, _tail in rows},
+                         {("name", name) for name in names} | {("attribute", name) for name in attributes}
+                         | {("string", ENUM_RUNS_VAR)}, "precondition: a row for each member")
+        for member, tail in rows:
+            nodes = list(ast.walk(ast.parse(tail)))
+            hits = ({("name", node.id) for node in nodes if isinstance(node, ast.Name) and node.id in names}
+                    | {("attribute", node.attr) for node in nodes
+                       if isinstance(node, ast.Attribute) and node.attr in attributes}
+                    | {("string", ENUM_RUNS_VAR) for node in nodes if isinstance(node, ast.Constant)
+                       and isinstance(node.value, str) and ENUM_RUNS_VAR in node.value})
+            self.assertEqual(hits, {member}, "precondition: the row holds only its own member")
             program = ENUM_RUN_MARK + tail
-            self.assertTrue(runs_enum_run_mark_first(program), program)
-            self.assertFalse(program_leaves_record(program), program)
+            with self.subTest(member=member):
+                self.assertTrue(runs_enum_run_mark_first(program), program)
+                self.assertFalse(program_leaves_record(program), program)
         marker = self._tmp / "enumerator-ran.txt"
         self.arm_lease()
         for argv in ([sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)],
@@ -1646,16 +1668,18 @@ class EnumeratorBounds(Stage2Harness):
     # syntax trees, so any edit to 1 of its statements, and any statement added or removed anywhere in
     # it, fails it, whatever values the edit would accept. It reads the function that each name holds
     # when the case runs, and requires that every Stage2Harness class of this file resolves
-    # write_registry and fail to the functions of Stage2Harness and unittest.TestCase. It also requires
-    # that each name that the bodies read and do not bind keeps its meaning: each module is the module
-    # itself, no global of this file shadows a builtin, ENUM_TIMEOUT and ENUM_RUNS_VAR have the values
-    # below, and ENUM_RUN_MARK and each of the 3 programs of ENUM_PROGRAMS, in order, have the sha256 of
-    # their UTF-8 text below, so a program added, removed, reordered or changed fails it. It does not
-    # see an edit made to the pin and to the code together, or a change outside this file to a name
-    # that the bodies read (the builtins module, an attribute of the ast or json module, or
-    # sys.executable rebound while the suite runs); test_write_registry_refuses_every_generated_near_miss
-    # and the named rows drive write_registry, so they see such a change only when it accepts a value
-    # that they hold.
+    # write_registry and fail, as class attributes, to the functions of Stage2Harness and
+    # unittest.TestCase. It also requires, as the test process holds them when the case runs, that each
+    # module that the bodies read is the module itself, that no global of this file shadows a builtin,
+    # that ENUM_TIMEOUT and ENUM_RUNS_VAR have the values below, and that ENUM_RUN_MARK and each of the
+    # 3 programs of ENUM_PROGRAMS, in order, have the sha256 of their UTF-8 text below, so a program
+    # added, removed, reordered or changed in the text fails it. Code of this file can rebind those
+    # names at run time in ways that this case does not see; PIN_PROGRAM below checks the text in a new
+    # process, and states what neither case sees. Neither sees an edit made to the pin and to the code
+    # together, or a change outside this file to a name that the bodies read (the builtins module, an
+    # attribute of the ast or json module, or sys.executable rebound while the suite runs);
+    # test_write_registry_refuses_every_generated_near_miss and the named rows drive write_registry, so
+    # they see such a change only when it accepts a value that they hold.
     PINNED_CHECKS = (
         ("write_registry", "self, obj", '''
 text = json.dumps(obj)
@@ -1764,6 +1788,205 @@ return True
                         "ENUM_PROGRAMS is not a tuple of str")
         self.assertEqual(tuple(hashlib.sha256(program.encode("utf-8")).hexdigest() for program in programs),
                          self.ENUM_PROGRAMS_SHA256, "ENUM_PROGRAMS is not its 3 reviewed programs")
+
+    # The pin above runs in the test process, where code of this file can rebind at run time any name
+    # that the pin or the checks read, so no check in this process can hold them: a check replaced by a
+    # function of the same source that closes over another ENUM_PROGRAMS, a code object given other
+    # names, a global rebound for the cases of 1 class, write_registry bound on an instance, or
+    # unittest.TestCase.fail rebound each passes it. PIN_PROGRAM checks the pin again in a new python3 -I
+    # process that reads only the text of this file, so no state of the test process reaches what it
+    # computes. It requires the bodies of PINNED_CHECKS as written; it runs the module-level assignments
+    # of ENUM_RUNS_VAR, ENUM_RUN_MARK, the 3 programs, ENUM_PROGRAMS and ENUM_TIMEOUT alone, with no
+    # builtins, and requires the values and sha256 of the pin; it compiles the 3 module-level checks
+    # with those values alone, and requires that they accept each program and refuse a 4th program and
+    # a timeout over ENUM_TIMEOUT; and it requires that the file binds each name that the path reads
+    # (the 4 checks, those values, the modules ast, json, sys and unittest, the builtins of
+    # PINNED_BUILTINS and Stage2Harness) only at its 1 definition, and binds the attributes
+    # write_registry and fail nowhere else. A binding here is a statement that binds the name (an
+    # assignment, del, def, class, import, global or nonlocal, a parameter, a for, with, except or match
+    # target), a store of an attribute of that name, a store of the code, globals, closure, defaults or
+    # dictionary of 1 of the checks, a store of any attribute of those modules, a subscript store, a
+    # setattr, a delattr, a __setattr__ or a __delattr__ that names it as a string constant, or an
+    # update, setdefault or pop of a mapping that names it as a keyword or a constant key. It does not
+    # see a binding that names the name only at run time (a name built from parts, a variable passed to
+    # setattr, exec or eval of a built string, a mapping built elsewhere), a store through an alias of
+    # a check (another name bound to the function), native code, an edit made to PIN_PROGRAM or to the
+    # pin together with the code, or a run-time edit of this case itself, of what it starts or of how
+    # it reads the result, since that runs in the test process.
+    PIN_PROGRAM = r'''
+import ast, hashlib, sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    tree = ast.parse(fh.read(), path)
+found = []
+
+
+def finish():
+    for text in found:
+        print("pin: " + text)
+    print("pin: {} defect(s)".format(len(found)))
+    sys.exit(1 if found else 0)
+
+
+def single(body, kind, name):
+    hits = [node for node in body if isinstance(node, kind) and (
+        node.name == name if kind is not ast.Assign else len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name)]
+    if len(hits) != 1:
+        found.append("{} has {} definition(s) at its level".format(name, len(hits)))
+        return None
+    return hits[0]
+
+
+harness = single(tree.body, ast.ClassDef, "Stage2Harness")
+bounds = single(tree.body, ast.ClassDef, "EnumeratorBounds")
+if harness is None or bounds is None:
+    finish()
+pin = {}
+for name in ("PINNED_CHECKS", "PINNED_MODULES", "PINNED_BUILTINS", "PINNED_VALUES", "ENUM_RUN_MARK_SHA256",
+             "ENUM_PROGRAMS_SHA256"):
+    node = single(bounds.body, ast.Assign, name)
+    pin[name] = None if node is None else ast.literal_eval(node.value)
+if found:
+    finish()
+CHECKS = [name for name, _parameters, _body in pin["PINNED_CHECKS"]]
+VALUES = ["ENUM_RUNS_VAR", "ENUM_RUN_MARK", "ENUM_FIXTURE", "WRITING_ENUM_FIXTURE", "SLEEPING_ENUM_FIXTURE",
+          "ENUM_PROGRAMS", "ENUM_TIMEOUT"]
+MODULES = list(pin["PINNED_MODULES"]) + ["unittest"]
+NAMES = set(CHECKS) | set(VALUES) | set(MODULES) | set(pin["PINNED_BUILTINS"]) | {"Stage2Harness", "fail"}
+ATTRIBUTES = {"write_registry", "fail"}
+FUNCTION_ATTRIBUTES = {"__code__", "__globals__", "__closure__", "__defaults__", "__kwdefaults__",
+                       "__dict__", "__wrapped__"}
+definitions = {name: single(harness.body if name == "write_registry" else tree.body, ast.FunctionDef, name)
+               for name in CHECKS}
+values = {name: single(tree.body, ast.Assign, name) for name in VALUES}
+imports = {}
+for node in tree.body:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.asname is None and alias.name in MODULES:
+                imports.setdefault(alias.name, []).append(alias)
+for module in MODULES:
+    if len(imports.get(module, [])) != 1:
+        found.append("{} has {} import(s) at module level".format(module, len(imports.get(module, []))))
+allowed = {id(node) for node in definitions.values() if node is not None}
+allowed |= {id(node.targets[0]) for node in values.values() if node is not None}
+allowed |= {id(alias) for aliases in imports.values() for alias in aliases} | {id(harness)}
+
+# The bodies of PINNED_CHECKS, as the in-process pin compares them.
+for name, parameters, body in pin["PINNED_CHECKS"]:
+    node = definitions[name]
+    if node is None:
+        continue
+    if node.decorator_list:
+        found.append("{} is decorated".format(name))
+    if ast.dump(node.args) != ast.dump(ast.parse("def f({}):\n    pass\n".format(parameters)).body[0].args):
+        found.append("{} has other parameters".format(name))
+    if [ast.dump(statement) for statement in node.body[1:]] != [ast.dump(statement)
+                                                                 for statement in ast.parse(body).body]:
+        found.append("{} is not as PINNED_CHECKS holds it".format(name))
+
+# Each binding of a name or attribute that the path reads, other than its 1 definition.
+def where(node, text):
+    found.append("line {}: {}".format(getattr(node, "lineno", "?"), text))
+
+
+def checked(node):
+    return (isinstance(node, ast.Name) and node.id in CHECKS) or (
+        isinstance(node, ast.Attribute) and node.attr in ATTRIBUTES)
+
+
+def constant(node):
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+binders = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar)
+type_parameters = tuple(getattr(ast, kind) for kind in ("TypeVar", "ParamSpec", "TypeVarTuple")
+                        if hasattr(ast, kind))
+for node in ast.walk(tree):
+    if id(node) in allowed:
+        continue
+    if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) and node.id in NAMES:
+        where(node, "binds " + node.id)
+    elif isinstance(node, binders + type_parameters) and getattr(node, "name", None) in NAMES:
+        where(node, "binds " + node.name)
+    elif isinstance(node, ast.MatchMapping) and node.rest in NAMES:
+        where(node, "binds " + node.rest)
+    elif isinstance(node, ast.arg) and node.arg in NAMES:
+        where(node, "binds the parameter " + node.arg)
+    elif isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) in NAMES:
+        where(node, "imports " + (node.asname or node.name))
+    elif isinstance(node, (ast.Global, ast.Nonlocal)) and set(node.names) & NAMES:
+        where(node, "declares " + ", ".join(sorted(set(node.names) & NAMES)))
+    elif isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load) and (
+            node.attr in ATTRIBUTES or (node.attr in FUNCTION_ATTRIBUTES and checked(node.value))
+            or (isinstance(node.value, ast.Name) and node.value.id in MODULES)):
+        where(node, "stores the attribute " + node.attr)
+    elif isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load) and (
+            constant(node.slice) in NAMES | ATTRIBUTES):
+        where(node, "stores the key " + constant(node.slice))
+    elif isinstance(node, ast.Call):
+        callee = node.func.id if isinstance(node.func, ast.Name) else (
+            node.func.attr if isinstance(node.func, ast.Attribute) else None)
+        texts = [constant(argument) for argument in node.args[:2]]
+        if callee in ("setattr", "delattr", "__setattr__", "__delattr__") and (
+                set(texts) & (NAMES | ATTRIBUTES) or (set(texts) & FUNCTION_ATTRIBUTES
+                                                      and any(checked(a) for a in node.args[:2]))):
+            where(node, "calls {} naming {}".format(callee, ", ".join(sorted(
+                set(texts) & (NAMES | ATTRIBUTES | FUNCTION_ATTRIBUTES)))))
+        elif callee in ("update", "setdefault", "pop", "__setitem__", "__delitem__"):
+            keys = {keyword.arg for keyword in node.keywords} | set(texts[:1])
+            for argument in node.args[:1]:
+                if isinstance(argument, ast.Dict):
+                    keys |= {constant(key) for key in argument.keys if key is not None}
+            if keys & (NAMES | ATTRIBUTES):
+                where(node, "calls {} naming {}".format(
+                    callee, ", ".join(sorted(keys & (NAMES | ATTRIBUTES)))))
+
+# The values, run alone with no builtins, and the pinned checks, compiled with those values alone.
+namespace = {"__builtins__": {}}
+try:
+    for name in VALUES:
+        if values[name] is not None:
+            exec(compile(ast.Module(body=[values[name]], type_ignores=[]), path, "exec", dont_inherit=True),
+                 namespace)
+except Exception as exc:
+    found.append("the values do not run alone: {!r}".format(exc))
+    finish()
+for name, value in pin["PINNED_VALUES"]:
+    if type(namespace.get(name)) is not type(value) or namespace.get(name) != value:
+        found.append("{} is not as pinned".format(name))
+mark, programs = namespace.get("ENUM_RUN_MARK"), namespace.get("ENUM_PROGRAMS")
+if type(mark) is not str or hashlib.sha256(mark.encode("utf-8")).hexdigest() != pin["ENUM_RUN_MARK_SHA256"]:
+    found.append("ENUM_RUN_MARK is not as pinned")
+if type(programs) is not tuple or not all(type(program) is str for program in programs) or tuple(
+        hashlib.sha256(program.encode("utf-8")).hexdigest()
+        for program in programs) != pin["ENUM_PROGRAMS_SHA256"]:
+    found.append("ENUM_PROGRAMS is not its 3 reviewed programs")
+if found:
+    finish()
+run = {name: namespace[name] for name in VALUES}
+run.update({module: __import__(module) for module in pin["PINNED_MODULES"]})
+module = ast.Module(body=[definitions[name] for name in CHECKS if name != "write_registry"], type_ignores=[])
+exec(compile(module, path, "exec", dont_inherit=True), run)
+for program in programs:
+    argv = [sys.executable, "-I", "-c", program]
+    if not (run["runs_enum_run_mark_first"](program) and run["program_leaves_record"](program)
+            and run["declared_enumerator_defect"]({"argv": argv, "timeout": run["ENUM_TIMEOUT"]}) is None):
+        found.append("a program of ENUM_PROGRAMS is refused")
+    if run["declared_enumerator_defect"]({"argv": argv, "timeout": run["ENUM_TIMEOUT"] + 1}) is None:
+        found.append("a timeout over ENUM_TIMEOUT is accepted")
+if run["declared_enumerator_defect"]({"argv": [sys.executable, "-I", "-c", programs[0] + "pass\n"]}) is None:
+    found.append("a 4th program is accepted")
+finish()
+'''
+
+    def test_the_pin_holds_in_a_fresh_interpreter(self):
+        result = run_doctor_recorded(self, [sys.executable, "-I", "-c", self.PIN_PROGRAM,
+                                            str(Path(__file__).resolve())],
+                                     capture_output=True, text=True, timeout=RUN_TIMEOUT)
+        self.assertEqual((result.returncode, result.stdout), (0, "pin: 0 defect(s)\n"), result.stderr)
 
     @staticmethod
     def near_misses(value):
