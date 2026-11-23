@@ -274,11 +274,14 @@ OUTPUT_KINDS once, and the read routes name each of the 3 reads of READS. The re
 are those that its branch of outcome's try gives, standard input for the branch taken on "-" and
 a path and the default path for the other, and its driver names each of those reads as an item
 of READS. Every run that the test makes through launch() fails on any byte on standard error.
-The pin shows only that the check's code is the code last reviewed against the registries:
-whether each registered case would fail on a change of meaning at its site, every input that no
-case writes, and the environments that the test does not create rest on review and on mutants
-run by hand, not on any assertion of this test. The code does not bound counts or line numbers,
-and the test holds their values only as far as the cases above write them.
+The CODE_SHA256 pin shows only that the sha256 of the syntax tree that the check's bytes parse
+to, without its docstrings and the sha256 values of PARAGRAPHS, unparsed, equals CODE_SHA256. An
+edit that leaves that unparsed tree as it is keeps the digest, so the pin does not show that the
+check's bytes are those last reviewed against the registries. Whether each registered case would
+fail on a change of meaning at its site, every input that no case writes, and the environments
+that the test does not create rest on review and on mutants run by hand, not on any assertion of
+this test. The code does not bound counts or line numbers, and the test holds their values only
+as far as the cases above write them.
 test_each_kind_of_output_names_each_kind_of_name is a
 coverage counter of the cross product of OUTPUT_KINDS and NAME_KINDS: for "-" on standard input,
 and for SPACED_NAME and UNDECODED_NAME through a path and through the default path, it compares

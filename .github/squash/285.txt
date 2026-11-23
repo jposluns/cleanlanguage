@@ -76,7 +76,13 @@ docstring of code_form() name the examples above as examples, and the
 comment on CODE_SHA256 points to the docstring of code_form() for
 them. The comment of the registry case says that unparsing leaves out
 those positions and that an edit that keeps the unparsed tree keeps
-the digest. The docstring of code_form() names the docstrings that it
+the digest. The same paragraph of the squash message of pull request
+276 says that the pin shows only that the check's code is the code
+last reviewed against the registries, and the module docstring said
+so too. The module docstring now says that the pin shows only that
+the sha256 of that unparsed tree equals CODE_SHA256, and so not that
+the check's bytes are those last reviewed against the registries.
+The docstring of code_form() names the docstrings that it
 removes as those of a module, a function, an async function and a
 class, and says that the only values that it makes PLACEHOLDER are
 string constants of 64 lowercase hexadecimal digits, each the third
