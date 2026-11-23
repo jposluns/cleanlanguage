@@ -3129,9 +3129,12 @@ def check_disclosure_states(failures: list[str]) -> int:
     in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
     D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
-    follow the entries, and a page with no D-4 heading, among others. A stand-in reader checks that the reading's
-    ShortCommentRefused becomes a failure, and that any other exception from the reader, such as a ValueError, passes
-    out of this function instead of becoming a case result."""
+    follow the entries, and a page with no D-4 heading, among others. d4_failures() catches only the reading's
+    ShortCommentRefused and makes it a failure, so any other exception from the reader, such as a ValueError, passes out
+    of d4_failures(), and so out of this function, instead of becoming a case result. A stand-in reader case pins the
+    catch in d4_failures(): the stand-in's ShortCommentRefused must become a failure, and its ValueError must pass out
+    of d4_failures() unchanged. That case catches the ValueError itself, so it does not check that this function lets
+    such an exception pass."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
