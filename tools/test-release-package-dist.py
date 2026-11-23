@@ -2463,6 +2463,58 @@ class TraceReaderTests(unittest.TestCase):
         """path as strace -xx gives a string: each byte as a hex escape."""
         return '"%s"' % "".join("\\x%02x" % b for b in os.fsencode(path))
 
+    # The arguments of a call of each name of REMOVING_CALLS, by their names
+    # in the manual pages of the calls, and the value that the test gives
+    # each argument that is neither a path nor a descriptor. The test
+    # derives from these, and not from REMOVING_CALLS, which a mutant of the
+    # reader may change, each path of each call and the descriptor that it
+    # is read against, by the descriptor rule: a path is an argument whose
+    # name holds "path", and it is read against the argument just before
+    # it when that argument's name ends in "dirfd", and otherwise against
+    # the folder of its process.
+    SIGNATURES = {"unlink": ("pathname",), "rmdir": ("pathname",), "unlinkat": ("dirfd", "pathname", "flags"),
+                  "rename": ("oldpath", "newpath"), "renameat": ("olddirfd", "oldpath", "newdirfd", "newpath"),
+                  "renameat2": ("olddirfd", "oldpath", "newdirfd", "newpath", "flags")}
+    FLAGS = {"unlinkat": "0", "renameat2": "RENAME_NOREPLACE"}
+    # The ordinal of each path of a call, by its place among the paths.
+    PATH_ORDINALS = ("first", "second")
+
+    @classmethod
+    def removing_paths(cls, name: str) -> list:
+        """(descriptor, position) for each path of a call of name, in
+        order, as SIGNATURES and the descriptor rule give them; descriptor
+        is None for a path that is read against the folder of its
+        process."""
+        arguments = cls.SIGNATURES[name]
+        return [(index - 1 if index and arguments[index - 1].endswith("dirfd") else None, index)
+                for index, argument in enumerate(arguments) if "path" in argument]
+
+    def removing_call(self, name: str, given: list) -> str:
+        """The start of a call of name, to which a trace adds its end, in
+        which the paths of removing_paths take, in order, the (token, path)
+        pairs of given: token is the text of the descriptor argument, or
+        None for a path with no descriptor, and path is the path, which the
+        call gives in hex escapes. Each other argument takes its value in
+        FLAGS."""
+        arguments = {}
+        for (descriptor, position), (token, path) in zip(self.removing_paths(name), given, strict=True):
+            arguments[position] = self.hexed(path)
+            if descriptor is not None:
+                arguments[descriptor] = token
+        return "%s(%s" % (name, ", ".join(arguments.get(index, self.FLAGS.get(name))
+                                           for index in range(len(self.SIGNATURES[name]))))
+
+    @staticmethod
+    def removal_coordinates(forms) -> set:
+        """Each (name, index, key) for the path at index of each name of
+        REMOVING_CALLS and each key that forms, given whether
+        REMOVING_CALLS reads that path against a descriptor, gives for it.
+        The coverage subtests compare these with the coordinates of the
+        traces that they hold, so that a name, path or descriptor form of
+        REMOVING_CALLS with no trace fails them."""
+        return {(name, index, key) for name, paths in REMOVING_CALLS.items()
+                for index, (descriptor, _) in enumerate(paths) for key in forms(descriptor is not None)}
+
     def removals(self, *lines: str) -> tuple:
         """traced_removals of a trace that holds lines, whose first process
         starts in /clone."""
@@ -2570,7 +2622,17 @@ class TraceReaderTests(unittest.TestCase):
         relative path after it enters a folder by a chdir or fchdir whose
         result is 0, and against a descriptor, other than AT_FDCWD, whose
         path strace -y gives as absolute and not as that of a removed
-        folder."""
+        folder. At each path of a call of each name of REMOVING_CALLS, a
+        relative path is read against the folder that its own descriptor
+        names, against the folder of its process for AT_FDCWD, and against
+        that folder where the path takes no descriptor, while each other
+        path of the call is read by the same rule, in the first process
+        after a chdir and in a process that it then made, and, against its
+        own descriptor, in a process with no maker. The test derives each
+        path, and the descriptor that it is read against, from SIGNATURES
+        by the descriptor rule, not from REMOVING_CALLS, and a subtest
+        fails if a name, a path or a descriptor form that REMOVING_CALLS
+        gives has no such trace."""
         unlink = "%d   unlink(" + self.hexed("x") + ") = 0"
         chdir = "100   chdir(%s) = 0" % self.hexed("sub")
         traces = {
@@ -2633,6 +2695,54 @@ class TraceReaderTests(unittest.TestCase):
                                        "102   unlink(%s) = 0" % self.hexed("/clone/y"),
                                        "103   unlink(%s) = 0" % self.hexed("/clone/z"))
             self.assertEqual([removal[2] for removal in removed], ["/clone/y", "/clone/z"])
+        # At each path of a call of each name of REMOVING_CALLS, as
+        # removing_paths gives it, a relative path against its own
+        # descriptor, against AT_FDCWD or, where the path takes no
+        # descriptor, with none, while each other path of the call is a
+        # relative path against its own descriptor, or with none where it
+        # takes none; in process 100 after it enters /clone/sub by chdir and
+        # in a child that it then makes, and, against its own descriptor, in
+        # a process with no maker, where no other path of the call needs the
+        # folder of its process. Each descriptor names a folder of its own,
+        # and AT_FDCWD is given as AT_FDCWD</clone>, not the folder of its
+        # process, so that a path read against any folder but the one that
+        # the rule gives gives another result.
+        processes = {"the first process": ([chdir], 100), "a process that a call made": ([chdir, self.FORK], 101),
+                     "a process with no maker": (["100   fork() = ?"], 101)}
+        held = set()
+        for name in self.SIGNATURES:
+            paths = self.removing_paths(name)
+            for index, (descriptor, _) in enumerate(paths):
+                for form in (("against its own descriptor", "against AT_FDCWD") if descriptor is not None
+                             else ("with no descriptor",)):
+                    for process, (before, pid) in processes.items():
+                        given, expected = [], []
+                        for other, (other_descriptor, position) in enumerate(paths):
+                            path = "p%d" % position
+                            if other_descriptor is not None and (other != index
+                                                                 or form == "against its own descriptor"):
+                                folder = "/clone/fd%d" % (3 + other_descriptor)
+                                given.append(("%d<%s>" % (3 + other_descriptor, folder), path))
+                            else:
+                                folder = None if process == "a process with no maker" else "/clone/sub"
+                                given.append((None if other_descriptor is None else "AT_FDCWD</clone>", path))
+                            expected.append(None if folder is None else (pid, name, folder + "/" + path))
+                        if None in expected:
+                            continue
+                        held.add((name, index, (form, process)))
+                        with self.subTest("a relative path %s as the %s path of %s, in %s"
+                                          % (form, self.PATH_ORDINALS[index], name, process)):
+                            removed, _ = self.removals(*before, "%d   %s) = 0" % (pid, self.removing_call(name, given)))
+                            self.assertEqual(removed, expected)
+        wanted = self.removal_coordinates(lambda has_descriptor: [
+            (form, process)
+            for form in (("against its own descriptor", "against AT_FDCWD") if has_descriptor
+                         else ("with no descriptor",))
+            for process in processes if process != "a process with no maker" or form == "against its own descriptor"])
+        # wanted - held is empty when held has a trace for each coordinate
+        # of REMOVING_CALLS; held may hold more.
+        with self.subTest("a trace for each name of REMOVING_CALLS, each of its paths and each form of its descriptor"):
+            self.assertEqual(sorted(wanted - held), [])
 
     def test_trace_refuses_what_it_cannot_read(self):
         """Each trace below ends the case. The labels name the condition of
@@ -2664,11 +2774,16 @@ class TraceReaderTests(unittest.TestCase):
         the error that names that path, and 1 against a descriptor with
         no path, with a relative path or with that of a removed folder
         ends it, with the error that names that descriptor. So does such
-        a path in a call of each name of REMOVING_CALLS, with the result
-        0 or in each form of MADE: with no descriptor or against AT_FDCWD
-        in a process with no maker, and against each such descriptor in
-        the first process, in a process that a call made and in a
-        process with no maker. A relative chdir whose result is 0 in a
+        a path at each path of a call of each name of REMOVING_CALLS, with
+        the result 0 or in each form of MADE, each other path of the call
+        absolute: with no descriptor or against AT_FDCWD in a process with
+        no maker, and, where the path takes a descriptor, against each
+        such descriptor in the first process, in a process that a call
+        made and in a process with no maker. The test derives each path,
+        and the descriptor that it is read against, from SIGNATURES by the
+        descriptor rule, not from REMOVING_CALLS, and a subtest fails if a
+        name, a path or a descriptor form that REMOVING_CALLS gives has no
+        such pin. A relative chdir whose result is 0 in a
         process with no maker ends the case with the error that names
         that path. A process with no maker ends the case, with the error
         that names it, after a call of each name of CUTTERS whose result
@@ -2831,36 +2946,53 @@ class TraceReaderTests(unittest.TestCase):
             pinned["a relative path against a descriptor with %s in a process with no maker" % label] = (
                 ("100   fork() = ?", "101   unlinkat(%s, %s, 0) = 0" % (token, self.hexed("x"))),
                 "the trace gives the descriptor %r, with no path that the test can use" % token)
-        # The start of a call of each name of REMOVING_CALLS whose first path
-        # is the relative path x, with {token} in place of its descriptor
-        # where it takes 1; the lines before a call of each kind of process,
-        # and its process id; and the descriptors whose path strace -y does
-        # not give, gives as relative or gives as that of a removed folder.
-        x, y = self.hexed("x"), self.hexed("/clone/y")
-        removing = {"unlink": "unlink(%s" % x, "rmdir": "rmdir(%s" % x, "rename": "rename(%s, %s" % (x, y),
-                    "unlinkat": "unlinkat({token}, %s, 0" % x,
-                    "renameat": "renameat({token}, %s, AT_FDCWD</clone>, %s" % (x, y),
-                    "renameat2": "renameat2({token}, %s, AT_FDCWD</clone>, %s, RENAME_NOREPLACE" % (x, y)}
+        # For each path of a call of each name of REMOVING_CALLS, as
+        # removing_paths gives it, the relative path x at that path, with no
+        # descriptor or against AT_FDCWD in a process with no maker, and,
+        # where the path takes a descriptor, against each descriptor whose
+        # path strace -y does not give, gives as relative or gives as that
+        # of a removed folder, in each kind of process; each other path of
+        # the call is the absolute path /clone/y, against AT_FDCWD</clone>
+        # where it takes a descriptor. The label of a pin at the first path
+        # names no path. held records the coordinates of the pins, which a
+        # subtest below compares with those of REMOVING_CALLS.
+        y = self.hexed("/clone/y")
         processes = {"the first process": ([], 100), "a process that a call made": ([self.FORK], 101),
                      "a process with no maker": (["100   fork() = ?"], 101)}
         descriptors = {"no path": "3", "a relative path": "3<gone>",
                        "the path of a removed folder": "3</clone/gone (deleted)>"}
-        for name, start in removing.items():
-            cases = [("with no descriptor" if "{token}" not in start else "against AT_FDCWD", "AT_FDCWD</clone/sub>",
-                      "a process with no maker", relative)]
-            if "{token}" in start:
-                cases += [("against a descriptor with %s" % label, token, process,
-                           "the trace gives the descriptor %r, with no path that the test can use" % token)
-                          for label, token in descriptors.items() for process in processes]
-            for where, token, process, error in cases:
-                before, pid = processes[process]
-                call = start.format(token=token)
-                for result in ("the result 0", *self.MADE):
-                    lines = (["%d   %s) = 0" % (pid, call)] if result == "the result 0"
-                             else self.written(result, name, call, pid=pid))
-                    pinned["a relative path %s in %s %s, in %s" % (
-                        where, name, "with the result 0" if result == "the result 0" else "in the form " + result,
-                        process)] = ([*before, *lines], error)
+        results = ("the result 0", *self.MADE)
+        held = set()
+        for name in self.SIGNATURES:
+            paths = self.removing_paths(name)
+            for index, (descriptor, _) in enumerate(paths):
+                cases = [("with no descriptor" if descriptor is None else "against AT_FDCWD", "AT_FDCWD</clone/sub>",
+                          "a process with no maker", relative)]
+                if descriptor is not None:
+                    cases += [("against a descriptor with %s" % label, token, process,
+                               "the trace gives the descriptor %r, with no path that the test can use" % token)
+                              for label, token in descriptors.items() for process in processes]
+                for where, token, process, error in cases:
+                    before, pid = processes[process]
+                    call = self.removing_call(name, [
+                        (token if descriptor is not None else None, "x") if other == index
+                        else (None if other_descriptor is None else "AT_FDCWD</clone>", "/clone/y")
+                        for other, (other_descriptor, _) in enumerate(paths)])
+                    place = "in %s" % name if index == 0 else "as the %s path of %s" % (self.PATH_ORDINALS[index], name)
+                    for result in results:
+                        lines = (["%d   %s) = 0" % (pid, call)] if result == "the result 0"
+                                 else self.written(result, name, call, pid=pid))
+                        pinned["a relative path %s %s %s, in %s" % (
+                            where, place, "with the result 0" if result == "the result 0" else "in the form " + result,
+                            process)] = ([*before, *lines], error)
+                        held.add((name, index, (where, process, result)))
+        wanted = self.removal_coordinates(lambda has_descriptor: [
+            (where, process, result)
+            for where, process in [("against AT_FDCWD" if has_descriptor else "with no descriptor",
+                                    "a process with no maker"),
+                                   *(("against a descriptor with %s" % label, process)
+                                     for label in (descriptors if has_descriptor else ()) for process in processes)]
+            for result in results])
         pinned["a relative chdir with the result 0 in a process with no maker"] = (
             ("100   fork() = ?", "101   chdir(%s) = 0" % self.hexed("sub")), relative.replace("'x'", "'sub'"))
         for name, start in self.CUTTERS.items():
@@ -2909,6 +3041,8 @@ class TraceReaderTests(unittest.TestCase):
         with self.subTest("a rename with 1 argument, which fits no form that the reader takes"):
             with self.assertRaises(IndexError):
                 self.removals("100   rename(%s) = 0" % self.hexed("x"))
+        with self.subTest("a pin for each name of REMOVING_CALLS, each of its paths and each form of its descriptor"):
+            self.assertEqual(sorted(wanted - held), [])
 
     def test_trace_admits_1_process_with_no_maker_for_each_call_cut_short(self):
         """Each call of clone, clone3, fork or vfork whose result is ? or

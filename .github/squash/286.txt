@@ -81,25 +81,34 @@ unchanged.
   result is 0, before a chdir or fchdir whose result is 0 gives that
   process a folder; and 1 of any process, in such a removal, against
   a descriptor whose path strace -y does not give, gives as relative
-  or gives as that of a removed folder. Subtests hold both, with the
-  result 0 and in each of the 10 forms: the first for unlink, rmdir
-  and rename and for unlinkat, renameat and renameat2 with AT_FDCWD,
-  and the second for the last 3 in the first process, in a process
-  that a call made and in a process with no maker; and they hold the
-  chdir. Another ends the case at a rename with 1 argument with an
-  IndexError, the error that the module docstring gives as an
-  example of another error. The module docstring states the rule
-  of the new test and points to its docstring, which states the
-  traces that it checks. The module docstring and the docstring of
-  the folder test state that a relative path is read against the
-  folder that its descriptor names, but against the folder of its
-  process for AT_FDCWD.
+  or gives as that of a removed folder. Subtests hold both at each
+  path of each removal, both paths of rename, renameat and renameat2
+  among them, with the result 0 and in each of the 10 forms: the
+  first at each path with no descriptor or against AT_FDCWD, and the
+  second at each path of unlinkat, renameat and renameat2 in the
+  first process, in a process that a call made and in a process
+  with no maker; and they hold the chdir. Another ends the case at a
+  rename with 1 argument with an IndexError, the error that the
+  module docstring gives as an example of another error. The module
+  docstring states the rule of the new test and points to its
+  docstring, which states the traces that it checks. The module
+  docstring and the docstring of the folder test state that a
+  relative path is read against the folder that its descriptor
+  names, but against the folder of its process for AT_FDCWD, and
+  subtests of the folder test hold this at each path of each
+  removal.
+- The test derives each path of each removal, and the descriptor
+  that it is read against, from the arguments of the call as its
+  manual page names them, not from the reader's table of removals,
+  which a mutant of the reader may change. A subtest of the refusal
+  test and 1 of the folder test fail if a name of that table, a path
+  that it gives or a descriptor form of that path has no subtest.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 5 tests, OK, here and 3 tests, OK, on main. Each
-of the 53 reader mutants that the pull request description lists is
+of the 58 reader mutants that the pull request description lists is
 expected to pass case 27 on main, and each but cap-4 and
 allowance-from-fifth, which break the rule only while more than 4
 such calls are untaken, to fail it here. In a git checkout with
