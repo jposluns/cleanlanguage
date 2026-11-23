@@ -4,21 +4,27 @@ Case 27 of tools/test-release-package-dist.py now holds the 5 gaps
 that TODOs 269 to 273 record for the trace reader, each with a case
 that fails without it. Its docstrings state a rule for what the
 reader refuses, with examples, and point to the reader functions as
-the code that makes its refusals. The packager is unchanged, and
-the reader changes only in the text of 2 errors, so that each
-refusal that a subtest checks by its whole error has an error of
-its own.
+the code that makes its refusals. The packager and the reader are
+unchanged.
 
 - fork() = 101 is read as the call, and its child starts in the
   folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
-  that folder when its maker enters another by chdir after the call.
+  that folder when its maker enters another by chdir after the call,
+  also when another line interrupted the call and it is resumed with
+  the id of the child.
 - For each of clone, clone3, fork and vfork, in each of the 9 forms
   in which strace cuts a call short and when it ends with the result
   ? and the note <unavailable>, 1 later process with no maker is
   read by its absolute paths, and a second ends the case, as does a
-  relative path in that process. After 2 such calls of the same name
-  in the same form, and after a fork and a vfork that each ended with
-  the result ?, 2 such processes are read and a third ends the case.
+  relative path in that process. The second ends it for each of
+  these first calls of the first: a chdir or an fchdir whose result
+  is 0, an unread call, a clone, clone3, fork or vfork that made a
+  process, and an unlink, a chdir or a fork that failed. After 2, 3
+  or 4 such calls of the same name in the same form, as many such
+  processes are read and 1 more ends the case; after a fork and a
+  vfork that each ended with the result ?, 2 are read and a third
+  ends it. These cases hold the rule for 1 to 4 such calls, so a
+  reader that breaks it only from 5 such calls on passes them.
 - An unlink read with its arguments that ends as "= ? <unavailable>"
   counts as a removal, in its line and in its resumption. After a
   chdir that ends that way in a shared folder, an absolute path is
@@ -35,12 +41,27 @@ its own.
   those of a trace with no call, a resumption with no call open or
   under another name, a path not in hex escapes, a line with no
   process id, and an unread call cut short while a call is open.
+- The error of each raise statement of the reader functions is
+  checked whole by 1 or more subtests. Some refusals share the text
+  of their error, so such a check does not show which of them ended
+  the case: a resumption with no call open and 1 under another name;
+  a call cut short and 1 that strace detached from while another
+  call of its process is open; and 3 refusals in trace_call of a
+  call that the test cannot read. The docstrings say so.
+- The module docstring states which relative paths of a process
+  with no maker end the case: 1 with no descriptor or with AT_FDCWD,
+  in a removal whose result is 0, ? or not given, or in a chdir whose
+  result is 0, before a chdir or fchdir whose result is 0 gives that
+  process a folder. It and the docstring of the folder test state
+  that a relative path is read against the folder that its
+  descriptor names, but against the folder of its process for
+  AT_FDCWD.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 4 tests, OK, here and 3 tests, OK, on main. Each
-of the 36 reader mutants that the pull request description lists is
+of the 40 reader mutants that the pull request description lists is
 expected to pass case 27 on main and to fail it here. In a git
 checkout with strace, the full run is expected to leave cases 1 to
 26 as they are on main.
