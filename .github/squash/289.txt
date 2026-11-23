@@ -1,0 +1,43 @@
+Hold the kind and span claims of the install-page pin (#289)
+
+Make the self-checks of tools/test-install-page.py hold what its
+docstrings say about the reader pin of check 7, and word those
+docstrings so that they claim no more than the checks hold. The gate,
+tools/check-install-page.py, is byte identical, so GATE_SHA256 and
+READER_SHA256 are unchanged.
+
+- Capture tuple, list and dict when the test is imported, as
+  PLAIN_CONTAINERS beside PLAIN_TYPES, and compare the exact type of a
+  value with them by identity in plain_data(). Each kind, plain data
+  included, is then compared by identity with a type that the test
+  captured when it was imported (PLAIN_TYPES, PLAIN_CONTAINERS,
+  PIN_KINDS).
+- Add capture_problems(): with re.Pattern, types.ModuleType, the
+  test's REPO_ROOT, tuple, list or dict rebound to a stand-in, 1 name
+  at a time, pin_value() must still write a real value of that kind as
+  before and refuse an instance of the stand-in. The exact type of a
+  value is read with the builtin type(), which a rebinding of a builtin
+  can change, a class that the reader pin does not see (residual 2); no
+  check holds the capture of type.
+- Derive refusal cases from the 3 capture tuples: for each of their 13
+  kinds, an object whose class gives the kind as its __class__, and,
+  for the 10 kinds that Python lets a class subclass, an instance of a
+  bare subclass, so that each kind test of pin_value() and plain_data()
+  must match the exact type. The 19 committed refused values are kept.
+- Run the 2 replacements of REQUESTED_FILES on 3 base gates: the
+  committed gate, one in which its statement shares its line with
+  LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
+  it spans 3 lines, each built gate first passing the reader pin.
+- Rewrite the fixture PIN_SUBCLASS as 1 simple statement with the same
+  meaning, a deliberate change of its contract: a class statement
+  cannot follow a semicolon, so the committed form does not parse on
+  the shared-line gate.
+- Add to pin_value()'s docstring that it writes a module, a class or a
+  path by its name, so a helper that one of them carries is in no
+  digest here, and mark its refused values as examples. The pin holds
+  the values that a reviewed gate defines in ordinary code, and
+  scope_sentence_problems() fails each docstring of the file that says
+  so without the words "a module, a class or a path by its name".
+- Leave .github/squash/269.txt unchanged: it is the merged record of
+  pull request 269, and whether merged records are amended is the
+  maintainer's decision.
