@@ -3,14 +3,7 @@ Start group-kill test timeout once its child is ready (TODO 253) (#282)
 TODO 253 records 1 run of tools/test-skill-release-date-client.py
 that errored with FileNotFoundError for sleeper.pid in
 test_a_child_that_does_not_end_is_killed_with_its_group, and 3 reruns
-that passed; a rerun that passes does not clear a failure. That is the
-TODO's record, not a check of this change.
-
-The 1 second timeout started before the stub child had forked its
-sleeper and written sleeper.pid, so a slow start let the group kill
-land before the pid file existed. Host load is the inferred cause of
-the slow start; a 2 second delay before the pid write reproduces the
-error.
+that passed. That is the TODO's record, not a check of this change.
 
 The sleeper, its pid file and the probe of its pid with os.kill are
 removed. The stub child now forks 1 member into its group and then
@@ -21,7 +14,7 @@ test asserts the client's reason first, then that the byte was read
 when the poll ended, that the client asked its first wait for exactly
 its 1 second timeout, that the real wait lasted at least that long,
 and that the client's run, from its start to its return, less the
-poll, ended within 15 seconds; main bounded the whole run by 15
+poll, ended within 15 seconds; main bounds the whole run by 15
 seconds.
 
 End of file on alive within 10 seconds after the client returns shows
@@ -40,20 +33,20 @@ The test sends no signal. Each stub process waits for end of file on
 a second FIFO, lifeline, whose only write end the test holds, and
 ignores SIGTERM, SIGINT and SIGHUP, among other signals. The check's
 finally clause closes lifeline and reaps a child the client left
-unreaped, and the kernel closes lifeline when the test process ends
-in any other way. The stub reads lifeline once before it forks, a
-read the planned design did not have. On Linux, select reports
-nothing for a FIFO reader opened with no writer, so a stub that
-starts after the release would otherwise wait out its 90 seconds;
-that read returns end of file, so with the read it exits at once. A
-stub process past that read ends at once on the release; one not yet
-there ends when it reaches it, after the rest of its start-up, which
-the test does not bound.
+unreaped if it ends within the 5 second reap grace, and the kernel
+closes lifeline when the test process ends in any other way. The stub
+reads lifeline once before it forks. On Linux, select reports nothing
+for a FIFO reader opened with no writer, and that read returns end of
+file, so a stub that starts after the release exits at once rather
+than wait out its 90 seconds. A stub process past that read ends at
+once on the release; one not yet there ends when it reaches it, after
+the rest of its start-up, which the test does not bound.
 
-The stub's source is a constant. The stub first reads its own end with
-float from a file, own_end, that the check writes, so no value of
-own_end adds code to the stub; a text that float does not take raises
-before the stub opens either FIFO, and the check fails.
+The stub's source is a constant, GROUP_STUB. The stub first reads its
+own end with float from a file, own_end, that the check writes with
+str, so a plain int or float passed as own_end reaches the stub only
+as a number; a text that float does not take raises before the stub
+opens either FIFO, and the check fails.
 
 New tests run the check against a client that kills only the leader,
 one that sends SIGTERM to the group, and a client whose group kill
@@ -64,8 +57,9 @@ and asserts that it fails at the own-end assertion, another asserts
 that a stub started after the release exits at once, and another
 asserts that an end of file seen after its deadline is not taken. A
 tripwire test asserts that the stub makes its pinned calls in order
-and that no signal-sending name appears in the check, its helpers or
-the stub, so a direct os.kill there fails it. The group-kill test
+and that no name in SIGNAL_NAMES, a list of example names through
+which Python code sends a signal, appears in the check, its helpers
+or the stub, so a direct os.kill there fails it. The group-kill test
 asserts nothing about the client's reap; its docstring names the 2
 tests that do.
 
@@ -77,7 +71,7 @@ example values of own_end, and no test that a caller's value runs no
 code of its own.
 
 Residual: the tripwire's name scan misses every route to a signal
-other than a signal-sending name in the functions it reads, and such
+other than a name in SIGNAL_NAMES in the functions it reads, and such
 an edit passes the tripwire unless it also changes the stub's calls,
 which the pin rejects. Passes of the name scan, examples, not a
 complete list: in the check, getattr(os, "kill") with a literal name,
@@ -89,7 +83,9 @@ assertLess; a module global or builtin that a caller rebinds, such as
 GROUP_STUB, or a function of os or the client, as the tests rebind
 os.killpg; the body of a decorator; and the code outside those
 functions, the client and the standard library. A value of check or
-own_end with methods of its own runs them in the test.
+own_end with methods of its own runs them in the test, and str of
+own_end runs before the check reads GROUP_STUB, so a method of
+own_end can change the stub's source.
 
 A stub process that the release finds before its first read of
 lifeline outlives the release by the rest of its start-up. While the
@@ -109,16 +105,20 @@ alive open and fails the check. A leader that has not ended within
 the 5 second reap grace of the finally clause, or one left when the
 test process ends without unwinding, stays unreaped until Python's
 own collection of finished children or the process that adopts it
-reaps it. The stub's source ignores SIGTERM, SIGINT and SIGHUP,
-Python ignores SIGPIPE and SIGXFSZ at start-up, and the stub also
-ignores any other signal that the test process ignores; a signal it
-does not ignore whose default action ends a process, such as SIGKILL
-or SIGUSR1, still ends it early. A correct client still fails if the
-child is not ready within 60 seconds. The design needs FIFOs, select
-on them and the Linux behaviour that a FIFO reader opened while a
-writer exists sees end of file when the last writer closes. The
-expected outcomes are for Linux; for other platforms and for the
-Python 3.9 floor they are not established.
+reaps it; while it is still running, it holds its descriptors, the
+write end of alive among them. The stub's source ignores SIGTERM,
+SIGINT and SIGHUP, Python ignores SIGPIPE and SIGXFSZ at start-up,
+and the stub also ignores any other signal that the test process
+ignores and blocks every signal that the test thread that starts it
+blocks; before its source or Python ignores 1 of the first 5, that
+signal can end it. Examples of a signal that ends it early, not a
+complete list: SIGKILL, and SIGUSR1 when the test neither ignores nor
+blocks SIGUSR1. A correct client still fails if the child is not
+ready within 60 seconds. The design needs FIFOs, select on them and
+the Linux behaviour that a FIFO reader opened while a writer exists
+sees end of file when the last writer closes. The expected outcomes
+are for Linux; for other platforms and for the Python 3.9 floor they
+are not established.
 
 Unchanged from main: the 1 second timeout, the reason string, the
 real wait, kill and reap, and a 10 second window for the group to end
@@ -127,10 +127,6 @@ main's test fails. A client that kills only the group leader, one
 that never kills, one whose first wait asks for half its timeout and
 one whose real wait gives up at half its timeout each fail the new
 test.
-
-The client's run_extractor catches Exception broadly and leaves its
-child's group running when KeyboardInterrupt passes through it; that
-is left for a later item.
 
 - Add .github/squash/282.txt as the committed squash message read by
   the Pull request text gate.
