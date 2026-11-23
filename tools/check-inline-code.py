@@ -495,9 +495,11 @@ def count_problems(text: str, parser: InlineCodeParser) -> list[str]:
 
 
 def markup_problems(text: str) -> list[str]:
-    """Checks 7 to 9 in an HTML page, by text matches and not by the parser: each element that check 7 refuses
-    (RAW_REFUSED_ELEMENT), each <![CDATA[ (RAW_CDATA) and each text <!--> or <!---> (RAW_SHORT_COMMENT), wherever
-    it stands, such as inside an attribute value, whether or not the parser or a browser reads it as markup."""
+    """Check 7's refusal of elements by name, and checks 8 and 9, in an HTML page, by text matches and not by the
+    parser: each element that check 7 refuses, found as < and its name, ignoring case, followed by whitespace, /, >
+    or the end of the text (RAW_REFUSED_ELEMENT), each <![CDATA[, ignoring case (RAW_CDATA), and each text <!--> or
+    <!---> (RAW_SHORT_COMMENT), wherever it stands, such as inside an attribute value, whether or not the parser or a
+    browser reads it as markup. Check 7's rule on the light and dark switch runs in switch_problems()."""
     problems = []
     for match in RAW_REFUSED_ELEMENT.finditer(text):
         problems.append(

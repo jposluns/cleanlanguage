@@ -43,13 +43,15 @@ same pattern, now names the text found in its message, as "the text
 '<!-->' in an HTML page", in place of "a comment that opens as
 '<!-->'". Its docstring entry says that it refuses that text wherever
 it stands, such as inside an attribute value. The docstring of
-markup_problems(), which runs checks 7 to 9, now says what they refuse:
-each element that check 7 refuses, each '<![CDATA[' and each text
-'<!-->' or '<!--->', found by text matches and not by the parser,
-wherever it stands, in place of calling them markup that the parser
-reads differently from a browser. What checks 7 to 9 refuse is
-unchanged. A new case in tools/test-inline-code.py puts '<!-->' in an
-attribute value and requires check 9's new message.
+markup_problems(), which runs check 7's refusal of elements by name and
+checks 8 and 9, now says what it refuses: each such element and each
+'<![CDATA[', both found ignoring case, and each text '<!-->' or
+'<!--->', found by text matches and not by the parser, wherever it
+stands, in place of calling them markup that the parser reads
+differently from a browser. It also says that check 7's rule on the
+light and dark switch runs in switch_problems(). What checks 7 to 9
+refuse is unchanged. A new case in tools/test-inline-code.py puts
+'<!-->' in an attribute value and requires check 9's new message.
 
 Add .github/squash/283.txt, which holds this message byte for byte.
 .python-version is unchanged.
@@ -63,10 +65,12 @@ results on them still come from the running interpreter's HTMLParser.
 The fourth check shows that, on Python 3.14.4, collect_document_tags()
 of tools/web_metadata.py and ld_json_blocks() of
 tools/check-page-metadata.py collect no meta element, link element or
-ld+json block after either opener, and collect them after the empty
-comment '<!---->'. This message does not say which callers of the other
-9 classes refuse these openers before they parse, or how Python 3.14.7
-reads them in any of these readers.
+ld+json block that stands between either opener and a later '-->', and
+collect them between the empty comment '<!---->' and a later '-->'.
+This message does not say what these 2 readers collect after either
+opener when no '-->' follows, which callers of the other 9 classes
+refuse these openers before they parse, or how Python 3.14.7 reads them
+in any of these readers.
 
 Checks, from the repository root, with the outputs of Python 3.14.4:
 

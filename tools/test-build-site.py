@@ -3062,13 +3062,15 @@ def check_release_near_placeholder(failures: list[str]) -> int:
 # The text <!--> or <!--->, found as plain text wherever it stands, such as inside an attribute value, as
 # tools/check-inline-code.py's check 9 finds it. The generator refuses both, wherever they stand. Python 3.14.4's
 # HTMLParser reads either one as the start of a comment up to the next --> or --!>, when one follows, at the start of
-# the input and in the content of a p element. It reads neither one as the start of a comment in the content of title,
-# textarea, script, style, xmp, iframe, noembed, noframes and plaintext, and of noscript when scripting is on, or
-# inside a start tag, a comment or a doctype: inside a quoted attribute value, it reads either one as part of the
-# value; elsewhere in a start tag or in a doctype, the > that ends it ends that markup, and in a comment, the --> that
-# ends it ends the comment. The earlier <!--> case of check_disclosure_states(), which expected no failure, passes on
-# Python 3.14.4 and failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the 2 releases read <!-->
-# differently; TODO 255 does not record how 3.14.7 reads <!--->.
+# the input and straight after a p start tag. It reads neither one as the start of a comment when it is the whole
+# content of title, textarea, script, style, xmp, iframe, noembed, noframes or plaintext, or of noscript when scripting
+# is on, with a p element and then --> or --!> after the end tag; nor when it stands in these places, each followed by
+# a p element and then -->: after <!-- and a space in a comment, after <!DOCTYPE html and a space in a doctype, in
+# place of an attribute in a start tag, and as an attribute value, unquoted or in double or single quotes. In a quoted
+# value it reads either one as part of the value; in the other places, the > that ends it ends that markup, so in a
+# comment, the --> that ends it ends the comment. The earlier <!--> case of check_disclosure_states(), which expected
+# no failure, passes on Python 3.14.4 and failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the
+# 2 releases read <!--> differently; TODO 255 does not record how 3.14.7 reads <!--->.
 # disclosure_d4_section() raises ShortCommentRefused on both rather than read them as the running interpreter does.
 SHORT_COMMENT = re.compile(r"<!---?>")
 
