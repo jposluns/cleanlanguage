@@ -77,22 +77,31 @@ that a stub started after the release exits at once, and another
 asserts that an end of file seen after its deadline is not taken. A
 tripwire test asserts that the only bindings of check_group_kill,
 end_of_file and stub in the test file's syntax are 1 def statement
-for each, counting async def, class and import statements, every kind
-of assignment to a name or an attribute, a lambda so assigned among
-them, deletions, targets, parameters and keyword arguments, but not a
-name given as a string; that, however it was bound, BoundsTest, each
-class derived from it when the test runs and each class in their
-method resolution orders hold no other entry with those names, that
-BoundsTest's 2 entries and the module's end_of_file are the functions
-their def statements made, judged by qualified name and first line,
-and that the test's instance has no such attribute of its own; that
-the stub makes its pinned calls in order; and that no name in
-SIGNAL_NAMES, a list of example names through which Python code sends
-a signal, appears in the check, its helpers or the stub, so a direct
-os.kill there fails it. Another test has a case for each form of
-binding stub that the first 2 of those assertions see, and for 1 that
-they miss. The group-kill test asserts nothing about the client's
-reap; its docstring names the 2 tests that do.
+for each, counting async def, class and import statements, plain,
+annotated, augmented, := and tuple or starred assignments to a name,
+assignments to an attribute, a lambda so assigned, deletions, for,
+with, comprehension, except and match targets, parameters and keyword
+arguments, but not a name given as a string; that, however it was
+bound, BoundsTest, each class derived from it when the test runs and
+each class in their method resolution orders hold no other entry with
+those names, that BoundsTest's 2 entries and the module's end_of_file
+are the functions their def statements made, judged by qualified name
+and first line, and that the test's instance has no such attribute of
+its own; that the stub makes its pinned calls in order; and that no
+name in SIGNAL_NAMES, a list of example names through which Python
+code sends a signal, appears in the check, its helpers or the stub, so
+a direct os.kill there fails it. The second of those assertions reads
+each class and the instance through the descriptors that type and
+TestCase define, not by attribute lookup, tells classes apart by
+identity and takes only a plain str as 1 of those names, so a class or
+metaclass that overrides __subclasses__, __mro__, __dict__,
+__qualname__, __getattribute__ or __eq__ hides no entry from it.
+Another test has a case for each of those forms of binding stub, for
+each form of binding it by a name given as a string that the second
+assertion sees on a class or an instance, for each such override, and
+for 1 form that the first 2 assertions miss; its match cases run only
+on Python 3.10 or later. The group-kill test asserts nothing about the
+client's reap; its docstring names the 2 tests that do.
 
 Unchanged from main: the 1 second timeout, the reason string, the
 real wait, kill and reap, and a 10 second window for the group to end
@@ -114,10 +123,15 @@ change to what self.stub finds without such an entry or attribute,
 such as a __getattribute__ method or an assignment to self.__class__;
 a class derived from BoundsTest that does not exist when the test
 runs; an attribute on an instance other than the test's; a
-replacement with the same qualified name and first line; a binding by
-a name given as a string anywhere else; and a change made after the
-test runs or undone before it. Passes of the name scan, examples, not
-a complete list: in the check, getattr(os, "kill") with a literal name,
+replacement whose qualified name and first line, which a value gives
+for itself, are those of the def statement; a binding by a name given
+as a string anywhere else; a change made after the test runs or undone
+before it; an edit that rebinds a name or function the tripwire calls,
+or that replaces the tripwire; and an edit that changes the
+interpreter's own records, as through ctypes. Code in the test file
+runs in the process that the tripwire checks, so no check there holds
+against all such code. Passes of the name scan, examples, not a
+complete list: in the check, getattr(os, "kill") with a literal name,
 getattr with a computed name, such as getattr(os, "ki" + "ll"),
 os.__dict__["kill"], vars(os)["kill"] and a shell kill through
 os.system; a value a caller passes, such as the witness, which the

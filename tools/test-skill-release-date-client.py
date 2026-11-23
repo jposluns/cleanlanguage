@@ -946,10 +946,11 @@ class BoundsTest(unittest.TestCase):
         # BoundsTest's own check_group_kill and stub, each the function its
         # def statement made, judged by qualified name and first line, that
         # the module's end_of_file is, judged so, the function its def
-        # statement made, and that the test's own instance has no attribute
-        # named 1 of BOUND_NAMES; that GROUP_STUB makes exactly STUB_CALLS,
-        # in that order, the order its bounds rest on; and that no name,
-        # attribute or import in any of them is in SIGNAL_NAMES.
+        # statement made, and that own_bindings finds no attribute named 1
+        # of BOUND_NAMES that the test's own instance holds of its own; that
+        # GROUP_STUB makes exactly STUB_CALLS, in that order, the order its
+        # bounds rest on; and that no name, attribute or import in any of
+        # them is in SIGNAL_NAMES.
         # The first assertion fails an edit that adds a binding that
         # bindings counts or removes 1 of the 3 def statements. The second
         # fails an edit that, however it is written, gives BoundsTest, a
@@ -957,25 +958,38 @@ class BoundsTest(unittest.TestCase):
         # orders another entry named 1 of BOUND_NAMES, replaces 1 of
         # BoundsTest's 2 entries or the module's end_of_file with a value
         # whose qualified name or first line differs, or gives this test's
-        # instance such an attribute. So a stub bound in this file on
-        # BoundsTest or a subclass by a def or async def statement or by an
-        # assignment, a lambda among them, fails the first, and one bound
-        # there by a name given as a string, as setattr, type and a mixin's
-        # namespace take it, fails the second if it is in place when this
-        # test runs; test_the_tripwire_sees_each_binding_of_its_names has a
-        # case for each form. The name scan fails an edit that uses a signal
-        # function by 1 of the names in SIGNAL_NAMES there, such as
-        # os.kill(os.getpid(), 0) added to the check.
+        # instance such an attribute. It reads those classes and that
+        # instance through the descriptors of type and TestCase, compares
+        # classes by identity and names as plain str, so a class or
+        # metaclass that overrides __subclasses__, __mro__, __dict__,
+        # __qualname__, __getattribute__ or __eq__, or an entry whose name
+        # is a str subclass, hides no entry from it. So a stub bound in this
+        # file on BoundsTest or a subclass by a def or async def statement or
+        # by an assignment, a lambda among them, fails the first, and one
+        # bound there by a name given as a string, as setattr, type and a
+        # mixin's namespace take it, fails the second if it is in place when
+        # this test runs; test_the_tripwire_sees_each_binding_of_its_names
+        # has a case for each of these forms, for each form that bindings
+        # names, and for each such override. The name scan fails an edit
+        # that uses a signal function by 1 of the names in SIGNAL_NAMES
+        # there, such as os.kill(os.getpid(), 0) added to the check.
         # Residual: the first 2 assertions miss an edit that changes what
         # self.stub finds without such an entry or attribute, such as a
         # __getattribute__ method or an assignment to self.__class__; a
         # class derived from BoundsTest that does not exist when this test
         # runs, such as one in another module; an attribute set on an
-        # instance other than this test's; a replacement with the same
-        # qualified name and first line; a binding of 1 of BOUND_NAMES by a
-        # name given as a string anywhere other than those classes, this
-        # instance and the module's end_of_file; and a change made after
-        # this test runs or undone before it.
+        # instance other than this test's; a replacement whose qualified
+        # name and first line, which a value gives for itself, are those
+        # of the def statement; a binding of 1 of BOUND_NAMES by a name
+        # given as a string anywhere other than those classes, this
+        # instance and the module's end_of_file; a change made after this
+        # test runs or undone before it; an edit that rebinds a name or
+        # function this test calls, such as class_bindings, SUBCLASSES,
+        # BoundsTest, a builtin or a function of ast, or that replaces
+        # this test; and an edit that changes the interpreter's own
+        # records, as through ctypes. Code in this file runs in the
+        # process that this test checks, so no check in it holds against
+        # all such code.
         # Residual: the name scan misses every route to a signal other than
         # a name in SIGNAL_NAMES in the functions it reads. Such an edit
         # passes this test unless it also fails 1 of its other 3 assertions:
@@ -1000,7 +1014,7 @@ class BoundsTest(unittest.TestCase):
         lines = {node.name: min([node.lineno] + [decorator.lineno for decorator in node.decorator_list])
                  for node in roots}
         self.assertEqual(
-            (class_bindings(BoundsTest), described(end_of_file), sorted(set(vars(self)) & set(BOUND_NAMES))),
+            (class_bindings(BoundsTest), described(end_of_file), own_bindings(self)),
             ([("BoundsTest", name, "BoundsTest." + name, lines[name]) for name in ("check_group_kill", "stub")],
              ("end_of_file", lines["end_of_file"]), []))
         stub_tree = ast.parse(GROUP_STUB)
@@ -1015,33 +1029,66 @@ class BoundsTest(unittest.TestCase):
 
     def test_the_tripwire_sees_each_binding_of_its_names(self):
         # A case for each form of binding stub that the tripwire's first 2
-        # assertions are meant to see, and for 1 that they miss. Each form is
-        # source text, run with exec on a stand-in, Base, whose stub is a
-        # lambda, so that it adds no binding to this file's syntax and no
-        # class derived from BoundsTest. Each case gives what bindings counts
-        # in the form, each (class, qualified name) that class_bindings finds
-        # from Base, and the attributes named 1 of BOUND_NAMES that an
-        # instance of Sub has of its own after its setUp, if any.
-        base = "class Base:\n    stub = lambda self: 0\n\n"
+        # assertions are meant to see, each form that bindings names among
+        # them, for each override of a class's introspection that they read
+        # past, and for 1 form that they miss. Each form is source text, run
+        # with exec on a stand-in, Base, a TestCase whose stub is a lambda,
+        # so that it adds no binding to this file's syntax and no class
+        # derived from BoundsTest. Each case gives what bindings counts in
+        # the form, each (class, qualified name) that class_bindings finds
+        # from Base, and what own_bindings finds on an instance of Sub after
+        # its setUp. The match cases run only where match parses, on Python
+        # 3.10 or later.
+        base = "class Base(TestCase):\n    stub = lambda self: 0\n\n"
         indirect = "def indirect(self):\n    return 1\n\n"
+        hide = "\nsetattr(Sub, 'st' + 'ub', indirect)\n"
         found = [("Base", "Base.<lambda>")]
+        sub = found + [("Sub", "indirect")]
         forms = {
             "def": ("class Sub(Base):\n    def stub(self):\n        return 1\n",
                     [("stub", "FunctionDef")], found + [("Sub", "Sub.stub")], []),
             "async def": ("class Sub(Base):\n    async def stub(self):\n        return 1\n",
                           [("stub", "AsyncFunctionDef")], found + [("Sub", "Sub.stub")], []),
-            "assignment": (indirect + "class Sub(Base):\n    stub = indirect\n",
-                           [("stub", "Name")], found + [("Sub", "indirect")], []),
+            "class": ("class Sub(Base):\n    class stub:\n        pass\n",
+                      [("stub", "ClassDef")], found + [("Sub", "Sub.stub")], []),
+            "assignment": (indirect + "class Sub(Base):\n    stub = indirect\n", [("stub", "Name")], sub, []),
+            "annotated assignment": (indirect + "class Sub(Base):\n    stub: object = indirect\n",
+                                     [("stub", "Name")], sub, []),
+            "augmented assignment": ("class Sub(Base):\n    stub = 0\n    stub += 1\n",
+                                     [("stub", "Name"), ("stub", "Name")], found + [("Sub", "int")], []),
+            ":=": (indirect + "class Sub(Base):\n    (stub := indirect)\n", [("stub", "Name")], sub, []),
+            "tuple target": (indirect + "class Sub(Base):\n    stub, other = indirect, 0\n",
+                             [("stub", "Name")], sub, []),
+            "starred target": ("class Sub(Base):\n    *stub, = (1,)\n",
+                               [("stub", "Name")], found + [("Sub", "list")], []),
+            "attribute": (indirect + "class Sub(Base):\n    pass\n\nSub.stub = indirect\n",
+                          [("stub", "Attribute")], sub, []),
             "lambda": ("class Sub(Base):\n    stub = lambda self: 1\n",
                        [("stub", "Name")], found + [("Sub", "Sub.<lambda>")], []),
-            "attribute": (indirect + "class Sub(Base):\n    pass\n\nSub.stub = indirect\n",
-                          [("stub", "Attribute")], found + [("Sub", "indirect")], []),
+            "deletion": ("class Sub(Base):\n    stub = 1\n    del stub\n",
+                         [("stub", "Name"), ("stub", "Name")], found, []),
+            "for target": ("class Sub(Base):\n    for stub in (1,):\n        pass\n",
+                           [("stub", "Name")], found + [("Sub", "int")], []),
+            "with target": ("class Sub(Base):\n    with memoryview(b'') as stub:\n        pass\n",
+                            [("stub", "Name")], found + [("Sub", "memoryview")], []),
+            "comprehension target": ("class Sub(Base):\n    values = [stub for stub in (1,)]\n",
+                                     [("stub", "Name")], found, []),
+            "except target": ("class Sub(Base):\n    try:\n        raise ValueError\n"
+                              "    except ValueError as stub:\n        pass\n",
+                              [("stub", "ExceptHandler")], found, []),
+            "match capture": ("class Sub(Base):\n    match 1:\n        case stub:\n            pass\n",
+                              [("stub", "MatchAs")], found + [("Sub", "int")], []),
+            "match star": ("class Sub(Base):\n    match (1,):\n        case (*stub,):\n            pass\n",
+                           [("stub", "MatchStar")], found + [("Sub", "list")], []),
+            "match rest": ("class Sub(Base):\n    match {}:\n        case {**stub}:\n            pass\n",
+                           [("stub", "MatchMapping")], found + [("Sub", "dict")], []),
             "import": ("class Sub(Base):\n    from os import getpid as stub\n",
                        [("stub", "alias")], found + [("Sub", "getpid")], []),
-            "setattr": (indirect + "class Sub(Base):\n    pass\n\nsetattr(Sub, 'st' + 'ub', indirect)\n",
-                        [], found + [("Sub", "indirect")], []),
-            "type": (indirect + "Sub = type('Sub', (Base,), {'st' + 'ub': indirect})\n",
-                     [], found + [("Sub", "indirect")], []),
+            "parameter": ("class Sub(Base):\n    def method(self, stub=1):\n        return stub\n",
+                          [("stub", "arg")], found, []),
+            "keyword argument": ("class Sub(Base):\n    values = dict(stub=1)\n", [("stub", "keyword")], found, []),
+            "setattr": (indirect + "class Sub(Base):\n    pass\n" + hide, [], sub, []),
+            "type": (indirect + "Sub = type('Sub', (Base,), {'st' + 'ub': indirect})\n", [], sub, []),
             "mixin": (indirect + "class Mixin:\n    pass\n\nsetattr(Mixin, 'st' + 'ub', indirect)\n\n"
                       "class Sub(Mixin, Base):\n    pass\n",
                       [], found + [("Mixin", "indirect")], []),
@@ -1050,6 +1097,32 @@ class BoundsTest(unittest.TestCase):
             "instance": (indirect + "class Sub(Base):\n    def setUp(self):\n"
                          "        setattr(self, 'st' + 'ub', indirect)\n",
                          [], found, ["stub"]),
+            "str subclass name": (indirect + "class Name(str):\n    def __eq__(self, other):\n        return False\n\n"
+                                  "    __hash__ = str.__hash__\n\n"
+                                  "Sub = type('Sub', (Base,), {Name('st' + 'ub'): indirect})\n",
+                                  [], sub, []),
+            "__subclasses__": (indirect + "class Hidden(Base):\n    @classmethod\n    def __subclasses__(cls):\n"
+                               "        return []\n\nclass Sub(Hidden):\n    pass\n" + hide, [], sub, []),
+            "metaclass __subclasses__": (indirect + "class Meta(type):\n    def __subclasses__(cls):\n"
+                                         "        return []\n\nclass Hidden(Base, metaclass=Meta):\n    pass\n\n"
+                                         "class Sub(Hidden):\n    pass\n" + hide, [], sub, []),
+            "metaclass __mro__": (indirect + "class Meta(type):\n    __mro__ = property(lambda cls: (cls,))\n\n"
+                                  "class Mixin:\n    pass\n\nsetattr(Mixin, 'st' + 'ub', indirect)\n\n"
+                                  "class Sub(Mixin, Base, metaclass=Meta):\n    pass\n",
+                                  [], found + [("Mixin", "indirect")], []),
+            "metaclass __dict__": (indirect + "class Meta(type):\n    __dict__ = property(lambda cls: {})\n\n"
+                                   "class Sub(Base, metaclass=Meta):\n    pass\n" + hide, [], sub, []),
+            "metaclass __eq__": (indirect + "class Meta(type):\n    def __eq__(cls, other):\n        return True\n\n"
+                                 "    __hash__ = type.__hash__\n\nclass Sub(Base, metaclass=Meta):\n    pass\n" + hide,
+                                 [], sub, []),
+            "metaclass __getattribute__": (
+                indirect + "class Meta(type):\n    def __getattribute__(cls, name):\n"
+                "        fake = {'__subclasses__': lambda: [], '__mro__': (), '__dict__': {}, '__qualname__': 'Base'}\n"
+                "        return fake[name] if name in fake else type.__getattribute__(cls, name)\n\n"
+                "class Sub(Base, metaclass=Meta):\n    pass\n" + hide, [], sub, []),
+            "instance __dict__": (indirect + "class Sub(Base):\n    __dict__ = property(lambda self: {})\n\n"
+                                  "    def setUp(self):\n        setattr(self, 'st' + 'ub', indirect)\n",
+                                  [], found, ["stub"]),
             "__getattribute__, missed": (
                 indirect + "class Sub(Base):\n    def __getattribute__(self, name):\n"
                 "        return (lambda: 1) if name == 'st' + 'ub' else object.__getattribute__(self, name)\n",
@@ -1057,13 +1130,15 @@ class BoundsTest(unittest.TestCase):
         }
         for form, (source, counted, owners, own) in forms.items():
             with self.subTest(form):
-                namespace = {}
+                if form.startswith("match") and sys.version_info < (3, 10):
+                    self.skipTest("match parses only on Python 3.10 or later")
+                namespace = {"TestCase": unittest.TestCase}
                 exec(compile(base + source, form, "exec"), namespace)
                 instance = namespace["Sub"]()
-                getattr(instance, "setUp", lambda: None)()
+                instance.setUp()
                 self.assertEqual(
                     (bindings(ast.parse(source)), [(row[0], row[2]) for row in class_bindings(namespace["Base"])],
-                     sorted(set(vars(instance)) & set(BOUND_NAMES))),
+                     own_bindings(instance)),
                     (counted, owners, own))
                 if form.endswith("missed"):
                     self.assertEqual(instance.stub(), 1, "the missed form does not change what stub finds")
@@ -1311,14 +1386,29 @@ class BoundsTest(unittest.TestCase):
 BOUND_NAMES = ("check_group_kill", "end_of_file", "stub")
 
 
+# The interpreter's own records of a class and of a test's instance, read
+# through the descriptors that type and unittest.TestCase define rather than
+# by attribute lookup, which a class or its metaclass can override: the
+# classes derived from a class, its method resolution order, its namespace,
+# its qualified name, and the attributes an instance holds of its own.
+SUBCLASSES = type.__subclasses__
+MRO = type.__dict__["__mro__"].__get__
+NAMESPACE = type.__dict__["__dict__"].__get__
+QUALNAME = type.__dict__["__qualname__"].__get__
+INSTANCE_DICT = NAMESPACE(unittest.TestCase)["__dict__"].__get__
+
+
 def bindings(tree: ast.AST) -> list:
     """Each (name, node type) for a node of ``tree`` that has 1 of
     BOUND_NAMES as its id, attr, name, asname, rest or arg and is not a
-    read: a def, async def or class statement, an assignment of any kind to
-    a name or an attribute, a lambda so assigned among them, a deletion, a
-    loop, with, comprehension, except or match target, an import, a
-    parameter or a keyword argument. A name given only as a string, as to
-    setattr or in a dict, is not counted."""
+    read. Among them, each with a case in
+    test_the_tripwire_sees_each_binding_of_its_names: a def, async def or
+    class statement; an assignment to a name, plain, annotated, augmented,
+    by :=, or as part of a tuple or a starred target; an assignment to an
+    attribute; a lambda so assigned; a deletion; a for, with,
+    comprehension, except or match target; an import; a parameter; and a
+    keyword argument. A name given only as a string, as to setattr or in a
+    dict, is not counted."""
     return sorted((value, type(node).__name__) for node in ast.walk(tree)
                   if not isinstance(getattr(node, "ctx", None), ast.Load)
                   for value in (getattr(node, field, None) for field in ("id", "attr", "name", "asname", "rest", "arg"))
@@ -1333,17 +1423,36 @@ def described(value) -> tuple:
     return getattr(value, "__qualname__", type(value).__name__), getattr(code, "co_firstlineno", 0)
 
 
+def entries(namespace) -> list:
+    """Each (name, qualified name, first line) for an entry of ``namespace``
+    whose name is a plain str equal to 1 of BOUND_NAMES, or is not a plain
+    str, whatever it compares equal to."""
+    return [(name if type(name) is str else object.__repr__(name),) + described(value)
+            for name, value in namespace.items() if type(name) is not str or name in BOUND_NAMES]
+
+
 def class_bindings(root: type) -> list:
-    """Each (class, name, qualified name, first line) for an entry named 1
-    of BOUND_NAMES in the namespace of ``root``, of each class derived from
+    """Each (class, name, qualified name, first line) for an entry that
+    entries finds in the namespace of ``root``, of each class derived from
     it that exists when this runs, or of each class in the method
-    resolution order of any of them, however the entry was bound."""
+    resolution order of any of them, however the entry was bound. It reads
+    each class through SUBCLASSES, MRO, NAMESPACE and QUALNAME and tells
+    classes apart by identity, so no method of a class or of its metaclass
+    changes which classes and entries it finds; the qualified name and
+    first line of an entry come from the entry's value."""
     classes = [root]
     for cls in classes:
-        classes.extend(sub for sub in cls.__subclasses__() if sub not in classes)
-    owners = {owner for cls in classes for owner in cls.__mro__}
-    return sorted((owner.__qualname__, name) + described(value) for owner in owners
-                  for name, value in vars(owner).items() if name in BOUND_NAMES)
+        classes.extend(sub for sub in SUBCLASSES(cls) if not any(sub is known for known in classes))
+    owners = []
+    for cls in classes:
+        owners.extend(owner for owner in MRO(cls) if not any(owner is known for known in owners))
+    return sorted((QUALNAME(owner),) + entry for owner in owners for entry in entries(NAMESPACE(owner)))
+
+
+def own_bindings(instance: unittest.TestCase) -> list:
+    """The name of each entry that entries finds among the attributes that
+    ``instance`` holds of its own, read through INSTANCE_DICT."""
+    return sorted(entry[0] for entry in entries(INSTANCE_DICT(instance)))
 
 
 class InheritedSigchldTest(unittest.TestCase):
