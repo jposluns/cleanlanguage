@@ -209,7 +209,7 @@ does not fail on it. An edit of a comment, of layout, of the quotes of a string,
 is written or of parentheses that change no grouping can leave that tree as it is, and each of
 those kinds of edit can also change it. The edits that change it form a class, and these are
 examples of it, not a complete list: such an edit can change it inside the = field of an
-f-string or inside an interpolation of a template string, whose source text the tree holds;
+f-string or inside an interpolation of a template string;
 parentheses put around the name that an annotated assignment targets, or around the targets of
 a del, can change it; an edit of an encoding declaration, which is a comment, can change it when
 a string in the source is not ASCII; and re-indenting a block that holds a string written over
@@ -1261,11 +1261,11 @@ def code_form(source):
     a number is written or of parentheses that change no grouping can leave that tree as it is,
     and each of those kinds of edit can also change it. The edits that change it form a class,
     and these are examples of it, not a complete list: such an edit can change it inside
-    the = field of an f-string or inside an interpolation of a template string, whose source
-    text the tree holds; parentheses put around the name that an annotated assignment targets,
-    or around the targets of a del, can change it; an edit of an encoding declaration, which is
-    a comment, can change it when a string in the source is not ASCII; and re-indenting a block
-    that holds a string written over more than 1 line can change it."""
+    the = field of an f-string or inside an interpolation of a template string; parentheses
+    put around the name that an annotated assignment targets, or around the targets of a del,
+    can change it; an edit of an encoding declaration, which is a comment, can change it when a
+    string in the source is not ASCII; and re-indenting a block that holds a string written over
+    more than 1 line can change it."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
