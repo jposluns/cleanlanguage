@@ -1,0 +1,38 @@
+Scope the release dry run's ref check to refs it can move (#290)
+
+tools/release-dry-run.sh hashed every ref of the repository before its
+run and in step 6, so a ref that another worktree moved during the run
+failed it, although the dry run had moved nothing (TODO 279, seen on
+the PR 284 gate). Step 6 now compares only the refs that the dry run
+could itself move, read from the main worktree before and after: the
+branch HEAD names, or that it is detached; the commit HEAD resolves
+to; and every tag and note with its object name. It prints both
+snapshots on a mismatch, so the failure names the ref that differs.
+It then fails when any ref of any namespace contains the dry-run
+commit, which the script records after its commit. A git error in
+either check fails the run and is never read as an empty listing.
+
+This narrows a release-integrity check on purpose and needs the
+maintainer's acceptance. Step 6 newly catches a commit in a detached
+main worktree, which the old hash missed because git for-each-ref
+lists no HEAD. It no longer catches the deletion of a branch other
+than the checked-out one, or a move or creation of a branch, a
+remote-tracking ref, refs/stash, refs/replace/ or any other ref
+outside tags and notes at a commit that does not contain the dry-run
+commit, including such a ref written by a commit hook. The script's
+header states that residual. A tag or note that another worktree
+writes during the run still fails it. TODO 279 does not record which
+ref moved on the PR 284 gate, so whether this change would have
+avoided that failure is unknown.
+
+tools/test-release-dry-run-refs.py runs the script's own functions,
+before line, dry-run commit line and step 6, extracted by content
+anchors, in throwaway repositories in a temporary folder. It runs 16
+ref cases, with concurrency modelled as sequenced writes from a second
+worktree, and 5 cases on fail-closed reading and structure. Against
+the unchanged script the concurrent cases failed and the detached
+commit passed; against this change all 21 pass. The release dry run
+workflow and tools/run_all_checks.sh run it before the dry run, and
+tools/test-run-all-checks.py records the new digest of
+tools/run_all_checks.sh after a reading of the whole script. The
+workflow header now counts 7 test suites.
