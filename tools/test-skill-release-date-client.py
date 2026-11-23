@@ -433,13 +433,18 @@ CHECK_SECONDS = 10
 OWN_END_SECONDS = 90
 
 # The stub child of the group-kill check. Its source ignores SIGTERM, SIGINT
-# and SIGHUP, Python ignores SIGPIPE and SIGXFSZ at start-up, and it keeps any
-# other signal that the test process ignores as ignored, and every signal that
-# the test thread blocks as blocked, when the client starts it. Before its
-# source or Python ignores 1 of those 5, that signal can end it. Examples of a
-# signal that ends it early, not a complete list: SIGKILL, and SIGUSR1 when
-# the test neither ignores nor blocks SIGUSR1. It first reads its own end, in
-# seconds, with float from the file own_end, which the check writes beside it,
+# and SIGHUP, and Python ignores SIGPIPE and SIGXFSZ at start-up. When the
+# client starts it, it keeps every signal that the test thread blocks as
+# blocked, and every signal other than SIGPIPE and SIGXFSZ that the test
+# process ignores as ignored: the client's Popen, with its default
+# restore_signals, resets SIGPIPE and SIGXFSZ to their default action before
+# exec. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ can end the
+# stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can end it
+# before its source ignores it if the test process does not ignore it.
+# Examples of a signal that ends it early, not a complete list: SIGKILL, and
+# SIGUSR1 when the test neither ignores nor blocks SIGUSR1. It first reads
+# its own end, in seconds, with float from the file own_end, which the check
+# writes beside it,
 # so a plain int or float passed as own_end reaches it only as a number; a
 # value with methods of its own can still change its source, as the comment
 # in check_group_kill states. A text that float does not take raises at that
@@ -451,7 +456,7 @@ OWN_END_SECONDS = 90
 # process then waits for end of file on the FIFO lifeline, whose only write
 # end the test holds, or for its own end, and exits. The test closes lifeline
 # when its check ends, and the kernel closes it when the test process ends in
-# any other way, SIGKILL included. Both opens are non-blocking, so a stub that
+# any other way, SIGKILL included. Each open is non-blocking, so a stub that
 # finds no reader of alive fails at once rather than block. On Linux, select
 # reports nothing for a FIFO read end opened while no writer has it open, so a
 # stub that opens lifeline after the test has closed it would wait at its
@@ -462,7 +467,7 @@ OWN_END_SECONDS = 90
 #
 # The bounds this order gives, derived from the source below. Start-up
 # here and in the check means interpreter start-up and then the read of
-# own_end, both before the first read of lifeline. A process reaches
+# own_end, which come before the first read of lifeline. A process reaches
 # its wait only after start-up and the first read, and the member only
 # after the fork, so its own end comes own_end seconds after it enters that
 # wait, not after it starts, and nothing in the test bounds start-up. After
@@ -470,8 +475,8 @@ OWN_END_SECONDS = 90
 # and exits at once; a process not yet at that read exits there when it
 # gets to it, so it outlives the release by the rest of its start-up,
 # however long that is. The leader writes the ready byte only after the
-# first read and the fork, so once the test has read that byte, both
-# processes are past the read. test_the_check_names_no_signal_function
+# first read and the fork, so once the test has read that byte, the leader
+# and the member are past the read. test_the_check_names_no_signal_function
 # pins this order.
 GROUP_STUB = (
     "import os, select, signal\n"
@@ -635,7 +640,7 @@ class BoundsTest(unittest.TestCase):
 
     def check_group_kill(self, check: float = CHECK_SECONDS, own_end: float = OWN_END_SECONDS, witness=None):
         # The stub child (GROUP_STUB) forks a member into its group and
-        # writes the ready byte to the FIFO alive, and both its processes then
+        # writes the ready byte to the FIFO alive, and its 2 processes then
         # wait for the release, end of file on the FIFO lifeline, or for their
         # own end, own_end seconds after each enters that wait, which the
         # stub reads from the file own_end that this check writes. The client's
@@ -676,9 +681,9 @@ class BoundsTest(unittest.TestCase):
         # neither. When the test process ends without unwinding, as on
         # SIGKILL or SIGTERM, the kernel closes lifeline. After either
         # release a stub process ends as GROUP_STUB's comment derives: at
-        # once if it is past its first read of lifeline, as both are once the
-        # ready byte has been read, and otherwise when it reaches that read,
-        # which nothing in the test bounds.
+        # once if it is past its first read of lifeline, as the leader and the
+        # member are once the ready byte has been read, and otherwise when it
+        # reaches that read, which nothing in the test bounds.
         # witness, when given, is called with the path of alive before the
         # stub starts, so that a caller can open a reader of its own.
         #
