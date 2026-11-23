@@ -4,8 +4,10 @@ Case 27 of tools/test-release-package-dist.py now holds the 5 gaps
 that TODOs 269 to 273 record for the trace reader, each with a case
 that fails without it. Its docstrings state a rule for what the
 reader refuses, with examples, and point to the reader functions as
-the code that makes its refusals. The packager and the reader are
-unchanged.
+the code that makes its refusals. The packager is unchanged, and
+the reader changes only in the text of 2 errors, so that each
+refusal that a subtest checks by its whole error has an error of
+its own.
 
 - fork() = 101 is read as the call, and its child starts in the
   folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
