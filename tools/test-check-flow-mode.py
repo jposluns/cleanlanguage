@@ -906,9 +906,11 @@ PRESERVED = [
 # equal: its 2 sources differ only in a docstring, in a body of a docstring alone against a body
 # of pass alone, or in a blank line.
 # False marks a pair that it must keep apart: its 2 sources differ only in a part that is
-# neither a docstring nor a sha256 of PARAGRAPHS, which is a constant of 64 lowercase hexadecimal
-# digits that is the third item of a 3-item tuple row of the list that an assignment at the top
-# level, without an annotation, binds to the name PARAGRAPHS alone.
+# neither a docstring nor a sha256 of PARAGRAPHS, which is a string constant of 64 lowercase
+# hexadecimal digits that is the third item of a 3-item tuple display that is an item of the list
+# display that is the value of an assignment statement of the module's body itself, not nested
+# inside another statement, without an annotation, not augmented and with the name PARAGRAPHS as
+# its only target.
 FORM_PAIRS = [
     ("a class docstring reworded", b"class Note:\n    \"\"\"A.\"\"\"\n",
      b"class Note:\n    \"\"\"B.\"\"\"\n", True),
@@ -1276,11 +1278,14 @@ def code_form(source):
     module, of a function, of an async function or of a class when that statement is a string
     constant, and with each sha256 of PARAGRAPHS made PLACEHOLDER, then unparsed. A sha256 of
     PARAGRAPHS is a string constant of 64 lowercase hexadecimal digits that is the third item of
-    a row that is a tuple display of 3 items, in a list display that an assignment at the top
-    level of the module, without an annotation and with the name PARAGRAPHS as its only target,
-    binds; no other value is made PLACEHOLDER. Unparsing leaves out the
-    line and column positions that the tree holds, so 2 sources whose trees differ only in those
-    positions give the same form, and an edit that leaves the unparsed tree as it is keeps the
+    a tuple display of 3 items that is an item of a list display that is the value of a statement
+    of the module's body, when that statement is an assignment statement without an annotation,
+    not an augmented assignment, with the name PARAGRAPHS as its only target. A statement of the
+    module's body is an item of that body, not a statement nested inside another, such as an if,
+    and an assignment expression is not a statement; no other value is made PLACEHOLDER.
+    Unparsing leaves out the line and column positions that the tree holds, so 2 sources whose
+    trees differ only in those positions give the same form, and an edit that leaves the unparsed
+    tree as it is keeps the
     form, and so the digest. An edit of a comment, of layout, of the quotes of a string, of how
     a number is written or of parentheses that change no grouping can leave that tree as it is,
     and each of those kinds of edit can also change it. The edits that change it form a class,
