@@ -15,15 +15,19 @@ a function; 2 keyword arguments of a call swapped; and a sha256 in a
 list bound to PARAGRAPHS_OLD, in a list bound to PARAGRAPHS by an
 annotated assignment and in a list bound to an attribute named
 PARAGRAPHS. The last 2 try isinstance(node, ast.Assign) in code_form()
-and isinstance(node, ast.Name) in is_name(). The pair of 2 keyword
-arguments of a call swapped tries no condition of code_form(); it
-tries only that code_form() keeps apart 2 sources that differ only in
-the order of 2 keyword arguments of a call, so a code_form() that
-sorts them fails it. The module docstring and the comment above
-FORM_PAIRS say that each pair but this 1 tries a condition of
-code_form(). MUTATIONS gains 3 rows on the check's own text: a
-comparison operator changed, the name __name__ changed and the upper
-bound of a slice changed.
+and isinstance(node, ast.Name) in is_name(). The only statement of
+each source of the pair of 2 keyword arguments of a call swapped is an
+expression that is a call, so the pair tries
+isinstance(first.value, ast.Constant) in code_form() on a module: a
+code_form() that removes the first statement of a module whenever it
+is an expression fails it. The pair also tries that code_form() keeps
+apart 2 sources that differ only in the order of 2 keyword arguments
+of a call, so a code_form() that sorts them fails it. The module
+docstring and the comment above FORM_PAIRS say that each pair tries a
+condition of code_form() that the check's own source does not.
+MUTATIONS gains 3 rows on the check's own text: a comparison operator
+changed, the name __name__ changed and the upper bound of a slice
+changed.
 
 TODO 262: the 2 MUTATIONS rows that edited the name or the opening
 text of a row of PARAGRAPHS tried only the name of its first row and
@@ -74,9 +78,14 @@ them. The comment of the registry case says that unparsing leaves out
 those positions and that an edit that keeps the unparsed tree keeps
 the digest. The docstring of code_form() names the docstrings that it
 removes as those of a module, a function, an async function and a
-class. PRESERVED gains 3 rows, edits of the check that must keep the
-digest: the quotes of a string changed, a number written in
-hexadecimal and parentheses that change no grouping added.
+class, and says that the only values that it makes PLACEHOLDER are
+string constants of 64 lowercase hexadecimal digits, each the third
+item of a row that is a tuple display of 3 items, in a list display
+that an assignment at the top level, without an annotation and with
+the name PARAGRAPHS as its only target, binds. PRESERVED gains 3 rows,
+edits of the check that must keep the digest: the quotes of a string
+changed, a number written in hexadecimal and parentheses that change
+no grouping added.
 
 Each row is evidence for its own edit only. A code_form() that hides
 or keeps only what no row edits still passes, such as one that also

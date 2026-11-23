@@ -235,11 +235,13 @@ full stop at the end of its name, 1 that changes the case of the first letter of
 that puts a full stop at the end of its opening text, 1 that puts a space at the end of its
 opening text, 1 that doubles the first space inside its opening text and 1 that deletes that
 space, and, for each opening text that ends with a space, 1 row that deletes that space.
-FORM_PAIRS holds pairs of sources in forms that the check does not hold. Each pair but 1 tries a
-condition of code_form() that the check's own source does not. The pair of 2 keyword arguments
-of a call swapped tries no condition of code_form(); it tries only that code_form() keeps apart 2
-sources that differ only in the order of 2 keyword arguments of a call, so a code_form() that
-sorts them fails it. code_form()
+FORM_PAIRS holds pairs of sources in forms that the check does not hold. Each pair tries a
+condition of code_form() that the check's own source does not. The only statement of each source
+of the pair of 2 keyword arguments of a call swapped is an expression that is a call, so the pair
+tries the condition isinstance(first.value, ast.Constant) of code_form() on a module: a
+code_form() that removes the first statement of a module whenever it is an expression fails it.
+The pair also tries that code_form() keeps apart 2 sources that differ only in the order of 2
+keyword arguments of a call, so a code_form() that sorts them fails it. code_form()
 must make 2 sources equal that differ only in the docstring of a class or of an async function,
 in a function of its docstring alone against one of pass alone, or in an empty module against a
 blank line, and keep apart 2 that differ only in a string first in the body of an if, a for, a
@@ -891,12 +893,15 @@ PRESERVED = [
      "    found = (findings(text, source))"),
 ]
 # The self-check of code_form() on forms that the check does not hold, so that no replacement of
-# its source can try them. Each pair but 1 tries a condition of code_form() that the check's own
-# source does not. The pair of 2 keyword arguments of a call swapped tries no condition of
-# code_form(); it tries only that code_form() keeps apart 2 sources that differ only in the order
-# of 2 keyword arguments of a call, so a code_form() that sorts them fails it. True marks a pair
-# that code_form() must make equal: its 2 sources differ only in a docstring, in a body of a
-# docstring alone against a body of pass alone, or in a blank line.
+# its source can try them. Each pair tries a condition of code_form() that the check's own source
+# does not. The only statement of each source of the pair of 2 keyword arguments of a call
+# swapped is an expression that is a call, so the pair tries the condition
+# isinstance(first.value, ast.Constant) of code_form() on a module: a code_form() that removes
+# the first statement of a module whenever it is an expression fails it. The pair also tries
+# that code_form() keeps apart 2 sources that differ only in the order of 2 keyword arguments of
+# a call, so a code_form() that sorts them fails it. True marks a pair that code_form() must make
+# equal: its 2 sources differ only in a docstring, in a body of a docstring alone against a body
+# of pass alone, or in a blank line.
 # False marks a pair that it must keep apart: its 2 sources differ only in a part that is
 # neither a docstring nor a sha256 of PARAGRAPHS, which is a constant of 64 lowercase hexadecimal
 # digits that is the third item of a 3-item tuple row of the list that an assignment at the top
@@ -1266,8 +1271,11 @@ def code_form(source):
     """The code in source, the bytes of a module, as CODE_SHA256 holds the check's: source parsed
     as compile() parses bytes, with each docstring removed, which is the first statement of the
     module, of a function, of an async function or of a class when that statement is a string
-    constant, and with the third item of each row of PARAGRAPHS made PLACEHOLDER when that item
-    is a constant of 64 lowercase hexadecimal digits, then unparsed. Unparsing leaves out the
+    constant, and with each sha256 of PARAGRAPHS made PLACEHOLDER, then unparsed. A sha256 of
+    PARAGRAPHS is a string constant of 64 lowercase hexadecimal digits that is the third item of
+    a row that is a tuple display of 3 items, in a list display that an assignment at the top
+    level of the module, without an annotation and with the name PARAGRAPHS as its only target,
+    binds; no other value is made PLACEHOLDER. Unparsing leaves out the
     line and column positions that the tree holds, so 2 sources whose trees differ only in those
     positions give the same form, and an edit that leaves the unparsed tree as it is keeps the
     form, and so the digest. An edit of a comment, of layout, of the quotes of a string, of how
