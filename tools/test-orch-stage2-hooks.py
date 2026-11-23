@@ -163,6 +163,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import tokenize
@@ -1345,24 +1346,26 @@ class EnumeratorBounds(Stage2Harness):
     at its bound passes, for 1 start and for 2, also when check=True fails after the start, that a
     launch with no running case fails at once, with the exception that the launch raised as the cause,
     also when the launch printed a doctor refusal as well, that each of ENUM_PROGRAMS records its start
-    first and leaves the record alone after it, that write_registry checks the enumerator as the hook
-    reads it from the file written, so a tuple or a str subclass is checked as the text that json
-    writes, and refuses a -c enumerator that this interpreter does not run with exactly -I and then -c
-    as separate elements, whose program is not 1 of ENUM_PROGRAMS (one without the statements of
-    ENUM_RUN_MARK, one that holds them only as text or after an exit, one that begins with them but
-    does not compile, and one that begins with them and then removes the record or adds a start), or
-    whose timeout is over ENUM_TIMEOUT, that for each of the interpreter, -I, -c and the program it
-    refuses a named value that begins with, ends with or holds an accepted value, and a named value
-    that an accepted value begins or ends with, that it refuses every program-file form found so far,
-    each with a recording file in place, that declared_enumerator_defect begins with exactly the
-    statements of EXACT_ARGV_CHECK, which accept an argv only when its interpreter, -I and -c each
-    equal (==) their expected value and its program is an item of ENUM_PROGRAMS, a tuple of str, and
-    that the names those statements read keep their meaning, and that write_registry refuses every
-    near miss that near_misses generates for each element and every path alias of the interpreter. The
+    first and leaves the record alone after it, and that each branch of those 2 checks
+    (runs_enum_run_mark_first and program_leaves_record) refuses a program of its own, that
+    write_registry checks the enumerator as the hook reads it from the file written, so a tuple or a
+    str subclass is checked as the text that json writes, and refuses a -c enumerator that this
+    interpreter does not run with exactly -I and then -c as separate elements, whose program is not 1
+    of ENUM_PROGRAMS (one without the statements of ENUM_RUN_MARK, also when its timeout is absent or
+    one that the hook reads as 60, one that holds them only as text or after an exit, one that begins
+    with them but does not compile, and one that begins with them and then removes the record or adds
+    a start), or whose timeout, as the hook reads it, is over ENUM_TIMEOUT, that for each of the
+    interpreter, -I, -c and the program it refuses a named value that begins with, ends with or holds
+    an accepted value, and a named value that an accepted value begins or ends with, that it refuses
+    every program-file form found so far, each with a recording file in place, that write_registry,
+    declared_enumerator_defect, runs_enum_run_mark_first and program_leaves_record each have exactly
+    the body of PINNED_CHECKS, that the names those bodies read keep their meaning, and that
+    ENUM_PROGRAMS is its 3 reviewed programs, by sha256, and that write_registry refuses every near
+    miss that near_misses generates for each element and every path alias of the interpreter. The
     named rows and the near misses are finite: each refuses the values it holds and shows nothing about
-    any other value. The exact comparison of each element is required by the pin of EXACT_ARGV_CHECK,
-    and what the pin does not see is stated there. This suite no longer drives a program-file
-    enumerator through the hook: the hook passes the argv to subprocess.run unchanged
+    any other value. The exact checks are required by the pin of PINNED_CHECKS, and what the pin does
+    not see is stated there. This suite no longer drives a program-file enumerator through the hook:
+    the hook passes the argv to subprocess.run unchanged
     (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
     does not see is stated above enumerator_bound_defect."""
 
@@ -1459,6 +1462,19 @@ class EnumeratorBounds(Stage2Harness):
         # write_registry accepts only ENUM_PROGRAMS, which refuses this one.
         self.assertTrue(program_leaves_record(self.SEARCHES), "precondition: no name of the record")
         self.assertNotIn(self.SEARCHES, ENUM_PROGRAMS)
+        # Each branch of the 2 checks refuses a program of its own: runs_enum_run_mark_first refuses
+        # the record followed by a statement that does not compile, and program_leaves_record refuses
+        # the record followed by each other name and attribute that it looks for and by a string that
+        # holds ENUM_RUNS_VAR.
+        for tail in ("return\n", "break\n", "from __future__ import annotations\n"):
+            self.assertFalse(runs_enum_run_mark_first(ENUM_RUN_MARK + tail), tail)
+        for tail in ("_record.close()\n", "from os import environ\nenviron.clear()\n",
+                     "from os import getenv\ngetenv(\"HOME\")\n",
+                     "from os import putenv\nputenv(\"A\", \"1\")\n", "os.getenv(\"HOME\")\n",
+                     "os.putenv(\"A\", \"1\")\n", "_name = \"" + ENUM_RUNS_VAR + "\"\n"):
+            program = ENUM_RUN_MARK + tail
+            self.assertTrue(runs_enum_run_mark_first(program), program)
+            self.assertFalse(program_leaves_record(program), program)
         marker = self._tmp / "enumerator-ran.txt"
         self.arm_lease()
         for argv in ([sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)],
@@ -1550,9 +1566,9 @@ class EnumeratorBounds(Stage2Harness):
         # ends with or holds an accepted value, and a value that an accepted value begins or ends with,
         # so a check that took an accepted value as a prefix, a suffix or a part of the value, or the
         # value as a prefix, a suffix or a part of an accepted value, accepts at least 1 of these rows.
-        # They catch those loosenings only; test_the_argv_comparison_is_exact_equality pins the exact
-        # comparison itself, and test_write_registry_refuses_every_generated_near_miss drives near misses
-        # of other kinds.
+        # They catch those loosenings only; test_the_checks_on_the_path_to_acceptance_are_pinned pins the
+        # exact comparison itself, and test_write_registry_refuses_every_generated_near_miss drives near
+        # misses of other kinds.
         first_line = ENUM_FIXTURE.split("\n", 1)[0] + "\n"
         unmarked = ENUM_FIXTURE[len(ENUM_RUN_MARK):]
         interpreter_name = os.path.basename(sys.executable)
@@ -1588,6 +1604,28 @@ class EnumeratorBounds(Stage2Harness):
             with self.subTest(enumerator=name):
                 with self.assertRaisesRegex(self.failureException, wanted):
                     self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": timeout}))
+        # The hook reads an absent timeout, and one that is not a number, is not over 0 or is over 600,
+        # as 60 and still starts the enumerator (aiqt_hooks.py:22830-22831), so write_registry checks the
+        # argv whatever the timeout holds: it refuses a -c program without the record and accepts the
+        # fixture with each of those, an absent timeout included. It refuses each timeout that the hook
+        # reads as over ENUM_TIMEOUT, whole or not, up to 600, and accepts each that it reads as at most
+        # ENUM_TIMEOUT.
+        absent = object()
+        for timeout in (absent, None, "fast", "120", 0, -1, 601):
+            unmarked_enumerator = {"argv": [sys.executable, "-I", "-c", "pass"]}
+            if timeout is not absent:
+                unmarked_enumerator["timeout"] = timeout
+            with self.subTest(timeout="absent" if timeout is absent else timeout):
+                with self.assertRaisesRegex(self.failureException, self.REFUSED):
+                    self.write_registry(self.stage2(enumerator=unmarked_enumerator))
+                self.write_registry(self.stage2(enumerator=dict(unmarked_enumerator, argv=fixture)))
+        for timeout in (ENUM_TIMEOUT + 1, ENUM_TIMEOUT + 2, 600, ENUM_TIMEOUT + 0.5, ENUM_TIMEOUT + 1.5):
+            with self.subTest(timeout=timeout):
+                with self.assertRaisesRegex(self.failureException, "over ENUM_TIMEOUT"):
+                    self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": timeout}))
+        for timeout in (1, ENUM_TIMEOUT - 0.5, ENUM_TIMEOUT, float(ENUM_TIMEOUT)):
+            with self.subTest(timeout=timeout):
+                self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": timeout}))
         # The fixture registry passes, so does the sleeping program of ENUM_PROGRAMS, and so does the
         # fixture argv as a tuple, since the hook reads the list that json writes; an argv that the hook
         # refuses starts nothing and is not held.
@@ -1597,50 +1635,135 @@ class EnumeratorBounds(Stage2Harness):
         self.write_registry(self.stage2(enumerator={"argv": tuple(fixture), "timeout": ENUM_TIMEOUT}))
         self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 600}))
 
-    # The statements with which declared_enumerator_defect begins, after its docstring, as source text:
-    # the argv as the hook reads it, and the comparison of each of its first 4 elements with == or, for
-    # the program, by membership in ENUM_PROGRAMS. test_the_argv_comparison_is_exact_equality requires
-    # them exactly, compared as syntax trees, so any edit to them, and any statement added before them,
-    # fails it, whatever values the edit would accept; it also requires that sys is the sys module, that
-    # ENUM_PROGRAMS is a tuple of str, so that membership is equality with 1 item, and that no global of
-    # this file shadows a builtin that the statements call. It reads the function that the name
-    # declared_enumerator_defect holds when the case runs, which write_registry calls. It does not see
-    # an edit made to this text with the same edit, a change outside this file to a name that the
-    # statements read (the builtins module, or sys.executable rebound while the suite runs), or a
-    # write_registry that changes the enumerator before it calls the check;
-    # test_write_registry_refuses_every_generated_near_miss drives write_registry, so it sees such a
-    # change only when it accepts a near miss that near_misses generates.
-    EXACT_ARGV_CHECK = '''
+    # Every function on the path from write_registry to its acceptance of a declared enumerator, and the
+    # 2 checks that EnumeratorBounds applies to each program of ENUM_PROGRAMS, each with its parameters
+    # and, as source text, the statements of its whole body after its docstring: write_registry (the
+    # read back, the branch that calls the check, the handling of its result and the write),
+    # declared_enumerator_defect (the argv as the hook reads it, the comparison of each of its first 4
+    # elements with == or, for the program, by membership in ENUM_PROGRAMS, and the timeout as the hook
+    # reads it, aiqt_hooks.py:22830-22831), runs_enum_run_mark_first and program_leaves_record.
+    # test_the_checks_on_the_path_to_acceptance_are_pinned requires each body exactly, compared as
+    # syntax trees, so any edit to 1 of its statements, and any statement added or removed anywhere in
+    # it, fails it, whatever values the edit would accept. It reads the function that each name holds
+    # when the case runs, and requires that every Stage2Harness class of this file resolves
+    # write_registry and fail to the functions of Stage2Harness and unittest.TestCase. It also requires
+    # that each name that the bodies read and do not bind keeps its meaning: each module is the module
+    # itself, no global of this file shadows a builtin, ENUM_TIMEOUT and ENUM_RUNS_VAR have the values
+    # below, and ENUM_RUN_MARK and each of the 3 programs of ENUM_PROGRAMS, in order, have the sha256 of
+    # their UTF-8 text below, so a program added, removed, reordered or changed fails it. It does not
+    # see an edit made to the pin and to the code together, or a change outside this file to a name
+    # that the bodies read (the builtins module, an attribute of the ast or json module, or
+    # sys.executable rebound while the suite runs); test_write_registry_refuses_every_generated_near_miss
+    # and the named rows drive write_registry, so they see such a change only when it accepts a value
+    # that they hold.
+    PINNED_CHECKS = (
+        ("write_registry", "self, obj", '''
+text = json.dumps(obj)
+written = json.loads(text)
+enumerator = written.get("enumerator") if isinstance(written, dict) else None
+if isinstance(enumerator, dict):
+    defect = declared_enumerator_defect(enumerator)
+    if defect is not None:
+        self.fail(defect)
+aiqt = self.repo / ".aiqt"
+aiqt.mkdir(exist_ok=True)
+(aiqt / "orchestration.json").write_text(text, encoding="utf-8")
+'''),
+        ("declared_enumerator_defect", "enumerator", '''
 argv = enumerator.get("argv")
 if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
     return None
 if not (len(argv) > 3 and argv[0] == sys.executable and argv[1] == "-I" and argv[2] == "-c"
         and argv[3] in ENUM_PROGRAMS):
     return "the enumerator {!r} is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS".format(argv)
-'''
+timeout = enumerator.get("timeout")
+timeout = timeout if isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60
+if timeout > ENUM_TIMEOUT:
+    return "the enumerator timeout {!r} is over ENUM_TIMEOUT".format(timeout)
+return None
+'''),
+        ("runs_enum_run_mark_first", "program", '''
+try:
+    body = ast.parse(program).body
+    compile(program, "<enumerator>", "exec", dont_inherit=True)
+except (SyntaxError, ValueError):
+    return False
+mark = ast.parse(ENUM_RUN_MARK).body
+return [ast.dump(node) for node in body[:len(mark)]] == [ast.dump(node) for node in mark]
+'''),
+        ("program_leaves_record", "program", '''
+body = ast.parse(program).body[len(ast.parse(ENUM_RUN_MARK).body):]
+for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+    if isinstance(node, ast.Name) and node.id in ("_runs", "_record", "environ", "getenv", "putenv"):
+        return False
+    if isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv", "putenv"):
+        return False
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and ENUM_RUNS_VAR in node.value:
+        return False
+return True
+'''))
+    PINNED_MODULES = ("ast", "json", "sys")
+    PINNED_BUILTINS = ("SyntaxError", "ValueError", "all", "compile", "dict", "float", "int", "isinstance",
+                       "len", "list", "str")
+    PINNED_VALUES = (("ENUM_TIMEOUT", 60), ("ENUM_RUNS_VAR", "ORCH_STAGE2_ENUMERATOR_RUNS"))
+    ENUM_RUN_MARK_SHA256 = "10c11bf2a18766e23aa9fafa66cd3cccbdce9e1c52a361da13031a49d24e981a"
+    ENUM_PROGRAMS_SHA256 = ("9c88bd9211b6e35dd6b52e512ab8690f215060899bf0141ff4a1abe0a7d17a21",
+                            "315b094aebc85e63844978cf269182615c347eadb7375fbc9fa537426eb57773",
+                            "a273ed8a976cc9643664fe1970d32ef904f6f210b9eaf87613e36b52cba43aad")
 
-    def test_the_argv_comparison_is_exact_equality(self):
-        self.assertFalse(hasattr(declared_enumerator_defect, "__wrapped__"), "the check is wrapped")
-        tree = ast.parse(inspect.getsource(declared_enumerator_defect))
-        self.assertEqual(len(tree.body), 1)
-        function = tree.body[0]
-        self.assertIsInstance(function, ast.FunctionDef)
-        self.assertEqual(function.name, declared_enumerator_defect.__code__.co_name)
-        self.assertEqual(function.decorator_list, [], "the check is decorated")
-        self.assertEqual(ast.dump(function.args),
-                         ast.dump(ast.parse("def f(enumerator):\n    pass\n").body[0].args))
-        docstring = function.body[0]
-        self.assertTrue(isinstance(docstring, ast.Expr) and isinstance(docstring.value, ast.Constant)
-                        and isinstance(docstring.value.value, str), "precondition: the check has a docstring")
-        wanted = [ast.dump(node) for node in ast.parse(self.EXACT_ARGV_CHECK).body]
-        self.assertEqual([ast.dump(node) for node in function.body[1:1 + len(wanted)]], wanted,
-                         "declared_enumerator_defect does not begin with EXACT_ARGV_CHECK")
-        names = declared_enumerator_defect.__globals__
-        self.assertIs(names["sys"], __import__("sys"))
-        self.assertIs(type(names["ENUM_PROGRAMS"]), tuple)
-        self.assertTrue(names["ENUM_PROGRAMS"] and all(type(p) is str for p in names["ENUM_PROGRAMS"]))
-        for builtin in ("isinstance", "list", "all", "str", "len"):
+    def test_the_checks_on_the_path_to_acceptance_are_pinned(self):
+        names = globals()
+        functions = {name: Stage2Harness.write_registry if name == "write_registry" else names[name]
+                     for name, _parameters, _body in self.PINNED_CHECKS}
+        read = set()
+        for name, parameters, body in self.PINNED_CHECKS:
+            function = functions[name]
+            self.assertIsInstance(function, types.FunctionType, name)
+            self.assertIs(function.__globals__, names, name)
+            self.assertFalse(hasattr(function, "__wrapped__"), "the check {} is wrapped".format(name))
+            tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+            self.assertEqual(len(tree.body), 1, name)
+            node = tree.body[0]
+            self.assertIsInstance(node, ast.FunctionDef, name)
+            self.assertEqual(node.name, function.__code__.co_name)
+            self.assertEqual(node.decorator_list, [], "the check {} is decorated".format(name))
+            self.assertEqual(ast.dump(node.args),
+                             ast.dump(ast.parse("def f({}):\n    pass\n".format(parameters)).body[0].args), name)
+            docstring = node.body[0]
+            self.assertTrue(isinstance(docstring, ast.Expr) and isinstance(docstring.value, ast.Constant)
+                            and isinstance(docstring.value.value, str),
+                            "precondition: the check {} has a docstring".format(name))
+            self.assertEqual([ast.dump(statement) for statement in node.body[1:]],
+                             [ast.dump(statement) for statement in ast.parse(body).body],
+                             "{} is not as PINNED_CHECKS holds it".format(name))
+            bound = {argument.arg for argument in node.args.args}
+            bound |= {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)
+                      and not isinstance(sub.ctx, ast.Load)}
+            read |= {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)
+                     and isinstance(sub.ctx, ast.Load)} - bound
+        for case in [value for value in names.values()
+                     if isinstance(value, type) and issubclass(value, Stage2Harness)]:
+            self.assertIs(case.write_registry, Stage2Harness.write_registry, case.__name__)
+            self.assertIs(case.fail, unittest.TestCase.fail, case.__name__)
+        pinned = (set(self.PINNED_MODULES) | set(self.PINNED_BUILTINS) | dict(self.PINNED_VALUES).keys()
+                  | {"ENUM_RUN_MARK", "ENUM_PROGRAMS"} | functions.keys())
+        self.assertEqual(read - pinned, set(), "a pinned check reads a name that is not pinned")
+        for module in self.PINNED_MODULES:
+            self.assertIs(names[module], __import__(module))
+        for builtin in self.PINNED_BUILTINS:
             self.assertNotIn(builtin, names, "a global shadows the builtin " + builtin)
+        for name, value in self.PINNED_VALUES:
+            self.assertIs(type(names[name]), type(value), name)
+            self.assertEqual(names[name], value, name)
+        self.assertIs(type(names["ENUM_RUN_MARK"]), str)
+        self.assertEqual(hashlib.sha256(names["ENUM_RUN_MARK"].encode("utf-8")).hexdigest(),
+                         self.ENUM_RUN_MARK_SHA256, "ENUM_RUN_MARK is not as pinned")
+        programs = names["ENUM_PROGRAMS"]
+        self.assertIs(type(programs), tuple)
+        self.assertTrue(all(type(program) is str for program in programs),
+                        "ENUM_PROGRAMS is not a tuple of str")
+        self.assertEqual(tuple(hashlib.sha256(program.encode("utf-8")).hexdigest() for program in programs),
+                         self.ENUM_PROGRAMS_SHA256, "ENUM_PROGRAMS is not its 3 reviewed programs")
 
     @staticmethod
     def near_misses(value):
