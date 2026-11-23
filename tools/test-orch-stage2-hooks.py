@@ -1340,21 +1340,28 @@ class EnumeratorBounds(Stage2Harness):
     ENUM_TIMEOUT for each enumerator start that the launch recorded, plus ENUM_MARGIN
     (enumerator_bound_defect), so the hook's own timeout ends an enumerator that hangs, and the case
     reads what the hook reports, before the bound ends the run. It reads the timeout that the launch
-    was given, however the case bound it. These cases prove that a start reaches the record through the
-    hook and through the doctor, that a launch 1 second under its bound fails its case and a launch at
-    its bound passes, for 1 start and for 2, also when check=True fails after the start, that a launch
-    with no running case fails at once, with the exception that the launch raised as the cause, also
-    when the launch printed a doctor refusal as well, that each of ENUM_PROGRAMS records its start
+    was given, however the case bound it. These cases require that a start reaches the record through
+    the hook and through the doctor, that a launch 1 second under its bound fails its case and a launch
+    at its bound passes, for 1 start and for 2, also when check=True fails after the start, that a
+    launch with no running case fails at once, with the exception that the launch raised as the cause,
+    also when the launch printed a doctor refusal as well, that each of ENUM_PROGRAMS records its start
     first and leaves the record alone after it, that write_registry checks the enumerator as the hook
     reads it from the file written, so a tuple or a str subclass is checked as the text that json
     writes, and refuses a -c enumerator that this interpreter does not run with exactly -I and then -c
     as separate elements, whose program is not 1 of ENUM_PROGRAMS (one without the statements of
     ENUM_RUN_MARK, one that holds them only as text or after an exit, one that begins with them but
     does not compile, and one that begins with them and then removes the record or adds a start), or
-    whose timeout is over ENUM_TIMEOUT, that it compares the interpreter, -I, -c and the program each
-    exactly, so for each it refuses a value that begins with, ends with or holds an accepted value,
-    and a value that an accepted value begins or ends with, and that it refuses every program-file
-    form found so far, each with a recording file in place. This suite no longer drives a program-file
+    whose timeout is over ENUM_TIMEOUT, that for each of the interpreter, -I, -c and the program it
+    refuses a named value that begins with, ends with or holds an accepted value, and a named value
+    that an accepted value begins or ends with, that it refuses every program-file form found so far,
+    each with a recording file in place, that declared_enumerator_defect begins with exactly the
+    statements of EXACT_ARGV_CHECK, which accept an argv only when its interpreter, -I and -c each
+    equal (==) their expected value and its program is an item of ENUM_PROGRAMS, a tuple of str, and
+    that the names those statements read keep their meaning, and that write_registry refuses every
+    near miss that near_misses generates for each element and every path alias of the interpreter. The
+    named rows and the near misses are finite: each refuses the values it holds and shows nothing about
+    any other value. The exact comparison of each element is required by the pin of EXACT_ARGV_CHECK,
+    and what the pin does not see is stated there. This suite no longer drives a program-file
     enumerator through the hook: the hook passes the argv to subprocess.run unchanged
     (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
     does not see is stated above enumerator_bound_defect."""
@@ -1539,11 +1546,13 @@ class EnumeratorBounds(Stage2Harness):
                 ("a timeout over ENUM_TIMEOUT", fixture, ENUM_TIMEOUT + 1, "over ENUM_TIMEOUT"))
         rows += tuple(("the record followed by " + name, [sys.executable, "-I", "-c", program], ENUM_TIMEOUT,
                        self.REFUSED) for name, program in uncompiled.items())
-        # declared_enumerator_defect compares each of the interpreter, -I, -c and the program exactly. For
-        # each of the 4, these rows hold a value that begins with, ends with or holds an accepted value,
-        # and a value that an accepted value begins or ends with, so a check that took an accepted value
-        # as a prefix, a suffix or a part of the value, or the value as a prefix, a suffix or a part of
-        # an accepted value, accepts at least 1 of these rows.
+        # For each of the interpreter, -I, -c and the program, these rows hold a value that begins with,
+        # ends with or holds an accepted value, and a value that an accepted value begins or ends with,
+        # so a check that took an accepted value as a prefix, a suffix or a part of the value, or the
+        # value as a prefix, a suffix or a part of an accepted value, accepts at least 1 of these rows.
+        # They catch those loosenings only; test_the_argv_comparison_is_exact_equality pins the exact
+        # comparison itself, and test_write_registry_refuses_every_generated_near_miss drives near misses
+        # of other kinds.
         first_line = ENUM_FIXTURE.split("\n", 1)[0] + "\n"
         unmarked = ENUM_FIXTURE[len(ENUM_RUN_MARK):]
         interpreter_name = os.path.basename(sys.executable)
@@ -1587,6 +1596,108 @@ class EnumeratorBounds(Stage2Harness):
             "argv": [sys.executable, "-I", "-c", SLEEPING_ENUM_FIXTURE], "timeout": 1}))
         self.write_registry(self.stage2(enumerator={"argv": tuple(fixture), "timeout": ENUM_TIMEOUT}))
         self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 600}))
+
+    # The statements with which declared_enumerator_defect begins, after its docstring, as source text:
+    # the argv as the hook reads it, and the comparison of each of its first 4 elements with == or, for
+    # the program, by membership in ENUM_PROGRAMS. test_the_argv_comparison_is_exact_equality requires
+    # them exactly, compared as syntax trees, so any edit to them, and any statement added before them,
+    # fails it, whatever values the edit would accept; it also requires that sys is the sys module, that
+    # ENUM_PROGRAMS is a tuple of str, so that membership is equality with 1 item, and that no global of
+    # this file shadows a builtin that the statements call. It reads the function that the name
+    # declared_enumerator_defect holds when the case runs, which write_registry calls. It does not see
+    # an edit made to this text with the same edit, a change outside this file to a name that the
+    # statements read (the builtins module, or sys.executable rebound while the suite runs), or a
+    # write_registry that changes the enumerator before it calls the check;
+    # test_write_registry_refuses_every_generated_near_miss drives write_registry, so it sees such a
+    # change only when it accepts a near miss that near_misses generates.
+    EXACT_ARGV_CHECK = '''
+argv = enumerator.get("argv")
+if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
+    return None
+if not (len(argv) > 3 and argv[0] == sys.executable and argv[1] == "-I" and argv[2] == "-c"
+        and argv[3] in ENUM_PROGRAMS):
+    return "the enumerator {!r} is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS".format(argv)
+'''
+
+    def test_the_argv_comparison_is_exact_equality(self):
+        self.assertFalse(hasattr(declared_enumerator_defect, "__wrapped__"), "the check is wrapped")
+        tree = ast.parse(inspect.getsource(declared_enumerator_defect))
+        self.assertEqual(len(tree.body), 1)
+        function = tree.body[0]
+        self.assertIsInstance(function, ast.FunctionDef)
+        self.assertEqual(function.name, declared_enumerator_defect.__code__.co_name)
+        self.assertEqual(function.decorator_list, [], "the check is decorated")
+        self.assertEqual(ast.dump(function.args),
+                         ast.dump(ast.parse("def f(enumerator):\n    pass\n").body[0].args))
+        docstring = function.body[0]
+        self.assertTrue(isinstance(docstring, ast.Expr) and isinstance(docstring.value, ast.Constant)
+                        and isinstance(docstring.value.value, str), "precondition: the check has a docstring")
+        wanted = [ast.dump(node) for node in ast.parse(self.EXACT_ARGV_CHECK).body]
+        self.assertEqual([ast.dump(node) for node in function.body[1:1 + len(wanted)]], wanted,
+                         "declared_enumerator_defect does not begin with EXACT_ARGV_CHECK")
+        names = declared_enumerator_defect.__globals__
+        self.assertIs(names["sys"], __import__("sys"))
+        self.assertIs(type(names["ENUM_PROGRAMS"]), tuple)
+        self.assertTrue(names["ENUM_PROGRAMS"] and all(type(p) is str for p in names["ENUM_PROGRAMS"]))
+        for builtin in ("isinstance", "list", "all", "str", "len"):
+            self.assertNotIn(builtin, names, "a global shadows the builtin " + builtin)
+
+    @staticmethod
+    def near_misses(value):
+        """Values that differ from value, generated from it: for each position, value without that
+        character, with that character's code point with its lowest bit flipped, with that character's
+        case swapped, with that character in its full-width form, and with a space before that
+        character; value with a space after it; value upper-cased, lower-cased and case-swapped; and
+        value with a space, a tab, a line feed, a carriage return and a line feed, a vertical tab, a
+        form feed or a no-break space before it, after it, and both. Each is non-empty and differs from
+        value. So a check that compares a part of the value, strips or folds it, or normalizes its
+        characters accepts at least 1 of them."""
+        found = []
+        for i, char in enumerate(value):
+            head, tail = value[:i], value[i + 1:]
+            found += [head + tail, head + chr(ord(char) ^ 1) + tail, head + char.swapcase() + tail,
+                      head + " " + char + tail]
+            if "!" <= char <= "~":
+                found.append(head + chr(ord(char) + 0xFEE0) + tail)
+        found += [value + " ", value.upper(), value.lower(), value.swapcase()]
+        for space in (" ", "\t", "\n", "\r\n", "\v", "\f", "\xa0"):
+            found += [space + value, value + space, space + value + space]
+        return [near for near in dict.fromkeys(found) if near and near != value]
+
+    def test_write_registry_refuses_every_generated_near_miss(self):
+        # For each of the interpreter, -I, -c and each program of ENUM_PROGRAMS, write_registry refuses
+        # every value that near_misses generates from it, and for the interpreter every path that names
+        # the same file another way. The values are generated, not chosen for 1 loosening, but they are
+        # finite: a check that accepted some other value would pass this case.
+        directory, name = os.path.split(sys.executable)
+        aliases = [os.path.join(directory, ".", name), directory + "//" + name,
+                   os.path.join(directory, "..", os.path.basename(directory), name),
+                   os.path.realpath(sys.executable), os.path.relpath(sys.executable)]
+        aliases = [alias for alias in aliases
+                   if alias != sys.executable and os.path.samefile(alias, sys.executable)]
+        self.assertGreaterEqual(len(aliases), 2, "precondition: at least 2 other paths name this interpreter")
+        accepted, tried = [], 0
+        for program in ENUM_PROGRAMS:
+            fixture = [sys.executable, "-I", "-c", program, str(self.backlog)]
+            self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": ENUM_TIMEOUT}))
+            elements = [(3, [near for near in self.near_misses(program) if near not in ENUM_PROGRAMS])]
+            if program is ENUM_FIXTURE:
+                elements += [(0, self.near_misses(sys.executable) + aliases), (1, self.near_misses("-I")),
+                             (2, self.near_misses("-c"))]
+            for position, values in elements:
+                for value in values:
+                    argv = list(fixture)
+                    argv[position] = value
+                    tried += 1
+                    try:
+                        self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": ENUM_TIMEOUT}))
+                    except self.failureException as refusal:
+                        if self.REFUSED not in str(refusal):
+                            accepted.append((position, value, str(refusal)))
+                    else:
+                        accepted.append((position, value))
+        self.assertGreater(tried, 1000, "precondition: the near misses were generated")
+        self.assertEqual(accepted, [], "write_registry accepted a near miss")
 
     def test_write_registry_refuses_every_program_file(self):
         # What the interpreter runs for a file operand depends on the operand's name and content, on how

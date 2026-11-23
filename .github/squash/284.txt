@@ -99,10 +99,22 @@ tools/test-orch-stage2-hooks.py:
   begins with, ends with or holds an accepted value, and a value that
   an accepted value begins or ends with, such as a command joined
   to -I, -X-I, an accepted program followed by a removal of the
-  record, and an accepted program without its record; and that it
+  record, and an accepted program without its record; that it
   refuses each program-file form found so far, each with a recording
   file in place: a plain file, a relative file under the root, -u, --
-  or - before the file, a directory, a .pyc name and a trailing slash.
+  or - before the file, a directory, a .pyc name and a trailing slash;
+  that declared_enumerator_defect begins with exactly the statements
+  of EXACT_ARGV_CHECK, compared as syntax trees, which compare the
+  interpreter, -I and -c each with == and the program by membership
+  in ENUM_PROGRAMS, a tuple of str, and that the names they read keep
+  their meaning, so any edit to those statements fails; and that
+  write_registry refuses every near miss that near_misses generates
+  from each element, 5,412 values on the test host: each character
+  dropped, changed, case-swapped, made full-width or preceded by a
+  space, the whole value case-changed or wrapped in whitespace, and
+  each other path to this interpreter's file. The named values and
+  the near misses are finite and catch only the values they hold; the
+  pin is what requires the exact comparison.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -186,12 +198,19 @@ checks the object that it is given rather than the text read back,
 takes any interpreter, does not compare argv[1] or argv[2], takes the
 interpreter, -I, -c or 1 of ENUM_PROGRAMS as a prefix, a suffix or a
 part of its argv element, or that element as a prefix, a suffix or a
-part of it, accepts any program that begins with the record, with or
-without the name check, or also accepts a recording program file, when
-the name check finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK,
-and when the failure with no running case drops its cause or takes the
-failed registration of a doctor refusal as its cause. The new doctor
-case fails when the doctor skips an argv element that is exactly -c.
+part of it, strips or case-folds argv[1] or argv[2], resolves argv[0],
+compares the program stripped or without its trailing line feed,
+accepts any program that begins with the record, with or without the
+name check, or also accepts a recording program file, when the name
+check finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK, and when
+the failure with no running case drops its cause or takes the failed
+registration of a doctor refusal as its cause. Each of those edits to
+the comparison of the argv also fails the pin and the near-miss case;
+a strip, case fold, resolution or dropped line feed made in
+EXACT_ARGV_CHECK as well still fails the near-miss case, and so does
+a write_registry that strips the first 3 argv elements before its
+check. The new doctor case fails when the doctor skips an argv element
+that is exactly -c.
 With a fixture enumerator that sleeps 70 s, from the same line as the
 6 s delay, neither the present-marker case of DoctorCheckpointWrites
 nor the DoctorStandInRestore case ends through a test bound, on main
@@ -223,6 +242,10 @@ stage-2 suite, where the hook runs the enumerator; the refusal runs no
 enumerator, a registry that the gate accepts never has -c at argv[2],
 and changing the doctor's operand model is product work outside this
 change. The fixture value 60 is safe only while the test registries
-are never gated. The new stamp test fails on a backward clock step
-during the run. The load check covers only the enumerator timeout case
-and CPU contention.
+are never gated. The pin of the argv comparison does not see an edit
+made to EXACT_ARGV_CHECK with the same edit, a change outside the file
+to a name that those statements read, or a write_registry that
+changes the argv before its check, and the near-miss case refuses
+only the finite values that it generates. The new stamp test fails on
+a backward clock step during the run. The load check covers only the
+enumerator timeout case and CPU contention.
