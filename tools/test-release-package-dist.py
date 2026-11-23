@@ -2663,7 +2663,19 @@ class TraceReaderTests(unittest.TestCase):
         against AT_FDCWD in a process with no maker ends the case, with
         the error that names that path, and 1 against a descriptor with
         no path, with a relative path or with that of a removed folder
-        ends it, with the error that names that descriptor."""
+        ends it, with the error that names that descriptor. So does such
+        a path in a call of each name of REMOVING_CALLS, with the result
+        0 or in each form of MADE: with no descriptor or against AT_FDCWD
+        in a process with no maker, and against each such descriptor in
+        the first process, in a process that a call made and in a
+        process with no maker. A relative chdir whose result is 0 in a
+        process with no maker ends the case with the error that names
+        that path. A process with no maker ends the case, with the error
+        that names it, after a call of each name of CUTTERS whose result
+        is 0, and after an unread call of each name of TRACED_CALLS but
+        fork and vfork, and of ???, in each form of CUT_SHORT. A rename
+        with 1 argument, which fits no form that the reader takes, ends
+        the case with an IndexError."""
         unlink = "100   unlink(%s) = 0" % self.hexed("x")
         later = "101   rmdir(%s) = 0" % self.hexed("z")
         cut = "101   unlink(%s <unfinished ...>) = " % self.hexed("y")
@@ -2819,6 +2831,47 @@ class TraceReaderTests(unittest.TestCase):
             pinned["a relative path against a descriptor with %s in a process with no maker" % label] = (
                 ("100   fork() = ?", "101   unlinkat(%s, %s, 0) = 0" % (token, self.hexed("x"))),
                 "the trace gives the descriptor %r, with no path that the test can use" % token)
+        # The start of a call of each name of REMOVING_CALLS whose first path
+        # is the relative path x, with {token} in place of its descriptor
+        # where it takes 1; the lines before a call of each kind of process,
+        # and its process id; and the descriptors whose path strace -y does
+        # not give, gives as relative or gives as that of a removed folder.
+        x, y = self.hexed("x"), self.hexed("/clone/y")
+        removing = {"unlink": "unlink(%s" % x, "rmdir": "rmdir(%s" % x, "rename": "rename(%s, %s" % (x, y),
+                    "unlinkat": "unlinkat({token}, %s, 0" % x,
+                    "renameat": "renameat({token}, %s, AT_FDCWD</clone>, %s" % (x, y),
+                    "renameat2": "renameat2({token}, %s, AT_FDCWD</clone>, %s, RENAME_NOREPLACE" % (x, y)}
+        processes = {"the first process": ([], 100), "a process that a call made": ([self.FORK], 101),
+                     "a process with no maker": (["100   fork() = ?"], 101)}
+        descriptors = {"no path": "3", "a relative path": "3<gone>",
+                       "the path of a removed folder": "3</clone/gone (deleted)>"}
+        for name, start in removing.items():
+            cases = [("with no descriptor" if "{token}" not in start else "against AT_FDCWD", "AT_FDCWD</clone/sub>",
+                      "a process with no maker", relative)]
+            if "{token}" in start:
+                cases += [("against a descriptor with %s" % label, token, process,
+                           "the trace gives the descriptor %r, with no path that the test can use" % token)
+                          for label, token in descriptors.items() for process in processes]
+            for where, token, process, error in cases:
+                before, pid = processes[process]
+                call = start.format(token=token)
+                for result in ("the result 0", *self.MADE):
+                    lines = (["%d   %s) = 0" % (pid, call)] if result == "the result 0"
+                             else self.written(result, name, call, pid=pid))
+                    pinned["a relative path %s in %s %s, in %s" % (
+                        where, name, "with the result 0" if result == "the result 0" else "in the form " + result,
+                        process)] = ([*before, *lines], error)
+        pinned["a relative chdir with the result 0 in a process with no maker"] = (
+            ("100   fork() = ?", "101   chdir(%s) = 0" % self.hexed("sub")), relative.replace("'x'", "'sub'"))
+        for name, start in self.CUTTERS.items():
+            pinned["a process with no maker after a %s whose result is 0" % name] = (
+                ("100   %s) = 0" % start, "101   unlink(%s) = 0" % y),
+                "the trace shows process 101, which no traced call made")
+        for name in ("???", *(name for name in TRACED_CALLS if name not in ("fork", "vfork"))):
+            for form in self.CUT_SHORT:
+                pinned["a process with no maker after an unread call %s( in the form %s" % (name, form)] = (
+                    self.written(form, name, name + "(", "101   unlink(%s) = 0" % y, pid=100),
+                    "the trace shows process 101, which no traced call made")
         # The first call of the process that a call of MAKERS cut short
         # leaves with no maker, each with the label that names it.
         firsts = [("a chdir", "chdir(%s) = 0" % self.hexed("/clone/a")), ("an fchdir", "fchdir(3</clone/sub>) = 0"),
@@ -2853,6 +2906,9 @@ class TraceReaderTests(unittest.TestCase):
             with self.subTest(label):
                 with self.assertRaisesRegex(AssertionError, r"\A%s\Z" % re.escape(error)):
                     self.removals(*lines)
+        with self.subTest("a rename with 1 argument, which fits no form that the reader takes"):
+            with self.assertRaises(IndexError):
+                self.removals("100   rename(%s) = 0" % self.hexed("x"))
 
     def test_trace_admits_1_process_with_no_maker_for_each_call_cut_short(self):
         """Each call of clone, clone3, fork or vfork whose result is ? or
@@ -2865,20 +2921,30 @@ class TraceReaderTests(unittest.TestCase):
         CUTTERS, a form of MADE and an owner of OWNERS, 180 in all; a first
         call is a kind of FIRST_KINDS with the result done, failed or a
         form of MADE, or for an unread call a form of CUT_SHORT, 177 in
-        all. All the calls of a trace take 1 call attribute, and all its
-        processes with no maker take 1 first call. The traces are every
-        order with each call attribute and the first call unlink done;
-        every order with each first call and the call attribute clone
-        detached by a process whose folder is known; and the order CNN
-        with each call attribute and each first call. Each trace is
-        checked for its error, whole, or, where the rule admits each
-        process, for the absolute paths that it removes or replaces, in
-        order. No trace has more than 4 such calls or 5 such processes, 2
-        call attributes or 2 first calls, or a process that makes a call
-        after such a call of its own, so a reader that breaks the rule
-        only in such a trace passes this test. That such a process starts
-        in a folder that is not known is checked not here but, for the
-        calls of MAKERS by process 100, by the relative paths of
+        all. All the C of a trace take 1 call attribute, and all its N
+        take 1 first call. The traces are every order with each call
+        attribute and the first call unlink done; every order with each
+        first call and the call attribute clone detached by a process
+        whose folder is known; and the order CNN with each call attribute
+        and each first call. Each trace is checked for its error, whole,
+        or, where the rule admits each process, for the absolute paths
+        that it removes or replaces, in order. An order holds at most 4 C
+        and 5 N, but a trace also holds such calls and processes that are
+        not C or N: before each C by a process with no maker, a process
+        that process 100 made makes a clone that strace detached from,
+        and the process with no maker that this clone lets start removes
+        an absolute path by unlink and then makes the C; and each N whose
+        first call is a call of CUTTERS in a form of MADE is itself such a
+        call. So a trace holds up to 9 such calls and up to 9 such
+        processes, but on none of these traces does the rule leave more
+        than 4 such calls untaken at the same time, and in none does a
+        process make a call after its own call cut short. A reader that
+        breaks the rule only in a trace that none of these products gives
+        passes this test, such as 1 that breaks it only while more than 4
+        such calls are untaken, or only for a call after a call cut short
+        of the same process. That such a process starts in a folder that
+        is not known is checked not here but, for the calls of MAKERS by
+        process 100, by the relative paths of
         test_trace_refuses_what_it_cannot_read."""
         cuts = [(name, form, owner) for name in self.CUTTERS for form in self.MADE for owner in self.OWNERS]
         firsts = [(kind, result) for kind in self.FIRST_KINDS
@@ -2893,7 +2959,8 @@ class TraceReaderTests(unittest.TestCase):
             groups["each order, each call clone detached by %s, each first call %s %s" % (self.OWNERS[0], *first)] = [
                 (order, ("clone", "detached", self.OWNERS[0]), first) for order in orders]
         for cut in cuts:
-            groups["the order CNN, the call %s in the form %s by %s, each first call" % cut] = [
+            groups["the order CNN, the call %s in the form %s by %s, each first call, those resumed with ? among them"
+                   % cut] = [
                 ("CNN", cut, first) for first in firsts]
         folder = tempfile.TemporaryDirectory(prefix=TEMP_PREFIX)
         self.addCleanup(folder.cleanup)
