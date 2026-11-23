@@ -3131,10 +3131,12 @@ def check_disclosure_states(failures: list[str]) -> int:
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
     follow the entries, and a page with no D-4 heading, among others. d4_failures() catches only the reading's
     ShortCommentRefused and makes it a failure, so any other exception from the reader, such as a ValueError, passes out
-    of d4_failures(), and so out of this function, instead of becoming a case result. A stand-in reader case pins the
-    catch in d4_failures(): the stand-in's ShortCommentRefused must become a failure, and its ValueError must pass out
-    of d4_failures() unchanged. That case catches the ValueError itself, so it does not check that this function lets
-    such an exception pass."""
+    of d4_failures(), and so out of this function, instead of becoming a case result. A stand-in reader case checks the
+    catch in d4_failures() for 2 exception classes only: the stand-in's ShortCommentRefused must become a failure, and
+    its ValueError must pass out of d4_failures() unchanged. So that case fails when the catch is widened to take in
+    ValueError, such as to except Exception, and passes when it is widened only by classes that leave ValueError out,
+    such as AssertionError. It catches the ValueError itself, so it does not check that this function lets such an
+    exception pass."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
@@ -3208,10 +3210,11 @@ def check_disclosure_states(failures: list[str]) -> int:
             failures.append(f"disclosure states: the test page with {case} gave {got}, expected {expected}")
     text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
     failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
-    # A stand-in for disclosure_d4_section() that raises shows that d4_failures() catches only ShortCommentRefused: the
-    # ShortCommentRefused that it raises becomes the failure line, and a ValueError that it raises passes out of
-    # d4_failures() unchanged instead of becoming a case result. With a wider catch, such as except Exception, the
-    # ValueError becomes a failure line and this case fails.
+    # A stand-in for disclosure_d4_section() that raises checks the catch in d4_failures() for 2 exception classes only:
+    # the ShortCommentRefused that it raises must become the failure line, and a ValueError that it raises must pass out
+    # of d4_failures() unchanged instead of becoming a case result. So this case fails when the catch is widened to take
+    # in ValueError, such as to except Exception, and passes when it is widened only by classes that leave ValueError
+    # out, such as AssertionError, which html.parser can raise.
     def raising(error: Exception):
         def read(text: str) -> str | None:
             raise error
