@@ -7,42 +7,49 @@ that opener and fails under Python 3.14.7 in a side-by-side test.
 Add SHORT_COMMENT, re.compile(r"<!---?>"), the same pattern as check 9
 of tools/check-inline-code.py, and the exception ShortCommentRefused.
 disclosure_d4_section() raises it, before it parses, on any text that
-SHORT_COMMENT matches, so its result on these openers does not come
-from the interpreter's HTMLParser; it still reads all other markup
-with that parser. The refusal names the text found, '<!-->' or
-'<!--->', without calling it a comment; SHORT_COMMENT matches that
-text inside an attribute value too. check_disclosure_states() catches
-only ShortCommentRefused and reports it as a failure line, so any
-other exception from the reader passes out instead of becoming a case
-result. A new case checks that catch for 2 exception classes only: it
-passes d4_failures() a stand-in reader that raises, whose
-ShortCommentRefused must become the failure line and whose ValueError
-must pass out unchanged. So the case fails when the catch is widened
-to take in ValueError, such as to except Exception, and passes when it
-is widened only by classes that leave ValueError out, such as
-AssertionError. The '<!-->' case now expects the refusal, and a new
-'<!--->' case expects it too. A new '<!---->' case puts an Entry 5
-label after the empty comment and the note after the label, and
-expects the lacks-note failure, which it gives only if the reader does
-not refuse the empty comment and reads the label as a tag that ends
-D-4. The case does not show that the reader parses '<!---->' as a
-comment: a reading of it as text gives the same result. The '<!-->'
-case is a fixture brought up to date with a deliberate contract
-change: the test's reader now refuses that opener.
+SHORT_COMMENT matches, so its result on these openers does not come from
+the interpreter's HTMLParser; it still reads all other markup with that
+parser. The refusal names the text found, '<!-->' or '<!--->', without
+calling it a comment; SHORT_COMMENT matches that text inside an
+attribute value too. In check_disclosure_states(), d4_failures() catches
+only ShortCommentRefused and reports it as a failure line, so any other
+exception from disclosure_d4_section() passes out of
+check_disclosure_states() instead of becoming a case result. A new case
+checks that catch for 2 exception classes only: it passes d4_failures()
+a stand-in reader that raises, whose ShortCommentRefused must become the
+failure line and whose ValueError must pass out of d4_failures()
+unchanged. So the case fails when the catch is widened to take in
+ValueError, such as to except Exception, and passes when it is widened
+only by classes that leave ValueError out, such as AssertionError.
+check_disclosure_states() catches that planted ValueError itself, so the
+case does not check that check_disclosure_states() lets such an
+exception pass. The '<!-->' case now expects the refusal, and a new
+'<!--->' case expects it too. A new '<!---->' case puts an Entry 5 label
+after the empty comment and the note after the label, and expects the
+lacks-note failure, which it gives only if the reader does not refuse
+the empty comment and reads the label as a tag that ends D-4. The case
+does not show that the reader parses '<!---->' as a comment: a reading
+of it as text gives the same result. The '<!-->' case is a fixture
+brought up to date with a deliberate contract change: the test's reader
+now refuses that opener.
 
 The comment on SHORT_COMMENT and the docstring of
 disclosure_d4_section() name the text '<!-->' or '<!--->' wherever it
 stands. The comment says that Python 3.14.4's HTMLParser reads either
-one in text as the start of a comment up to the next '-->' or '--!>',
-when one follows, and inside an attribute value as part of the value,
-and that TODO 255 does not record how Python 3.14.7 reads '<!--->'.
-Check 9 of tools/check-inline-code.py, which searches a page's whole
-text with the same pattern, now names the text found in its message,
-as "the text '<!-->' in an HTML page", in place of "a comment that
-opens as '<!-->'". Its docstring entry says that it refuses that text
-wherever it stands, such as inside an attribute value; what check 9
-refuses is unchanged. A new case in tools/test-inline-code.py puts
-'<!-->' in an attribute value and requires that message.
+one outside other markup, such as a tag, a comment or a doctype, and
+outside the content of title, textarea, script, style, xmp, iframe,
+noembed, noframes and plaintext, and of noscript when scripting is on,
+as the start of a comment up to the next '-->' or '--!>', when one
+follows, in the content of those elements as text, and inside a quoted
+attribute value as part of the value, and that TODO 255 does not record
+how Python 3.14.7 reads '<!--->'. Check 9 of tools/check-inline-code.py,
+which searches a page's whole text with the same pattern, now names the
+text found in its message, as "the text '<!-->' in an HTML page", in
+place of "a comment that opens as '<!-->'". Its docstring entry says
+that it refuses that text wherever it stands, such as inside an
+attribute value; what check 9 refuses is unchanged. A new case in
+tools/test-inline-code.py puts '<!-->' in an attribute value and
+requires that message.
 
 Add .github/squash/283.txt, which holds this message byte for byte.
 .python-version is unchanged.

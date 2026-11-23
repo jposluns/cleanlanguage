@@ -3060,11 +3060,14 @@ def check_release_near_placeholder(failures: list[str]) -> int:
 
 
 # The text <!--> or <!--->, found as plain text wherever it stands, such as inside an attribute value, as
-# tools/check-inline-code.py's check 9 finds it. The generator refuses both, wherever they stand. In text, Python
-# 3.14.4's HTMLParser reads either one as the start of a comment up to the next --> or --!>, when one follows; inside
-# an attribute value, it reads either one as part of the value. The earlier <!--> case of check_disclosure_states(),
-# which expected no failure, passes on Python 3.14.4 and failed on Python 3.14.7 in the side-by-side run that TODO 255
-# records, so the 2 releases read <!--> differently; TODO 255 does not record how 3.14.7 reads <!--->.
+# tools/check-inline-code.py's check 9 finds it. The generator refuses both, wherever they stand. Outside other markup,
+# such as a tag, a comment or a doctype, and outside the content of title, textarea, script, style, xmp, iframe,
+# noembed, noframes and plaintext, and of noscript when scripting is on, Python 3.14.4's HTMLParser reads either one as
+# the start of a comment up to the next --> or --!>, when one follows. In the content of those elements, it reads
+# either one as text; inside a quoted attribute value, it reads either one as part of the value. The earlier <!-->
+# case of check_disclosure_states(), which expected no failure, passes on Python 3.14.4 and failed on Python 3.14.7 in
+# the side-by-side run that TODO 255 records, so the 2 releases read <!--> differently; TODO 255 does not record how
+# 3.14.7 reads <!--->.
 # disclosure_d4_section() raises ShortCommentRefused on both rather than read them as the running interpreter does.
 SHORT_COMMENT = re.compile(r"<!---?>")
 
@@ -3129,14 +3132,14 @@ def check_disclosure_states(failures: list[str]) -> int:
     in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
     D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
-    follow the entries, and a page with no D-4 heading, among others. d4_failures() catches only the reading's
-    ShortCommentRefused and makes it a failure, so any other exception from the reader, such as a ValueError, passes out
-    of d4_failures(), and so out of this function, instead of becoming a case result. A stand-in reader case checks the
-    catch in d4_failures() for 2 exception classes only: the stand-in's ShortCommentRefused must become a failure, and
-    its ValueError must pass out of d4_failures() unchanged. So that case fails when the catch is widened to take in
-    ValueError, such as to except Exception, and passes when it is widened only by classes that leave ValueError out,
-    such as AssertionError. It catches the ValueError itself, so it does not check that this function lets such an
-    exception pass."""
+    follow the entries, and a page with no D-4 heading, among others. d4_failures() catches only a ShortCommentRefused
+    from its reader and makes it a failure, so any other exception from its reader, such as a ValueError, passes out of
+    d4_failures() instead of becoming a case result; one from disclosure_d4_section() passes out of this function too.
+    A stand-in reader case checks the catch in d4_failures() for 2 exception classes only: the stand-in's
+    ShortCommentRefused must become a failure, and its ValueError must pass out of d4_failures() unchanged. So that case
+    fails when the catch is widened to take in ValueError, such as to except Exception, and passes when it is widened
+    only by classes that leave ValueError out, such as AssertionError. It catches the ValueError itself, so it does not
+    check that this function lets such an exception pass."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
