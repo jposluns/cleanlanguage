@@ -75,12 +75,23 @@ Another runs it against a stub whose own end falls inside the check
 and asserts that it fails at the own-end assertion, another asserts
 that a stub started after the release exits at once, and another
 asserts that an end of file seen after its deadline is not taken. A
-tripwire test asserts that the test file has exactly 1 def statement
-for each of check_group_kill, end_of_file and stub, that the stub
-makes its pinned calls in order, and that no name in SIGNAL_NAMES, a
-list of example names through which Python code sends a signal,
-appears in the check, its helpers or the stub, so a direct os.kill
-there fails it. The group-kill test asserts nothing about the client's
+tripwire test asserts that the only bindings of check_group_kill,
+end_of_file and stub in the test file's syntax are 1 def statement
+for each, counting async def, class and import statements, every kind
+of assignment to a name or an attribute, a lambda so assigned among
+them, deletions, targets, parameters and keyword arguments, but not a
+name given as a string; that, however it was bound, BoundsTest, each
+class derived from it when the test runs and each class in their
+method resolution orders hold no other entry with those names, that
+BoundsTest's 2 entries and the module's end_of_file are the functions
+their def statements made, judged by qualified name and first line,
+and that the test's instance has no such attribute of its own; that
+the stub makes its pinned calls in order; and that no name in
+SIGNAL_NAMES, a list of example names through which Python code sends
+a signal, appears in the check, its helpers or the stub, so a direct
+os.kill there fails it. Another test has a case for each form of
+binding stub that the first 2 of those assertions see, and for 1 that
+they miss. The group-kill test asserts nothing about the client's
 reap; its docstring names the 2 tests that do.
 
 Unchanged from main: the 1 second timeout, the reason string, the
@@ -97,10 +108,16 @@ code of its own.
 Residual: the tripwire's name scan misses every route to a signal
 other than a name in SIGNAL_NAMES in the functions it reads, and such
 an edit passes the tripwire unless it also changes the stub's calls,
-which the pin rejects, or adds or removes a def statement for
-check_group_kill, end_of_file or stub, which its first assertion
-rejects. Passes of the name scan, examples, not a complete list: in
-the check, getattr(os, "kill") with a literal name,
+which the pin rejects, or binds check_group_kill, end_of_file or stub
+in a way its first 2 assertions reject. Those 2 assertions miss a
+change to what self.stub finds without such an entry or attribute,
+such as a __getattribute__ method or an assignment to self.__class__;
+a class derived from BoundsTest that does not exist when the test
+runs; an attribute on an instance other than the test's; a
+replacement with the same qualified name and first line; a binding by
+a name given as a string anywhere else; and a change made after the
+test runs or undone before it. Passes of the name scan, examples, not
+a complete list: in the check, getattr(os, "kill") with a literal name,
 getattr with a computed name, such as getattr(os, "ki" + "ll"),
 os.__dict__["kill"], vars(os)["kill"] and a shell kill through
 os.system; a value a caller passes, such as the witness, which the
