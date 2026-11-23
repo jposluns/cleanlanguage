@@ -35,24 +35,38 @@ now refuses that opener.
 
 The comment on SHORT_COMMENT and the docstring of
 disclosure_d4_section() name the text '<!-->' or '<!--->' wherever it
-stands. The comment says that Python 3.14.4's HTMLParser reads either
-one outside other markup, such as a tag, a comment or a doctype, and
-outside the content of title, textarea, script, style, xmp, iframe,
-noembed, noframes and plaintext, and of noscript when scripting is on,
-as the start of a comment up to the next '-->' or '--!>', when one
-follows, in the content of those elements as text, and inside a quoted
-attribute value as part of the value, and that TODO 255 does not record
-how Python 3.14.7 reads '<!--->'. Check 9 of tools/check-inline-code.py,
-which searches a page's whole text with the same pattern, now names the
-text found in its message, as "the text '<!-->' in an HTML page", in
-place of "a comment that opens as '<!-->'". Its docstring entry says
-that it refuses that text wherever it stands, such as inside an
-attribute value; what check 9 refuses is unchanged. A new case in
-tools/test-inline-code.py puts '<!-->' in an attribute value and
-requires that message.
+stands. The comment says where Python 3.14.4's HTMLParser reads either
+one as the start of a comment and where it does not, and that TODO 255
+does not record how Python 3.14.7 reads '<!--->'. Check 9 of
+tools/check-inline-code.py, which searches a page's whole text with the
+same pattern, now names the text found in its message, as "the text
+'<!-->' in an HTML page", in place of "a comment that opens as
+'<!-->'". Its docstring entry says that it refuses that text wherever
+it stands, such as inside an attribute value. The docstring of
+markup_problems(), which runs checks 7 to 9, now says what they refuse:
+each element that check 7 refuses, each '<![CDATA[' and each text
+'<!-->' or '<!--->', found by text matches and not by the parser,
+wherever it stands, in place of calling them markup that the parser
+reads differently from a browser. What checks 7 to 9 refuse is
+unchanged. A new case in tools/test-inline-code.py puts '<!-->' in an
+attribute value and requires check 9's new message.
 
 Add .github/squash/283.txt, which holds this message byte for byte.
 .python-version is unchanged.
+
+Residual: this change adds a refusal of '<!-->' and '<!--->' to 1
+reader only, disclosure_d4_section(), which reads with the class Reader.
+It does not change the 11 other classes in tools/ that subclass
+HTMLParser, which the third check below lists with Reader. Some of them
+are fed these openers with no refusal before they parse, so their
+results on them still come from the running interpreter's HTMLParser.
+The fourth check shows that, on Python 3.14.4, collect_document_tags()
+of tools/web_metadata.py and ld_json_blocks() of
+tools/check-page-metadata.py collect no meta element, link element or
+ld+json block after either opener, and collect them after the empty
+comment '<!---->'. This message does not say which callers of the other
+9 classes refuse these openers before they parse, or how Python 3.14.7
+reads them in any of these readers.
 
 Checks, from the repository root, with the outputs of Python 3.14.4:
 
@@ -60,3 +74,38 @@ Checks, from the repository root, with the outputs of Python 3.14.4:
   "test-build-site: all 1125 cases passed." and exits 0.
 - python3 -I tools/test-inline-code.py prints
   "test-inline-code: all 154 cases passed." and exits 0.
+- This command exits 0 and prints 1 line per class that subclasses
+  HTMLParser in tools/, its file and its name:
+
+  ```
+  python3 -I -c "import pathlib, re; [print(path, name) for path in sorted(pathlib.Path('tools').glob('*.py')) for name in re.findall(r'class (\w+)\((?:html\.parser\.)?HTMLParser\)', path.read_text(encoding='utf-8'))]"
+  ```
+
+  ```
+  tools/build-site.py PageScan
+  tools/check-inline-code.py InlineCodeParser
+  tools/check-inline-code.py SwitchScan
+  tools/check-install-page.py PageParser
+  tools/check-install-page.py LoadScan
+  tools/check-install-page.py TagReader
+  tools/check-page-metadata.py _LDJSONScripts
+  tools/check-release-checksum-live.py PageReader
+  tools/check-release-links.py PageReader
+  tools/test-build-site.py Placement
+  tools/test-build-site.py Reader
+  tools/web_metadata.py _DocumentTags
+  ```
+
+- This command exits 0 and prints 1 line per opener, the opener, then
+  the meta and link elements collected and then the ld+json blocks
+  collected:
+
+  ```
+  python3 -I -c "import runpy; m = runpy.run_path('tools/check-page-metadata.py'); [print(opener, m['web_metadata'].collect_document_tags(f'{opener}<meta name=a><link rel=b>-->'), m['ld_json_blocks'](f'{opener}<script type=application/ld+json>{{}}</script>-->')) for opener in ('<!-->', '<!--->', '<!---->')]"
+  ```
+
+  ```
+  <!--> ([], []) []
+  <!---> ([], []) []
+  <!----> ([{'name': 'a'}], [{'rel': 'b'}]) ['{}']
+  ```
