@@ -237,8 +237,9 @@ opening text, 1 that doubles the first space inside its opening text and 1 that 
 space, and, for each opening text that ends with a space, 1 row that deletes that space.
 FORM_PAIRS holds pairs of sources in forms that the check does not hold. Each pair but 1 tries a
 condition of code_form() that the check's own source does not. The pair of 2 keyword arguments
-of a call swapped tries no condition of code_form(); it tries only that code_form() keeps the
-order of the keyword arguments of a call, so a code_form() that sorts them fails it. code_form()
+of a call swapped tries no condition of code_form(); it tries only that code_form() keeps apart 2
+sources that differ only in the order of 2 keyword arguments of a call, so a code_form() that
+sorts them fails it. code_form()
 must make 2 sources equal that differ only in the docstring of a class or of an async function,
 in a function of its docstring alone against one of pass alone, or in an empty module against a
 blank line, and keep apart 2 that differ only in a string first in the body of an if, a for, a
@@ -814,12 +815,14 @@ DIGEST = "<a sha256 of PARAGRAPHS>"
 # carriage return and line feed pair and each other carriage return made a line feed, each of
 # which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest and
 # each of PRESERVED must keep it, so a code_form() that keeps the digest for 1 of those mutations,
-# or changes it for 1 of those edits, fails. Each row is evidence for its own edit only. The rows
-# that edit the name or the opening text of a row of PARAGRAPHS are built from NAMED, 6 for each
-# of its 7 rows: a full stop put at the end of its name, the case of the first letter of its name
-# changed, a full stop put at the end of its opening text, a space put at the end of its opening
-# text, the first space inside its opening text doubled and that space deleted; and 1 more for
-# each opening text that ends with a space: that space deleted.
+# or changes it for 1 of those edits, fails. Each row is evidence for its own edit only. 1 fixed
+# row changes the name of the first row of PARAGRAPHS, the header, to the heading, an edit of
+# letters after its first. The other rows that edit the name or the opening text of a row of
+# PARAGRAPHS are built from NAMED, 6 for each of its 7 rows: a full stop put at the end of its
+# name, the case of the first letter of its name changed, a full stop put at the end of its
+# opening text, a space put at the end of its opening text, the first space inside its opening
+# text doubled and that space deleted; and 1 more for each opening text that ends with a space:
+# that space deleted.
 MUTATIONS = [
     ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
      "    match text[:8000000]:\n        case text:\n            pass\n"
@@ -847,6 +850,7 @@ MUTATIONS = [
     ("a sha256 of PARAGRAPHS replaced by 64 hexadecimal digits that are not lower case",
      "\"" + DIGEST + "\"", "\"" + "F" * 64 + "\""),
     ("a text inside a function changed", "[PATH]\"]", "[FILE]\"]"),
+    ("the name of a row of PARAGRAPHS changed", "(\"the header\", ", "(\"the heading\", "),
     ("a comparison operator changed", "    if len(modes) != 1:", "    if len(modes) > 1:"),
     ("a name that starts with an underscore changed", "if __name__ ==", "if __file__ =="),
     ("the upper bound of a slice changed", "lines[start - 1:number - 1]",
@@ -889,10 +893,10 @@ PRESERVED = [
 # The self-check of code_form() on forms that the check does not hold, so that no replacement of
 # its source can try them. Each pair but 1 tries a condition of code_form() that the check's own
 # source does not. The pair of 2 keyword arguments of a call swapped tries no condition of
-# code_form(); it tries only that code_form() keeps the order of the keyword arguments of a call,
-# so a code_form() that sorts them fails it. True marks a pair that code_form() must make equal:
-# its 2 sources differ only in a docstring, in a body of a docstring alone against a body of pass
-# alone, or in a blank line.
+# code_form(); it tries only that code_form() keeps apart 2 sources that differ only in the order
+# of 2 keyword arguments of a call, so a code_form() that sorts them fails it. True marks a pair
+# that code_form() must make equal: its 2 sources differ only in a docstring, in a body of a
+# docstring alone against a body of pass alone, or in a blank line.
 # False marks a pair that it must keep apart: its 2 sources differ only in a part that is
 # neither a docstring nor a sha256 of PARAGRAPHS, which is a constant of 64 lowercase hexadecimal
 # digits that is the third item of a 3-item tuple row of the list that an assignment at the top

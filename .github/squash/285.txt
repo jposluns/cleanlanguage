@@ -17,30 +17,34 @@ annotated assignment and in a list bound to an attribute named
 PARAGRAPHS. The last 2 try isinstance(node, ast.Assign) in code_form()
 and isinstance(node, ast.Name) in is_name(). The pair of 2 keyword
 arguments of a call swapped tries no condition of code_form(); it
-tries only that code_form() keeps the order of the keyword arguments
-of a call, so a code_form() that sorts them fails it. The module
-docstring and the comment above FORM_PAIRS say that each pair but
-this 1 tries a condition of code_form(). MUTATIONS gains 3 rows on
-the check's own text: a comparison operator changed, the name __name__
-changed and the upper bound of a slice changed.
+tries only that code_form() keeps apart 2 sources that differ only in
+the order of 2 keyword arguments of a call, so a code_form() that
+sorts them fails it. The module docstring and the comment above
+FORM_PAIRS say that each pair but this 1 tries a condition of
+code_form(). MUTATIONS gains 3 rows on the check's own text: a
+comparison operator changed, the name __name__ changed and the upper
+bound of a slice changed.
 
 TODO 262: the 2 MUTATIONS rows that edited the name or the opening
 text of a row of PARAGRAPHS tried only the name of its first row and
-the opening text of its second. 44 rows built from NAMED replace them.
-Each of its 7 rows gets 6: a full stop put at the end of its name, the
-case of the first letter of its name changed, a full stop put at the
-end of its opening text, a space put at the end of its opening text,
-the first space inside its opening text doubled, and that space
-deleted. A full stop put at the end of a name edits none of its
-letters. The 7 rows that change the case of the first letter of a
-name each edit a letter of that name, as the removed name row did, so
-a code_form() that drops the letters of each name fails each of those
-7 rows. Each of the 2 opening texts that end with a space gets 1 more
-row that deletes that space. For the opening text of
-the cycle steps that row makes the same replacement as the removed
-opening-text row, byte for byte, under a new label, so it keeps the
-coverage of main and adds no catch. Of those 2 rows, only the one for
-the opening text of the CODEX ROLE LIMIT is a new edit.
+the opening text of its second. 44 rows built from NAMED join the
+name row, which changes the header to the heading, and replace the
+opening-text row. Each of the 7 rows of NAMED gets 6: a full stop put
+at the end of its name, the case of the first letter of its name
+changed, a full stop put at the end of its opening text, a space put
+at the end of its opening text, the first space inside its opening
+text doubled, and that space deleted. A full stop put at the end of a
+name edits none of its letters. The 7 rows that change the case of
+the first letter of a name each edit only that letter, so a
+code_form() that drops the letters of each name fails each of those 7
+rows. The name row edits letters after the first and is the row of
+main, byte for byte, so it keeps that catch of main: a code_form()
+that fails it on main fails it here too. Each of the 2 opening texts
+that end with a space gets 1 more row that deletes that space. For the
+opening text of the cycle steps that row makes the same replacement as
+the removed opening-text row, byte for byte, under a new label, so it
+keeps the coverage of main and adds no catch. Of those 2 rows, only
+the one for the opening text of the CODEX ROLE LIMIT is a new edit.
 
 TODO 263: the squash message of pull request 276 says that every edit
 of the check's code fails the test until CODE_SHA256 is updated. Only
@@ -77,7 +81,9 @@ hexadecimal and parentheses that change no grouping added.
 Each row is evidence for its own edit only. A code_form() that hides
 or keeps only what no row edits still passes, such as one that also
 removes a string first in the body of an except clause or of an async
-for. An edit of the check that changes its bytes but not that unparsed
+for. Only the name of the header has a row that edits a letter of a
+name after the first; as on main, no row does so for the other 6
+names. An edit of the check that changes its bytes but not that unparsed
 tree keeps the digest, by design. The digest's value depends on how
 the Python that runs the test unparses a syntax tree; .python-version
 names 3.14.4.
