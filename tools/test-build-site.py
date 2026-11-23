@@ -3059,19 +3059,12 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
-# The text <!--> or <!--->, found as plain text wherever it stands, such as inside an attribute value, as
-# tools/check-inline-code.py's check 9 finds it. The generator refuses both, wherever they stand. Python 3.14.4's
-# HTMLParser reads either one as the start of a comment up to the next --> or --!>, when one follows, at the start of
-# the input and straight after a p start tag. It reads neither one as the start of a comment when it is the whole
-# content of title, textarea, script, style, xmp, iframe, noembed, noframes or plaintext, or of noscript when scripting
-# is on, with a p element and then --> or --!> after the end tag; nor when it stands in these places, each followed by
-# a p element and then -->: after <!-- and a space in a comment, after <!DOCTYPE html and a space in a doctype, in
-# place of an attribute in a start tag, and as an attribute value, unquoted or in double or single quotes. In a quoted
-# value it reads either one as part of the value; in the other places, the > that ends it ends that markup, so in a
-# comment, the --> that ends it ends the comment. The earlier <!--> case of check_disclosure_states(), which expected
-# no failure, passes on Python 3.14.4 and failed on Python 3.14.7 in the side-by-side run that TODO 255 records, so the
-# 2 releases read <!--> differently; TODO 255 does not record how 3.14.7 reads <!--->.
-# disclosure_d4_section() raises ShortCommentRefused on both rather than read them as the running interpreter does.
+# The pattern of the text <!--> or <!--->, the same as RAW_SHORT_COMMENT in tools/check-inline-code.py, which check 9
+# uses. TODO 255 records that the earlier <!--> case of check_disclosure_states(), whose test page was that of the <!-->
+# case there and which expected no failure, pins Python 3.14.4's html.parser reading of <!--> and fails under Python
+# 3.14.7; it records nothing about <!--->. disclosure_d4_section() searches the whole text with this pattern before it
+# parses and raises ShortCommentRefused on a match, rather than read either text with the running interpreter's
+# HTMLParser.
 SHORT_COMMENT = re.compile(r"<!---?>")
 
 
@@ -3096,11 +3089,11 @@ def disclosure_d4_section(text: str) -> str | None:
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
     the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
     source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the 2 can differ further.
-    The generator refuses the text <!--> or <!---> wherever it stands, and HTMLParser's reading of <!--> differs
-    between Python releases (SHORT_COMMENT). This reading raises ShortCommentRefused, before it parses, on any text
-    that SHORT_COMMENT matches, wherever it stands, so its result on such text does not come from HTMLParser. It reads
-    all other markup with the running interpreter's HTMLParser, whose reading of some other markup also changes
-    between releases (tools/check-inline-code.py, "Python versions")."""
+    Before it parses, this reading searches the whole text with SHORT_COMMENT, the pattern of the text <!--> or
+    <!--->, and raises ShortCommentRefused on a match, so on a text with a match its result does not come from
+    HTMLParser; TODO 255 records a case that pins Python 3.14.4's reading of <!--> and fails under Python 3.14.7
+    (SHORT_COMMENT). It reads every other text with the running interpreter's HTMLParser; tools/check-inline-code.py
+    ("Python versions") names other html.parser behaviour that changes between versions."""
     short = SHORT_COMMENT.search(text)
     if short is not None:
         raise ShortCommentRefused(f"the text {short.group(0)}, which the generator refuses")
@@ -3135,14 +3128,14 @@ def check_disclosure_states(failures: list[str]) -> int:
     in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
     D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
-    follow the entries, and a page with no D-4 heading, among others. d4_failures() catches only a ShortCommentRefused
-    from its reader and makes it a failure, so any other exception from its reader, such as a ValueError, passes out of
-    d4_failures() instead of becoming a case result; one from disclosure_d4_section() passes out of this function too.
-    A stand-in reader case checks the catch in d4_failures() for 2 exception classes only: the stand-in's
-    ShortCommentRefused must become a failure, and its ValueError must pass out of d4_failures() unchanged. So that case
-    fails when the catch is widened to take in ValueError, such as to except Exception, and passes when it is widened
-    only by classes that leave ValueError out, such as AssertionError. It catches the ValueError itself, so it does not
-    check that this function lets such an exception pass."""
+    follow the entries, and a page with no D-4 heading, among others. d4_failures() has 1 except clause around the
+    call of its reader, for ShortCommentRefused, which it makes a failure; this function has no except clause around
+    its calls of d4_failures() with disclosure_d4_section(). A stand-in reader case checks the catch in d4_failures()
+    for 2 exception classes only: the stand-in's ShortCommentRefused must become a failure, and its ValueError must
+    pass out of d4_failures() unchanged. So that case fails when the catch is widened to except Exception or to except
+    (ShortCommentRefused, ValueError), and passes when it is widened to except (ShortCommentRefused, LookupError,
+    TypeError, AttributeError, AssertionError). It catches the ValueError itself, so it does not check that this
+    function lets such an exception pass."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
@@ -3190,12 +3183,12 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
-        # The reading refuses <!--> and <!---> before it parses (SHORT_COMMENT). The <!----> case shows that it does
-        # not refuse an empty comment, which SHORT_COMMENT does not match, and that it reads the Entry 5 label after
-        # the empty comment as a tag that ends D-4: a reading that takes the label as comment text, such as one in
-        # which <!----> never closes, puts the note in D-4 and gives no failure. It does not show that the reading
-        # parses <!----> as a comment: the reading records only where start tags stand, so a reading that takes
-        # <!----> as text, and then reads the label as a tag, gives the same result.
+        # The <!--> and <!---> cases expect the refusal (SHORT_COMMENT). The <!----> case expects no refusal and the
+        # lacks-note failure: on its test page the note follows an Entry 5 label that follows <!---->. A reading in
+        # which <!----> never closes and the rest of the input becomes comment text puts the note in D-4, and the case
+        # then fails. The case does not show that the reading parses <!----> as a comment: the reading records only
+        # where start tags stand, so a reading that passes <!----> on as text and goes on after it gives the same
+        # result.
         ("the note after <!--> and an Entry 5 label (the generator refuses <!-->)",
          entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
          [short.format("<!-->")]),
@@ -3218,9 +3211,9 @@ def check_disclosure_states(failures: list[str]) -> int:
     failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
     # A stand-in for disclosure_d4_section() that raises checks the catch in d4_failures() for 2 exception classes only:
     # the ShortCommentRefused that it raises must become the failure line, and a ValueError that it raises must pass out
-    # of d4_failures() unchanged instead of becoming a case result. So this case fails when the catch is widened to take
-    # in ValueError, such as to except Exception, and passes when it is widened only by classes that leave ValueError
-    # out, such as AssertionError, which html.parser can raise.
+    # of d4_failures() unchanged instead of becoming a case result. So this case fails when the catch is widened to
+    # except Exception or to except (ShortCommentRefused, ValueError), and passes when it is widened to except
+    # (ShortCommentRefused, LookupError, TypeError, AttributeError, AssertionError).
     def raising(error: Exception):
         def read(text: str) -> str | None:
             raise error
