@@ -365,9 +365,15 @@ reference digest. The cases, all in that clone:
     their error, so that the error alone does not show which of them
     ended the case: a resumption with no call open and 1 under another
     name; a call cut short and 1 that strace detached from while
-    another call of its process is open; and 3 refusals in trace_call
-    of a call that the test cannot read. The subtests of
-    test_trace_refuses_what_it_cannot_read name further examples in
+    another call of its process is open; 3 refusals in trace_call of a
+    call that the test cannot read; a line of a process after a call
+    that strace detached from, 1 after an unread call left unfinished
+    and 1 after an unread call that ended with the result ?; a
+    relative path in a process with no maker and 1 in a folder that a
+    chdir or fchdir that strace cut short left not known; and a
+    process that no traced call made when no call cut short came
+    before it and 1 when each such call has let 1 start. The subtests
+    of test_trace_refuses_what_it_cannot_read name further examples in
     their labels.
 
 Each case starts with no dist/ in the clone.
@@ -2478,6 +2484,14 @@ class TraceReaderTests(unittest.TestCase):
     FLAGS = {"unlinkat": "0", "renameat2": "RENAME_NOREPLACE"}
     # The ordinal of each path of a call, by its place among the paths.
     PATH_ORDINALS = ("first", "second")
+    # The kinds of process, and the descriptors with no path that the test
+    # can use, at which the coverage subtests of the folder test and the
+    # refusal test want a trace for each path of each name of
+    # REMOVING_CALLS. They are given here, apart from the tables that write
+    # the traces, so that a kind or a descriptor dropped from such a table
+    # is still wanted.
+    PROCESS_KINDS = ("the first process", "a process that a call made", "a process with no maker")
+    UNUSABLE_DESCRIPTORS = ("no path", "a relative path", "the path of a removed folder")
 
     @classmethod
     def removing_paths(cls, name: str) -> list:
@@ -2616,23 +2630,28 @@ class TraceReaderTests(unittest.TestCase):
         <unavailable>, so that the call does not name the process; and so
         is 1 such process for each of 2, 3 or 4 such calls of the same
         name in the same form, and for each of a fork and a vfork that
-        ended with the result ?. A fork or vfork that another line
-        interrupted and that is resumed with the id of its child is read
-        as the call, so its maker goes on. A process with no maker reads a
-        relative path after it enters a folder by a chdir or fchdir whose
-        result is 0, and against a descriptor, other than AT_FDCWD, whose
-        path strace -y gives as absolute and not as that of a removed
-        folder. At each path of a call of each name of REMOVING_CALLS, a
-        relative path is read against the folder that its own descriptor
-        names, against the folder of its process for AT_FDCWD, and against
-        that folder where the path takes no descriptor, while each other
-        path of the call is read by the same rule, in the first process
-        after a chdir and in a process that it then made, and, against its
-        own descriptor, in a process with no maker. The test derives each
-        path, and the descriptor that it is read against, from SIGNATURES
-        by the descriptor rule, not from REMOVING_CALLS, and a subtest
-        fails if a name, a path or a descriptor form that REMOVING_CALLS
-        gives has no such trace."""
+        ended with the result ?. A fork or vfork that a line of its child
+        interrupted and that is resumed with the id of that child is read
+        as the call, so its maker goes on, and the child reads a relative
+        path, before the resumption and after a chdir of its maker,
+        against the folder that its maker had at the call. A process with
+        no maker reads a relative path after it enters a folder by a chdir
+        or fchdir whose result is 0, and against a descriptor, other than
+        AT_FDCWD, whose path strace -y gives as absolute and not as that
+        of a removed folder. At each path of a call of each name of
+        REMOVING_CALLS, a relative path is read against the folder that
+        its own descriptor names, against the folder of its process for
+        AT_FDCWD, and against that folder where the path takes no
+        descriptor, while each other path of the call is read by the same
+        rule, in the first process after a chdir and in a process that it
+        then made, and, against its own descriptor, in a process with no
+        maker. The test derives each path, and the descriptor that it is
+        read against, from SIGNATURES by the descriptor rule, not from
+        REMOVING_CALLS, and a subtest fails if a name, a path or a
+        descriptor form that REMOVING_CALLS gives has no such trace, in a
+        kind of process above; it takes the descriptor forms and the kinds
+        of process that it wants from a list of its own, not from the
+        tables that write the traces."""
         unlink = "%d   unlink(" + self.hexed("x") + ") = 0"
         chdir = "100   chdir(%s) = 0" % self.hexed("sub")
         traces = {
@@ -2663,10 +2682,6 @@ class TraceReaderTests(unittest.TestCase):
             "a relative path against a descriptor in a process with no maker":
                 (("100   fork() = ?", "101   unlinkat(3</clone/sub>, %s, 0) = 0" % self.hexed("x")), "/clone/sub/x"),
         }
-        for name in ("fork", "vfork"):
-            traces["a child of %s resumed with 101, made before a chdir of its maker" % name] = (
-                ("100   %s( <unfinished ...>" % name, "100   <... %s resumed>) = 101" % name, chdir, unlink % 101),
-                "/clone/x")
         for name in self.MAKERS:
             for form in self.MADE:
                 traces["an absolute path in a child of a %s in the form %s" % (name, form)] = (
@@ -2675,6 +2690,18 @@ class TraceReaderTests(unittest.TestCase):
             with self.subTest(label):
                 removed, _ = self.removals(*lines)
                 self.assertEqual([removal[2] for removal in removed], [path])
+        # A fork and a vfork that a line of their child interrupts, so that
+        # the trace records that line between the start of the call and its
+        # resumption with the id of the child; the child's relative paths,
+        # before the resumption and after a chdir of its maker, are both
+        # read against the folder that its maker had at the call.
+        for name in ("fork", "vfork"):
+            with self.subTest("a child of %s that a line of the child interrupted, resumed with 101, made before a "
+                              "chdir of its maker" % name):
+                removed, _ = self.removals("100   %s( <unfinished ...>" % name,
+                                           "101   unlink(%s) = 0" % self.hexed("before"),
+                                           "100   <... %s resumed>) = 101" % name, chdir, unlink % 101)
+                self.assertEqual(removed, [(101, "unlink", "/clone/before"), (101, "unlink", "/clone/x")])
         for name in self.MAKERS:
             for form in self.MADE:
                 with self.subTest("an absolute path in each child of 2 calls of %s in the form %s" % (name, form)):
@@ -2734,11 +2761,15 @@ class TraceReaderTests(unittest.TestCase):
                                           % (form, self.PATH_ORDINALS[index], name, process)):
                             removed, _ = self.removals(*before, "%d   %s) = 0" % (pid, self.removing_call(name, given)))
                             self.assertEqual(removed, expected)
+        # wanted takes its forms and kinds of process from lists of its own,
+        # not from processes or the forms of the loop above, so that a form
+        # or a kind dropped from those is still wanted.
         wanted = self.removal_coordinates(lambda has_descriptor: [
             (form, process)
             for form in (("against its own descriptor", "against AT_FDCWD") if has_descriptor
                          else ("with no descriptor",))
-            for process in processes if process != "a process with no maker" or form == "against its own descriptor"])
+            for process in self.PROCESS_KINDS
+            if process != "a process with no maker" or form == "against its own descriptor"])
         # wanted - held is empty when held has a trace for each coordinate
         # of REMOVING_CALLS; held may hold more.
         with self.subTest("a trace for each name of REMOVING_CALLS, each of its paths and each form of its descriptor"):
@@ -2756,10 +2787,16 @@ class TraceReaderTests(unittest.TestCase):
         call by process 100 after a call that strace detached from ends
         the case, for an unread call, a removal, a chdir, an fchdir and
         each name of MAKERS, and so does a resumption of a call of each of
-        these under another name, a shorter 1 among them. After a chdir
-        that ends with the result ? and the note <unavailable> in a shared
-        folder, the case ends at the relative path that follows it, with
-        the error that names that path.
+        these under another name, a shorter 1 among them. A line of
+        process 101 after a call that strace detached from, read or
+        unread, after an unread call left unfinished, resumed with ? among
+        them, and after an unread call that ended with the result ?, a
+        signal and a second resumption among them, ends the case with the
+        error that names that line, so that each way in which the reader
+        finds that a process ended is checked with its error whole. After
+        a chdir that ends with the result ? and the note <unavailable> in
+        a shared folder, the case ends at the relative path that follows
+        it, with the error that names that path.
         For a call of each name of MAKERS in each form of MADE, the case
         ends at a relative path of the process that the call made; at a
         second process after 1 such call whose process first enters a
@@ -2783,7 +2820,10 @@ class TraceReaderTests(unittest.TestCase):
         and the descriptor that it is read against, from SIGNATURES by the
         descriptor rule, not from REMOVING_CALLS, and a subtest fails if a
         name, a path or a descriptor form that REMOVING_CALLS gives has no
-        such pin. A relative chdir whose result is 0 in a
+        such pin, in a kind of process and with a result above; it takes
+        the descriptors, the kinds of process and the results that it
+        wants from lists of its own, not from the tables that write the
+        pins. A relative chdir whose result is 0 in a
         process with no maker ends the case with the error that names
         that path. A process with no maker ends the case, with the error
         that names it, after a call of each name of CUTTERS whose result
@@ -2796,16 +2836,8 @@ class TraceReaderTests(unittest.TestCase):
         cut = "101   unlink(%s <unfinished ...>) = " % self.hexed("y")
         opened = "101   unlink(%s <unfinished ...>" % self.hexed("y")
         traces = {
-            "a call after a detached unread call":
-                (self.FORK, "101   ???( <detached ...>", "101   unlink(%s) = 0" % self.hexed("x")),
-            "a call after an unfinished unread call":
-                (self.FORK, "101   ???( <unfinished ...>", "101   unlink(%s) = 0" % self.hexed("x")),
-            "a signal after a detached unread call":
-                (self.FORK, "101   ???( <detached ...>", "101   --- SIGCHLD {si_signo=SIGCHLD} ---"),
             "an unread call resumed":
                 (self.FORK, "101   ???( <unfinished ...>", "101   <... ??? resumed>) = 0"),
-            "a call after a detached call":
-                (self.FORK, "101   unlink(%s <detached ...>" % self.hexed("y"), "101   rmdir(%s) = 0" % self.hexed("z")),
             "an unread call with 2 spaces": (self.FORK, "101   ???(  <detached ...>"),
             "an unread call with 4 question marks": (self.FORK, "101   ????( <detached ...>"),
             "a chdir detached in a shared folder":
@@ -2816,19 +2848,9 @@ class TraceReaderTests(unittest.TestCase):
             "an fchdir ended in a shared folder": (self.SHARED, "101   fchdir(3</clone/sub>) = ?", unlink),
             "an unread call resumed with ? and <unavailable>":
                 (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ? <unavailable>"),
-            "an unread call resumed with ? 2 times":
-                (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?",
-                 "101   <... ??? resumed>) = ?"),
-            "a call after an unread call resumed with ?":
-                (self.FORK, "101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?", later),
-            "a call after an unread call that ended": (self.FORK, "101   ???() = ?", later),
-            "a signal after an unfinished unread call":
-                (self.FORK, "101   ???( <unfinished ...>", "101   --- SIGCHLD {si_signo=SIGCHLD} ---"),
             "a named unread call resumed":
                 (self.FORK, "101   unlinkat( <unfinished ...>", unlink, "101   <... unlinkat resumed>) = 0"),
             "a named unread call ended as unavailable": (self.FORK, "101   unlinkat() = ? <unavailable>"),
-            "a call after a named unread call": (self.FORK, "101   unlinkat( <unfinished ...>", later),
-            "a call after a named unread call that ended": (self.FORK, "101   getpid() = ?", later),
             "a call cut short with a note": (self.FORK, cut + "? <unavailable>"),
             "a call resumed after <unfinished ...> with a result":
                 (self.FORK, opened, unlink, "101   <... unlink resumed> <unfinished ...>) = 0"),
@@ -2917,6 +2939,32 @@ class TraceReaderTests(unittest.TestCase):
                 (("100   fchdir(3<gone>) = 0",),
                  "the trace gives the descriptor '3<gone>', with no path that the test can use"),
         }
+        # The lines of process 101, after the fork that makes it, that end
+        # with a line after the call at which it ended: a call that strace
+        # detached from, read or unread, an unread call left unfinished,
+        # resumed with ? among them, and an unread call that ended with the
+        # result ?. Each ends the case with the error that names its last
+        # line.
+        signal_line = "101   --- SIGCHLD {si_signo=SIGCHLD} ---"
+        ended = {
+            "a call after a detached unread call":
+                ("101   ???( <detached ...>", "101   unlink(%s) = 0" % self.hexed("x")),
+            "a call after an unfinished unread call":
+                ("101   ???( <unfinished ...>", "101   unlink(%s) = 0" % self.hexed("x")),
+            "a signal after a detached unread call": ("101   ???( <detached ...>", signal_line),
+            "a call after a detached call": ("101   unlink(%s <detached ...>" % self.hexed("y"), later),
+            "an unread call resumed with ? 2 times":
+                ("101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?", "101   <... ??? resumed>) = ?"),
+            "a call after an unread call resumed with ?":
+                ("101   ???( <unfinished ...>", unlink, "101   <... ??? resumed>) = ?", later),
+            "a call after an unread call that ended": ("101   ???() = ?", later),
+            "a signal after an unfinished unread call": ("101   ???( <unfinished ...>", signal_line),
+            "a call after a named unread call": ("101   unlinkat( <unfinished ...>", later),
+            "a call after a named unread call that ended": ("101   getpid() = ?", later),
+        }
+        for label, lines in ended.items():
+            pinned[label] = ((self.FORK, *lines),
+                             "the trace shows process 101 after the call at which it ended: %r" % lines[-1])
         # The start of a call by process 100 of an unread call, a removal, a
         # chdir, an fchdir and each name of MAKERS, each with another name
         # under which a resumption of it ends the case.
@@ -2986,13 +3034,17 @@ class TraceReaderTests(unittest.TestCase):
                             where, place, "with the result 0" if result == "the result 0" else "in the form " + result,
                             process)] = ([*before, *lines], error)
                         held.add((name, index, (where, process, result)))
+        # wanted takes its descriptors, kinds of process and results from
+        # lists of its own, not from descriptors, processes or results, so
+        # that an entry dropped from those is still wanted.
         wanted = self.removal_coordinates(lambda has_descriptor: [
             (where, process, result)
             for where, process in [("against AT_FDCWD" if has_descriptor else "with no descriptor",
                                     "a process with no maker"),
                                    *(("against a descriptor with %s" % label, process)
-                                     for label in (descriptors if has_descriptor else ()) for process in processes)]
-            for result in results])
+                                     for label in (self.UNUSABLE_DESCRIPTORS if has_descriptor else ())
+                                     for process in self.PROCESS_KINDS)]
+            for result in ("the result 0", *self.MADE)])
         pinned["a relative chdir with the result 0 in a process with no maker"] = (
             ("100   fork() = ?", "101   chdir(%s) = 0" % self.hexed("sub")), relative.replace("'x'", "'sub'"))
         for name, start in self.CUTTERS.items():

@@ -10,8 +10,8 @@ unchanged.
 - fork() = 101 is read as the call, and its child starts in the
   folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
   that folder when its maker enters another by chdir after the call,
-  also when another line interrupted the call and it is resumed with
-  the id of the child.
+  also when a line of the child interrupted the call and it is
+  resumed with the id of the child.
 - For each of clone, clone3, fork and vfork, in each of the 9 forms
   in which strace cuts a call short and when it ends with the result
   ? and the note <unavailable>, 1 later process with no maker is
@@ -68,12 +68,20 @@ unchanged.
   under another name, a path not in hex escapes, a line with no
   process id, and an unread call cut short while a call is open.
 - The error of each raise statement of the reader functions is
-  checked whole by 1 or more subtests. Some refusals share the text
-  of their error, so such a check does not show which of them ended
-  the case: a resumption with no call open and 1 under another name;
-  a call cut short and 1 that strace detached from while another
-  call of its process is open; and 3 refusals in trace_call of a
-  call that the test cannot read. The docstrings say so.
+  checked whole by 1 or more subtests, as is the error for a line of
+  a process after each kind of call at which the reader finds that
+  the process ended. Some refusals share the text of their error, so
+  such a check does not show which of them ended the case: a
+  resumption with no call open and 1 under another name; a call cut
+  short and 1 that strace detached from while another call of its
+  process is open; 3 refusals in trace_call of a call that the test
+  cannot read; a line of a process after a call that strace
+  detached from, 1 after an unread call left unfinished and 1 after
+  an unread call that ended with the result ?; a relative path in a
+  process with no maker and 1 in a folder that a chdir or fchdir
+  that strace cut short left not known; and a process that no
+  traced call made when no call cut short came before it and 1 when
+  each such call has let 1 start. The docstrings say so.
 - Among the examples of refusals in the module docstring are 2 for
   relative paths, not a list of all that end the case: 1 of a
   process with no maker, with no descriptor or with AT_FDCWD, in a
@@ -103,6 +111,9 @@ unchanged.
   which a mutant of the reader may change. A subtest of the refusal
   test and 1 of the folder test fail if a name of that table, a path
   that it gives or a descriptor form of that path has no subtest.
+  Each takes the forms and the kinds of process that it wants from
+  lists of its own, not from the tables that write the subtests, so
+  that an entry dropped from such a table fails it.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
 
