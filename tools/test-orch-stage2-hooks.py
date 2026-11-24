@@ -1361,14 +1361,15 @@ class EnumeratorBounds(Stage2Harness):
     declared_enumerator_defect, runs_enum_run_mark_first and program_leaves_record each have exactly
     the body of PINNED_CHECKS, and that ENUM_PROGRAMS is its 3 reviewed programs, by sha256, both in
     the test process and in a new python3 -I process that reads only the text of this file
-    (PIN_PROGRAM), which also requires that the file binds each name that those bodies read only at its
-    definition, and that write_registry refuses every near
-    miss that near_misses generates for each element and every path alias of the interpreter. The
-    named rows and the near misses are finite: each refuses the values it holds and shows nothing about
-    any other value. The exact checks are required by the pin of PINNED_CHECKS, and what the pin does
-    not see, among it a rebinding that names its target only at run time, is stated above
-    PIN_PROGRAM. This suite no longer drives a program-file enumerator through the hook:
-    the hook passes the argv to subprocess.run unchanged
+    (PIN_PROGRAM), which also requires that its scan of the file finds no binding of a name that
+    those bodies read, of the forms that the scan models, but its definition, though code of the file
+    can defeat that scan by routes that it does not model, as stated above PIN_PROGRAM, and that
+    write_registry refuses every near miss that near_misses generates for each element and every
+    path alias of the interpreter. The named rows and the near misses are finite: each refuses the
+    values it holds and shows nothing about any other value. The exact checks are required by the pin
+    of PINNED_CHECKS, and what the pin does not see, among it a rebinding that names its target only
+    at run time, is stated above PIN_PROGRAM. This suite no longer drives a program-file enumerator
+    through the hook: the hook passes the argv to subprocess.run unchanged
     (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
     does not see is stated above enumerator_bound_defect."""
 
@@ -1799,20 +1800,36 @@ return True
     # of ENUM_RUNS_VAR, ENUM_RUN_MARK, the 3 programs, ENUM_PROGRAMS and ENUM_TIMEOUT alone, with no
     # builtins, and requires the values and sha256 of the pin; it compiles the 3 module-level checks
     # with those values alone, and requires that they accept each program and refuse a 4th program and
-    # a timeout over ENUM_TIMEOUT; and it requires that the file binds each name that the path reads
-    # (the 4 checks, those values, the modules ast, json, sys and unittest, the builtins of
-    # PINNED_BUILTINS and Stage2Harness) only at its 1 definition, and binds the attributes
-    # write_registry and fail nowhere else. A binding here is a statement that binds the name (an
-    # assignment, del, def, class, import, global or nonlocal, a parameter, a for, with, except or match
-    # target), a store of an attribute of that name, a store of the code, globals, closure, defaults or
-    # dictionary of 1 of the checks, a store of any attribute of those modules, a subscript store, a
-    # setattr, a delattr, a __setattr__ or a __delattr__ that names it as a string constant, or an
-    # update, setdefault or pop of a mapping that names it as a keyword or a constant key. It does not
-    # see a binding that names the name only at run time (a name built from parts, a variable passed to
+    # a timeout over ENUM_TIMEOUT; and it scans the syntax tree of the file for the forms of binding
+    # listed here of a name that the path reads (the 4 checks, those values, the modules ast, json, sys
+    # and unittest, the builtins of PINNED_BUILTINS, Stage2Harness and fail) or of the attribute
+    # write_registry or fail, and requires that it finds none but the 1 definition of each name and the
+    # 1 plain module-level import of each module. These are the forms, and the only ones, that it finds:
+    # a statement that binds the name (an assignment, del, def, class, an import that binds it, global
+    # or nonlocal, a parameter, a for, with, except or match target); a store or del of the attribute
+    # write_registry or fail of any object; a store or del of the code, globals, closure, defaults,
+    # keyword defaults, dictionary or __wrapped__ of a check written as its name or as an attribute
+    # write_registry or fail; a store or del of any attribute of a module written as the bare name ast,
+    # json, sys or unittest; a subscript store or del whose key is the name or attribute as a string
+    # constant; a call of setattr, delattr, __setattr__ or __delattr__ whose first or second argument is
+    # the name or attribute as a string constant, or the code, globals and so on as a string constant
+    # with a check as above; and a call of update, setdefault, pop, __setitem__ or __delitem__ that
+    # names it as a keyword, as a string constant first argument, or as a constant key of a dictionary
+    # display first argument. No check that runs from this file holds against all code of this file:
+    # that code runs in the test process, so it can edit this case, what it starts or how it reads the
+    # result, and it can defeat the scan by any route that the scan does not model, so of bindings the
+    # case shows only that the file holds none of the forms above. Routes that defeat it include a
+    # store through the module object of this file (sys.modules[__name__].ENUM_PROGRAMS = ...),
+    # setattr(json, "loads", ...) or setattr(sys, "executable", ...), whose attribute is not 1 that the
+    # scan names, a store through another name for a module (import json under another name, then a
+    # store of its loads), a store into the dictionary of a module (json.__dict__["loads"] = ...), and
+    # a __getattribute__ of a case class that gives write_registry another value on its instances:
+    # each, scoped to 1 case, passes both pins while write_registry, as that case reaches it, accepts a
+    # program outside ENUM_PROGRAMS or an argv[0] other than the interpreter's own path. So do a
+    # binding that names its target only at run time (a name built from parts, a variable passed to
     # setattr, exec or eval of a built string, a mapping built elsewhere), a store through an alias of
-    # a check (another name bound to the function), native code, an edit made to PIN_PROGRAM or to the
-    # pin together with the code, or a run-time edit of this case itself, of what it starts or of how
-    # it reads the result, since that runs in the test process.
+    # a check (another name bound to the function) and native code. Neither pin sees an edit made to
+    # PIN_PROGRAM or to the pin together with the code.
     PIN_PROGRAM = r'''
 import ast, hashlib, sys
 

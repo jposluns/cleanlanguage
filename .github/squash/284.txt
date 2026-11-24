@@ -123,16 +123,22 @@ tools/test-orch-stage2-hooks.py:
   fails; that the same holds in a new python3 -I process that reads
   only the text of the file (PIN_PROGRAM, the fresh pin), since code
   of the file can rebind those names at run time in ways that no check
-  in the test process sees, and that the file binds each name that
-  the path reads, and the attributes write_registry and fail, only at
-  its definition; and that
-  write_registry refuses every near miss that near_misses generates
-  from each element, 5,412 values on the test host: each character
-  dropped, changed, case-swapped, made full-width or preceded by a
-  space, the whole value case-changed or wrapped in whitespace, and
-  each other path to this interpreter's file. The named values and the
-  near misses are finite and catch only the values they hold; the 2
-  pins are what require the exact checks.
+  in the test process sees, and that its scan of the file finds no
+  binding of a name that the path reads, or of the attribute
+  write_registry or fail, of the forms that the comment above
+  PIN_PROGRAM lists, but its definition; and that write_registry
+  refuses every near miss that near_misses generates from each
+  element: each character dropped, changed, case-swapped, made
+  full-width or preceded by a space, the whole value case-changed or
+  wrapped in whitespace, and each other path to this interpreter's
+  file. That case requires that at least 2 other paths name this
+  interpreter and that it tries more than 1000 values, and is
+  expected to pass; it states no count, which depends on the path of
+  the interpreter. The named values and the near misses are finite
+  and catch only the values they hold; the 2 pins are what require
+  the exact checks. No check that runs from the file holds against
+  all code of the file: that code can defeat the scan of the fresh
+  pin by routes that it does not model, as the residuals state.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -241,9 +247,16 @@ body that closes over another ENUM_PROGRAMS, binds write_registry on
 an instance, rebinds ENUM_PROGRAMS through globals() or a global
 statement, replaces the code of declared_enumerator_defect, or rebinds
 unittest.TestCase.fail, and at a named row when program_leaves_record
-drops environ from its attribute names, also in PINNED_CHECKS. The new
-doctor case fails when the doctor skips an argv element that is
-exactly -c.
+drops environ from its attribute names, also in PINNED_CHECKS. A new
+case that sends through write_registry a -c program outside
+ENUM_PROGRAMS passes both pins and is written when, for that case
+alone, ENUM_PROGRAMS gains the program through sys.modules[__name__],
+json.loads is replaced by setattr, through another name for json or
+through json.__dict__, or a __getattribute__ of the case gives
+write_registry a writer with no check; and the same case passes with
+another path to this interpreter as argv[0] when sys.executable is
+set to that path by setattr. The new doctor case fails when the
+doctor skips an argv element that is exactly -c.
 With a fixture enumerator that sleeps 70 s, from the same line as the
 6 s delay, neither the present-marker case of DoctorCheckpointWrites
 nor the DoctorStandInRestore case ends through a test bound, on main
@@ -278,11 +291,20 @@ change. The fixture value 60 is safe only while the test registries
 are never gated. No check in the test process can hold the names that
 the pinned checks read, since code of the file can rebind them at run
 time; the fresh pin reads the text of the file in a new process, and
-does not see a binding that names its target only at run time (a built
-name, a variable passed to setattr, exec or eval of a built string, or
-a mapping built elsewhere), a store through another name bound to a
-check, native code, or a run-time edit of the fresh pin case itself,
-of what it starts or of how it reads the result. Neither pin sees an
+no check that runs from the file holds against all code of the file:
+its scan finds only the forms of binding that the comment above
+PIN_PROGRAM lists, so code of the file can defeat it by other routes,
+such as a store through sys.modules[__name__], setattr(json, "loads",
+...) or setattr(sys, "executable", ...), a store through another name
+for a module, a store into json.__dict__, or a __getattribute__ of a
+case class, each of which passes both pins while write_registry, as
+that case reaches it, accepts a program outside ENUM_PROGRAMS or
+another argv[0]. Nor does it see a binding that names its target
+only at run time (a built name, a variable passed to setattr, exec or
+eval of a built string, or a mapping built elsewhere), a store
+through another name bound to a check, native code, or a run-time
+edit of the fresh pin case itself, of what it starts or of how it
+reads the result. Neither pin sees an
 edit made to the pin and to the code together, such as a
 write_registry that ignores a defect that names '-J' or a 4th program
 of ENUM_PROGRAMS with its sha256 added, or a change outside the file
