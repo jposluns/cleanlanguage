@@ -13,31 +13,72 @@ READER_SHA256 are unchanged.
   captured when it was imported (PLAIN_TYPES, PLAIN_CONTAINERS,
   PIN_KINDS).
 - Add capture_problems(): with re.Pattern, types.ModuleType, the
-  test's REPO_ROOT, tuple, list or dict rebound to a stand-in, 1 name
-  at a time, pin_value() must still write a real value of that kind as
-  before and refuse an instance of the stand-in. The exact type of a
-  value is read with the builtin type(), which a rebinding of a builtin
-  can change, a class that the reader pin does not see (residual 2); no
+  test's REPO_ROOT, str, bytes, int, float, bool, tuple, list or dict
+  rebound to a stand-in, 1 name at a time, pin_value() must still
+  write a real value of that kind as before and refuse an instance of
+  the stand-in, and each name must be restored once the last of them
+  has been rebound. The exact type of a value, and type(None), are
+  read with the builtin type(), which a rebinding of a builtin can
+  change, a class that the reader pin does not see (residual 2); no
   check holds the capture of type.
 - Derive refusal cases from the 3 capture tuples: for each of their 13
   kinds, an object whose class gives the kind as its __class__, and,
-  for the 10 kinds that Python lets a class subclass, an instance of a
-  bare subclass, so that each kind test of pin_value() and plain_data()
-  must match the exact type. The 19 committed refused values are kept.
+  for each of the 10 kinds that FINAL_KINDS does not name, an instance
+  of a bare subclass, so that each kind test of pin_value() and
+  plain_data() must match the exact type. A subclass that cannot be
+  made fails the check, and so does a kind of FINAL_KINDS (bool,
+  NoneType and re.Pattern) that Python lets a class subclass. The 19
+  committed refused values are kept.
 - Run the 2 replacements of REQUESTED_FILES on 3 base gates: the
   committed gate, one in which its statement shares its line with
   LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
-  it spans 3 lines, each built gate first passing the reader pin.
+  it spans 3 lines with a comment after it. Each built gate must first
+  pass the reader pin, and each gate with the statement replaced must
+  keep the comments of its base gate.
+- Make pin_reflowed_gate() refuse an unpacking assignment to
+  REQUESTED_FILES, and give both gate builders sources that their
+  docstrings refuse, each of which must raise ValueError.
 - Rewrite the fixture PIN_SUBCLASS as 1 simple statement with the same
   meaning, a deliberate change of its contract: a class statement
   cannot follow a semicolon, so the committed form does not parse on
   the shared-line gate.
 - Add to pin_value()'s docstring that it writes a module, a class or a
-  path by its name, so a helper that one of them carries is in no
+  path by its name, so a helper that 1 of them carries is in no
   digest here, and mark its refused values as examples. The pin holds
   the values that a reviewed gate defines in ordinary code, and
   scope_sentence_problems() fails each docstring of the file that says
   so without the words "a module, a class or a path by its name".
-- Leave .github/squash/269.txt unchanged: it is the merged record of
-  pull request 269, and whether merged records are amended is the
-  maintainer's decision.
+- Rewrite the module docstring's account of the kind tests and of
+  pin_value_problems() with only what these checks hold.
+- Leave .github/squash/269.txt unchanged: this change edits no merged
+  squash record.
+
+Checks, each with its expected outcome:
+
+- python3 -I tools/test-install-page.py: exit 0, "all 623 cases".
+- python3 -I tools/check-install-page.py: exit 0, and its sha256
+  equals GATE_SHA256 before and after this change.
+- Each mutant that the description names, 1 or 2 exact replacements
+  in a copy of the test: exit 1 with this change, with the problems
+  that the description names, and exit 0 on main before this change
+  for each mutant whose code main holds.
+- python3 -I tools/check-pr-text.py on the description and on this
+  message: exit 0, 0 defects.
+
+What TODO 283 records:
+
+- The 5 gaps between the docstrings and the self-checks that the
+  review of pull request 269 reported are each closed by a check
+  above: the capture of the kinds, the refusal of a subclass of int,
+  float or bytes, the capture of tuple, list and dict, the columns of
+  the replaced span and the residual of pin_value()'s scope sentence.
+  The 2nd is widened to bool and None, the 4th to a span that ends at
+  the end of its 1st line and to 1 that takes in a comment after the
+  statement, and the 1st to str, bytes, int, float and bool.
+- pin_value()'s docstring gives its refused values as examples and
+  points to pin_value_problems(), which names the values that it
+  holds; every count in this message and the description names its
+  unit.
+- The fixture PIN_SUBCLASS changes its contract deliberately, for the
+  reason above.
+- GATE_SHA256 and READER_SHA256 are unchanged.
