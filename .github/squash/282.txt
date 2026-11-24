@@ -25,9 +25,10 @@ itself 90 seconds after it enters its wait for the release, and so
 more than 90 seconds after the test's start. The check takes no end of
 file seen later than 85 seconds from that start, the 60 second poll,
 the 15 second run and the 10 second check, plus the poll's last step,
-and end of file must come before 90 seconds, or before a bound that a
-caller passes in its place, so the group's own end is never taken for
-the kill.
+and end of file must come before 90 seconds, or before a smaller bound
+that a caller passes in its place; a larger bound leaves the 90
+seconds as the bound, so the group's own end is never taken for the
+kill.
 
 The check sends no signal. Each stub process waits for end of file on
 a second FIFO, lifeline, whose only write end the test holds. The
@@ -77,12 +78,15 @@ raises KeyboardInterrupt, and assert that each fails or passes the
 interrupt through and that the group then ends before the stub's own
 end could come, timed from before the stub starts. Another runs it
 with an own-end bound of 0.5 seconds, below the 1 second first wait
-that the check asserts, and asserts that it fails at the own-end
-assertion; another asserts that a stub started after the release
-exits at its first read, as no ready byte shows; and another asserts,
-on a stand-in clock, that an end of file seen after its deadline is
-not taken. A tripwire test asserts that the only bindings of
-check_group_kill, end_of_file and stub in the test file's syntax are
+that the check asserts, then with the default bound and with a bound
+of 180 seconds, each with a stand-in end_of_file that returns the
+real one's clock reading plus 90 seconds, and asserts that each run
+fails at the own-end assertion; another asserts that a stub started
+after the release exits at its first read, as no ready byte shows;
+and another asserts, on a stand-in clock, that an end of file seen
+after its deadline is not taken. A tripwire test asserts that the
+only bindings of check_group_kill, end_of_file and stub in the test
+file's syntax are
 1 def statement
 for each, counting async def, class and import statements, plain,
 annotated, augmented, := and tuple or starred assignments to a name,
@@ -177,9 +181,10 @@ Residual:
   functions, the client, whose group kill, the behaviour under test, is
   the 1 signal that a run of the group-kill test sends, and the standard
   library.
-- The check takes the text of own_end with str and adds check and
-  own_end, or end_bound in its place when given, to clock readings, so
-  a value with methods of its own runs them in the test. str runs before
+- The check takes the text of own_end with str, compares end_bound
+  with own_end when given, and adds check and own_end, or end_bound in
+  its place when smaller, to clock readings, so a value with methods of
+  its own runs them in the test. str runs before
   the check reads GROUP_STUB, so a method of own_end can change the
   stub's source, for example by rebinding GROUP_STUB, and so add code to
   the stub. The callers in the test file pass numbers.
@@ -233,8 +238,10 @@ Residual:
 - A correct client still fails the test if the child is not ready within
   60 seconds. It also fails each test that runs the check if the test
   process is delayed past 1 of the bounds the check asserts, or so long,
-  after it reads the ready byte, that the stub reaches its own end
-  before the client's first wait times out.
+  at any point after the client starts the stub, before or after the
+  test reads the ready byte, that the stub reaches its own end before
+  the client's first wait times out. The run bound leaves out the poll,
+  so it does not measure a delay during the poll.
 - The design needs FIFOs in the temporary folder, select on them, and
   the Linux behaviour that a FIFO reader opened while a writer exists
   sees end of file when the last writer closes. The behaviour stated

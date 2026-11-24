@@ -674,9 +674,10 @@ class BoundsTest(unittest.TestCase):
         # after the client returns, which shows that no process of the
         # group still holds it: the client
         # killed the member too, not only the leader. That end of file must
-        # also come less than end_bound seconds after the client's start,
-        # own_end seconds when end_bound is not given, so however late the
-        # child gets ready, the group's own end is never taken for the kill.
+        # also come less than own_end seconds after the client's start, or
+        # less than end_bound seconds when a caller passes a smaller
+        # end_bound, so however late the child gets ready, the group's own
+        # end is never taken for the kill.
         #
         # The check sends no signal, so it never names a process by an id
         # that may have been reused. Its finally clause closes lifeline,
@@ -696,8 +697,9 @@ class BoundsTest(unittest.TestCase):
         # with float, so a plain int or float passed as own_end reaches the
         # stub only as a number. A text that float does not take raises in
         # the stub before it opens either FIFO, so the check fails.
-        # end_bound, when given, takes the place of own_end in the own-end
-        # assertion only; the stub still reads own_end.
+        # end_bound, when given and smaller than own_end, takes the place of
+        # own_end in the own-end assertion only; a larger end_bound leaves
+        # own_end as the bound. The stub still reads own_end.
         #
         # Residual, not checked, of this check and of its tripwire,
         # test_the_check_names_no_signal_function:
@@ -746,9 +748,10 @@ class BoundsTest(unittest.TestCase):
         #   functions, the client, whose group kill, the behaviour under test,
         #   is the 1 signal that a run of the group-kill test sends, and the
         #   standard library.
-        # - The check takes the text of own_end with str and adds check and
-        #   own_end, or end_bound in its place when given, to clock readings,
-        #   so a value with methods of its own runs them in the test. str
+        # - The check takes the text of own_end with str, compares end_bound
+        #   with own_end when given, and adds check and own_end, or end_bound
+        #   in its place when smaller, to clock readings, so a value with
+        #   methods of its own runs them in the test. str
         #   runs before the check reads GROUP_STUB, so a method of own_end can
         #   change the stub's source, for example by rebinding GROUP_STUB, and
         #   so add code to the stub. The callers in the test file pass
@@ -804,8 +807,11 @@ class BoundsTest(unittest.TestCase):
         # - A correct client still fails the test if the child is not ready
         #   within 60 seconds. It also fails each test that runs the check if
         #   the test process is delayed past 1 of the bounds the check
-        #   asserts, or so long, after it reads the ready byte, that the stub
-        #   reaches its own end before the client's first wait times out.
+        #   asserts, or so long, at any point after the client starts the
+        #   stub, before or after the test reads the ready byte, that the
+        #   stub reaches its own end before the client's first wait times
+        #   out. The run bound leaves out the poll, so it does not measure a
+        #   delay during the poll.
         # - The design needs FIFOs in the temporary folder, select on them, and
         #   the Linux behaviour that a FIFO reader opened while a writer exists
         #   sees end of file when the last writer closes. The behaviour stated
@@ -884,7 +890,7 @@ class BoundsTest(unittest.TestCase):
                 if ended is None:
                     self.fail(f"a process of the child's group outlived the client's kill: alive did not reach "
                               f"end of file within {check} seconds after the client returned")
-                bound = own_end if end_bound is None else end_bound
+                bound = own_end if end_bound is None else min(end_bound, own_end)
                 self.assertLess(ended, started + bound,
                                 "the group may have ended on its own, so its end does not show the kill")
             finally:
@@ -946,19 +952,41 @@ class BoundsTest(unittest.TestCase):
         # The own-end assertion must fail an end of file that comes no
         # earlier than its bound after the client's start, since such an end
         # could be the group's own end, as for a child that gets ready so
-        # late that the stub's own end falls inside the check. The check runs
-        # the real client against the stub with its own end of
-        # OWN_END_SECONDS and an end_bound of 0.5 seconds. Derived from the
-        # order the check asserts, not from how long any step takes: the
-        # check reads ready_at after started, asserts that the client's first
-        # real wait lasted at least 1 second from ready_at, and reads the end
-        # of file only after the client returns, so every end of file it can
-        # take comes at least 1 second after started, past the bound. Like
-        # each test that runs the check, it can still fail on a delay of the
-        # test process, as the residual list in check_group_kill states.
-        with self.assertRaises(AssertionError) as caught:
-            self.check_group_kill(end_bound=0.5)
-        self.assertIn("the group may have ended on its own", str(caught.exception))
+        # late that the stub's own end falls inside the check. Each subtest
+        # runs the check against the real client and the stub with its own
+        # end of OWN_END_SECONDS, so no subtest lets the stub's own end fall
+        # inside the check. Each must fail at the own-end assertion, derived
+        # from the order the check asserts, not from how long any step
+        # takes: the check reads ready_at after started, asserts that the
+        # client's first real wait lasted at least 1 second from ready_at,
+        # and reads the end of file only after the client returns, so every
+        # end of file it can take comes at least 1 second after started.
+        # - A smaller bound, an end_bound of 0.5 seconds: that end of file
+        #   comes past it.
+        # - The default bound, own_end, with no end_bound, and a larger
+        #   bound, an end_bound of 2 * OWN_END_SECONDS, which the check
+        #   limits to own_end: the check's end_of_file is replaced for the
+        #   run by a stand-in that returns the real one's reading plus
+        #   OWN_END_SECONDS, so the reading the check takes comes at least
+        #   OWN_END_SECONDS after started, at its bound or past it.
+        # Like each test that runs the check, it can still fail on a delay of
+        # the test process, as the residual list in check_group_kill states.
+        real_end_of_file = end_of_file
+
+        def late_end_of_file(fd, deadline):
+            seen = real_end_of_file(fd, deadline)
+            return None if seen is None else seen + OWN_END_SECONDS
+
+        for label, end_bound, stand_in in (
+            ("a smaller bound", 0.5, real_end_of_file),
+            ("the default bound", None, late_end_of_file),
+            ("a larger bound", 2 * OWN_END_SECONDS, late_end_of_file),
+        ):
+            with self.subTest(label):
+                with mock.patch.object(sys.modules[__name__], "end_of_file", stand_in):
+                    with self.assertRaises(AssertionError) as caught:
+                        self.check_group_kill(end_bound=end_bound)
+                self.assertIn("the group may have ended on its own", str(caught.exception))
 
     def test_an_interrupted_check_releases_its_group(self):
         # The client's group kill raises KeyboardInterrupt, as a Ctrl-C at
