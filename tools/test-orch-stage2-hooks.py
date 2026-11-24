@@ -186,9 +186,10 @@ NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator wa
 # begins, so that it records each of its starts in that file before anything else runs. The hook
 # starts the enumerator with the hook's own environment (`subprocess.run` at aiqt_hooks.py:22833 passes
 # no env), and the doctor runs the hook in its own process, so a launch of either passes the file on to
-# the enumerator. write_registry accepts only an enumerator that is exactly this interpreter, -I, -c and
-# 1 of ENUM_PROGRAMS (declared_enumerator_defect), each of which begins with these statements; the
-# residuals are stated above enumerator_bound_defect.
+# the enumerator. Of the enumerators that the hook would start, write_registry accepts only one that is
+# exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS (declared_enumerator_defect), each of which
+# begins with these statements, and it writes unchecked an enumerator that the hook refuses before it
+# starts anything. The residuals are stated above enumerator_bound_defect.
 ENUM_RUNS_VAR = "ORCH_STAGE2_ENUMERATOR_RUNS"
 ENUM_RUN_MARK = """import os
 _runs = os.environ.get("ORCH_STAGE2_ENUMERATOR_RUNS")
@@ -240,13 +241,14 @@ WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
 # The enumerator of the enumerator timeout case: it records its start, then sleeps past any timeout.
 SLEEPING_ENUM_FIXTURE = ENUM_RUN_MARK + "import time\ntime.sleep(100)\n"
 
-# The only programs that write_registry accepts in a declared enumerator, compared as exact text. Each
-# begins with the statements of ENUM_RUN_MARK and compiles (runs_enum_run_mark_first), and after them
-# names neither the record nor the environment (program_leaves_record); EnumeratorBounds checks both
-# of each. They are short, they are read in review, and after the mark none of them opens, removes or
-# writes any path but its own operands, so an accepted program leaves the count to the mark. A program
-# that is not 1 of these is refused however it begins, since a check of a program's text cannot see
-# every way in which a program can reach the record (EnumeratorBounds.SEARCHES).
+# The only programs that write_registry accepts in a declared enumerator that the hook would start,
+# compared as exact text. Each begins with the statements of ENUM_RUN_MARK and compiles
+# (runs_enum_run_mark_first), and after them names neither the record nor the environment
+# (program_leaves_record); EnumeratorBounds checks both of each. They are short, they are read in
+# review, and after the mark none of them opens, removes or writes any path but its own operands, so an
+# accepted program leaves the count to the mark. In such an enumerator, a program that is not 1 of
+# these is refused however it begins, since a check of a program's text cannot see every way in which
+# a program can reach the record (EnumeratorBounds.SEARCHES).
 ENUM_PROGRAMS = (ENUM_FIXTURE, WRITING_ENUM_FIXTURE, SLEEPING_ENUM_FIXTURE)
 
 
@@ -497,9 +499,11 @@ class Stage2Harness(unittest.TestCase):
         """Write obj as the registry, after failing the case when its enumerator, read back from the
         text to be written as the hook reads it, has a defect (declared_enumerator_defect). The program
         is the argv element itself, so the check reads the text that the interpreter compiles; no file
-        is read. Every program file is refused, since what the interpreter runs for a file operand
-        depends on the operand's name and content, on how the path resolves, and on the file at each
-        run, not only on the text that a check reads."""
+        is read. Every program file in an enumerator that the hook would start is refused, since what
+        the interpreter runs for a file operand depends on the operand's name and content, on how the
+        path resolves, and on the file at each run, not only on the text that a check reads. An
+        enumerator that the hook refuses before it starts anything (one that is not an object, or whose
+        argv is not a list of non-empty strings) is written unchecked."""
         text = json.dumps(obj)
         written = json.loads(text)
         enumerator = written.get("enumerator") if isinstance(written, dict) else None
@@ -1349,8 +1353,9 @@ class EnumeratorBounds(Stage2Harness):
     first and leaves the record alone after it, and that each branch of those 2 checks
     (runs_enum_run_mark_first and program_leaves_record) refuses a program of its own, that
     write_registry checks the enumerator as the hook reads it from the file written, so a tuple or a
-    str subclass is checked as the text that json writes, and refuses a -c enumerator that this
-    interpreter does not run with exactly -I and then -c as separate elements, whose program is not 1
+    str subclass is checked as the text that json writes, and refuses a -c enumerator that the hook
+    would start and that this interpreter does not run with exactly -I and then -c as separate
+    elements, whose program is not 1
     of ENUM_PROGRAMS (one without the statements of ENUM_RUN_MARK, also when its timeout is absent or
     one that the hook reads as 60, one that holds them only as text or after an exit, one that begins
     with them but does not compile, and one that begins with them and then removes the record or adds
@@ -1360,16 +1365,16 @@ class EnumeratorBounds(Stage2Harness):
     every program-file form found so far, each with a recording file in place, that write_registry,
     declared_enumerator_defect, runs_enum_run_mark_first and program_leaves_record each have exactly
     the body of PINNED_CHECKS, and that ENUM_PROGRAMS is its 3 reviewed programs, by sha256, both in
-    the test process and in a new python3 -I process that reads only the text of this file
-    (PIN_PROGRAM), which also requires that its scan of the file finds no binding of a name that
-    those bodies read, of the forms that the scan models, but its definition, though code of the file
-    can defeat that scan by routes that it does not model, as stated above PIN_PROGRAM, and that
-    write_registry refuses every near miss that near_misses generates for each element and every
-    path alias of the interpreter. The named rows and the near misses are finite: each refuses the
-    values it holds and shows nothing about any other value. The exact checks are required by the pin
-    of PINNED_CHECKS, and what the pin does not see, among it a rebinding that names its target only
-    at run time, is stated above PIN_PROGRAM. This suite no longer drives a program-file enumerator
-    through the hook: the hook passes the argv to subprocess.run unchanged
+    the test process and in a new python3 -I process that parses the text of this file and does not
+    import it (PIN_PROGRAM), which also requires that its scan of the file finds no binding of a name
+    that those bodies read, of the forms that the scan models, but its definition, though code of the
+    file can defeat that scan by routes that it does not model, as stated above PIN_PROGRAM, and that
+    write_registry refuses every near miss that near_misses generates for each element and each other
+    path to the interpreter that the case builds. The named rows and the near misses are finite: each
+    refuses the values it holds and shows nothing about any other value. The exact checks are required
+    by the pin of PINNED_CHECKS, and what the pin does not see, among it a rebinding that names its
+    target only at run time, is stated above PIN_PROGRAM. This suite no longer drives a program-file
+    enumerator through the hook: the hook passes the argv to subprocess.run unchanged
     (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
     does not see is stated above enumerator_bound_defect."""
 
@@ -1462,8 +1467,9 @@ class EnumeratorBounds(Stage2Harness):
         for program in (self.ERASES, self.FORGES, self.READS_ENVIRONMENT):
             self.assertTrue(runs_enum_run_mark_first(program), program)
             self.assertFalse(program_leaves_record(program), program)
-        # The check reads names, so a program can reach the record without them; that is why
-        # write_registry accepts only ENUM_PROGRAMS, which refuses this one.
+        # The check reads names, so a program can reach the record without them; that is why, in an
+        # enumerator that the hook would start, write_registry accepts only ENUM_PROGRAMS, which refuses
+        # this one.
         self.assertTrue(program_leaves_record(self.SEARCHES), "precondition: no name of the record")
         self.assertNotIn(self.SEARCHES, ENUM_PROGRAMS)
         # Each branch of the 2 checks refuses a program of its own: runs_enum_run_mark_first refuses
@@ -1795,18 +1801,28 @@ return True
     # function of the same source that closes over another ENUM_PROGRAMS, a code object given other
     # names, a global rebound for the cases of 1 class, write_registry bound on an instance, or
     # unittest.TestCase.fail rebound each passes it. PIN_PROGRAM checks the pin again in a new python3 -I
-    # process that reads only the text of this file, so no state of the test process reaches what it
-    # computes. It requires the bodies of PINNED_CHECKS as written; it runs the module-level assignments
-    # of ENUM_RUNS_VAR, ENUM_RUN_MARK, the 3 programs, ENUM_PROGRAMS and ENUM_TIMEOUT alone, with no
-    # builtins, and requires the values and sha256 of the pin; it compiles the 3 module-level checks
-    # with those values alone, and requires that they accept each program and refuse a 4th program and
-    # a timeout over ENUM_TIMEOUT; and it scans the syntax tree of the file for the forms of binding
-    # listed here of a name that the path reads (the 4 checks, those values, the modules ast, json, sys
-    # and unittest, the builtins of PINNED_BUILTINS, Stage2Harness and fail) or of the attribute
-    # write_registry or fail, and requires that it finds none but the 1 definition of each name and the
-    # 1 plain module-level import of each module. These are the forms, and the only ones, that it finds:
-    # a statement that binds the name (an assignment, del, def, class, an import that binds it, global
-    # or nonlocal, a parameter, a for, with, except or match target); a store or del of the attribute
+    # process that parses the text of this file, which it reads from the path that it is given, and
+    # does not import it, so the names of the test process reach what it computes only through what
+    # the test process gives it, which includes its program, that path, the interpreter and the
+    # environment; the test process also reads its result. It requires the bodies of PINNED_CHECKS as
+    # written; it runs the module-level assignments of ENUM_RUNS_VAR, ENUM_RUN_MARK, the 3 programs,
+    # ENUM_PROGRAMS and ENUM_TIMEOUT alone, with no builtins, and requires the values and sha256 of the
+    # pin; it compiles the 3 module-level checks with those values, the modules of PINNED_MODULES (ast,
+    # json and sys) as that process imports them and the builtins of that process, and requires that
+    # they accept each program and refuse a 4th program and a timeout over ENUM_TIMEOUT; and it scans
+    # the syntax tree of the file for the forms of binding listed here of a name that the path reads
+    # (the 4 checks, those values, the modules ast, json, sys and unittest, the builtins of
+    # PINNED_BUILTINS, Stage2Harness and fail) or of the attribute write_registry or fail, and requires
+    # that it finds none but the 1 definition of each check, of each of those values and of
+    # Stage2Harness, and the 1 plain module-level import of each module. These are the forms, and the
+    # only ones, that it finds: the name as a bare name that is stored or deleted, which covers the
+    # target of an assignment, an augmented or annotated assignment, del, for, with, := or a
+    # comprehension, and the name of a type statement; the name of a def, async def, class, type
+    # parameter or except clause, or a name that a match pattern binds (a capture, an as, a star or a
+    # mapping rest); a parameter, of a lambda as well; an import that binds the name by its own text
+    # (import of the name or of a submodule of it, or from ... import of the name, or any import as the
+    # name), but not a star import (from ... import *), which can bind it and which the scan does not
+    # see; a global or nonlocal statement that names it; a store or del of the attribute
     # write_registry or fail of any object; a store or del of the code, globals, closure, defaults,
     # keyword defaults, dictionary or __wrapped__ of a check written as its name or as an attribute
     # write_registry or fail; a store or del of any attribute of a module written as the bare name ast,
@@ -1961,7 +1977,8 @@ for node in ast.walk(tree):
                 where(node, "calls {} naming {}".format(
                     callee, ", ".join(sorted(keys & (NAMES | ATTRIBUTES)))))
 
-# The values, run alone with no builtins, and the pinned checks, compiled with those values alone.
+# The values, run alone with no builtins, and the pinned checks, compiled with those values, the
+# modules of PINNED_MODULES and the builtins of this process.
 namespace = {"__builtins__": {}}
 try:
     for name in VALUES:
@@ -2009,12 +2026,13 @@ finish()
     def near_misses(value):
         """Values that differ from value, generated from it: for each position, value without that
         character, with that character's code point with its lowest bit flipped, with that character's
-        case swapped, with that character in its full-width form, and with a space before that
-        character; value with a space after it; value upper-cased, lower-cased and case-swapped; and
-        value with a space, a tab, a line feed, a carriage return and a line feed, a vertical tab, a
-        form feed or a no-break space before it, after it, and both. Each is non-empty and differs from
-        value. So a check that compares a part of the value, strips or folds it, or normalizes its
-        characters accepts at least 1 of them."""
+        case swapped, with a space before that character, and, when that character is 1 of "!" to "~"
+        (the printable ASCII characters other than the space), with that character in its full-width
+        form, its code point plus 0xFEE0; value with a space after it; value upper-cased, lower-cased
+        and case-swapped; and value with a space, a tab, a line feed, a carriage return and a line
+        feed, a vertical tab, a form feed or a no-break space before it, after it, and both. Each is
+        non-empty and differs from value. So a check that compares a part of the value, strips or folds
+        it, or normalizes its characters accepts at least 1 of them."""
         found = []
         for i, char in enumerate(value):
             head, tail = value[:i], value[i + 1:]
@@ -2029,9 +2047,10 @@ finish()
 
     def test_write_registry_refuses_every_generated_near_miss(self):
         # For each of the interpreter, -I, -c and each program of ENUM_PROGRAMS, write_registry refuses
-        # every value that near_misses generates from it, and for the interpreter every path that names
-        # the same file another way. The values are generated, not chosen for 1 loosening, but they are
-        # finite: a check that accepted some other value would pass this case.
+        # every value that near_misses generates from it, and for the interpreter each of the 5 paths
+        # below that differs from sys.executable and names the same file. The values are generated, not
+        # chosen for 1 loosening, but they are finite: a check that accepted some other value would pass
+        # this case.
         directory, name = os.path.split(sys.executable)
         aliases = [os.path.join(directory, ".", name), directory + "//" + name,
                    os.path.join(directory, "..", os.path.basename(directory), name),
@@ -2064,7 +2083,8 @@ finish()
 
     def test_write_registry_refuses_every_program_file(self):
         # What the interpreter runs for a file operand depends on the operand's name and content, on how
-        # the path resolves, and on the file at each run, so write_registry refuses every program file.
+        # the path resolves, and on the file at each run, so write_registry refuses every program file
+        # in an enumerator that the hook would start.
         # Each row has a recording program file in place, so a check that read that file would accept
         # it, and the refusal is of the form, not of the file. The rows are the forms found so far: a
         # plain file, a relative file under the root, an option word (-u, -- or -) in the operand
@@ -3451,15 +3471,16 @@ def _env_naming_starts(env, folder):
 
 
 # The residuals of the bound check that run_doctor_recorded makes. It counts only the starts that an
-# enumerator records: Stage2Harness.write_registry accepts only a declared enumerator that is exactly
-# this interpreter, -I, -c and 1 of ENUM_PROGRAMS (declared_enumerator_defect), and refuses every
-# program file. The record is a file that any process of this user can write, so its count holds only
-# because each accepted program leaves the record alone after the mark (program_leaves_record), and a
-# program that the 1 launcher starts directly, not through a registry, is trusted as the code of this
-# file is. Code that the interpreter runs before any program under -I (site: .pth import lines and
-# sitecustomize) is not seen, a registry written another way is not seen, a child that starts the
-# enumerator with an environment that drops ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that
-# the hook and the doctor pass it on), and a start that ends before its program runs is not counted.
+# enumerator records: of the declared enumerators that the hook would start, Stage2Harness.write_registry
+# accepts only one that is exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS
+# (declared_enumerator_defect), and refuses every program file. The record is a file that any process
+# of this user can write, so its count holds only because each accepted program leaves the record
+# alone after the mark (program_leaves_record), and a program that the 1 launcher starts directly,
+# not through a registry, is trusted as the code of this file is. Code that the interpreter runs
+# before any program under -I (site: .pth import lines and sitecustomize) is not seen, a registry
+# written another way is not seen, a child that starts the enumerator with an environment that drops
+# ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that the hook and the doctor pass it on), and a
+# start that ends before its program runs is not counted.
 # The doctor checks each element of the argv from argv[2] on as an operand path, as for a committed
 # registry, whose argv[2] the registry gate requires to be a script, so for these registries it also
 # checks -c and the program; a special file at <root>/-c makes it refuse where the hook runs the

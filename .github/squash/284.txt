@@ -45,24 +45,29 @@ tools/test-orch-stage2-hooks.py:
   text, in 1 place, declared_enumerator_defect. It accepts an
   enumerator that the hook would start only when its argv is exactly
   this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS,
-  each a separate element, and when its timeout, as the hook reads
-  it, is at most ENUM_TIMEOUT. ENUM_PROGRAMS holds ENUM_FIXTURE,
-  WRITING_ENUM_FIXTURE and SLEEPING_ENUM_FIXTURE, the sleeping
-  enumerator of the enumerator timeout case, and the 2 pin cases of
-  EnumeratorBounds require exactly those 3, by the sha256 of each.
+  each a separate element, followed by any operands, and when its
+  timeout, as the hook reads it, is at most ENUM_TIMEOUT.
+  ENUM_PROGRAMS holds ENUM_FIXTURE, WRITING_ENUM_FIXTURE and
+  SLEEPING_ENUM_FIXTURE, the sleeping enumerator of the enumerator
+  timeout case, and the 2 pin cases of EnumeratorBounds require
+  exactly those 3, by the sha256 of each.
   Each begins with ENUM_RUN_MARK and compiles, and after the mark it
   names neither the record nor the environment and opens, removes or
   writes no path but its own operands. The program is the argv element
   itself, so the check reads the text that the interpreter compiles;
-  no file is read. It refuses every other shape, including every other
-  program and every program file: a check of a program's text cannot
-  see every way in which the program could reach the record, and what
-  the interpreter runs for a file operand depends on the operand's
-  name and content, on how the path resolves, and on the file at each
-  run, not only on the text that a check reads. It refuses some
-  enumerators that record their start and leave the record alone, such
-  as a program file that begins with the mark or any program outside
-  ENUM_PROGRAMS; each refusal fails safe.
+  no file is read. Of the enumerators that the hook would start, it
+  refuses every other shape, including every other program and every
+  program file: a check of a program's text cannot see every way in
+  which the program could reach the record, and what the interpreter
+  runs for a file operand depends on the operand's name and content,
+  on how the path resolves, and on the file at each run, not only on
+  the text that a check reads. It refuses some enumerators that record
+  their start and leave the record alone, such as a program file that
+  begins with the mark or any program outside ENUM_PROGRAMS; each
+  refusal fails safe. It writes unchecked an enumerator that the hook
+  refuses before it starts anything: one that is not an object, or
+  whose argv is not a list of non-empty strings
+  (aiqt_hooks.py:22819-22829).
 - Every fixture enumerator is declared in that form, with ENUM_FIXTURE
   or WRITING_ENUM_FIXTURE as the program, so the backlog moves from
   argv[3] to argv[4], and the doctor operand label that the cases
@@ -120,25 +125,27 @@ tools/test-orch-stage2-hooks.py:
   and that ENUM_RUN_MARK and the 3 programs of ENUM_PROGRAMS have the
   sha256 that the case holds, as the test process holds them when the
   case runs, so any edit to the text of those bodies or that set
-  fails; that the same holds in a new python3 -I process that reads
-  only the text of the file (PIN_PROGRAM, the fresh pin), since code
-  of the file can rebind those names at run time in ways that no check
-  in the test process sees, and that its scan of the file finds no
-  binding of a name that the path reads, or of the attribute
-  write_registry or fail, of the forms that the comment above
-  PIN_PROGRAM lists, but its definition; and that write_registry
+  fails; that the same holds in a new python3 -I process that parses
+  the text of the file and does not import it (PIN_PROGRAM, the fresh
+  pin), since code of the file can rebind those names at run time in
+  ways that no check in the test process sees, and that its scan of
+  the file finds no binding of a name that the path reads, or of the
+  attribute write_registry or fail, of the forms that the comment
+  above PIN_PROGRAM lists, but its definition; and that write_registry
   refuses every near miss that near_misses generates from each
-  element: each character dropped, changed, case-swapped, made
-  full-width or preceded by a space, the whole value case-changed or
-  wrapped in whitespace, and each other path to this interpreter's
-  file. That case requires that at least 2 other paths name this
-  interpreter and that it tries more than 1000 values, and is
-  expected to pass; it states no count, which depends on the path of
-  the interpreter. The named values and the near misses are finite
-  and catch only the values they hold; the 2 pins are what require
-  the exact checks. No check that runs from the file holds against
-  all code of the file: that code can defeat the scan of the fresh
-  pin by routes that it does not model, as the residuals state.
+  element: each character dropped, changed, case-swapped or preceded
+  by a space, each character from ! to ~ made full-width, the whole
+  value case-changed or wrapped in whitespace, and each of 5 other
+  paths to this interpreter's file where it differs from the
+  interpreter's path and names the same file. That case requires
+  that at least 2 other paths name this interpreter and that it tries
+  more than 1000 values, and is expected to pass; it states no count,
+  which depends on the path of the interpreter. The named values and
+  the near misses are finite and catch only the values they hold; the
+  2 pins are what require the exact checks. No check that runs from
+  the file holds against all code of the file: that code can defeat
+  the scan of the fresh pin by routes that it does not model, as the
+  residuals state.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
 - In the enumerator timeout case the bound on the hook run goes from
@@ -299,12 +306,12 @@ such as a store through sys.modules[__name__], setattr(json, "loads",
 for a module, a store into json.__dict__, or a __getattribute__ of a
 case class, each of which passes both pins while write_registry, as
 that case reaches it, accepts a program outside ENUM_PROGRAMS or
-another argv[0]. Nor does it see a binding that names its target
-only at run time (a built name, a variable passed to setattr, exec or
-eval of a built string, or a mapping built elsewhere), a store
-through another name bound to a check, native code, or a run-time
-edit of the fresh pin case itself, of what it starts or of how it
-reads the result. Neither pin sees an
+another argv[0]. Nor does it see a star import, a binding that names
+its target only at run time (a built name, a variable passed to
+setattr, exec or eval of a built string, or a mapping built
+elsewhere), a store through another name bound to a check, native
+code, or a run-time edit of the fresh pin case itself, of what it
+starts or of how it reads the result. Neither pin sees an
 edit made to the pin and to the code together, such as a
 write_registry that ignores a defect that names '-J' or a 4th program
 of ENUM_PROGRAMS with its sha256 added, or a change outside the file
