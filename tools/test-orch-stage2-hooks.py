@@ -186,10 +186,12 @@ NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator wa
 # begins, so that it records each of its starts in that file before anything else runs. The hook
 # starts the enumerator with the hook's own environment (`subprocess.run` at aiqt_hooks.py:22833 passes
 # no env), and the doctor runs the hook in its own process, so a launch of either passes the file on to
-# the enumerator. Of the enumerators that the hook would start, write_registry accepts only one that is
-# exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS (declared_enumerator_defect), each of which
-# begins with these statements, and it writes unchecked an enumerator that the hook refuses before it
-# starts anything. The residuals are stated above enumerator_bound_defect.
+# the enumerator. Of the enumerators that the hook would start, write_registry accepts only one whose
+# argv is exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS, each a separate element, followed by
+# any operands, and whose timeout, as the hook reads it, is at most ENUM_TIMEOUT
+# (declared_enumerator_defect). Each program of ENUM_PROGRAMS begins with these statements. It writes
+# unchecked an enumerator that the hook refuses before it starts anything. The residuals are stated
+# above enumerator_bound_defect.
 ENUM_RUNS_VAR = "ORCH_STAGE2_ENUMERATOR_RUNS"
 ENUM_RUN_MARK = """import os
 _runs = os.environ.get("ORCH_STAGE2_ENUMERATOR_RUNS")
@@ -1528,8 +1530,9 @@ class EnumeratorBounds(Stage2Harness):
         "for _found in glob.glob(tempfile.gettempdir() + \"/orch-stage2-starts-*/starts\"):\n"
         "    os.remove(_found)\nimport json\n", 1)
 
-    # The words of the refusal of a declared enumerator that is not this interpreter, -I, -c and 1 of
-    # ENUM_PROGRAMS (declared_enumerator_defect).
+    # The words of the refusal of a declared enumerator that the hook would start and whose argv is not
+    # this interpreter, -I, -c and 1 of ENUM_PROGRAMS, each a separate element, followed by any operands
+    # (declared_enumerator_defect).
     REFUSED = "is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS"
 
     def test_write_registry_refuses_an_enumerator_that_would_not_be_held(self):
@@ -3472,8 +3475,9 @@ def _env_naming_starts(env, folder):
 
 # The residuals of the bound check that run_doctor_recorded makes. It counts only the starts that an
 # enumerator records: of the declared enumerators that the hook would start, Stage2Harness.write_registry
-# accepts only one that is exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS
-# (declared_enumerator_defect), and refuses every program file. The record is a file that any process
+# accepts only one whose argv is exactly this interpreter, -I, -c and 1 of ENUM_PROGRAMS, each a separate
+# element, followed by any operands (declared_enumerator_defect), and refuses every program file. The
+# record is a file that any process
 # of this user can write, so its count holds only because each accepted program leaves the record
 # alone after the mark (program_leaves_record), and a program that the 1 launcher starts directly,
 # not through a registry, is trusted as the code of this file is. Code that the interpreter runs
