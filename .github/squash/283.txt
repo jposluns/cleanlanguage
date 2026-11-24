@@ -6,17 +6,18 @@ that opener and fails under Python 3.14.7 in a side-by-side test.
 
 Add SHORT_COMMENT, re.compile(r"<!---?>"), the same pattern as check 9
 of tools/check-inline-code.py, and the exception ShortCommentRefused.
-disclosure_d4_section() searches the whole text with SHORT_COMMENT
-before it parses and raises it on a match, so on a text with a match
-its result does not come from the interpreter's HTMLParser; it still
-reads every other text with that parser. The refusal names the text
-found, '<!-->' or '<!--->', without calling it a comment. In
-check_disclosure_states(), d4_failures() gets 1 except clause around
-the call of its reader, for ShortCommentRefused, which it reports as a
-failure line; check_disclosure_states() has no except clause around its
-calls of d4_failures() with disclosure_d4_section(). A new case checks
-that catch for 2 exception classes only: it passes d4_failures() a
-stand-in reader that raises, whose ShortCommentRefused must become the
+Before parsing, disclosure_d4_section() searches the whole text with
+SHORT_COMMENT and, on a match, raises ShortCommentRefused, so on a text
+with a match the result of disclosure_d4_section() does not come from
+the interpreter's HTMLParser; disclosure_d4_section() still parses every
+other text with that parser. The refusal names the text found, '<!-->'
+or '<!--->', without calling that text a comment. In
+check_disclosure_states(), d4_failures() gets 1 except clause around the
+call of its reader, for ShortCommentRefused, which d4_failures() reports
+as a failure line; check_disclosure_states() has no except clause around
+its calls of d4_failures() with disclosure_d4_section(). A new case
+checks that catch for 2 exception classes only: it passes d4_failures()
+a stand-in reader that raises, whose ShortCommentRefused must become the
 failure line and whose ValueError must pass out of d4_failures()
 unchanged. check_disclosure_states() catches that planted ValueError
 itself, so the case does not check that check_disclosure_states() lets
@@ -26,50 +27,55 @@ label after the empty comment and the note after the label, and expects
 no refusal and the lacks-note failure. The case does not show that the
 reader parses '<!---->' as a comment, as the reader records only where
 start tags stand. The '<!-->' case is a fixture brought up to date with
-a deliberate contract change: the test's reader now refuses that
-opener.
+a deliberate contract change: the test's reader now refuses that opener.
 
 The comment on SHORT_COMMENT and the docstring of
-disclosure_d4_section() say that the reading searches the whole text
-with SHORT_COMMENT before it parses and raises ShortCommentRefused on a
-match, and cite TODO 255's record of a case that pins Python 3.14.4's
-reading of '<!-->' and fails under Python 3.14.7; the comment adds that
-TODO 255 records nothing about '<!--->'. Check 9 of
-tools/check-inline-code.py, which searches with the same pattern, now
-names the text found in its message, as "the text '<!-->' in an HTML
-page", in place of "a comment that opens as '<!-->'". Its docstring
-entry says that it refuses that text wherever it stands, such as inside
-an attribute value. The docstring of markup_problems(), which runs
-check 7's refusal of elements by name and checks 8 and 9, now says what
-it refuses: each such element and each '<![CDATA[', both found ignoring
-case, and each text '<!-->' or '<!--->', found by text matches and not
-by the parser, wherever it stands, in place of calling them markup that
-the parser reads differently from a browser. It also says that check
-7's rule on the light and dark switch runs in switch_problems(). What
-checks 7 to 9 refuse is unchanged. A new case in
+disclosure_d4_section() say that, before parsing,
+disclosure_d4_section() searches the whole text with SHORT_COMMENT and
+raises ShortCommentRefused on a match, and cite TODO 255's record of a
+case that pins Python 3.14.4's reading of '<!-->' and fails under Python
+3.14.7; the comment adds that TODO 255 records nothing about '<!--->'.
+Check 9 of tools/check-inline-code.py searches with the same pattern;
+check 9's message now names the text found, as "the text '<!-->' in an
+HTML page", in place of "a comment that opens as '<!-->'". Check 9's
+docstring entry says that check 9 refuses that text wherever it stands,
+such as inside an attribute value. The docstring of markup_problems(),
+which runs check 7's refusal of elements by name and checks 8 and 9, now
+says what it refuses: each such element and each '<![CDATA[', both found
+ignoring case, and each text '<!-->' or '<!--->', found by text matches
+and not by the parser, wherever it stands, in place of calling them
+markup that the parser reads differently from a browser. It also says
+that check 7's rule on the light and dark switch runs in
+switch_problems(). What checks 7 to 9 refuse is unchanged. A new case in
 tools/test-inline-code.py puts '<!-->' in an attribute value and
 requires check 9's new message.
 
 Add .github/squash/283.txt, which holds this message byte for byte.
 .python-version is unchanged.
 
-Residual: this change adds a refusal of '<!-->' and '<!--->' to 1
-reader only, disclosure_d4_section(), which reads with the class Reader.
-It does not change the 11 other classes that the third check below
-lists with Reader. Neither collect_document_tags() of
-tools/web_metadata.py nor ld_json_blocks() of
-tools/check-page-metadata.py searches its input for these openers
-before it parses. The fourth check feeds collect_document_tags() the
-text '<!--><meta name=a><link rel=b>-->' and ld_json_blocks() the text
-'<!--><script type=application/ld+json>{}</script>-->', and each the
-same text with '<!--->' and with '<!---->' in place of '<!-->'. On
-Python 3.14.4, neither collects anything from its texts that start with
-'<!-->' or '<!--->'; from its text that starts with '<!---->',
-collect_document_tags() collects the meta and the link element, and
-ld_json_blocks() the ld+json block. This message says nothing about
-what these 2 readers collect from any other input, which callers of the
-other 9 classes refuse these openers before they parse, or how Python
-3.14.7 reads these openers in any of these readers.
+Residual: this change adds a refusal of '<!-->' and '<!--->' to 1 reader
+only, disclosure_d4_section(), which reads with the class Reader. This
+change leaves unchanged the 11 other classes that the third check below
+lists with Reader, each with HTMLParser as the only base in its class
+statement. collect_document_tags() of tools/web_metadata.py feeds its
+input straight to an instance of _DocumentTags, and ld_json_blocks() of
+tools/check-page-metadata.py feeds its input straight to an instance of
+_LDJSONScripts; neither function searches its input for these openers
+first. So what each of the 2 functions collects from a text that holds
+'<!-->' or '<!--->' depends on how the running interpreter's HTMLParser
+reads that text. The fourth check feeds collect_document_tags() the text
+'<!--><meta name=a><link rel=b>-->' and ld_json_blocks() the text
+'<!--><script type=application/ld+json>{}</script>-->', and each
+function the same text with '<!--->' and with '<!---->' in place of
+'<!-->'. On Python 3.14.4, collect_document_tags() collects nothing from
+its 2 texts that start with '<!-->' or '<!--->' and collects the meta
+and the link element from its text that starts with '<!---->';
+ld_json_blocks() collects nothing from its 2 texts that start with
+'<!-->' or '<!--->' and collects the ld+json block from its text that
+starts with '<!---->'. This message says nothing about what these 2
+functions collect from any other input, which callers of the other 9
+classes refuse these openers before those classes parse, or how Python
+3.14.7 reads these openers in any of the 11 other classes.
 
 Checks, from the repository root, with the outputs of Python 3.14.4:
 
@@ -77,8 +83,9 @@ Checks, from the repository root, with the outputs of Python 3.14.4:
   "test-build-site: all 1125 cases passed." and exits 0.
 - python3 -I tools/test-inline-code.py prints
   "test-inline-code: all 154 cases passed." and exits 0.
-- This command exits 0 and prints 1 line per class that subclasses
-  HTMLParser in tools/, its file and its name:
+- This command exits 0 and prints 1 line per class in tools/*.py whose
+  class statement has HTMLParser or html.parser.HTMLParser as the only
+  base, the file and the class name:
 
   ```
   python3 -I -c "import pathlib, re; [print(path, name) for path in sorted(pathlib.Path('tools').glob('*.py')) for name in re.findall(r'class (\w+)\((?:html\.parser\.)?HTMLParser\)', path.read_text(encoding='utf-8'))]"
