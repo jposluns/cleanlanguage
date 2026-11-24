@@ -396,10 +396,12 @@ TIME_LIMIT_SITES = {}
 TIME_LIMIT_SCOPE = set()
 # Each limit given to _time_limit_applied, as (sink, site, value, refusal or None), in the order given;
 # the refusals that no cleanup has read yet; and the ids of the tests that have run in this process.
+# Each change of the 3 is made with TIME_LIMIT_LOCK held. It is reentrant, so TimeLimitTeardownProbe
+# can hold it while it replaces the 3 for a call of tearDownModule, which takes it too.
 TIME_LIMIT_CHECKS = []
 TIME_LIMIT_REFUSALS = []
 TESTS_RUN = set()
-TIME_LIMIT_LOCK = threading.Lock()
+TIME_LIMIT_LOCK = threading.RLock()
 
 
 class TimeLimitViolation(AssertionError):
@@ -466,8 +468,8 @@ def _checked_run(run):
     """unittest.TestCase.run, wrapped to add the test's id to TESTS_RUN and to give the test, before it
     runs, the cleanup that fails it for each time limit refused while it ran."""
     def checked(case, result=None):
-        TESTS_RUN.add(case.id())
         with TIME_LIMIT_LOCK:
+            TESTS_RUN.add(case.id())
             start = len(TIME_LIMIT_REFUSALS)
         case.addCleanup(_fail_refused_time_limits, case, start)
         return run(case, result)
@@ -6433,8 +6435,10 @@ class TimeLimitTeardownProbe(unittest.TestCase):
 
     def test_teardown_holds_the_entries_to_their_sites_only_in_a_full_run(self):
         # tearDownModule, called with TESTS_RUN, TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for
-        # the call and restored after it, and TEST_TIME_LIMITS as it is: in a full run, with every
-        # test of the file in TESTS_RUN, it must fail with the mismatch of an entry whose site
+        # the call and restored after it, with TIME_LIMIT_LOCK held from before the replacement until
+        # after the restore, so a limit that a thread applies meanwhile waits for the lock and is
+        # recorded in the lists that are restored, and TEST_TIME_LIMITS as it is: in a full run, with
+        # every test of the file in TESTS_RUN, it must fail with the mismatch of an entry whose site
         # admitted a greater least limit and of an entry whose site admitted none; in a run that is
         # not full, with 1 test of the file missing from TESTS_RUN or with this test only, it must
         # fail for neither. Controls: limits that agree with the table must fail neither run. Then,
@@ -6464,14 +6468,15 @@ class TimeLimitTeardownProbe(unittest.TestCase):
 
         def teardown(run, checks):
             names = ("TESTS_RUN", "TIME_LIMIT_CHECKS", "TIME_LIMIT_REFUSALS")
-            saved = {name: globals()[name] for name in names}
-            globals().update(TESTS_RUN=set(run), TIME_LIMIT_CHECKS=list(checks), TIME_LIMIT_REFUSALS=[])
-            try:
-                tearDownModule()
-            except AssertionError as error:
-                return str(error)
-            finally:
-                globals().update(saved)
+            with TIME_LIMIT_LOCK:
+                saved = {name: globals()[name] for name in names}
+                globals().update(TESTS_RUN=set(run), TIME_LIMIT_CHECKS=list(checks), TIME_LIMIT_REFUSALS=[])
+                try:
+                    tearDownModule()
+                except AssertionError as error:
+                    return str(error)
+                finally:
+                    globals().update(saved)
             return None
 
         cases = {

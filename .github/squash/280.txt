@@ -265,15 +265,18 @@ at assertLess must be admitted at no site, and 4.4 s at Thread.join
 refused at the floor. TimeLimitTeardownProbe holds 1 test, which
 requires that it is the last test of the file that a
 unittest.TestLoader finds. It calls tearDownModule with TESTS_RUN,
-TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for the call: with
-every test of the file run, it must fail with the mismatch of an
-entry whose site admitted a greater least limit and of one whose site
-admitted none; with 1 test missing, or with that test alone, it must
-fail for neither; and limits that agree with the table must fail
-neither run. Once every test of the file has run, as in a full run,
-the test requires each entry to be the least limit admitted at its
-site, so a wrong entry fails the test itself, not only
-tearDownModule; a run that -k narrows does not reach that check. The
+TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for the call and
+TIME_LIMIT_LOCK, which is reentrant, held until it restores them, so
+a limit that a thread applies meanwhile waits for the lock and is
+recorded in the restored lists: with every test of the file run, it
+must fail with the mismatch of an entry whose site admitted a greater
+least limit and of one whose site admitted none; with 1 test missing,
+or with that test alone, it must fail for neither; and limits that
+agree with the table must fail neither run. Once every test of the
+file has run, as in a full run, the test requires each entry to be
+the least limit admitted at its site, so a wrong entry fails the test
+itself, not only tearDownModule; a run that -k narrows does not reach
+that check. The
 T15EnumeratorTimeout section header
 states that the hook exits within 120 s, not that it never hangs, so
 in tools/test-no-qa-labels.py only 2 allowlist entries, which hold the
@@ -349,25 +352,55 @@ does not check those messages against their diffs, and it does not list
 or correct their statements. Some of those statements are not borne out
 by their diffs, and later messages of the branch correct some of them,
 so a reader should take a statement of one of those messages as borne
-out only where this message makes it too. Below, the branch's 20
-commits are numbered from 1, its first, to 20, its last, with the merge
+out only where this message makes it too. Below, the branch's 22
+commits are numbered from 1, its first, to 22, its last, with the merge
 commit, which merges main as of #275 (Refresh the vendored AIQT hooks
-plugin), as 9.
+plugin), as 9; commit 21 changes no file.
 
-Runs, with python3 -I (3.14.4) on a copy of commit 19 with the change
-of commit 20 applied, on a Linux host that other work loaded, no added
+Runs, with python3 -I (3.14.4) on a copy of commit 20, whose tree
+commit 21 keeps, with the change of commit 22 applied, on a Linux host
+with 96 CPUs whose load was not read, the 3 whole-file runs below
+running at the same time:
+- tools/test-orch-stage2-hooks.py ran once, 158 tests: it passed, and
+  TimeLimitTeardownProbe passed alone, 1 test;
+- against copies of the changed file that each change 1 thing, with
+  the new test run alone: without the table check in tearDownModule,
+  it failed 2 of its 3 subtests of a full run, the 2 with a mismatch;
+  with tearDownModule taking every run as full, it failed 3 of its 4
+  subtests of a run that is not full, the 3 with a mismatch, and
+  tearDownModule failed on 19 entries; each of those 2 runs exited 1;
+  with the entry for Doctor._audit_bounded set to 30, it passed and
+  the run exited 0;
+- with a thread made to apply 0.1 s at Thread.join just after each of
+  the 7 calls of tearDownModule by the new test, while the 3 lists are
+  still replaced, the new test failed on the 7 refusals; with the file
+  of commit 20, none of them reached the restored lists and it passed;
+- against copies of the file of commit 19, each run as a whole file:
+  without the table check in tearDownModule, it passed, 157 tests;
+  with tearDownModule taking every run as full, it failed only
+  test_stage1_contrast_when_sigchld_is_ignored, of 157 tests, as the
+  nested run of that test failed in tearDownModule;
+- tools/test-orch-stage1-hooks.py passed, 32 tests;
+- tools/test-no-qa-labels.py passed, 63 tests, in a copy with the .git
+  folder, and its probe of the description, this message and the
+  messages of commits 21 and 22 found no hit.
+Reported for commit 20 and not repeated, apart from the runs above,
+with python3 -I (3.14.4) on a copy of commit 19 with the change of
+commit 20 applied, on a Linux host that other work loaded, no added
 load during the whole-file runs:
 - tools/test-orch-stage2-hooks.py ran once, 158 tests, with 1-minute
   load averages of 79.76 before the run and 82.29 after it: it passed,
   and TimeLimitTeardownProbe passed alone, 1 test;
 - against copies of the changed file that each change 1 thing: without
   the table check in tearDownModule, the new test, run alone, failed
-  its 2 subtests of a full run; with tearDownModule taking every run as
-  full, it failed its 3 subtests of a run that is not full, and
+  the 2 of its 3 subtests of a full run with a mismatch; with
+  tearDownModule taking every run as full, it failed the 3 of its 4
+  subtests of a run that is not full with a mismatch, and
   tearDownModule failed on 19 entries; with the entry for
   Doctor._audit_bounded set to 30, the new test passed alone and failed
   in a run of the whole file, 158 tests, as tearDownModule did; each
-  copy exited 1;
+  of those runs exited 1 but the run alone of the copy with the wrong
+  entry, which exited 0;
 - against copies of the file of commit 19 with the same first 2
   changes, the 2 probe classes passed their 9 tests, and the 2 tests
   named for the full-run check passed, with only tearDownModule failing
