@@ -1270,7 +1270,8 @@ class T14PosturePins(Stage2Harness):
         self.assertIn("not a list of non-empty strings", r.stderr)
 
     def test_enumerator_timeout_malformed_still_runs(self):
-        # The hook reads a timeout that is not a number, is not over 0 or is over 600 as 60
+        # The hook reads a timeout that is not an int or a float (a bool counts as an int, so a JSON true
+        # is kept, as a 1 second timeout), is not over 0 or is over 600 as 60
         # (`isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60` at aiqt_hooks.py:22831),
         # so the timeout "fast" silently becomes 60 and the enumerator still runs.
         self.write_registry(self.stage2(enumerator={
@@ -1641,12 +1642,12 @@ class EnumeratorBounds(Stage2Harness):
             with self.subTest(enumerator=name):
                 with self.assertRaisesRegex(self.failureException, wanted):
                     self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": timeout}))
-        # The hook reads an absent timeout, and one that is not a number, is not over 0 or is over 600,
-        # as 60 and still starts the enumerator (aiqt_hooks.py:22830-22831), so write_registry checks the
-        # argv whatever the timeout holds: it refuses a -c program without the record and accepts the
-        # fixture with each of those, an absent timeout included. It refuses each timeout that the hook
-        # reads as over ENUM_TIMEOUT, whole or not, up to 600, and accepts each that it reads as at most
-        # ENUM_TIMEOUT.
+        # The hook reads an absent timeout, and one that is not an int or a float (a bool counts as an
+        # int), is not over 0 or is over 600, as 60 and still starts the enumerator
+        # (aiqt_hooks.py:22830-22831), so write_registry checks the argv whatever the timeout holds: it
+        # refuses a -c program without the record and accepts the fixture with each of those, an absent
+        # timeout included. It refuses each timeout that the hook reads as over ENUM_TIMEOUT, whole or
+        # not, up to 600, and accepts each that it reads as at most ENUM_TIMEOUT.
         absent = object()
         for timeout in (absent, None, "fast", "120", 0, -1, 601):
             unmarked_enumerator = {"argv": [sys.executable, "-I", "-c", "pass"]}

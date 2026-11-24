@@ -105,8 +105,9 @@ tools/test-orch-stage2-hooks.py:
   begins with it but does not compile, one run without -I or by
   another interpreter, and a timeout over ENUM_TIMEOUT; that it checks
   the argv whatever the timeout holds, so it refuses a -c program
-  without the record when the timeout is absent, not a number, not
-  over 0 or over 600, all of which the hook reads as 60, and refuses
+  without the record when the timeout is absent, not an int or a float
+  (a bool counts as an int), not over 0 or over 600, all of which the
+  hook reads as 60, and refuses
   each timeout that the hook reads as over ENUM_TIMEOUT, whole or not,
   such as 62, 600 and 60.5; that for each of the interpreter, -I, -c
   and the program it refuses a value that begins with, ends with or
