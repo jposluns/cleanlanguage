@@ -16,16 +16,17 @@ check_disclosure_states(), d4_failures() gets 1 except clause around the
 call of its reader, for ShortCommentRefused, which d4_failures() reports
 as a failure line; check_disclosure_states() has no except clause around
 its calls of d4_failures() with disclosure_d4_section(). A new case
-checks that catch for 2 exception classes only: it passes d4_failures()
-a stand-in reader that raises, whose ShortCommentRefused must become the
-failure line and whose ValueError must pass out of d4_failures()
-unchanged. check_disclosure_states() catches that planted ValueError
-itself, so the case does not check that check_disclosure_states() lets
-such an exception pass. The '<!-->' case now expects the refusal, and a
-new '<!--->' case expects it too. A new '<!---->' case puts an Entry 5
-label after the empty comment and the note after the label, and expects
-no refusal and the lacks-note failure. The case does not show that the
-reader parses '<!---->' as a comment, as the reader records only where
+checks that catch for 2 exception classes only: the case passes
+d4_failures() a stand-in reader that raises, whose ShortCommentRefused
+must become the failure line and whose ValueError must pass out of
+d4_failures() unchanged. check_disclosure_states() catches that planted
+ValueError itself, so the case does not check that
+check_disclosure_states() lets such an exception pass. The '<!-->' case
+now expects the refusal, and a new '<!--->' case expects the refusal
+too. A new '<!---->' case puts an Entry 5 label after the empty comment
+and the note after the label, and expects no refusal and the lacks-note
+failure. The case does not show that disclosure_d4_section() parses
+'<!---->' as a comment, as disclosure_d4_section() records only where
 start tags stand. The '<!-->' case is a fixture brought up to date with
 a deliberate contract change: the test's reader now refuses that opener.
 
@@ -41,10 +42,11 @@ HTML page", in place of "a comment that opens as '<!-->'". Check 9's
 docstring entry says that check 9 refuses that text wherever it stands,
 such as inside an attribute value. The docstring of markup_problems(),
 which runs check 7's refusal of elements by name and checks 8 and 9, now
-says what it refuses: each such element and each '<![CDATA[', both found
-ignoring case, and each text '<!-->' or '<!--->', found by text matches
-and not by the parser, wherever it stands, in place of calling them
-markup that the parser reads differently from a browser. It also says
+says what markup_problems() refuses: each such element and each
+'<![CDATA[', both found ignoring case, and each text '<!-->' or
+'<!--->', found by text matches and not by the parser, wherever it
+stands, in place of calling the results of markup_problems() markup that
+the parser reads differently from a browser. That docstring also says
 that check 7's rule on the light and dark switch runs in
 switch_problems(). What checks 7 to 9 refuse is unchanged. A new case in
 tools/test-inline-code.py puts '<!-->' in an attribute value and
@@ -56,8 +58,8 @@ Add .github/squash/283.txt, which holds this message byte for byte.
 Residual: this change adds a refusal of '<!-->' and '<!--->' to 1 reader
 only, disclosure_d4_section(), which reads with the class Reader. This
 change leaves unchanged the 11 other classes that the third check below
-lists with Reader, each with HTMLParser as the only base in its class
-statement. collect_document_tags() of tools/web_metadata.py feeds its
+lists with Reader, each with a class statement whose only base is
+HTMLParser. collect_document_tags() of tools/web_metadata.py feeds its
 input straight to an instance of _DocumentTags, and ld_json_blocks() of
 tools/check-page-metadata.py feeds its input straight to an instance of
 _LDJSONScripts; neither function searches its input for these openers
