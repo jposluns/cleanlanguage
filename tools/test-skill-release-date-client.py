@@ -717,11 +717,14 @@ class BoundsTest(unittest.TestCase):
         # and the check fails; a leader that has not ended within the reap
         # grace, or one left when the test process ends without unwinding,
         # stays unreaped until Python's own collection of finished children
-        # or the process that adopts it reaps it; and the check needs FIFOs,
-        # select on them and the Linux behaviour that a FIFO reader opened
-        # while a writer exists sees end of file when the last writer closes,
-        # so its outcome on other platforms and on the Python 3.9 floor is
-        # not established.
+        # or the process that adopts it reaps it; a leader that has ended
+        # holds no descriptor while it waits to be reaped, and one still
+        # running, such as a stopped one, holds the descriptors it has open,
+        # the write end of alive among them once it has opened it; and the
+        # check needs FIFOs, select on them and the Linux behaviour that a
+        # FIFO reader opened while a writer exists sees end of file when the
+        # last writer closes, so its outcome on other platforms and on the
+        # Python 3.9 floor is not established.
         real_wait = client.wait_child
         real_popen = subprocess.Popen
         children = []
@@ -992,10 +995,11 @@ class BoundsTest(unittest.TestCase):
         # entry whose name is a str subclass; and an instance's __dict__
         # property. It does not hold against all code in this file, which
         # can hide an entry by routes that the walk does not model, such as
-        # a metaclass whose mro method puts BoundsTest in the order of a
-        # class that does not have it among its bases, a class that
-        # type.__subclasses__ does not list, or a dict subclass, set as this
-        # test's instance __dict__, whose items method leaves out an entry.
+        # these 2: a metaclass whose mro method puts BoundsTest in the order
+        # of a class that does not have it among its bases, so that
+        # type.__subclasses__ does not list that class; and a dict subclass,
+        # set as this test's instance __dict__, whose items method leaves
+        # out an entry.
         # So a stub bound in this file on BoundsTest or a class that has it
         # among its bases by a def or async def statement or by an
         # assignment, a lambda among them, fails the first, and one bound
@@ -1033,18 +1037,20 @@ class BoundsTest(unittest.TestCase):
         # it changes the stub's calls, which the STUB_CALLS pin rejects, as
         # it rejects os.__dict__["kill"](os.getppid(), 0) added to the stub,
         # or it binds check_group_kill, end_of_file or stub in a way the
-        # first 2 assertions reject. Passes of
-        # the name scan, examples, not a complete list: in the check,
-        # getattr(os, "kill") with a literal name, getattr with a computed
-        # name, such as getattr(os, "ki" + "ll"), os.__dict__["kill"],
-        # vars(os)["kill"] and a shell kill through os.system; a value a
-        # caller passes, such as the witness, which the check calls and which
-        # can run any code; a method of self that a subclass overrides, such
-        # as assertLess; a module global or builtin that a caller rebinds,
-        # such as GROUP_STUB, or a function of os or the client, as the tests
-        # here rebind os.killpg; the body of a decorator; and the code outside
-        # these functions, the client, whose group kill is the 1 signal a
-        # run sends and the behaviour under test, and the standard library.
+        # first 2 assertions reject, as they reject a subclass of BoundsTest
+        # whose stub, bound by a def statement, calls getattr(os, "kill").
+        # Passes of the name scan, examples, not a complete list: in the
+        # check, getattr(os, "kill") with a literal name, getattr with a
+        # computed name, such as getattr(os, "ki" + "ll"),
+        # os.__dict__["kill"], vars(os)["kill"] and a shell kill through
+        # os.system; a value a caller passes, such as the witness, which the
+        # check calls and which can run any code; a method of self that a
+        # subclass overrides, such as assertLess; a module global or builtin
+        # that a caller rebinds, such as GROUP_STUB, or a function of os or
+        # the client, as the tests here rebind os.killpg; the body of a
+        # decorator; and the code outside these functions, the client, whose
+        # group kill, the behaviour under test, is the 1 signal that a run
+        # of the group-kill test sends, and the standard library.
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
         roots = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in BOUND_NAMES]
         self.assertEqual(bindings(tree), [(name, "FunctionDef") for name in BOUND_NAMES])

@@ -28,7 +28,7 @@ the 15 second run and the 10 second check, plus the poll's last step,
 and end of file must come before 90 seconds, so the group's own end is
 never taken for the kill.
 
-The test sends no signal. Each stub process waits for end of file on
+The check sends no signal. Each stub process waits for end of file on
 a second FIFO, lifeline, whose only write end the test holds. The
 check's finally clause closes lifeline and reaps a child the client
 left unreaped if it ends within the 5 second reap grace, and the
@@ -101,11 +101,12 @@ __subclasses__; a metaclass's __subclasses__, __mro__, __dict__,
 __eq__ or __getattribute__, the last also giving a false __qualname__;
 an entry whose name is a str subclass; and an instance's __dict__
 property. It does not hold against all code in the test file, which
-can hide an entry by routes that the walk does not model, such as a
-metaclass whose mro method puts BoundsTest in the order of a class
-that does not have it among its bases, a class that
-type.__subclasses__ does not list, or a dict subclass, set as the
-test's instance __dict__, whose items method leaves out an entry.
+can hide an entry by routes that the walk does not model, such as
+these 2: a metaclass whose mro method puts BoundsTest in the order of
+a class that does not have it among its bases, so that
+type.__subclasses__ does not list that class; and a dict subclass, set
+as the test's instance __dict__, whose items method leaves out an
+entry.
 Another test has a case for each of those forms of binding stub, for
 each form of binding it by a name given as a string that the second
 assertion sees on a class or an instance, for each such override, and
@@ -127,18 +128,23 @@ code of its own.
 Residual: the tripwire's name scan misses every route to a signal
 other than a name in SIGNAL_NAMES in the functions it reads, and such
 an edit passes the tripwire unless it also changes the stub's calls,
-which the pin rejects, or binds check_group_kill, end_of_file or stub
-in a way its first 2 assertions reject. Those 2 assertions miss a
+which the pin rejects, as it rejects
+os.__dict__["kill"](os.getppid(), 0) added to the stub, or binds
+check_group_kill, end_of_file or stub in a way its first 2 assertions
+reject, as they reject a subclass of BoundsTest whose stub, bound by
+a def statement, calls getattr(os, "kill"). Those 2 assertions miss a
 change to what self.stub finds without such an entry or attribute,
 such as a __getattribute__ method or an assignment to self.__class__;
 a class derived from BoundsTest that does not exist when the test
-runs; an attribute on an instance other than the test's, such as one
-that a subclass's setUp sets where the tripwire runs as BoundsTest's,
-not on that subclass; a replacement whose qualified name and first
-line, which a value gives for itself, are those of the def statement;
-a binding by a name given as a string anywhere else; a change made
-after the test runs or undone before it; an edit that rebinds a name
-or function the tripwire calls, or that replaces the tripwire; an edit
+runs, such as one in another module; an attribute on an instance
+other than the test's, such as one that a subclass's setUp sets where
+the tripwire runs as BoundsTest's, not on that subclass; a
+replacement whose qualified name and first line, which a value gives
+for itself, are those of the def statement; a binding by a name given
+as a string anywhere else; a change made after the test runs or
+undone before it; an edit that rebinds a name or function the
+tripwire calls, such as class_bindings, SUBCLASSES, BoundsTest, a
+builtin or a function of ast, or that replaces the tripwire; an edit
 that changes the interpreter's own records, as through ctypes; and an
 entry hidden by a route that the walk does not model, such as the
 metaclass mro method or the dict subclass named above. Code in the
@@ -148,14 +154,16 @@ not a complete list: in the check, getattr(os, "kill") with a literal
 name, getattr with a computed name, such as getattr(os, "ki" + "ll"),
 os.__dict__["kill"], vars(os)["kill"] and a shell kill through
 os.system; a value a caller passes, such as the witness, which the
-check calls; a method of self that a subclass overrides, such as
-assertLess; a module global or builtin that a caller rebinds, such as
-GROUP_STUB, or a function of os or the client, as the tests rebind
-os.killpg; the body of a decorator; and the code outside those
-functions, the client and the standard library. A value of check or
-own_end with methods of its own runs them in the test, and str of
-own_end runs before the check reads GROUP_STUB, so a method of
-own_end can change the stub's source.
+check calls and which can run any code; a method of self that a
+subclass overrides, such as assertLess; a module global or builtin
+that a caller rebinds, such as GROUP_STUB, or a function of os or the
+client, as the tests here rebind os.killpg; the body of a decorator;
+and the code outside those functions, the client, whose group kill,
+the behaviour under test, is the 1 signal that a run of the group-kill
+test sends, and the standard library. A value of check or own_end
+with methods of its own runs them in the test, and str of own_end
+runs before the check reads GROUP_STUB, so a method of own_end can
+change the stub's source.
 
 A stub process that the release finds before its first read of
 lifeline outlives the release by the rest of its start-up. While the
@@ -175,8 +183,10 @@ alive open and fails the check. A leader that has not ended within
 the 5 second reap grace of the finally clause, or one left when the
 test process ends without unwinding, stays unreaped until Python's
 own collection of finished children or the process that adopts it
-reaps it; while it is still running, it holds its descriptors, the
-write end of alive among them. No signal ends the stub while it
+reaps it. A leader that has ended holds no descriptor while it waits
+to be reaped; one still running, such as a stopped one, holds the
+descriptors it has open, the write end of alive among them once it has
+opened it. No signal ends the stub while it
 ignores or blocks that signal; the signals that can end it before it
 ignores them are stated above. Examples of a signal that ends it
 early, not a complete list: SIGKILL, and SIGUSR1 when the test
