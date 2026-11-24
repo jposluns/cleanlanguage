@@ -40,15 +40,16 @@ at the end of its opening text, the first space inside its opening
 text doubled, and that space deleted. A full stop put at the end of a
 name edits none of its letters. The 7 rows that change the case of
 the first letter of a name each edit only that letter, so a
-code_form() that drops the letters of each name fails each of those 7
-rows. The name row edits letters after the first and is the row of
-main, byte for byte, so it keeps that catch of main: a code_form()
-that fails it on main fails it here too. Each of the 2 opening texts
-that end with a space gets 1 more row that deletes that space. For the
-opening text of the cycle steps that row makes the same replacement as
-the removed opening-text row, byte for byte, under a new label, so it
-keeps the coverage of main and adds no catch. Of those 2 rows, only
-the one for the opening text of the CODEX ROLE LIMIT is a new edit.
+code_form() that drops the letters of each name of NAMED fails each
+of those 7 rows. The name row edits letters after the first and is
+the row of main, byte for byte, so it keeps that catch of main: a
+code_form() that fails it on main fails it here too. Each of the 2
+opening texts that end with a space gets 1 more row that deletes that
+space. For the opening text of the cycle steps that row makes the
+same replacement as the removed opening-text row, byte for byte,
+under a new label, so it keeps the coverage of main and adds no
+catch. Of those 2 rows, only the one for the opening text of the
+CODEX ROLE LIMIT is a new edit.
 
 TODO 263: the squash message of pull request 276 says that every edit
 of the check's code fails the test until CODE_SHA256 is updated. Only
@@ -99,13 +100,13 @@ hexadecimal and parentheses that change no grouping added.
 Each row is evidence for its own edit only. A code_form() that hides
 or keeps only what no row edits still passes, such as one that also
 removes a string first in the body of an except clause or of an async
-for. Only the name of the header has a row that edits a letter of a
-name after the first, and that row also changes the number of letters
-in the name; as on main, no row edits a letter of a name after the
-first and keeps the number of letters, so a code_form() that replaces
-each letter after the first of each of the 7 names with x, that of
-the header included, passes.
+for. Of the 7 names of NAMED, only the name of the header has a row
+that edits a letter after the first, and that row also changes the
+number of letters in the name; as on main, no row edits a letter
+after the first of a name of NAMED and keeps the number of letters,
+so a code_form() that replaces each letter after the first of each of
+the 7 names with x, that of the header included, passes.
 An edit of the check that changes its bytes but not that unparsed
-tree keeps the digest, by design. The digest's value depends on how
-the Python that runs the test unparses a syntax tree; .python-version
-names 3.14.4.
+tree keeps the digest. The digest's value depends on how the Python
+that runs the test unparses a syntax tree; .python-version names
+3.14.4.
