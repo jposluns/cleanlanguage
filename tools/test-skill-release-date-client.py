@@ -694,37 +694,116 @@ class BoundsTest(unittest.TestCase):
         # written with str after witness is called, and the stub reads it
         # with float, so a plain int or float passed as own_end reaches the
         # stub only as a number. A text that float does not take raises in
-        # the stub before it opens either FIFO, so the check fails. Residual,
-        # not checked: a value with methods of its own runs them here, in
-        # str and when check and own_end are added to clock readings. str
-        # runs before the stub's source is read from GROUP_STUB, so such a
-        # method can change that source, for example by rebinding
-        # GROUP_STUB. The callers in this file pass numbers.
-        # Residual, not checked, besides that: a stub process not yet past
-        # its first read of lifeline at the release outlives it by the rest
-        # of its start-up, as derived above; the first-wait timing passes a
-        # client that gives up early by less than a margin that the host
-        # sets, as stated above; GROUP_STUB's comment states the signals that
-        # can end the stub early; a correct client fails if the child is not
-        # ready within POLL_SECONDS; while the test process is alive but
-        # neither closes lifeline nor ends, as when it is stopped, each stub
-        # process lives its start-up plus own_end seconds; a process that
-        # inherits the write end of lifeline and outlives the test keeps the
-        # stub alive up to its own end, which only a fork without exec in the
-        # test process could do; a stub process that closed its copy of alive
-        # before it ended would hide from the check, which only an altered
-        # stub could do; a process that SIGKILL cannot end keeps alive open,
-        # and the check fails; a leader that has not ended within the reap
-        # grace, or one left when the test process ends without unwinding,
-        # stays unreaped until Python's own collection of finished children
-        # or the process that adopts it reaps it; a leader that has ended
-        # holds no descriptor while it waits to be reaped, and one still
-        # running, such as a stopped one, holds the descriptors it has open,
-        # the write end of alive among them once it has opened it; and the
-        # check needs FIFOs, select on them and the Linux behaviour that a
-        # FIFO reader opened while a writer exists sees end of file when the
-        # last writer closes, so its outcome on other platforms and on the
-        # Python 3.9 floor is not established.
+        # the stub before it opens either FIFO, so the check fails.
+        #
+        # Residual, not checked, of this check and of its tripwire,
+        # test_the_check_names_no_signal_function:
+        # - What the tripwire's first 2 assertions miss: an edit that changes
+        #   what self.stub finds without an entry in the classes they read or
+        #   an attribute of the tripwire's own instance, such as a
+        #   __getattribute__ method or an assignment to self.__class__; a class
+        #   derived from BoundsTest that does not exist when the tripwire runs,
+        #   such as one in another module; an attribute set on an instance
+        #   other than the tripwire's own, such as one that a subclass's setUp
+        #   sets where the tripwire runs as BoundsTest.<test name>, not on that
+        #   subclass as the whole file runs it; a replacement whose qualified
+        #   name and first line, which a value gives for itself, are those of
+        #   the def statement; a binding of check_group_kill, end_of_file or
+        #   stub by a name given as a string anywhere other than those classes,
+        #   that instance and the module's end_of_file; a change made after the
+        #   tripwire runs or undone before it; an edit that rebinds a name or
+        #   function the tripwire calls, such as class_bindings, SUBCLASSES,
+        #   BoundsTest, a builtin or a function of ast, or that replaces the
+        #   tripwire; an edit that changes the interpreter's own records, as
+        #   through ctypes; and an entry hidden by a route that the walk does
+        #   not model, such as a metaclass whose mro method puts BoundsTest in
+        #   the order of a class that does not have it among its bases, or a
+        #   dict subclass, set as the tripwire's instance __dict__, whose items
+        #   method leaves out an entry. Code in the test file runs in the
+        #   process that the tripwire checks, so no check there holds against
+        #   all such code.
+        # - What the tripwire's name scan misses: every route to a signal other
+        #   than a name in SIGNAL_NAMES in the functions it reads. Such an edit
+        #   passes the tripwire unless it also fails 1 of its other 3
+        #   assertions: it changes the stub's calls, which the STUB_CALLS pin
+        #   rejects, as it rejects os.__dict__["kill"](os.getppid(), 0) added
+        #   to the stub, or it binds check_group_kill, end_of_file or stub in a
+        #   way the first 2 assertions reject, as they reject a subclass of
+        #   BoundsTest whose stub, bound by a def statement, calls
+        #   getattr(os, "kill"). Passes of the name scan, examples, not a
+        #   complete list: in check_group_kill, getattr(os, "kill") with a
+        #   literal name, getattr with a computed name, such as
+        #   getattr(os, "ki" + "ll"), os.__dict__["kill"], vars(os)["kill"] and
+        #   a shell kill through os.system; a value a caller passes, such as
+        #   the witness, which the check calls and which can run any code; a
+        #   method of self that a subclass overrides, such as assertLess; a
+        #   module global or builtin that a caller rebinds, such as GROUP_STUB,
+        #   or a function of os or the client, as the tests here rebind
+        #   os.killpg; the body of a decorator; and the code outside those
+        #   functions, the client, whose group kill, the behaviour under test,
+        #   is the 1 signal that a run of the group-kill test sends, and the
+        #   standard library.
+        # - The check takes the text of own_end with str and adds check and
+        #   own_end to clock readings, so a value with methods of its own runs
+        #   them in the test. str runs before the check reads GROUP_STUB, so a
+        #   method of own_end can change the stub's source, for example by
+        #   rebinding GROUP_STUB, and so add code to the stub. The callers in
+        #   the test file pass numbers.
+        # - After the release, by the finally clause or by the kernel when the
+        #   test process ends, a stub process that has not yet reached its
+        #   first read of lifeline ends only when it reaches that read, so it
+        #   outlives the release, and a killed test process, by the rest of its
+        #   start-up, which nothing in the test bounds. This is derived from
+        #   the stub's order. The leader and the member are past that read once
+        #   the ready byte has been read, so this arises only for a release
+        #   that comes before the test has read that byte: during the poll, or
+        #   after a poll that ran out without it.
+        # - While the test process is alive but neither closes lifeline nor
+        #   ends, as when it is stopped, each stub process lives until its own
+        #   end, own_end seconds after it enters its wait, 90 in the group-kill
+        #   test. It enters that wait only after start-up, its first read of
+        #   lifeline and, for the member, the fork, so its life from its start
+        #   is that start-up plus own_end seconds, and nothing in the test
+        #   bounds the start-up.
+        # - The first-wait timing passes a client whose real wait gives up
+        #   early by less than the time the gate's 2 clock reads and the call
+        #   add. The call's share includes the wait's overrun past its own
+        #   deadline, which the code does not bound, so the margin is set by
+        #   the host and is more than the 2 clock reads take.
+        # - A process that inherits the write end of lifeline and outlives the
+        #   test would keep the stub alive up to its own end. Only a fork
+        #   without exec in the test process could do that: the descriptor is
+        #   not inheritable across exec, and the test file forks only inside
+        #   the stub's source.
+        # - A stub process that closed its copy of alive before it ended would
+        #   hide from the check. The stub is the test's own code, and its calls
+        #   are pinned, so this arises only from an altered stub.
+        # - A process that SIGKILL cannot end keeps alive open, and the check
+        #   then fails.
+        # - When the client gives up without reaping, the finally clause reaps
+        #   the leader after the release if it ends within the 5 second reap
+        #   grace. A leader that has not ended by then, or one left when the
+        #   test process ends without unwinding, stays unreaped until Python's
+        #   own collection of finished children or the process that adopts it
+        #   reaps it. A leader that has ended holds no descriptor while it
+        #   waits to be reaped; one still running, such as a stopped one, holds
+        #   the descriptors it has open, the write end of alive among them once
+        #   it has opened it.
+        # - No signal ends the stub while it ignores or blocks that signal.
+        #   Unless the test thread blocks it, SIGPIPE or SIGXFSZ can end the
+        #   stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can
+        #   end it before its source ignores it if the test process does not
+        #   ignore it. Examples of a signal that ends it early, not a complete
+        #   list: SIGKILL, and SIGUSR1 when the test neither ignores nor blocks
+        #   SIGUSR1. Without such a signal, it ends on the release or at its
+        #   own end, unless it is stopped, as by SIGSTOP.
+        # - A correct client still fails the test if the child is not ready
+        #   within 60 seconds.
+        # - The design needs FIFOs in the temporary folder, select on them, and
+        #   the Linux behaviour that a FIFO reader opened while a writer exists
+        #   sees end of file when the last writer closes. The behaviour stated
+        #   here is that on Linux; for other platforms and for the Python 3.9
+        #   floor it is not established.
         real_wait = client.wait_child
         real_popen = subprocess.Popen
         children = []
@@ -1011,46 +1090,9 @@ class BoundsTest(unittest.TestCase):
         # each such override. The name scan fails an edit that uses a signal
         # function by 1 of the names in SIGNAL_NAMES there, such as
         # os.kill(os.getpid(), 0) added to the check.
-        # Residual: the first 2 assertions miss an edit that changes what
-        # self.stub finds without such an entry or attribute, such as a
-        # __getattribute__ method or an assignment to self.__class__; a
-        # class derived from BoundsTest that does not exist when this test
-        # runs, such as one in another module; an attribute set on an
-        # instance other than this test's, such as one that a subclass's
-        # setUp sets where this test runs as BoundsTest's, not on that
-        # subclass; a replacement whose qualified name and first line,
-        # which a value gives for itself, are those of the def statement; a
-        # binding of 1 of BOUND_NAMES by a name given as a string anywhere
-        # other than those classes, this instance and the module's
-        # end_of_file; a change made after this test runs or undone before
-        # it; an edit that rebinds a name or function this test calls, such
-        # as class_bindings, SUBCLASSES, BoundsTest, a builtin or a function
-        # of ast, or that replaces this test; an edit that changes the
-        # interpreter's own records, as through ctypes; and an entry hidden
-        # by a route that the walk does not model, such as the metaclass mro
-        # method or the dict subclass named above. Code in this file runs in
-        # the process that this test checks, so no check in it holds
-        # against all such code.
-        # Residual: the name scan misses every route to a signal other than
-        # a name in SIGNAL_NAMES in the functions it reads. Such an edit
-        # passes this test unless it also fails 1 of its other 3 assertions:
-        # it changes the stub's calls, which the STUB_CALLS pin rejects, as
-        # it rejects os.__dict__["kill"](os.getppid(), 0) added to the stub,
-        # or it binds check_group_kill, end_of_file or stub in a way the
-        # first 2 assertions reject, as they reject a subclass of BoundsTest
-        # whose stub, bound by a def statement, calls getattr(os, "kill").
-        # Passes of the name scan, examples, not a complete list: in the
-        # check, getattr(os, "kill") with a literal name, getattr with a
-        # computed name, such as getattr(os, "ki" + "ll"),
-        # os.__dict__["kill"], vars(os)["kill"] and a shell kill through
-        # os.system; a value a caller passes, such as the witness, which the
-        # check calls and which can run any code; a method of self that a
-        # subclass overrides, such as assertLess; a module global or builtin
-        # that a caller rebinds, such as GROUP_STUB, or a function of os or
-        # the client, as the tests here rebind os.killpg; the body of a
-        # decorator; and the code outside these functions, the client, whose
-        # group kill, the behaviour under test, is the 1 signal that a run
-        # of the group-kill test sends, and the standard library.
+        # What the first 2 assertions miss and what the name scan misses are
+        # the first 2 items of the residual list in check_group_kill's
+        # comment.
         tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
         roots = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in BOUND_NAMES]
         self.assertEqual(bindings(tree), [(name, "FunctionDef") for name in BOUND_NAMES])
