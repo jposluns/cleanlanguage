@@ -700,6 +700,28 @@ class BoundsTest(unittest.TestCase):
         # runs before the stub's source is read from GROUP_STUB, so such a
         # method can change that source, for example by rebinding
         # GROUP_STUB. The callers in this file pass numbers.
+        # Residual, not checked, besides that: a stub process not yet past
+        # its first read of lifeline at the release outlives it by the rest
+        # of its start-up, as derived above; the first-wait timing passes a
+        # client that gives up early by less than a margin that the host
+        # sets, as stated above; GROUP_STUB's comment states the signals that
+        # can end the stub early; a correct client fails if the child is not
+        # ready within POLL_SECONDS; while the test process is alive but
+        # neither closes lifeline nor ends, as when it is stopped, each stub
+        # process lives its start-up plus own_end seconds; a process that
+        # inherits the write end of lifeline and outlives the test keeps the
+        # stub alive up to its own end, which only a fork without exec in the
+        # test process could do; a stub process that closed its copy of alive
+        # before it ended would hide from the check, which only an altered
+        # stub could do; a process that SIGKILL cannot end keeps alive open,
+        # and the check fails; a leader that has not ended within the reap
+        # grace, or one left when the test process ends without unwinding,
+        # stays unreaped until Python's own collection of finished children
+        # or the process that adopts it reaps it; and the check needs FIFOs,
+        # select on them and the Linux behaviour that a FIFO reader opened
+        # while a writer exists sees end of file when the last writer closes,
+        # so its outcome on other platforms and on the Python 3.9 floor is
+        # not established.
         real_wait = client.wait_child
         real_popen = subprocess.Popen
         children = []
@@ -953,43 +975,58 @@ class BoundsTest(unittest.TestCase):
         # them is in SIGNAL_NAMES.
         # The first assertion fails an edit that adds a binding that
         # bindings counts or removes 1 of the 3 def statements. The second
-        # fails an edit that, however it is written, gives BoundsTest, a
-        # class derived from it or a class in their method resolution
+        # fails an edit that, in a form that
+        # test_the_tripwire_sees_each_binding_of_its_names has a case for,
+        # gives BoundsTest, a class that has it among its bases, directly or
+        # through other such classes, or a class in their method resolution
         # orders another entry named 1 of BOUND_NAMES, replaces 1 of
         # BoundsTest's 2 entries or the module's end_of_file with a value
         # whose qualified name or first line differs, or gives this test's
         # instance such an attribute. It reads those classes and that
-        # instance through the descriptors of type and TestCase, compares
-        # classes by identity and names as plain str, so a class or
-        # metaclass that overrides __subclasses__, __mro__, __dict__,
-        # __qualname__, __getattribute__ or __eq__, or an entry whose name
-        # is a str subclass, hides no entry from it. So a stub bound in this
-        # file on BoundsTest or a subclass by a def or async def statement or
-        # by an assignment, a lambda among them, fails the first, and one
-        # bound there by a name given as a string, as setattr, type and a
-        # mixin's namespace take it, fails the second if it is in place when
-        # this test runs; test_the_tripwire_sees_each_binding_of_its_names
-        # has a case for each of these forms, for each form that bindings
-        # names, and for each such override. The name scan fails an edit
-        # that uses a signal function by 1 of the names in SIGNAL_NAMES
-        # there, such as os.kill(os.getpid(), 0) added to the check.
+        # instance through the descriptors of type and TestCase, lists each
+        # namespace with its items method, compares classes by identity and
+        # names as plain str, so these overrides, each of which those cases
+        # make, hide no entry from it: a class's __subclasses__; a
+        # metaclass's __subclasses__, __mro__, __dict__, __eq__ or
+        # __getattribute__, the last also giving a false __qualname__; an
+        # entry whose name is a str subclass; and an instance's __dict__
+        # property. It does not hold against all code in this file, which
+        # can hide an entry by routes that the walk does not model, such as
+        # a metaclass whose mro method puts BoundsTest in the order of a
+        # class that does not have it among its bases, a class that
+        # type.__subclasses__ does not list, or a dict subclass, set as this
+        # test's instance __dict__, whose items method leaves out an entry.
+        # So a stub bound in this file on BoundsTest or a class that has it
+        # among its bases by a def or async def statement or by an
+        # assignment, a lambda among them, fails the first, and one bound
+        # there by a name given as a string, as setattr, type and a mixin's
+        # namespace take it, fails the second if it is in place when this
+        # test runs. The case test,
+        # test_the_tripwire_sees_each_binding_of_its_names, has a case for
+        # each of these forms, for each form that bindings names, and for
+        # each such override. The name scan fails an edit that uses a signal
+        # function by 1 of the names in SIGNAL_NAMES there, such as
+        # os.kill(os.getpid(), 0) added to the check.
         # Residual: the first 2 assertions miss an edit that changes what
         # self.stub finds without such an entry or attribute, such as a
         # __getattribute__ method or an assignment to self.__class__; a
         # class derived from BoundsTest that does not exist when this test
         # runs, such as one in another module; an attribute set on an
-        # instance other than this test's; a replacement whose qualified
-        # name and first line, which a value gives for itself, are those
-        # of the def statement; a binding of 1 of BOUND_NAMES by a name
-        # given as a string anywhere other than those classes, this
-        # instance and the module's end_of_file; a change made after this
-        # test runs or undone before it; an edit that rebinds a name or
-        # function this test calls, such as class_bindings, SUBCLASSES,
-        # BoundsTest, a builtin or a function of ast, or that replaces
-        # this test; and an edit that changes the interpreter's own
-        # records, as through ctypes. Code in this file runs in the
-        # process that this test checks, so no check in it holds against
-        # all such code.
+        # instance other than this test's, such as one that a subclass's
+        # setUp sets where this test runs as BoundsTest's, not on that
+        # subclass; a replacement whose qualified name and first line,
+        # which a value gives for itself, are those of the def statement; a
+        # binding of 1 of BOUND_NAMES by a name given as a string anywhere
+        # other than those classes, this instance and the module's
+        # end_of_file; a change made after this test runs or undone before
+        # it; an edit that rebinds a name or function this test calls, such
+        # as class_bindings, SUBCLASSES, BoundsTest, a builtin or a function
+        # of ast, or that replaces this test; an edit that changes the
+        # interpreter's own records, as through ctypes; and an entry hidden
+        # by a route that the walk does not model, such as the metaclass mro
+        # method or the dict subclass named above. Code in this file runs in
+        # the process that this test checks, so no check in it holds
+        # against all such code.
         # Residual: the name scan misses every route to a signal other than
         # a name in SIGNAL_NAMES in the functions it reads. Such an edit
         # passes this test unless it also fails 1 of its other 3 assertions:
@@ -1030,9 +1067,9 @@ class BoundsTest(unittest.TestCase):
     def test_the_tripwire_sees_each_binding_of_its_names(self):
         # A case for each form of binding stub that the tripwire's first 2
         # assertions are meant to see, each form that bindings names among
-        # them, for each override of a class's introspection that they read
-        # past, and for 1 form that they miss. Each form is source text, run
-        # with exec on a stand-in, Base, a TestCase whose stub is a lambda,
+        # them, for each override that the tripwire's comment says they
+        # read past, and for 1 form that they miss. Each form is source text,
+        # run with exec on a stand-in, Base, a TestCase whose stub is a lambda,
         # so that it adds no binding to this file's syntax and no class
         # derived from BoundsTest. Each case gives what bindings counts in
         # the form, each (class, qualified name) that class_bindings finds
@@ -1389,8 +1426,9 @@ BOUND_NAMES = ("check_group_kill", "end_of_file", "stub")
 # The interpreter's own records of a class and of a test's instance, read
 # through the descriptors that type and unittest.TestCase define rather than
 # by attribute lookup, which a class or its metaclass can override: the
-# classes derived from a class, its method resolution order, its namespace,
-# its qualified name, and the attributes an instance holds of its own.
+# classes that list a class among their bases, its method resolution order,
+# its namespace, its qualified name, and the attributes an instance holds of
+# its own.
 SUBCLASSES = type.__subclasses__
 MRO = type.__dict__["__mro__"].__get__
 NAMESPACE = type.__dict__["__dict__"].__get__
@@ -1424,22 +1462,27 @@ def described(value) -> tuple:
 
 
 def entries(namespace) -> list:
-    """Each (name, qualified name, first line) for an entry of ``namespace``
-    whose name is a plain str equal to 1 of BOUND_NAMES, or is not a plain
-    str, whatever it compares equal to."""
+    """Each (name, qualified name, first line) for an entry of ``namespace``,
+    as its items method lists them, whose name is a plain str equal to 1 of
+    BOUND_NAMES, or is not a plain str, whatever it compares equal to."""
     return [(name if type(name) is str else object.__repr__(name),) + described(value)
             for name, value in namespace.items() if type(name) is not str or name in BOUND_NAMES]
 
 
 def class_bindings(root: type) -> list:
     """Each (class, name, qualified name, first line) for an entry that
-    entries finds in the namespace of ``root``, of each class derived from
-    it that exists when this runs, or of each class in the method
-    resolution order of any of them, however the entry was bound. It reads
-    each class through SUBCLASSES, MRO, NAMESPACE and QUALNAME and tells
-    classes apart by identity, so no method of a class or of its metaclass
-    changes which classes and entries it finds; the qualified name and
-    first line of an entry come from the entry's value."""
+    entries finds in the namespace of ``root``, of each class that exists
+    when this runs and has it among its bases, directly or through other
+    such classes, or of each class in the method resolution order of any of
+    them, however the entry was bound. It reads each class through
+    SUBCLASSES, MRO, NAMESPACE and QUALNAME and tells classes apart by
+    identity, so the overrides of a class or of its metaclass that
+    test_the_tripwire_sees_each_binding_of_its_names has a case for change
+    neither which classes nor which entries it finds. Other routes can: a
+    metaclass whose mro method puts ``root`` in the order of a class that
+    does not have it among its bases hides that class and its entries,
+    since SUBCLASSES does not list it. The qualified name and first line of
+    an entry come from the entry's value."""
     classes = [root]
     for cls in classes:
         classes.extend(sub for sub in SUBCLASSES(cls) if not any(sub is known for known in classes))
@@ -1451,7 +1494,9 @@ def class_bindings(root: type) -> list:
 
 def own_bindings(instance: unittest.TestCase) -> list:
     """The name of each entry that entries finds among the attributes that
-    ``instance`` holds of its own, read through INSTANCE_DICT."""
+    ``instance`` holds of its own, read through INSTANCE_DICT and listed by
+    the items method of the object found there. A dict subclass set as the
+    instance's __dict__ can override that method and so hide an entry."""
     return sorted(entry[0] for entry in entries(INSTANCE_DICT(instance)))
 
 

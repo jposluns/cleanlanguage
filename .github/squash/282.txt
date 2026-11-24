@@ -81,21 +81,31 @@ for each, counting async def, class and import statements, plain,
 annotated, augmented, := and tuple or starred assignments to a name,
 assignments to an attribute, a lambda so assigned, deletions, for,
 with, comprehension, except and match targets, parameters and keyword
-arguments, but not a name given as a string; that, however it was
-bound, BoundsTest, each class derived from it when the test runs and
-each class in their method resolution orders hold no other entry with
-those names, that BoundsTest's 2 entries and the module's end_of_file
-are the functions their def statements made, judged by qualified name
-and first line, and that the test's instance has no such attribute of
-its own; that the stub makes its pinned calls in order; and that no
+arguments, but not a name given as a string; that BoundsTest, each
+class that exists when the test runs and has it among its bases,
+directly or through other such classes, and each class in their method
+resolution orders hold no other entry with those names, that
+BoundsTest's 2 entries and the module's end_of_file are the functions
+their def statements made, judged by qualified name and first line,
+and that the test's instance has no such attribute of its own; that
+the stub makes its pinned calls in order; and that no
 name in SIGNAL_NAMES, a list of example names through which Python
 code sends a signal, appears in the check, its helpers or the stub, so
 a direct os.kill there fails it. The second of those assertions reads
 each class and the instance through the descriptors that type and
-TestCase define, not by attribute lookup, tells classes apart by
-identity and takes only a plain str as 1 of those names, so a class or
-metaclass that overrides __subclasses__, __mro__, __dict__,
-__qualname__, __getattribute__ or __eq__ hides no entry from it.
+TestCase define, not by attribute lookup, lists each namespace with
+its items method, tells classes apart by identity and takes only a
+plain str as 1 of those names, so these overrides, each of which
+another test has a case for, hide no entry from it: a class's
+__subclasses__; a metaclass's __subclasses__, __mro__, __dict__,
+__eq__ or __getattribute__, the last also giving a false __qualname__;
+an entry whose name is a str subclass; and an instance's __dict__
+property. It does not hold against all code in the test file, which
+can hide an entry by routes that the walk does not model, such as a
+metaclass whose mro method puts BoundsTest in the order of a class
+that does not have it among its bases, a class that
+type.__subclasses__ does not list, or a dict subclass, set as the
+test's instance __dict__, whose items method leaves out an entry.
 Another test has a case for each of those forms of binding stub, for
 each form of binding it by a name given as a string that the second
 assertion sees on a class or an instance, for each such override, and
@@ -122,17 +132,20 @@ in a way its first 2 assertions reject. Those 2 assertions miss a
 change to what self.stub finds without such an entry or attribute,
 such as a __getattribute__ method or an assignment to self.__class__;
 a class derived from BoundsTest that does not exist when the test
-runs; an attribute on an instance other than the test's; a
-replacement whose qualified name and first line, which a value gives
-for itself, are those of the def statement; a binding by a name given
-as a string anywhere else; a change made after the test runs or undone
-before it; an edit that rebinds a name or function the tripwire calls,
-or that replaces the tripwire; and an edit that changes the
-interpreter's own records, as through ctypes. Code in the test file
-runs in the process that the tripwire checks, so no check there holds
-against all such code. Passes of the name scan, examples, not a
-complete list: in the check, getattr(os, "kill") with a literal name,
-getattr with a computed name, such as getattr(os, "ki" + "ll"),
+runs; an attribute on an instance other than the test's, such as one
+that a subclass's setUp sets where the tripwire runs as BoundsTest's,
+not on that subclass; a replacement whose qualified name and first
+line, which a value gives for itself, are those of the def statement;
+a binding by a name given as a string anywhere else; a change made
+after the test runs or undone before it; an edit that rebinds a name
+or function the tripwire calls, or that replaces the tripwire; an edit
+that changes the interpreter's own records, as through ctypes; and an
+entry hidden by a route that the walk does not model, such as the
+metaclass mro method or the dict subclass named above. Code in the
+test file runs in the process that the tripwire checks, so no check
+there holds against all such code. Passes of the name scan, examples,
+not a complete list: in the check, getattr(os, "kill") with a literal
+name, getattr with a computed name, such as getattr(os, "ki" + "ll"),
 os.__dict__["kill"], vars(os)["kill"] and a shell kill through
 os.system; a value a caller passes, such as the witness, which the
 check calls; a method of self that a subclass overrides, such as
