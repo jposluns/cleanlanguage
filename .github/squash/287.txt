@@ -6,35 +6,48 @@ tools/test-check-licence-names.py. The gate lists the tracked files
 with git ls-files, reads each from the work tree, splits it at line
 feeds only and finds every line that holds 1 of its 3 search terms in
 any ASCII letter case; its docstring names the terms. It fails on such
-a line that no allowlist row claims, on a line that the markers of 2
-rows claim, on a row whose count is lower or higher than the number of
-lines it claims, and on a malformed row, which includes a count that
-is not canonical ASCII decimal and a row that repeats the path and
-marker of an earlier row, malformed or not. It compares a count as
-text, so a count of any length gives a named problem. It also fails,
-naming the cause, when git ls-files fails or lists nothing, on an
-unmerged index entry, on a tracked symbolic link or submodule, and on
-a tracked file or allowlist that it cannot read. It runs git with a
-fixed argument list and no shell and treats file content as data. In
-each path, count, owner, marker and message that it shows, it writes a
-character outside printable ASCII once as a backslash escape. Its own
-3 files are its named exceptions; each must be tracked and must hold a
-matching line. The allowlist has 1 row per kind of line in a file:
-path, count, owner and marker. The gate refuses an owner other than
-unit-2, unit-3 or keep; whether a row's owner is the right one is
-reviewed prose that the gate does not check.
+a line that no allowlist row claims, on a line that holds the markers
+of 2 or more rows of its file, on a row whose count is lower or higher
+than the number of lines it claims, and on a malformed row, which
+includes a count that is not canonical ASCII decimal and a row that
+repeats the path and marker of an earlier row that has 4 fields and no
+carriage return, whether or not that earlier row is well formed. It
+compares a count as text, so a wrong count of any length gives a
+named problem. It also fails, naming the cause, when git ls-files
+cannot run, fails or lists nothing, on an entry of git ls-files that
+it cannot read, on an unmerged index entry, on a tracked path with a
+mode other than 100644 or 100755, such as a symbolic link or a
+submodule, on a tracked path that is not a regular file in the work
+tree or that it cannot read, and on an allowlist that it cannot read
+or that is not UTF-8. It runs git with a fixed argument list and no
+shell and treats file content as data. It makes git's message and an
+error's text 1 line and cuts them to 300 characters; then, in each
+field that it shows, it writes a backslash and each character outside
+printable ASCII once as a backslash escape. Its own 3 files are its
+named exceptions; each must be tracked and must hold a matching line.
+The allowlist has 1 row per kind of line in a file: path, count, owner
+and marker. The gate refuses an owner other than unit-2, unit-3 or
+keep; whether a row's owner is the right one is reviewed, and the
+gate does not check it.
 
-The tests build throwaway git repositories. Each refusal case first
-runs the gate on the unchanged repository, which must pass, then makes
-1 change, or 2 in the case that tracks a file of control bytes and a
-binary file, and requires exit 1, exactly 1 summary line on standard
-output, and problem lines that are exactly the cause and any
-consequence that the case names with its reason. Each subtest makes
-its 1 change to the unchanged repository. No run may write a
-character outside printable ASCII. 3 cases load the gate in a separate
-process and call its file reader with os.lstat or os.fdopen replaced,
+The tests build throwaway git repositories. Each refusal case that
+runs the gate first runs it on the unchanged repository, which must
+pass, then makes the change that it tests, to the repository or to the
+gate's PATH, in 1 or more steps, such as tracking a file and then
+deleting it from the work tree. It then requires exit 1, exactly 1
+summary line on standard output (for --list, only path:count lines and
+then a total line), and problem lines that match, 1 for 1, the cause
+and any consequence that the case names with its reason, with none
+left over. Each subtest makes its change to the unchanged repository.
+No run of the gate may write a character outside printable ASCII. 5
+cases load the gate in a separate process and call its file reader: 1
+reads a regular file as a control, and 4 replace os.lstat or os.fdopen
 to reach a descriptor that is not a regular file, a symbolic link that
-appears after the lstat check, and a read error.
+appears after the lstat check, and a read error, once with the
+system's text and once with a text of whitespace, characters outside
+printable ASCII and more than 300 characters. 3 cases put a stand-in
+git alone on the gate's PATH: 1 exits 3 with a message like that text,
+and 2 list entries that cannot be read, to the gate and to --list.
 
 The Agent Plugins manifest workflow runs the tests and the gate as 2
 new steps, and tools/run_all_checks.sh runs them as 2 new run lines.
@@ -58,9 +71,3 @@ exits 0 and prints 1 line of path and count per file, then the line
     python3 -I tools/test-run-all-checks.py
 
 each exit 0.
-
-TODO 274 records a gate, tools/check-licence-names.py, with an
-allowlist that holds every tracked line matching its 3 terms in any
-letter case outside named exceptions, failing on an unclaimed line or
-a stale row, wired into CI and tools/run_all_checks.sh, in a pull
-request of its own after pull request 279, at the substantive tier.

@@ -12,7 +12,8 @@ that holds a NUL byte, with no line number.
 
 The tracked files are the entries that git ls-files --stage -z lists for the repository at the
 root, run with a fixed argument list and no shell. File content is data: no line of a file is
-run, parsed as code or printed.
+run, parsed as code or printed whole; a problem line shows only fields of an allowlist row,
+written as the output paragraph below states.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
@@ -20,12 +21,12 @@ tab: a repository-relative path, a count, an owner (unit-2, unit-3 or keep) and 
 literal text matched with its letter case. The count is canonical ASCII decimal: it matches
 [1-9][0-9]* in full, so a sign, a space, a leading zero, a digit outside ASCII or any other
 spelling is a bad count. It is compared as text with the decimal number of claimed lines, so a
-count of any length is read. A row claims each matching line of its path that holds its marker.
-The gate fails on:
+count of any length is read. A row claims each matching line of its path that holds its marker
+and the marker of no other row of that path. The gate fails on:
 
 - a matching line that no row of its path claims (unclaimed);
-- a matching line that the markers of 2 or more rows of its path claim (ambiguous), so a broad
-  marker cannot quietly take lines of another kind;
+- a matching line that holds the markers of 2 or more rows of its path (ambiguous), which none
+  of those rows claims, so a broad marker cannot quietly take lines of another kind;
 - a row whose claimed lines differ in number from its count (stale), fewer or more, which
   includes a row whose lines are gone; a row of a path that cannot be read is not reported
   stale, since its lines are unknown;
@@ -40,26 +41,31 @@ Each must be tracked and must hold at least 1 matching line, so the list cannot 
 file that needs no exemption.
 
 Fail closed: the gate exits 1, naming the cause, and turns no error into an empty or clean
-result, when git ls-files cannot run, fails or lists nothing; when an entry is unmerged (a stage
-other than 0); when a tracked path has a mode other than 100644 or 100755, such as a symbolic link
-(120000) or a submodule (160000); when a tracked path is not a regular file in the work tree, or
-cannot be opened or read; and when the allowlist cannot be read or is not UTF-8.
+result, when git ls-files cannot run, fails or lists nothing; when it gives an entry that cannot
+be read (one with no tab, or without exactly 3 fields before its tab); when an entry is unmerged
+(a stage other than 0); when a tracked path has a mode other than 100644 or 100755, such as a
+symbolic link (120000) or a submodule (160000); when a tracked path is not a regular file in the
+work tree, or cannot be opened or read; and when the allowlist cannot be read or is not UTF-8.
 
 Output and exit codes. Each problem goes to standard error, prefixed "check-licence-names: ",
-then the line "check-licence-names: checked: N lines in M files; P problem(s)" goes to standard
-output, where N and M count the matching lines and files outside the named exceptions. In every
-field that a problem line or --list shows (a path, count, owner, marker, mode, stage, git's
-message or an error's text), each character outside printable ASCII is written once as \\xHH,
-\\uHHHH or \\UHHHHHHHH, and a backslash as \\\\, so no control byte reaches the output. Exit 0 when
-the allowlist and the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown
-option (argparse's own code). --list prints "path:count" for each file outside the named
-exceptions with a matching line, then "total: N lines in M files". It does not parse the
-allowlist, so it reports no unclaimed or ambiguous line, no stale or malformed row and no
-allowlist that is not UTF-8. It exits 1 when git ls-files cannot run, fails or lists nothing; on
-an unmerged entry; on a tracked path with a mode other than 100644 or 100755; on a tracked path,
-the allowlist included, that is not a regular file in the work tree or cannot be read; and on a
-named exception that is not tracked or holds no matching line. --root PATH points the gate at
-another repository.
+then, without --list, the line "check-licence-names: checked: N lines in M files; P problem(s)"
+goes to standard output, where N and M count the matching lines and files outside the named
+exceptions. Git's message (its standard error, read as UTF-8 with U+FFFD in place of bytes that
+are not UTF-8) and an error's text are first made 1 line, each run of whitespace that Python's
+str.split finds written as 1 space, or dropped at either end, and cut to their first 300
+characters. Then, in every field that a problem line or --list shows (a path, count, owner,
+marker, mode, stage, entry of git ls-files, git's message or an error's text), each character
+outside printable ASCII is written once as \\xHH, \\uHHHH or \\UHHHHHHHH, and a backslash as
+\\\\, so no control byte reaches the output and no escape is cut. Exit 0 when the allowlist and
+the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown option (argparse's
+own code). --list prints "path:count" for each file outside the named exceptions with a matching
+line, then "total: N lines in M files". It does not parse the allowlist, so it reports no
+unclaimed or ambiguous line, no stale or malformed row and no allowlist that is not UTF-8. It
+exits 1 when git ls-files cannot run, fails or lists nothing; on an entry of git ls-files that
+cannot be read; on an unmerged entry; on a tracked path with a mode other than 100644 or 100755;
+on a tracked path, the allowlist included, that is not a regular file in the work tree or cannot
+be read; and on a named exception that is not tracked or holds no matching line. --root PATH
+points the gate at another repository.
 
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
@@ -108,7 +114,7 @@ def shown(text: str) -> str:
 
 
 def error_text(error: BaseException) -> str:
-    return f"{type(error).__name__}: {shown(' '.join(str(error).split()))[:300]}"
+    return f"{type(error).__name__}: {shown(' '.join(str(error).split())[:300])}"
 
 
 def tracked(root: Path, problems: list):
@@ -120,7 +126,7 @@ def tracked(root: Path, problems: list):
         problems.append(f"cannot run git ls-files, so no tracked file can be listed: {error_text(error)}")
         return None
     if done.returncode != 0:
-        detail = shown(" ".join(done.stderr.decode("utf-8", "replace").split()))[:300]
+        detail = shown(" ".join(done.stderr.decode("utf-8", "replace").split())[:300])
         problems.append(f"git ls-files exited {done.returncode}, so no tracked file can be listed: {detail}")
         return None
     entries = {}

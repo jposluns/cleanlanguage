@@ -9,16 +9,19 @@ that marker. The gate runs as a separate process, python3 -I with --root, with t
 configuration of the machine and of the user left out and the search for a repository stopped at
 the temporary folder, so the result depends on the case alone.
 
-Every refusal case first runs the gate on the unchanged repository, a control that must exit 0
-and print exactly the summary line, then makes 1 change (test_line_ends_only_at_a_line_feed makes
-2: it tracks 2 files) and requires exit 1, a standard output of exactly 1 summary line whose
-problem count is the number of problem lines, and problem lines that are exactly the cause and any
-consequence the case names, each consequence with the reason it follows. Each subtest makes its 1
-change to the unchanged repository, since it undoes or overwrites the change of the subtest before
-it. So each case fails when the gate does not refuse the change, when it names another cause or
-an extra problem, and when it refuses the unchanged repository. Every run of the gate must also
-write nothing outside printable ASCII, so a control byte in a path, count, owner or marker that
-reaches the output fails the case.
+Every refusal case that runs the gate first runs it on the unchanged repository, a control that
+must exit 0 and print exactly the summary line, or for a case of --list exactly the list. It then
+makes the change that it tests, to the repository or to the PATH that the gate is given; a change
+can take more than 1 step, such as tracking a file and then deleting it from the work tree, or
+tracking 2 files. It then requires exit 1; problem lines that match, 1 for 1, the cause and any
+consequence the case names, each consequence with the reason it follows, each matched as a part
+of its line, with no problem line left over; and on standard output exactly 1 summary line whose
+problem count is the number of problem lines, or for --list only path:count lines and then 1
+total line. Each subtest makes its change to the unchanged repository, since it undoes or
+overwrites the change of the subtest before it. So each case fails when the gate does not refuse
+the change, when it names another cause or an extra problem, and when it refuses the unchanged
+repository. Every run of the gate must also write nothing outside printable ASCII, so a control
+byte that reaches the output unescaped, in any field, fails the case.
 
 The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
@@ -26,11 +29,18 @@ line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes 
 line; near misses of the 3 terms match nothing; an untracked file is not read; an unknown option
 exits 2.
 
-4 cases call the gate's read_file in a separate python3 -I process that loads the gate by file
-path. 1 reads a regular file as a control. The other 3 replace os.lstat or os.fdopen in that
+5 cases call the gate's read_file in a separate python3 -I process that loads the gate by file
+path. 1 reads a regular file as a control. The other 4 replace os.lstat or os.fdopen in that
 process alone, to reach what a race or a failing disk could cause: an open descriptor that is not
-a regular file, a symbolic link that appears after the lstat check, and a read error. A case for
-a file whose mode the runner can still read after chmod 000, as root can, is skipped and says so.
+a regular file, a symbolic link that appears after the lstat check, and a read error, once with
+the system's text and once with a text of whitespace, characters outside printable ASCII, a
+backslash and more than 300 characters, whose problem line is compared whole: the text must come
+out as 1 line, cut to 300 characters and then escaped. 3 cases give the gate a stand-in git, a
+Python script alone on its PATH. 1 exits 3 with a message like that text, and its problem line,
+compared whole, must show it the same way. 2 list the repository's 4 files and 2 entries that
+cannot be read, 1 with no tab and 1 with 2 fields before its tab, to the gate and to --list. A
+case for a file whose mode the runner can still read after chmod 000, as root can, is skipped
+and says so.
 
 Exit 0 when every case passes; 1 otherwise.
 """
@@ -64,8 +74,21 @@ TERM = b"CC BY-SA 4.0"
 # Each byte run here ends a line for some reader (str.splitlines, a vertical-tab split and others),
 # but not for the gate, which splits at a line feed only.
 SEPARATORS = (b"\x0b", b"\x0c", b"\x1c", b"\x1d", b"\x1e", b"\x85", "\u2028".encode(), "\u2029".encode())
+# An error's text and git's message of whitespace (tab, carriage return, line feed, vertical tab,
+# 0x1c, U+00A0, U+2028), an escape byte, non-ASCII letters, a backslash and more than 300 characters.
+ODD_TAIL = "\t\x1b[31m\r\n  d\xe9j\xe0 \\ vu\x0b\x1c\xa0\N{LINE SEPARATOR}" + "\xe9" * 400
+ODD_SHOWN = "\\x1b[31m d\\xe9j\\xe0 \\\\ vu "
+ODD_RAW_LENGTH = 16
+# What a stand-in git lists: the 4 files of the repository, as git ls-files --stage -z would, then
+# an entry with no tab and an entry with 2 fields before its tab.
+LISTING = b"".join(b"100644 " + b"0" * 40 + b" 0\t" + path.encode("ascii") + b"\0"
+                   for path in ("README.md", *NAMED_EXCEPTIONS))
+BAD_ENTRIES = b"100644 n\x1bo 0\0" + b"100644 bad\tmi\x1bss.md\0"
+BAD_ENTRY_PROBLEMS = (PREFIX + "git ls-files gave an entry that cannot be read: 100644 n\\x1bo 0",
+                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 bad\\x09mi\\x1bss.md")
 PROBE = """
 import errno, importlib.util, json, os, sys
+ODD_ERROR = """ + repr(ODD_TAIL) + """
 from pathlib import Path
 gate_path, mode, root, name, decoy = sys.argv[1:6]
 sys.dont_write_bytecode = True
@@ -75,7 +98,8 @@ spec.loader.exec_module(gate)
 real_lstat, real_fdopen = os.lstat, os.fdopen
 if mode in ("descriptor", "swap"):
     os.lstat = lambda path, *args, **kwargs: real_lstat(decoy)
-if mode == "read-error":
+if mode in ("read-error", "odd-error"):
+    text = os.strerror(errno.EIO) if mode == "read-error" else ODD_ERROR
     class Failing:
         def __init__(self, handle):
             self.handle = handle
@@ -86,7 +110,7 @@ if mode == "read-error":
         def fileno(self):
             return self.handle.fileno()
         def read(self, *args):
-            raise OSError(errno.EIO, os.strerror(errno.EIO))
+            raise OSError(errno.EIO, text)
     os.fdopen = lambda *args, **kwargs: Failing(real_fdopen(*args, **kwargs))
 problems = []
 data = gate.read_file(Path(root), name, problems)
@@ -184,6 +208,18 @@ class GateCase(unittest.TestCase):
             self.assertEqual(int(summary.group(1)), len(lines), out)
         if out_text:
             self.assertEqual(out, out_text)
+        return err
+
+    def fake_git(self, stdout: bytes, stderr: bytes, code: int) -> dict:
+        """The gate's environment with a stand-in git alone on PATH: a script that writes stdout and
+        stderr and exits with code, whatever its arguments."""
+        folder = self.repo.base / "fake-git"
+        folder.mkdir()
+        script = folder / "git"
+        script.write_text(f"#!{sys.executable} -I\nimport sys\nsys.stdout.buffer.write({stdout!r})\n"
+                          f"sys.stderr.buffer.write({stderr!r})\nsys.exit({code})\n", encoding="ascii")
+        script.chmod(0o755)
+        return dict(self.repo.env, PATH=str(folder))
 
     def probe(self, mode: str, name: str, decoy: str):
         done = subprocess.run([sys.executable, "-I", "-c", PROBE, str(GATE), mode, str(self.repo.root), name,
@@ -339,6 +375,16 @@ class Refusals(GateCase):
         self.refused(f"{ALLOWLIST}:3: malformed row: the count '0' {BAD_COUNT}",
                      also=(f"{ALLOWLIST}:4: malformed row: it repeats the path and marker of row 3",))
 
+    def test_row_without_4_fields_or_with_a_carriage_return_is_no_earlier_row(self):
+        self.control()
+        cases = (("README.md\t1\r\tkeep\tCC BY-SA 4.0", "it holds a carriage return"),
+                 ("README.md\t1\tkeep\tCC BY-SA 4.0\tmore", "it has 5 tab-separated field(s), not 4"))
+        for row, cause in cases:
+            with self.subTest(row=row):
+                # The well-formed row after it repeats no earlier row, so it claims the README.md line.
+                self.repo.set_rows(row, ROW)
+                self.refused(f"{ALLOWLIST}:2: malformed row: {cause}")
+
     def test_shown_fields_are_escaped_once(self):
         self.control()
         name = "a\x1bb\\c\u00e9\u2028.md"
@@ -439,6 +485,13 @@ class Refusals(GateCase):
                          {"data": None, "problems": [f"README.md: cannot read the tracked file: OSError: [Errno "
                                                      f"{errno.EIO}] {os.strerror(errno.EIO)}"]})
 
+    def test_error_text_is_one_line_cut_and_escaped(self):
+        # The text is made 1 line and cut to 300 characters before it is escaped, so no escape is cut.
+        prefix = f"[Errno {errno.EIO}] "
+        detail = prefix + ODD_SHOWN + "\\xe9" * (300 - len(prefix) - ODD_RAW_LENGTH)
+        self.assertEqual(self.probe("odd-error", "README.md", "README.md"),
+                         {"data": None, "problems": [f"README.md: cannot read the tracked file: OSError: {detail}"]})
+
     def test_unmerged_entry_at_each_stage(self):
         self.control()
         blob = self.repo.git("hash-object", "-w", "README.md").strip()
@@ -483,6 +536,21 @@ class Refusals(GateCase):
         self.refused(f"{PREFIX}cannot run git ls-files, so no tracked file can be listed: FileNotFoundError",
                      env=dict(self.repo.env, PATH=str(empty)))
 
+    def test_git_message_is_one_line_cut_and_escaped(self):
+        self.control()
+        # The byte 0xff is read as U+FFFD; with "fatal: " that makes 8 characters before the odd tail.
+        detail = "\\" + "ufffdfatal: " + ODD_SHOWN + "\\xe9" * (300 - 8 - ODD_RAW_LENGTH)
+        line = f"{PREFIX}git ls-files exited 3, so no tracked file can be listed: {detail}"
+        err = self.refused(line, env=self.fake_git(b"", b"\xfffatal:" + ODD_TAIL.encode("utf-8"), 3),
+                           out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+        self.assertEqual(err, line + "\n")
+
+    def test_entry_of_git_ls_files_that_cannot_be_read(self):
+        self.control()
+        self.refused(BAD_ENTRY_PROBLEMS[0], also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
+                     out_text=PREFIX + "checked: 1 lines in 1 files; 2 problem(s)\n")
+
     def test_empty_index(self):
         self.control()
         self.repo.git("rm", "-r", "--cached", "-q", ".")
@@ -498,6 +566,12 @@ class Refusals(GateCase):
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
         self.repo.git("rm", "--cached", "-q", ALLOWLIST)
         self.refused(f"{ALLOWLIST}: a named exception that git does not track", "--list")
+
+    def test_list_fails_on_an_entry_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.refused(BAD_ENTRY_PROBLEMS[0], "--list", also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
 
     def test_file_content_is_data(self):
         self.control()
