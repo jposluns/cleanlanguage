@@ -13,16 +13,19 @@
 # and no git push. At exit it proves, reading the main worktree, that it moved
 # no tag, no note, and not the main worktree's HEAD (the branch HEAD names and
 # the commit HEAD resolves to), and that no ref of any namespace contains the
-# dry-run commit. A ref that another worktree moves during the run is outside
-# that proof and does not fail it, unless it is a tag or a note.
+# dry-run commit. A ref that another worktree writes during the run fails the
+# proof only when it is a tag or a note, when it is the branch the main
+# worktree has checked out, or when it is created or moved onto the dry-run
+# commit or a descendant of it; any other such write is outside the proof.
 #
-# Residual: the proof does not catch the deletion of a branch other than the
-# one the main worktree has checked out; a move or creation of a branch, a
-# remote-tracking ref, refs/stash, refs/replace/ or any other ref outside tags
-# and notes, at a commit that does not contain the dry-run commit; or such a
-# ref written by a commit hook, which the dry-run commit runs. It also does not
-# see the throwaway worktree's own per-worktree refs, anything the exit cleanup
-# does, or a ref moved and then restored between the 2 snapshots.
+# Residual: the proof does not catch the deletion of any ref outside tags and
+# notes other than the branch the main worktree has checked out, such as
+# another branch, a remote-tracking ref, refs/stash or a refs/replace/ ref; a
+# move or creation of such a ref at a commit that does not contain the dry-run
+# commit; or such a deletion, move or creation made by a commit hook, which
+# the dry-run commit runs. It also does not see the throwaway worktree's own
+# per-worktree refs, anything the exit cleanup does, or a ref moved and then
+# restored between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -361,9 +364,10 @@ python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_ta
   --checksum "${checksum}" --date "${dry_date}" --check
 
 # 6. Prove that the dry run moved no tag, no note and not the main worktree's
-#    HEAD, and that no ref of any namespace contains the dry-run commit. Other
-#    refs that another worktree moves do not fail it; the header states the
-#    residual.
+#    HEAD, and that no ref of any namespace contains the dry-run commit. The
+#    deletion of any other ref, and its move or creation at a commit that does
+#    not contain the dry-run commit, does not fail it, whoever makes it; the
+#    header states that residual in full.
 refs_after="$(ref_snapshot)"
 [ "${refs_before}" = "${refs_after}" ] \
   || fail "the dry run changed a git ref, which it must never do; the main worktree's HEAD, tags and notes before:

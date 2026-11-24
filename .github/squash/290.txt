@@ -14,25 +14,30 @@ either check fails the run and is never read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit in a detached
-main worktree, which the old hash missed because git for-each-ref
-lists no HEAD. It no longer catches the deletion of a branch other
-than the checked-out one, or a move or creation of a branch, a
-remote-tracking ref, refs/stash, refs/replace/ or any other ref
-outside tags and notes at a commit that does not contain the dry-run
-commit, including such a ref written by a commit hook. The script's
-header states that residual. A tag or note that another worktree
-writes during the run still fails it. TODO 279 does not record which
-ref moved on the PR 284 gate, so whether this change would have
-avoided that failure is unknown.
+main worktree, and a detach or an attach at the same commit, which the
+old hash missed because git for-each-ref lists no HEAD. It no longer
+catches the deletion of any ref outside tags and notes other than the
+checked-out branch, such as another branch, a remote-tracking ref,
+refs/stash or a refs/replace/ ref; a move or creation of such a ref at
+a commit that does not contain the dry-run commit; or such a deletion,
+move or creation made by a commit hook. The script's header states
+that residual. A write that another worktree makes during the run
+still fails it when it is a tag or a note, the checked-out branch, or
+a ref put on the dry-run commit or a descendant of it. TODO 279 does
+not record which ref moved on the PR 284 gate, so whether this change
+would have avoided that failure is unknown.
 
 tools/test-release-dry-run-refs.py runs the script's own functions,
 before line, dry-run commit line and step 6, extracted by content
-anchors, in throwaway repositories in a temporary folder. It runs 16
+anchors, in throwaway repositories in a temporary folder. It runs 25
 ref cases, with concurrency modelled as sequenced writes from a second
-worktree, and 5 cases on fail-closed reading and structure. Against
-the unchanged script the concurrent cases failed and the detached
-commit passed; against this change all 21 pass. The release dry run
-workflow and tools/run_all_checks.sh run it before the dry run, and
+worktree, 6 cases on fail-closed reading and structure, and 2 that
+remove and repeat each extraction anchor and function. Its first
+version of 21 cases, run against the unchanged script, failed the
+concurrent cases and passed the detached commit; against this change
+all 33 cases pass, and each of 14 mutants that remove 1 stated rule
+fails at least 1 of them. The release dry run workflow and
+tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The
 workflow header now counts 7 test suites.
