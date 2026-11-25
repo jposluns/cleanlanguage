@@ -141,9 +141,20 @@ unchanged.
   tables of forms that write its subtests.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
+- A new test compares whole, with its value at this head, each
+  pattern, text, set and table at module level that decides what
+  the reader reads, each pattern by its source and its flags, and
+  the tuples that the code of each reader function holds as
+  constants, among them the call names and the results that
+  traced_removals tests a call for. A list of traces holds only the
+  forms that it names: 19 edits to those patterns and to
+  FORKING_CALLS, each of which makes the reader read a form that it
+  refuses here, passed case 27 without this test and fail it now.
+  An edit to other code of the reader functions is held only as far
+  as the traces of the other tests hold it.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
-is expected to give 5 tests, OK, here and 3 tests, OK, on main. Each
+is expected to give 6 tests, OK, here and 3 tests, OK, on main. Each
 of the 91 reader mutants that the pull request description lists is
 expected to pass case 27 on main, and each but cap-4 and
 allowance-from-fifth, which break the rule only while more than 4

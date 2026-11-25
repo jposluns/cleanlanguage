@@ -377,7 +377,12 @@ reference digest. The cases, all in that clone:
     call made when no call cut short came before it and 1 when each
     such call has let 1 start.
     The subtests of test_trace_refuses_what_it_cannot_read name
-    further examples in their labels.
+    further examples in their labels. Each pattern, text, set and table
+    at module level that decides what the reader reads, and each tuple
+    that the code of a reader function holds as a constant, is compared
+    whole with its value at this head, so that any edit to 1 of them
+    fails the case, not only 1 that a trace of the case shows; the
+    docstring of test_trace_reader_values_are_pinned names them.
 
 Each case starts with no dist/ in the clone.
 
@@ -3320,6 +3325,80 @@ class TraceReaderTests(unittest.TestCase):
                         wrong.append((order, first, expected, found))
                 if wrong:
                     self.fail("%d of %d traces give another result, first %r" % (len(wrong), len(traces), wrong[0]))
+
+    # The value at this head of each name at module level that decides what
+    # the reader reads: each pattern with its flags, each text that ends a
+    # call cut short or names an unread call, the calls that the test asks
+    # strace for, and each table of calls and of escapes. A trace shows only
+    # the forms that it holds, so these are compared whole, not by traces.
+    READER_VALUES = {
+        "TRACED_CALLS": ("unlink", "unlinkat", "rmdir", "rename", "renameat", "renameat2",
+                         "chdir", "fchdir", "clone", "clone3", "fork", "vfork"),
+        "REMOVING_CALLS": {"unlink": ((None, 0),), "rmdir": ((None, 0),), "unlinkat": ((0, 1),),
+                           "rename": ((None, 0), (None, 1)), "renameat": ((0, 1), (2, 3)),
+                           "renameat2": ((0, 1), (2, 3))},
+        "FORKING_CALLS": ("clone", "clone3", "fork", "vfork"),
+        "NO_ARGUMENT_CALLS": ("fork", "vfork"),
+        "CLONE_FS": re.compile(r"\bCLONE_FS\b"),
+        "TRACE_LINE": re.compile(r"([0-9]+) +(.*)", re.S),
+        "TRACE_UNFINISHED": " <unfinished ...>",
+        "TRACE_DETACHED": " <detached ...>",
+        "TRACE_UNREAD": "???(",
+        "TRACE_NAME": re.compile(r"[a-z0-9_]+|\?\?\?"),
+        "TRACE_RESUMED": re.compile(r"<\.\.\. ([a-z0-9_]+|\?\?\?) resumed>(.*)", re.S),
+        "TRACE_CALL": re.compile(r"([a-z0-9_]+|\?\?\?)\((.*)\) += (-?[0-9]+|\?)( .*)?", re.S),
+        "TRACE_STRING": re.compile(r'"((?:\\x[0-9A-Fa-f]{2})*)"'),
+        "TRACE_DESCRIPTOR": re.compile(r"(AT_FDCWD|-?[0-9]+)(?:<(.*)>)?", re.S),
+        "TRACE_ESCAPE": re.compile(r"\\(?:x([0-9A-Fa-f]{2})|([0-7]{1,3})|(.))", re.S),
+        "TRACE_ESCAPES": {"a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r", "t": b"\t", "v": b"\v"},
+    }
+    # The tuples that the code of each reader function holds as constants:
+    # the sets of call names and of results that it tests a call for, and
+    # the defaults and keyword names that it passes.
+    READER_TUPLES = {
+        "trace_bytes": set(), "trace_string": set(), "trace_folder": set(), "trace_arguments": set(),
+        "trace_unread": set(), "trace_call": set(), "trace_records": {("result_given",), (None, "")},
+        "traced_path": set(), "traced_removals": {("chdir", "fchdir"), (None, "?"), (None, "?", "0")},
+    }
+
+    @staticmethod
+    def code_tuples(code) -> set:
+        """The tuples among the constants of code and of the code nested in it."""
+        found = set()
+        for constant in code.co_consts:
+            if isinstance(constant, tuple):
+                found.add(constant)
+            elif hasattr(constant, "co_consts"):
+                found |= TraceReaderTests.code_tuples(constant)
+        return found
+
+    def test_trace_reader_values_are_pinned(self):
+        """Each pattern, text, set and table at module level that decides
+        what the reader reads has its value of READER_VALUES, whole: a
+        pattern its source and its flags, and a set or table each member,
+        in order where it has an order, and each value its type. So any
+        edit to 1 of them fails this test, among them each edit that makes
+        the reader read a form that it now refuses, which no list of
+        traces can hold in full, since such an edit may admit only a form
+        that no trace holds. The names at module level that start with
+        TRACE_ are those of READER_VALUES. The code of each reader function
+        holds as constants the tuples of READER_TUPLES and no other, so
+        that a set of call names or of results written in that code is
+        pinned the same way. An edit that is meant changes these tables
+        with it. The code of the reader functions is not pinned beyond
+        these tuples, so an edit to that code, such as 1 that applies a
+        pattern with match in place of fullmatch, is held only by the
+        traces of the other tests."""
+        module = globals()
+        with self.subTest("the names at module level that start with TRACE_"):
+            self.assertEqual(sorted(name for name in module if name.startswith("TRACE_")),
+                             sorted(name for name in self.READER_VALUES if name.startswith("TRACE_")))
+        for name, value in self.READER_VALUES.items():
+            with self.subTest(name):
+                self.assertEqual((type(module.get(name)), module.get(name)), (type(value), value))
+        for name, tuples in self.READER_TUPLES.items():
+            with self.subTest("the tuples of the code of %s" % name):
+                self.assertEqual(self.code_tuples(module[name].__code__), tuples)
 
 
 if __name__ == "__main__":
