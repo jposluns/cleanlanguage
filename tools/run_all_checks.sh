@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 #
 # Runs on this machine the run text of the workflow steps that
-# tools/test-run-all-checks.py reads, the steps of the 17 workflows under
+# tools/test-run-all-checks.py reads, the steps of the 19 workflows under
 # .github/workflows that a pull_request or a push to main triggers, in the order
 # of their files and of their steps, a command that an earlier workflow already
 # runs being run once. Each distinct run text of those steps has a run line of
 # its own, apart from the 5 run texts of the Plugin manifests job, for which the
-# 1 run line plugin_manifests stands in (see below). plugin-drift.yml (a
-# schedule and a manual dispatch) and release-skill.yml (a tag push and a manual
-# dispatch) are not triggered by a pull request or a push to main, so neither is
-# mirrored. The script runs the command of a run line from the repository root
+# 1 run line plugin_manifests stands in (see below), and the event step of
+# pr-text.yml, which checks the pull request's own event payload, a file that
+# only CI provides; the run line of the text gate's suite, which runs that check
+# on payload fixtures, stands in for it. plugin-drift.yml (a schedule and a
+# manual dispatch) and release-skill.yml (a tag push and a manual dispatch) are
+# not triggered by a pull request or a push to main, so neither is mirrored.
+# The script runs the command of a run line from the repository root
 # through its function run, which records a nonzero exit status; a failure does
 # not stop the run, and the script ends by naming the commands that failed and
 # exiting 1, or exits 0 when all of them passed. It puts no pipe on the command
@@ -123,6 +126,9 @@ run python3 -I tools/check-page-metadata.py
 # pages-build.yml, after tools/check-python-version.py above
 run python3 -I tools/test-pages-build.py
 run bash tools/pages-build.sh
+# plugin-distribution.yml
+run python3 -I tools/test-check-plugin-distribution.py
+run python3 -I tools/check-plugin-distribution.py
 # plugin-validate.yml
 run plugin_manifests
 # portable-text-sync.yml, after tools/check-python-version.py above
@@ -135,12 +141,15 @@ run python3 -I tools/test-check-skill-consistency.py
 run python3 -I tools/check-skill-consistency.py
 run python3 -I tools/test-instructions-page.py
 run python3 -I tools/check-instructions-page.py
+# pr-text.yml, after tools/check-python-version.py above
+run python3 -I tools/test-check-pr-text.py
 # release-checksum-live.yml
 run python3 -I tools/test-release-checksum-live.py
 run python3 -I tools/check-release-checksum-live.py
 # release-dry-run.yml, after the 3 of its steps above
 run python3 -I tools/test-skill-version-consumers.py
 run python3 -I tools/test-release-skill-workflow.py
+run python3 -I tools/test-release-package-dist.py
 run bash tools/test-version-selectors.sh
 run tools/release-dry-run.sh
 # site-draft.yml

@@ -14,9 +14,11 @@ What it updates
 ---------------
 
 * ``site/_redirects``: the short shareable paths, still pointing at the
-  version-named assets, and the fixed redirects kept since promotion (the old
-  download names, ``/privacy`` and the old icon paths), so a release never
-  drops them.
+  version-named assets, the fixed redirects kept since promotion (the old
+  download names, ``/privacy`` and the old icon paths), and the 22 logo files
+  that the site stopped serving with the move to baseline 1.13.0, whose copy
+  holds only the logos the pages load (``DROPPED_LOGOS``), each sent to the
+  full-colour logo of its own project, so a release never drops them.
 * ``site-src/release.json``: the version, tag and checksum that every version
   string of the generated pages comes from.
 * The generated pages under ``site/``, regenerated in-process by
@@ -72,6 +74,34 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 # and tools/check-release-links.py refuse it; a real SHA-256 has that many with a probability of about 10^-58.
 PLACEHOLDER = "0" * 64
 NEAR_PLACEHOLDER_ZEROS = 56
+# The logo files under /assets/baseline/logos/ that the site served at baseline 1.11.4 and stopped serving with the
+# move to baseline 1.13.0, whose copy holds only the logos the pages load (LOGOS in tools/check-baseline-pin.py). Each
+# is redirected (301) to the full-colour logo of its own project, <key>.svg, which the pages still load, so an outside
+# link to it still answers.
+DROPPED_LOGOS = {
+    "aiqt-card.svg": "aiqt.svg",
+    "aiqt-favicon.svg": "aiqt.svg",
+    "aiqt-mono.svg": "aiqt.svg",
+    "aiqt-touch.png": "aiqt.svg",
+    "auditthis-card.svg": "auditthis.svg",
+    "auditthis-favicon.svg": "auditthis.svg",
+    "auditthis-mono.svg": "auditthis.svg",
+    "auditthis-touch.png": "auditthis.svg",
+    "cleanlanguage-card.svg": "cleanlanguage.svg",
+    "cleanlanguage-mono.svg": "cleanlanguage.svg",
+    "grclibrary-card.svg": "grclibrary.svg",
+    "grclibrary-favicon.svg": "grclibrary.svg",
+    "grclibrary-mono.svg": "grclibrary.svg",
+    "grclibrary-touch.png": "grclibrary.svg",
+    "opfiles-card.svg": "opfiles.svg",
+    "opfiles-favicon.svg": "opfiles.svg",
+    "opfiles-mono.svg": "opfiles.svg",
+    "opfiles-touch.png": "opfiles.svg",
+    "secureconfig-card.svg": "secureconfig.svg",
+    "secureconfig-favicon.svg": "secureconfig.svg",
+    "secureconfig-mono.svg": "secureconfig.svg",
+    "secureconfig-touch.png": "secureconfig.svg",
+}
 
 
 def die(message: str) -> None:
@@ -80,18 +110,24 @@ def die(message: str) -> None:
 
 
 def redirects_body(zip_url: str, sum_url: str) -> str:
+    dropped = "".join(f"/assets/baseline/logos/{name} /assets/baseline/logos/{target} 301\n"
+                      for name, target in DROPPED_LOGOS.items())
     return (
         f"/claude/download {zip_url} 302\n"
         f"/download {zip_url} 302\n"
         f"/download/checksum {sum_url} 302\n"
-        f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
-        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
-        f"/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301\n"
+        f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-instructions-11k.md 301\n"
+        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions-11k.md 301\n"
+        f"/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301\n"
+        f"/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302\n"
+        f"/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302\n"
+        f"/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302\n"
+        f"/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302\n"
         f"/privacy https://posluns.ca/privacy/ 301\n"
         f"/privacy/ https://posluns.ca/privacy/ 301\n"
         f"/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301\n"
         f"/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301\n"
-    )
+    ) + dropped
 
 
 def stamp_modified(text: str, page_id: str, date: str) -> str:
@@ -196,7 +232,8 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="report changes without writing")
     args = parser.parse_args()
 
-    if not re.match(r"^[0-9][0-9.]*$", args.version):
+    # --version and --date are checked with re.fullmatch, since a $ anchor admits a final LF.
+    if not re.fullmatch(r"[0-9][0-9.]*", args.version):
         die(f"{args.version!r} is not a version number")
     checksum = args.checksum.strip().split()[0] if args.checksum.strip() else ""
     if not SHA256.match(checksum):
@@ -207,7 +244,8 @@ def main() -> int:
             "a mistyped placeholder; pass the zero placeholder until the release is published, and the "
             "published release checksum after that"
         )
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
+    # re.ASCII limits \d to 0-9; without it \d matches a digit of any script, such as U+0664.
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date, re.ASCII):
         die(f"{args.date!r} is not a YYYY-MM-DD date")
     try:
         dt.date.fromisoformat(args.date)

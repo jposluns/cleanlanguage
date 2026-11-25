@@ -1,0 +1,38 @@
+name: Plugin distribution
+
+# Run the offline consistency check of the plugin distribution and its unit
+# tests (TODO 234): the marketplace, plugin and site names agree, every
+# relative marketplace source resolves to a plugin folder, the versions of the
+# manifests and the skill agree, and every dependency names a plugin of the same
+# marketplace. Stdlib only, no network.
+#
+# This is not a required check. The required checks are named in the root
+# CLAUDE.md, and adding this one to them is the maintainer's decision alone.
+#
+# Neither trigger carries a paths filter, so the check reports on every pull
+# request and on every push to main. tools/run_all_checks.sh runs the same 2
+# commands, and tools/test-run-all-checks.py requires that it does.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # A unique display name, so no other workflow job called check shares it.
+    name: Plugin distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the plugin distribution check tests
+        shell: bash
+        run: python3 -I tools/test-check-plugin-distribution.py
+      - name: Check the plugin distribution
+        shell: bash
+        run: python3 -I tools/check-plugin-distribution.py
