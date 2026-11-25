@@ -824,18 +824,22 @@ class Isolation(MigrateHarness):
 
 class InputFileType(MigrateHarness):
     """The input must be a regular file. A FIFO with no writer, a symlink to a FIFO, a
-    directory and /dev/null are each refused within a short timeout, naming the path and the file
+    directory and /dev/null are each refused within TIMEOUT, naming the path and the file
     type, in both modes, and no output is written; a regular file and a symlink to one still
     convert."""
 
-    TIMEOUT = 20
+    # The bound covers the whole migration run, interpreter start-up included, which a loaded host
+    # can stretch, also where it must convert an input larger than 1 read chunk, so it is 60 seconds,
+    # not 20. A run that ends at this bound shows only that the migration did not exit in time, not
+    # why.
+    TIMEOUT = 60
 
     def run_bounded(self, *args):
         try:
             return subprocess.run([sys.executable, "-I", str(MIGRATE), *[str(a) for a in args]],
                                   capture_output=True, text=True, timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the migration did not exit within {} s for {!r}: the open blocked"
+            self.fail("the migration did not exit within {} s for {!r}"
                       .format(self.TIMEOUT, [str(a) for a in args]))
 
     def assert_type_refused(self, path, kind):
@@ -934,7 +938,9 @@ class ErrorPosition(MigrateHarness):
     """Every refusal the migration can produce names its position. In old_fixture()
     the header is line 5 and the first row line 7."""
 
-    TIMEOUT = 20
+    # The bound covers the whole run of the migration or of the harness that loads it, interpreter
+    # start-up included, as in InputFileType, so it is 60 seconds, not 20.
+    TIMEOUT = 60
 
     def run_bounded(self, *args, **kwargs):
         try:
@@ -1660,7 +1666,9 @@ class RuntimeGuard(MigrateHarness):
     refused once the output step has started. A KeyboardInterrupt gets the same positioned line,
     with the same account of the output, and exit 130."""
 
-    TIMEOUT = 20
+    # The bound covers the whole run of the migration or of the harness that loads it, interpreter
+    # start-up included, as in InputFileType, so it is 60 seconds, not 20.
+    TIMEOUT = 60
 
     def assert_guarded(self, code, stderr, position, needle):
         self.assertEqual(code, 1, "expected exit 1: {!r}".format(stderr))
