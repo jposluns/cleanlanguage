@@ -2,13 +2,18 @@ Test that the enumerator gets and enforces its declared timeout (#280)
 
 This message compares the tree it merges with main as of #275 (Refresh
 the vendored AIQT hooks plugin), the commit of main that the branch
-merged and its merge base with main, not one commit of the branch with
-another. The branch started from main as of #271 (State the full
-download's character count as saved); against main as of #271 (State
-the full download's character count as saved) the tree also differs
-by main's own changes from main as of #271 (State the full download's
-character count as saved) to main as of #275 (Refresh the vendored
-AIQT hooks plugin), in 26 more files, the hook among them.
+merged first, not one commit of the branch with another. The branch
+later merged 2 later commits of main, so the tree also holds main's
+own changes from main as of #275 (Refresh the vendored AIQT hooks
+plugin) to the later of them; each comparison below leaves those
+changes out, and this message does not list them, apart from how the
+last merge resolves tools/test-orch-stage2-hooks.py. The branch
+started from main as of #271 (State the full download's character
+count as saved); against main as of #271 (State the full download's
+character count as saved) the tree also differs by main's own changes
+from main as of #271 (State the full download's character count as
+saved) to main as of #275 (Refresh the vendored AIQT hooks plugin), in
+26 more files, the hook among them.
 
 In main as of #275 (Refresh the vendored AIQT hooks plugin),
 T15EnumeratorTimeout in tools/test-orch-stage2-hooks.py
@@ -83,27 +88,28 @@ a start that makes the first os.fork call of the hook's process raise
 the os.fork audit event and then BlockingIOError, as CPython's os.fork
 does when fork() fails; every later call forks.
 
-test_sleeping_enumerator_times_out_and_denies declares an enumerator
-that is 1 process sleeping 3600 s, under a declared timeout of 1 s,
-and runs the hook in keep mode. The test asks the enumerator to do
-nothing before the timeout fires, and it cannot end by itself, so a
-call that passes it a 1 s timeout raises TimeoutExpired once that
-timeout fires, unless the enumerator cannot be started or the 120 s
-bound kills the hook first. The test requires, in this order, that
-the wrapper call ended within 240 s and the wrapper wrote its report,
-that no process that the hook started was alive when cleanup
-stopped, at once or after 30 s, and that the hook exited within
-120 s; then exactly 1 call with the declared argv, timeout 1 and
-outcome TimeoutExpired; then no process that the hook started still
-running when it ended; then exit 2, ENUMERATOR_ERROR and 'failed to
-run'. Its time bounds are the 240 s, 30 s and 120 s ones; every other
-check is logical, and no timeout of the hook but the enumerator's can
-fire. A correct hook leaves no process running, so cleanup has
-nothing to do, and for such a hook only the 240 s and 120 s bounds
-can make a check's result depend on load.
+test_sleeping_enumerator_times_out_and_denies declares an enumerator,
+SLEEPING_ENUM_FIXTURE, that is 1 process that records its start when
+its environment names a file for that and then sleeps 100 s, under a
+declared timeout of 1 s, and runs the hook in keep mode. The test asks
+the enumerator to do nothing but that record before the timeout fires,
+and it sleeps 100 s, so a call that passes it a 1 s timeout raises
+TimeoutExpired once that timeout fires, unless the enumerator cannot
+be started or the 120 s bound kills the hook first. The test
+requires, in this order, that the wrapper call ended within 240 s and
+the wrapper wrote its report, that no process that the hook started
+was alive when cleanup stopped, at once or after 30 s, and that the
+hook exited within 120 s; then exactly 1 call with the declared argv,
+timeout 1 and outcome TimeoutExpired; then no process that the hook
+started still running when it ended; then exit 2, ENUMERATOR_ERROR
+and 'failed to run'. Its time bounds are the 240 s, 30 s and 120 s
+ones; every other check is logical, and no timeout of the hook but the
+enumerator's can fire. A correct hook leaves no process running, so
+cleanup has nothing to do, and for such a hook only the 240 s and
+120 s bounds can make a check's result depend on load.
 
 test_declared_timeout_reaches_the_enumerator_call runs the hook in
-strip mode for each declared timeout of 0.001, 1, 7.5 and 600 s and
+strip mode for each declared timeout of 0.001, 1, 7.5 and 60 s and
 requires the same 3 time bounds and report, then exactly 1 call with
 the declared argv and that timeout argument, and that the enumerator
 ran once.
@@ -171,19 +177,20 @@ not check that a range names what the words beside it name. Every
 other test that runs the hook, or the doctor, keeps the hook's own
 timeouts: the 5 s one of the git call in _recovery_toplevel, the 5 s
 or 10 s one of any other git call, the declared enumerator timeout,
-5 s in the stage 2 fixture, and for orch_yield_tool and
+ENUM_TIMEOUT, 60 s, in the stage 2 fixture, and for orch_yield_tool and
 orch_ask_guard the 8 s PreToolUse deadline.
 Such a test fails a correct hook when one of them fires and that
 changes what the test checks, and passes when it requires only what
 the hook also does after that timeout, as T04NotBefore's
 test_future_blocks requires only exit 0. These tests also set limits
 of their own, which TEST_TIME_LIMITS lists by the class and function
-of the site that applies each, 19 entries with the least value that
+of the site that applies each, 21 entries with the least value that
 each site applies. The least is 4.5 s, at
 DoctorScopeMargin._assert_refused_near, which puts NEAR on the time
 from just before a case sets its lease mtime 4.5 s from a freshness
 bound of the hook to the return of the doctor call; the others are
-30 s, 60 s, 120 s and 300 s, and 60 s or 240 s through run_reaped.
+60 s, 119 s, 120 s, 240 s and 300 s, and 60 s or 240 s through
+run_reaped.
 So, deriving from the 2 lists, a correct hook can fail such a test
 when the doctor call of a DoctorScopeMargin case takes 4.5 s, while
 its git call is still inside its 5 s timeout, and otherwise only when
@@ -295,19 +302,19 @@ first line of the body after any docstring. The branch also adds
 .github/squash/280.txt, which holds this message and which the pull
 request text check reads.
 
-The enforcement test fails a hook that passes no timeout; that passes
-a timeout other than 1, such as a fixed 20 s or 60 s,
-max(timeout, 30) or timeout * 2, or that runs the enumerator again
-after a timeout, on the call check if the hook still exits within
-120 s and on the earlier "exited" check if not, as with a fixed
-180 s; that starts it with Popen and never stops it, in or out of a
+The enforcement test fails a hook that passes no timeout, which waits
+the 100 s sleep out, that passes a timeout other than 1, such as a
+fixed 20 s, 60 s or 180 s, max(timeout, 30) or timeout * 2, or that
+runs the enumerator again after a timeout, on the call check if the
+hook still exits within 120 s and on the earlier "exited" check if
+not; that starts it with Popen and never stops it, in or out of a
 new session; that gives another verdict; that does not exit within
 120 s; or whose check of the declared value rejects 1. It passes a
 hook that passes 1 s whatever is declared or changes only other
 values, such as round(timeout); the recorder test fails these. The
 recorder test fails a hook that passes the same timeout whatever is
 declared, that multiplies it, that passes no timeout, that floors it
-above 0.001 s, that caps it below 600 s, that rounds it to a whole
+above 0.001 s, that caps it below 60 s, that rounds it to a whole
 number, or whose check rejects one of the 4 values, such as one that
 accepts only an int.
 
@@ -316,11 +323,15 @@ the hook starts the enumerator, that lets it exit within 120 s, which
 the 15 s bound in main as of #275 (Refresh the vendored AIQT hooks
 plugin) caught only when the whole call then passed 15 s, as a 5 s
 stall after the 1 s timeout need not make it; a floor of 0.001 or
-below; a cap of 600 or above, which changes nothing; rounding to 3 or
-more decimal places; a change to a declared value other than the 4
-tested, such as 60 s for any value from 10 to 599; a change to the
-60 s fallback, such as 30 s; a change to which values the check
-rejects that still accepts 0.001, 1, 7.5 and 600, such as one that
+below; a cap of a declared timeout between 60 s and 600 s, such as
+min(timeout, 60) or min(timeout, 300), which the declared-timeout test
+no longer catches, as it declares at most ENUM_TIMEOUT, 60 s, since
+write_registry refuses a declared timeout over it; a cap of 600 or
+above, which changes nothing; rounding to 3 or more decimal places; a
+change to a declared value other than the 4 tested, such as 60 s for
+any value from 10 to 599; a change to the 60 s fallback, such as
+30 s; a change to which values the check rejects that still accepts
+0.001, 1, 7.5 and 60, such as one that
 rejects JSON true, which the unchanged hook takes as 1 s; and a hook
 that also stops the processes that the enumerator starts, against the
 unchanged hook, whose timeout stops only the enumerator's own process,
@@ -351,10 +362,38 @@ does not check those messages against their diffs, and it does not list
 or correct their statements. Some of those statements are not borne out
 by their diffs, and later messages of the branch correct some of them,
 so a reader should take a statement of one of those messages as borne
-out only where this message makes it too. Below, the branch's 22
-commits are numbered from 1, its first, to 22, its last, with the merge
-commit, which merges main as of #275 (Refresh the vendored AIQT hooks
-plugin), as 9; commit 21 changes no file.
+out only where this message makes it too. Below, the branch's 25
+commits are numbered from 1, its first, to 25, its last, with the merge
+commit that merges main as of #275 (Refresh the vendored AIQT hooks
+plugin) as 9, and the merge commits that merge the 2 later commits of
+main as 24 and 25; commit 21 changes no file, and commit 23 is a text
+fix.
+
+Commit 25 resolves 3 conflict blocks in
+tools/test-orch-stage2-hooks.py, where main's changes refuse a
+declared enumerator whose program is not 1 of ENUM_PROGRAMS, and a
+declared timeout over ENUM_TIMEOUT, 60 s, and widen the bounds of the
+doctor and hook calls that can run the stage 2 enumerator to
+RUN_TIMEOUT, 120 s. In the head of
+test_sleeping_enumerator_times_out_and_denies it keeps this branch's
+test, with main's SLEEPING_ENUM_FIXTURE as the enumerator, and drops
+main's comment on its 90 s bound; at the end of that test and in
+test_declared_timeout_reaches_the_enumerator_call it keeps this
+branch's test and drops main's 90 s bound on the elapsed time, which
+the wider 120 s hook bound replaces; and in run_doctor_recorded it
+joins both docstrings and checks the limit before main's code makes
+the run's file of enumerator starts. The sleeping enumerator is now
+the pinned SLEEPING_ENUM_FIXTURE, which sleeps 100 s in place of
+3600 s, so a hook that waits the sleep out fails the call check, not
+the "exited" check. The declared timeouts are capped at ENUM_TIMEOUT,
+60 s, in place of 600 s, and the writing enumerator runs as a -c
+program. TEST_TIME_LIMITS moves to the widened bounds, 120 s in place
+of 30 s or 60 s at 5 sites and 240 s in place of 60 s at 1, and gains
+main's 2 sites of EnumeratorBounds, at 119 s and 120 s, so it holds
+21 entries, the least still 4.5 s; the comment above Stage2Harness
+states them. 2 planted forms of TimeLimitSinkProbe bind the TIMEOUT
+that main's DoctorCheckpointWrites._doctor reads, as it takes no
+timeout argument. No run reported below is of commit 25's tree.
 
 Runs, with python3 -I (3.14.4) on a copy of commit 20, whose tree
 commit 21 keeps, with the change of commit 22 applied, on a Linux host
