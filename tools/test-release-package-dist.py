@@ -370,10 +370,12 @@ reference digest. The cases, all in that clone:
     that strace detached from, 1 after an unread call left unfinished
     and 1 after an unread call that ended with the result ?; a
     relative path in a process with no maker, 1 in a folder that a
-    chdir or fchdir that strace cut short left not known and 1 in a
+    chdir or fchdir that strace cut short left not known, 1 in a
     child that a process whose folder was not known made without
-    CLONE_FS; and a process that no traced call made when no call cut
-    short came before it and 1 when each such call has let 1 start.
+    CLONE_FS and 1 in a thread that such a process made with
+    CLONE_FS, which shares that folder; and a process that no traced
+    call made when no call cut short came before it and 1 when each
+    such call has let 1 start.
     The subtests of test_trace_refuses_what_it_cannot_read name
     further examples in their labels.
 
@@ -2822,7 +2824,14 @@ class TraceReaderTests(unittest.TestCase):
         relative path of a child that a call of each name of MAKERS made
         without CLONE_FS in a process with no maker, or after such a
         chdir or fchdir that ended with the result ?, since the child
-        takes the folder of its maker, which is not known.
+        takes the folder of its maker, which is not known; and at a
+        relative path of a thread that a clone or clone3 with CLONE_FS
+        made in such a process, since the thread shares that folder,
+        which is not known. A line with no space or with a tab after
+        the process id, a call whose result is neither a number nor ?,
+        a path in a string that strace cut short, with ... after its
+        closing quote, and a descriptor whose path strace cut short
+        the same way each end the case with the error that names it.
         For a call of each name of MAKERS in each form of MADE, the case
         ends at a relative path of the process that the call made; at a
         second process after 1 such call whose process first enters a
@@ -2908,12 +2917,25 @@ class TraceReaderTests(unittest.TestCase):
             "a path not in hex escapes":
                 (('100   unlink("x") = 0',),
                  "the trace gives the path '\"x\"', which is not 1 whole string in hex escapes"),
+            "a path in a string that strace cut short":
+                (("100   unlink(%s...) = 0" % self.hexed("abc"),),
+                 "the trace gives the path %r, which is not 1 whole string in hex escapes"
+                 % (self.hexed("abc") + "...")),
             "a descriptor that the test cannot read":
                 (("100   unlinkat(foo, %s, 0) = 0" % self.hexed("x"),),
                  "the trace gives the descriptor 'foo', which the test cannot read"),
+            "a descriptor whose path strace cut short":
+                (("100   unlinkat(3</clone/su>..., %s, 0) = 0" % self.hexed("x"),),
+                 "the trace gives the descriptor %r, which the test cannot read" % "3</clone/su>..."),
             "a line with no process id":
                 ((unlink, "unlink(%s) = 0" % self.hexed("y")),
                  "the trace holds a line that the test cannot read: %r" % ("unlink(%s) = 0" % self.hexed("y"))),
+            "a line with no space after the process id":
+                (("100unlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a line that the test cannot read: %r" % ("100unlink(%s) = 0" % self.hexed("x"))),
+            "a line with a tab after the process id":
+                (("100\tunlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a line that the test cannot read: %r" % ("100\tunlink(%s) = 0" % self.hexed("x"))),
             "a call resumed under a shorter name":
                 ((self.FORK, "101   unlinkat(AT_FDCWD</clone>, %s <unfinished ...>" % self.hexed("y"), unlink, resumed),
                  "the trace resumes a call that it did not start: %r" % resumed),
@@ -2954,6 +2976,12 @@ class TraceReaderTests(unittest.TestCase):
             "a named unread call with a result":
                 ((self.FORK, "101   unlinkat() = 0"),
                  "the trace gives a result for a call whose arguments strace could not read: 'unlinkat() = 0'"),
+            "a result that is neither a number nor ?":
+                (("100   unlink(%s) = 0x3" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s) = 0x3" % self.hexed("x"))),
+            "a result of ? with text after it":
+                (("100   unlink(%s) = ?x" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s) = ?x" % self.hexed("x"))),
             "an fchdir into a descriptor with no path":
                 (("100   fchdir(3) = 0",), "the trace gives the descriptor '3', with no path that the test can use"),
             "an fchdir into a descriptor with a relative path":
@@ -3024,6 +3052,9 @@ class TraceReaderTests(unittest.TestCase):
         # maker, or 1 whose shared folder a chdir or an fchdir that strace
         # cut short left not known. The child takes that folder, not known,
         # so its relative path ends the case with the error that names it.
+        # A thread that a clone or clone3 with CLONE_FS made in such a
+        # process shares that folder, so its relative path ends the case
+        # the same way; the loop below the next adds those pins.
         owners = {"a process with no maker": ("100   fork() = ?",),
                   "a process after a chdir that strace cut short in its shared folder":
                       (self.SHARED, "101   chdir(%s) = ?" % self.hexed("sub")),
@@ -3034,6 +3065,11 @@ class TraceReaderTests(unittest.TestCase):
                 pinned["a relative path in a child of a %s by %s" % (name, owner)] = (
                     (*before, "101   %s%s = 102" % (start[len("100   "):], ", child_tidptr=0x7f0a)" if name == "clone"
                                                    else ")"),
+                     "102   unlink(%s) = 0" % self.hexed("x")), relative)
+        for owner, before in owners.items():
+            for name in ("clone with CLONE_FS", "clone3 with CLONE_FS"):
+                pinned["a relative path in a thread of a %s by %s" % (name, owner)] = (
+                    (*before, "101   %s) = 102" % self.CUTTERS[name],
                      "102   unlink(%s) = 0" % self.hexed("x")), relative)
         pinned["a relative path against AT_FDCWD in a process with no maker"] = (
             ("100   fork() = ?", "101   unlinkat(AT_FDCWD</clone/sub>, %s, 0) = 0" % self.hexed("x")), relative)

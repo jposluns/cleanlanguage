@@ -67,7 +67,12 @@ unchanged.
 - New subtests hold refusals that no case on main held, among them
   those of a trace with no call, a resumption with no call open or
   under another name, a path not in hex escapes, a line with no
-  process id, and an unread call cut short while a call is open.
+  process id, an unread call cut short while a call is open, a line
+  with no space or with a tab after the process id, a result that is
+  neither a number nor ?, a path in a string that strace cut short,
+  a descriptor whose path strace cut short, and a relative path in a
+  thread that a clone or clone3 with CLONE_FS made while the folder
+  of its maker was not known.
 - The error of each raise statement of the reader functions is
   checked whole by 1 or more subtests, as is the error for a line of
   a process after each kind of call at which the reader finds that
@@ -80,16 +85,18 @@ unchanged.
   detached from, 1 after an unread call left unfinished and 1 after
   an unread call that ended with the result ?; a relative path in a
   process with no maker, 1 in a folder that a chdir or fchdir that
-  strace cut short left not known and 1 in a child that a process
-  whose folder was not known made without CLONE_FS; and a process
-  that no traced call made when no call cut short came before it and
-  1 when each such call has let 1 start. The docstrings say so. Each
-  of these refusals is checked whole by 1 or more subtests, among
-  them a relative path after a chdir or an fchdir that strace
-  detached from or that ended with the result ? in a shared folder,
-  and 1 in a child that a clone, clone3, fork or vfork made without
-  CLONE_FS in a process with no maker or after such a chdir or
-  fchdir.
+  strace cut short left not known, 1 in a child that a process whose
+  folder was not known made without CLONE_FS and 1 in a thread that
+  such a process made with CLONE_FS, which shares that folder; and a
+  process that no traced call made when no call cut short came
+  before it and 1 when each such call has let 1 start. The
+  docstrings say so. Each of these refusals is checked whole by 1 or
+  more subtests, among them a relative path after a chdir or an
+  fchdir that strace detached from or that ended with the result ?
+  in a shared folder, 1 in a child that a clone, clone3, fork or
+  vfork made without CLONE_FS in a process with no maker or after
+  such a chdir or fchdir, and 1 in a thread that clone or clone3
+  with CLONE_FS made in each of those 3 kinds of process.
 - Among the examples of refusals in the module docstring are 2 for
   relative paths, not a list of all that end the case: 1 of a
   process with no maker, with no descriptor or with AT_FDCWD, in a
@@ -129,9 +136,10 @@ unchanged.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 5 tests, OK, here and 3 tests, OK, on main. Each
-of the 63 reader mutants that the pull request description lists is
+of the 69 reader mutants that the pull request description lists is
 expected to pass case 27 on main, and each but cap-4 and
 allowance-from-fifth, which break the rule only while more than 4
 such calls are untaken, to fail it here. In a git checkout with
 strace, the full run is expected to leave cases 1 to 26 as they are
-on main.
+on main. ptrace is not available on codex seats, so traced checks
+run on the claude seat.
