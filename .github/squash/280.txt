@@ -315,8 +315,9 @@ values, such as round(timeout); the recorder test fails these. The
 recorder test fails a hook that passes the same timeout whatever is
 declared, that multiplies it, that passes no timeout, that floors it
 above 0.001 s, that caps it below 60 s, that rounds it to a whole
-number, or whose check rejects one of the 4 values, such as one that
-accepts only an int.
+number, or whose check rejects 0.001, 1 or 7.5, such as one that
+accepts only an int. It does not catch a check that rejects 60, as the
+hook then passes its 60 s fallback for the declared 60, the same value.
 
 Neither enumerator test catches: a stall after the timeout, or before
 the hook starts the enumerator, that lets it exit within 120 s, which
@@ -332,7 +333,9 @@ change to a declared value other than the 4 tested, such as 60 s for
 any value from 10 to 599; a change to the 60 s fallback, such as
 30 s; a change to which values the check rejects that still accepts
 0.001, 1, 7.5 and 60, such as one that
-rejects JSON true, which the unchanged hook takes as 1 s; and a hook
+rejects JSON true, which the unchanged hook takes as 1 s; a check
+that rejects 60 and still accepts 0.001, 1 and 7.5, as the hook then
+passes its 60 s fallback for the declared 60, the same value; and a hook
 that also stops the processes that the enumerator starts, against the
 unchanged hook, whose timeout stops only the enumerator's own process,
 as the sleeping enumerator is 1 process. The tests do not time the
@@ -362,12 +365,18 @@ does not check those messages against their diffs, and it does not list
 or correct their statements. Some of those statements are not borne out
 by their diffs, and later messages of the branch correct some of them,
 so a reader should take a statement of one of those messages as borne
-out only where this message makes it too. Below, the branch's 25
-commits are numbered from 1, its first, to 25, its last, with the merge
-commit that merges main as of #275 (Refresh the vendored AIQT hooks
-plugin) as 9, and the merge commits that merge the 2 later commits of
+out only where this message makes it too. Below, the branch's 27
+commits up to and including the one that carries this message are
+numbered from 1, its first, to 27, that one, with the merge commit
+that merges main as of #275 (Refresh the vendored AIQT hooks plugin)
+as 9, and the merge commits that merge the 2 later commits of
 main as 24 and 25; commit 21 changes no file, and commit 23 is a text
-fix.
+fix. Commit 26, "Describe the second join of main and its coverage
+gap", is a text fix, and commit 27, "Count the newest commits and
+correct the 60 s and 120 s claims", corrects this message, the
+description of the pull request and the comments of the 2 enumerator
+tests in tools/test-orch-stage2-hooks.py. Up to commit 27, no other
+commit is on the branch.
 
 Commit 25 resolves 3 conflict blocks in
 tools/test-orch-stage2-hooks.py, where main's changes refuse a
@@ -384,8 +393,9 @@ the wider 120 s hook bound replaces; and in run_doctor_recorded it
 joins both docstrings and checks the limit before main's code makes
 the run's file of enumerator starts. The sleeping enumerator is now
 the pinned SLEEPING_ENUM_FIXTURE, which sleeps 100 s in place of
-3600 s, so a hook that waits the sleep out fails the call check, not
-the "exited" check. The declared timeouts are capped at ENUM_TIMEOUT,
+3600 s, so a hook that waits the sleep out fails the call check if it
+still exits within 120 s, and the earlier "exited" check if not. The
+declared timeouts are capped at ENUM_TIMEOUT,
 60 s, in place of 600 s, and the writing enumerator runs as a -c
 program. TEST_TIME_LIMITS moves to the widened bounds, 120 s in place
 of 30 s or 60 s at 5 sites and 240 s in place of 60 s at 1, and gains

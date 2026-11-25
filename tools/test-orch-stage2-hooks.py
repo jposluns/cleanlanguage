@@ -2028,13 +2028,15 @@ class T15EnumeratorTimeout(Stage2Harness):
         # loaded host took the whole call past 15 s. PR 284 widened that bound to 90 s (TODO 254),
         # measured from before the hook starts and below the enumerator's sleep; the 120 s hook bound
         # is wider still, also covers the hook's start-up, and, as with the 90 s bound, a hook that
-        # waits the sleep out fails, here by the call check. A hook that starts the enumerator other
+        # waits the sleep out fails, here by the call check if it still exits within 120 s and by
+        # the "exited" check first if it does not. A hook that starts the enumerator other
         # than through subprocess.run records no call and fails here even if it stops the
         # enumerator at the declared time. The unchanged hook's timeout stops only the enumerator's
         # own process, and the sleeping enumerator is 1 process, so this test says nothing about
         # processes that an enumerator starts. This test declares only 1 s, so of the changes to the
         # hook's check of the declared value (a number, above 0, at most 600) it catches only one
-        # that rejects 1: such a hook passes the 60 s fallback as the timeout and fails the call check.
+        # that rejects 1: such a hook passes the 60 s fallback as the timeout and fails the call check
+        # if it still exits within 120 s, and the "exited" check first if it does not.
         record = self._tmp / "run-calls-enforced.jsonl"
         argv = [sys.executable, "-I", "-c", SLEEPING_ENUM_FIXTURE]
         self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": 1}))
@@ -2094,8 +2096,10 @@ class T15EnumeratorTimeout(Stage2Harness):
         # 600), so it also misses a change to the 60 s fallback for such a value, such as 30 s, and
         # a change to which values the check rejects that still accepts 0.001, 1, 7.5 and 60, such
         # as one that rejects JSON true, which the unchanged hook takes as 1 s, or one that rejects
-        # each value over 60. A change that rejects one of the 4, such as one that accepts only an
-        # int, fails for that value, as the hook then passes the 60 s fallback.
+        # each value over 60. A change that rejects 0.001, 1 or 7.5, such as one that accepts only
+        # an int, fails for that value, as the hook then passes the 60 s fallback. It also misses a
+        # change that rejects 60 and still accepts 0.001, 1 and 7.5, such as 0 < timeout < 60, as
+        # the hook then passes the 60 s fallback for the declared 60, the same value.
         for declared in self.DECLARED_TIMEOUTS:
             with self.subTest(declared=declared):
                 mark = self._tmp / "enumerator-ran-{}.txt".format(declared)
