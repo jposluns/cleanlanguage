@@ -276,17 +276,16 @@ agree with the table must fail neither run. Once every test of the
 file has run, as in a full run, the test requires each entry to be
 the least limit admitted at its site, so a wrong entry fails the test
 itself, not only tearDownModule; a run that -k narrows does not reach
-that check. The
-T15EnumeratorTimeout section header
-states that the hook exits within 120 s, not that it never hangs, so
-in tools/test-no-qa-labels.py only 2 allowlist entries, which hold the
+that check. The T15EnumeratorTimeout section header states that the
+hook exits within 120 s, not that it never hangs, so in
+tools/test-no-qa-labels.py only 2 allowlist entries, which hold the
 exact text of that line and of the comment that cites the
-NO_ENUMERATOR check and its return and the stage 1 test of that
-deny, differ from main as of #275 (Refresh the vendored AIQT hooks
-plugin). In tools/test-orch-stage1-hooks.py only 1 entry of the WHOLE
-table of WholeFunctionCitations, 4 hook line ranges in comments and 1
-sentence of the docstring of WholeFunctionCitations differ from main
-as of #275 (Refresh the vendored AIQT hooks plugin): the comment of
+NO_ENUMERATOR check and its return and the stage 1 test of that deny,
+differ from main as of #275 (Refresh the vendored AIQT hooks plugin).
+In tools/test-orch-stage1-hooks.py only 1 entry of the WHOLE table of
+WholeFunctionCitations, 4 hook line ranges in comments and 1 sentence
+of the docstring of WholeFunctionCitations differ from main as
+of #275 (Refresh the vendored AIQT hooks plugin): the comment of
 test_stage1_contrast cites the whole of _child_status_refusal by its
 line range in the hook, and that test requires each whole-function
 citation in a tools file to be counted in WHOLE; the 4 ranges now
