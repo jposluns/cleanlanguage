@@ -2827,11 +2827,20 @@ class TraceReaderTests(unittest.TestCase):
         takes the folder of its maker, which is not known; and at a
         relative path of a thread that a clone or clone3 with CLONE_FS
         made in such a process, since the thread shares that folder,
-        which is not known. A line with no space or with a tab after
-        the process id, a call whose result is neither a number nor ?,
-        a path in a string that strace cut short, with ... after its
-        closing quote, and a descriptor whose path strace cut short
-        the same way each end the case with the error that names it.
+        which is not known. Each of these ends the case with the error
+        that names it: a line with no space or with a tab after the
+        process id, with a space or a tab before it, or whose process
+        id has a sign; a call with no space before or after its = or
+        with 2 spaces after it; a result in hexadecimal or with a plus
+        sign, and a result of ? with text right after it, with no space
+        between them; a path in a string that strace cut short, with ...
+        after its closing quote, or in a string with an octal escape, a
+        letter escape or a hex escape of 1 digit; a descriptor whose
+        path strace cut short the same way, or 1 in hexadecimal, with a
+        plus sign or written as at_fdcwd in small letters; a resumption
+        with 2 spaces or with no space after <... or before resumed; and
+        a call, a call that strace detached from or a resumption whose
+        name holds a capital letter.
         For a call of each name of MAKERS in each form of MADE, the case
         ends at a relative path of the process that the call made; at a
         second process after 1 such call whose process first enters a
@@ -2921,12 +2930,30 @@ class TraceReaderTests(unittest.TestCase):
                 (("100   unlink(%s...) = 0" % self.hexed("abc"),),
                  "the trace gives the path %r, which is not 1 whole string in hex escapes"
                  % (self.hexed("abc") + "...")),
+            "a path in octal escapes":
+                (('100   unlink("\\170") = 0',),
+                 "the trace gives the path %r, which is not 1 whole string in hex escapes" % '"\\170"'),
+            "a path with a letter escape":
+                (('100   unlink("\\n") = 0',),
+                 "the trace gives the path %r, which is not 1 whole string in hex escapes" % '"\\n"'),
+            "a path with a hex escape of 1 digit":
+                (('100   unlink("\\x7") = 0',),
+                 "the trace gives the path %r, which is not 1 whole string in hex escapes" % '"\\x7"'),
             "a descriptor that the test cannot read":
                 (("100   unlinkat(foo, %s, 0) = 0" % self.hexed("x"),),
                  "the trace gives the descriptor 'foo', which the test cannot read"),
             "a descriptor whose path strace cut short":
                 (("100   unlinkat(3</clone/su>..., %s, 0) = 0" % self.hexed("x"),),
                  "the trace gives the descriptor %r, which the test cannot read" % "3</clone/su>..."),
+            "a descriptor in hexadecimal":
+                (("100   unlinkat(0x3</clone/sub>, %s, 0) = 0" % self.hexed("x"),),
+                 "the trace gives the descriptor '0x3</clone/sub>', which the test cannot read"),
+            "a descriptor with a plus sign":
+                (("100   unlinkat(+3</clone/sub>, %s, 0) = 0" % self.hexed("x"),),
+                 "the trace gives the descriptor '+3</clone/sub>', which the test cannot read"),
+            "a descriptor at_fdcwd in small letters":
+                (("100   unlinkat(at_fdcwd</clone>, %s, 0) = 0" % self.hexed("x"),),
+                 "the trace gives the descriptor 'at_fdcwd</clone>', which the test cannot read"),
             "a line with no process id":
                 ((unlink, "unlink(%s) = 0" % self.hexed("y")),
                  "the trace holds a line that the test cannot read: %r" % ("unlink(%s) = 0" % self.hexed("y"))),
@@ -2936,6 +2963,15 @@ class TraceReaderTests(unittest.TestCase):
             "a line with a tab after the process id":
                 (("100\tunlink(%s) = 0" % self.hexed("x"),),
                  "the trace holds a line that the test cannot read: %r" % ("100\tunlink(%s) = 0" % self.hexed("x"))),
+            "a line with a space before the process id":
+                ((" 100   unlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a line that the test cannot read: %r" % (" 100   unlink(%s) = 0" % self.hexed("x"))),
+            "a line with a tab before the process id":
+                (("\t100   unlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a line that the test cannot read: %r" % ("\t100   unlink(%s) = 0" % self.hexed("x"))),
+            "a line whose process id has a sign":
+                (("-100   unlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a line that the test cannot read: %r" % ("-100   unlink(%s) = 0" % self.hexed("x"))),
             "a call resumed under a shorter name":
                 ((self.FORK, "101   unlinkat(AT_FDCWD</clone>, %s <unfinished ...>" % self.hexed("y"), unlink, resumed),
                  "the trace resumes a call that it did not start: %r" % resumed),
@@ -2976,12 +3012,45 @@ class TraceReaderTests(unittest.TestCase):
             "a named unread call with a result":
                 ((self.FORK, "101   unlinkat() = 0"),
                  "the trace gives a result for a call whose arguments strace could not read: 'unlinkat() = 0'"),
-            "a result that is neither a number nor ?":
+            "a result in hexadecimal":
                 (("100   unlink(%s) = 0x3" % self.hexed("x"),),
                  "the trace holds a call that the test cannot read: %r" % ("unlink(%s) = 0x3" % self.hexed("x"))),
-            "a result of ? with text after it":
+            "a result of ? with text right after it, with no space between them":
                 (("100   unlink(%s) = ?x" % self.hexed("x"),),
                  "the trace holds a call that the test cannot read: %r" % ("unlink(%s) = ?x" % self.hexed("x"))),
+            "a result with a plus sign":
+                (("100   unlink(%s) = +0" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s) = +0" % self.hexed("x"))),
+            "a call with no space before its =":
+                (("100   unlink(%s)= 0" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s)= 0" % self.hexed("x"))),
+            "a call with no space after its =":
+                (("100   unlink(%s) =0" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s) =0" % self.hexed("x"))),
+            "a call with 2 spaces after its =":
+                (("100   unlink(%s) =  0" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("unlink(%s) =  0" % self.hexed("x"))),
+            "a resumption with 2 spaces after <...":
+                (("100   unlink(%s <unfinished ...>" % self.hexed("x"), "100   <...  unlink resumed>) = 0"),
+                 "the trace holds a call that the test cannot read: '<...  unlink resumed>) = 0'"),
+            "a resumption with no space after <...":
+                (("100   unlink(%s <unfinished ...>" % self.hexed("x"), "100   <...unlink resumed>) = 0"),
+                 "the trace holds a call that the test cannot read: '<...unlink resumed>) = 0'"),
+            "a resumption with 2 spaces before resumed":
+                (("100   unlink(%s <unfinished ...>" % self.hexed("x"), "100   <... unlink  resumed>) = 0"),
+                 "the trace holds a call that the test cannot read: '<... unlink  resumed>) = 0'"),
+            "a resumption with no space before resumed":
+                (("100   unlink(%s <unfinished ...>" % self.hexed("x"), "100   <... unlinkresumed>) = 0"),
+                 "the trace holds a call that the test cannot read: '<... unlinkresumed>) = 0'"),
+            "a resumption whose name holds a capital letter":
+                (("100   unlink(%s <unfinished ...>" % self.hexed("x"), "100   <... Unlink resumed>) = 0"),
+                 "the trace holds a call that the test cannot read: '<... Unlink resumed>) = 0'"),
+            "a call whose name holds a capital letter":
+                (("100   Unlink(%s) = 0" % self.hexed("x"),),
+                 "the trace holds a call that the test cannot read: %r" % ("Unlink(%s) = 0" % self.hexed("x"))),
+            "a call that strace detached from whose name holds a capital letter":
+                ((self.FORK, "101   Unlink( <detached ...>"),
+                 "the trace holds a call that the test cannot read: 'Unlink('"),
             "an fchdir into a descriptor with no path":
                 (("100   fchdir(3) = 0",), "the trace gives the descriptor '3', with no path that the test can use"),
             "an fchdir into a descriptor with a relative path":
