@@ -976,12 +976,10 @@ class BoundsTest(unittest.TestCase):
         #   appends to starts, plus OWN_END_SECONDS: the same instant and
         #   value whose sum is the check's default bound. The reading the
         #   check takes is that bound exactly, the same float, so the
-        #   assertion fails it, while a bound raised above own_end by at
-        #   least the float spacing of that sum, 1 second or less
-        #   included, makes started plus bound a larger float, takes that
-        #   reading for the kill, and fails this test; a raise smaller
-        #   than that spacing can leave started plus bound the same
-        #   float and pass this test.
+        #   assertion fails it, while a bound raised above own_end by
+        #   1 second or by 0.5 seconds takes that reading for the kill and
+        #   fails this test, as a test mutant for each raise shows; a
+        #   smaller raise may pass this test.
         # Like each test that runs the check, it can still fail on a delay of
         # the test process, as the residual list in check_group_kill states.
         real_end_of_file = end_of_file
