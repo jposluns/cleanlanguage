@@ -27,8 +27,8 @@ tools/test-orch-stage2-hooks.py:
   run.
 - run_doctor_recorded, the 1 launcher of the suite, holds the timeout
   that each launch was given, however the case bound it, to the
-  enumerator starts that the launch recorded. It names a new file of the
-  launch's own in ORCH_STAGE2_ENUMERATOR_RUNS in the launch's
+  enumerator starts that the launch recorded. It names a new file of
+  the launch's own in ORCH_STAGE2_ENUMERATOR_RUNS in the launch's
   environment, and every enumerator that a case declares through
   write_registry first runs ENUM_RUN_MARK, which adds 1 line to that
   file. However the launch ends, the recorder counts the lines, and a
@@ -41,33 +41,32 @@ tools/test-orch-stage2-hooks.py:
   context. A launch with no start, or with no timeout, is not held.
 - Stage2Harness.write_registry checks the declared enumerator as the
   hook reads it, from the JSON text that it writes, so a tuple is
-  checked as the list that json writes and a str subclass as its
-  text, in 1 place, declared_enumerator_defect. It accepts an
-  enumerator that the hook would start only when its argv is exactly
-  this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS,
-  each a separate element, followed by any operands, and when its
-  timeout, as the hook reads it, is at most ENUM_TIMEOUT.
-  ENUM_PROGRAMS holds ENUM_FIXTURE, WRITING_ENUM_FIXTURE and
-  SLEEPING_ENUM_FIXTURE, the sleeping enumerator of the enumerator
-  timeout case, and the 2 pin cases of EnumeratorBounds require
-  exactly those 3, by the sha256 of each.
-  Each begins with ENUM_RUN_MARK and compiles, and after the mark it
-  names neither the record nor the environment and opens, removes or
-  writes no path but its own operands. The program is the argv element
-  itself, so the check reads the text that the interpreter compiles;
-  no file is read. Of the enumerators that the hook would start, it
-  refuses every other shape, including every other program and every
-  program file: a check of a program's text cannot see every way in
-  which the program could reach the record, and what the interpreter
-  runs for a file operand depends on the operand's name and content,
-  on how the path resolves, and on the file at each run, not only on
-  the text that a check reads. It refuses some enumerators that record
-  their start and leave the record alone, such as a program file that
-  begins with the mark or any program outside ENUM_PROGRAMS; each
-  refusal fails safe. It writes unchecked an enumerator that the hook
-  refuses before it starts anything: one that is not an object, or
-  whose argv is not a list of non-empty strings
-  (aiqt_hooks.py:22819-22829).
+  checked as the list that json writes and a str subclass as its text,
+  in 1 place, declared_enumerator_defect. It accepts an enumerator
+  that the hook would start only when its argv is exactly this
+  interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS, each a
+  separate element, followed by any operands, and when its timeout, as
+  the hook reads it, is at most ENUM_TIMEOUT. ENUM_PROGRAMS holds
+  ENUM_FIXTURE, WRITING_ENUM_FIXTURE and SLEEPING_ENUM_FIXTURE, the
+  sleeping enumerator of the enumerator timeout case, and the 2 pin
+  cases of EnumeratorBounds require exactly those 3, by the sha256 of
+  each. Each begins with ENUM_RUN_MARK and compiles, and after the
+  mark it names neither the record nor the environment and opens,
+  removes or writes no path but its own operands. The program is the
+  argv element itself, so the check reads the text that the
+  interpreter compiles; no file is read. Of the enumerators that the
+  hook would start, it refuses every other shape, including every
+  other program and every program file: a check of a program's text
+  cannot see every way in which the program could reach the record,
+  and what the interpreter runs for a file operand depends on the
+  operand's name and content, on how the path resolves, and on the
+  file at each run, not only on the text that a check reads. It
+  refuses some enumerators that record their start and leave the
+  record alone, such as a program file that begins with the mark or
+  any program outside ENUM_PROGRAMS; each refusal fails safe. It
+  writes unchecked an enumerator that the hook refuses before it
+  starts anything: one that is not an object, or whose argv is not a
+  list of non-empty strings (aiqt_hooks.py:22819-22829).
 - Every fixture enumerator is declared in that form, with ENUM_FIXTURE
   or WRITING_ENUM_FIXTURE as the program, so the backlog moves from
   argv[3] to argv[4], and the doctor operand label that the cases
@@ -76,8 +75,8 @@ tools/test-orch-stage2-hooks.py:
   hook: apart from requiring a list of non-empty strings, the hook
   passes the argv to subprocess.run unchanged (aiqt_hooks.py:22833),
   so the hook behaviour under test does not depend on its form. The
-  doctor's operand pre-check does: it checks each element from
-  argv[2] on as a path, as for a committed registry, whose argv[2] the
+  doctor's operand pre-check does: it checks each element from argv[2]
+  on as a path, as for a committed registry, whose argv[2] the
   registry gate requires to be a script, so for these registries it
   also checks -c and the program, and it refuses a special file at
   <root>/-c, running no enumerator, where the hook runs the
@@ -85,8 +84,8 @@ tools/test-orch-stage2-hooks.py:
   file enumerator keeps its own suite.
 - EnumeratorBounds requires that a stage-2 Stop and preflight each
   record 1 start and a stage-1 Stop none; that a launch 1 second under
-  its bound fails its case and a launch at its bound passes, for
-  1 start and for 2, also when check=True fails, and that one with no
+  its bound fails its case and a launch at its bound passes, for 1
+  start and for 2, also when check=True fails, and that one with no
   running case fails at once, with the launch's exception as the
   cause, also when it printed a doctor refusal as well; that each of
   ENUM_PROGRAMS begins with the record and names neither the record
@@ -142,10 +141,10 @@ tools/test-orch-stage2-hooks.py:
   at least 2 other paths name this interpreter and that it tries more
   than 1000 values, and is expected to pass; it states no count, which
   depends on the path of the interpreter. The named values and the
-  near misses are finite and catch only the values they hold; the
-  2 pins are what require the exact checks. No check that runs from
-  the file holds against all code of the file: that code can defeat
-  the scan of the fresh pin by routes that it does not model, as the
+  near misses are finite and catch only the values they hold; the 2
+  pins are what require the exact checks. No check that runs from the
+  file holds against all code of the file: that code can defeat the
+  scan of the fresh pin by routes that it does not model, as the
   residuals state.
 - DoctorCheckpointWrites._doctor drops a timeout parameter that no
   caller passes.
@@ -196,8 +195,8 @@ ENUM_RUN_MARK, fails 4 stage-2 cases on main's test files and none
 with this change; a 6 s delay of the real enumerator fails the hook
 case and the stamp test on main's files and neither with this change;
 a 21 s delay of the real enumerator fails the large-input
-InputFileType case on main's files and not with this change, and a
-61 s delay fails it with this change; the same 21 s delay fails 2
+InputFileType case on main's files and not with this change, and a 61
+s delay fails it with this change; the same 21 s delay fails 2
 ErrorPosition and 2 RuntimeGuard cases at their 20 s bounds on main's
 files and none with this change, and a 61 s delay fails
 ErrorPosition.test_missing_input with this change; a 50 s delay of the
@@ -237,19 +236,19 @@ name check, or also accepts a recording program file, when the name
 check finds nothing, when ENUM_FIXTURE lacks ENUM_RUN_MARK, and when
 the failure with no running case drops its cause or takes the failed
 registration of a doctor refusal as its cause. Each of those edits to
-the comparison of the argv also fails both pins and the near-miss case;
-a strip, case fold, resolution or dropped line feed made in
-PINNED_CHECKS as well still fails the near-miss case, and so does
-a write_registry that strips the first 3 argv elements before its
-check, which also fails both pins. EnumeratorBounds also fails, at
-both pins and at a named row, when the timeout statements accept up to
-61 or only whole numbers, when write_registry checks only an
-enumerator that has a timeout, when runs_enum_run_mark_first drops its
-compile call, and when program_leaves_record drops its test of strings
-or of the names _record, getenv and putenv, each also with the same
-edit made in PINNED_CHECKS; and at both pins alone when write_registry
-ignores a defect that names '-J' or ENUM_PROGRAMS gains a 4th program.
-It fails at the fresh pin alone when the file replaces
+the comparison of the argv also fails both pins and the near-miss
+case; a strip, case fold, resolution or dropped line feed made in
+PINNED_CHECKS as well still fails the near-miss case, and so does a
+write_registry that strips the first 3 argv elements before its check,
+which also fails both pins. EnumeratorBounds also fails, at both pins
+and at a named row, when the timeout statements accept up to 61 or
+only whole numbers, when write_registry checks only an enumerator that
+has a timeout, when runs_enum_run_mark_first drops its compile call,
+and when program_leaves_record drops its test of strings or of the
+names _record, getenv and putenv, each also with the same edit made in
+PINNED_CHECKS; and at both pins alone when write_registry ignores a
+defect that names '-J' or ENUM_PROGRAMS gains a 4th program. It fails
+at the fresh pin alone when the file replaces
 declared_enumerator_defect by assignment with a function of the same
 body that closes over another ENUM_PROGRAMS, binds write_registry on
 an instance, rebinds ENUM_PROGRAMS through globals() or a global
@@ -262,15 +261,15 @@ alone, ENUM_PROGRAMS gains the program through sys.modules[__name__],
 json.loads is replaced by setattr, through another name for json or
 through json.__dict__, or a __getattribute__ of the case gives
 write_registry a writer with no check; and the same case passes with
-another path to this interpreter as argv[0] when sys.executable is
-set to that path by setattr. The new doctor case fails when the
-doctor skips an argv element that is exactly -c.
-With a fixture enumerator that sleeps 70 s, from the same line as the
-6 s delay, neither the present-marker case of DoctorCheckpointWrites
-nor the DoctorStandInRestore case ends through a test bound, on main
-or with this change; with this change and the earlier bounds, each
-does. With 64 busy processes and the enumerator timeout case pinned to
-1 CPU, the case is expected to end OK in each of 3 runs.
+another path to this interpreter as argv[0] when sys.executable is set
+to that path by setattr. The new doctor case fails when the doctor
+skips an argv element that is exactly -c. With a fixture enumerator
+that sleeps 70 s, from the same line as the 6 s delay, neither the
+present-marker case of DoctorCheckpointWrites nor the
+DoctorStandInRestore case ends through a test bound, on main or with
+this change; with this change and the earlier bounds, each does. With
+64 busy processes and the enumerator timeout case pinned to 1 CPU, the
+case is expected to end OK in each of 3 runs.
 
 Residuals: a wider bound makes a load failure rarer, not impossible.
 An enumerator that hangs holds a test run for up to 60 s, a doctor or
@@ -280,43 +279,43 @@ run of SpecialFileInputs, or a migration run of InputFileType,
 ErrorPosition or RuntimeGuard in the migrate-todo suite, that blocks
 fails after 60 s instead of 20. The new hang case adds 60 s to the
 enumerate-backlog suite. The bound check counts only starts that an
-enumerator records. The record is a file that any process of this
-user can write, so its count rests on reading the 3 programs of
+enumerator records. The record is a file that any process of this user
+can write, so its count rests on reading the 3 programs of
 ENUM_PROGRAMS, and a program that the launcher starts directly is
 trusted as the suite's own code is. Code that the interpreter runs
 before any program under -I (site: .pth import lines and
 sitecustomize) and a registry written other than through
 write_registry are not seen, and a child that drops
-ORCH_STAGE2_ENUMERATOR_RUNS from its environment and a start that
-ends before its program runs are not counted. It holds only the
-starts a launch made when a case ran it, not a start recorded after
-the launch returned, and not a launch with no timeout. The doctor
-refuses a special file at <root>/-c for the -c registries of the
-stage-2 suite, where the hook runs the enumerator; the refusal runs no
-enumerator, a registry that the gate accepts never has -c at argv[2],
-and changing the doctor's operand model is product work outside this
-change. The fixture value 60 is safe only while the test registries
-are never gated. No check in the test process can hold the names that
-the pinned checks read, since code of the file can rebind them at run
-time; the fresh pin reads the text of the file in a new process, and
-no check that runs from the file holds against all code of the file:
-its scan finds only the forms of binding that the comment above
-PIN_PROGRAM lists, so code of the file can defeat it by other routes,
-such as a store through sys.modules[__name__], setattr(json, "loads",
-...) or setattr(sys, "executable", ...), a store through another name
-for a module, a store into json.__dict__, or a __getattribute__ of a
-case class, each of which passes both pins while write_registry, as
-that case reaches it, accepts a program outside ENUM_PROGRAMS or
-another argv[0]. Nor does it see a star import, a binding that names
-its target only at run time (a built name, a variable passed to
-setattr, exec or eval of a built string, or a mapping built
-elsewhere), a store through another name bound to a check, native
-code, or a run-time edit of the fresh pin case itself, of what it
-starts or of how it reads the result. Neither pin sees an
-edit made to the pin and to the code together, such as a
-write_registry that ignores a defect that names '-J' or a 4th program
-of ENUM_PROGRAMS with its sha256 added, or a change outside the file
-to a name that the pinned bodies read, and the named rows and the
-near-miss case refuse only the finite values that they hold. The new
-stamp test fails on a backward clock step during the run. The load
-check covers only the enumerator timeout case and CPU contention.
+ORCH_STAGE2_ENUMERATOR_RUNS from its environment and a start that ends
+before its program runs are not counted. It holds only the starts a
+launch made when a case ran it, not a start recorded after the launch
+returned, and not a launch with no timeout. The doctor refuses a
+special file at <root>/-c for the -c registries of the stage-2 suite,
+where the hook runs the enumerator; the refusal runs no enumerator, a
+registry that the gate accepts never has -c at argv[2], and changing
+the doctor's operand model is product work outside this change. The
+fixture value 60 is safe only while the test registries are never
+gated. No check in the test process can hold the names that the pinned
+checks read, since code of the file can rebind them at run time; the
+fresh pin reads the text of the file in a new process, and no check
+that runs from the file holds against all code of the file: its scan
+finds only the forms of binding that the comment above PIN_PROGRAM
+lists, so code of the file can defeat it by other routes, such as a
+store through sys.modules[__name__], setattr(json, "loads", ...) or
+setattr(sys, "executable", ...), a store through another name for a
+module, a store into json.__dict__, or a __getattribute__ of a case
+class, each of which passes both pins while write_registry, as that
+case reaches it, accepts a program outside ENUM_PROGRAMS or another
+argv[0]. Nor does it see a star import, a binding that names its
+target only at run time (a built name, a variable passed to setattr,
+exec or eval of a built string, or a mapping built elsewhere), a store
+through another name bound to a check, native code, or a run-time edit
+of the fresh pin case itself, of what it starts or of how it reads the
+result. Neither pin sees an edit made to the pin and to the code
+together, such as a write_registry that ignores a defect that names
+'-J' or a 4th program of ENUM_PROGRAMS with its sha256 added, or a
+change outside the file to a name that the pinned bodies read, and the
+named rows and the near-miss case refuse only the finite values that
+they hold. The new stamp test fails on a backward clock step during
+the run. The load check covers only the enumerator timeout case and
+CPU contention.
