@@ -83,9 +83,11 @@ of 180 seconds, these 2 with a stand-in end_of_file that returns the
 check's own start reading, which the check appends to a list the
 caller passes, plus 90 seconds, the same instant and value whose sum
 is the check's default bound, so the reading is at that bound exactly
-and a bound raised above the own end by any amount, 1 second or less
-included, takes it for the kill and fails the test, and asserts that
-each run fails at the own-end assertion; another asserts that a stub
+and a bound raised above the own end by at least the float spacing
+of that sum, 1 second or less included, takes it for the kill and
+fails the test, while a raise smaller than that spacing can leave
+the sum the same float and pass the test, and asserts that each
+run fails at the own-end assertion; another asserts that a stub
 started after the release exits at its first read, as no ready byte
 shows; and another asserts, on a stand-in clock, that an end of file
 seen after its deadline is not taken. A tripwire test asserts that the
