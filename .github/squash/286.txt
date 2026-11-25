@@ -10,8 +10,9 @@ unchanged.
 - fork() = 101 is read as the call, and its child starts in the
   folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
   that folder when its maker enters another by chdir after the call,
-  also when a line of the child interrupted the call and it is
-  resumed with the id of the child.
+  also when strace left the call unfinished and resumed it with the
+  id of the child at the next line, and when a line of the child
+  interrupted the call and it is resumed with the id of the child.
 - For each of clone, clone3, fork and vfork, in each of the 9 forms
   in which strace cuts a call short and when it ends with the result
   ? and the note <unavailable>, 1 later process with no maker is
@@ -78,10 +79,17 @@ unchanged.
   cannot read; a line of a process after a call that strace
   detached from, 1 after an unread call left unfinished and 1 after
   an unread call that ended with the result ?; a relative path in a
-  process with no maker and 1 in a folder that a chdir or fchdir
-  that strace cut short left not known; and a process that no
-  traced call made when no call cut short came before it and 1 when
-  each such call has let 1 start. The docstrings say so.
+  process with no maker, 1 in a folder that a chdir or fchdir that
+  strace cut short left not known and 1 in a child that a process
+  whose folder was not known made without CLONE_FS; and a process
+  that no traced call made when no call cut short came before it and
+  1 when each such call has let 1 start. The docstrings say so. Each
+  of these refusals is checked whole by 1 or more subtests, among
+  them a relative path after a chdir or an fchdir that strace
+  detached from or that ended with the result ? in a shared folder,
+  and 1 in a child that a clone, clone3, fork or vfork made without
+  CLONE_FS in a process with no maker or after such a chdir or
+  fchdir.
 - Among the examples of refusals in the module docstring are 2 for
   relative paths, not a list of all that end the case: 1 of a
   process with no maker, with no descriptor or with AT_FDCWD, in a
@@ -113,13 +121,15 @@ unchanged.
   that it gives or a descriptor form of that path has no subtest.
   Each takes the forms and the kinds of process that it wants from
   lists of its own, not from the tables that write the subtests, so
-  that an entry dropped from such a table fails it.
+  that an entry dropped from such a table fails it; the refusal test
+  takes the results from a list that names each form, not from the
+  tables of forms that write its subtests.
 - Each subtest whose trace resumes a call with the result ? says
   "resumed with ?" in its label.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 5 tests, OK, here and 3 tests, OK, on main. Each
-of the 58 reader mutants that the pull request description lists is
+of the 63 reader mutants that the pull request description lists is
 expected to pass case 27 on main, and each but cap-4 and
 allowance-from-fifth, which break the rule only while more than 4
 such calls are untaken, to fail it here. In a git checkout with
