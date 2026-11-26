@@ -3250,8 +3250,11 @@ PLAIN_CONTAINERS = (tuple, list, dict)
 # runs; capture_problems() holds it for each kind but type. type(REPO_ROOT) is the type of a path on this platform;
 # Path itself is not.
 PIN_KINDS = (re.Pattern, types.ModuleType, type, type(REPO_ROOT))
-# Check 7: the kinds of PLAIN_TYPES, PLAIN_CONTAINERS and PIN_KINDS that Python lets no class subclass, so that
-# pin_value_problems() fails for each other kind whose bare subclass it cannot make, and for each of these that it can.
+# Check 7: the kinds of PLAIN_TYPES, PLAIN_CONTAINERS and PIN_KINDS that Python lets no class subclass, and no other
+# kind, so that pin_value_problems() fails for each other kind of those 3 tuples whose bare subclass it cannot make,
+# for each of these that it can, and for each kind named here that is in none of the 3 tuples. Python lets no class
+# subclass other kinds too, such as slice and range, which are in none of the 3 tuples, so FINAL_KINDS does not name
+# them.
 FINAL_KINDS = (bool, type(None), re.Pattern)
 
 
@@ -3406,7 +3409,9 @@ def pin_shared_gate(source: bytes) -> bytes:
     """source with the statements of PIN_NEIGHBOURS moved from their own lines onto the line of the statement of
     PIN_NAME, the 1st before it and the 2nd after it, joined by "; ", with a comment after them, each statement found
     by the syntax tree. It raises ValueError unless each of the 3 names is bound by exactly 1 statement at the top level
-    of source, and each such statement is a simple statement on 1 line, alone on the lines of PIN_NEIGHBOURS."""
+    of source, each such statement is a simple statement on 1 line that binds its name alone, so that no 2 of the 3
+    names share a statement, whose move would drop or repeat a binding, and those of PIN_NEIGHBOURS stand alone on
+    their lines."""
     tree = ast.parse(source)
     found = {}
     for name in (PIN_NAME, *PIN_NEIGHBOURS):
@@ -3414,6 +3419,9 @@ def pin_shared_gate(source: bytes) -> bytes:
         if (len(statements) != 1 or not isinstance(statements[0], (ast.Assign, ast.AnnAssign, ast.AugAssign))
                 or statements[0].lineno != statements[0].end_lineno):
             raise ValueError(f"{name} is not bound by exactly 1 simple statement on 1 line at the top level")
+        targets = getattr(statements[0], "targets", [getattr(statements[0], "target", None)])
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or targets[0].id != name:
+            raise ValueError(f"the statement of {name} does not bind that name alone")
         found[name] = statements[0]
     rows = source.splitlines(keepends=True)
     texts = {}
@@ -3460,10 +3468,11 @@ def pin_value_problems() -> list[str]:
     dict and of list that holds only plain data, and, for each kind of PLAIN_TYPES, PLAIN_CONTAINERS and PIN_KINDS, an
     instance of a bare subclass, for each kind but those of FINAL_KINDS, and an object whose class gives the kind as
     its __class__, so that each kind test of pin_value() and plain_data() must match the exact type; a problem for
-    each such subclass that cannot be made, and for each kind of FINAL_KINDS that Python lets a class subclass; unless
-    reader_pin_text() raises it for a value with __wrapped__ that a statement other than a def binds; unless
-    pin_reflowed_gate() and pin_shared_gate() raise ValueError on each source that the code here gives them and that
-    their docstrings refuse, an unpacking assignment to PIN_NAME among them; and unless, on each of 3 base gates, the
+    each such subclass that cannot be made, for each kind of FINAL_KINDS that Python lets a class subclass, and for
+    each kind of FINAL_KINDS that is in none of the 3 tuples; unless reader_pin_text() raises it for a value with
+    __wrapped__ that a statement other than a def binds; unless pin_reflowed_gate() and pin_shared_gate() raise
+    ValueError on each source given them here that their docstrings refuse, among them an unpacking assignment to
+    PIN_NAME and statements that 2 of PIN_NAME and PIN_NEIGHBOURS share; and unless, on each of 3 base gates, the
     committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME by exactly 1
     statement at its top level, and reader_pin_problems(), given the gate with that statement, any statement that
     binds PIN_NAME, as the syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem, which says that
@@ -3567,7 +3576,8 @@ def pin_value_problems() -> list[str]:
     # For each kind that pin_value() or plain_data() matches, an instance of a bare subclass of it, for each kind but
     # those of FINAL_KINDS, and an object whose class gives the kind as its __class__, so that a kind added to 1 of
     # the 3 tuples gets both cases with no further edit. A subclass that cannot be made, as a class or as an instance
-    # from the arguments here, fails, never a skip, and so does a kind of FINAL_KINDS that Python lets a class subclass.
+    # from the arguments here, fails, never a skip, and so does a kind of FINAL_KINDS that Python lets a class subclass,
+    # or that is in none of the 3 tuples, such as slice, which Python lets no class subclass either.
     made_from = {types.ModuleType: ("qz",), kind_of_class: ("QzClass", (), {})}
     common = {"pattern": "x", "flags": 32, "__name__": "re", "__getattr__": lambda self, name: "Path",
               "is_relative_to": lambda self, other: False, "__str__": lambda self: "/qz",
@@ -3590,6 +3600,10 @@ def pin_value_problems() -> list[str]:
             refused += ((f"an instance of a bare subclass of {named}", subclass(*made_from.get(kind, ()))),)
         except Exception as error:
             problems.append(f"an instance of a bare subclass of {named} could not be made: {error!r}")
+    for kind in FINAL_KINDS:
+        if not any(kind is captured for captured in (*PLAIN_TYPES, *PLAIN_CONTAINERS, *PIN_KINDS)):
+            problems.append(f"FINAL_KINDS names {kind.__module__}.{kind.__qualname__}, which is in none of "
+                            "PLAIN_TYPES, PLAIN_CONTAINERS and PIN_KINDS")
     for value in plain:
         try:
             written = pin_value(value)
@@ -3610,14 +3624,26 @@ def pin_value_problems() -> list[str]:
     except UnpinnableValue:
         pass
     # Sources that the docstrings of the 2 builders refuse: PIN_NAME bound by an unpacking, by a chained assignment or
-    # by an annotated one, and a neighbour of PIN_NAME that shares its line or a statement of PIN_NAME on 2 lines.
+    # by an annotated one, a neighbour of PIN_NAME that shares its line, a statement of PIN_NAME on 2 lines, and a
+    # statement that binds more than its own name: shared, by an unpacking or a chained assignment, by PIN_NAME and the
+    # 1st neighbour, by PIN_NAME and the 2nd or by the 2 neighbours, or binding a neighbour and another name.
     for build, source in ((pin_reflowed_gate, b'REQUESTED_FILES, EXTRA = (("favicon.ico",), 1)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES = EXTRA = ("favicon.ico",)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES: tuple = ("favicon.ico",)\n'),
                           (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",); EXTRA = 1\n'
                                             b'REQUESTED_FILES = ("favicon.ico",)\nREDIRECT_TARGETS = "assets/"\n'),
                           (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = (\n    "favicon.ico",)\n'
-                                            b'REDIRECT_TARGETS = "assets/"\n')):
+                                            b'REDIRECT_TARGETS = "assets/"\n'),
+                          (pin_shared_gate, b'LOADED_SEGMENTS, REQUESTED_FILES = ("assets",), ("favicon.ico",)\n'
+                                            b'REDIRECT_TARGETS = "assets/"\n'),
+                          (pin_shared_gate, b'LOADED_SEGMENTS = REQUESTED_FILES = ("assets",)\n'
+                                            b'REDIRECT_TARGETS = "assets/"\n'),
+                          (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",)\n'
+                                            b'REQUESTED_FILES, REDIRECT_TARGETS = ("favicon.ico",), "assets/"\n'),
+                          (pin_shared_gate, b'LOADED_SEGMENTS, REDIRECT_TARGETS = ("assets",), "assets/"\n'
+                                            b'REQUESTED_FILES = ("favicon.ico",)\n'),
+                          (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = ("favicon.ico",)\n'
+                                            b'REDIRECT_TARGETS, EXTRA = "assets/", 1\n')):
         try:
             problems.append(f"{build.__name__}() rewrites {source!r} as {build(source)!r}, not raising ValueError")
         except ValueError:
