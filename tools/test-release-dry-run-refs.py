@@ -13,7 +13,10 @@ writes during the run, as a commit on another branch or a fetch that moves a rem
 does, fails the run only when it is a tag or a note, when it is the HEAD of repo_root or the branch
 that worktree has checked out, or when it is a ref that git for-each-ref lists from repo_root,
 created or moved onto the dry run's commit or a descendant of it; any other such write is outside
-the proof.
+the proof. The dry run's commit is the one the script names before git commit runs, and the run
+fails unless git commit leaves the HEAD of the throwaway worktree at it, so a hook that moves that
+HEAD cannot point the leak check at another commit. The leak check reads with replace refs turned
+off, so a refs/replace/ ref cannot hide a ref that contains the commit.
 
 The script's header states the residual of the proof in these words:
 
@@ -43,15 +46,21 @@ Released line does not name, write the site files that the script's assertions r
 gate. The repository has branches main, feature and other (other checked out in a second
 worktree), a lightweight tag v1.0.0, an annotated tag v0.9.0 and refs/remotes/origin/main.
 
-A ref case's writes are made by a git stand-in, first on PATH for the run, that runs the real git
-for every call. When the script first asks git to add a worktree, the stand-in makes the case's
-writes that it attributes to another worktree, before it adds the worktree. When the script's own
-commit of the dry run has been made, the stand-in records that commit and makes the case's writes
-that the dry run makes, in the dry run's worktree. So the before snapshot must precede the dry run's
-first ref write, and the leak check must read the commit that the dry run made in its own worktree;
-a script in which either does not hold fails a ref case. Every ref case requires both points to have
-been reached and its writes to have succeeded. Concurrency is modelled as sequenced writes, which a
-snapshot comparison cannot tell from a race, and no real race is run.
+A ref case's writes are made at 3 points. A git stand-in, first on PATH for the run, runs the real
+git for every call and makes the writes of the first 2 points. When the script first asks git to add
+a worktree, the stand-in makes the case's first writes, which are all another worktree's, before it
+adds the worktree. When the script's git commit of the dry run has made its commit, at the point
+where git runs a post-commit hook, the stand-in records that commit and makes the case's second
+writes, in the dry run's worktree, before git commit returns: these are the dry run's own writes,
+except in cases 28 and 29, which make another worktree's writes there because they need the
+dry run's commit. Once the check of step 5, the script's last step before step 6, has passed, its
+stand-in makes the case's late writes, in the dry run's worktree. So the before snapshot must
+precede the dry run's first ref write, the leak check must read the commit that the dry run's git
+commit made, whatever runs inside that git commit, and the after snapshot and the leak check must
+follow step 5; a script in which any of these does not hold fails a ref case. Every ref case other
+than case 31 requires all 3 points to have been reached and its writes to have succeeded; case 31
+requires the first 2, and requires the run to stop before the third. Concurrency is modelled as
+sequenced writes, which a snapshot comparison cannot tell from a race, and no real race is run.
 
 A case expected to pass must exit 0 with the script's success message. A ref case expected to fail
 must exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison,
@@ -64,8 +73,9 @@ for-each-ref, which the old whole-repository hash compared, taken after the case
 after the run, and requires exactly the refs that the case names to differ, so the old check failed
 exactly the ref cases that name one. Case 20 also requires its new branch to be at a child of the
 dry run's commit, case 27 requires its ref to be at a tree, cases 28 and 29 require the other
-worktree's ref and HEAD to be at the dry run's commit, and case 30 requires ORIG_HEAD of the main
-worktree to be at the dry run's commit.
+worktree's ref and HEAD to be at the dry run's commit, case 30 requires ORIG_HEAD of the main
+worktree to be at the dry run's commit, and case 36 requires its new branch to be at a child of the
+dry run's commit that its replace ref shows with no parent.
 
 The ref cases, each with its expected outcome:
 
@@ -116,21 +126,38 @@ The ref cases, each with its expected outcome:
   residual, since git for-each-ref lists no HEAD.
 - 30, the dry run points ORIG_HEAD of the main worktree at its commit: passes, a blind spot before
   and after, since git for-each-ref lists no ref outside refs/.
+- 31, a hook of the dry run's commit keeps that commit in a ref and moves the HEAD of the dry run's
+  worktree to a child of it: fails closed at the commit, naming that HEAD and the dry run's commit.
+- 32, the dry run moves an existing tag after its last step: fails, naming the tag.
+- 33, the dry run points a ref in a namespace of its own at its commit after its last step: fails,
+  naming that ref.
+- 34, the dry run adds a note under a notes ref other than refs/notes/commits: fails, naming that
+  notes ref.
+- 35, the dry run points per-worktree refs of the main worktree at its commit: fails, naming both.
+- 36, the dry run points a new branch at a descendant of its commit and hides that commit's parent
+  with a replace ref: fails, naming the branch.
 
-The 5 fail-closed cases run the whole script too: in a folder that is not a repository, in a
-repository whose HEAD resolves to no commit, with a tag and note listing that git refuses after
-both HEAD reads succeed, and with a leak check that git refuses, each fails with the script's
-message, never read as an empty listing; in a repository with no tag and no note it passes. A
-refused call is made by a git wrapper, first on PATH, that exits 128 when it is given the argument
-it refuses and otherwise runs git. These 5 cases make no writes and do not use the git stand-in, so
-they reach neither of its points and compare no listing. The first 2 run the copy of the script in
-a folder that holds no commit of it, and since each requires a message of the before snapshot,
-they also require that snapshot to be the script's first git call.
+The 8 fail-closed cases run the whole script too: in a folder that is not a repository, in a
+repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
+listing that git refuses in the before snapshot, with one that git refuses only in step 6, with a
+leak check that git refuses, and with each git call that makes or reads the dry run's commit
+refused in turn, each fails with exit 1 and the script's message, never read as an empty listing;
+in a repository with no tag and no note it passes. A refused call is made by a git wrapper, first on
+PATH, that records every call and exits 128, or the status the case names, when it is given the
+argument it refuses, from the call that the case names on, and otherwise runs git. Each failing
+case requires the script's message to be the last line of its output, and the script's version
+line to be printed exactly when the failing read comes after the before snapshot, so the run must
+end at that read. These 8 cases make no writes and do not use the git stand-in, so they reach none
+of its points and compare no listing. The first 2 run the copy of the script in a folder that holds
+no commit of it, and they require the wrapper to have recorded only the reads of the before
+snapshot that precede the failure, so they also require that snapshot to be the script's first git
+call.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
 hook folder given as GIT_CONFIG_COUNT entries (the environment form of git -c), fixed author and
-committer dates, and DRY_DATE fixed. Every process is bounded by a timeout, runs in a session of its
+committer dates, and DRY_DATE fixed; a ref case's run also has REF_CASE_HOOKS, the folder of its
+writes. Every process is bounded by a timeout, runs in a session of its
 own, and is killed with its process group when it ends or times out; nothing is left running in the
 background.
 
@@ -139,7 +166,8 @@ next step of release-dry-run.yml runs with the real tools, and the script runs w
 first on PATH and an environment that the test fixes, not those of that workflow. A change to the
 script is caught only when it changes what a case observes, so a change that acts only outside the
 cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
-ref no case writes, is not caught. The cases run on 1 git version with its default ref backend.
+ref no case writes or stops step 6 reading one, is not caught. The cases run on 1 git version with
+its default ref backend.
 
 Usage: python3 -I tools/test-release-dry-run-refs.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -171,6 +199,8 @@ SUCCESS = "release-dry-run: every step, gate, and assertion passed for v1.0.1 (n
 # The stand-in for every Python tool the script runs, named by its file name.
 STUB = r'''"""A stand-in for a tool of the release path, chosen by its file name, for the ref cases."""
 import hashlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -253,6 +283,15 @@ elif NAME == "set-release-links":
                 sys.exit(f"set-release-links: {path} is out of date")
         else:
             Path(path).write_text(text, encoding="utf-8")
+    # The late point of a ref case: once the check of step 5, the script's last step before step 6,
+    # has passed, make the case's late writes in the dry run's worktree.
+    hooks = os.environ.get("REF_CASE_HOOKS")
+    if "--check" in found and hooks and not (Path(hooks) / "late.done").exists():
+        (Path(hooks) / "late.done").write_bytes(b"")
+        if subprocess.run(["bash", "--noprofile", "--norc", "-e", str(Path(hooks) / "late.sh")],
+                          stdout=sys.stderr).returncode != 0:
+            sys.exit(97)
+        (Path(hooks) / "late.ok").write_bytes(b"")
 '''
 STUB_TOOLS = ("skill-version", "skill-release-date-client", "release-package", "set-release-links",
               "generate-sitemap", "check-release-links", "check-page-metadata", "check-links",
@@ -272,18 +311,23 @@ FILES = {
     "site/_redirects": "/privacy https://posluns.ca/privacy/ 301\n",
 }
 # The git stand-in of the ref cases. It runs the real git for every call. Before the first call that
-# adds a worktree it runs concurrent.sh; after the dry run's commit it records that commit and runs
-# own.sh in the dry run's worktree. A failing write fails the call, so the run cannot pass.
+# adds a worktree it runs concurrent.sh; after the dry run's git commit, at the point where git runs
+# a post-commit hook, it records that commit and runs own.sh in the dry run's worktree. A failing
+# write fails the call, so the run cannot pass.
 HOOK = """#!/bin/sh
 real={real}
 hooks={hooks}
 point=
 previous=
+subcommand=
+message=
 for arg in "$@"; do
   if [ "${{previous}}" = worktree ] && [ "${{arg}}" = add ]; then point=worktree; fi
-  case "${{arg}}" in "Dry run: version "*) point=commit ;; esac
+  if [ "${{arg}}" = commit ]; then subcommand=commit; fi
+  case "${{arg}}" in "Dry run: version "*) message=dry ;; esac
   previous="${{arg}}"
 done
+if [ "${{subcommand}}" = commit ] && [ "${{message}}" = dry ]; then point=commit; fi
 if [ "${{point}}" = worktree ] && [ ! -e "${{hooks}}/worktree.done" ]; then
   : > "${{hooks}}/worktree.done"
   PATH={path} bash --noprofile --norc -e "${{hooks}}/concurrent.sh" >&2 || exit 97
@@ -361,21 +405,44 @@ def place_script(folder: Path) -> Path:
     return target
 
 
-def refusing_git(folder: Path, env: dict, refused: str) -> Path:
-    """A folder holding a git wrapper that exits 128 when it is given the argument refused."""
+def refusing_git(folder: Path, env: dict, refused: str | None = None, status: int = 128, after: int = 0) -> Path:
+    """A folder holding a git wrapper that appends the arguments of each call it is given, joined by
+    spaces, as a line of folder/log, and exits status, without running git, on each call given the
+    argument refused after the first after such calls; it runs git for every other call."""
     real = real_git(env)
     folder.mkdir()
+    refusal = ""
+    if refused is not None:
+        refusal = (
+            "refuse=no\n"
+            "for arg in \"$@\"; do\n"
+            f"  if [ \"${{arg}}\" = {shlex.quote(refused)} ]; then refuse=yes; fi\n"
+            "done\n"
+            "if [ \"${refuse}\" = yes ]; then\n"
+            f"  printf 'x' >> {shlex.quote(str(folder / 'count'))}\n"
+            f"  if [ \"$(wc -c < {shlex.quote(str(folder / 'count'))})\" -gt {after} ]; then\n"
+            f"    printf 'wrapper: refused %s\\n' {shlex.quote(refused)} >&2\n"
+            f"    exit {status}\n"
+            "  fi\n"
+            "fi\n")
     (folder / "git").write_text(
         "#!/bin/sh\n"
-        "for arg in \"$@\"; do\n"
-        f"  if [ \"${{arg}}\" = {shlex.quote(refused)} ]; then\n"
-        f"    printf 'wrapper: refused %s\\n' {shlex.quote(refused)} >&2\n"
-        "    exit 128\n"
-        "  fi\n"
-        "done\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(folder / 'log'))}\n"
+        + refusal +
         f"exec {shlex.quote(real)} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
     return folder
+
+
+def git_log(folder: Path) -> list:
+    """The calls that the wrapper in folder recorded, in order."""
+    return (folder / "log").read_text(encoding="utf-8").splitlines()
+
+
+def last_line(err: str) -> str:
+    """The last line of err, the message of the failure that ended the run."""
+    lines = err.rstrip("\n").split("\n")
+    return lines[-1]
 
 
 def run_script(script: Path, env: dict, first_on_path: Path | None = None):
@@ -393,7 +460,8 @@ FETCHED = """fetched="$(git -C "${other}" commit-tree -p refs/remotes/origin/mai
 git -C "${other}" update-ref refs/remotes/origin/main "${fetched}\""""
 
 # (case, setup before the run, writes another worktree makes before the dry run adds its worktree,
-# writes the dry run makes in its worktree after its commit, with ${dry} naming that commit, expected
+# writes made in the dry run's worktree after its commit, before its git commit returns, with ${dry}
+# naming that commit (the dry run's own writes, except in cases 28 and 29), expected
 # outcome, the texts a failure must print, {dry} standing for the dry run's commit, {before} for the
 # before snapshot and {after} for the after one, and the refs whose line in the whole-repository
 # listing differs between the end of the setup and the end of the run, which the old
@@ -470,7 +538,37 @@ CASES = (
      'git -C "${other}" checkout -q --detach "${dry}"', "pass", (), ()),
     ("30 the dry run points ORIG_HEAD of the main worktree at its commit", "", "",
      'git -C "${repo_root}" update-ref ORIG_HEAD "${dry}"', "pass", (), ()),
+    ("31 a hook of the dry-run commit keeps that commit in a ref and moves the worktree's HEAD to a child of it",
+     "", "",
+     'git update-ref refs/keep/dry HEAD\nchild="$(git commit-tree -p HEAD -m Hook \'HEAD^{tree}\')"\n'
+     'git update-ref --no-deref HEAD "${child}"', "fail closed",
+     ("release-dry-run: the dry-run commit left the HEAD of its worktree at ", "not at the dry-run commit {dry};"),
+     ("refs/keep/dry",)),
+    ("32 the dry run moves an existing tag after its last step", "", "", "", "fail",
+     (BEFORE, "{dry} refs/tags/v1.0.0"), ("refs/tags/v1.0.0",)),
+    ("33 the dry run points a ref in a namespace of its own at its commit after its last step", "", "", "",
+     "fail", ("these refs contain its commit {dry}:\nrefs/keep/late\n",), ("refs/keep/late",)),
+    ("34 the dry run adds a note under a notes ref other than refs/notes/commits", "", "",
+     "git notes --ref=review add -m dry HEAD", "fail", (BEFORE, "refs/notes/review"), ("refs/notes/review",)),
+    ("35 the dry run points per-worktree refs of the main worktree at its commit", "", "",
+     'git -C "${repo_root}" update-ref refs/bisect/bad "${dry}"\n'
+     'git -C "${repo_root}" update-ref refs/worktree/leak "${dry}"', "fail",
+     ("these refs contain its commit {dry}:\nrefs/bisect/bad\nrefs/worktree/leak\n",),
+     ("refs/bisect/bad", "refs/worktree/leak")),
+    ("36 the dry run hides a new branch at a descendant of its commit with a replace ref", "", "",
+     'child="$(git commit-tree -p "${dry}" -m Descendant "${dry}^{tree}")"\ngit update-ref refs/heads/carry "${child}"\n'
+     'git replace "${child}" "$(git commit-tree -m Replacement "${dry}^{tree}")"', "fail",
+     ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry", "refs/replace/{carry}")),
 )
+# The late writes of the cases that make them, by case number: writes the dry run makes in its
+# worktree once the check of step 5, its last step before step 6, has passed, with ${dry} naming the
+# dry-run commit. Every other ref case makes no late writes.
+LATE = {
+    "32": "git tag -f v1.0.0 HEAD",
+    "33": "git update-ref refs/keep/late HEAD",
+}
+# The ref cases that must stop at the dry-run commit, and so must not reach the late point.
+STOP_AT_COMMIT = ("31",)
 
 
 class Fixture:
@@ -530,11 +628,14 @@ class Fixture:
         head = ref.strip() if ref.strip() else "detached"
         return f"HEAD ref: {head}\nHEAD commit: {commit.strip()}\n{listing}".rstrip("\n")
 
-    def hook(self, concurrent: str, own: str) -> Path:
+    def hook(self, concurrent: str, own: str, late: str = "") -> Path:
         """Write the case's writes and the git stand-in, and return the folder that holds it."""
         variables = f"repo_root={shlex.quote(str(self.main))}\nother={shlex.quote(str(self.other))}\n"
         (self.hooks / "concurrent.sh").write_text(variables + concurrent + "\n", encoding="utf-8")
         (self.hooks / "own.sh").write_text(variables + 'wt="$(pwd)"\n' + own + "\n", encoding="utf-8")
+        (self.hooks / "late.sh").write_text(
+            variables + f'wt="$(pwd)"\ndry="$(cat {shlex.quote(str(self.hooks / "dry"))})"\n' + late + "\n",
+            encoding="utf-8")
         folder = self.tmp / "hook"
         folder.mkdir()
         (folder / "git").write_text(HOOK.format(real=shlex.quote(real_git(self.env)),
@@ -545,7 +646,7 @@ class Fixture:
 
 
 class RefComparisonCases(unittest.TestCase):
-    def run_case(self, setup: str, concurrent: str, own: str):
+    def run_case(self, number: str, setup: str, concurrent: str, own: str):
         """(fixture, exit code, stdout, stderr, dry commit, before snapshot, after snapshot, listing
         before, listing after). The listing is git for-each-ref of the whole repository, taken by
         the test after the case's setup and once the run has ended, and so are the snapshots."""
@@ -557,10 +658,15 @@ class RefComparisonCases(unittest.TestCase):
             self.assertEqual(code, 0, f"the case's setup exited {code}: {err}")
         listing_before = fixture.git("for-each-ref")
         before = fixture.snapshot()
-        code, out, err = run_script(fixture.script, fixture.env, fixture.hook(concurrent, own))
-        for mark in ("concurrent.ok", "own.ok"):
+        env = dict(fixture.env, REF_CASE_HOOKS=str(fixture.hooks))
+        code, out, err = run_script(fixture.script, env, fixture.hook(concurrent, own, LATE.get(number, "")))
+        marks = ("concurrent.ok", "own.ok") if number in STOP_AT_COMMIT else ("concurrent.ok", "own.ok", "late.ok")
+        for mark in marks:
             self.assertTrue((fixture.hooks / mark).exists(),
                             f"the case's writes did not run to the end ({mark} is missing)\n{out}{err}")
+        if number in STOP_AT_COMMIT:
+            self.assertFalse((fixture.hooks / "late.done").exists(),
+                             f"case {number}: the run went on past the dry-run commit\n{out}{err}")
         dry = (fixture.hooks / "dry").read_text(encoding="utf-8").strip()
         return fixture, code, out, err, dry, before, fixture.snapshot(), listing_before, fixture.git("for-each-ref")
 
@@ -573,8 +679,13 @@ class RefComparisonCases(unittest.TestCase):
         return tuple(sorted(ref for ref in old.keys() | new.keys() if old.get(ref) != new.get(ref)))
 
     def check(self, name, setup, concurrent, own, outcome, texts, changed):
-        fixture, code, out, err, dry, snapshot, after_snapshot, before, after = self.run_case(setup, concurrent, own)
+        number = name.split()[0]
+        fixture, code, out, err, dry, snapshot, after_snapshot, before, after = self.run_case(number, setup,
+                                                                                              concurrent, own)
         self.assertIsNotNone(snapshot, f"case {name}: the before snapshot could not be read")
+        if any("{carry}" in ref for ref in changed):
+            carry = fixture.git("rev-parse", "--verify", "refs/heads/carry").strip()
+            changed = tuple(ref.format(carry=carry) for ref in changed)
         self.assertEqual(self.differing(before, after), tuple(sorted(changed)),
                          f"case {name}: these refs changed in the whole-repository listing, not {changed!r}, so "
                          "the case's writes are not those it states")
@@ -609,6 +720,11 @@ class RefComparisonCases(unittest.TestCase):
         if name.startswith("30 "):
             self.assertEqual(fixture.git("rev-parse", "--verify", "ORIG_HEAD").strip(), dry,
                              "case 30: ORIG_HEAD of the main worktree is not at the dry run's commit")
+        if name.startswith("36 "):
+            self.assertEqual(fixture.git("--no-replace-objects", "rev-parse", "--verify", "refs/heads/carry^").strip(),
+                             dry, "case 36: refs/heads/carry is not at a child of the dry run's commit")
+            self.assertEqual(fixture.git("rev-list", "--count", "refs/heads/carry").strip(), "1",
+                             "case 36: the replace ref does not hide the parent of refs/heads/carry")
 
 
 def case_method(case: tuple):
@@ -622,13 +738,30 @@ for _case in CASES:
     setattr(RefComparisonCases, f"test_case_{_case[0].split()[0]}", case_method(_case))
 
 
+# The line the script prints once it has read the version, directly after the before snapshot.
+VERSION_LINE = "release-dry-run: version 1.0.0 at HEAD"
+
+
 class FailClosedCases(unittest.TestCase):
+    def assert_stops(self, code, out, err, message, reached_version):
+        """The run failed with exit 1, its last message starts with message, and it printed the version
+        line exactly when reached_version is true."""
+        self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
+        self.assertTrue(last_line(err).startswith(message),
+                        f"the run did not end with {message!r}\n{err}")
+        self.assertEqual(VERSION_LINE in out, reached_version,
+                         f"the run {'did not reach' if reached_version else 'went on to'} the version line\n{out}{err}")
+
     def test_a_folder_that_is_not_a_repository_fails(self):
         with tempfile.TemporaryDirectory() as name:
             tmp = Path(name)
-            code, out, err = run_script(place_script(tmp / "plain"), environment(tmp))
-            self.assertEqual((code, SUCCESS in out), (1, False), err)
-            self.assertIn("release-dry-run: could not read the branch HEAD names", err)
+            env = environment(tmp)
+            wrapper = refusing_git(tmp / "wrapper", env)
+            code, out, err = run_script(place_script(tmp / "plain"), env, wrapper)
+            self.assert_stops(code, out, err, "release-dry-run: could not read the branch HEAD names", False)
+            calls = git_log(wrapper)
+            self.assertEqual(len(calls), 1, f"the script made other git calls than the branch read: {calls}")
+            self.assertTrue(calls[0].startswith("-C ") and calls[0].endswith(" symbolic-ref -q HEAD"), calls)
 
     def test_a_head_that_resolves_to_no_commit_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -636,27 +769,65 @@ class FailClosedCases(unittest.TestCase):
             env = environment(tmp)
             script = place_script(tmp / "unborn")
             self.assertEqual(run_bounded(["git", "init", "-q", "-b", "main"], env, tmp / "unborn")[0], 0)
-            code, out, err = run_script(script, env)
-            self.assertEqual((code, SUCCESS in out), (1, False), err)
-            self.assertIn("release-dry-run: could not resolve HEAD to a commit", err)
+            wrapper = refusing_git(tmp / "wrapper", env)
+            code, out, err = run_script(script, env, wrapper)
+            self.assert_stops(code, out, err, "release-dry-run: could not resolve HEAD to a commit", False)
+            calls = git_log(wrapper)
+            self.assertEqual(len(calls), 2, f"the script made other git calls than the 2 HEAD reads: {calls}")
+            self.assertTrue(calls[0].startswith("-C ") and calls[0].endswith(" symbolic-ref -q HEAD"), calls)
+            self.assertTrue(calls[1].startswith("-C ") and calls[1].endswith(" rev-parse --verify -q HEAD"), calls)
+
+    def test_a_branch_read_with_another_failing_status_fails(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, "symbolic-ref", status=2)
+            code, out, err = run_script(fixture.script, fixture.env, wrapper)
+            self.assert_stops(code, out, err,
+                              f"release-dry-run: could not read the branch HEAD names in {fixture.main} "
+                              "(git symbolic-ref exit 2)", False)
 
     def test_a_tag_and_note_listing_that_git_refuses_fails(self):
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, "refs/tags")
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
-            self.assertEqual((code, SUCCESS in out), (1, False), err)
             self.assertIn("wrapper: refused refs/tags", err)
-            self.assertIn("release-dry-run: could not list the tags and notes", err)
+            self.assert_stops(code, out, err, "release-dry-run: could not list the tags and notes", False)
+
+    def test_a_tag_and_note_listing_that_git_refuses_in_step_6_fails(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, "refs/tags", after=1)
+            code, out, err = run_script(fixture.script, fixture.env, wrapper)
+            self.assertIn("wrapper: refused refs/tags", err)
+            self.assert_stops(code, out, err, "release-dry-run: could not list the tags and notes", True)
+            self.assertEqual(sum("refs/tags" in call.split() for call in git_log(wrapper)), 2,
+                             "the tag and note listing was not read exactly twice")
 
     def test_a_leak_check_that_git_refuses_fails(self):
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, "--contains")
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
-            self.assertEqual((code, SUCCESS in out), (1, False), err)
             self.assertIn("wrapper: refused --contains", err)
-            self.assertIn("release-dry-run: could not list the refs", err)
+            self.assert_stops(code, out, err, "release-dry-run: could not list the refs", True)
+
+    def test_a_git_call_of_the_dry_run_commit_that_fails_fails(self):
+        # (the argument refused, the number of such calls let through first, the message that must end
+        # the run): each git call that makes or reads the dry-run commit fails the run with exit 1.
+        for refused, after, message in (
+                ("-u", 0, "release-dry-run: could not stage the dry-run version bump"),
+                ("write-tree", 0, "release-dry-run: could not write the tree of the dry-run commit"),
+                ("commit-tree", 0, "release-dry-run: could not name the dry-run commit"),
+                ("commit", 0, "release-dry-run: the dry-run commit failed"),
+                ("--verify", 1, "release-dry-run: could not read the HEAD of the dry run's worktree after its commit"),
+        ):
+            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, refused, after=after)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                self.assertIn(f"wrapper: refused {refused}", err)
+                self.assert_stops(code, out, err, message, True)
 
     def test_no_tag_and_no_note_passes(self):
         with tempfile.TemporaryDirectory() as name:

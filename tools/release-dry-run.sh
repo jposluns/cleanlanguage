@@ -20,7 +20,10 @@
 # proof only when it is a tag or a note, when it is the HEAD of the script's
 # worktree or the branch that worktree has checked out, or when it is such a
 # listed ref created or moved onto the dry-run commit or a descendant of it;
-# any other such write is outside the proof.
+# any other such write is outside the proof. The dry-run commit is the one the
+# script names before git commit runs, and the run fails unless git commit
+# leaves the HEAD of the throwaway worktree at it, so a hook that moves that
+# HEAD cannot point the proof at another commit.
 #
 # Residual: the proof does not catch the deletion of any ref outside tags and
 # notes other than the branch the script's worktree has checked out, such as
@@ -94,11 +97,13 @@ ref_snapshot() {
 # remote-tracking ref or other such ref created or moved onto it, or onto a
 # descendant of it, fails the run. The HEAD and the per-worktree refs of any
 # other worktree, and a ref outside refs/ other than HEAD, such as ORIG_HEAD,
-# of any worktree, are not listed, so they are not checked. A failing git call
-# fails the run and is never read as an empty listing.
+# of any worktree, are not listed, so they are not checked. Replace refs are
+# turned off for the listing, so a refs/replace/ ref cannot hide a ref that
+# contains COMMIT. A failing git call fails the run and is never read as an
+# empty listing.
 ref_leak_check() {
   local holders
-  holders="$(git -C "${repo_root}" for-each-ref --contains "$1" --format='%(refname)')" \
+  holders="$(git -C "${repo_root}" --no-replace-objects for-each-ref --contains "$1" --format='%(refname)')" \
     || fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"
   [ -z "${holders}" ] \
     || fail "the dry run changed a git ref, which it must never do; these refs contain its commit $1:
@@ -207,12 +212,29 @@ p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
 PYVER
 python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/plugin.json"))["version"]; sys.exit(0 if v==sys.argv[1] else 1)' "${dry_version}" \
   || fail "could not set the dry-run version in cleanlanguage/.claude-plugin/plugin.json"
+# The dry-run commit, for the leak check of step 6. The script names it before
+# git commit runs, as the commit of the staged tree on HEAD with the dry run's
+# identity, dates and message, which git commit then makes. A hook that git
+# commit runs can move the HEAD of this worktree, so the run fails unless that
+# HEAD is at the named commit when git commit returns, and the leak check reads
+# the named commit, never a later HEAD. Its object is in the store the worktree
+# shares with repo_root, so repo_root resolves it. Every git call here fails
+# the run with exit 1 on an error.
+dry_message="Dry run: version ${dry_version}"
+git add -u || fail "could not stage the dry-run version bump"
+dry_tree="$(git write-tree)" || fail "could not write the tree of the dry-run commit"
+dry_commit="$(GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
+  git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" -c commit.gpgSign=false \
+  commit-tree -p HEAD -m "${dry_message}" "${dry_tree}")" \
+  || fail "could not name the dry-run commit"
 GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
-  git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
-  commit -q -am "Dry run: version ${dry_version}"
-# The dry-run commit, for the leak check of step 6. Its object is in the store
-# the worktree shares with repo_root, so repo_root resolves it.
-dry_commit="$(git rev-parse --verify HEAD)"
+  git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" -c commit.gpgSign=false \
+  commit -q -am "${dry_message}" \
+  || fail "the dry-run commit failed"
+dry_head="$(git rev-parse --verify HEAD)" \
+  || fail "could not read the HEAD of the dry run's worktree after its commit"
+[ "${dry_head}" = "${dry_commit}" ] \
+  || fail "the dry-run commit left the HEAD of its worktree at ${dry_head}, not at the dry-run commit ${dry_commit}; a hook moved that HEAD or changed the commit"
 
 # Seed the modified-date fields with an old sentinel so the writer must restamp
 # them for the gates and assertions to pass: the modified dates of the install

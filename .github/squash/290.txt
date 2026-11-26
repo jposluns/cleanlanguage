@@ -1,17 +1,21 @@
 Scope the release dry run's ref check to refs it can move (#290)
 
-tools/release-dry-run.sh hashed every ref of the repository before its
-run and in step 6, so a ref that another worktree moved during the run
-failed it, although the dry run had moved nothing (TODO 279, seen on
-the PR 284 gate). Step 6 now compares only the refs that the dry run
-could itself move, read from the worktree that holds the script before
-and after: the branch HEAD names, or that it is detached; the commit
-HEAD resolves to; and every tag and note with its object name. It
-prints both snapshots on a mismatch, so the failure names the ref that
-differs. It then fails when a ref that git for-each-ref lists from that
-worktree contains the dry-run commit, which the script records after
-its commit. A git error in either check fails the run and is never
-read as an empty listing.
+tools/release-dry-run.sh hashed the whole git for-each-ref listing
+before its run and in step 6, so a ref that another worktree moved
+during the run failed it, although the dry run had moved nothing (TODO
+279, seen on the PR 284 gate). Step 6 now compares only the refs that
+the dry run could itself move, read from the worktree that holds the
+script before and after: the branch HEAD names, or that it is
+detached; the commit HEAD resolves to; and every tag and note with its
+object name. It prints both snapshots on a mismatch, so the failure
+names the ref that differs. It then fails when a ref that git
+for-each-ref lists from that worktree contains the dry-run commit,
+read with replace refs turned off. The script names that commit before
+git commit runs and fails closed unless git commit leaves the
+throwaway worktree's HEAD at it, so a hook that moves that HEAD cannot
+point the check at another commit. A git error in either check, or in
+making or reading the dry-run commit, fails the run with exit 1 and is
+never read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -34,38 +38,45 @@ worktree included, so such a ref put on the dry-run commit does not
 fail it. It does not see anything the exit cleanup does, or a ref
 moved and then restored between the 2 snapshots.
 
-A write that another worktree makes during the run still fails it when
-it is a tag or a note, the HEAD of the script's worktree or its
-checked-out branch, or a listed ref put on the dry-run commit or a
-descendant of it. TODO 279 does not record which ref moved on the PR
-284 gate, so whether this change would have avoided that failure is
-unknown.
+A graft file or a shallow file, neither of which is a ref, can still
+hide a ref from the leak check. A write that another worktree makes
+during the run still fails it when it is a tag or a note, the HEAD of
+the script's worktree or its checked-out branch, or a listed ref put
+on the dry-run commit or a descendant of it. TODO 279 does not record
+which ref moved on the PR 284 gate, so whether this change would have
+avoided that failure is unknown.
 
 tools/test-release-dry-run-refs.py runs the whole script, copied byte
 for byte into throwaway folders with stand-ins for the tools it calls,
-so bash itself reads every line of it. Its 30 ref cases each build a
-repository, and a git stand-in first on PATH makes each ref case's
-writes from a second worktree before the dry run adds its worktree,
-and the dry run's own writes after its commit; each ref case checks
-that exactly the refs it names change. Its 5 cases on fail-closed
-reading make no writes. Residual of the test: stand-ins replace the
+so bash itself reads every line of it. Its 36 ref cases each build a
+repository and make writes at 3 points: a git stand-in first on PATH
+makes another worktree's writes before the dry run adds its worktree,
+and, inside the dry run's git commit once it has made its commit, the
+dry run's own writes, or in cases 28 and 29 another worktree's; the
+stand-in of step 5 makes late writes after that step. Each ref case
+checks that exactly the refs it names change. Its 8 cases on
+fail-closed reading make no writes and require the run to end at the
+read that fails. Residual of the test: stand-ins replace the
 packaging, the gates and the site rewrite, which the next step of
 release-dry-run.yml runs with the real tools, and the script runs with
 a git stand-in first on PATH and an environment that the test fixes,
 not those of that workflow. A change to the script is caught only when
 it changes what a case observes, so a change that acts only outside
 the cases, such as one that tests for the stand-ins or for the
-workflow's environment, or that moves a ref no case writes, is not
-caught. The cases run on 1 git version with its default ref backend.
+workflow's environment, or that moves a ref no case writes or stops
+step 6 reading one, is not caught. The cases run on 1 git version with
+its default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 35 cases pass. Each of 14 mutants that remove
+against this change all 44 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
-later mutants failed at least 1 case of the 36-case suite, and each of
-9 script mutants that the 36-case suite passed fails at least 1 case
-of the 34-case suite and of the 35-case suite. The release dry run
-workflow and tools/run_all_checks.sh run it before the dry run, and
+later mutants failed at least 1 case of the 36-case suite, each of 9
+script mutants that the 36-case suite passed fails at least 1 case of
+the 34-case suite and of the 35-case suite, and each of 13 script
+mutants of the capture fix, 8 of which the 35-case suite passed, fails
+at least 1 case of the 44-case suite. The release dry run workflow and
+tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The
 workflow header now counts 7 test suites.
