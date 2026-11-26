@@ -17,14 +17,20 @@ repository or index than the one it finds at the root. File content is data: no 
 run, parsed as code or printed whole; besides the gate's own words and counts, a problem line
 shows only the fields that the output paragraph below names, written as that paragraph states.
 
-The work tree is the root folder as the gate opens it, once, before git runs. Git runs in that
-open folder, and every read starts from its descriptor: each tracked path is opened 1 part at a
-time, each part inside the folder opened before it and none through a symbolic link
-(O_NOFOLLOW), and after the read the gate checks that each folder and the file that it opened is
-still the entry at its name in the folder before it. So neither a symbolic link in the work tree,
-a root replaced after the open nor a folder or file moved out of the work tree before that check
-can lead a read outside it. On a system without O_NOFOLLOW the gate refuses to run, since without
-it no path can be opened without following a symbolic link.
+The work tree is the root folder as the gate opens it, once, before git runs. Git starts in that
+open folder, and every read of a tracked file, the allowlist included, starts from its
+descriptor: each tracked path is opened 1 part at a time, each part inside the folder opened
+before it and none through a symbolic link (O_NOFOLLOW, which the system applies at each open).
+So neither a symbolic link in the work tree, made before or during the run, nor a root replaced
+after the open can lead a read outside it, and while no other process moves a folder or file of
+the work tree, each read is of the entry at its tracked path in the work tree. The gate does not
+prevent a read outside the work tree by a process that moves a folder or file that the gate
+opened out of it during the run: an opened folder or file is read wherever it is moved, and a
+process that can move it can as well put any bytes at the tracked paths. After the read the
+gate checks that each folder and the file that it opened is still the entry at its name in the
+folder before it, and refuses the bytes that it read when one is not. On a system without
+O_NOFOLLOW the gate refuses to run, since without it no path can be opened without following a
+symbolic link.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
@@ -90,10 +96,12 @@ repository.
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
 of a file whose work-tree copy differs (in CI they are equal); a folder of the work tree that is a
-mount point and a file that is a hard link, each read where it stands; a folder or file moved
-out of the work tree and back between the gate's open of it and the check after the read, since
-an opened folder or file is read wherever it is moved and that check sees only where it is then;
-whether a line is a true statement of a licence; whether the
+mount point and a file that is a hard link, each read where it stands; a folder or file that
+another process moves out of the work tree after the gate opens it, whose bytes the gate reads
+wherever it is, and refuses only when that folder or file is not back in its place at the check
+after the read, since that check sees only where it is then; the reads of git ls-files, of the
+repository that git finds from the open root folder, its index and its configuration, which can
+lie outside the work tree; whether a line is a true statement of a licence; whether the
 owner of a row is right, which is reviewed prose; and the named exceptions' own lines. A row
 counts lines per file, so fixing 1 line and adding another of the same kind in the same file
 passes.
@@ -173,7 +181,12 @@ def tracked(root: int, problems: list):
         # Git starts in the folder of the root descriptor, wherever that folder now is, not at a path.
         done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, shell=False, env=env,
                               preexec_fn=lambda: os.fchdir(root))
-    except (OSError, subprocess.SubprocessError) as error:
+    except subprocess.SubprocessError as error:
+        # The only code that runs in the child before git is the change into the root folder.
+        problems.append("cannot run git ls-files, since the change into the root folder that the gate opened "
+                        f"failed before git started, so no tracked file can be listed: {error_text(error)}")
+        return None
+    except OSError as error:
         problems.append(f"cannot run git ls-files, so no tracked file can be listed: {error_text(error)}")
         return None
     if done.returncode != 0:
@@ -218,11 +231,11 @@ def read_file(root: int, path: str, problems: list):
 
     root is the descriptor of the root folder, which the caller opened once and closes. The path is
     opened 1 part at a time from it, each part inside the folder opened before it and none through a
-    symbolic link, and after the read each folder and the file that were opened must still be the entry
-    at their name in the folder before them, so neither a symbolic link, a replaced root nor a folder or
-    file moved out of the work tree can lead a read outside it. Not covered: a folder or file moved
-    out of the work tree and back between the gate's open of it and the check after the read, since
-    an opened folder or file is read wherever it is moved and that check sees only where it is then."""
+    symbolic link, so neither a symbolic link nor a replaced root can lead a read outside the work
+    tree. After the read each folder and the file that were opened must still be the entry at their
+    name in the folder before them, or the bytes read are refused. This refuses bytes; it prevents no
+    read: a folder or file that another process moves out of the work tree after its open is read
+    wherever it is, and its bytes are accepted when it is back in its place at that check."""
     not_regular = f"{shown(path)}: the tracked path is not a regular file in the work tree"
     parts = path.split("/")
     # An absolute path has an empty first part.
