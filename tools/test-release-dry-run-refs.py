@@ -13,22 +13,23 @@ writes during the run, as a commit on another branch or a fetch that moves a rem
 does, fails the run only when it is a tag or a note, when it is the HEAD of repo_root or the branch
 that worktree has checked out, or when it is a ref that git for-each-ref lists from repo_root,
 created or moved onto the dry run's commit or a descendant of it; any other such write is outside
-the proof. The dry run's commit is the one the script names before git commit runs, and the run
-fails unless git commit leaves the HEAD of the throwaway worktree at it, so a hook that moves that
-HEAD cannot point the leak check at another commit. The leak check reads with replace refs, the
-graft file and the shallow file turned off, so no refs/replace/ ref, graft or shallow boundary can
-hide a ref that contains the commit. Both git calls that make or name the commit run with commit
-signing turned off, so the dry run's commit is never signed.
+the proof. The dry run's commit is the commit that the script's git commit-tree writes and prints,
+which the script saves and step 6 reads, never a later HEAD; the script's git calls that can write
+the index or a ref run with the repository's hooks turned off, so no hook runs during the dry run,
+and the run fails unless the HEAD of the throwaway worktree is at that commit once the script has
+moved it there. The leak check reads with replace refs, the graft file and the shallow file turned
+off, so no refs/replace/ ref, graft or shallow boundary can hide a ref that contains the commit. The
+git commit-tree that makes the commit runs with commit signing turned off, so the dry run's commit
+is never signed.
 
 The script's header states the residual of the proof in these words:
 
 Residual: the proof does not catch the deletion of any ref outside tags and notes other than the
 branch the script's worktree has checked out, such as another branch, a remote-tracking ref,
-refs/stash or a refs/replace/ ref; a move or creation of such a ref at a commit that does not
-contain the dry-run commit, or at an object that peels to no commit, such as a tree or a blob; or
-such a deletion, move or creation made by a commit hook, which the dry-run commit runs. It does not
-see the HEAD or the per-worktree refs of any worktree other than the script's worktree, the
-throwaway worktree included, or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any
+refs/stash or a refs/replace/ ref; or a move or creation of such a ref at a commit that does not
+contain the dry-run commit, or at an object that peels to no commit, such as a tree or a blob. It
+does not see the HEAD or the per-worktree refs of any worktree other than the script's worktree,
+the throwaway worktree included, or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any
 worktree, the script's worktree included, so such a ref put on the dry-run commit does not fail it.
 It does not see anything the exit cleanup does, or a ref moved and then restored between the 2
 snapshots.
@@ -48,21 +49,30 @@ Released line does not name, write the site files that the script's assertions r
 gate. The repository has branches main, feature and other (other checked out in a second
 worktree), a lightweight tag v1.0.0, an annotated tag v0.9.0 and refs/remotes/origin/main.
 
-A ref case's writes are made at 3 points. A git stand-in, first on PATH for the run, runs the real
-git for every call and makes the writes of the first 2 points. When the script first asks git to add
+A ref case's writes are made at 4 points. A git stand-in, first on PATH for the run, runs the real
+git for every call and makes the writes of the first 3 points. When the script first asks git to add
 a worktree, the stand-in makes the case's first writes, which are all another worktree's, before it
-adds the worktree. When the script's git commit of the dry run has made its commit, at the point
-where git runs a post-commit hook, the stand-in records that commit and makes the case's second
-writes, in the dry run's worktree, before git commit returns: these are the dry run's own writes,
-except in cases 28 and 29, which make another worktree's writes there because they need the
+adds the worktree. Once that call has added the worktree, the stand-in records the commit that the
+new worktree's HEAD resolves to, makes the case's added writes, which only case 42 makes, and records
+the commit that HEAD then resolves to. When the script's git commit-tree given the dry run's message
+has written its commit, the stand-in records the commit that call prints. After the first later git
+call that leaves the HEAD of the dry run's worktree at that commit, before that call returns, the
+stand-in makes the case's second writes, in the dry run's worktree: these are the dry run's own
+writes, except in cases 28 and 29, which make another worktree's writes there because they need the
 dry run's commit. Once the check of step 5, the script's last step before step 6, has passed, its
 stand-in makes the case's late writes, in the dry run's worktree. So the before snapshot must
 precede the dry run's first ref write, the leak check must read the commit that the dry run's git
-commit made, whatever runs inside that git commit, and the after snapshot and the leak check must
-follow step 5; a script in which any of these does not hold fails a ref case. Every ref case other
-than case 31 requires all 3 points to have been reached and its writes to have succeeded; case 31
-requires the first 2, and requires the run to stop before the third. Concurrency is modelled as
-sequenced writes, which a snapshot comparison cannot tell from a race, and no real race is run.
+commit-tree wrote, not the HEAD of its worktree at step 6 (case 39), and the after snapshot and the
+leak check must follow step 5; a script in which any of these does not hold fails a ref case. Every
+ref case also requires the commit that git commit-tree wrote to be a child of the commit that the
+dry run's worktree resolved to once the added writes had run, with the dry run's identity, dates and
+message, and with the tree of the commit that worktree was added at, changed only in the version
+bump and the Released line. Case 42 moves that worktree to feature first, so a script that reads the
+parent in another folder fails it, and a script that writes the tree in another folder, whose index
+holds no version bump, fails every ref case. Every ref case other than case 31 requires all 4
+points to have been reached and its writes to have succeeded; case 31 requires the first 3, and
+requires the run to stop before the fourth. Concurrency is modelled as sequenced writes, which a
+snapshot comparison cannot tell from a race, and no real race is run.
 
 A case expected to pass must exit 0 with the script's success message. A ref case expected to fail
 must exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison,
@@ -129,8 +139,9 @@ The ref cases, each with its expected outcome:
   residual, since git for-each-ref lists no HEAD.
 - 30, the dry run points ORIG_HEAD of the main worktree at its commit: passes, a blind spot before
   and after, since git for-each-ref lists no ref outside refs/.
-- 31, a hook of the dry run's commit keeps that commit in a ref and moves the HEAD of the dry run's
-  worktree to a child of it: fails closed at the commit, naming that HEAD and the dry run's commit.
+- 31, once the dry run's worktree is at its commit, a write keeps that commit in a ref and moves the
+  HEAD of the dry run's worktree to a child of it: fails closed at the commit, naming that HEAD and
+  the dry run's commit.
 - 32, the dry run moves an existing tag after its last step: fails, naming the tag.
 - 33, the dry run points a ref in a namespace of its own at its commit after its last step: fails,
   naming that ref.
@@ -141,38 +152,59 @@ The ref cases, each with its expected outcome:
   with a replace ref: fails, naming the branch.
 - 37, as 36 with a graft in place of the replace ref: fails, naming the branch.
 - 38, as 36 with a shallow entry in place of the replace ref: fails, naming the branch.
+- 39, the dry run keeps its commit in a ref and moves the HEAD of its worktree to a child of it after
+  its last step: fails, naming its commit and that ref.
+- 40, the dry run moves an existing notes ref: fails, printing both snapshots.
+- 41, the dry run deletes an existing notes ref: fails, printing both snapshots.
+- 42, the dry run's worktree is moved to feature after it is added and before the dry run makes its
+  commit: passes, and the dry run's commit is a child of feature.
 
 The 8 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
 listing that git refuses in the before snapshot, with one that git refuses only in step 6, with a
-leak check that git refuses, and with each git call that makes or reads the dry run's commit
-refused in turn, each fails with exit 1 and the script's message, never read as an empty listing;
-in a repository with no tag and no note it passes. A refused call is made by a git wrapper, first on
-PATH, that records every call and exits 128, or the status the case names, when it is given the
-argument it refuses, from the call that the case names on, and otherwise runs git. Each failing
-case requires the script's message to be the last line of its output, and the script's version
-line to be printed exactly when the failing read comes after the before snapshot, so the run must
-end at that read. These 8 cases make no writes and do not use the git stand-in, so they reach none
-of its points and compare no listing. The first 2 run the copy of the script in a folder that holds
-no commit of it, and they require the wrapper to have recorded only the reads of the before
-snapshot that precede the failure. They also turn on git's own trace2 log, which each run of git
-writes whatever path it is started by, and require it to record a start of git for exactly those
-reads, so they require that snapshot to be the script's first git call, made through PATH or by any
-other path. A git call that turns that log off is not seen.
+leak check that git refuses, and with each git call that makes or reads the dry run's commit or
+moves HEAD to it refused in turn, each fails with exit 1 and the script's message, never read as an
+empty listing; in a repository with no tag and no note it passes. A refused call is made by a git
+wrapper, first on PATH, that records every call and exits 128, or the status the case names, when
+it is given the argument it refuses, from the call that the case names on, and otherwise runs git.
+Each failing case requires the script's message to be the last line of its output, and the script's
+version line to be printed exactly when the failing read comes after the before snapshot, so the
+run must end at that read. These 8 cases make no writes and do not use the git stand-in, so they
+reach none of its points and compare no listing. The first 2 run the copy of the script in a folder
+that holds no commit of it, and they require the wrapper to have recorded only the reads of the
+before snapshot that precede the failure. They also turn on git's own trace2 log, which each run of
+git writes whatever path it is started by, and require it to record a start of git for exactly
+those reads. So in a folder that is not a repository, and in a repository whose HEAD resolves to no
+commit, the script makes no git call before those reads, through PATH or by any other path, other
+than one that turns that log off. No case shows which git call the script makes first in a
+repository whose HEAD resolves to a commit.
 
 1 more case turns commit signing on in the fixture's configuration, with a gpg.program stand-in
 that records each call and fails, and first checks, in a repository of its own, that git commit
-then tries to sign and fails. The dry run must pass without calling that stand-in, since the script
-turns signing off for the git commit that makes its commit, and for the git commit-tree that names
-it, which on the git version the cases ran on does not sign under that setting.
+then tries to sign and fails. The dry run must pass without calling that stand-in. The script
+turns signing off for the git commit-tree that makes its commit, but on the git version the cases
+ran on git commit-tree does not sign under that setting in any case, so this case does not show
+that the script turns it off.
+
+1 more case writes 8 hooks that git runs around a commit, a checkout, an index write or a ref
+update, pre-commit, prepare-commit-msg, commit-msg, post-commit, post-checkout,
+reference-transaction, post-index-change and pre-auto-gc, to a folder that the fixture's
+configuration names as core.hooksPath. Each hook records its name when it runs; the commit-msg
+hook also adds a trailer to the message, and the post-commit hook keeps the commit just made in a
+ref and moves HEAD to the commit of the same tree and parent with the dry run's message, as a hook
+that hides the commit made from the leak check would. The case first checks, in a repository of its
+own, that a git commit and a git worktree add then run the first 6 of those hooks. The dry run must
+then pass with no hook run and the whole-repository listing unchanged.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
 hook folder given as GIT_CONFIG_COUNT entries (the environment form of git -c), fixed author and
 committer dates, and DRY_DATE fixed; a ref case's run also has REF_CASE_HOOKS, the folder of its
-writes. Every process is bounded by a timeout, runs in a session of its
-own, and is killed with its process group when it ends or times out; nothing is left running in the
-background.
+writes. Every git and bash process that the test starts itself is bounded by a timeout, runs in a
+session of its own, and is killed with its process group when it ends or times out. A process that
+one of those starts, such as a git call of the script or the bash of a case's writes, has no
+session or timeout of its own: it runs in that process group, unless it leaves it, and is killed
+with it.
 
 Residual of the test: stand-ins replace the packaging, the gates and the site rewrite, which the
 next step of release-dry-run.yml runs with the real tools, and the script runs with a git stand-in
@@ -188,6 +220,7 @@ Exit status: 0 when every case passes, 1 otherwise.
 
 from __future__ import annotations
 
+import datetime
 import os
 import shlex
 import shutil
@@ -207,6 +240,9 @@ MESSAGE = "the dry run changed a git ref, which it must never do"
 BEFORE = "before:\n{before}\nand after:\n{after}\n"
 # The date every run stamps, and the success message of a run at the fixture's version.
 DRY_DATE = "2026-01-02"
+# The identity and the time, in seconds since the epoch, of the commit that every run makes.
+DRY_IDENTITY = "release-dry-run <release-dry-run@invalid>"
+DRY_EPOCH = int(datetime.datetime.fromisoformat(f"{DRY_DATE}T12:00:00+00:00").timestamp())
 SUCCESS = "release-dry-run: every step, gate, and assertion passed for v1.0.1 (nothing was published).\n"
 
 # The stand-in for every Python tool the script runs, named by its file name.
@@ -324,9 +360,12 @@ FILES = {
     "site/_redirects": "/privacy https://posluns.ca/privacy/ 301\n",
 }
 # The git stand-in of the ref cases. It runs the real git for every call. Before the first call that
-# adds a worktree it runs concurrent.sh; after the dry run's git commit, at the point where git runs
-# a post-commit hook, it records that commit and runs own.sh in the dry run's worktree. A failing
-# write fails the call, so the run cannot pass.
+# adds a worktree it runs concurrent.sh; once that call has added the worktree, it records the
+# commit that the new worktree's HEAD resolves to as checked, runs added.sh with ${wt} naming that
+# worktree, and records the commit that HEAD then resolves to as base. On the first git commit-tree
+# given the dry run's message, it records the commit that call prints, which is the commit the call
+# wrote, as dry. After the first later call that leaves the HEAD of the folder it runs in at that
+# commit, it runs own.sh there. A failing write fails the call, so the run cannot pass.
 HOOK = """#!/bin/sh
 real={real}
 hooks={hooks}
@@ -334,24 +373,39 @@ point=
 previous=
 subcommand=
 message=
+added=
 for arg in "$@"; do
   if [ "${{previous}}" = worktree ] && [ "${{arg}}" = add ]; then point=worktree; fi
-  if [ "${{arg}}" = commit ]; then subcommand=commit; fi
+  if [ "${{previous}}" = --detach ]; then added="${{arg}}"; fi
+  if [ "${{arg}}" = commit-tree ]; then subcommand=commit-tree; fi
   case "${{arg}}" in "Dry run: version "*) message=dry ;; esac
   previous="${{arg}}"
 done
-if [ "${{subcommand}}" = commit ] && [ "${{message}}" = dry ]; then point=commit; fi
 if [ "${{point}}" = worktree ] && [ ! -e "${{hooks}}/worktree.done" ]; then
   : > "${{hooks}}/worktree.done"
   PATH={path} bash --noprofile --norc -e "${{hooks}}/concurrent.sh" >&2 || exit 97
   : > "${{hooks}}/concurrent.ok"
+  "${{real}}" "$@" || exit
+  "${{real}}" -C "${{added}}" rev-parse --verify HEAD > "${{hooks}}/checked" || exit
+  wt="${{added}}" PATH={path} bash --noprofile --norc -e "${{hooks}}/added.sh" >&2 || exit 97
+  "${{real}}" -C "${{added}}" rev-parse --verify HEAD > "${{hooks}}/base" || exit
+  : > "${{hooks}}/added.ok"
+  exit 0
 fi
-if [ "${{point}}" != commit ] || [ -e "${{hooks}}/commit.done" ]; then
+if [ "${{subcommand}}" = commit-tree ] && [ "${{message}}" = dry ] && [ ! -e "${{hooks}}/commit.done" ]; then
+  : > "${{hooks}}/commit.done"
+  "${{real}}" "$@" > "${{hooks}}/dry" || exit
+  cat "${{hooks}}/dry"
+  exit 0
+fi
+if [ ! -e "${{hooks}}/commit.done" ] || [ -e "${{hooks}}/own.done" ]; then
   exec "${{real}}" "$@"
 fi
-: > "${{hooks}}/commit.done"
 "${{real}}" "$@" || exit
-"${{real}}" rev-parse --verify HEAD > "${{hooks}}/dry" || exit
+if [ "$("${{real}}" rev-parse --verify -q HEAD)" != "$(cat "${{hooks}}/dry")" ]; then
+  exit 0
+fi
+: > "${{hooks}}/own.done"
 dry="$(cat "${{hooks}}/dry")" PATH={path} bash --noprofile --norc -e "${{hooks}}/own.sh" >&2 || exit 97
 : > "${{hooks}}/own.ok"
 """
@@ -360,7 +414,8 @@ dry="$(cat "${{hooks}}/dry")" PATH={path} bash --noprofile --norc -e "${{hooks}}
 def run_bounded(args: list, env: dict, cwd: Path, timeout: float = TIMEOUT):
     """Run args in a new session with standard input from /dev/null and return (exit code, stdout,
     stderr). A run that outlives timeout fails the test. However the wait ends, the process group
-    is killed and the process is reaped, so nothing it started keeps running."""
+    is killed and the process is reaped, so nothing it started keeps running unless it left that
+    process group."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=cwd, start_new_session=True)
     try:
@@ -484,8 +539,9 @@ FETCHED = """fetched="$(git -C "${other}" commit-tree -p refs/remotes/origin/mai
 git -C "${other}" update-ref refs/remotes/origin/main "${fetched}\""""
 
 # (case, setup before the run, writes another worktree makes before the dry run adds its worktree,
-# writes made in the dry run's worktree after its commit, before its git commit returns, with ${dry}
-# naming that commit (the dry run's own writes, except in cases 28 and 29), expected
+# writes made in the dry run's worktree once its HEAD is at the dry run's commit, before the git call
+# that put it there returns, with ${dry} naming that commit (the dry run's own writes, except in
+# cases 28 and 29), expected
 # outcome, the texts a failure must print, {dry} standing for the dry run's commit, {before} for the
 # before snapshot and {after} for the after one, and the refs whose line in the whole-repository
 # listing differs between the end of the setup and the end of the run, which the old
@@ -562,13 +618,14 @@ CASES = (
      'git -C "${other}" checkout -q --detach "${dry}"', "pass", (), ()),
     ("30 the dry run points ORIG_HEAD of the main worktree at its commit", "", "",
      'git -C "${repo_root}" update-ref ORIG_HEAD "${dry}"', "pass", (), ()),
-    ("31 a hook of the dry-run commit keeps that commit in a ref and moves the worktree's HEAD to a child of it",
+    ("31 once the dry run's worktree is at its commit, a write keeps that commit in a ref and moves that "
+     "worktree's HEAD to a child of it",
      "", "",
-     'git update-ref refs/keep/dry HEAD\nchild="$(git commit-tree -p HEAD -m Hook \'HEAD^{tree}\')"\n'
+     'git update-ref refs/keep/dry HEAD\nchild="$(git commit-tree -p HEAD -m Moved \'HEAD^{tree}\')"\n'
      'git update-ref --no-deref HEAD "${child}"\nprintf \'%s\\n\' "${child}" > "${REF_CASE_HOOKS}/child"',
      "fail closed",
-     ("release-dry-run: the dry-run commit left the HEAD of its worktree at {child}, not at the dry-run commit "
-      "{dry}; a hook moved that HEAD or changed the commit\n",),
+     ("release-dry-run: the HEAD of the dry run's worktree is at {child}, not at the dry-run commit "
+      "{dry}; another process moved that HEAD\n",),
      ("refs/keep/dry",)),
     ("32 the dry run moves an existing tag after its last step", "", "", "", "fail",
      (BEFORE, "{dry} refs/tags/v1.0.0"), ("refs/tags/v1.0.0",)),
@@ -593,6 +650,14 @@ CASES = (
      'child="$(git commit-tree -p "${dry}" -m Descendant "${dry}^{tree}")"\ngit update-ref refs/heads/carry "${child}"\n'
      'printf \'%s\\n\' "${child}" >> "$(git rev-parse --git-path shallow)"', "fail",
      ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry",)),
+    ("39 the dry run keeps its commit in a ref and moves its worktree's HEAD to a child of it after its last "
+     "step", "", "", "", "fail", ("these refs contain its commit {dry}:\nrefs/keep/held\n",), ("refs/keep/held",)),
+    ("40 the dry run moves an existing notes ref", "git notes add -m old HEAD", "", "git notes add -m dry HEAD",
+     "fail", (BEFORE, "refs/notes/commits"), ("refs/notes/commits",)),
+    ("41 the dry run deletes an existing notes ref", "git notes add -m old HEAD", "",
+     "git update-ref -d refs/notes/commits", "fail", (BEFORE, "refs/notes/commits"), ("refs/notes/commits",)),
+    ("42 the dry run's worktree is moved to another commit before the dry run makes its commit", "", "", "",
+     "pass", (), ()),
 )
 # The late writes of the cases that make them, by case number: writes the dry run makes in its
 # worktree once the check of step 5, its last step before step 6, has passed, with ${dry} naming the
@@ -600,6 +665,13 @@ CASES = (
 LATE = {
     "32": "git tag -f v1.0.0 HEAD",
     "33": "git update-ref refs/keep/late HEAD",
+    "39": 'git update-ref refs/keep/held "${dry}"\nchild="$(git commit-tree -p "${dry}" -m Later "${dry}^{tree}")"\n'
+          'git update-ref --no-deref HEAD "${child}"\ntest "$(git rev-parse --verify HEAD)" = "${child}"',
+}
+# The writes made once the dry run has added its worktree, before it makes its commit, by case
+# number, with ${wt} naming that worktree. Every other ref case makes none.
+ADDED = {
+    "42": 'git -C "${wt}" update-ref --no-deref HEAD refs/heads/feature',
 }
 # The ref cases that must stop at the dry-run commit, and so must not reach the late point.
 STOP_AT_COMMIT = ("31",)
@@ -662,10 +734,11 @@ class Fixture:
         head = ref.strip() if ref.strip() else "detached"
         return f"HEAD ref: {head}\nHEAD commit: {commit.strip()}\n{listing}".rstrip("\n")
 
-    def hook(self, concurrent: str, own: str, late: str = "") -> Path:
+    def hook(self, concurrent: str, own: str, late: str = "", added: str = "") -> Path:
         """Write the case's writes and the git stand-in, and return the folder that holds it."""
         variables = f"repo_root={shlex.quote(str(self.main))}\nother={shlex.quote(str(self.other))}\n"
         (self.hooks / "concurrent.sh").write_text(variables + concurrent + "\n", encoding="utf-8")
+        (self.hooks / "added.sh").write_text(variables + added + "\n", encoding="utf-8")
         (self.hooks / "own.sh").write_text(variables + 'wt="$(pwd)"\n' + own + "\n", encoding="utf-8")
         (self.hooks / "late.sh").write_text(
             variables + f'wt="$(pwd)"\ndry="$(cat {shlex.quote(str(self.hooks / "dry"))})"\n' + late + "\n",
@@ -693,8 +766,11 @@ class RefComparisonCases(unittest.TestCase):
         listing_before = fixture.git("for-each-ref")
         before = fixture.snapshot()
         env = dict(fixture.env, REF_CASE_HOOKS=str(fixture.hooks))
-        code, out, err = run_script(fixture.script, env, fixture.hook(concurrent, own, LATE.get(number, "")))
-        marks = ("concurrent.ok", "own.ok") if number in STOP_AT_COMMIT else ("concurrent.ok", "own.ok", "late.ok")
+        code, out, err = run_script(fixture.script, env,
+                                    fixture.hook(concurrent, own, LATE.get(number, ""), ADDED.get(number, "")))
+        marks = ("concurrent.ok", "added.ok", "own.ok")
+        if number not in STOP_AT_COMMIT:
+            marks += ("late.ok",)
         for mark in marks:
             self.assertTrue((fixture.hooks / mark).exists(),
                             f"the case's writes did not run to the end ({mark} is missing)\n{out}{err}")
@@ -703,6 +779,34 @@ class RefComparisonCases(unittest.TestCase):
                              f"case {number}: the run went on past the dry-run commit\n{out}{err}")
         dry = (fixture.hooks / "dry").read_text(encoding="utf-8").strip()
         return fixture, code, out, err, dry, before, fixture.snapshot(), listing_before, fixture.git("for-each-ref")
+
+    def assert_dry_commit(self, name: str, fixture: Fixture, dry: str) -> None:
+        """The commit that the dry run's git commit-tree wrote is a child of base, the commit that
+        the HEAD of the dry run's worktree resolved to once the case's writes at that point had run,
+        with the dry run's identity, dates and message, and its tree is that of checked, the commit
+        the worktree was added at, with only the version bump and the Released line changed."""
+        checked = (fixture.hooks / "checked").read_text(encoding="utf-8").strip()
+        base = (fixture.hooks / "base").read_text(encoding="utf-8").strip()
+        tree = fixture.git("rev-parse", "--verify", f"{dry}^{{tree}}").strip()
+        stamp = f"{DRY_EPOCH} +0000"
+        self.assertEqual(fixture.git("cat-file", "commit", dry),
+                         f"tree {tree}\nparent {base}\nauthor {DRY_IDENTITY} {stamp}\n"
+                         f"committer {DRY_IDENTITY} {stamp}\n\nDry run: version 1.0.1\n",
+                         f"case {name}: the dry run's commit is not the child of {base} it must make")
+        self.assertEqual(fixture.git("diff-tree", "-r", "--name-only", checked, dry).split(),
+                         ["cleanlanguage/.claude-plugin/plugin.json", "cleanlanguage/skills/cleanlanguage/SKILL.md"],
+                         f"case {name}: the dry run's commit changes other files than the version bump")
+        self.assertEqual(fixture.git("show", f"{dry}:cleanlanguage/skills/cleanlanguage/SKILL.md"),
+                         f"# Skill\n\nVersion: 1.0.1  \nReleased: {DRY_DATE}  \n\nBody.\n",
+                         f"case {name}: the dry run's commit does not hold the version bump")
+        self.assertEqual(fixture.git("show", f"{dry}:cleanlanguage/.claude-plugin/plugin.json"),
+                         '{\n  "version": "1.0.1"\n}\n',
+                         f"case {name}: the dry run's commit does not hold the plugin version bump")
+        if name.startswith("42 "):
+            feature = fixture.git("rev-parse", "--verify", "refs/heads/feature").strip()
+            self.assertEqual((base, checked == base), (feature, False),
+                             "case 42: the dry run's worktree was not moved from the commit it was added at to "
+                             "feature before the dry run made its commit")
 
     @staticmethod
     def differing(before: str, after: str) -> tuple:
@@ -723,6 +827,7 @@ class RefComparisonCases(unittest.TestCase):
         self.assertEqual(self.differing(before, after), tuple(sorted(changed)),
                          f"case {name}: these refs changed in the whole-repository listing, not {changed!r}, so "
                          "the case's writes are not those it states")
+        self.assert_dry_commit(name, fixture, dry)
         if outcome == "pass":
             self.assertEqual((code, SUCCESS in out), (0, True),
                              f"case {name}: expected the dry run to pass, got exit {code}\n{out}{err}")
@@ -871,11 +976,12 @@ class FailClosedCases(unittest.TestCase):
         for refused, after, message in (
                 ("-u", 0, "release-dry-run: could not stage the dry-run version bump"),
                 ("write-tree", 0, "release-dry-run: could not write the tree of the dry-run commit"),
-                ("commit-tree", 0, "release-dry-run: could not name the dry-run commit"),
-                ("commit", 0, "release-dry-run: the dry-run commit failed"),
-                ("--verify", 1, "release-dry-run: could not read the HEAD of the dry run's worktree after its commit"),
+                ("--verify", 1, "release-dry-run: could not read the HEAD of the dry run's worktree before its commit"),
+                ("commit-tree", 0, "release-dry-run: could not make the dry-run commit"),
+                ("update-ref", 0, "release-dry-run: could not move the HEAD of the dry run's worktree from "),
+                ("--verify", 2, "release-dry-run: could not read the HEAD of the dry run's worktree after its commit"),
         ):
-            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as name:
+            with self.subTest(refused=refused, after=after), tempfile.TemporaryDirectory() as name:
                 fixture = Fixture(Path(name))
                 wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, refused, after=after)
                 code, out, err = run_script(fixture.script, fixture.env, wrapper)
@@ -923,6 +1029,64 @@ class SigningCases(unittest.TestCase):
             code, out, err = run_script(fixture.script, env)
             self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
             self.assertFalse(called.exists(), "the dry run asked git to sign a commit")
+
+
+# 8 hooks that git runs around a commit, a checkout, an index write or a ref update, each written to
+# the hook folder of the hook case: each records its name in the log of that case. The commit-msg
+# hook also adds a trailer to the message, and the post-commit hook keeps the commit just made in
+# refs/keep/hooked and moves HEAD to the commit of the same tree and parent with the dry run's
+# message, made with git commit-tree, as a hook that hides the commit made from the leak check would.
+HOOK_NAMES = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-checkout",
+              "reference-transaction", "post-index-change", "pre-auto-gc")
+HOOK_ACTIONS = {
+    "commit-msg": "printf '\\nHooked: yes\\n' >> \"$1\"\n",
+    "post-commit": ('kept="$(git rev-parse --verify HEAD)"\n'
+                    'named="$(git commit-tree -p HEAD^ -m "Dry run: version 1.0.1" "HEAD^{tree}")"\n'
+                    'git update-ref refs/keep/hooked "${kept}"\n'
+                    'git update-ref --no-deref HEAD "${named}"\n'),
+    "reference-transaction": "cat > /dev/null\n",
+}
+# The hooks that the probe of the hook case must see run: a git commit and a git worktree add run
+# these under the case's configuration.
+PROBED_HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-checkout",
+                "reference-transaction")
+
+
+class HookCases(unittest.TestCase):
+    def test_no_hook_of_the_repository_runs(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            folder = fixture.tmp / "git-hooks"
+            folder.mkdir()
+            log = fixture.tmp / "hooks-ran"
+            for hook in HOOK_NAMES:
+                (folder / hook).write_text(f"#!/bin/sh\nprintf '%s\\n' {hook} >> {shlex.quote(str(log))}\n"
+                                           + HOOK_ACTIONS.get(hook, ""), encoding="utf-8")
+                (folder / hook).chmod(0o755)
+            env = dict(fixture.env)
+            keys = [env[f"GIT_CONFIG_KEY_{index}"] for index in range(int(env["GIT_CONFIG_COUNT"]))]
+            env[f"GIT_CONFIG_VALUE_{keys.index('core.hooksPath')}"] = str(folder)
+            probe = fixture.tmp / "probe"
+            probe.mkdir()
+            for args in (["git", "init", "-q"], ["git", "commit", "-q", "--allow-empty", "-m", "Probe"],
+                         ["git", "worktree", "add", "-q", "--detach", str(fixture.tmp / "probe-worktree")]):
+                code, _, err = run_bounded(args, env, probe)
+                self.assertEqual(code, 0, f"the probe's {' '.join(args)} exited {code}: {err}")
+            ran = set(log.read_text(encoding="utf-8").split())
+            self.assertEqual(sorted(set(PROBED_HOOKS) - ran), [],
+                             "the configuration does not make git run each of these hooks")
+            log.unlink()
+            listing = fixture.git("for-each-ref")
+            code, out, err = run_script(fixture.script, env)
+            self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
+            kept = ""
+            if fixture.git("for-each-ref", "refs/keep/hooked"):
+                kept = fixture.git("log", "-1", "--format=%H %s%n%b", "refs/keep/hooked")
+            self.assertEqual(RefComparisonCases.differing(listing, fixture.git("for-each-ref")), (),
+                             f"a hook changed the whole-repository listing while the run passed; refs/keep/hooked "
+                             f"holds {kept!r}")
+            self.assertFalse(log.exists(), "these hooks ran during the dry run: "
+                             + (log.read_text(encoding="utf-8").replace("\n", " ") if log.exists() else ""))
 
 
 if __name__ == "__main__":
