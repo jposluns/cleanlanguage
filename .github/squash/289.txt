@@ -37,21 +37,37 @@ sha256 of the gate before and after this change.
   committed gate, one in which its statement shares its line with
   LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
   it spans 3 lines with a comment after it. Each built gate must first
-  pass the reader pin, and each gate with the statement replaced must
-  keep the comments of its base gate.
-- Make pin_reflowed_gate() refuse an unpacking assignment to
-  REQUESTED_FILES, and pin_shared_gate() a statement that binds more
-  than its own name, such as 1 that 2 of its 3 names share, so that
-  moving the statements drops or repeats no binding. Give both gate
-  builders sources that their docstrings refuse, each of which must
-  raise ValueError.
+  pass the reader pin and have the layout of its builder's docstring,
+  and each gate with the statement replaced must keep the comments of
+  its base gate.
+- Make both gate builders raise ValueError rather than drop, repeat or
+  change a statement or a binding of their source. Each statement that
+  they move or reflow must bind its own name and no other name, with
+  no assignment expression (:=) in it, so pin_reflowed_gate() refuses
+  an unpacking assignment to REQUESTED_FILES and pin_shared_gate() a
+  statement that 2 of its 3 names share. pin_reflowed_gate() takes
+  only an assignment on 1 line, so that its result spans exactly 3
+  lines. Each result must parse and hold every top-level statement of
+  its source, so a statement after that of REQUESTED_FILES on its
+  line, which the builder's comment would take in, is refused, not
+  dropped. Give the builders 16 sources that their docstrings refuse,
+  each of which must raise ValueError, and 2 sources that they accept,
+  each of which must give the layout of its builder's docstring.
+- Add control_problems(): with a name of the test rebound to a
+  stand-in for 1 call, each rule of capture_problems(),
+  pin_value_problems() and scope_sentence_problems() that its
+  docstring lists must make that check fail, so an edit that removes
+  such a rule from its check alone fails; the rules of the span and of
+  the restore are held by those checks as they run. An edit of a check
+  and of its control together rests on review (residual 4).
 - Rewrite the fixture PIN_SUBCLASS as 1 simple statement with the same
   meaning, a deliberate change of its contract: a class statement
   cannot follow a semicolon, so the committed form does not parse on
   the shared-line gate.
 - Add to pin_value()'s docstring that it writes a module, a class or a
-  path by its name, so a helper that 1 of them carries is in no
-  digest here, and mark its refused values as examples. The pin holds
+  path by its name, so a helper that such a module, class or path
+  carries is in no digest here, and mark its refused values as
+  examples. The pin holds
   the values that a reviewed gate defines in ordinary code, and
   scope_sentence_problems() fails each docstring of the file that says
   so without the words "a module, a class or a path by its name".
@@ -80,12 +96,15 @@ What TODO 283 records:
   float or bytes, the capture of tuple, list and dict, the columns of
   the replaced span and the residual of pin_value()'s scope sentence.
   The 2nd is widened to bool and None, the 4th to a span that ends at
-  the end of its 1st line and to 1 that takes in a comment after the
-  statement, and the 1st to str, bytes, int, float and bool.
+  the end of its 1st line and to a span that takes in a comment after
+  the statement, and the 1st to str, bytes, int, float and bool.
 - pin_value()'s docstring gives its refused values as examples and
   points to pin_value_problems(), which names the values that it
   holds; every count in this message and the description names its
   unit.
 - The fixture PIN_SUBCLASS changes its contract deliberately, for the
   reason above.
-- GATE_SHA256 and READER_SHA256 are unchanged.
+- GATE_SHA256 and READER_SHA256 are unchanged. READER_SHA256 is no
+  single value: it maps each of the 27 names that the reader pin holds
+  to its own digest, so this message lists none of the 27 digests; its
+  statement in the test is the same before and after this change.
