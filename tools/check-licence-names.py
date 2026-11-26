@@ -17,6 +17,15 @@ repository or index than the one it finds at the root. File content is data: no 
 run, parsed as code or printed whole; besides the gate's own words and counts, a problem line
 shows only the fields that the output paragraph below names, written as that paragraph states.
 
+The work tree is the root folder as the gate opens it, once, before git runs. Git runs in that
+open folder, and every read starts from its descriptor: each tracked path is opened 1 part at a
+time, each part inside the folder opened before it and none through a symbolic link
+(O_NOFOLLOW), and after the read the gate checks that each folder and the file that it opened is
+still the entry at its name in the folder before it. So neither a symbolic link in the work tree,
+a root replaced after the open nor a folder or file moved out of the work tree before that check
+can lead a read outside it. On a system without O_NOFOLLOW the gate refuses to run, since without
+it no path can be opened without following a symbolic link.
+
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
 tab: a repository-relative path, a count, an owner (unit-2, unit-3 or keep) and a marker, a
@@ -43,15 +52,17 @@ Each must be tracked and must hold at least 1 matching line, so the list cannot 
 file that needs no exemption.
 
 The gate fails closed, exiting 1 and naming the cause, and turns no error into an empty or clean
-result: when git ls-files cannot run, fails or lists nothing; when it gives an entry that cannot
-be read (one with no tab, or without exactly 3 fields before its tab); when an entry is unmerged
-(a stage other than 0); when a tracked path has a mode other than 100644 or 100755, such as a
-symbolic link (120000) or a submodule (160000); when a tracked path is not a regular file in the
-work tree (which includes a path that is absolute, a path with a part that is empty, 1 dot
-or 2 dots, and a path with a parent at any depth that is a symbolic link or anything else but a
-folder) or cannot be opened or read; and when the allowlist cannot be read or is not UTF-8. When
-git ls-files lists entries and the gate can read none of them, it names each entry and no other
-cause.
+result: when the system has no O_NOFOLLOW or the root cannot be opened as a folder, and then it
+runs no git and reads no file; when git ls-files cannot run, fails or lists nothing; when it
+gives an entry that cannot be read (one with no tab, or without exactly 3 fields before its tab);
+when an entry is unmerged (a stage other than 0); when a tracked path has a mode other than
+100644 or 100755, such as a symbolic link (120000) or a submodule (160000); when a tracked path
+is not a regular file in the work tree (which includes a path that is absolute, a path with a
+part that is empty, 1 dot or 2 dots, and a path with a parent at any depth that is a symbolic
+link or anything else but a folder) or cannot be opened or read; when a folder or the file that
+the gate opened for a tracked path is no longer in its place after the read; and when the
+allowlist cannot be read or is not UTF-8. When git ls-files lists entries and the gate can read
+none of them, it names each entry and no other cause.
 
 Output and exit codes. Each problem goes to standard error, prefixed "check-licence-names: ",
 then, without --list, the line "check-licence-names: checked: N lines in M files; P problem(s)"
@@ -68,19 +79,21 @@ allowlist and the tree agree; 1 on any problem; 2 on a bad invocation, such as a
 own code). --list prints "path:count" for each file outside the named exceptions with a matching
 line, then "total: N lines in M files". It does not parse the allowlist, so it reports no
 unclaimed or ambiguous line, no stale or malformed row and no allowlist that is not UTF-8. It
-exits 1 when git ls-files cannot run, fails or lists nothing; on an entry of git ls-files that
-cannot be read; on an unmerged entry; on a tracked path with a mode other than 100644 or 100755;
-on a tracked path, the allowlist included, that is not a regular file in the work tree or cannot
-be read; and on a named exception that is not tracked or holds no matching line. --root PATH
-points the gate at another repository.
+exits 1 when the system has no O_NOFOLLOW or the root cannot be opened as a folder; when git
+ls-files cannot run, fails or lists nothing; on an entry of git ls-files that cannot be read; on
+an unmerged entry; on a tracked path with a mode other than 100644 or 100755; on a tracked path,
+the allowlist included, that is not a regular file in the work tree or cannot be read; on a
+tracked path with a folder or file that is no longer in its place after the read; and on a named
+exception that is not tracked or holds no matching line. --root PATH points the gate at another
+repository.
 
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
 of a file whose work-tree copy differs (in CI they are equal); a folder of the work tree that is a
-mount point and a file that is a hard link, each read where it stands; a work tree that changes
-while the gate runs, since the root is opened by its path for each file and an opened folder is
-read wherever it is moved, so a root replaced or a folder moved out of the work tree during the
-run can lead a read outside it; whether a line is a true statement of a licence; whether the
+mount point and a file that is a hard link, each read where it stands; a folder or file moved
+out of the work tree and back between the gate's open of it and the check after the read, since
+an opened folder or file is read wherever it is moved and that check sees only where it is then;
+whether a line is a true statement of a licence; whether the
 owner of a row is right, which is reviewed prose; and the named exceptions' own lines. A row
 counts lines per file, so fixing 1 line and adding another of the same kind in the same file
 passes.
@@ -106,6 +119,7 @@ COUNT = re.compile(r"[1-9][0-9]*")
 PREFIX = "check-licence-names: "
 # The settings that would point git at another repository or index than the one at the root.
 GIT_LOCATIONS = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+NO_NOFOLLOW = "this system has no O_NOFOLLOW, so no path can be opened without following a symbolic link"
 
 
 def shown(text: str) -> str:
@@ -130,13 +144,36 @@ def error_text(error: BaseException) -> str:
     return f"{type(error).__name__}: {shown(' '.join(str(error).split())[:300])}"
 
 
-def tracked(root: Path, problems: list):
-    """{path: mode} for each entry git ls-files lists, or None when the listing fails."""
-    argv = ["git", "-C", str(root), "ls-files", "--stage", "-z"]
+def open_root(root: Path, problems: list):
+    """A descriptor of the root folder, opened once, or None, with a problem, when it cannot be opened."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        problems.append(f"{NO_NOFOLLOW}, and the gate runs no git and reads no file")
+        return None
+    cannot = f"{shown(os.fsdecode(root))}: cannot open the root folder"
+    try:
+        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError as error:
+        problems.append(f"{cannot}: {error_text(error)}")
+        return None
+    try:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            return fd
+        problems.append(f"{cannot}: it is not a folder")
+    except OSError as error:
+        problems.append(f"{cannot}: {error_text(error)}")
+    os.close(fd)
+    return None
+
+
+def tracked(root: int, problems: list):
+    """{path: mode} for each entry git ls-files lists in the open root folder, or None when the listing fails."""
+    argv = ["git", "ls-files", "--stage", "-z"]
     env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATIONS}
     try:
-        done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, shell=False, env=env)
-    except OSError as error:
+        # Git starts in the folder of the root descriptor, wherever that folder now is, not at a path.
+        done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, shell=False, env=env,
+                              preexec_fn=lambda: os.fchdir(root))
+    except (OSError, subprocess.SubprocessError) as error:
         problems.append(f"cannot run git ls-files, so no tracked file can be listed: {error_text(error)}")
         return None
     if done.returncode != 0:
@@ -166,32 +203,48 @@ def tracked(root: Path, problems: list):
     return entries or None
 
 
-def read_file(root: Path, path: str, problems: list):
+def in_place(parent: int, name: str, opened: int) -> bool:
+    """Whether the entry at name in the folder parent is still the folder or file that opened holds."""
+    try:
+        entry = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    mine = os.fstat(opened)
+    return (entry.st_dev, entry.st_ino) == (mine.st_dev, mine.st_ino)
+
+
+def read_file(root: int, path: str, problems: list):
     """The bytes of the regular work-tree file at path, or None, with a problem, when it cannot be read.
 
-    The path is opened 1 part at a time from the root, each part inside the folder opened before it and
-    none through a symbolic link, so a symbolic link in the work tree cannot lead a read outside it. A
-    work tree that changes while the gate runs is not covered: the root is opened by its path for each
-    file and an opened folder is read wherever it is moved, so a root replaced or a folder moved out of
-    the work tree during the run can lead a read outside it."""
+    root is the descriptor of the root folder, which the caller opened once and closes. The path is
+    opened 1 part at a time from it, each part inside the folder opened before it and none through a
+    symbolic link, and after the read each folder and the file that were opened must still be the entry
+    at their name in the folder before them, so neither a symbolic link, a replaced root nor a folder or
+    file moved out of the work tree can lead a read outside it. Not covered: a folder or file moved
+    out of the work tree and back between the gate's open of it and the check after the read, since
+    an opened folder or file is read wherever it is moved and that check sees only where it is then."""
     not_regular = f"{shown(path)}: the tracked path is not a regular file in the work tree"
     parts = path.split("/")
     # An absolute path has an empty first part.
     if any(part in ("", ".", "..") for part in parts):
         problems.append(f"{not_regular}, since it is not a plain relative path")
         return None
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    # Without O_NOFOLLOW no open can refuse a symbolic link, so the gate refuses and does not fall back.
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        problems.append(f"{shown(path)}: cannot read the tracked file: {NO_NOFOLLOW}")
+        return None
     folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
-    folder = None
+    # (the folder it was opened in, its name, its descriptor) for each folder opened below the root.
+    steps, folder = [], root
     try:
-        folder = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         for number, part in enumerate(parts[:-1], 1):
             not_folder = f"{not_regular}, since its parent {shown('/'.join(parts[:number]))} is not a folder in the work tree"
             if not stat.S_ISDIR(os.lstat(part, dir_fd=folder).st_mode):
                 problems.append(not_folder)
                 return None
             inner = os.open(part, folder_flags, dir_fd=folder)
-            os.close(folder)
+            steps.append((folder, part, inner))
             folder = inner
             if not stat.S_ISDIR(os.fstat(folder).st_mode):
                 problems.append(not_folder)
@@ -204,13 +257,20 @@ def read_file(root: Path, path: str, problems: list):
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                 problems.append(not_regular)
                 return None
-            return handle.read()
+            data = handle.read()
+            # From the root outwards, so the first entry that moved is the one named.
+            for number, (parent, part, opened) in enumerate([*steps, (folder, parts[-1], handle.fileno())], 1):
+                if not in_place(parent, part, opened):
+                    problems.append(f"{shown(path)}: the work tree changed while the gate read the file, since "
+                                    f"{shown('/'.join(parts[:number]))} is no longer where the gate opened it")
+                    return None
+            return data
     except OSError as error:
         problems.append(f"{shown(path)}: cannot read the tracked file: {error_text(error)}")
         return None
     finally:
-        if folder is not None:
-            os.close(folder)
+        for _, _, opened in steps:
+            os.close(opened)
 
 
 def matching_lines(data: bytes) -> list:
@@ -218,7 +278,7 @@ def matching_lines(data: bytes) -> list:
     return [(number, line) for number, line in enumerate(data.split(b"\n"), 1) if PATTERN.search(line)]
 
 
-def scan(root: Path, entries: dict, problems: list):
+def scan(root: int, entries: dict, problems: list):
     """({path: [(number, line)]} for files outside the named exceptions, the set of unreadable paths)."""
     found, unreadable = {}, set()
     for path, mode in sorted(entries.items()):
@@ -243,7 +303,7 @@ def scan(root: Path, entries: dict, problems: list):
     return found, unreadable
 
 
-def read_allowlist(root: Path, entries: dict, problems: list) -> list:
+def read_allowlist(root: int, entries: dict, problems: list) -> list:
     """The well-formed rows of the allowlist, each (row line number, path, count text, owner, marker)."""
     data = read_file(root, ALLOWLIST, problems)
     if data is None:
@@ -318,17 +378,22 @@ def main(argv=None) -> int:
     parser.add_argument("--root", type=Path, default=ROOT, help="the repository to check (default: this one)")
     parser.add_argument("--list", action="store_true", help="print path:count per file and the total")
     args = parser.parse_args(argv)
-    root = args.root
     problems = []
-    entries = tracked(root, problems)
-    found, unreadable = scan(root, entries, problems) if entries is not None else ({}, set())
-    lines = sum(len(v) for v in found.values())
-    if args.list:
-        for path, matched in sorted(found.items()):
-            print(f"{shown(path)}:{len(matched)}")
-        print(f"total: {lines} lines in {len(found)} files")
-    elif entries is not None:
-        compare(found, unreadable, read_allowlist(root, entries, problems), problems)
+    # The root is opened once, before git runs, and every later step starts from this descriptor.
+    root = open_root(args.root, problems)
+    try:
+        entries = tracked(root, problems) if root is not None else None
+        found, unreadable = scan(root, entries, problems) if entries is not None else ({}, set())
+        lines = sum(len(v) for v in found.values())
+        if args.list:
+            for path, matched in sorted(found.items()):
+                print(f"{shown(path)}:{len(matched)}")
+            print(f"total: {lines} lines in {len(found)} files")
+        elif entries is not None:
+            compare(found, unreadable, read_allowlist(root, entries, problems), problems)
+    finally:
+        if root is not None:
+            os.close(root)
     for problem in problems:
         print(PREFIX + problem, file=sys.stderr)
     if not args.list:
