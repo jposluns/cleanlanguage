@@ -14,12 +14,23 @@ read with replace refs, grafts and the shallow file turned off, so
 none of them can hide such a ref. The script makes that commit with
 git commit-tree, which prints the name of the commit it writes, saves
 that name for step 6, never reading a later HEAD, and moves the
-throwaway worktree's HEAD to it with git update-ref. Every git call of
-the script that can write the index or a ref runs with the
-repository's hooks turned off, so no hook runs during the dry run, and
-the run fails closed unless that HEAD is at the commit once moved. The
-git commit-tree runs with commit signing turned off, so the dry-run
-commit is never signed. A git error in either check, or in making or
+throwaway worktree's HEAD to it with git update-ref, which fails if
+that HEAD is no longer at the parent it read. Every git call of the
+script after the before snapshot other than the reads of step 6, the
+exit cleanup's included, runs with hooks, the core.fsmonitor program,
+a pager and every filter driver that the configuration read from the
+script's worktree defines turned off, and every git process of the dry
+run with lazy fetching turned off. No git call of the script asks for
+a textconv or diff driver, a signature, an editor or automatic
+maintenance, and the snapshot and leak-check reads read no index and
+no file content and write to no terminal. So no program that git can
+run from its configuration or from attributes runs during a git call
+of the script, other than a filter driver that only configuration read
+inside the throwaway worktree defines; the tools that the script runs
+are covered only by the lazy-fetch setting. The run fails closed
+unless that HEAD is at the commit once moved. The git
+commit-tree runs with commit signing turned off, so the dry-run commit
+is never signed. A git error in either check, or in making or
 reading the dry-run commit or moving HEAD to it, fails the run with
 exit 1 and is never read as an empty listing.
 
@@ -52,23 +63,36 @@ unknown.
 
 tools/test-release-dry-run-refs.py runs the whole script, copied byte
 for byte into throwaway folders with stand-ins for the tools it calls,
-so bash itself reads every line of it. Its 42 ref cases each build a
-repository and make writes at up to 4 points: a git stand-in first on
+so bash itself reads every line of it. Its 44 ref cases each build a
+repository and make writes at up to 5 points: a git stand-in first on
 PATH makes another worktree's writes before the dry run adds its
-worktree, case 42's move of that worktree once it is added, and, once
-the dry run's worktree is at the commit its git commit-tree wrote,
-the dry run's own writes, or in cases 28 and 29 another worktree's;
-the stand-in of step 5 makes late writes after that step. Every ref
-case but case 31 must reach all 4 points; case 31 must stop at the
-dry-run commit, before the fourth. Each ref case checks that exactly
-the refs it names change, and that the dry-run commit has the parent,
-identity, dates, message and tree it must have. Its 8 cases on
-fail-closed reading make no writes: 7 require the run to end at the
-read that fails, and 1, with no tag and no note, requires it to pass.
-1 more case turns commit signing on in the configuration and requires
-the dry run to pass without signing, and 1 more writes 8 hooks to the
-configured hook folder and requires the dry run to pass with none of
-them run. Residual of the test: stand-ins replace the packaging, the
+worktree, the move of that worktree once it is added in cases 42 and
+44, its move after the dry run reads the parent of its commit in case
+43, and, once the dry run's worktree is at the commit its git
+commit-tree wrote, the dry run's own writes, or in cases 28 and 29
+another worktree's; the stand-in of step 5 makes late writes after
+that step. Every ref case but cases 31 and 43 must reach all 5 points;
+case 31 must stop at the dry-run commit, before the fifth, and case 43
+must stop when the move of that HEAD to it fails, before the fourth.
+Each ref case checks that exactly the refs it names change, and that
+the dry-run commit has the parent, identity, dates, message and tree
+it must have. Its 8 cases on fail-closed reading make no writes: 7
+require the run to end at the read that fails, and 1, with no tag and
+no note, requires it to pass. 1 more case turns commit signing on in
+the configuration and requires the dry run to pass without signing,
+and 1 more writes 8 hooks to the configured hook folder and requires
+the dry run to pass with none of them run. 6 more each configure
+programs that git runs from its configuration or from attributes: a
+core.fsmonitor program, clean and smudge filters, a process filter, a
+pager with the run on a terminal, textconv and diff drivers, and the
+upload-pack program of a promisor remote; each requires the dry run
+to run none of them, the last by failing closed at its read of a
+missing blob. 1 more reads git's trace2 log and requires every git
+call of the script after the before snapshot other than the reads of
+step 6, the exit cleanup's included, to run with hooks, the
+core.fsmonitor program and filters turned off and to start no program
+other than git, and every one to run with lazy fetching turned off.
+Residual of the test: stand-ins replace the packaging, the
 gates and the site rewrite, which the next step of release-dry-run.yml
 runs with the real tools, and the script runs with a git stand-in
 first on PATH and an environment that the test fixes, not those of
@@ -81,7 +105,7 @@ default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 52 cases pass. Each of 14 mutants that remove
+against this change all 61 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
 later mutants failed at least 1 case of the 36-case suite, each of 9
 script mutants that the 36-case suite passed fails at least 1 case of
@@ -95,7 +119,11 @@ or that call git by its absolute path before the before snapshot. The
 52-case suite fails the hook case against the script before the
 plumbing fix, whose run passes there while a hook keeps the commit
 that git commit made in a ref, and fails each of 11 mutants of the
-plumbing fix. The release dry run workflow and tools/run_all_checks.sh
+plumbing fix. The 61-case suite fails 6 cases against the script
+before the configured-program fix, the core.fsmonitor case among them,
+whose run passes there while that program runs 6 times and makes the
+parent of the dry-run commit, and fails each of 12 mutants of that
+fix. The release dry run workflow and tools/run_all_checks.sh
 run it before the dry run, and tools/test-run-all-checks.py records
 the new digest of tools/run_all_checks.sh after a reading of the whole
 script. The workflow header now counts 7 test suites.

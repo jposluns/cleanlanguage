@@ -23,10 +23,22 @@
 # listed ref created or moved onto the dry-run commit or a descendant of it;
 # any other such write is outside the proof. The dry-run commit is the commit
 # that git commit-tree writes and prints, which the script saves and step 6
-# reads, never a later HEAD. Every git call of the script that can write the
-# index or a ref runs with the repository's hooks turned off, so no hook runs
-# during the dry run, and the run fails unless the HEAD of the throwaway
-# worktree is at the dry-run commit once the script has moved it there.
+# reads, never a later HEAD. Every git call of the script after the before
+# snapshot other than the reads of step 6, the exit cleanup's git worktree
+# remove included, runs with hooks, the core.fsmonitor program, a pager, and
+# the clean, smudge and process commands of every filter driver that the
+# configuration read from the script's worktree defines turned off, whatever
+# the configuration asks, and every git process of the dry run runs with lazy
+# fetching from a promisor remote turned off. No git call of the script asks
+# for a textconv or diff driver, a signature, an editor or automatic
+# maintenance, and the reads of the 2 snapshots and the leak check read no
+# index and no file content and write to no terminal. So no program that git
+# can run from its configuration or from attributes runs during a git call of
+# the script, other than a filter driver that only configuration read inside
+# the throwaway worktree defines, and the run fails unless the HEAD of the
+# throwaway worktree is at the dry-run commit once the script has moved it
+# there. The git calls of the tools that the script runs are covered only by
+# the lazy-fetch setting.
 #
 # Residual: the proof does not catch the deletion of any ref outside tags and
 # notes other than the branch the script's worktree has checked out, such as
@@ -65,6 +77,10 @@ set -euo pipefail
 # west of UTC in the evening does not stamp tomorrow's local date and fail its
 # own metadata gate.
 export TZ=UTC
+# A missing object fails a git call of the dry run, its tools' included,
+# instead of fetching it from a promisor remote with the programs that a fetch
+# starts.
+export GIT_NO_LAZY_FETCH=1
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_root="$(pwd)"
@@ -127,6 +143,39 @@ seed_date="2020-01-01"
 
 refs_before="$(ref_snapshot)"
 
+# git_off holds the options that turn off, for 1 git call, the programs that
+# git can otherwise run from its configuration or from attributes during the
+# git calls of this script, whatever the configuration asks, and every later
+# git call of the script, the exit cleanup's included, other than the reads of
+# step 6, runs with them: --no-pager, so no pager that pager.<command> or
+# core.pager names runs when the call writes to a terminal; core.hooksPath set
+# to the null device, which holds no hook, so no hook of the repository runs,
+# such as post-checkout here; core.fsmonitor set to false, so no
+# core.fsmonitor program runs, which git otherwise starts on reading the
+# index; and, for every filter driver that the configuration read from
+# repo_root defines, its clean, smudge and process commands set to empty,
+# which git reads as no command, and its required flag set to false, so no
+# filter runs on checking out or staging a file. A git error in listing those
+# drivers fails the run.
+git_off=(--no-pager -c core.hooksPath=/dev/null -c core.fsmonitor=false)
+filter_rc=0
+filter_keys="$(git "${git_off[@]}" config --name-only --get-regexp '^filter\.')" || filter_rc=$?
+case "${filter_rc}" in
+  0|1) ;;
+  *) fail "could not list the filter drivers of ${repo_root} (git config exit ${filter_rc})" ;;
+esac
+while IFS= read -r filter_key; do
+  case "${filter_key}" in
+    filter.*.*) filter_driver="${filter_key#filter.}"; filter_driver="${filter_driver%.*}" ;;
+    *) continue ;;
+  esac
+  case "${filter_driver}" in
+    *=*) fail "could not turn off the filter driver ${filter_driver}, whose name holds an equals sign" ;;
+  esac
+  git_off+=(-c "filter.${filter_driver}.clean=" -c "filter.${filter_driver}.smudge="
+    -c "filter.${filter_driver}.process=" -c "filter.${filter_driver}.required=false")
+done <<< "${filter_keys}"
+
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
 # strict rule the release gates apply; a malformed first line is rejected here,
 # never skipped to a later matching line. One shared strict extractor,
@@ -135,7 +184,7 @@ refs_before="$(ref_snapshot)"
 # NUL, which the old capture-then-sed form silently stripped). The raw blob is
 # piped straight in: skill-version.py reads ALL of stdin, so git show completes
 # and can take no SIGPIPE, and the ~64KB-pipe exit-141 regression cannot recur.
-if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"; then
+if ! version="$(git "${git_off[@]}" show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"; then
   fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
 fi
 patch="${version##*.}"
@@ -146,15 +195,13 @@ echo "release-dry-run: version ${version} at HEAD; dry-run version ${dry_version
 worktree="$(mktemp -d)"
 cleanup() {
   cd "${repo_root}"
-  git -c core.hooksPath=/dev/null worktree remove --force "${worktree}" >/dev/null 2>&1 || true
+  git "${git_off[@]}" worktree remove --force "${worktree}" >/dev/null 2>&1 || true
   rm -rf "${worktree}"
 }
 trap cleanup EXIT
-# Every git call of the script that can write the index or a ref sets
-# core.hooksPath to the null device, which holds no hook, so git runs no hook
-# of the repository, such as post-checkout here, whatever the configuration
-# asks.
-git -c core.hooksPath=/dev/null worktree add --detach "${worktree}" HEAD >/dev/null
+# Like every later git call of the script, git worktree add runs with git_off,
+# so no hook, core.fsmonitor program, pager or filter runs inside it.
+git "${git_off[@]}" worktree add --detach "${worktree}" HEAD >/dev/null
 cd "${worktree}"
 
 # Stand in for the human version-bump commit that precedes a real release.
@@ -229,26 +276,26 @@ python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/p
 # commit the dry run made, and the leak check reads it, never a later HEAD. git
 # update-ref then moves the HEAD of this worktree from the parent to that
 # commit, and fails if that HEAD is no longer at the parent.
-# Every git call here that writes runs with the hooks turned off, as git
-# worktree add does above, so no hook can change the commit, keep another or
-# move that HEAD inside them; the run then fails unless that HEAD is at the
-# dry-run commit, so the steps below read that commit. Its object is in the
-# store the worktree shares with repo_root, so repo_root resolves it. git
+# Every git call here runs with git_off, as git worktree add does above, so no
+# hook, core.fsmonitor program, pager or filter can change the commit, keep
+# another or move that HEAD inside them; the run then fails unless that HEAD is
+# at the dry-run commit, so the steps below read that commit. Its object is in
+# the store the worktree shares with repo_root, so repo_root resolves it. git
 # commit-tree runs with commit signing turned off, whatever the configuration
 # asks, so the dry-run commit is never signed. Every git call here fails the
 # run with exit 1 on an error.
 dry_message="Dry run: version ${dry_version}"
-git -c core.hooksPath=/dev/null add -u || fail "could not stage the dry-run version bump"
-dry_tree="$(git -c core.hooksPath=/dev/null write-tree)" || fail "could not write the tree of the dry-run commit"
-dry_parent="$(git rev-parse --verify HEAD)" \
+git "${git_off[@]}" add -u || fail "could not stage the dry-run version bump"
+dry_tree="$(git "${git_off[@]}" write-tree)" || fail "could not write the tree of the dry-run commit"
+dry_parent="$(git "${git_off[@]}" rev-parse --verify HEAD)" \
   || fail "could not read the HEAD of the dry run's worktree before its commit"
 dry_commit="$(GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
-  git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" -c commit.gpgSign=false \
-  -c core.hooksPath=/dev/null commit-tree -p "${dry_parent}" -m "${dry_message}" "${dry_tree}")" \
+  git "${git_off[@]}" -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
+  -c commit.gpgSign=false commit-tree -p "${dry_parent}" -m "${dry_message}" "${dry_tree}")" \
   || fail "could not make the dry-run commit"
-git -c core.hooksPath=/dev/null update-ref --no-deref -m "${dry_message}" HEAD "${dry_commit}" "${dry_parent}" \
+git "${git_off[@]}" update-ref --no-deref -m "${dry_message}" HEAD "${dry_commit}" "${dry_parent}" \
   || fail "could not move the HEAD of the dry run's worktree from ${dry_parent} to the dry-run commit ${dry_commit}"
-dry_head="$(git rev-parse --verify HEAD)" \
+dry_head="$(git "${git_off[@]}" rev-parse --verify HEAD)" \
   || fail "could not read the HEAD of the dry run's worktree after its commit"
 [ "${dry_head}" = "${dry_commit}" ] \
   || fail "the HEAD of the dry run's worktree is at ${dry_head}, not at the dry-run commit ${dry_commit}; another process moved that HEAD"

@@ -14,13 +14,18 @@ does, fails the run only when it is a tag or a note, when it is the HEAD of repo
 that worktree has checked out, or when it is a ref that git for-each-ref lists from repo_root,
 created or moved onto the dry run's commit or a descendant of it; any other such write is outside
 the proof. The dry run's commit is the commit that the script's git commit-tree writes and prints,
-which the script saves and step 6 reads, never a later HEAD; the script's git calls that can write
-the index or a ref run with the repository's hooks turned off, so no hook runs during the dry run,
-and the run fails unless the HEAD of the throwaway worktree is at that commit once the script has
-moved it there. The leak check reads with replace refs, the graft file and the shallow file turned
-off, so no refs/replace/ ref, graft or shallow boundary can hide a ref that contains the commit. The
-git commit-tree that makes the commit runs with commit signing turned off, so the dry run's commit
-is never signed.
+which the script saves and step 6 reads, never a later HEAD. Every git call of the script after the
+before snapshot other than the reads of step 6, the exit cleanup's included, runs with hooks, the
+core.fsmonitor program, a pager and every filter driver that the configuration read from the
+script's worktree defines turned off, and every git process of the dry run with lazy fetching
+turned off, so no program that git can run from its configuration or from attributes runs during a
+git call of the script, other than a filter driver that only configuration read inside the
+throwaway worktree defines; the run fails unless the HEAD of the throwaway worktree is at that
+commit once the script has moved it there, and the move fails unless that HEAD is still at the
+parent the script read. The leak check reads with replace refs, the graft file and the shallow file
+turned off, so no refs/replace/ ref, graft or shallow boundary can hide a ref that contains the
+commit. The git commit-tree that makes the commit runs with commit signing turned off, so the dry
+run's commit is never signed.
 
 The script's header states the residual of the proof in these words:
 
@@ -49,18 +54,20 @@ Released line does not name, write the site files that the script's assertions r
 gate. The repository has branches main, feature and other (other checked out in a second
 worktree), a lightweight tag v1.0.0, an annotated tag v0.9.0 and refs/remotes/origin/main.
 
-A ref case's writes are made at 4 points. A git stand-in, first on PATH for the run, runs the real
-git for every call and makes the writes of the first 3 points. When the script first asks git to add
+A ref case's writes are made at 5 points. A git stand-in, first on PATH for the run, runs the real
+git for every call and makes the writes of the first 4 points. When the script first asks git to add
 a worktree, the stand-in makes the case's first writes, which are all another worktree's, before it
 adds the worktree. Once that call has added the worktree, the stand-in records the commit that the
-new worktree's HEAD resolves to, makes the case's added writes, which only case 42 makes, and records
-the commit that HEAD then resolves to. When the script's git commit-tree given the dry run's message
-has written its commit, the stand-in records the commit that call prints. After the first later git
-call that leaves the HEAD of the dry run's worktree at that commit, before that call returns, the
-stand-in makes the case's second writes, in the dry run's worktree: these are the dry run's own
-writes, except in cases 28 and 29, which make another worktree's writes there because they need the
-dry run's commit. Once the check of step 5, the script's last step before step 6, has passed, its
-stand-in makes the case's late writes, in the dry run's worktree. So the before snapshot must
+new worktree's HEAD resolves to, makes the case's added writes, which only cases 42 and 44 make, and
+records the commit that HEAD then resolves to. When the script runs git commit-tree given the dry
+run's message, which it does once it has read the parent of its commit, the stand-in first makes the
+case's parent writes, in the dry run's worktree, which only case 43 makes, then runs that call and
+records the commit it prints. After the first later git call that leaves the HEAD of the dry run's
+worktree at that commit, before that call returns, the stand-in makes the case's second writes, in
+the dry run's worktree: these are the dry run's own writes, except in cases 28 and 29, which make
+another worktree's writes there because they need the dry run's commit. Once the check of step 5,
+the script's last step before step 6, has passed, its stand-in makes the case's late writes, in the
+dry run's worktree. So the before snapshot must
 precede the dry run's first ref write, the leak check must read the commit that the dry run's git
 commit-tree wrote, not the HEAD of its worktree at step 6 (case 39), and the after snapshot and the
 leak check must follow step 5; a script in which any of these does not hold fails a ref case. Every
@@ -69,10 +76,16 @@ dry run's worktree resolved to once the added writes had run, with the dry run's
 message, and with the tree of the commit that worktree was added at, changed only in the version
 bump and the Released line. Case 42 moves that worktree to feature first, so a script that reads the
 parent in another folder fails it, and a script that writes the tree in another folder, whose index
-holds no version bump, fails every ref case. Every ref case other than case 31 requires all 4
-points to have been reached and its writes to have succeeded; case 31 requires the first 3, and
-requires the run to stop before the fourth. Concurrency is modelled as sequenced writes, which a
-snapshot comparison cannot tell from a race, and no real race is run.
+holds no version bump, fails every ref case. Case 44 attaches that worktree's HEAD to feature first,
+so a script whose move of that HEAD follows it to the branch moves feature onto its commit and fails
+the case. Case 43 moves that worktree to feature after the script has read the parent, so a script
+whose git commit-tree reads HEAD again makes a child of feature and fails the case, and a script
+whose move of that HEAD does not require it to be at the parent moves it from feature and passes,
+which fails the case. Every ref case other than cases 31 and 43 requires all 5 points to have been
+reached and its writes to have succeeded; case 31 requires the first 4, and requires the run to stop
+before the fifth, and case 43 requires the first 3, and requires the run to stop before the fourth.
+Concurrency is modelled as sequenced writes, which a snapshot comparison cannot tell from a race,
+and no real race is run.
 
 A case expected to pass must exit 0 with the script's success message. A ref case expected to fail
 must exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison,
@@ -158,6 +171,11 @@ The ref cases, each with its expected outcome:
 - 41, the dry run deletes an existing notes ref: fails, printing both snapshots.
 - 42, the dry run's worktree is moved to feature after it is added and before the dry run makes its
   commit: passes, and the dry run's commit is a child of feature.
+- 43, the dry run's worktree is moved to feature after the dry run reads the parent of its commit:
+  fails closed at the move of that HEAD, naming the parent and the dry run's commit, which is a child
+  of that parent.
+- 44, the dry run's worktree is attached to feature after it is added: passes, the dry run's commit
+  is a child of feature, and feature does not move.
 
 The 8 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
@@ -196,6 +214,26 @@ that hides the commit made from the leak check would. The case first checks, in 
 own, that a git commit and a git worktree add then run the first 6 of those hooks. The dry run must
 then pass with no hook run and the whole-repository listing unchanged.
 
+6 more cases each configure programs that git runs from its configuration or from attributes, each
+of which records its name when it runs, and first check, in a repository of their own, that git
+then runs each of them: a core.fsmonitor program, which on its third run in a linked worktree also
+moves that worktree's HEAD to a new child of it; clean and smudge commands of a required filter
+driver that the main worktree's info/attributes gives every path; a process command of such a
+driver; a pager for each subcommand that the script runs, with the run's standard output on a
+pseudo-terminal; textconv and diff command drivers that info/attributes gives every path, and
+diff.external; and, in a partial clone made without blobs, the upload-pack program of its promisor
+remote. The dry run must pass with none of them run and the whole-repository listing unchanged, or,
+in the partial clone, fail closed at its read of the version with no fetch run. 1 more case, whose
+configuration names a hook folder, a core.fsmonitor program and the commands of a filter driver,
+reads git's trace2 log of a run and requires every run of git that the script starts after the
+before snapshot, other than the reads of step 6, the exit cleanup's git worktree remove included, to
+run with core.hooksPath set to the null device, core.fsmonitor set to false and the commands of a
+configured filter driver empty, and every run of git, the reads of the 2 snapshots and the leak
+check included, to run with lazy fetching turned off; the reads must start no program, and the
+other runs no program other than git, and no automatic maintenance or fetch, although the case's
+gc.auto and maintenance.auto ask for it. The textconv and diff driver case passes against the
+script before these settings too, since no git call of the script runs a diff.
+
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
 hook folder given as GIT_CONFIG_COUNT entries (the environment form of git -c), fixed author and
@@ -221,12 +259,14 @@ Exit status: 0 when every case passes, 1 otherwise.
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import shlex
 import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -363,9 +403,10 @@ FILES = {
 # adds a worktree it runs concurrent.sh; once that call has added the worktree, it records the
 # commit that the new worktree's HEAD resolves to as checked, runs added.sh with ${wt} naming that
 # worktree, and records the commit that HEAD then resolves to as base. On the first git commit-tree
-# given the dry run's message, it records the commit that call prints, which is the commit the call
-# wrote, as dry. After the first later call that leaves the HEAD of the folder it runs in at that
-# commit, it runs own.sh there. A failing write fails the call, so the run cannot pass.
+# given the dry run's message, it runs parent.sh with ${wt} naming the folder it runs in, then runs
+# that call and records the commit it prints, which is the commit the call wrote, as dry. After the
+# first later call that leaves the HEAD of the folder it runs in at that commit, it runs own.sh there.
+# A failing write fails the call, so the run cannot pass.
 HOOK = """#!/bin/sh
 real={real}
 hooks={hooks}
@@ -394,6 +435,8 @@ if [ "${{point}}" = worktree ] && [ ! -e "${{hooks}}/worktree.done" ]; then
 fi
 if [ "${{subcommand}}" = commit-tree ] && [ "${{message}}" = dry ] && [ ! -e "${{hooks}}/commit.done" ]; then
   : > "${{hooks}}/commit.done"
+  wt="$(pwd)" PATH={path} bash --noprofile --norc -e "${{hooks}}/parent.sh" >&2 || exit 97
+  : > "${{hooks}}/parent.ok"
   "${{real}}" "$@" > "${{hooks}}/dry" || exit
   cat "${{hooks}}/dry"
   exit 0
@@ -658,7 +701,20 @@ CASES = (
      "git update-ref -d refs/notes/commits", "fail", (BEFORE, "refs/notes/commits"), ("refs/notes/commits",)),
     ("42 the dry run's worktree is moved to another commit before the dry run makes its commit", "", "", "",
      "pass", (), ()),
+    ("43 the dry run's worktree is moved to another commit after the dry run reads the parent of its commit",
+     "", "", "", "fail closed",
+     ("release-dry-run: could not move the HEAD of the dry run's worktree from {base} to the dry-run commit "
+      "{dry}\n",), ()),
+    ("44 the dry run's worktree is attached to feature before the dry run makes its commit", "", "", "",
+     "pass", (), ()),
 )
+# The writes made in the dry run's worktree once the dry run has read the parent of its commit, before
+# its git commit-tree runs, by case number, with ${wt} naming that worktree. Every other ref case makes
+# none.
+PARENT = {
+    "43": 'git update-ref --no-deref HEAD refs/heads/feature\n'
+          'test "$(git rev-parse --verify HEAD)" = "$(git rev-parse --verify refs/heads/feature)"',
+}
 # The late writes of the cases that make them, by case number: writes the dry run makes in its
 # worktree once the check of step 5, its last step before step 6, has passed, with ${dry} naming the
 # dry-run commit. Every other ref case makes no late writes.
@@ -672,9 +728,13 @@ LATE = {
 # number, with ${wt} naming that worktree. Every other ref case makes none.
 ADDED = {
     "42": 'git -C "${wt}" update-ref --no-deref HEAD refs/heads/feature',
+    "44": 'git -C "${wt}" symbolic-ref HEAD refs/heads/feature',
 }
 # The ref cases that must stop at the dry-run commit, and so must not reach the late point.
 STOP_AT_COMMIT = ("31",)
+# The ref cases that must stop at the move of the dry run's worktree to its commit, and so must reach
+# neither the point after that move nor the late point.
+STOP_AT_MOVE = ("43",)
 
 
 class Fixture:
@@ -734,11 +794,12 @@ class Fixture:
         head = ref.strip() if ref.strip() else "detached"
         return f"HEAD ref: {head}\nHEAD commit: {commit.strip()}\n{listing}".rstrip("\n")
 
-    def hook(self, concurrent: str, own: str, late: str = "", added: str = "") -> Path:
+    def hook(self, concurrent: str, own: str, late: str = "", added: str = "", parent: str = "") -> Path:
         """Write the case's writes and the git stand-in, and return the folder that holds it."""
         variables = f"repo_root={shlex.quote(str(self.main))}\nother={shlex.quote(str(self.other))}\n"
         (self.hooks / "concurrent.sh").write_text(variables + concurrent + "\n", encoding="utf-8")
         (self.hooks / "added.sh").write_text(variables + added + "\n", encoding="utf-8")
+        (self.hooks / "parent.sh").write_text(variables + parent + "\n", encoding="utf-8")
         (self.hooks / "own.sh").write_text(variables + 'wt="$(pwd)"\n' + own + "\n", encoding="utf-8")
         (self.hooks / "late.sh").write_text(
             variables + f'wt="$(pwd)"\ndry="$(cat {shlex.quote(str(self.hooks / "dry"))})"\n' + late + "\n",
@@ -767,9 +828,12 @@ class RefComparisonCases(unittest.TestCase):
         before = fixture.snapshot()
         env = dict(fixture.env, REF_CASE_HOOKS=str(fixture.hooks))
         code, out, err = run_script(fixture.script, env,
-                                    fixture.hook(concurrent, own, LATE.get(number, ""), ADDED.get(number, "")))
-        marks = ("concurrent.ok", "added.ok", "own.ok")
-        if number not in STOP_AT_COMMIT:
+                                    fixture.hook(concurrent, own, LATE.get(number, ""), ADDED.get(number, ""),
+                                                 PARENT.get(number, "")))
+        marks = ("concurrent.ok", "added.ok", "parent.ok")
+        if number not in STOP_AT_MOVE:
+            marks += ("own.ok",)
+        if number not in STOP_AT_COMMIT + STOP_AT_MOVE:
             marks += ("late.ok",)
         for mark in marks:
             self.assertTrue((fixture.hooks / mark).exists(),
@@ -777,6 +841,10 @@ class RefComparisonCases(unittest.TestCase):
         if number in STOP_AT_COMMIT:
             self.assertFalse((fixture.hooks / "late.done").exists(),
                              f"case {number}: the run went on past the dry-run commit\n{out}{err}")
+        if number in STOP_AT_MOVE:
+            self.assertFalse((fixture.hooks / "own.done").exists() or (fixture.hooks / "late.done").exists(),
+                             f"case {number}: the run moved the HEAD of its worktree to the dry-run commit, or "
+                             f"went on past that move\n{out}{err}")
         dry = (fixture.hooks / "dry").read_text(encoding="utf-8").strip()
         return fixture, code, out, err, dry, before, fixture.snapshot(), listing_before, fixture.git("for-each-ref")
 
@@ -802,11 +870,11 @@ class RefComparisonCases(unittest.TestCase):
         self.assertEqual(fixture.git("show", f"{dry}:cleanlanguage/.claude-plugin/plugin.json"),
                          '{\n  "version": "1.0.1"\n}\n',
                          f"case {name}: the dry run's commit does not hold the plugin version bump")
-        if name.startswith("42 "):
+        if name.startswith(("42 ", "44 ")):
             feature = fixture.git("rev-parse", "--verify", "refs/heads/feature").strip()
             self.assertEqual((base, checked == base), (feature, False),
-                             "case 42: the dry run's worktree was not moved from the commit it was added at to "
-                             "feature before the dry run made its commit")
+                             f"case {name}: the dry run's worktree was not moved from the commit it was added at "
+                             "to feature before the dry run made its commit")
 
     @staticmethod
     def differing(before: str, after: str) -> tuple:
@@ -846,7 +914,8 @@ class RefComparisonCases(unittest.TestCase):
                     self.assertEqual(fixture.git("rev-parse", "--verify", f"{child}^").strip(), dry,
                                      f"case {name}: the HEAD it moved is not at a child of the dry run's commit")
                     text = text.replace("{child}", child)
-                wanted = text.format(dry=dry, before=snapshot, after=after_snapshot)
+                base = (fixture.hooks / "base").read_text(encoding="utf-8").strip()
+                wanted = text.format(dry=dry, base=base, before=snapshot, after=after_snapshot)
                 self.assertIn(wanted, err, f"case {name}: the failure does not name {wanted!r}\n{err}")
         if name.startswith("20 "):
             self.assertEqual(fixture.git("rev-parse", "--verify", "refs/heads/carry^").strip(), dry,
@@ -1087,6 +1156,295 @@ class HookCases(unittest.TestCase):
                              f"holds {kept!r}")
             self.assertFalse(log.exists(), "these hooks ran during the dry run: "
                              + (log.read_text(encoding="utf-8").replace("\n", " ") if log.exists() else ""))
+
+
+def configured(env: dict, settings: dict) -> dict:
+    """env with settings added as GIT_CONFIG_COUNT entries."""
+    env = dict(env)
+    count = int(env["GIT_CONFIG_COUNT"])
+    for key, value in settings.items():
+        env[f"GIT_CONFIG_KEY_{count}"] = key
+        env[f"GIT_CONFIG_VALUE_{count}"] = value
+        count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+    return env
+
+
+def recorder(path: Path, name: str, log: Path, body: str = "cat\n") -> str:
+    """Write a program at path that appends name to log each time it runs, then runs body."""
+    path.write_text(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(name)} >> {shlex.quote(str(log))}\n" + body,
+                    encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
+
+
+def run_on_terminal(args: list, env: dict, cwd: Path, timeout: float = TIMEOUT):
+    """Run args as run_bounded does, but with standard output on a new pseudo-terminal, and return (exit
+    code, what it wrote there, stderr)."""
+    master, slave = os.openpty()
+    proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=slave, stderr=subprocess.PIPE, env=env, cwd=cwd,
+                            start_new_session=True)
+    os.close(slave)
+    chunks = []
+
+    def drain():
+        while True:
+            try:
+                data = os.read(master, 4096)
+            except OSError:
+                return
+            if not data:
+                return
+            chunks.append(data)
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    try:
+        err = proc.communicate(timeout=timeout)[1]
+    except subprocess.TimeoutExpired:
+        kill_group(proc.pid)
+        proc.communicate(timeout=REAP_TIMEOUT)
+        raise AssertionError(f"{args[0]} ran longer than {timeout} seconds and was killed")
+    finally:
+        kill_group(proc.pid)
+        try:
+            proc.wait(timeout=REAP_TIMEOUT)
+        finally:
+            reader.join(timeout=REAP_TIMEOUT)
+            os.close(master)
+            if proc.stderr is not None:
+                proc.stderr.close()
+    return proc.returncode, b"".join(chunks).decode("utf-8", "replace"), err.decode("utf-8", "replace")
+
+
+# The git subcommands that the script runs, each of which a pager.<command> setting can name.
+SUBCOMMANDS = ("symbolic-ref", "rev-parse", "for-each-ref", "config", "show", "worktree", "add", "write-tree",
+               "commit-tree", "update-ref")
+
+
+class ConfiguredProgramCases(unittest.TestCase):
+    """Each case configures programs that git runs from its configuration or from attributes, each of
+    which records its name when it runs, first checks, in a repository of its own, that git then runs
+    them, and requires the dry run to run none of them."""
+
+    def ran(self, log: Path) -> str:
+        return log.read_text(encoding="utf-8").replace("\n", " ") if log.exists() else ""
+
+    def assert_none_ran(self, fixture: Fixture, env: dict, log: Path, on_terminal: bool = False) -> None:
+        listing = fixture.git("for-each-ref")
+        if on_terminal:
+            code, out, err = run_on_terminal(["bash", "--noprofile", "--norc", str(fixture.script)], env, fixture.main)
+        else:
+            code, out, err = run_script(fixture.script, env)
+        self.assertEqual((code, SUCCESS in out.replace("\r\n", "\n")), (0, True), f"exit {code}\n{out}{err}")
+        self.assertEqual(RefComparisonCases.differing(listing, fixture.git("for-each-ref")), (),
+                         "the whole-repository listing changed while the run passed")
+        self.assertFalse(log.exists(), "these programs ran during the dry run: " + self.ran(log))
+
+    def probe(self, fixture: Fixture, env: dict, log: Path, commands: list, wanted: set, on_terminal: bool = False,
+              attributes: str = "") -> None:
+        """Run commands in a new repository under env, and require them to run each program in wanted."""
+        probe = fixture.tmp / "probe"
+        probe.mkdir()
+        self.assertEqual(run_bounded(["git", "init", "-q"], env, probe)[0], 0)
+        if attributes:
+            (probe / ".git" / "info").mkdir(exist_ok=True)
+            (probe / ".git" / "info" / "attributes").write_text(attributes, encoding="utf-8")
+        (probe / "file").write_text("probe\n", encoding="utf-8")
+        for args in commands:
+            if on_terminal:
+                code, _, err = run_on_terminal(args, env, probe)
+            else:
+                code, _, err = run_bounded(args, env, probe)
+            self.assertEqual(code, 0, f"the probe's {' '.join(args)} exited {code}: {err}")
+        ran = set(log.read_text(encoding="utf-8").split()) if log.exists() else set()
+        self.assertEqual(sorted(wanted - ran), [], "the configuration does not make git run each of these programs")
+        log.unlink()
+
+    def test_no_fsmonitor_program_runs(self):
+        # On its third run in a linked worktree, which git add -u starts in the dry run's worktree, the
+        # core.fsmonitor program also moves the HEAD of that worktree to a new child of it, once, as a
+        # program that changes the parent of the dry-run commit would.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            moved = fixture.tmp / "moved"
+            count = shlex.quote(str(fixture.tmp / "count"))
+            body = ('case "$(git -c core.fsmonitor=false rev-parse --git-dir)" in\n'
+                    '  */worktrees/*)\n'
+                    f'    printf x >> {count}\n'
+                    f'    if [ ! -e {shlex.quote(str(moved))} ] && [ "$(wc -c < {count})" -ge 3 ]; then\n'
+                    '      child="$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null commit-tree -p HEAD '
+                    "-m Moved 'HEAD^{tree}')\"\n"
+                    '      git -c core.fsmonitor=false -c core.hooksPath=/dev/null update-ref --no-deref HEAD '
+                    '"${child}"\n'
+                    f'      printf \'%s\\n\' "${{child}}" > {shlex.quote(str(moved))}\n'
+                    '    fi ;;\n'
+                    'esac\nexit 1\n')
+            env = configured(fixture.env, {"core.fsmonitor": recorder(fixture.tmp / "fsmonitor", "fsmonitor", log,
+                                                                       body)})
+            self.probe(fixture, env, log, [["git", "add", "file"], ["git", "status", "--porcelain"]], {"fsmonitor"})
+            self.assert_none_ran(fixture, env, log)
+            self.assertFalse(moved.exists(), "the core.fsmonitor program moved the HEAD of the dry run's worktree")
+
+    def test_no_clean_or_smudge_filter_runs(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            attributes = "* filter=probe\n"
+            (fixture.main / ".git" / "info" / "attributes").write_text(attributes, encoding="utf-8")
+            env = configured(fixture.env, {
+                "filter.probe.clean": recorder(fixture.tmp / "clean", "clean", log),
+                "filter.probe.smudge": recorder(fixture.tmp / "smudge", "smudge", log),
+                "filter.probe.required": "true"})
+            self.probe(fixture, env, log, [["git", "add", "file"], ["git", "commit", "-q", "-m", "Probe"],
+                                           ["git", "worktree", "add", "-q", "--detach",
+                                            str(fixture.tmp / "probe-worktree")]],
+                       {"clean", "smudge"}, attributes=attributes)
+            self.assert_none_ran(fixture, env, log)
+
+    def test_no_process_filter_runs(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            attributes = "* filter=probe\n"
+            (fixture.main / ".git" / "info" / "attributes").write_text(attributes, encoding="utf-8")
+            env = configured(fixture.env, {"filter.probe.process": recorder(fixture.tmp / "process", "process", log,
+                                                                             "exit 1\n")})
+            probe_env = configured(env, {"filter.probe.required": "false"})
+            probe = fixture.tmp / "probe"
+            probe.mkdir()
+            self.assertEqual(run_bounded(["git", "init", "-q"], probe_env, probe)[0], 0)
+            (probe / ".git" / "info" / "attributes").write_text(attributes, encoding="utf-8")
+            (probe / "file").write_text("probe\n", encoding="utf-8")
+            run_bounded(["git", "add", "file"], probe_env, probe)
+            self.assertIn("process", self.ran(log), "the configuration does not make git run the process filter")
+            log.unlink()
+            self.assert_none_ran(fixture, env, log)
+
+    def test_no_pager_runs_on_a_terminal(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            pager = recorder(fixture.tmp / "pager", "pager", log)
+            env = configured(fixture.env, {f"pager.{command}": pager for command in SUBCOMMANDS})
+            self.probe(fixture, env, log, [["git", "add", "file"]], {"pager"}, on_terminal=True)
+            self.assert_none_ran(fixture, env, log, on_terminal=True)
+
+    def test_no_textconv_or_diff_driver_runs(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            (fixture.main / ".git" / "info" / "attributes").write_text("* diff=probe\n", encoding="utf-8")
+            env = configured(fixture.env, {
+                "diff.probe.textconv": recorder(fixture.tmp / "textconv", "textconv", log, 'cat "$1"\n'),
+                "diff.probe.command": recorder(fixture.tmp / "command", "command", log, ":\n"),
+                "diff.external": recorder(fixture.tmp / "external", "external", log, ":\n")})
+            # In the probe, file has the diff driver and other has none, so other's diff runs diff.external.
+            probe = fixture.tmp / "probe"
+            probe.mkdir()
+            self.assertEqual(run_bounded(["git", "init", "-q"], env, probe)[0], 0)
+            (probe / ".git" / "info" / "attributes").write_text("file diff=probe\n", encoding="utf-8")
+            for path in ("file", "other"):
+                (probe / path).write_text("probe\n", encoding="utf-8")
+            for args in (["git", "add", "-A"], ["git", "commit", "-q", "-m", "Probe"],
+                         ["git", "show", "--textconv", "HEAD:file"]):
+                self.assertEqual(run_bounded(args, env, probe)[0], 0, f"the probe's {' '.join(args)} failed")
+            for path in ("file", "other"):
+                (probe / path).write_text("changed\n", encoding="utf-8")
+            self.assertEqual(run_bounded(["git", "diff", "--ext-diff", "HEAD"], env, probe)[0], 0)
+            ran = set(self.ran(log).split())
+            self.assertEqual(sorted({"textconv", "command", "external"} - ran), [],
+                             "the configuration does not make git run each of these programs")
+            log.unlink()
+            self.assert_none_ran(fixture, env, log)
+
+    def test_no_lazy_fetch_runs(self):
+        # A partial clone of the fixture made without blobs: the dry run must fail closed at its first read
+        # of a missing blob, without fetching it from the promisor remote, whose upload-pack program records
+        # each run.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            fixture.git("config", "uploadpack.allowFilter", "true")
+            fixture.git("config", "uploadpack.allowAnySHA1InWant", "true")
+            clone = fixture.tmp / "clone"
+            code, _, err = run_bounded(["git", "clone", "-q", "--no-checkout", "--filter=blob:none",
+                                        "file://" + str(fixture.main), str(clone)], fixture.env, fixture.tmp)
+            self.assertEqual(code, 0, f"the partial clone failed: {err}")
+            fixture.git("config", "remote.origin.uploadpack",
+                        recorder(fixture.tmp / "upload-pack", "upload-pack", log, 'exec git-upload-pack "$@"\n'),
+                        cwd=clone)
+            self.assertEqual(run_bounded(["git", "cat-file", "-p", "HEAD:file"], fixture.env, clone)[0], 0)
+            self.assertIn("upload-pack", self.ran(log), "reading a missing blob does not make git fetch it")
+            log.unlink()
+            script = place_script(clone)
+            code, out, err = run_script(script, fixture.env)
+            self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
+            self.assertTrue(last_line(err).startswith("release-dry-run: could not read a valid bare X.Y.Z Version: "
+                                                      "line"), f"the run did not end at its read of the version\n{err}")
+            self.assertFalse(log.exists(), "these programs ran during the dry run: " + self.ran(log))
+
+    def test_every_git_call_runs_with_the_programs_turned_off(self):
+        # git's trace2 log records, for each run of git, the settings it runs with and the programs it
+        # starts. Every run of git that the script starts after the before snapshot, other than the reads
+        # of step 6, must run with hooks, the core.fsmonitor program and the configured filter driver
+        # turned off and lazy fetching turned off, the exit cleanup's git worktree remove included, and
+        # start no program other than git, and no automatic maintenance or fetch; the reads of the 2
+        # snapshots and the leak check must run with lazy fetching turned off and start no program.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            trace = fixture.tmp / "trace2"
+            # The configuration names a hook folder and a core.fsmonitor program, so a run of git that
+            # does not turn them off records their values, not those of the script's settings.
+            env = configured(fixture.env, {"filter.probe.clean": "false", "filter.probe.smudge": "false",
+                                           "filter.probe.process": "false", "gc.auto": "1",
+                                           "maintenance.auto": "true",
+                                           "core.fsmonitor": str(fixture.tmp / "fsmonitor")})
+            keys = [env[f"GIT_CONFIG_KEY_{index}"] for index in range(int(env["GIT_CONFIG_COUNT"]))]
+            (fixture.tmp / "git-hooks").mkdir()
+            env[f"GIT_CONFIG_VALUE_{keys.index('core.hooksPath')}"] = str(fixture.tmp / "git-hooks")
+            env.update(GIT_TRACE2_EVENT=str(trace), GIT_TRACE2_CONFIG_PARAMS="core.hooksPath,core.fsmonitor,filter.*",
+                       GIT_TRACE2_ENV_VARS="GIT_NO_LAZY_FETCH")
+            code, out, err = run_script(fixture.script, env)
+            self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
+            runs = {}
+            for line in trace.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                run = runs.setdefault(event["sid"], {"argv": None, "params": {}, "children": []})
+                if event["event"] == "start":
+                    run["argv"] = event["argv"][1:]
+                elif event["event"] == "def_param":
+                    run["params"][event["param"]] = event["value"]
+                elif event["event"] == "child_start":
+                    run["children"].append(event.get("argv"))
+            off = {"core.hookspath": "/dev/null", "core.fsmonitor": "false", "filter.probe.clean": "",
+                   "filter.probe.smudge": "", "filter.probe.process": "", "filter.probe.required": "false",
+                   "GIT_NO_LAZY_FETCH": "1"}
+            reads = {"symbolic-ref", "rev-parse", "for-each-ref"}
+            seen = []
+            for run in runs.values():
+                argv = run["argv"] or []
+                if argv[:2] == ["-C", str(fixture.main)] and argv[2] in reads or "--contains" in argv:
+                    self.assertEqual((run["params"].get("GIT_NO_LAZY_FETCH"), run["children"]), ("1", []),
+                                     f"the read {argv} ran without lazy fetching turned off, or started a program")
+                    continue
+                seen.append(" ".join(argv))
+                # The listing of the filter drivers runs before they are turned off, and reads no file.
+                wanted = off
+                if "--get-regexp" in argv:
+                    wanted = {key: off[key] for key in ("core.hookspath", "core.fsmonitor", "GIT_NO_LAZY_FETCH")}
+                self.assertEqual({key: run["params"].get(key) for key in wanted}, wanted,
+                                 f"git {' '.join(argv)} ran without every program turned off")
+                # A program that git starts is a run of git itself, which this loop checks in turn, and
+                # never automatic maintenance or a fetch, although gc.auto and maintenance.auto ask for it.
+                for child in run["children"]:
+                    self.assertTrue(child and child[0] == "git" and child[1:2] not in (["gc"], ["maintenance"],
+                                                                                    ["fetch"]),
+                                    f"git {' '.join(argv)} started {child}")
+            for call in ("config --name-only --get-regexp", "show HEAD:", "worktree add --detach", "add -u",
+                         "write-tree", "rev-parse --verify HEAD", "commit-tree -p", "update-ref --no-deref",
+                         "worktree remove --force"):
+                self.assertTrue(any(call in run for run in seen), f"no run of git {call} was recorded: {seen}")
 
 
 if __name__ == "__main__":
