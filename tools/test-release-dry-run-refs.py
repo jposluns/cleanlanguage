@@ -1,35 +1,46 @@
 #!/usr/bin/env python3
 """Tests the ref comparison of tools/release-dry-run.sh in throwaway repositories.
 
-The dry run proves at exit that it moved none of the refs it could itself move. It snapshots, from
-the main worktree, the branch that HEAD names (or that HEAD is detached), the commit that HEAD
-resolves to, and every tag and note with its object name, before its run and again in step 6, and
-fails when the 2 snapshots differ. Step 6 also fails when any ref of any namespace contains the
-dry run's own commit. A ref other than a tag, a note or the branch the main worktree has checked
-out that another worktree moves during the run, as a commit on another branch or a fetch that moves
-a remote-tracking ref does, is outside that comparison, so it no longer fails the run unless it then
-contains the dry run's commit.
+The dry run proves at exit that it moved no tag, no note and not the HEAD of the worktree that holds
+the script, and that no ref of any namespace contains its own commit; it does not prove that it
+moved no other ref (cases 12, 13, 23 and 27). It snapshots, from the worktree that holds the script
+(repo_root, which in these cases is the main worktree of the case's repository), the branch that
+HEAD names (or that HEAD is detached), the commit that HEAD resolves to, and every tag and note with
+its object name, before its run and again in step 6, and fails when the 2 snapshots differ. Step 6
+also fails when any ref of any namespace contains the dry run's own commit. A ref other than a tag,
+a note, that worktree's HEAD or the branch it has checked out that another worktree moves during the
+run, as a commit on another branch or a fetch that moves a remote-tracking ref does, is outside that
+comparison, so it no longer fails the run unless it then contains the dry run's commit.
 
 This test runs the script's own text. It extracts from tools/release-dry-run.sh every shell
 function defined before the line that starts with refs_before= (fail and the 2 ref functions), that
 line, the line that starts with dry_commit=, and step 6, from its line starting "# 6. " up to the
 final success message. Each of those anchors, and each function, must occur exactly once; a missing
-or repeated anchor fails every case, naming it, and nothing is read as an empty block. The
-extraction cases remove and repeat each anchor and each function in a copy of the script's text
-and require the extraction to fail, naming it. Each case builds a repository in a temporary folder
+or repeated anchor fails every case, naming it, and nothing is read as an empty block. No line of
+the script other than its comment lines may define one of those functions again, anywhere on the
+line and in either form bash accepts (name () and function name), and no line other than its
+anchor may assign refs_before or dry_commit, since such a line, which the cases do not run, would
+change what step 6 runs or compares; either fails every case, naming the function or variable. A
+definition or assignment that the script makes by other means, such as eval, source, read or
+printf -v, is not detected. The extraction cases remove and repeat each anchor and each function,
+and add such a definition or assignment at 4 places, in a copy of the script's text and require
+the extraction to fail, naming it. Each case builds a repository in a temporary folder
 with branches main, feature and other (other checked out in a second worktree), a lightweight tag
 v1.0.0, an annotated tag v0.9.0 and refs/remotes/origin/main. It then runs, with bash, the
-extracted functions, the before snapshot, the dry run's worktree and commit (or the defect the case
-models), the dry_commit line, the case's ref writes, and step 6, and checks the exit status. A
-failing case must also print the ref that differs, and a case that fails on the snapshot
-comparison must print the whole before snapshot as well as the after one. A write that the case
+extracted functions, the case's setup, the before snapshot, the dry run's worktree and commit (or
+the defect the case models), the dry_commit line, the case's ref writes, and step 6, and checks the
+exit status. A failing case must also print the ref that differs, and a case that fails on the
+snapshot comparison must print the whole before snapshot and the whole after one, which the test
+reads again with the script's ref_snapshot once the run has ended. A write that the case
 attributes to another worktree is made from the second worktree after the before snapshot and
 before step 6: concurrency is modelled as sequenced writes, which a snapshot comparison cannot tell
 from a race, and no real race is run.
 
 Each case also checks that its writes took effect: it compares the whole-repository listing of git
-for-each-ref before and after the run, which the old whole-repository hash compared, and requires
-it to change exactly when the case says that the old check failed.
+for-each-ref, which the old whole-repository hash compared, taken after the case's setup and again
+after the run, and requires exactly the refs that the case names to differ, so the old check failed
+exactly the cases that name one. Case 20 also requires its new branch to be at a child of the dry
+run's commit, and case 27 requires its ref to be at a tree.
 
 The cases, each with its expected outcome:
 
@@ -69,6 +80,10 @@ The cases, each with its expected outcome:
   snapshots.
 - 25, the dry run deletes the branch the main worktree has checked out: fails closed, since HEAD
   then resolves to no commit.
+- 26, another worktree detaches the main worktree's HEAD at the same commit: fails, naming HEAD as
+  detached (the old whole-repository hash passed it).
+- 27, the dry run points a ref in a namespace of its own at its commit's tree: passes, an accepted
+  residual, since a ref that peels to no commit contains no commit.
 
 The fail-closed cases run the 2 ref functions directly: a folder that is not a repository, a
 repository whose HEAD resolves to no commit, a tag and note listing that git refuses after both
@@ -112,14 +127,20 @@ DRY_RUN = REPO_ROOT / "tools" / "release-dry-run.sh"
 TIMEOUT = 60
 REAP_TIMEOUT = 5
 FUNCTION = re.compile(r"([a-z_]+)\(\) \{")
-# The functions the cases run, each of which the script must define exactly once before refs_before=.
+# The functions the cases run, each of which the script must define exactly once, before refs_before=,
+# and on no other line.
 FUNCTIONS = ("fail", "ref_snapshot", "ref_leak_check")
+# The variables that step 6 reads from lines outside it, each of which the script must assign on its
+# anchor line alone.
+VARIABLES = ("refs_before", "dry_commit")
+# A shell word starts at the start of a line or after a blank or a shell metacharacter.
+WORD_START = r"(?<![^\s;&|()])"
 # The line anchors, each of which must start exactly 1 line of the script.
 ANCHORS = ("refs_before=", "# 6. ", 'echo "release-dry-run: every step, gate, and assertion passed',
            '  commit -q -am "Dry run: version ', "dry_commit=")
 MESSAGE = "the dry run changed a git ref, which it must never do"
-# The text a snapshot mismatch must print: the whole before snapshot, then the after one.
-BEFORE = "before:\n{before}\nand after:\n"
+# The text a snapshot mismatch must print: the whole before snapshot, then the whole after one.
+BEFORE = "before:\n{before}\nand after:\n{after}\n"
 
 
 def run_bounded(args: list, env: dict, cwd: Path, timeout: float = TIMEOUT):
@@ -166,9 +187,15 @@ def environment(home: Path) -> dict:
     return env
 
 
+def binding_lines(lines: list, pattern: re.Pattern) -> list:
+    """The indexes of the lines, other than comment lines, on which pattern matches anywhere."""
+    return [i for i, line in enumerate(lines) if not line.lstrip().startswith("#") and pattern.search(line)]
+
+
 def extract(text: str) -> dict:
     """The parts of the script that the cases run, found by content anchors. Raises ValueError,
-    naming the anchor, when one is missing or repeated."""
+    naming the anchor, when one is missing or repeated, and naming the function or variable when
+    the script defines or assigns it on a line that the cases do not run as that binding."""
     lines = text.split("\n")
 
     def only(prefix: str, required: bool = True):
@@ -178,7 +205,7 @@ def extract(text: str) -> dict:
         return found[0] if found else None
 
     before = only("refs_before=")
-    functions, names, index = [], [], 0
+    functions, names, starts, index = [], [], [], 0
     while index < before:
         match = FUNCTION.fullmatch(lines[index])
         if match:
@@ -189,12 +216,22 @@ def extract(text: str) -> dict:
                 raise ValueError(f"the function {match.group(1)} of tools/release-dry-run.sh has no closing line")
             functions.append("\n".join(lines[index:end + 1]))
             names.append(match.group(1))
+            starts.append(index)
             index = end
         index += 1
     for name in sorted(set(names) | set(FUNCTIONS)):
         if names.count(name) != 1:
             raise ValueError(f"tools/release-dry-run.sh defines the function {name!r} {names.count(name)} times "
                              "before its refs_before= line, not 1")
+    # A second definition anywhere else, in either form bash accepts (name () and function name),
+    # would replace the function the cases run before step 6 runs it, so it is refused.
+    for name, start in sorted(zip(names, starts)):
+        word = re.escape(name)
+        found = binding_lines(lines, re.compile(WORD_START + r"(?:function[ \t]+" + word + r"(?![^\s;&|()])|"
+                                                + word + r"[ \t]*\([ \t]*\))"))
+        if found != [start]:
+            raise ValueError(f"tools/release-dry-run.sh defines the function {name!r} on lines "
+                             f"{[i + 1 for i in found]}, not on line {start + 1} alone")
     step6 = only("# 6. ")
     done = only('echo "release-dry-run: every step, gate, and assertion passed')
     if not before < step6 < done:
@@ -202,6 +239,12 @@ def extract(text: str) -> dict:
                          "in that order")
     commit = only('  commit -q -am "Dry run: version ')
     dry = only("dry_commit=")
+    # An assignment on any other line would change what step 6 compares or checks, so it is refused.
+    for name, at in zip(VARIABLES, (before, dry)):
+        found = binding_lines(lines, re.compile(WORD_START + re.escape(name) + r"(?:\[[^\]]*\])?\+?="))
+        if found != [at]:
+            raise ValueError(f"tools/release-dry-run.sh assigns the variable {name!r} on lines "
+                             f"{[i + 1 for i in found]}, not on line {at + 1} alone")
     return {"functions": "\n".join(functions), "names": names, "before": lines[before],
             "dry_commit": lines[dry], "dry_index": dry, "commit_index": commit,
             "step6_index": step6, "step6": "\n".join(lines[step6:done]).rstrip("\n")}
@@ -228,63 +271,74 @@ FETCHED = """fetched="$(git -C "${other}" commit-tree -p refs/remotes/origin/mai
 git -C "${other}" update-ref refs/remotes/origin/main "${fetched}\""""
 
 # (case, setup before the before snapshot, the dry run's body, writes before step 6, expected outcome,
-# the texts a failure must print, {dry} standing for the dry run's commit and {before} for the before
-# snapshot, and whether the whole-repository listing changes, which is when the old whole-repository
-# hash failed the case). A case expected to fail must print MESSAGE; one expected to fail closed
-# must exit 1 with its texts and need not print MESSAGE.
+# the texts a failure must print, {dry} standing for the dry run's commit, {before} for the before
+# snapshot and {after} for the after one, and the refs whose line in the whole-repository listing
+# differs between the end of the setup and the end of the run, which the old whole-repository hash
+# compared, so the old hash failed the case exactly when that tuple is not empty). A case expected to
+# fail must print MESSAGE; one expected to fail closed must exit 1 with its texts and need not print
+# MESSAGE.
 CASES = (
-    ("01 the dry run alone", "", DRY_BODY, "", "pass", (), False),
-    ("02 a concurrent commit on a branch in another worktree", "", DRY_BODY, CONCURRENT_COMMIT, "pass", (), True),
+    ("01 the dry run alone", "", DRY_BODY, "", "pass", (), ()),
+    ("02 a concurrent commit on a branch in another worktree", "", DRY_BODY, CONCURRENT_COMMIT, "pass", (),
+     ("refs/heads/other",)),
     ("03 a concurrent update of refs/remotes/origin/main, as a fetch does", "", DRY_BODY, FETCHED, "pass", (),
-     True),
+     ("refs/remotes/origin/main",)),
     ("04 a concurrent new branch from another worktree", "", DRY_BODY, 'git -C "${other}" branch topic', "pass",
-     (), True),
+     (), ("refs/heads/topic",)),
     ("16 a concurrent commit in another worktree with the main worktree detached", "git checkout -q --detach",
-     DRY_BODY, CONCURRENT_COMMIT, "pass", (), True),
+     DRY_BODY, CONCURRENT_COMMIT, "pass", (), ("refs/heads/other",)),
     ("05 the dry run moves an existing tag", "", DRY_BODY, "git tag -f v1.0.0 HEAD", "fail",
-     (BEFORE, "{dry} refs/tags/v1.0.0"), True),
+     (BEFORE, "{dry} refs/tags/v1.0.0"), ("refs/tags/v1.0.0",)),
     ("06 the dry run creates the dry tag at its commit", "", DRY_BODY, "git tag v1.0.1 HEAD", "fail",
-     (BEFORE, "{dry} refs/tags/v1.0.1"), True),
+     (BEFORE, "{dry} refs/tags/v1.0.1"), ("refs/tags/v1.0.1",)),
     ("07 the dry run makes its worktree with -b and commits", "",
-     DRY_BODY.replace("--detach", "-b dry-run"), "", "fail", ("refs/heads/dry-run",), True),
+     DRY_BODY.replace("--detach", "-b dry-run"), "", "fail", ("refs/heads/dry-run",), ("refs/heads/dry-run",)),
     ("08 the dry run commits in the main worktree on a branch", "", MAIN_BODY, "", "fail",
-     (BEFORE, "HEAD commit: {dry}"), True),
+     (BEFORE, "HEAD commit: {dry}"), ("refs/heads/main",)),
     ("09 the dry run commits in a detached main worktree", "git checkout -q --detach", MAIN_BODY, "", "fail",
-     (BEFORE, "HEAD commit: {dry}"), False),
+     (BEFORE, "HEAD commit: {dry}"), ()),
     ("10 the dry run adds a note", "", DRY_BODY, "git notes add -m dry HEAD", "fail",
-     (BEFORE, "refs/notes/commits"), True),
+     (BEFORE, "refs/notes/commits"), ("refs/notes/commits",)),
     ("11 the dry run points a remote-tracking ref at its commit", "", DRY_BODY,
-     "git update-ref refs/remotes/origin/main HEAD", "fail", ("refs/remotes/origin/main",), True),
+     "git update-ref refs/remotes/origin/main HEAD", "fail", ("refs/remotes/origin/main",),
+     ("refs/remotes/origin/main",)),
     ("12 the dry run deletes a branch other than the checked-out one", "", DRY_BODY,
-     'git -C "${repo_root}" branch -q -D feature', "pass", (), True),
+     'git -C "${repo_root}" branch -q -D feature', "pass", (), ("refs/heads/feature",)),
     ("13 the dry run moves a remote-tracking ref to a commit that already existed", "", DRY_BODY,
-     "git update-ref refs/remotes/origin/main feature", "pass", (), True),
+     "git update-ref refs/remotes/origin/main feature", "pass", (), ("refs/remotes/origin/main",)),
     ("14 a concurrent tag from another worktree", "", DRY_BODY, 'git -C "${other}" tag v2.0.0', "fail",
-     (BEFORE, "refs/tags/v2.0.0"), True),
+     (BEFORE, "refs/tags/v2.0.0"), ("refs/tags/v2.0.0",)),
     ("15 a per-worktree ref inside the dry run's own worktree", "", DRY_BODY,
-     "git update-ref refs/bisect/bad HEAD", "pass", (), False),
+     "git update-ref refs/bisect/bad HEAD", "pass", (), ()),
     ("17 the dry run switches the main worktree to a new branch at the same commit", "", DRY_BODY,
-     'git -C "${repo_root}" checkout -q -b twin', "fail", (BEFORE, "HEAD ref: refs/heads/twin"), True),
+     'git -C "${repo_root}" checkout -q -b twin', "fail", (BEFORE, "HEAD ref: refs/heads/twin"),
+     ("refs/heads/twin",)),
     ("18 the dry run detaches the main worktree at the same commit", "", DRY_BODY,
-     'git -C "${repo_root}" checkout -q --detach', "fail", (BEFORE, "HEAD ref: detached"), False),
+     'git -C "${repo_root}" checkout -q --detach', "fail", (BEFORE, "HEAD ref: detached"), ()),
     ("19 the dry run attaches a detached main worktree to main at the same commit", "git checkout -q --detach",
-     DRY_BODY, 'git -C "${repo_root}" checkout -q main', "fail", (BEFORE, "HEAD ref: refs/heads/main"), False),
+     DRY_BODY, 'git -C "${repo_root}" checkout -q main', "fail", (BEFORE, "HEAD ref: refs/heads/main"), ()),
     ("20 the dry run points a new branch at a descendant of its commit", "", DRY_BODY,
      'git commit -q --allow-empty -m Descendant\ngit update-ref refs/heads/carry HEAD', "fail",
-     ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), True),
+     ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry",)),
     ("21 the dry run points refs/stash and a ref in a namespace of its own at its commit", "", DRY_BODY,
      "git update-ref refs/stash HEAD\ngit update-ref refs/keep/dry HEAD", "fail",
-     ("these refs contain its commit {dry}:\nrefs/keep/dry\nrefs/stash\n",), True),
+     ("these refs contain its commit {dry}:\nrefs/keep/dry\nrefs/stash\n",), ("refs/keep/dry", "refs/stash")),
     ("22 the dry run deletes an existing tag", "", DRY_BODY, "git tag -d v0.9.0 >/dev/null", "fail", (BEFORE,),
-     True),
+     ("refs/tags/v0.9.0",)),
     ("23 the dry run deletes a remote-tracking ref and a ref in a namespace of its own",
      "git update-ref refs/keep/old HEAD", DRY_BODY,
-     "git update-ref -d refs/remotes/origin/main\ngit update-ref -d refs/keep/old", "pass", (), True),
+     "git update-ref -d refs/remotes/origin/main\ngit update-ref -d refs/keep/old", "pass", (),
+     ("refs/keep/old", "refs/remotes/origin/main")),
     ("24 another worktree moves the branch the main worktree has checked out", "", DRY_BODY,
-     'git -C "${other}" update-ref refs/heads/main refs/heads/feature', "fail", (BEFORE,), True),
+     'git -C "${other}" update-ref refs/heads/main refs/heads/feature', "fail", (BEFORE,), ("refs/heads/main",)),
     ("25 the dry run deletes the branch the main worktree has checked out", "", DRY_BODY,
      'git -C "${repo_root}" update-ref -d refs/heads/main', "fail closed",
-     ("release-dry-run: could not resolve HEAD to a commit",), True),
+     ("release-dry-run: could not resolve HEAD to a commit",), ("refs/heads/main",)),
+    ("26 another worktree detaches the main worktree's HEAD at the same commit", "", DRY_BODY,
+     'git -C "${other}" update-ref --no-deref main-worktree/HEAD HEAD', "fail", (BEFORE, "HEAD ref: detached"),
+     ()),
+    ("27 the dry run points a ref in a namespace of its own at its commit's tree", "", DRY_BODY,
+     "git update-ref refs/keep/tree 'HEAD^{tree}'", "pass", (), ("refs/keep/tree",)),
 )
 
 
@@ -338,9 +392,11 @@ def parts(case: unittest.TestCase) -> dict:
 
 class RefComparisonCases(unittest.TestCase):
     def run_case(self, setup: str, body: str, writes: str):
-        """(fixture, exit code, stdout, stderr, dry commit, before snapshot, listing before, listing
-        after). The listing is git for-each-ref of the whole repository, taken by the test outside
-        the run."""
+        """(fixture, exit code, stdout, stderr, dry commit, before snapshot, after snapshot, listing
+        before, listing after). The listing is git for-each-ref of the whole repository, printed by
+        the run after the case's setup and taken by the test once the run has ended. The after
+        snapshot is the script's ref_snapshot, run by the test once the run has ended, when nothing
+        has written a ref since step 6; it is None when that run fails."""
         code_parts = parts(self)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -351,6 +407,8 @@ class RefComparisonCases(unittest.TestCase):
             code_parts["functions"],
             'cd "${repo_root}"',
             setup,
+            'test_listing="$(git for-each-ref)"',
+            "printf 'listing\\n%s\\nend of listing\\n' \"${test_listing}\"",
             code_parts["before"],
             "printf 'before snapshot\\n%s\\nend of before snapshot\\n' \"${refs_before}\"",
             body,
@@ -361,21 +419,33 @@ class RefComparisonCases(unittest.TestCase):
             "printf 'step 6 passed\\n'",
             "",
         ))
-        listing_before = fixture.git("for-each-ref")
         code, out, err = fixture.bash(script)
         listing_after = fixture.git("for-each-ref")
+        after_code, after_out, _ = fixture.bash("\n".join(("set -euo pipefail", fixture.variables(),
+                                                           code_parts["functions"], "ref_snapshot", "")))
+        listing = re.search(r"^listing\n(.*?)\nend of listing$", out, re.M | re.S)
         dry = re.search(r"^dry commit ([0-9a-f]{40,64})$", out, re.M)
         snapshot = re.search(r"^before snapshot\n(.*?)\nend of before snapshot$", out, re.M | re.S)
         return (fixture, code, out, err, dry.group(1) if dry else None, snapshot.group(1) if snapshot else None,
-                listing_before, listing_after)
+                after_out.rstrip("\n") if after_code == 0 else None, listing.group(1) if listing else None,
+                listing_after)
+
+    @staticmethod
+    def differing(before: str, after: str) -> tuple:
+        """The refs whose line in git for-each-ref differs between the 2 listings, sorted."""
+        def lines(listing):
+            return dict(reversed(line.split("\t", 1)) for line in listing.split("\n") if line)
+        old, new = lines(before), lines(after)
+        return tuple(sorted(ref for ref in old.keys() | new.keys() if old.get(ref) != new.get(ref)))
 
     def check(self, name, setup, body, writes, outcome, texts, changed):
-        fixture, code, out, err, dry, snapshot, before, after = self.run_case(setup, body, writes)
+        fixture, code, out, err, dry, snapshot, after_snapshot, before, after = self.run_case(setup, body, writes)
         self.assertIsNotNone(dry, f"case {name}: the dry run made no commit\n{out}{err}")
         self.assertIsNotNone(snapshot, f"case {name}: the before snapshot was not printed\n{out}{err}")
-        self.assertEqual(before != after, changed,
-                         f"case {name}: the whole-repository listing {'did not change' if changed else 'changed'}, "
-                         "so the case's writes are not those it states")
+        self.assertIsNotNone(before, f"case {name}: the listing after the setup was not printed\n{out}{err}")
+        self.assertEqual(self.differing(before, after), tuple(sorted(changed)),
+                         f"case {name}: these refs changed in the whole-repository listing, not {changed!r}, so "
+                         "the case's writes are not those it states")
         if outcome == "pass":
             self.assertEqual((code, "step 6 passed" in out), (0, True),
                              f"case {name}: expected step 6 to pass, got exit {code}\n{err}")
@@ -385,11 +455,19 @@ class RefComparisonCases(unittest.TestCase):
             if outcome == "fail":
                 self.assertIn(MESSAGE, err, f"case {name}: the failure does not say {MESSAGE!r}\n{err}")
             for text in texts:
-                wanted = text.format(dry=dry, before=snapshot)
+                if "{after}" in text:
+                    self.assertIsNotNone(after_snapshot, f"case {name}: the after snapshot could not be read")
+                wanted = text.format(dry=dry, before=snapshot, after=after_snapshot)
                 self.assertIn(wanted, err, f"case {name}: the failure does not name {wanted!r}\n{err}")
         if name.startswith("15 "):
             code, _, _ = run_bounded(["git", "rev-parse", "--verify", "-q", "refs/bisect/bad"], fixture.env, fixture.wt)
             self.assertEqual(code, 0, "case 15: the per-worktree ref was not written")
+        if name.startswith("20 "):
+            self.assertEqual(fixture.git("rev-parse", "--verify", "refs/heads/carry^").strip(), dry,
+                             "case 20: refs/heads/carry is not at a child of the dry run's commit")
+        if name.startswith("27 "):
+            self.assertEqual(fixture.git("cat-file", "-t", "refs/keep/tree").strip(), "tree",
+                             "case 27: refs/keep/tree is not at a tree")
 
 
 def case_method(case: tuple):
@@ -484,7 +562,8 @@ class StructureCases(unittest.TestCase):
 
 
 class ExtractionCases(unittest.TestCase):
-    """A missing or repeated anchor or function makes the extraction fail, naming it."""
+    """A missing or repeated anchor or function, or a second definition of a function or assignment of a
+    variable outside the extracted lines, makes the extraction fail, naming it."""
 
     def extraction_error(self, lines: list) -> str:
         with self.assertRaises(ValueError) as caught:
@@ -512,6 +591,23 @@ class ExtractionCases(unittest.TestCase):
                                   ("repeated", lines[:end + 1] + lines[start:end + 1] + lines[end + 1:])):
                 with self.subTest(function=name, form=form):
                     self.assertIn(f"function {name!r}", self.extraction_error(changed))
+
+    def test_a_second_binding_outside_the_extracted_lines_is_named(self):
+        parts(self)
+        lines = DRY_RUN.read_bytes().decode("utf-8").split("\n")
+        before = [i for i, line in enumerate(lines) if line.startswith("refs_before=")][0]
+        places = {"before refs_before=": before, "after refs_before=": before + 1,
+                  "before step 6": [i for i, line in enumerate(lines) if line.startswith("# 6. ")][0],
+                  "at the end": len(lines)}
+        bindings = [(f"function {name!r}", form.format(name=name)) for name in FUNCTIONS
+                    for form in ("{name}() {{ :; }}", "function {name} {{ :; }}", "  {name} () {{ return 0; }}",
+                                 "true; {name}()", "function {name}() {{")]
+        bindings += [(f"variable {name!r}", form.format(name=name)) for name in VARIABLES
+                     for form in ('  {name}="$(ref_snapshot)"', "export {name}=x", "true; {name}+=x")]
+        for named, binding in bindings:
+            for place, at in places.items():
+                with self.subTest(binding=binding, place=place):
+                    self.assertIn(named, self.extraction_error(lines[:at] + [binding] + lines[at:]))
 
 
 if __name__ == "__main__":

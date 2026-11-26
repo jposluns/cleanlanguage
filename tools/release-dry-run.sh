@@ -10,22 +10,26 @@
 # are deliberately absent here: the tag push and gh release stay in the workflow,
 # the site checksum flip and its pull request are performed by the orchestrator
 # out of band after the release publishes, and this script contains no gh call
-# and no git push. At exit it proves, reading the main worktree, that it moved
-# no tag, no note, and not the main worktree's HEAD (the branch HEAD names and
-# the commit HEAD resolves to), and that no ref of any namespace contains the
-# dry-run commit. A ref that another worktree writes during the run fails the
-# proof only when it is a tag or a note, when it is the branch the main
+# and no git push. At exit it proves, reading the worktree that holds this
+# script (repo_root, called the script's worktree below, which is the main
+# worktree when the script is run from there, as release-dry-run.yml runs
+# it), that it moved no tag, no note, and not the HEAD of the script's
+# worktree (the branch HEAD names and the commit HEAD resolves to), and that
+# no ref of any namespace contains the dry-run commit. A ref that another
+# worktree writes during the run fails the proof only when it is a tag or a
+# note, when it is the HEAD of the script's worktree or the branch that
 # worktree has checked out, or when it is created or moved onto the dry-run
 # commit or a descendant of it; any other such write is outside the proof.
 #
 # Residual: the proof does not catch the deletion of any ref outside tags and
-# notes other than the branch the main worktree has checked out, such as
+# notes other than the branch the script's worktree has checked out, such as
 # another branch, a remote-tracking ref, refs/stash or a refs/replace/ ref; a
 # move or creation of such a ref at a commit that does not contain the dry-run
-# commit; or such a deletion, move or creation made by a commit hook, which
-# the dry-run commit runs. It also does not see the throwaway worktree's own
-# per-worktree refs, anything the exit cleanup does, or a ref moved and then
-# restored between the 2 snapshots.
+# commit, or at an object that peels to no commit, such as a tree or a blob; or
+# such a deletion, move or creation made by a commit hook, which the dry-run
+# commit runs. It also does not see the throwaway worktree's own per-worktree
+# refs, anything the exit cleanup does, or a ref moved and then restored
+# between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -61,8 +65,8 @@ fail() {
   exit 1
 }
 
-# ref_snapshot: print, reading the main worktree at repo_root, the refs that
-# step 6 compares: the branch HEAD names, or "detached"; the commit HEAD
+# ref_snapshot: print, reading the script's worktree at repo_root, the refs
+# that step 6 compares: the branch HEAD names, or "detached"; the commit HEAD
 # resolves to; and every tag and note with its object name. An empty tag and
 # note listing is legitimate. Any git error fails the run, so an error is never
 # read as an empty listing.
@@ -363,14 +367,13 @@ done
 python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}" --check
 
-# 6. Prove that the dry run moved no tag, no note and not the main worktree's
-#    HEAD, and that no ref of any namespace contains the dry-run commit. The
-#    deletion of any other ref, and its move or creation at a commit that does
-#    not contain the dry-run commit, does not fail it, whoever makes it; the
-#    header states that residual in full.
+# 6. Prove that the dry run moved no tag, no note and not the HEAD of the
+#    script's worktree, and that no ref of any namespace contains the dry-run
+#    commit. A write that the header's residual names does not fail it,
+#    whoever makes it; the header states the proof and that residual in full.
 refs_after="$(ref_snapshot)"
 [ "${refs_before}" = "${refs_after}" ] \
-  || fail "the dry run changed a git ref, which it must never do; the main worktree's HEAD, tags and notes before:
+  || fail "the dry run changed a git ref, which it must never do; the HEAD of ${repo_root}, and every tag and note, before:
 ${refs_before}
 and after:
 ${refs_after}"
