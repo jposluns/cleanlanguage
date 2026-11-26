@@ -30,7 +30,9 @@ process that can move it can as well put any bytes at the tracked paths. After t
 gate checks that each folder and the file that it opened is still in its place, the entry at its
 name in the folder before it, and refuses the bytes that it read when one is not. The cases that
 remain are in the list below. On a system without O_NOFOLLOW the gate refuses to run, since
-without it no path can be opened without following a symbolic link.
+without it no path can be opened without following a symbolic link. The root and each folder and
+file below it are opened without waiting (O_NONBLOCK), so a FIFO in the place of any of them is
+refused, with or without O_DIRECTORY, and not waited on.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
@@ -38,15 +40,16 @@ tab: a repository-relative path, a count, an owner (unit-2, unit-3 or keep) and 
 literal text matched with its letter case. The count is canonical ASCII decimal: it matches
 [1-9][0-9]* in full, so a sign, a space, a leading zero, a digit outside ASCII or any other
 spelling is a bad count. It is compared as text with the decimal number of claimed lines, so a
-count of any length is read. A row claims each matching line of its path that holds its marker
-and the marker of no other row of that path.
+count of any length is read. A well-formed row claims each matching line of its path that holds
+its marker and the marker of no other well-formed row of that path.
 
 The gate fails on a matching line that no row of its path claims (unclaimed); on a matching line
-that holds the markers of 2 or more rows of its path (ambiguous), which none of those rows claims,
-so a broad marker cannot quietly take lines of another kind; on a row whose claimed lines differ
-in number from its count (stale), fewer or more, which includes a row whose lines are gone, though
-a row of a path that cannot be read is not reported stale, since its lines are unknown; and on a
-malformed row, which claims nothing: a row with a number of fields other than 4, a carriage
+that holds the markers of 2 or more well-formed rows of its path (ambiguous), which none of those
+rows claims, so a broad marker cannot quietly take lines of another kind; on a well-formed row
+whose claimed lines differ in number from its count (stale), fewer or more, which includes a row
+whose lines are gone, though a row of a path that cannot be read is not reported stale, since its
+lines are unknown; and on a malformed row, which claims nothing and whose marker makes no line
+ambiguous: a row with a number of fields other than 4, a carriage
 return, a count that is not canonical ASCII decimal, an owner other than unit-2, unit-3 or keep,
 an empty marker, a path that is not tracked, a path of a named exception, or the path and marker
 of an earlier row that has 4 fields and no carriage return, whether or not that earlier row is
@@ -159,7 +162,8 @@ def open_root(root: Path, problems: list):
         return None
     cannot = f"{shown(os.fsdecode(root))}: cannot open the root folder"
     try:
-        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        # O_NONBLOCK, so a FIFO at the root opens at once without O_DIRECTORY and the check below refuses it.
+        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError as error:
         problems.append(f"{cannot}: {error_text(error)}")
         return None
@@ -250,7 +254,8 @@ def read_file(root: int, path: str, problems: list):
     if nofollow is None:
         problems.append(f"{shown(path)}: cannot read the tracked file: {NO_NOFOLLOW}")
         return None
-    folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
+    # O_NONBLOCK, so a FIFO in the place of a parent opens at once without O_DIRECTORY and is refused below.
+    folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow | getattr(os, "O_NONBLOCK", 0)
     # (the folder it was opened in, its name, its descriptor) for each folder opened below the root.
     steps, folder = [], root
     try:

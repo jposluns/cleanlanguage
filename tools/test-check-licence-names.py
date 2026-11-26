@@ -16,10 +16,14 @@ configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
 GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
 search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init
 takes no template (--template=), so no hook, exclude file or description of a template reaches
-the repository. So the result depends on the case alone. The caller's environment is read for 2
-things only, and the tests build settings from them: where git is, whose folder is the PATH of
-each process but the 1 named below, and where Python's tempfile makes the temporary folder, which
-holds HOME and the repository. The folder in which a case builds a repository, the temporary
+the repository. So, apart from the locale below, the result depends on the case alone. The
+caller's environment is read for 3 things only. The tests build settings from 2 of them: where
+git is, whose folder is the PATH of each process but the 1 named below, and where Python's
+tempfile makes the temporary folder, which holds HOME and the repository. The third is the locale
+(LC_ALL, LC_CTYPE and LANG), which python3 -I does not ignore and which sets the encoding in which
+this process writes file names. Under a locale whose encoding cannot write a name outside ASCII
+that a case uses, that case ends in an encoding error and the suite fails. The folder in which a
+case builds a repository, the temporary
 folder or, in 2 cases, a folder named case inside it, is the value of GIT_CEILING_DIRECTORIES and
 the working folder of each process that the case starts with an environment built from the one
 of that repository; the git that the gate starts works in the root folder that the gate opened.
@@ -30,7 +34,9 @@ each probe process records the environment that it gets, and the case requires i
 values exactly.
 
 Every refusal case that runs the gate first runs it on the unchanged repository, a control that
-must exit 0 and print exactly the summary line, or for a case of --list exactly the list. It then
+must exit 0 and print exactly the summary line, or for a case of --list exactly the list; the
+helper that checks a refusal fails the case when no run of the gate passed earlier in that case
+on the repository as it was built, the same index and the same bytes in each tracked file. It then
 makes the change that it tests, to the repository, to the PATH that the gate is given or, through
 a launcher, to the gate's process; a change can take more than 1 step, such as tracking a file
 and then deleting it from the work tree, or tracking 2 files. It then requires exit 1; problem
@@ -65,13 +71,15 @@ path.
 10 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
 path: 1 reads a regular file as a control; 6 replace os.lstat or os.fdopen in that process alone
 to reach an open descriptor that is not a regular file, a symbolic link that appears after the
-lstat check, a symbolic link to a folder outside the work tree and a file, each in place of a
-parent after the lstat check, and a read error, once with the system's text and once with a text
-of whitespace, characters outside printable ASCII, a backslash and more than 300 characters; 1
-replaces os.open to move a folder at depth 1, a folder at depth 2, the folder at depth 1 that
-holds it and a file out of the work tree, each just after the gate opens it; 1 does the same and
-then puts in the place of the moved entry a new entry of the same kind, and then a symbolic link
-to the moved entry; and 1 removes os.O_NOFOLLOW. The process opens the root
+lstat check, a symbolic link to a folder outside the work tree, a file and a FIFO, each in place
+of a parent after the lstat check, and a read error, once with the system's text and once with a
+text of whitespace, characters outside printable ASCII, a backslash and more than 300 characters;
+1 replaces os.open to move a folder at depth 1, a folder at depth 2, the folder at depth 1 that
+holds it and a file out of the work tree, each just after the gate opens it, and then replaces
+os.fdopen to make each of those moves while the gate reads the file; 1 makes the same moves just
+after the gate opens each entry and then puts in the place of the moved entry a new entry of the
+same kind, and then a symbolic link to the moved entry; and 1 removes os.O_NOFOLLOW. The process
+opens the root
 with the gate's own opener. These reach what a race or a failing disk could cause. The problem
 line of that last text is compared whole: the text must come out as 1 line, cut to 300
 characters and then escaped. A parent link
@@ -81,30 +89,45 @@ link, and must refuse a parent that is not a folder when it opens it and, withou
 os.O_DIRECTORY, when it checks the folder that it opened. A parent link must be refused with the
 error that opening a link without following it gives, NotADirectoryError with os.O_DIRECTORY and
 ELOOP without it, while a real folder at the same depth, read the same way, gives its file's
-bytes. 8 cases give the
+bytes. 9 cases give the
 gate a stand-in git, a Python script alone on its PATH: 1 exits 3 with a message like that text;
 1 lists the repository's 4 files and paths that are not plain relative, 1 of them leading out of
 the work tree, to the gate and to --list; 1 lists the repository's 4 files and, before it exits,
 replaces the root with a symbolic link to a copy whose allowlist holds a malformed row and
 records its working folder, to the gate and to --list; 1 lists the repository's 4 files and
 records the folder that it starts in, after a launcher has replaced the root in the same way, to
-the gate and to --list; and 4 list 3 entries that cannot be read, 1 with no tab, 1 with 2 fields
-before its tab and 1 with 4, to the gate and to --list, 2 beside the repository's 4 files and 2
-alone. The problem line of the first, compared whole, must show the message the
+the gate and to --list; 1 lists the repository's 4 files, an entry whose mode and an entry whose
+stage each hold an escape byte, a backslash and a byte outside ASCII, to the gate and to --list;
+and 4 list 3 entries that cannot be read, 1 with no tab, 1 with 2 fields before its tab and 1
+with 4, to the gate and to --list, 2 beside the repository's 4 files and 2 alone. The problem
+line of the first, compared whole, must show the message the
 same way. 4 cases run the gate through another python3 -I launcher that changes the gate's
 process alone, each to the gate and to --list: 1 replaces the root after the gate opens it and
 before git starts, in the stand-in case above; 1 moves a folder at depth 1, the folder at depth 1
-above a folder at depth 2 and a file out of the work tree, each just after the gate opens it; 1
-removes os.O_DIRECTORY, with a file as the root; and 1 makes the change into the root folder fail
-before git starts, as on a root folder of mode 0600 that the gate can open and git cannot enter.
+above a folder at depth 2 and a file out of the work tree, each just after the gate opens it and
+again while the gate reads the file; 1 removes os.O_DIRECTORY, with a file and then a FIFO as the
+root; and 1 makes the change into the root folder fail before git starts, as on a root folder of
+mode 0600 that the gate can open and git cannot enter.
 A case for a file whose mode the runner can still read after chmod 000, as root can, is
 skipped and says so.
+
+3 cases, in RepeatedText, read no repository and run no gate. They keep the text that 2 or more
+of these texts repeat word for word the same: the gate's docstring, this docstring, the squash
+message SQUASH_TEXT and, when they are at the repository root, as in an export for review,
+PR-BODY.md, the description, from its third line, and SQUASH-MSG. Each row of BLOCKS names a
+block by its opening and its closing words and names the texts that state it. The opening words
+must occur exactly once in each of those texts, and the block runs from them to the end of the
+first closing words after them. Each run of whitespace is read as 1 space and the backticks of
+PR-BODY.md are dropped; no other difference passes. 1 case compares the docstrings and
+SQUASH_TEXT, 1 compares PR-BODY.md and SQUASH-MSG with them, and 1 requires SQUASH-MSG to equal
+SQUASH_TEXT byte for byte; a text that is not there is skipped, and the skip names it.
 
 Exit 0 when every case passes; 1 otherwise.
 """
 
 from __future__ import annotations
 
+import ast
 import errno
 import json
 import os
@@ -119,7 +142,8 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 # Where git is, found once on the caller's PATH: with the temporary folder that tempfile picks, the
-# only value that the tests take from the caller's environment. Its folder is the PATH of each process.
+# only value from which the tests build a setting; the locale, the only other value of the caller's
+# environment that is read, sets only the encoding of file names. Its folder is the PATH of each process.
 FOUND_GIT = shutil.which("git")
 # Made absolute, since a relative entry of the caller's PATH would be read again from the working folder
 # of each process, which is the temporary folder.
@@ -207,28 +231,48 @@ if mode in ("read-error", "odd-error"):
     os.fdopen = lambda *args, **kwargs: Failing(real_fdopen(*args, **kwargs))
 if mode == "no-nofollow":
     del os.O_NOFOLLOW
-if mode in ("move", "replace", "relink"):
-    # Just after the gate opens the entry decoy, inside a folder, it moves to the folder away beside
-    # the root, and the file that the gate is about to read gets bytes that name a term. Then, with
-    # replace, a new entry of the same kind takes the name of decoy, and with relink, a symbolic link
-    # to the moved entry does.
+if mode in ("move", "replace", "relink", "move-read"):
+    # Just after the gate opens the entry decoy, inside a folder, or with move-read when the gate
+    # starts to read the file, the entry moves to the folder away beside the root, and the file that
+    # the gate reads gets bytes that name a term. Then, with replace, a new entry of the same kind
+    # takes the name of decoy, and with relink, a symbolic link to the moved entry does.
     real_open, moved = os.open, []
+    def move():
+        moved.append(decoy)
+        away = Path(root).parent / "away" / os.path.basename(decoy)
+        os.rename(decoy, away)
+        with open(away / os.path.relpath(os.path.join(root, name), decoy), "r+b") as moved_file:
+            moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
+        if mode == "replace" and away.is_dir():
+            os.mkdir(decoy)
+        elif mode == "replace":
+            Path(decoy).write_bytes(b"inside\\n")
+        elif mode == "relink":
+            os.symlink(away, decoy)
     def opening(path, *args, **kwargs):
         fd = real_open(path, *args, **kwargs)
-        if not moved and kwargs.get("dir_fd") is not None and path == os.path.basename(decoy):
-            moved.append(path)
-            away = Path(root).parent / "away" / os.path.basename(decoy)
-            os.rename(decoy, away)
-            with open(away / os.path.relpath(os.path.join(root, name), decoy), "r+b") as moved_file:
-                moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
-            if mode == "replace" and away.is_dir():
-                os.mkdir(decoy)
-            elif mode == "replace":
-                Path(decoy).write_bytes(b"inside\\n")
-            elif mode == "relink":
-                os.symlink(away, decoy)
+        if (mode != "move-read" and not moved and kwargs.get("dir_fd") is not None
+                and path == os.path.basename(decoy)):
+            move()
         return fd
     os.open = opening
+if mode == "move-read":
+    # The move happens inside the read, after every open and before the bytes come back, so only a
+    # check made after the read can see it.
+    class Moving:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def read(self, *args):
+            if not moved:
+                move()
+            return self.handle.read(*args)
+    os.fdopen = lambda *args, **kwargs: Moving(real_fdopen(*args, **kwargs))
 problems = []
 descriptor = gate.open_root(Path(root), problems)
 if descriptor is None:
@@ -259,20 +303,44 @@ if mode == "swap-root":
         os.symlink(other, root)
         return real_run(*args, **kwargs)
     subprocess.run = run
-if mode == "move":
-    # Just after the gate opens other, a folder or file of the root, it moves to the folder away beside
-    # the root, and the tracked file name that it is or holds gets bytes that name a term.
-    real_open, moved = os.open, []
+if mode in ("move", "move-read"):
+    # Just after the gate opens other, a folder or file of the root, or with move-read when the gate
+    # starts to read the tracked file name, other moves to the folder away beside the root, and the
+    # tracked file name that it is or holds gets bytes that name a term.
+    real_open, real_fdopen, moved, reading = os.open, os.fdopen, [], []
+    def move():
+        moved.append(other)
+        away = Path(root).parent / "away" / os.path.basename(other)
+        os.rename(os.path.join(root, other), away)
+        with open(away / os.path.relpath(name, other), "r+b") as moved_file:
+            moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
     def opening(path, *args, **kwargs):
         fd = real_open(path, *args, **kwargs)
-        if not moved and kwargs.get("dir_fd") is not None and path == os.path.basename(other):
-            moved.append(path)
-            away = Path(root).parent / "away" / os.path.basename(other)
-            os.rename(os.path.join(root, other), away)
-            with open(away / os.path.relpath(name, other), "r+b") as moved_file:
-                moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
+        if not moved and kwargs.get("dir_fd") is not None:
+            if mode == "move" and path == os.path.basename(other):
+                move()
+            elif mode == "move-read" and path == os.path.basename(name):
+                reading.append(fd)
         return fd
     os.open = opening
+if mode == "move-read":
+    class Moving:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def read(self, *args):
+            if not moved:
+                move()
+            return self.handle.read(*args)
+    def fdopening(fd, *args, **kwargs):
+        handle = real_fdopen(fd, *args, **kwargs)
+        return Moving(handle) if fd in reading and not moved else handle
+    os.fdopen = fdopening
 if mode == "no-directory" and hasattr(os, "O_DIRECTORY"):
     del os.O_DIRECTORY
 if mode == "no-entry":
@@ -338,6 +406,16 @@ class Repo:
         self.write(rel, data)
         self.git("add", "--", rel)
 
+    def state(self) -> tuple:
+        """The index as git ls-files --stage lists it and the bytes of each tracked file, or None for
+        a tracked path that is not a regular file in the work tree."""
+        listing = self.git("ls-files", "--stage", "-z")
+        contents = []
+        for entry in listing.split("\0"):
+            path = self.root / entry.partition("\t")[2]
+            contents.append(path.read_bytes() if entry and path.is_file() and not path.is_symlink() else None)
+        return listing, tuple(contents)
+
     def track_executable(self, rel: str, data: bytes) -> None:
         """Track rel as an executable file, and fail unless git lists it with mode 100755."""
         self.write(rel, data)
@@ -369,6 +447,8 @@ class GateCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.repo = Repo(Path(self.tmp.name))
         self.stand_in = None
+        # Whether a run of the gate has passed in this case on the repository as Repo built it.
+        self.built, self.passed_on_built = self.repo.state(), False
 
     def built_environment(self, path: str) -> dict:
         """The environment that each process of the case must get, with path as its PATH. It is
@@ -396,6 +476,8 @@ class GateCase(unittest.TestCase):
         code, out, err = self.run_gate(*args, env=env, default_root=default_root, launch=launch)
         self.assertEqual((code, err), (0, ""), f"the gate must pass:\n{out}{err}")
         self.assertEqual(out, out_text)
+        if not self.passed_on_built and self.repo.root.is_dir() and self.repo.state() == self.built:
+            self.passed_on_built = True
 
     def control(self):
         self.passes()
@@ -403,6 +485,8 @@ class GateCase(unittest.TestCase):
     def refused(self, cause: str, *args: str, env: dict | None = None, also: tuple = (), out_text: str = "",
                 without_nofollow: bool = False, launch: tuple = ()):
         """Exit 1 and problem lines that are exactly cause and also, each matched as a substring once."""
+        self.assertTrue(self.passed_on_built, "the case refuses a change before any run of the gate passed on "
+                        "the unchanged repository")
         code, out, err = self.run_gate(*args, env=env, without_nofollow=without_nofollow, launch=launch)
         self.assertEqual(code, 1, f"the gate must refuse this change:\n{out}{err}")
         lines = err.splitlines()
@@ -470,7 +554,8 @@ class Controls(GateCase):
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
 
     def test_default_root_is_the_repository_that_holds_the_gate(self):
-        # Both launchers run the gate with no --root, so its default root is the repository of its own file.
+        # The copy of the gate in the repository runs with no --root, alone and with --list, so its default
+        # root must be the repository of its own file.
         self.passes(default_root=True)
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", default_root=True)
 
@@ -834,6 +919,31 @@ class Refusals(GateCase):
             with self.subTest(row=row):
                 self.repo.add_row(row)
                 self.refused(line)
+        self.repo.set_rows(ROW)
+        self.control()
+        with self.subTest(field="mode and stage"):
+            # A stand-in git lists an entry whose mode, and 1 whose stage, holds an escape byte, a backslash
+            # and a byte that is not ASCII, which the gate reads as U+FFFD; stage.md is in the work tree.
+            self.repo.write("stage.md", b"no term\n")
+            listing = (LISTING + b"10\x1b\\\xff644 " + b"0" * 40 + b" 0\tmode.md\0"
+                       + b"100644 " + b"0" * 40 + b" \x1b\\\xff\tstage.md\0")
+            mode_line = (f"{PREFIX}mode.md: tracked with mode 10\\x1b\\\\\\ufffd644, not as a regular file (a "
+                         "symbolic link or a submodule), so the gate cannot read it")
+            stage_line = (f"{PREFIX}stage.md: an unmerged index entry (stage \\x1b\\\\\\ufffd), so the gate cannot "
+                          "tell which version is tracked")
+            env = self.fake_git(listing, b"", 0)
+            # The stage is read as git lists the entries, before any file is read, so its line comes first.
+            for args, out_text in (((), PREFIX + "checked: 1 lines in 1 files; 2 problem(s)\n"),
+                                   (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
+                err = self.refused(stage_line, *args, also=(mode_line,), env=env, out_text=out_text)
+                self.assertEqual(err, stage_line + "\n" + mode_line + "\n")
+            (self.repo.root / "stage.md").unlink()
+        with self.subTest(field="root"):
+            # A root path, which no folder holds, with an escape byte, a backslash and a letter outside ASCII.
+            odd = str(self.repo.base / "r\x1bo\\ot\xe9")
+            cause = f"{PREFIX}{escaped(odd)}: cannot open the root folder: FileNotFoundError"
+            self.refused(cause, "--root", odd, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+            self.refused(cause, "--list", "--root", odd, out_text="total: 0 lines in 0 files\n")
 
     def test_missing_allowlist(self):
         self.control()
@@ -1006,29 +1116,36 @@ class Refusals(GateCase):
                                     result)
 
     def test_parent_file_after_the_lstat_check(self):
+        # A file and a FIFO with no writer, each in place of a parent after the lstat check.
         (self.repo.root / "flat").write_bytes(b"no term\n")
-        with self.subTest(mode="parent"):
-            # Opened as a folder, the file is refused at once.
-            result = self.probe("parent", "flat/notes.md", "tools")
-            self.assertIsNone(result["data"], result)
-            self.assertEqual(len(result["problems"]), 1, result)
-            self.assertTrue(result["problems"][0].startswith(
-                f"flat/notes.md: cannot read the tracked file: NotADirectoryError: [Errno {errno.ENOTDIR}]"), result)
-        with self.subTest(mode="parent-bare"):
-            # Without os.O_DIRECTORY the file opens, and the check of what was opened refuses it.
-            self.assertEqual(self.probe("parent-bare", "flat/notes.md", "tools"),
-                             {"data": None, "problems": ["flat/notes.md: the tracked path is not a regular file in "
-                                                         "the work tree, since its parent flat is not a folder in "
-                                                         "the work tree"]})
+        os.mkfifo(self.repo.root / "pipe")
+        for parent in ("flat", "pipe"):
+            with self.subTest(mode="parent", parent=parent):
+                # Opened as a folder, the entry is refused at once.
+                result = self.probe("parent", f"{parent}/notes.md", "tools")
+                self.assertIsNone(result["data"], result)
+                self.assertEqual(len(result["problems"]), 1, result)
+                self.assertTrue(result["problems"][0].startswith(
+                    f"{parent}/notes.md: cannot read the tracked file: NotADirectoryError: [Errno {errno.ENOTDIR}]"),
+                    result)
+            with self.subTest(mode="parent-bare", parent=parent):
+                # Without os.O_DIRECTORY the entry opens, the FIFO without waiting for a writer since the
+                # gate opens it with O_NONBLOCK, and the check of what was opened refuses it.
+                self.assertEqual(self.probe("parent-bare", f"{parent}/notes.md", "tools"),
+                                 {"data": None, "problems": [f"{parent}/notes.md: the tracked path is not a regular "
+                                                             f"file in the work tree, since its parent {parent} is not "
+                                                             "a folder in the work tree"]})
 
     def test_entry_moved_out_after_the_open(self):
-        # Each entry moves out of the work tree just after the gate opens it, and the file then holds
-        # bytes that name a term, so a reader that did not check each entry after the read would
-        # return those bytes. The folder deep, above the folder sub that holds the file, is checked too.
+        # Each entry moves out of the work tree just after the gate opens it, or with move-read while
+        # the gate reads the file, and the file then holds bytes that name a term, so a reader that did
+        # not check each entry after the read would return those bytes. With move-read the move comes
+        # after every open, so a reader that checked before the read would return them too. The folder
+        # deep, above the folder sub that holds the file, is checked too.
         cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep/sub"), ("deep/sub/notes.md", "deep"),
                  ("sub/notes.md", "sub/notes.md"))
-        for name, moved in cases:
-            with self.subTest(name=name, moved=moved):
+        for mode, (name, moved) in [(mode, case) for mode in ("move", "move-read") for case in cases]:
+            with self.subTest(mode=mode, name=name, moved=moved):
                 for folder in ("sub", "deep", "away"):
                     shutil.rmtree(self.repo.root / folder, ignore_errors=True)
                     shutil.rmtree(self.repo.base / folder, ignore_errors=True)
@@ -1036,7 +1153,7 @@ class Refusals(GateCase):
                 (self.repo.root / name).parent.mkdir(parents=True)
                 (self.repo.root / name).write_bytes(b"inside\n")
                 self.assertEqual(self.probe("plain", name, name), {"data": "inside\n", "problems": []})
-                self.assertEqual(self.probe("move", name, moved),
+                self.assertEqual(self.probe(mode, name, moved),
                                  {"data": None, "problems": [f"{name}: the work tree changed while the gate read the "
                                                              f"file, since {moved} is no longer where the gate "
                                                              "opened it"]})
@@ -1065,13 +1182,15 @@ class Refusals(GateCase):
                                                                  "opened it"]})
 
     def test_entry_moved_out_while_the_gate_runs(self):
-        # The launcher moves the entry out of the work tree just after the gate opens it, through the
-        # whole gate and --list, so each must report the move and exit 1.
+        # The launcher moves the entry out of the work tree just after the gate opens it, or with
+        # move-read while the gate reads the file, through the whole gate and --list, so each must
+        # report the move and exit 1.
+        self.control()
         cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep"), ("sub/notes.md", "sub/notes.md"))
-        for name, moved in cases:
+        for mode, (name, moved) in [(mode, case) for mode in ("move", "move-read") for case in cases]:
             for args, out_text in (((), PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n"),
                                    (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
-                with self.subTest(name=name, moved=moved, args=args):
+                with self.subTest(mode=mode, name=name, moved=moved, args=args):
                     for folder in ("sub", "deep", "away"):
                         shutil.rmtree(self.repo.root / folder, ignore_errors=True)
                         shutil.rmtree(self.repo.base / folder, ignore_errors=True)
@@ -1083,7 +1202,7 @@ class Refusals(GateCase):
                     self.passes(f"README.md:1\n{name}:1\ntotal: 2 lines in 2 files\n", "--list")
                     self.refused(f"{PREFIX}{name}: the work tree changed while the gate read the file, since {moved} "
                                  "is no longer where the gate opened it", *args,
-                                 launch=("move", str(self.repo.root), name, moved), out_text=out_text)
+                                 launch=(mode, str(self.repo.root), name, moved), out_text=out_text)
 
     def test_reader_without_o_nofollow(self):
         # The opener and the reader each refuse, so neither falls back to an open that follows a link.
@@ -1146,27 +1265,50 @@ class Refusals(GateCase):
         self.refused(cause, without_nofollow=True, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
         self.refused(cause, "--list", without_nofollow=True, out_text="total: 0 lines in 0 files\n")
 
-    def test_root_that_is_not_a_folder(self):
-        self.control()
+    def put_at_root(self, kind: str) -> None:
+        """Move the root folder aside and put a file that names a term, or a FIFO with no writer, at its path."""
         self.repo.root.rename(self.repo.base / "held")
-        self.repo.root.write_bytes(b"CC BY-SA 4.0\n")
+        if kind == "a file":
+            self.repo.root.write_bytes(b"CC BY-SA 4.0\n")
+        else:
+            os.mkfifo(self.repo.root)
+
+    def restore_root(self) -> None:
+        self.repo.root.unlink()
+        (self.repo.base / "held").rename(self.repo.root)
+
+    def test_root_that_is_not_a_folder(self):
+        # Opened as a folder, a file or a FIFO is refused at once, so the gate never waits on a FIFO.
+        self.control()
         cause = f"{PREFIX}{escaped(str(self.repo.root))}: cannot open the root folder: NotADirectoryError"
-        self.refused(cause, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
-        self.refused(cause, "--list", out_text="total: 0 lines in 0 files\n")
+        for kind in ("a file", "a FIFO"):
+            with self.subTest(kind=kind):
+                self.put_at_root(kind)
+                try:
+                    self.refused(cause, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+                    self.refused(cause, "--list", out_text="total: 0 lines in 0 files\n")
+                finally:
+                    self.restore_root()
+                self.control()
 
     def test_root_that_is_not_a_folder_without_o_directory(self):
-        # Without os.O_DIRECTORY a file opens as the root, and the check of what was opened refuses it.
+        # Without os.O_DIRECTORY a file or a FIFO opens as the root, the FIFO without waiting for a writer
+        # since the gate opens it with O_NONBLOCK, and the check of what was opened refuses it.
         launch = ("no-directory", str(self.repo.root), "", "")
         self.passes(launch=launch)
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", launch=launch)
-        self.repo.root.rename(self.repo.base / "held")
-        self.repo.root.write_bytes(b"CC BY-SA 4.0\n")
         cause = f"{PREFIX}{escaped(str(self.repo.root))}: cannot open the root folder: it is not a folder"
-        for args, out_text in (((), PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n"),
-                               (("--list",), "total: 0 lines in 0 files\n")):
-            with self.subTest(args=args):
-                err = self.refused(cause, *args, launch=launch, out_text=out_text)
-                self.assertEqual(err, cause + "\n")
+        for kind in ("a file", "a FIFO"):
+            for args, out_text in (((), PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n"),
+                                   (("--list",), "total: 0 lines in 0 files\n")):
+                with self.subTest(kind=kind, args=args):
+                    self.put_at_root(kind)
+                    try:
+                        err = self.refused(cause, *args, launch=launch, out_text=out_text)
+                        self.assertEqual(err, cause + "\n")
+                    finally:
+                        self.restore_root()
+                    self.passes(launch=launch)
 
     def test_root_that_git_cannot_start_in(self):
         # The launcher makes the change into the root folder fail, as on a root folder of mode 0600, which
@@ -1321,6 +1463,115 @@ class Refusals(GateCase):
             self.skipTest("this process can read a file of mode 000, as root can")
         # The README.md row is not reported stale, since the lines of a file that cannot be read are unknown.
         self.refused("README.md: cannot read the tracked file: PermissionError")
+
+
+# The squash message of the change that last edited a block below; a later change that edits a block
+# names its own squash message here, so the record of an earlier change stays as it was merged.
+SQUASH_TEXT = HERE.parent / ".github" / "squash" / "287.txt"
+DESCRIPTION = HERE.parent / "PR-BODY.md"
+SQUASH_COPY = HERE.parent / "SQUASH-MSG"
+# Each block that 2 or more texts repeat: its name, its opening words, its closing words and the tracked
+# texts that must state it: gate, the gate's docstring; tests, this file's docstring; and squash,
+# SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG, must state every block.
+BLOCKS = (
+    ("the first sentence of the change", "lists the tracked files with", "in any ASCII letter case",
+     ("squash",)),
+    ("the git settings", "Git gets the gate's environment without", "than the one it finds at the root.",
+     ("gate", "squash")),
+    ("the failure rules", "The gate fails on a matching line", "whether or not that earlier row is well formed.",
+     ("gate", "squash")),
+    ("the count", "It compares a count as text", "gives a named problem.", ("squash",)),
+    ("the fail-closed causes", "The gate fails closed,", "it names each entry and no other cause.",
+     ("gate", "squash")),
+    ("the confinement claim and its remaining cases", "The work tree is the root folder as the gate opens it",
+     "and not waited on.", ("gate", "squash")),
+    ("the file content", "File content is data:", "printed whole", ("gate", "squash")),
+    ("the escaping", "It makes git's message and an error's text 1 line", "once as a backslash escape.",
+     ("squash",)),
+    ("the named exceptions", "Its own 3 files are its named exceptions;", "must hold a matching line.",
+     ("squash",)),
+    ("the row fields", "1 row per kind of line in a file:", "a literal marker.", ("squash",)),
+    ("the owner check", "The gate refuses an owner other than", "the gate does not check it.", ("squash",)),
+    ("not covered", "Not covered:", "in the same file passes.", ("gate", "squash")),
+    ("the refusal cases", "Each refusal case that runs the gate", "outside printable ASCII.", ("squash",)),
+    ("the reader cases", "10 cases call the gate's file reader", "and 1 removes os.O_NOFOLLOW.",
+     ("tests", "squash")),
+    ("the stand-in cases", "9 cases give the gate a stand-in git", "2 beside the repository's 4 files and 2 alone.",
+     ("tests", "squash")),
+    ("the launcher without O_NOFOLLOW", "1 case runs the gate through a python3 -I launcher", "to --list.",
+     ("squash",)),
+    ("the launcher cases", "4 cases run the gate through another python3 -I launcher", "git cannot enter.",
+     ("tests", "squash")),
+    ("the relative PATH case", "1 case loads the test file", "to be an absolute path.", ("tests", "squash")),
+)
+
+
+def plain(text: str, markdown: bool = False) -> str:
+    """text with each run of whitespace as 1 space, and without backticks when it is Markdown."""
+    return " ".join((text.replace("`", "") if markdown else text).split())
+
+
+def docstring(path: Path) -> str:
+    return ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")), clean=False) or ""
+
+
+class RepeatedText(unittest.TestCase):
+    """Each block that the texts repeat is the same, word for word, in every text that states it."""
+
+    def block(self, name: str, source: str, text: str, start: str, end: str) -> str:
+        count = text.count(start)
+        self.assertEqual(count, 1,
+                         f"{source}: the opening words of {name}, {start!r}, occur {count} times, not once")
+        begin = text.index(start)
+        close = text.find(end, begin + len(start))
+        self.assertNotEqual(close, -1, f"{source}: {name} has no closing words {end!r} after {start!r}")
+        return text[begin:close + len(end)]
+
+    def same(self, name: str, copies: dict) -> None:
+        (first, reference), *others = copies.items()
+        for source, copy in others:
+            if copy != reference:
+                words, theirs = reference.split(), copy.split()
+                at = next((i for i, pair in enumerate(zip(words, theirs)) if pair[0] != pair[1]),
+                          min(len(words), len(theirs)))
+                self.fail(f"{name} differs between {first} and {source} at word {at + 1}: "
+                          f"{' '.join(words[at:at + 8])!r} against {' '.join(theirs[at:at + 8])!r}")
+
+    def tracked_blocks(self) -> dict:
+        """{name: {text: block}} for the 3 tracked texts: the 2 docstrings and SQUASH_TEXT."""
+        texts = {"gate": ("the docstring of " + GATE.name, plain(docstring(GATE))),
+                 "tests": ("the docstring of " + SELF.name, plain(docstring(SELF))),
+                 "squash": (SQUASH_TEXT.name, plain(SQUASH_TEXT.read_text(encoding="utf-8")))}
+        return {name: {texts[kind][0]: self.block(name, texts[kind][0], texts[kind][1], start, end)
+                       for kind in sources}
+                for name, start, end, sources in BLOCKS}
+
+    def test_each_block_is_the_same_in_the_tracked_texts(self):
+        for name, copies in self.tracked_blocks().items():
+            with self.subTest(block=name):
+                self.same(name, copies)
+
+    def test_each_block_is_the_same_in_the_texts_for_review(self):
+        for path, markdown in ((DESCRIPTION, True), (SQUASH_COPY, False)):
+            with self.subTest(text=path.name):
+                if not path.exists():
+                    self.skipTest(f"{path.name} is not at the repository root")
+                found = self.tracked_blocks()
+                text = path.read_text(encoding="utf-8")
+                if markdown:
+                    # The description is the body of the pull request, from the third line of PR-BODY.md.
+                    text = "".join(text.splitlines(keepends=True)[2:])
+                text = plain(text, markdown)
+                for name, start, end, sources in BLOCKS:
+                    copies = dict(found[name])
+                    copies[path.name] = self.block(name, path.name, text, start, end)
+                    self.same(name, copies)
+
+    def test_squash_message_equals_its_committed_copy(self):
+        if not SQUASH_COPY.exists():
+            self.skipTest(f"{SQUASH_COPY.name} is not at the repository root")
+        self.assertEqual(SQUASH_COPY.read_bytes(), SQUASH_TEXT.read_bytes(),
+                         f"{SQUASH_COPY.name} differs from {SQUASH_TEXT.relative_to(HERE.parent)}")
 
 
 if __name__ == "__main__":
