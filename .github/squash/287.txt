@@ -105,24 +105,36 @@ must show no text of a file, the problem lines are compared whole. Each
 subtest makes its change to the unchanged repository. The helper that
 checks a refusal fails the case when no run of the gate passed earlier
 in that case on the repository as it was built. No run of the gate may
-write a character outside printable ASCII. 10 cases call the gate's file
-reader in a separate python3 -I process that loads the gate by file
-path: 1 reads a regular file as a control; 6 replace os.lstat or
-os.fdopen in that process alone to reach an open descriptor that is not
-a regular file, a symbolic link that appears after the lstat check, a
-symbolic link to a folder outside the work tree, a file and a FIFO, each
-in place of a parent after the lstat check, and a read error, once with
-the system's text and once with a text of whitespace, characters outside
-printable ASCII, a backslash and more than 300 characters; 1 replaces
-os.open to move a folder at depth 1, a folder at depth 2, the folder at
-depth 1 that holds it and a file out of the work tree, each just after
-the gate opens it, and then replaces os.fdopen to make each of those
-moves while the gate reads the file; 1 makes the same moves just after
-the gate opens each entry and then puts in the place of the moved entry
-a new entry of the same kind, and then a symbolic link to the moved
-entry; and 1 removes os.O_NOFOLLOW. 9 cases give the gate a stand-in
-git, a Python script alone on its PATH: 1 exits 3 with a message like
-that text; 1 lists the repository's 4 files and paths that are not plain
+write a character outside printable ASCII. 1 case requires the gate to
+escape a tracked path that holds an escape byte, a backslash, DEL and
+characters outside ASCII in the problem lines for a file deleted from
+the work tree, a tracked symbolic link, a parent that is a file, an
+unmerged entry, a line that holds the markers of 2 rows, and a stale
+row. 1 case pins the rule of the helper that checks a refusal: the
+helper must fail when no run of the gate passed before it, when the only
+run that passed was on a changed index, and when the only run that
+passed was on changed bytes of a tracked file, and must check the
+refusal after a run that passed on the repository as it was built. 10
+cases call the gate's file reader in a separate python3 -I process that
+loads the gate by file path: 1 reads a regular file as a control; 6
+replace os.lstat or os.fdopen in that process alone to reach an open
+descriptor that is not a regular file, a symbolic link that appears
+after the lstat check, a symbolic link to a folder outside the work
+tree, a file and a FIFO, each in place of a parent after the lstat
+check, and a read error, once with the system's text and once with a
+text of whitespace, characters outside printable ASCII, a backslash and
+more than 300 characters; 1 replaces os.open to move a folder at depth
+1, a folder at depth 2, the folder at depth 1 that holds it, a file, and
+a folder at depth 1 whose name holds an escape byte, a backslash, DEL
+and characters outside ASCII out of the work tree, each just after the
+gate opens it, and then replaces os.fdopen to make each of those moves
+while the gate reads the file; 1 makes the same moves just after the
+gate opens each entry and then puts in the place of the moved entry a
+new entry of the same kind, and then a symbolic link to the moved entry;
+and 1 removes os.O_NOFOLLOW, once with README.md and once with a path
+that holds those characters. 9 cases give the gate a stand-in git, a
+Python script alone on its PATH: 1 exits 3 with a message like that
+text; 1 lists the repository's 4 files and paths that are not plain
 relative, 1 of them leading out of the work tree, to the gate and to
 --list; 1 lists the repository's 4 files and, before it exits, replaces
 the root with a symbolic link to a copy whose allowlist holds a
@@ -147,11 +159,13 @@ fail before git starts, as on a root folder of mode 0600 that the gate
 can open and git cannot enter. 1 case loads the test file in a python3
 -I process whose PATH is a relative folder that holds git, and requires
 the git that it finds to be an absolute path. 3 cases read no repository
-and run no gate: they require each block of text that 2 or more of the
-gate's docstring, the test docstring, the squash message and, in an
-export for review, the description and SQUASH-MSG repeat to be word for
-word the same, and SQUASH-MSG to equal .github/squash/287.txt; a text
-that is not there is skipped, and the skip names it.
+and run no gate. They require each block that a row of BLOCKS in the
+tests names to be word for word the same in each text that states it:
+the gate's docstring, the test docstring and the squash message, as the
+row names them, and, in an export for review, the description and
+SQUASH-MSG, which state every block. They compare no other text, and
+they require SQUASH-MSG to equal .github/squash/287.txt; a text that is
+not there is skipped, and the skip names it.
 
 The Agent Plugins manifest workflow runs the tests and the gate as 2
 new steps, and tools/run_all_checks.sh runs them as 2 new run lines.

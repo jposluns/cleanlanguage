@@ -49,7 +49,14 @@ makes its change to the unchanged repository, since it undoes or overwrites the 
 subtest before it. So each case fails when the gate does not refuse
 the change, when it names another cause or an extra problem, and when it refuses the unchanged
 repository. Every run of the gate must also write nothing outside printable ASCII, so a control
-byte that reaches the output unescaped, in any field, fails the case.
+byte that reaches the output unescaped, in any field, fails the case. 1 case requires the gate to
+escape a tracked path that holds an escape byte, a backslash, DEL and characters outside ASCII in
+the problem lines for a file deleted from the work tree, a tracked symbolic link, a parent that is
+a file, an unmerged entry, a line that holds the markers of 2 rows, and a stale row. 1 case pins
+the rule of the helper that checks a refusal: the helper must fail when no run of the gate passed
+before it, when the only run that passed was on a changed index, and when the only run that
+passed was on changed bytes of a tracked file, and must check the refusal after a run that passed
+on the repository as it was built.
 
 The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
@@ -75,10 +82,12 @@ lstat check, a symbolic link to a folder outside the work tree, a file and a FIF
 of a parent after the lstat check, and a read error, once with the system's text and once with a
 text of whitespace, characters outside printable ASCII, a backslash and more than 300 characters;
 1 replaces os.open to move a folder at depth 1, a folder at depth 2, the folder at depth 1 that
-holds it and a file out of the work tree, each just after the gate opens it, and then replaces
-os.fdopen to make each of those moves while the gate reads the file; 1 makes the same moves just
-after the gate opens each entry and then puts in the place of the moved entry a new entry of the
-same kind, and then a symbolic link to the moved entry; and 1 removes os.O_NOFOLLOW. The process
+holds it, a file, and a folder at depth 1 whose name holds an escape byte, a backslash, DEL and
+characters outside ASCII out of the work tree, each just after the gate opens it, and then
+replaces os.fdopen to make each of those moves while the gate reads the file; 1 makes the same
+moves just after the gate opens each entry and then puts in the place of the moved entry a new
+entry of the same kind, and then a symbolic link to the moved entry; and 1 removes os.O_NOFOLLOW,
+once with README.md and once with a path that holds those characters. The process
 opens the root
 with the gate's own opener. These reach what a race or a failing disk could cause. The problem
 line of that last text is compared whole: the text must come out as 1 line, cut to 300
@@ -111,11 +120,12 @@ mode 0600 that the gate can open and git cannot enter.
 A case for a file whose mode the runner can still read after chmod 000, as root can, is
 skipped and says so.
 
-3 cases, in RepeatedText, read no repository and run no gate. They keep the text that 2 or more
-of these texts repeat word for word the same: the gate's docstring, this docstring, the squash
-message SQUASH_TEXT and, when they are at the repository root, as in an export for review,
+3 cases, in RepeatedText, read no repository and run no gate. They compare the blocks that the
+rows of BLOCKS name, and no other text, in these texts: the gate's docstring, this docstring, the
+squash message SQUASH_TEXT and, when they are at the repository root, as in an export for review,
 PR-BODY.md, the description, from its third line, and SQUASH-MSG. Each row of BLOCKS names a
-block by its opening and its closing words and names the texts that state it. The opening words
+block by its opening and its closing words and names the tracked texts that state it; PR-BODY.md
+and SQUASH-MSG state every block. The opening words
 must occur exactly once in each of those texts, and the block runs from them to the end of the
 first closing words after them. Each run of whitespace is read as 1 space and the backticks of
 PR-BODY.md are dropped; no other difference passes. 1 case compares the docstrings and
@@ -179,6 +189,15 @@ BAD_ENTRY_PROBLEMS = (PREFIX + "git ls-files gave an entry that cannot be read: 
                       PREFIX + "git ls-files gave an entry that cannot be read: 100644 " + "0" * 40
                       + " 0 more\\x09sur\\x1bplus.md")
 NOT_PLAIN = " the tracked path is not a regular file in the work tree, since it is not a plain relative path"
+# A part of a path with an escape byte, a backslash, DEL (0x7f), a Latin-1 letter, a character of the BMP
+# and 1 above it, and that part as the gate shows it.
+ODD_PART = "a\x1bb\\c\x7f\xe9\N{LINE SEPARATOR}\U0001f600"
+ODD_PART_SHOWN = "a\\x1bb\\\\c\\x7f\\xe9\\u2028\\U0001f600"
+
+
+def as_shown(text: str) -> str:
+    """text with ODD_PART written as the gate shows it; every other part of a case's paths is printable ASCII."""
+    return text.replace(ODD_PART, ODD_PART_SHOWN)
 
 
 def escaped(text: str) -> str:
@@ -945,6 +964,94 @@ class Refusals(GateCase):
             self.refused(cause, "--root", odd, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
             self.refused(cause, "--list", "--root", odd, out_text="total: 0 lines in 0 files\n")
 
+    def test_tracked_path_is_escaped_in_each_problem_line(self):
+        # Each problem line here shows a tracked path that holds ODD_PART, so a line that showed the path
+        # without its escapes fails. The first line ends with an error's text, which holds the path as
+        # well, so it is matched from its start; each other line is compared whole.
+        self.control()
+        name, shown = f"{ODD_PART}.md", f"{ODD_PART_SHOWN}.md"
+        with self.subTest(line="a file deleted from the work tree"):
+            self.repo.track(name, b"no term\n")
+            (self.repo.root / name).unlink()
+            self.refused(f"{PREFIX}{shown}: cannot read the tracked file: FileNotFoundError")
+            self.repo.git("rm", "-q", "--cached", "--", name)
+            self.control()
+        with self.subTest(line="a tracked symbolic link"):
+            os.symlink("README.md", self.repo.root / name)
+            self.repo.git("add", "--", name)
+            line = (f"{PREFIX}{shown}: tracked with mode 120000, not as a regular file (a symbolic link or a "
+                    "submodule), so the gate cannot read it")
+            self.assertEqual(self.refused(line), line + "\n")
+            self.repo.git("rm", "-q", "--cached", "--", name)
+            (self.repo.root / name).unlink()
+            self.control()
+        with self.subTest(line="a parent that is a file"):
+            path = f"{ODD_PART}/notes.md"
+            self.repo.track(path, b"no term\n")
+            shutil.rmtree(self.repo.root / ODD_PART)
+            (self.repo.root / ODD_PART).write_bytes(b"no term\n")
+            line = (f"{PREFIX}{ODD_PART_SHOWN}/notes.md: the tracked path is not a regular file in the work tree, "
+                    f"since its parent {ODD_PART_SHOWN} is not a folder in the work tree")
+            self.assertEqual(self.refused(line), line + "\n")
+            (self.repo.root / ODD_PART).unlink()
+            self.repo.git("rm", "-q", "--cached", "--", path)
+            self.control()
+        with self.subTest(line="an unmerged entry"):
+            self.repo.track(name, b"no term\n")
+            blob = self.repo.git("hash-object", "-w", name).strip()
+            info = f"0 {'0' * 40}\t{name}\n100644 {blob} 1\t{name}\n".encode("utf-8")
+            self.repo.git("update-index", "--index-info", stdin=info)
+            line = (f"{PREFIX}{shown}: an unmerged index entry (stage 1), so the gate cannot tell which version is "
+                    "tracked")
+            self.assertEqual(self.refused(line), line + "\n")
+            self.repo.git("rm", "-q", "--cached", "--", name)
+            (self.repo.root / name).unlink()
+            self.control()
+        with self.subTest(line="a line that holds the markers of 2 rows, and their stale rows"):
+            self.repo.track(name, b"CC BY-SA 4.0\n")
+            self.repo.set_rows(ROW, f"{name}\t1\tkeep\tCC BY-SA 4.0", f"{name}\t1\tunit-3\tBY-SA 4.0")
+            lines = (f"{PREFIX}{shown}:1: holds the markers of allowlist rows 3, 4, so it is ambiguous and no row "
+                     "claims it",
+                     f"{PREFIX}{shown}: allowlist row 3 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s), "
+                     "the allowlist says 1",
+                     f"{PREFIX}{shown}: allowlist row 4 (unit-3, marker 'BY-SA 4.0') is stale: it claims 0 line(s), "
+                     "the allowlist says 1")
+            err = self.refused(lines[0], also=lines[1:])
+            self.assertEqual(err, "".join(line + "\n" for line in lines))
+
+    def test_refusal_helper_needs_a_pass_on_the_repository_as_built(self):
+        # Each change below, a file whose line no row claims, is 1 that the gate refuses, so a helper
+        # without its rule would check the refusal and pass. The helper must fail first: with no run of
+        # the gate before it, after a run that passed on a changed index alone, and after a run that
+        # passed on changed bytes of a tracked file alone.
+        guard = "before any run of the gate passed on the unchanged repository"
+        unclaimed = "other.md:1: names a licence term and no allowlist row claims it"
+        befores = {
+            "no run of the gate": lambda: None,
+            "a pass on a changed index": lambda: self.repo.git("update-index", "--chmod=+x", "--", "README.md"),
+            "a pass on changed bytes of a tracked file": lambda: self.repo.write("README.md", README + b"plain\n"),
+        }
+        for before, change in befores.items():
+            with self.subTest(before=before):
+                change()
+                if before != "no run of the gate":
+                    self.passes()
+                self.repo.track("other.md", b"CC BY-SA 4.0\n")
+                with self.assertRaises(AssertionError) as caught:
+                    self.refused(unclaimed)
+                self.assertIn(guard, str(caught.exception))
+                # Back to the repository as Repo built it. The bytes come back first, since update-index
+                # also reads README.md from the work tree.
+                self.repo.git("rm", "-q", "--cached", "--", "other.md")
+                (self.repo.root / "other.md").unlink()
+                self.repo.write("README.md", README)
+                self.repo.git("update-index", "--chmod=-x", "--", "README.md")
+                self.assertEqual(self.repo.state(), self.built)
+        # After a run that passed on the repository as built, the helper checks the refusal.
+        self.control()
+        self.repo.track("other.md", b"CC BY-SA 4.0\n")
+        self.refused(unclaimed)
+
     def test_missing_allowlist(self):
         self.control()
         (self.repo.root / ALLOWLIST).unlink()
@@ -1141,12 +1248,13 @@ class Refusals(GateCase):
         # the gate reads the file, and the file then holds bytes that name a term, so a reader that did
         # not check each entry after the read would return those bytes. With move-read the move comes
         # after every open, so a reader that checked before the read would return them too. The folder
-        # deep, above the folder sub that holds the file, is checked too.
+        # deep, above the folder sub that holds the file, is checked too. The folder ODD_PART pins the
+        # escaping of the path and of the moved entry in the problem line.
         cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep/sub"), ("deep/sub/notes.md", "deep"),
-                 ("sub/notes.md", "sub/notes.md"))
+                 ("sub/notes.md", "sub/notes.md"), (f"{ODD_PART}/notes.md", ODD_PART))
         for mode, (name, moved) in [(mode, case) for mode in ("move", "move-read") for case in cases]:
             with self.subTest(mode=mode, name=name, moved=moved):
-                for folder in ("sub", "deep", "away"):
+                for folder in ("sub", "deep", "away", ODD_PART):
                     shutil.rmtree(self.repo.root / folder, ignore_errors=True)
                     shutil.rmtree(self.repo.base / folder, ignore_errors=True)
                 (self.repo.base / "away").mkdir()
@@ -1154,20 +1262,20 @@ class Refusals(GateCase):
                 (self.repo.root / name).write_bytes(b"inside\n")
                 self.assertEqual(self.probe("plain", name, name), {"data": "inside\n", "problems": []})
                 self.assertEqual(self.probe(mode, name, moved),
-                                 {"data": None, "problems": [f"{name}: the work tree changed while the gate read the "
-                                                             f"file, since {moved} is no longer where the gate "
-                                                             "opened it"]})
+                                 {"data": None, "problems": [f"{as_shown(name)}: the work tree changed while the gate "
+                                                             f"read the file, since {as_shown(moved)} is no longer "
+                                                             "where the gate opened it"]})
 
     def test_entry_replaced_after_the_open(self):
         # As in test_entry_moved_out_after_the_open, and then a new entry of the same kind, or a symbolic
         # link to the moved entry, takes its name, so a reader that checked only that an entry is at the
         # name, or that followed a link there, would return the bytes outside the work tree.
         cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep/sub"), ("deep/sub/notes.md", "deep"),
-                 ("sub/notes.md", "sub/notes.md"))
+                 ("sub/notes.md", "sub/notes.md"), (f"{ODD_PART}/notes.md", ODD_PART))
         for mode in ("replace", "relink"):
             for name, moved in cases:
                 with self.subTest(mode=mode, name=name, moved=moved):
-                    for folder in ("sub", "deep", "away"):
+                    for folder in ("sub", "deep", "away", ODD_PART):
                         for place in (self.repo.root / folder, self.repo.base / folder):
                             if place.is_symlink():
                                 place.unlink()
@@ -1177,9 +1285,9 @@ class Refusals(GateCase):
                     (self.repo.root / name).write_bytes(b"inside\n")
                     self.assertEqual(self.probe("plain", name, name), {"data": "inside\n", "problems": []})
                     self.assertEqual(self.probe(mode, name, moved),
-                                     {"data": None, "problems": [f"{name}: the work tree changed while the gate read "
-                                                                 f"the file, since {moved} is no longer where the gate "
-                                                                 "opened it"]})
+                                     {"data": None, "problems": [f"{as_shown(name)}: the work tree changed while the "
+                                                                 f"gate read the file, since {as_shown(moved)} is no "
+                                                                 "longer where the gate opened it"]})
 
     def test_entry_moved_out_while_the_gate_runs(self):
         # The launcher moves the entry out of the work tree just after the gate opens it, or with
@@ -1205,10 +1313,13 @@ class Refusals(GateCase):
                                  launch=(mode, str(self.repo.root), name, moved), out_text=out_text)
 
     def test_reader_without_o_nofollow(self):
-        # The opener and the reader each refuse, so neither falls back to an open that follows a link.
-        self.assertEqual(self.probe("no-nofollow", "README.md", "README.md"),
-                         {"data": None, "problems": [f"{NO_NOFOLLOW}, and the gate runs no git and reads no file",
-                                                     f"README.md: cannot read the tracked file: {NO_NOFOLLOW}"]})
+        # The opener and the reader each refuse, so neither falls back to an open that follows a link. The
+        # path that holds ODD_PART pins the escaping of the path in the reader's problem line.
+        for name in ("README.md", f"{ODD_PART}.md"):
+            with self.subTest(name=name):
+                problems = [f"{NO_NOFOLLOW}, and the gate runs no git and reads no file",
+                            f"{as_shown(name)}: cannot read the tracked file: {NO_NOFOLLOW}"]
+                self.assertEqual(self.probe("no-nofollow", name, "README.md"), {"data": None, "problems": problems})
 
     def test_read_error(self):
         self.assertEqual(self.probe("read-error", "README.md", "README.md"),
@@ -1470,9 +1581,9 @@ class Refusals(GateCase):
 SQUASH_TEXT = HERE.parent / ".github" / "squash" / "287.txt"
 DESCRIPTION = HERE.parent / "PR-BODY.md"
 SQUASH_COPY = HERE.parent / "SQUASH-MSG"
-# Each block that 2 or more texts repeat: its name, its opening words, its closing words and the tracked
-# texts that must state it: gate, the gate's docstring; tests, this file's docstring; and squash,
-# SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG, must state every block.
+# The blocks that RepeatedText compares, and no other text: for each, its name, its opening words, its
+# closing words and the tracked texts that must state it: gate, the gate's docstring; tests, this file's
+# docstring; and squash, SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG, must state every block.
 BLOCKS = (
     ("the first sentence of the change", "lists the tracked files with", "in any ASCII letter case",
      ("squash",)),
@@ -1492,9 +1603,15 @@ BLOCKS = (
      ("squash",)),
     ("the row fields", "1 row per kind of line in a file:", "a literal marker.", ("squash",)),
     ("the owner check", "The gate refuses an owner other than", "the gate does not check it.", ("squash",)),
+    ("the lead of not covered", "The gate's docstring states", "what it does not cover.", ("squash",)),
     ("not covered", "Not covered:", "in the same file passes.", ("gate", "squash")),
+    ("the tests' setting", "with no setting of git taken", "environment or configuration.", ("squash",)),
     ("the refusal cases", "Each refusal case that runs the gate", "outside printable ASCII.", ("squash",)),
-    ("the reader cases", "10 cases call the gate's file reader", "and 1 removes os.O_NOFOLLOW.",
+    ("the refusal helper", "helper that checks a refusal fails the case", "as it was built", ("tests", "squash")),
+    ("the escaped path case", "1 case requires the gate to escape a tracked path", "and a stale row.",
+     ("tests", "squash")),
+    ("the refusal helper case", "1 case pins the rule of the helper", "as it was built.", ("tests", "squash")),
+    ("the reader cases", "10 cases call the gate's file reader", "a path that holds those characters.",
      ("tests", "squash")),
     ("the stand-in cases", "9 cases give the gate a stand-in git", "2 beside the repository's 4 files and 2 alone.",
      ("tests", "squash")),
@@ -1503,6 +1620,9 @@ BLOCKS = (
     ("the launcher cases", "4 cases run the gate through another python3 -I launcher", "git cannot enter.",
      ("tests", "squash")),
     ("the relative PATH case", "1 case loads the test file", "to be an absolute path.", ("tests", "squash")),
+    ("the text cases", "3 cases read no repository and run no gate.", "and the skip names it.", ("squash",)),
+    ("the skip", "a text that is not there is skipped,", "and the skip names it.", ("tests", "squash")),
+    ("the digest", "tools/test-run-all-checks.py records the new digest", "of that script.", ("squash",)),
 )
 
 
@@ -1516,7 +1636,7 @@ def docstring(path: Path) -> str:
 
 
 class RepeatedText(unittest.TestCase):
-    """Each block that the texts repeat is the same, word for word, in every text that states it."""
+    """Each block that a row of BLOCKS names is the same, word for word, in every text that states it."""
 
     def block(self, name: str, source: str, text: str, start: str, end: str) -> str:
         count = text.count(start)
