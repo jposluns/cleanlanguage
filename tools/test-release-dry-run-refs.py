@@ -194,18 +194,25 @@ info/attributes file, names the empty tree or reads the filter drivers that the 
 dry run's commit name, git ls-tree and git check-attr, refused in turn, with the git check-attr that
 asks git to refuse a GIT_ATTR_SOURCE that names no tree refused with another message than git's
 own for that refusal, at exit 128 or at exit 1, or given git's own message at exit 1, or at exit
-128 with another line after it, with an info/attributes file that cannot be read, since it is a
-folder, and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the script's
-message, never read as an empty listing; in a repository with no tag and no note it passes. A
-refused call is made by a git wrapper, first on PATH, that records every call and prints "wrapper:
-refused" and the argument it refuses and exits 128, or the status the case names, when it is given
-that argument, from the call that the case names on, and otherwise runs git. git's own message is
-given by a git wrapper, first on PATH, that prints it, or it and another line, and exits with the
-status the case names, on each git check-attr call not given --source, and otherwise runs git. The
-git that ignores GIT_ATTR_SOURCE is a git wrapper, first on PATH, that removes it from the
-environment of every call. Each failing case requires the script's message to be the last line of
-its output, and the script's version line to be printed exactly when the failing call comes after
-the script's read of the version, so the run must end at that call. These 11 cases make no ref
+128 with another line after it or before it, with a blank line after it or before it, or without
+the newline that ends it, with an info/attributes file that cannot be read, since it is a folder,
+and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the script's message,
+never read as an empty listing; in a repository with no tag and no note it passes. A refused call
+is made by a git wrapper, first on PATH, that records every call and prints "wrapper: refused" and
+the argument it refuses and exits 128, or the status the case names, when it is given that
+argument, from the call that the case names on, and otherwise runs git. git's own message is given
+by a git wrapper, first on PATH, that writes the standard error that the case names, byte for byte,
+and exits with the status the case names, on each git check-attr call not given --source, and
+otherwise runs git. The git that ignores GIT_ATTR_SOURCE is a git wrapper, first on PATH, that
+removes it from the environment of every call. Each of these wrappers, and the one of the case of
+an info/attributes file that cannot be read, which refuses nothing, also records, in order, every
+git call and, through a python3 wrapper first on PATH, every run of python3, which runs every tool
+of the script and every Python program of its own. Each failing case requires the script's message
+to be the last line of its output, the script's version line to be printed exactly when the
+failing call comes after the script's read of the version, and, after the failing call or run,
+nothing to be recorded other than the exit cleanup's git worktree remove and, when the failing call
+is git ls-tree or git check-attr of the pipeline that reads the filter drivers of the dry-run
+commit, the other call of that pipeline, so the run must end at that call. These 11 cases make no ref
 writes and do not use the git stand-in, so they reach none of its points and compare no listing.
 The first 2 run the copy of the script in a folder that holds no commit of it, and they require the
 wrapper to have recorded only the reads of the before snapshot that precede the failure. They also
@@ -214,6 +221,21 @@ require it to record a start of git for exactly those reads. So in a folder that
 repository, and in a repository whose HEAD resolves to no commit, the script makes no git call
 before those reads, through PATH or by any other path, other than one that turns that log off. No
 case shows which git call the script makes first in a repository whose HEAD resolves to a commit.
+
+1 more case, the locale case, runs the dry run with LC_ALL removed from its environment, LANG set
+to C.UTF-8 and LANGUAGE to fr, with a git wrapper, first on PATH, that records the LC_ALL of each git
+check-attr not given --source, and requires the run to pass and that check to run once, with LC_ALL
+set to C. No git with a translation of its messages is run, so the case shows the locale that the
+check gives git, not that git would translate its message without it.
+
+1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
+commit that the run left in the object store, which is the same object in a second run at the same
+HEAD, since its parent, tree, identity, dates and message are. It then points a lightweight tag and
+an annotated tag at that commit, a tag at a child of it, and 2 notes refs at that commit and at that
+child, and runs the dry run again. Since nothing moves those refs, the 2 snapshots agree; the run
+must fail on the leak check alone, naming exactly those 5 refs, with the whole-repository listing
+unchanged. Every ref case that writes a tag or a note fails on the snapshot comparison, before the
+leak check, so this case is the one that requires the leak check to list tags and notes.
 
 1 more case turns commit signing on in the fixture's configuration, with a gpg.program stand-in
 that records each call and fails, and first checks, in a repository of its own, that git commit
@@ -274,14 +296,18 @@ than git, and no automatic maintenance or fetch, although the case's gc.auto and
 ask for it. The textconv and diff driver case passes against the script before these settings too,
 since no git call of the script runs a diff.
 
-1 more case reads the comment lines at the top of the script, and the description and the squash
-message of the pull request, which the export of the branch holds as PR-BODY.md and SQUASH-MSG at
-the top of the repository, and requires each of 3 blocks that the header repeats in both texts,
-the residual, the remainder of the filter settings and the remainder of the tools' git calls, to be
-there once and the same in all 3, word for word, each run of whitespace read as 1 space. A
-checkout that lacks either text skips that case and says so, as a checkout of the branch or of main
-does, since neither text is committed. It is the only case that reads the script's text, and it
-reads only those comment lines.
+1 more case, the text case, compares 4 blocks that are repeated word for word, each run of
+whitespace read as 1 space: the residual, the remainder of the filter settings and the remainder of
+the tools' git calls, which the comment lines at the top of the script state, and the residual of
+the test, which this docstring states. Each must be there once and the same in the text that states
+it and in each text that repeats it: the residual in this docstring, and all 4 in the squash message
+that .github/squash/290.txt commits and in the description and the squash message that the export
+of the branch holds as PR-BODY.md and SQUASH-MSG at the top of the repository. The script's header,
+this docstring and the committed squash message are read in every checkout, CI included. PR-BODY.md
+and SQUASH-MSG are not committed, so a checkout of the branch or of main lacks them, and there the
+case compares every other text and skips each missing one in a subtest that says so: in CI no copy
+in the description is compared, and the squash message is compared only as committed. It is the
+only case that reads the script's text, and it reads only those comment lines.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -307,6 +333,7 @@ Exit status: 0 when every case passes, 1 otherwise.
 
 from __future__ import annotations
 
+import ast
 import datetime
 import json
 import os
@@ -567,12 +594,55 @@ def place_script(folder: Path) -> Path:
     return target
 
 
+def recording_python(folder: Path, env: dict) -> str:
+    """Write folder/python3, a wrapper that appends "python3" and the arguments of each run it is
+    given, joined by spaces, as a line of folder/events, and runs python3, so that the events log
+    records, in order with the git calls that a git wrapper in folder records there, every Python
+    tool and every inline Python program that the script runs. Return the shell line with which such
+    a git wrapper records a git call there."""
+    real = shutil.which("python3", path=env["PATH"])
+    if real is None:
+        raise AssertionError("no python3 on PATH")
+    events = shlex.quote(str(folder / "events"))
+    (folder / "python3").write_text(f"#!/bin/sh\nprintf 'python3 %s\\n' \"$*\" >> {events}\nexec {shlex.quote(real)} "
+                                    '"$@"\n', encoding="utf-8")
+    (folder / "python3").chmod(0o755)
+    return f"printf 'git %s\\n' \"$*\" >> {events}\n"
+
+
+def events(folder: Path) -> list:
+    """The git calls and python3 runs that the wrappers in folder recorded, in order."""
+    return (folder / "events").read_text(encoding="utf-8").splitlines()
+
+
+def nth_call(word: str, number: int):
+    """A predicate, given each recorded event in order, that is true of the number-th git call, counted
+    from 1, that is given the argument word, as a refusing wrapper counts them."""
+    seen = [0]
+
+    def predicate(event: str) -> bool:
+        if event.startswith("git ") and word in event.split()[1:]:
+            seen[0] += 1
+            return seen[0] == number
+        return False
+    return predicate
+
+
+def attribute_source_check(event: str) -> bool:
+    """True of the git check-attr not given --source, which asks git to refuse a GIT_ATTR_SOURCE that
+    names no tree."""
+    words = event.split()
+    return words[:1] == ["git"] and "check-attr" in words and "--source" not in words
+
+
 def refusing_git(folder: Path, env: dict, refused: str | None = None, status: int = 128, after: int = 0) -> Path:
     """A folder holding a git wrapper that appends the arguments of each call it is given, joined by
     spaces, as a line of folder/log, and exits status, without running git, on each call given the
-    argument refused after the first after such calls; it runs git for every other call."""
+    argument refused after the first after such calls; it runs git for every other call. It also
+    records each call in folder/events, with every python3 run, as recording_python does."""
     real = real_git(env)
     folder.mkdir()
+    record = recording_python(folder, env)
     refusal = ""
     if refused is not None:
         refusal = (
@@ -590,16 +660,52 @@ def refusing_git(folder: Path, env: dict, refused: str | None = None, status: in
     (folder / "git").write_text(
         "#!/bin/sh\n"
         f"printf '%s\\n' \"$*\" >> {shlex.quote(str(folder / 'log'))}\n"
-        + refusal +
+        + record + refusal +
         f"exec {shlex.quote(real)} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
     return folder
 
 
 def mimicking_git(folder: Path, env: dict, status: int, message: str) -> Path:
-    """A folder holding a git wrapper that, on each git check-attr call not given --source, prints
-    message on standard error and exits status without running git, and runs git for every other
-    call."""
+    """A folder holding a git wrapper that, on each git check-attr call not given --source, writes
+    message, byte for byte, on standard error and exits status without running git, and runs git for
+    every other call. It records each call in folder/events, with every python3 run, as
+    recording_python does."""
+    folder.mkdir()
+    record = recording_python(folder, env)
+    (folder / "git").write_text(
+        "#!/bin/sh\n"
+        + record +
+        "attr=no\n"
+        "source=no\n"
+        "for arg in \"$@\"; do\n"
+        "  if [ \"${arg}\" = check-attr ]; then attr=yes; fi\n"
+        "  if [ \"${arg}\" = --source ]; then source=yes; fi\n"
+        "done\n"
+        "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
+        f"  printf '%s' {shlex.quote(message)} >&2\n"
+        f"  exit {status}\n"
+        "fi\n"
+        f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
+    (folder / "git").chmod(0o755)
+    return folder
+
+
+def ignoring_git(folder: Path, env: dict) -> Path:
+    """A folder holding a git wrapper that removes GIT_ATTR_SOURCE from the environment of every call,
+    as a git that does not read it would ignore it, and runs git. It records each call in
+    folder/events, with every python3 run, as recording_python does."""
+    folder.mkdir()
+    record = recording_python(folder, env)
+    (folder / "git").write_text(f"#!/bin/sh\n{record}unset GIT_ATTR_SOURCE\nexec {shlex.quote(real_git(env))} "
+                                '"$@"\n', encoding="utf-8")
+    (folder / "git").chmod(0o755)
+    return folder
+
+
+def locale_recording_git(folder: Path, env: dict, log: Path) -> Path:
+    """A folder holding a git wrapper that, on each git check-attr call not given --source, appends the
+    value of LC_ALL in its environment, or "unset", as a line of log, and runs git for every call."""
     folder.mkdir()
     (folder / "git").write_text(
         "#!/bin/sh\n"
@@ -610,8 +716,7 @@ def mimicking_git(folder: Path, env: dict, status: int, message: str) -> Path:
         "  if [ \"${arg}\" = --source ]; then source=yes; fi\n"
         "done\n"
         "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
-        f"  printf '%s\\n' {shlex.quote(message)} >&2\n"
-        f"  exit {status}\n"
+        f"  printf '%s\\n' \"${{LC_ALL-unset}}\" >> {shlex.quote(str(log))}\n"
         "fi\n"
         f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
@@ -1033,8 +1138,12 @@ for _case in CASES:
     setattr(RefComparisonCases, f"test_case_{_case[0].split()[0]}", case_method(_case))
 
 
-# The line the script prints once it has read the version, directly after the before snapshot.
+# The line the script prints once it has read the version at HEAD, after the before snapshot, the
+# reads of the filter settings and the check of GIT_ATTR_SOURCE.
 VERSION_LINE = "release-dry-run: version 1.0.0 at HEAD"
+# The text of the exit cleanup's git worktree remove, the only git call that may follow the call that
+# fails a run, other than a call that runs in the same pipeline as it.
+CLEANUP = " worktree remove --force "
 
 
 class FailClosedCases(unittest.TestCase):
@@ -1046,6 +1155,18 @@ class FailClosedCases(unittest.TestCase):
                         f"the run did not end with {message!r}\n{err}")
         self.assertEqual(VERSION_LINE in out, reached_version,
                          f"the run {'did not reach' if reached_version else 'went on to'} the version line\n{out}{err}")
+
+    def assert_ends_at(self, folder: Path, failing, partners: tuple = ()) -> None:
+        """The run did no work after the event that failed it, the first event that the wrappers in
+        folder recorded for which failing is true: every later event is a git call that holds the text
+        of one of partners, the calls that run in the same pipeline as the failing one, or of the exit
+        cleanup's git worktree remove, so no later step, no tool and no other python3 run."""
+        recorded = events(folder)
+        index = next((number for number, event in enumerate(recorded) if failing(event)), None)
+        self.assertIsNotNone(index, f"the wrappers recorded no event that fails the run: {recorded}")
+        later = [event for event in recorded[index + 1:]
+                 if not (event.startswith("git ") and any(text in event for text in (*partners, CLEANUP)))]
+        self.assertEqual(later, [], f"the run went on past {recorded[index]!r}")
 
     def test_a_folder_that_is_not_a_repository_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1059,6 +1180,7 @@ class FailClosedCases(unittest.TestCase):
             self.assertTrue(calls[0].startswith("-C ") and calls[0].endswith(" symbolic-ref -q HEAD"), calls)
             self.assertEqual(git_starts(tmp / "trace2"), calls,
                              "git's trace2 log records other runs of git than the branch read")
+            self.assert_ends_at(wrapper, nth_call("symbolic-ref", 1))
 
     def test_a_head_that_resolves_to_no_commit_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1076,6 +1198,7 @@ class FailClosedCases(unittest.TestCase):
             self.assertTrue(calls[1].startswith("-C ") and calls[1].endswith(" rev-parse --verify -q HEAD"), calls)
             self.assertEqual(git_starts(tmp / "trace2"), calls,
                              "git's trace2 log records other runs of git than the 2 HEAD reads")
+            self.assert_ends_at(wrapper, nth_call("rev-parse", 1))
 
     def test_a_branch_read_with_another_failing_status_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1085,6 +1208,7 @@ class FailClosedCases(unittest.TestCase):
             self.assert_stops(code, out, err,
                               f"release-dry-run: could not read the branch HEAD names in {fixture.main} "
                               "(git symbolic-ref exit 2)", False)
+            self.assert_ends_at(wrapper, nth_call("symbolic-ref", 1))
 
     def test_a_tag_and_note_listing_that_git_refuses_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1093,6 +1217,7 @@ class FailClosedCases(unittest.TestCase):
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
             self.assertIn("wrapper: refused refs/tags", err)
             self.assert_stops(code, out, err, "release-dry-run: could not list the tags and notes", False)
+            self.assert_ends_at(wrapper, nth_call("refs/tags", 1))
 
     def test_a_tag_and_note_listing_that_git_refuses_in_step_6_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1103,6 +1228,7 @@ class FailClosedCases(unittest.TestCase):
             self.assert_stops(code, out, err, "release-dry-run: could not list the tags and notes", True)
             self.assertEqual(sum("refs/tags" in call.split() for call in git_log(wrapper)), 2,
                              "the tag and note listing was not read exactly twice")
+            self.assert_ends_at(wrapper, nth_call("refs/tags", 2))
 
     def test_a_leak_check_that_git_refuses_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1111,6 +1237,7 @@ class FailClosedCases(unittest.TestCase):
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
             self.assertIn("wrapper: refused --contains", err)
             self.assert_stops(code, out, err, "release-dry-run: could not list the refs", True)
+            self.assert_ends_at(wrapper, nth_call("--contains", 1))
 
     def test_a_git_call_of_the_dry_run_commit_that_fails_fails(self):
         # (the argument refused, the number of such calls let through first, the message that must end
@@ -1129,6 +1256,7 @@ class FailClosedCases(unittest.TestCase):
                 code, out, err = run_script(fixture.script, fixture.env, wrapper)
                 self.assertIn(f"wrapper: refused {refused}", err)
                 self.assert_stops(code, out, err, message, True)
+                self.assert_ends_at(wrapper, nth_call(refused, after + 1))
 
     def test_no_tag_and_no_note_passes(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1145,20 +1273,22 @@ class FailClosedCases(unittest.TestCase):
         # the filter drivers that the attributes of the dry-run commit name, git ls-tree and the second git
         # check-attr, fails the run with exit 1. The first git check-attr asks git to refuse a
         # GIT_ATTR_SOURCE that names no tree; a refusal of it with the wrapper's message, at exit 128 or at
-        # another exit status, is not git's refusal of such a source, so it fails the run too.
+        # another exit status, is not git's refusal of such a source, so it fails the run too. The calls of
+        # the pipeline that reads the drivers of the dry-run commit, git ls-tree and the second git
+        # check-attr, are each the other's partner, which may run on once the other is refused.
         drivers = "release-dry-run: could not read the filter drivers that the attributes of the dry-run commit "
         source = ("release-dry-run: git did not refuse a GIT_ATTR_SOURCE that names no tree as it refuses such "
                   "a source")
-        for refused, after, status, message, reached_version in (
-                ("--get-regexp", 0, 128, "release-dry-run: could not list the filter drivers of ", False),
-                ("--git-path", 0, 128, "release-dry-run: could not find the info/attributes file of ", False),
-                ("hash-object", 0, 128, "release-dry-run: could not name the empty tree of ", False),
+        for refused, after, status, message, reached_version, partners in (
+                ("--get-regexp", 0, 128, "release-dry-run: could not list the filter drivers of ", False, ()),
+                ("--git-path", 0, 128, "release-dry-run: could not find the info/attributes file of ", False, ()),
+                ("hash-object", 0, 128, "release-dry-run: could not name the empty tree of ", False, ()),
                 ("check-attr", 0, 128, f"{source}, so the dry run cannot show that git reads that variable "
-                                       "(git check-attr exit 128)", False),
+                                       "(git check-attr exit 128)", False, ()),
                 ("check-attr", 0, 1, f"{source}, so the dry run cannot show that git reads that variable "
-                                     "(git check-attr exit 1)", False),
-                ("ls-tree", 0, 128, drivers, True),
-                ("check-attr", 1, 128, drivers, True),
+                                     "(git check-attr exit 1)", False, ()),
+                ("ls-tree", 0, 128, drivers, True, (" check-attr --source ",)),
+                ("check-attr", 1, 128, drivers, True, (" ls-tree -r --name-only ",)),
         ):
             with self.subTest(refused=refused, after=after, status=status), \
                     tempfile.TemporaryDirectory() as name:
@@ -1167,40 +1297,99 @@ class FailClosedCases(unittest.TestCase):
                 code, out, err = run_script(fixture.script, fixture.env, wrapper)
                 self.assertIn(f"wrapper: refused {refused}", err)
                 self.assert_stops(code, out, err, message, reached_version)
-        # (the exit status, the standard error of the first git check-attr): git's own message for the
-        # refusal of a GIT_ATTR_SOURCE that names no tree, at another exit status than 128, or at 128 with
-        # another line after it, is not that refusal either.
+                self.assert_ends_at(wrapper, nth_call(refused, after + 1), partners)
+        # (the exit status, the standard error of the first git check-attr, byte for byte): git's own
+        # message for the refusal of a GIT_ATTR_SOURCE that names no tree, at another exit status than 128,
+        # or at 128 with another line after it or before it, with a blank line after it or before it, or
+        # without the newline that ends it, is not that refusal either.
         refusal = "fatal: bad --attr-source or GIT_ATTR_SOURCE"
-        for status, stderr in ((1, refusal), (128, f"{refusal}\nerror: and another reason")):
+        for status, stderr in ((1, f"{refusal}\n"), (128, f"{refusal}\nerror: and another reason\n"),
+                               (128, f"error: an earlier reason\n{refusal}\n"), (128, f"{refusal}\n\n"),
+                               (128, f"\n{refusal}\n"), (128, refusal)):
             with self.subTest(status=status, stderr=stderr), tempfile.TemporaryDirectory() as name:
                 fixture = Fixture(Path(name))
                 wrapper = mimicking_git(fixture.tmp / "wrapper", fixture.env, status, stderr)
                 code, out, err = run_script(fixture.script, fixture.env, wrapper)
-                self.assertIn(stderr, err)
+                self.assertIn(stderr.strip("\n"), err)
                 self.assert_stops(code, out, err, f"{source}, so the dry run cannot show that git reads that "
                                   f"variable (git check-attr exit {status})", False)
+                self.assert_ends_at(wrapper, attribute_source_check)
+
+    def test_the_attribute_source_check_runs_in_the_c_locale(self):
+        # The caller's environment names a locale other than C, in which a git with a translation of its
+        # messages would translate its refusal; the check must still run with LC_ALL set to C, and the
+        # run must pass.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            env = {key: value for key, value in fixture.env.items() if key != "LC_ALL"}
+            env.update(LANG="C.UTF-8", LANGUAGE="fr")
+            log = fixture.tmp / "locales"
+            wrapper = locale_recording_git(fixture.tmp / "wrapper", env, log)
+            code, out, err = run_script(fixture.script, env, wrapper)
+            self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
+            self.assertEqual(log.read_text(encoding="utf-8").splitlines() if log.exists() else [], ["C"],
+                             "the check of GIT_ATTR_SOURCE did not run once with LC_ALL set to C")
 
     def test_an_info_attributes_file_that_cannot_be_read_fails(self):
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             (fixture.main / ".git" / "info" / "attributes").mkdir()
-            code, out, err = run_script(fixture.script, fixture.env)
+            wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env)
+            code, out, err = run_script(fixture.script, fixture.env, wrapper)
             self.assert_stops(code, out, err,
                               "release-dry-run: could not read the filter drivers that .git/info/attributes names",
                               False)
+            self.assert_ends_at(wrapper, lambda event: event.startswith("python3 ")
+                                and event.endswith(" .git/info/attributes"))
 
     def test_a_git_that_ignores_the_attribute_source_fails(self):
         # A git wrapper, first on PATH, removes GIT_ATTR_SOURCE from the environment of every call, as a
         # git that does not read it would ignore it.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
-            wrapper = fixture.tmp / "ignoring"
-            wrapper.mkdir()
-            (wrapper / "git").write_text(f"#!/bin/sh\nunset GIT_ATTR_SOURCE\nexec {shlex.quote(real_git(fixture.env))} "
-                                         '"$@"\n', encoding="utf-8")
-            (wrapper / "git").chmod(0o755)
+            wrapper = ignoring_git(fixture.tmp / "ignoring", fixture.env)
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
             self.assert_stops(code, out, err, "release-dry-run: git ignores GIT_ATTR_SOURCE", False)
+            self.assert_ends_at(wrapper, attribute_source_check)
+
+
+class HeldCommitCases(unittest.TestCase):
+    def test_a_tag_or_note_that_already_holds_the_dry_run_commit_fails(self):
+        # The dry-run commit is the same object in each run at the same HEAD, since its parent, tree,
+        # identity, dates and message are, so a ref can hold it from an earlier run. After a first run,
+        # which must pass, a lightweight tag and an annotated tag at that commit, a tag at a child of it,
+        # and 2 notes refs, 1 at that commit and 1 at that child, hold it before the second run starts,
+        # and nothing moves them. The 2 snapshots then agree, and the second run must fail on the leak
+        # check alone, naming exactly those refs, so a leak check that leaves out tags, or notes, fails
+        # this case although no ref case reaches the leak check with such a ref.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            code, out, err = run_script(fixture.script, fixture.env)
+            self.assertEqual((code, SUCCESS in out), (0, True), f"the first run: exit {code}\n{out}{err}")
+            commits = [line.split() for line in fixture.git("cat-file", "--batch-all-objects",
+                                                            "--batch-check=%(objecttype) %(objectname)").splitlines()]
+            subjects = fixture.git("log", "--no-walk=unsorted", "--format=%H %s",
+                                   *[object_name for kind, object_name in commits if kind == "commit"]).splitlines()
+            dry = [line.split()[0] for line in subjects if line.split(" ", 1)[1] == "Dry run: version 1.0.1"]
+            self.assertEqual(len(dry), 1, f"the first run did not leave exactly 1 dry-run commit: {subjects}")
+            dry = dry[0]
+            child = fixture.git("commit-tree", "-p", dry, "-m", "Descendant", f"{dry}^{{tree}}").strip()
+            fixture.git("tag", "held-light", dry)
+            fixture.git("tag", "-a", "-m", "Held", "held-annotated", dry)
+            fixture.git("tag", "held-child", child)
+            fixture.git("update-ref", "refs/notes/held", dry)
+            fixture.git("update-ref", "refs/notes/held-child", child)
+            before, listing = fixture.snapshot(), fixture.git("for-each-ref")
+            code, out, err = run_script(fixture.script, fixture.env)
+            self.assertEqual(fixture.snapshot(), before, "the 2 snapshots differ, so the case does not reach the "
+                                                         "leak check with its refs unchanged")
+            self.assertEqual(fixture.git("for-each-ref"), listing, "the whole-repository listing changed")
+            self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
+            self.assertNotIn("before:\n", err, "the run failed on the snapshot comparison")
+            self.assertTrue(err.endswith(f"{MESSAGE}; these refs contain its commit {dry}:\nrefs/notes/held\n"
+                                         "refs/notes/held-child\nrefs/tags/held-annotated\nrefs/tags/held-child\n"
+                                         "refs/tags/held-light\n"),
+                            f"the leak check did not name exactly the tags and notes that hold the commit\n{err}")
 
 
 def signing(env: dict, program: Path) -> dict:
@@ -1364,8 +1553,8 @@ def run_on_terminal(args: list, env: dict, cwd: Path, timeout: float = TIMEOUT):
 
 
 # The git subcommands that the script runs, each of which a pager.<command> setting can name.
-SUBCOMMANDS = ("symbolic-ref", "rev-parse", "for-each-ref", "config", "show", "worktree", "add", "write-tree",
-               "commit-tree", "update-ref")
+SUBCOMMANDS = ("symbolic-ref", "rev-parse", "for-each-ref", "config", "hash-object", "check-attr", "show", "worktree",
+               "add", "write-tree", "commit-tree", "update-ref", "ls-tree")
 
 
 class ConfiguredProgramCases(unittest.TestCase):
@@ -1703,18 +1892,29 @@ class ConfiguredProgramCases(unittest.TestCase):
                 self.assertTrue(any(call in run for run in seen), f"no run of git {call} was recorded: {seen}")
 
 
-# The 2 texts of the pull request that repeat blocks of the script's header word for word: the
-# description and the squash message, as the export of the branch holds them at the top of the
-# repository.
+# The texts that state or repeat blocks word for word: the script's header and this test's docstring,
+# which every checkout holds; the squash message as .github/squash/290.txt commits it, which every
+# checkout of the branch holds; and the description and the squash message as the export of the
+# branch holds them at the top of the repository, PR-BODY.md and SQUASH-MSG, which no checkout holds,
+# since neither is committed.
+HEADER = "the script's header"
+DOCSTRING = "the test's docstring"
+COMMITTED_SQUASH = REPO_ROOT / ".github" / "squash" / "290.txt"
 DESCRIPTION = REPO_ROOT / "PR-BODY.md"
 SQUASH_MESSAGE = REPO_ROOT / "SQUASH-MSG"
-HEADER = "the script's header"
-# (name, first words, last words) of each block that the script's header, the description and the
-# squash message repeat.
+COMMITTED = ".github/squash/290.txt"
+EXPORTED = {"PR-BODY.md": DESCRIPTION, "SQUASH-MSG": SQUASH_MESSAGE}
+# (name, the text that states the block, first words, last words, the texts that repeat it) of each
+# block that is repeated word for word.
 REPEATED = (
-    ("the residual", "Residual: the proof does not catch", "between the 2 snapshots."),
-    ("the filter remainder", "So no filter runs during a git call of the dry run,", "comes to name during the run."),
-    ("the tools remainder", "The git calls of the tools that the script runs", "attribute and filter settings."),
+    ("the residual", HEADER, "Residual: the proof does not catch", "between the 2 snapshots.",
+     (DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+    ("the filter remainder", HEADER, "So no filter runs during a git call of the dry run,",
+     "comes to name during the run.", (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+    ("the tools remainder", HEADER, "The git calls of the tools that the script runs", "attribute and filter settings.",
+     (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+    ("the residual of the test", DOCSTRING, "Residual of the test:", "with its default ref backend.",
+     (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
 )
 
 
@@ -1751,29 +1951,38 @@ def first_difference(block: str, other: str) -> str:
 
 
 class RepeatedTextCases(unittest.TestCase):
-    def test_each_repeated_block_is_the_same_in_the_3_texts(self):
-        # Each block of REPEATED, read from the script's header, the description and the squash
-        # message, must be there once and the same, word for word, in all 3. A checkout that lacks
-        # either text skips the case and says so.
-        missing = [path.name for path in (DESCRIPTION, SQUASH_MESSAGE) if not path.is_file()]
-        if missing:
-            self.skipTest(f"{' and '.join(missing)} not at the top of the repository, so the blocks that the "
-                          "script's header repeats there cannot be compared")
+    def test_each_repeated_block_is_the_same_in_every_text_that_holds_it(self):
+        # Each block of REPEATED, read from the text that states it and from each text that repeats it,
+        # must be there once and the same, word for word, in each. The script's header, this test's
+        # docstring and the committed squash message are read in every checkout, CI included. The
+        # description and the squash message at the top of the repository are read only where they are
+        # there; a checkout that lacks either skips that text alone, in a subtest that says so, and
+        # still compares every other text.
         texts = {
             HEADER: header_text(DRY_RUN.read_text(encoding="utf-8")),
-            DESCRIPTION.name: DESCRIPTION.read_text(encoding="utf-8"),
-            SQUASH_MESSAGE.name: SQUASH_MESSAGE.read_text(encoding="utf-8"),
+            DOCSTRING: ast.get_docstring(ast.parse(Path(__file__).read_text(encoding="utf-8")), clean=False) or "",
+            COMMITTED: COMMITTED_SQUASH.read_text(encoding="utf-8"),
         }
-        for name, first, last in REPEATED:
+        for place, path in EXPORTED.items():
+            if path.is_file():
+                texts[place] = path.read_text(encoding="utf-8")
+            else:
+                with self.subTest(text=place):
+                    self.skipTest(f"{place} is not at the top of the repository, as in a checkout, so its copies "
+                                  "of the repeated blocks are not compared; every other text is")
+        for name, source, first, last, copies in REPEATED:
             with self.subTest(block=name):
-                blocks = {place: repeated_block(text, first, last) for place, text in texts.items()}
-                for place, block in blocks.items():
+                stated = repeated_block(texts[source], first, last)
+                self.assertIsNotNone(stated, f"{name}: {source} holds no block from {first!r} to {last!r}, or "
+                                     "holds its first words other than once")
+                for place in copies:
+                    if place not in texts:
+                        continue
+                    block = repeated_block(texts[place], first, last)
                     self.assertIsNotNone(block, f"{name}: {place} holds no block from {first!r} to {last!r}, "
                                          "or holds its first words other than once")
-                for place, block in blocks.items():
-                    self.assertEqual(block, blocks[HEADER],
-                                     f"{name}: {place} differs from {HEADER} at "
-                                     f"{first_difference(block, blocks[HEADER])}")
+                    self.assertEqual(block, stated, f"{name}: {place} differs from {source} at "
+                                     f"{first_difference(block, stated)}")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,9 @@
 # defines or that the info/attributes file names, and, from the dry-run commit
 # on, of every one that an attribute gives a path of that commit; those 3
 # calls list the filter drivers, find the info/attributes file and name the
-# empty tree, and read no index and no file of a worktree. So no filter runs
+# empty tree, read no index and pass no file content through a filter,
+# although the configuration that they read can include a file that lies in
+# a worktree. So no filter runs
 # during a git call of the dry run, whatever the configuration that git reads
 # in any worktree defines, other than a driver that the info/attributes file,
 # or the tree that git archive archives, comes to name during the run. The run
@@ -214,7 +216,9 @@ turn_off_filters() {
 # the tree that git archive archives, comes to name during the run. The
 # drivers that the attributes of the dry-run commit name are turned off below,
 # before step 1 runs git archive. The first 3 git calls below run before these
-# settings exist, and read no index and no file of a worktree. A git error in
+# settings exist, and read no index and pass no file content through a filter,
+# although the configuration that they read can include a file that lies in a
+# worktree. A git error in
 # any of them, or an error in reading the info/attributes file, fails the run.
 filter_rc=0
 filter_keys="$(git "${git_off[@]}" config --name-only --get-regexp '^filter\.')" || filter_rc=$?
@@ -279,15 +283,21 @@ turn_off_filters "${filter_drivers}${attributes_drivers}"
 # nothing else on standard error, read in the C locale so that the message is
 # not translated. Exit 0 fails the run as a git that ignores the variable,
 # and any other exit status or message fails it too, since a git that ignores
-# the variable can fail the call for another reason.
+# the variable can fail the call for another reason. Standard error is
+# compared byte for byte, its line ending included: the capture ends it with
+# a dot, which is removed after, since a command substitution removes every
+# newline at the end of what it captures, which would read the message
+# followed by blank lines, or without its newline, as git's message.
 attr_source_rc=0
-attr_source_err="$(GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh 2>&1 >/dev/null)" \
+attr_source_err="$(GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh 2>&1 >/dev/null \
+  && attr_status=0 || attr_status=$?; printf '.'; exit "${attr_status}")" \
   || attr_source_rc=$?
+attr_source_err="${attr_source_err%.}"
 if [ "${attr_source_rc}" -eq 0 ]; then
   fail "git ignores GIT_ATTR_SOURCE, so the dry run cannot keep the attribute files of its worktree out of reach"
 fi
-if [ "${attr_source_rc}" -ne 128 ] || [ "${attr_source_err}" != "fatal: bad --attr-source or GIT_ATTR_SOURCE" ]; then
-  [ -z "${attr_source_err}" ] || printf '%s\n' "${attr_source_err}" >&2
+if [ "${attr_source_rc}" -ne 128 ] || [ "${attr_source_err}" != "fatal: bad --attr-source or GIT_ATTR_SOURCE"$'\n' ]; then
+  [ -z "${attr_source_err}" ] || printf '%s\n' "${attr_source_err%$'\n'}" >&2
   fail "git did not refuse a GIT_ATTR_SOURCE that names no tree as it refuses such a source, so the dry run cannot show that git reads that variable (git check-attr exit ${attr_source_rc})"
 fi
 

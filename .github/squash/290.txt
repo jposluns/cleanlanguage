@@ -91,11 +91,17 @@ must stop when the move of that HEAD to it fails, before the fourth.
 Each ref case checks that exactly the refs it names change, and that
 the dry-run commit has the parent, identity, dates, message and tree
 it must have. Its 11 cases on fail-closed reading make no ref writes:
-10 require the run to end at the call that fails, and 1, with no tag
-and no note, requires it to pass. 1 more case turns commit signing on
-in the configuration and requires the dry run to pass without
-signing, and 1 more writes 8 hooks to the configured hook folder and
-requires the dry run to pass with none of them run. 6 more each
+10 require the run to end at the call that fails, with no later step,
+tool or git call other than the exit cleanup and the other call of a
+pipeline, and 1, with no tag and no note, requires it to pass. 1 more
+case runs the dry run in a caller locale other than C and requires its
+check of GIT_ATTR_SOURCE to run with LC_ALL set to C, and 1 more
+leaves tags and notes refs on the dry-run commit of an earlier run, or
+on a child of it, and requires the leak check to name them. 1 more
+case turns commit signing on in the configuration and requires the
+dry run to pass without signing, and 1 more writes 8 hooks to the
+configured hook folder and requires the dry run to pass with none of
+them run. 6 more each
 configure programs that git runs from its configuration or from
 attributes: a core.fsmonitor program, clean and smudge filters, a
 process filter, a pager with the run on a terminal, textconv and diff
@@ -114,10 +120,14 @@ turned off and to start no program other than git, every one after
 the first 3 and the GIT_ATTR_SOURCE check also to run with the
 attribute settings and both configured filter drivers turned off, and
 every one to run with lazy fetching turned off. 1 more requires the
-residual and the 2 remainders that the script's header repeats in the
-description and in this message to be the same in all 3, word for
-word, and is skipped where either text is not at the top of the
-repository.
+residual and the 2 remainders that the script's header states, and the
+residual of the test that its docstring states, to be the same, word
+for word, in every text that repeats them: the docstring, this message
+as .github/squash/290.txt commits it, and the description and this
+message at the top of the export. CI has neither of the last 2, so
+there the case compares the header and the docstring with the
+committed message only, and says that it skips the other 2.
+
 Residual of the test: stand-ins replace the packaging, the
 gates and the site rewrite, which the next step of release-dry-run.yml
 runs with the real tools, and the script runs with a git stand-in
@@ -131,7 +141,7 @@ default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 67 cases pass. Each of 14 mutants that remove
+against this change all 69 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
 later mutants failed at least 1 case of the 36-case suite, each of 9
 script mutants that the 36-case suite passed fails at least 1 case of
@@ -157,7 +167,13 @@ that fix. The 67-case suite fails 2 tests against the script and the
 texts before the refusal fix, the case on the filter settings, in
 which that script reads 4 other outcomes of its first git check-attr
 as git's refusal of a GIT_ATTR_SOURCE that names no tree, and the text
-case, and fails each of 4 mutants of that fix. The release dry run
+case, and fails each of 4 mutants of that fix. The 69-case suite
+fails the case on the filter settings against the script before the
+line-ending fix, which reads git's message followed by a blank line,
+or without its newline, as git's refusal, and fails each of 6 script
+mutants that the 67-case suite passes, or its fail-closed cases for
+the 2 that change only a failure path, and each of 6 one-word mutants
+of the texts that its text case passes. The release dry run
 workflow and tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The
