@@ -31,17 +31,19 @@
 # process of the dry run that starts after the first 3 git calls that follow
 # the before snapshot, its tools' included, reads no attribute file other
 # than the info/attributes file of the repository and, in git archive, the
-# .gitattributes files of the tree it archives, and runs with the clean,
-# smudge and process commands turned off of every filter driver that the
-# configuration read from the script's worktree defines or that the
-# info/attributes file names, and, from the dry-run commit on, of every one
-# that an attribute gives a path of that commit; those 3 calls list the filter
-# drivers, find the info/attributes file and name the empty tree, and read no
-# index and no file of a worktree. So no filter runs during a git call of the
-# dry run, whatever the configuration that git reads in any worktree defines,
-# other than a driver that the info/attributes file, or the tree that git
-# archive archives, comes to name during the run. The run fails unless git
-# refuses a GIT_ATTR_SOURCE that names no tree. No git call of the script asks
+# .gitattributes files of the tree it archives and, in the git check-attr
+# that reads the filter drivers of the dry-run commit, those of that commit,
+# and runs with the clean, smudge and process commands turned off of every
+# filter driver that the configuration read from the script's worktree
+# defines or that the info/attributes file names, and, from the dry-run commit
+# on, of every one that an attribute gives a path of that commit; those 3
+# calls list the filter drivers, find the info/attributes file and name the
+# empty tree, and read no index and no file of a worktree. So no filter runs
+# during a git call of the dry run, whatever the configuration that git reads
+# in any worktree defines, other than a driver that the info/attributes file,
+# or the tree that git archive archives, comes to name during the run. The run
+# fails unless git refuses a GIT_ATTR_SOURCE that names no tree with exit 128
+# and its own message for that refusal. No git call of the script asks
 # for a textconv or diff driver, a signature, an editor or automatic
 # maintenance, and the reads of the 2 snapshots and the leak check read no
 # index and no file content and write to no terminal. So no other program that
@@ -203,13 +205,17 @@ turn_off_filters() {
 
 # A filter runs only on a path that an attribute gives a filter driver. So the
 # dry run keeps every attribute file other than the info/attributes file out
-# of reach of its git processes, and turns off every filter driver that the
-# info/attributes file names and every one that the configuration read from
-# repo_root defines, which git config lists; then no filter applies, whatever
-# the configuration that git reads in any worktree defines. The first 3 git
-# calls below run before these settings exist, and read no index and no file
-# of a worktree. A git error in any of them, or an error in reading the
-# info/attributes file, fails the run.
+# of reach of its git processes, other than the .gitattributes files of a tree
+# that git archive, or the git check-attr below given --source, reads, and
+# turns off every filter driver that the info/attributes file names and every
+# one that the configuration read from repo_root defines, which git config
+# lists; then no filter applies, whatever the configuration that git reads in
+# any worktree defines, other than a driver that the info/attributes file, or
+# the tree that git archive archives, comes to name during the run. The
+# drivers that the attributes of the dry-run commit name are turned off below,
+# before step 1 runs git archive. The first 3 git calls below run before these
+# settings exist, and read no index and no file of a worktree. A git error in
+# any of them, or an error in reading the info/attributes file, fails the run.
 filter_rc=0
 filter_keys="$(git "${git_off[@]}" config --name-only --get-regexp '^filter\.')" || filter_rc=$?
 case "${filter_rc}" in
@@ -259,16 +265,30 @@ empty_tree="$(git "${git_off[@]}" hash-object -t tree --stdin < /dev/null)" \
 # none, in place of those of its worktree, index or HEAD (GIT_ATTR_SOURCE), so
 # only the info/attributes file stays in reach, and, in git archive, the
 # .gitattributes files of the tree it archives, which git archive reads
-# whatever GIT_ATTR_SOURCE names; step 1 runs git archive only after the
-# drivers that those name are turned off below.
+# whatever GIT_ATTR_SOURCE names, and, in a git check-attr given --source,
+# those of the tree it names, as in the read below of the filter drivers of
+# the dry-run commit; step 1 runs git archive only after the drivers that
+# those name are turned off below.
 export GIT_ATTR_NOSYSTEM=1 GIT_ATTR_SOURCE="${empty_tree}"
 export_settings core.attributesFile=/dev/null
 turn_off_filters "${filter_drivers}${attributes_drivers}"
 # A git that ignores GIT_ATTR_SOURCE would read the attribute files of the
 # throwaway worktree, so the run fails unless git refuses a GIT_ATTR_SOURCE
-# that names no tree.
-if GIT_ATTR_SOURCE=.. git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh >/dev/null 2>&1; then
+# that names no tree. Only the refusal that git gives such a source counts:
+# exit 128 with the message "fatal: bad --attr-source or GIT_ATTR_SOURCE" and
+# nothing else on standard error, read in the C locale so that the message is
+# not translated. Exit 0 fails the run as a git that ignores the variable,
+# and any other exit status or message fails it too, since a git that ignores
+# the variable can fail the call for another reason.
+attr_source_rc=0
+attr_source_err="$(GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh 2>&1 >/dev/null)" \
+  || attr_source_rc=$?
+if [ "${attr_source_rc}" -eq 0 ]; then
   fail "git ignores GIT_ATTR_SOURCE, so the dry run cannot keep the attribute files of its worktree out of reach"
+fi
+if [ "${attr_source_rc}" -ne 128 ] || [ "${attr_source_err}" != "fatal: bad --attr-source or GIT_ATTR_SOURCE" ]; then
+  [ -z "${attr_source_err}" ] || printf '%s\n' "${attr_source_err}" >&2
+  fail "git did not refuse a GIT_ATTR_SOURCE that names no tree as it refuses such a source, so the dry run cannot show that git reads that variable (git check-attr exit ${attr_source_rc})"
 fi
 
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
@@ -296,7 +316,8 @@ cleanup() {
 trap cleanup EXIT
 # Like every later git call of the script, git worktree add runs with git_off
 # and the attribute and filter settings exported above, so no hook,
-# core.fsmonitor program, pager or filter runs inside it.
+# core.fsmonitor program or pager runs inside it, and no filter other than a
+# driver that the info/attributes file comes to name during the run.
 git "${git_off[@]}" worktree add --detach "${worktree}" HEAD >/dev/null
 cd "${worktree}"
 
@@ -373,13 +394,15 @@ python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/p
 # update-ref then moves the HEAD of this worktree from the parent to that
 # commit, and fails if that HEAD is no longer at the parent.
 # Every git call here runs with git_off and the attribute and filter settings,
-# as git worktree add does above, so no hook, core.fsmonitor program, pager or
-# filter can change the commit, keep another or move that HEAD inside them;
-# the run then fails unless that HEAD is at the dry-run commit, so the steps
-# below read that commit. Its object is in the store the worktree shares with
-# repo_root, so repo_root resolves it. git commit-tree runs with commit signing
-# turned off, whatever the configuration asks, so the dry-run commit is never
-# signed. Every git call here fails the run with exit 1 on an error.
+# as git worktree add does above, so no hook, core.fsmonitor program or pager,
+# and no filter other than a driver that the info/attributes file comes to
+# name during the run, can change the commit, keep another or move that HEAD
+# inside them; the run then fails unless that HEAD is at the dry-run commit,
+# so the steps below read that commit. Its object is in the store the worktree
+# shares with repo_root, so repo_root resolves it. git commit-tree runs with
+# commit signing turned off, whatever the configuration asks, so the dry-run
+# commit is never signed. Every git call here fails the run with exit 1 on an
+# error.
 dry_message="Dry run: version ${dry_version}"
 git "${git_off[@]}" add -u || fail "could not stage the dry-run version bump"
 dry_tree="$(git "${git_off[@]}" write-tree)" || fail "could not write the tree of the dry-run commit"
@@ -401,7 +424,8 @@ dry_head="$(git "${git_off[@]}" rev-parse --verify HEAD)" \
 # commit, read as git archive reads them, is turned off too. git check-attr
 # prints set, unset or unspecified both for an attribute that names no driver
 # and for a driver of that name, so a driver of each of those names is turned
-# off too. A git error here fails the run.
+# off too. A git error in either call here, git ls-tree or git check-attr,
+# fails the run.
 tree_drivers="$(git "${git_off[@]}" ls-tree -r --name-only "${dry_commit}" \
   | git "${git_off[@]}" check-attr --source "${dry_commit}" --stdin filter \
   | sed 's/.*: //' | LC_ALL=C sort -u && printf '.')" \

@@ -25,11 +25,18 @@
 #      and run in that site's real producer environment (a throwaway git repo for
 #      the git-show reads; a throwaway working tree for the file reads), with the
 #      shared extractor copied in so the real relative call resolves. The
-#      release-dry-run.sh block runs after that script's own git_off line, also
-#      extracted, since its git call takes its options from git_off. Each
-#      extracted block must be a run of whole lines of its source as read now,
-#      so a copy that has gone stale, or one edited in this test, fails before
-#      it is run.
+#      release-dry-run.sh block runs after that script's own settings, also
+#      extracted and run in the script's order: its exports of TZ and
+#      GIT_NO_LAZY_FETCH, then every line from its git_off line through its
+#      check that git refuses a GIT_ATTR_SOURCE that names no tree, which build
+#      git_off and export the attribute and filter settings. So the block's git
+#      call runs with the options, the variables and the configuration that the
+#      script gives it. Each extracted block must be a run of whole lines of its
+#      source as read now. Since each is extracted from its source as it is
+#      read, that check fails only when this test is changed to run a copy of
+#      a block, such as one that has gone stale, or a block it has edited, in
+#      place of the block it extracts, before the check; it then fails before
+#      that block is run.
 #   C. Every fixture's expected value is computed by a Python oracle that applies
 #      the gates' own universal-newline read and VERSION_LINE / SKILL_VERSION
 #      regexes, so the sites are pinned to the gates' rule, not to hardcoded
@@ -191,9 +198,14 @@ extract_block() { # file start end
 }
 
 # release-dry-run.sh runs the git call of its selector with the options in its
-# git_off array, so its own git_off line is extracted too, and run_dry runs it
-# before the block.
-GIT_OFF_LINE="$(extract_block tools/release-dry-run.sh 'git_off=(' ')')"
+# git_off array, the variables it exports and the settings it passes in
+# GIT_CONFIG_PARAMETERS, so its own lines that set them are extracted too, and
+# run_dry runs them before the block, in the script's order: DRY_ENV, its
+# exports of TZ and GIT_NO_LAZY_FETCH, then DRY_SETUP, every line from its
+# git_off line through its check that git refuses a GIT_ATTR_SOURCE that names
+# no tree, up to the comment that opens the selector.
+DRY_ENV="$(extract_block tools/release-dry-run.sh 'export TZ=UTC' 'export GIT_NO_LAZY_FETCH=1')"
+DRY_SETUP="$(extract_block tools/release-dry-run.sh 'git_off=(' '# The first Version: line is authoritative')"
 DRY_BLOCK="$(extract_block tools/release-dry-run.sh \
   'if ! version="$(git "${git_off[@]}" show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
 WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
@@ -201,7 +213,8 @@ WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
 WF_MAIN_BLOCK="$(extract_block .github/workflows/release-skill.yml \
   'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
 declare -A block_source=(
-  [GIT_OFF_LINE]=tools/release-dry-run.sh
+  [DRY_ENV]=tools/release-dry-run.sh
+  [DRY_SETUP]=tools/release-dry-run.sh
   [DRY_BLOCK]=tools/release-dry-run.sh
   [WF_LOCAL_BLOCK]=.github/workflows/release-skill.yml
   [WF_MAIN_BLOCK]=.github/workflows/release-skill.yml
@@ -215,10 +228,15 @@ is_line_run() {
   esac
   return 1
 }
-for name in GIT_OFF_LINE DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
+for name in DRY_ENV DRY_SETUP DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
   [ -n "${!name}" ] || { echo "Could not extract ${name} from its source" >&2; exit 1; }
-  # The block must be the source's own lines as they stand now, so a copy that
-  # has gone stale, or one edited in this test, is refused before it is run.
+  # The block must be the source's own lines as they stand now. extract_block
+  # prints whole lines of the file it reads, so this holds for every block
+  # extracted above, and the check cannot fail on the test as it stands: it
+  # guards this test against a change that runs a copy of a block, such as one
+  # that has gone stale, or a block it has edited, in place of the block it
+  # extracts, and refuses such a block before it is run. A change made to a
+  # block after this check is not caught.
   is_line_run "${block_source[$name]}" "${!name}" \
     || { echo "${name} is not a run of whole lines of ${block_source[$name]}" >&2; exit 1; }
 done
@@ -235,7 +253,8 @@ git_id=(-c user.email=t@t -c user.name=t -c commit.gpgsign=false)
 run_version_of() { version_of "$1"; }
 
 # Site 1: release-dry-run.sh, reading git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md
-# with the options of its own git_off line.
+# after its own settings: the options of git_off, its exported variables and the
+# attribute and filter settings, which its own check of GIT_ATTR_SOURCE follows.
 run_dry() { # fixture-file
   local repo out rc
   repo="$(mktemp -d)"
@@ -257,7 +276,10 @@ run_dry() { # fixture-file
     set -uo pipefail
     exec 2>/dev/null
     fail() { exit 1; }
-    eval "${GIT_OFF_LINE}"
+    # The settings' own messages name repo_root, the folder the script runs in.
+    repo_root="$(pwd)"
+    eval "${DRY_ENV}"
+    eval "${DRY_SETUP}"
     eval "${DRY_BLOCK}"
     status=$?
     printf '%s' "${version}"
