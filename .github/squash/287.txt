@@ -5,7 +5,10 @@ tools/licence-names-allowlist.tsv and its tests
 tools/test-check-licence-names.py. The gate lists the tracked files
 with git ls-files, reads each from the work tree, splits it at line
 feeds only and finds every line that holds 1 of its 3 search terms in
-any ASCII letter case; its docstring names the terms. The gate fails
+any ASCII letter case; its docstring names the terms. Git gets the
+gate's environment without GIT_DIR, GIT_INDEX_FILE and
+GIT_COMMON_DIR, the 3 settings that would point it at another
+repository or index than the one it finds at the root. The gate fails
 on a matching line that no row of its path claims (unclaimed); on a
 matching line that holds the markers of 2 or more rows of its path
 (ambiguous), which none of those rows claims, so a broad marker cannot
@@ -34,8 +37,10 @@ opened or read; and when the allowlist cannot be read or is not UTF-8.
 When git ls-files lists entries and the gate can read none of them, it
 names each entry and no other cause. It opens each tracked path 1 part
 at a time from the repository root, never through a symbolic link, so
-it reads no tracked path from outside the work tree. It runs git with
-a fixed argument list and no shell and treats file content as data. It
+a symbolic link in the work tree cannot lead a read outside it; a work
+tree that changes while the gate runs is not covered, as its docstring
+states. It runs git with a fixed argument list and no shell and treats
+file content as data. It
 makes git's message and an error's text 1 line and cuts them to 300
 characters; then, in each field that it shows, it writes a backslash
 and each character outside printable ASCII once as a backslash escape.
@@ -51,10 +56,14 @@ terms, a term split over 2 lines or a lookalike character outside
 ASCII; untracked and ignored files; the index copy of a file whose
 work-tree copy differs (in CI they are equal); a folder of the work
 tree that is a mount point and a file that is a hard link, each read
-where it stands; whether a line is a true statement of a licence;
-whether the owner of a row is right, which is reviewed prose; and the
-named exceptions' own lines. A row counts lines per file, so fixing 1
-line and adding another of the same kind in the same file passes.
+where it stands; a work tree that changes while the gate runs, since
+the root is opened by its path for each file and an opened folder is
+read wherever it is moved, so a root replaced or a folder moved out of
+the work tree during the run can lead a read outside it; whether a
+line is a true statement of a licence; whether the owner of a row is
+right, which is reviewed prose; and the named exceptions' own lines. A
+row counts lines per file, so fixing 1 line and adding another of the
+same kind in the same file passes.
 
 The tests build throwaway git repositories and run the gate with no
 setting of git taken from the caller's environment or configuration.

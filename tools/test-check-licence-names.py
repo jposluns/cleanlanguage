@@ -6,17 +6,19 @@ and no identity are needed, since the gate reads the index and the work tree). T
 holds the gate's 3 files: a copy of the gate and of this test from this test's own folder, and an
 allowlist with 1 row, README.md, 1, keep, CC BY-SA 4.0, for README.md, whose 1 matching line holds
 that marker. The gate runs as a separate process, python3 -I with --root. The gate, git and the
-probe process below each get an environment built from fixed values alone, so no variable of the
-caller's environment, such as XDG_CONFIG_HOME, HOME or a variable whose name starts with GIT_,
-reaches them: PATH, the folder of the git found on the caller's PATH; HOME, an empty folder; the
-git configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
-GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
-search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init takes
-no template (--template=), so no hook, exclude file or description of a template reaches the
-repository. So the result depends on the case alone. The caller's environment is read for 2
-things only, neither of which reaches a process as a setting: where git is (PATH) and where
-Python's tempfile makes the temporary folder. Each stand-in git below and each probe process
-records the environment that it gets, and the case requires it to equal those values exactly.
+probe process below each run in the temporary folder and get an environment built from fixed
+values alone, so no variable of the caller's environment, such as XDG_CONFIG_HOME, HOME or a
+variable whose name starts with GIT_, is passed on to them: PATH, the folder of the git found on
+the caller's PATH; HOME, an empty folder in the temporary folder; the git configuration of the
+machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and GIT_CONFIG_GLOBAL set to the null
+device); git's messages in the C locale (LC_ALL=C); and the search for a repository stopped at
+the temporary folder (GIT_CEILING_DIRECTORIES). git init takes no template (--template=), so no
+hook, exclude file or description of a template reaches the repository. So the result depends on
+the case alone. The caller's environment is read for 2 things only, and the tests build settings
+from them: where git is, whose folder is the PATH of each process, and where Python's tempfile
+makes the temporary folder, which holds HOME, is the value of GIT_CEILING_DIRECTORIES and is the
+working folder of each process. Each stand-in git below and each probe process records the
+environment that it gets, and the case requires it to equal those values exactly.
 
 Every refusal case that runs the gate first runs it on the unchanged repository, a control that
 must exit 0 and print exactly the summary line, or for a case of --list exactly the list. It then
@@ -36,9 +38,15 @@ The controls of their own: the unchanged repository reports 1 line in 1 file and
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
 line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes stay in their
 line; near misses of the 3 terms match nothing; an untracked file is not read; an executable
-tracked file is read like any other; an unknown option exits 2; git settings in the caller's
-environment that would ignore README.md or point git at another repository change no result; and
-git init leaves .git with no hook, exclude file or description, which only a template gives.
+tracked file is read like any other; a marker is literal text, so a marker that a regular
+expression would read in another way claims the line that holds it; an unknown option exits 2;
+run without --root, the gate checks the repository that holds it, both with and without --list;
+--list passes with an allowlist that is not UTF-8; git settings in the caller's environment that
+would ignore README.md or point git at another repository change no result; GIT_DIR,
+GIT_INDEX_FILE and GIT_COMMON_DIR in the gate's own environment, which would point git at another
+repository or index, change no result; and git init leaves .git with no hook, exclude file or
+description, which only a template gives, even when GIT_TEMPLATE_DIR names a template that a
+git init without --template= copies.
 
 7 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
 path: 1 reads a regular file as a control, and 6 replace os.lstat or os.fdopen in that process
@@ -51,7 +59,10 @@ whole: the text must come out as 1 line, cut to 300 characters and then escaped.
 sits at depth 1 and at depth 2, and each parent case runs once with os.O_DIRECTORY and once with
 it removed, as on a system without it, so the gate must open each parent without following a
 link, and must refuse a parent that is not a folder when it opens it and, without
-os.O_DIRECTORY, when it checks the folder that it opened. 6 cases give the
+os.O_DIRECTORY, when it checks the folder that it opened. A parent link must be refused with the
+error that opening a link without following it gives, NotADirectoryError with os.O_DIRECTORY and
+ELOOP without it, while a real folder at the same depth, read the same way, gives its file's
+bytes. 6 cases give the
 gate a stand-in git, a Python script alone on its PATH: 1 exits 3 with a message like that text;
 1 lists the repository's 4 files and paths that are not plain relative, 1 of them leading out of
 the work tree, to the gate and to --list; and 4 list 3 entries that cannot be read, 1 with no tab,
@@ -112,6 +123,23 @@ BAD_ENTRY_PROBLEMS = (PREFIX + "git ls-files gave an entry that cannot be read: 
                       PREFIX + "git ls-files gave an entry that cannot be read: 100644 " + "0" * 40
                       + " 0 more\\x09sur\\x1bplus.md")
 NOT_PLAIN = " the tracked path is not a regular file in the work tree, since it is not a plain relative path"
+
+
+def escaped(text: str) -> str:
+    """text as the gate's docstring says that a field is shown, for a path that the temporary folder
+    fixes, whose characters the case cannot write out; the fixed escapes are written out in full."""
+    out = []
+    for char in text:
+        code = ord(char)
+        if char == "\\":
+            out.append("\\\\")
+        elif " " <= char <= "~":
+            out.append(char)
+        else:
+            out.append(f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}" if code < 0x10000 else f"\\U{code:08x}")
+    return "".join(out)
+
+
 PROBE = """
 import errno, importlib.util, json, os, sys
 ODD_ERROR = """ + repr(ODD_TAIL) + """
@@ -188,7 +216,7 @@ class Repo:
 
     def git(self, *args: str, stdin: bytes = b"") -> str:
         done = subprocess.run(["git", "-C", str(self.root), *args], input=stdin, capture_output=True,
-                              env=self.env, timeout=60)
+                              env=self.env, cwd=self.base, timeout=60)
         if done.returncode != 0:
             raise AssertionError(f"git {' '.join(args)} failed: {done.stderr.decode('utf-8', 'replace')}")
         return done.stdout.decode("utf-8", "replace")
@@ -213,9 +241,12 @@ class Repo:
         if not listed.startswith("100755 "):
             raise AssertionError(f"git does not track {rel} as executable: {listed!r}")
 
-    def gate(self, *args: str, env: dict | None = None):
-        done = subprocess.run([sys.executable, "-I", str(GATE), "--root", str(self.root), *args],
-                              capture_output=True, env=env or self.env, stdin=subprocess.DEVNULL, timeout=120)
+    def gate(self, *args: str, env: dict | None = None, default_root: bool = False):
+        # With default_root, the copy of the gate in the repository runs without --root.
+        command = ([str(self.root / "tools" / "check-licence-names.py")] if default_root
+                   else [str(GATE), "--root", str(self.root)])
+        done = subprocess.run([sys.executable, "-I", *command, *args], capture_output=True, env=env or self.env,
+                              cwd=self.base, stdin=subprocess.DEVNULL, timeout=120)
         return (done.returncode, done.stdout.decode("utf-8", "replace"),
                 done.stderr.decode("utf-8", "replace"))
 
@@ -233,8 +264,8 @@ class GateCase(unittest.TestCase):
         return {"PATH": path, "HOME": str(self.repo.base / "home"), "GIT_CONFIG_GLOBAL": os.devnull,
                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CEILING_DIRECTORIES": str(self.repo.base), "LC_ALL": "C"}
 
-    def run_gate(self, *args: str, env: dict | None = None):
-        code, out, err = self.repo.gate(*args, env=env)
+    def run_gate(self, *args: str, env: dict | None = None, default_root: bool = False):
+        code, out, err = self.repo.gate(*args, env=env, default_root=default_root)
         shown = [char for char in out + err if char != "\n" and not " " <= char <= "~"]
         self.assertEqual(shown, [], f"the output holds characters outside printable ASCII:\n{out}{err}")
         if env is not None and env is self.stand_in:
@@ -246,8 +277,8 @@ class GateCase(unittest.TestCase):
                              "the stand-in git got another environment")
         return code, out, err
 
-    def passes(self, out_text: str = CONTROL_OUT, *args: str):
-        code, out, err = self.run_gate(*args)
+    def passes(self, out_text: str = CONTROL_OUT, *args: str, env: dict | None = None, default_root: bool = False):
+        code, out, err = self.run_gate(*args, env=env, default_root=default_root)
         self.assertEqual((code, err), (0, ""), f"the gate must pass:\n{out}{err}")
         self.assertEqual(out, out_text)
 
@@ -297,7 +328,7 @@ class GateCase(unittest.TestCase):
     def probe(self, mode: str, name: str, decoy: str):
         done = subprocess.run([sys.executable, "-I", "-c", PROBE, str(GATE), mode, str(self.repo.root), name,
                                str(self.repo.root / decoy)], capture_output=True, stdin=subprocess.DEVNULL,
-                              env=self.repo.env, timeout=60)
+                              env=self.repo.env, cwd=self.repo.base, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
         result = json.loads(done.stdout)
         self.assertEqual(result.pop("environment"), self.built_environment(str(Path(FOUND_GIT).parent)),
@@ -315,6 +346,39 @@ class Controls(GateCase):
     def test_list_does_not_parse_the_allowlist(self):
         self.repo.set_rows("README.md\t5\tkeep\tCC BY-SA 4.0", "README.md\t0\tkeep")
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_passes_with_an_allowlist_that_is_not_utf8(self):
+        self.repo.write(ALLOWLIST, (HEADER + ROW + "\n# \xff\n").encode("latin-1"))
+        self.repo.git("add", ALLOWLIST)
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_default_root_is_the_repository_that_holds_the_gate(self):
+        # Both launchers run the gate with no --root, so its default root is the repository of its own file.
+        self.passes(default_root=True)
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", default_root=True)
+
+    def test_marker_is_literal_text(self):
+        # As a regular expression, [CC] BY-SA would need a C before " BY-SA", which this line does not hold.
+        self.repo.track("bracket.md", b"Licence: [CC] BY-SA\n")
+        self.repo.add_row("bracket.md\t1\tkeep\t[CC] BY-SA")
+        self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+
+    def test_git_location_settings_of_the_gate_change_no_result(self):
+        # Each setting points git at an index or repository whose listing differs from the root's: a copy
+        # of the index and of .git taken while extra.md, whose line no row claims, was tracked, and a
+        # folder that is not a repository. If git used it, the gate would report extra.md or fail.
+        self.repo.track("extra.md", b"CC BY-SA 4.0\n")
+        shutil.copyfile(self.repo.root / ".git" / "index", self.repo.base / "other-index")
+        shutil.copytree(self.repo.root / ".git", self.repo.base / "other-git")
+        self.repo.git("rm", "-q", "-f", "--", "extra.md")
+        self.control()
+        settings = {"GIT_INDEX_FILE": str(self.repo.base / "other-index"), "GIT_DIR": str(self.repo.base / "other-git"),
+                    "GIT_COMMON_DIR": str(self.repo.base / "home")}
+        for name, value in settings.items():
+            with self.subTest(setting=name):
+                env = dict(self.repo.env, **{name: value})
+                self.passes(env=env)
+                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", env=env)
 
     def test_carriage_returns_alone_do_not_end_a_line(self):
         self.repo.track("notes.txt", b"CC BY-SA 4.0\rBY-SA again\rCC BY-SA 4.0\r")
@@ -372,6 +436,28 @@ class Controls(GateCase):
     def test_git_init_takes_no_template(self):
         # A template gives .git its hooks, its info/exclude, which git add reads, and its description.
         made = sorted(entry.name for entry in (self.repo.root / ".git").iterdir())
+        self.assertEqual([name for name in made if name in ("branches", "description", "hooks", "info")], [], made)
+        # A populated template that git init copies when it is not given --template=, so the result
+        # does not depend on the template that the installed git has.
+        template = self.repo.base / "template"
+        (template / "hooks").mkdir(parents=True)
+        (template / "info").mkdir()
+        (template / "description").write_bytes(b"from the template\n")
+        (template / "info" / "exclude").write_bytes(b"*.md\n")
+
+        class Templated(Repo):
+            def git(self, *args: str, stdin: bytes = b"") -> str:
+                self.env = dict(self.env, GIT_TEMPLATE_DIR=str(template))
+                return super().git(*args, stdin=stdin)
+
+        copied = self.repo.base / "copied"
+        copied.mkdir()
+        done = subprocess.run(["git", "-C", str(copied), "init", "-q"], capture_output=True, cwd=self.repo.base,
+                              env=dict(self.repo.env, GIT_TEMPLATE_DIR=str(template)), timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((copied / ".git" / "description").read_bytes(), b"from the template\n")
+        templated = Templated(self.repo.base / "case")
+        made = sorted(entry.name for entry in (templated.root / ".git").iterdir())
         self.assertEqual([name for name in made if name in ("branches", "description", "hooks", "info")], [], made)
 
 
@@ -438,6 +524,15 @@ class Refusals(GateCase):
                                "the allowlist says 1",))
             self.repo.track("README.md", README)
             self.control()
+
+    def test_marker_is_not_a_pattern(self):
+        # As a regular expression, the dot of 4.0 would match the x of 4x0 and claim the line.
+        self.control()
+        self.repo.track("dotted.md", b"Licence: CC BY-SA 4x0\n")
+        self.repo.add_row("dotted.md\t1\tkeep\tCC BY-SA 4.0")
+        self.refused("dotted.md:1: names a licence term and no allowlist row claims it",
+                     also=("dotted.md: allowlist row 3 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s), "
+                           "the allowlist says 1",))
 
     def test_removed_line_leaves_a_stale_row(self):
         self.control()
@@ -509,8 +604,9 @@ class Refusals(GateCase):
 
     def test_shown_fields_are_escaped_once(self):
         self.control()
-        name = "a\x1bb\\c\u00e9\u2028.md"
-        shown = "a\\x1bb\\\\c\\xe9\\u2028.md"
+        # An escape byte, a backslash, DEL (0x7f), a Latin-1 letter, a character of the BMP and 1 above it.
+        name = "a\x1bb\\c\x7f\u00e9\u2028\U0001f600.md"
+        shown = "a\\x1bb\\\\c\\x7f\\xe9\\u2028\\U0001f600.md"
         with self.subTest(field="path"):
             self.repo.track(name, b"CC BY-SA 4.0\n")
             self.refused(f"{PREFIX}{shown}:1: names a licence term and no allowlist row claims it")
@@ -534,7 +630,7 @@ class Refusals(GateCase):
     def test_missing_allowlist(self):
         self.control()
         (self.repo.root / ALLOWLIST).unlink()
-        # The allowlist is read twice, as a named exception and as the allowlist, and with no row
+        # The allowlist is read 2 times, as a named exception and as the allowlist, and with no row
         # left the README.md line is unclaimed.
         self.refused("the allowlist cannot be read",
                      also=(f"{ALLOWLIST}: cannot read the tracked file: FileNotFoundError",
@@ -603,6 +699,7 @@ class Refusals(GateCase):
                 self.control()
 
     def test_list_fails_on_a_parent_that_is_not_a_folder(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
         self.repo.track("sub/notes.md", b"ShareAlike\n")
         self.passes("README.md:1\nsub/notes.md:1\ntotal: 2 lines in 2 files\n", "--list")
         outside = self.repo.base / "outside"
@@ -616,15 +713,18 @@ class Refusals(GateCase):
 
     def test_path_that_is_not_plain_relative(self):
         # Each path would reach a file with a matching line if the gate opened it as written: 1 outside
-        # the work tree and the others README.md.
+        # the work tree, 1 the copy of the gate, 1 a file with a name outside ASCII and the others
+        # README.md. The only part of tools//check-licence-names.py that is refused is its empty part, and
+        # the absolute paths are written in the file system's encoding, whatever the temporary folder holds.
         self.control()
         (self.repo.base / "outside.md").write_bytes(b"CC BY-SA 4.0\n")
-        absolute = str(self.repo.root / "README.md")
-        paths = ("../outside.md", absolute, "./README.md", "tools//../README.md", "tools/../README.md")
-        listing = LISTING + b"".join(b"100644 " + b"0" * 40 + b" 0\t" + path.encode("ascii") + b"\0"
+        (self.repo.root / "d\xe9j\xe0.md").write_bytes(b"CC BY-SA 4.0\n")
+        paths = ("../outside.md", str(self.repo.root / "README.md"), str(self.repo.root / "d\xe9j\xe0.md"),
+                 "./README.md", "tools//../README.md", "tools//check-licence-names.py", "tools/../README.md")
+        listing = LISTING + b"".join(b"100644 " + b"0" * 40 + b" 0\t" + os.fsencode(path) + b"\0"
                                      for path in paths)
         env = self.fake_git(listing, b"", 0)
-        causes = [f"{PREFIX}{path}:{NOT_PLAIN}" for path in paths]
+        causes = [f"{PREFIX}{escaped(path)}:{NOT_PLAIN}" for path in paths]
         self.refused(causes[0], also=tuple(causes[1:]), env=env,
                      out_text=PREFIX + f"checked: 1 lines in 1 files; {len(paths)} problem(s)\n")
         self.refused(causes[0], "--list", also=tuple(causes[1:]), env=env,
@@ -671,13 +771,23 @@ class Refusals(GateCase):
         (self.repo.root / "deep").mkdir()
         os.symlink(outside, self.repo.root / "sub")
         os.symlink(outside, self.repo.root / "deep" / "sub")
-        for mode in ("parent", "parent-bare"):
-            for name in ("sub/notes.md", "deep/sub/notes.md"):
+        # The controls: real folders at the same depths, read through the same replaced os.lstat.
+        (self.repo.root / "real" / "sub").mkdir(parents=True)
+        (self.repo.root / "real" / "notes.md").write_bytes(b"inside\n")
+        (self.repo.root / "real" / "sub" / "notes.md").write_bytes(b"inside\n")
+        # Opened without following it, a link is refused as not a folder with os.O_DIRECTORY, and as a
+        # link (ELOOP) without it, so a read error of another kind does not pass.
+        refusals = {"parent": f"NotADirectoryError: [Errno {errno.ENOTDIR}]",
+                    "parent-bare": f"OSError: [Errno {errno.ELOOP}]"}
+        for mode, refusal in refusals.items():
+            for name, real in (("sub/notes.md", "real/notes.md"), ("deep/sub/notes.md", "real/sub/notes.md")):
+                with self.subTest(mode=mode, name=real):
+                    self.assertEqual(self.probe(mode, real, "tools"), {"data": "inside\n", "problems": []})
                 with self.subTest(mode=mode, name=name):
                     result = self.probe(mode, name, "tools")
                     self.assertIsNone(result["data"], result)
                     self.assertEqual(len(result["problems"]), 1, result)
-                    self.assertTrue(result["problems"][0].startswith(f"{name}: cannot read the tracked file: "),
+                    self.assertTrue(result["problems"][0].startswith(f"{name}: cannot read the tracked file: {refusal}"),
                                     result)
 
     def test_parent_file_after_the_lstat_check(self):
@@ -819,8 +929,52 @@ class Refusals(GateCase):
         self.refused(f"{PREFIX}git ls-files lists no tracked file, so there is nothing to compare", "--list",
                      out_text="total: 0 lines in 0 files\n")
 
+    def test_list_fails_on_an_unmerged_entry(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        blob = self.repo.git("hash-object", "-w", "README.md").strip()
+        for stage in ("1", "2", "3"):
+            with self.subTest(stage=stage):
+                info = f"0 {'0' * 40}\tREADME.md\n100644 {blob} {stage}\tREADME.md\n".encode("ascii")
+                self.repo.git("update-index", "--index-info", stdin=info)
+                self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot tell "
+                             "which version is tracked", "--list", out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                self.repo.git("add", "README.md")
+                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_fails_on_a_file_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        with self.subTest(path="gone.md"):
+            self.repo.track("gone.md", b"no term\n")
+            (self.repo.root / "gone.md").unlink()
+            self.refused(f"{PREFIX}gone.md: cannot read the tracked file: FileNotFoundError", "--list",
+                         out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+            self.repo.git("rm", "-q", "--cached", "--", "gone.md")
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        with self.subTest(path=ALLOWLIST):
+            # --list reads the allowlist only as a named exception, so it reports 1 problem.
+            before = (self.repo.root / ALLOWLIST).read_bytes()
+            (self.repo.root / ALLOWLIST).unlink()
+            self.refused(f"{PREFIX}{ALLOWLIST}: cannot read the tracked file: FileNotFoundError", "--list",
+                         out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+            self.repo.write(ALLOWLIST, before)
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_fails_on_a_named_exception_without_a_matching_line(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        contents = {ALLOWLIST: (HEADER + "README.md\t1\tkeep\tLicence:\n").encode("utf-8")}
+        for path in NAMED_EXCEPTIONS:
+            with self.subTest(path=path):
+                before = (self.repo.root / path).read_bytes()
+                self.repo.track(path, contents.get(path, b"print('no term')\n"))
+                self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
+                             out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                self.repo.track(path, before)
+                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
     def test_file_content_is_data(self):
         self.control()
+        # The gate runs in the temporary folder, so the relative touch of the name and the absolute touch
+        # of the content would each make the 1 file that the case checks.
         marker = self.repo.base / "ran"
         name = "$(touch ran);x.md"
         self.repo.track(name, f"`touch {marker}` $(touch {marker}) --root / CC BY-SA 4.0\n".encode("utf-8"))

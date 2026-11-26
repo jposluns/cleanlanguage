@@ -11,7 +11,9 @@ place of an s, and without -a git grep reports a match in a file it treats as bi
 that holds a NUL byte, with no line number.
 
 The tracked files are the entries that git ls-files --stage -z lists for the repository at the
-root, run with a fixed argument list and no shell. File content is data: no line of a file is
+root, run with a fixed argument list and no shell. Git gets the gate's environment without
+GIT_DIR, GIT_INDEX_FILE and GIT_COMMON_DIR, the 3 settings that would point it at another
+repository or index than the one it finds at the root. File content is data: no line of a file is
 run, parsed as code or printed whole; besides the gate's own words and counts, a problem line
 shows only the fields that the output paragraph below names, written as that paragraph states.
 
@@ -75,10 +77,13 @@ points the gate at another repository.
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
 of a file whose work-tree copy differs (in CI they are equal); a folder of the work tree that is a
-mount point and a file that is a hard link, each read where it stands; whether a line is a true
-statement of a licence; whether the owner of a row is right, which is reviewed prose; and the
-named exceptions' own lines. A row counts lines per file, so fixing 1 line and adding another of
-the same kind in the same file passes.
+mount point and a file that is a hard link, each read where it stands; a work tree that changes
+while the gate runs, since the root is opened by its path for each file and an opened folder is
+read wherever it is moved, so a root replaced or a folder moved out of the work tree during the
+run can lead a read outside it; whether a line is a true statement of a licence; whether the
+owner of a row is right, which is reviewed prose; and the named exceptions' own lines. A row
+counts lines per file, so fixing 1 line and adding another of the same kind in the same file
+passes.
 """
 
 from __future__ import annotations
@@ -99,6 +104,8 @@ OWNERS = ("unit-2", "unit-3", "keep")
 REGULAR_MODES = ("100644", "100755")
 COUNT = re.compile(r"[1-9][0-9]*")
 PREFIX = "check-licence-names: "
+# The settings that would point git at another repository or index than the one at the root.
+GIT_LOCATIONS = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
 
 
 def shown(text: str) -> str:
@@ -126,8 +133,9 @@ def error_text(error: BaseException) -> str:
 def tracked(root: Path, problems: list):
     """{path: mode} for each entry git ls-files lists, or None when the listing fails."""
     argv = ["git", "-C", str(root), "ls-files", "--stage", "-z"]
+    env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATIONS}
     try:
-        done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, shell=False)
+        done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, shell=False, env=env)
     except OSError as error:
         problems.append(f"cannot run git ls-files, so no tracked file can be listed: {error_text(error)}")
         return None
@@ -162,7 +170,10 @@ def read_file(root: Path, path: str, problems: list):
     """The bytes of the regular work-tree file at path, or None, with a problem, when it cannot be read.
 
     The path is opened 1 part at a time from the root, each part inside the folder opened before it and
-    none through a symbolic link, so no tracked path is read from outside the work tree."""
+    none through a symbolic link, so a symbolic link in the work tree cannot lead a read outside it. A
+    work tree that changes while the gate runs is not covered: the root is opened by its path for each
+    file and an opened folder is read wherever it is moved, so a root replaced or a folder moved out of
+    the work tree during the run can lead a read outside it."""
     not_regular = f"{shown(path)}: the tracked path is not a regular file in the work tree"
     parts = path.split("/")
     # An absolute path has an empty first part.
