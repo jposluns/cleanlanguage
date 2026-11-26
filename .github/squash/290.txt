@@ -11,9 +11,11 @@ object name. It prints both snapshots on a mismatch, so the failure
 names the ref that differs. It then fails when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit,
 read with replace refs, grafts and the shallow file turned off, so
-none of them can hide such a ref. The script makes that commit with
-git commit-tree, which prints the name of the commit it writes, saves
-that name for step 6, never reading a later HEAD, and moves the
+none of them can hide such a ref. Neither failure says who wrote the
+ref, since another worktree's write, or a ref that held the dry-run
+commit before the run, fails the run too. The script makes that commit
+with git commit-tree, which prints the name of the commit it writes,
+saves that name for step 6, never reading a later HEAD, and moves the
 throwaway worktree's HEAD to it with git update-ref, which fails if
 that HEAD is no longer at the parent it read. Every git call of the
 script after the before snapshot other than the reads of step 6, the
@@ -31,22 +33,29 @@ that info/attributes names, and, from the dry-run commit on, every one
 that an attribute gives a path of that commit. A driver name with an
 equals sign fails the run, as does a git that does not refuse a
 GIT_ATTR_SOURCE that names no tree with exit 128 and its own message
-for that refusal. So no filter runs during a git call of the dry run,
-whatever the configuration that git reads in any worktree defines,
-other than a driver that the info/attributes file, or the tree that
-git archive archives, comes to name during the run. No git call of the
-script asks for a textconv or diff driver, a signature, an editor or
-automatic maintenance, and the snapshot and leak-check reads read no
-index and no file content and write to no terminal. So no other
-program that git can run from its configuration or from attributes
-runs during a git call of the script. The git calls of the tools that
-the script runs are covered only by the lazy-fetch, attribute and
-filter settings. The run fails closed unless that HEAD is at the
-commit once moved. The git commit-tree runs with commit signing
-turned off, so the dry-run commit is never signed. A git error in
-either check, in reading the filter drivers, or in making or reading
-the dry-run commit or moving HEAD to it, fails the run with exit 1
-and is never read as an empty listing.
+for that refusal alone on standard error, which cmp compares byte for
+byte.
+
+So no filter runs during a git call of the dry run, whatever the
+configuration that git reads in any worktree defines, other than a
+driver that the info/attributes file, or the tree that git archive
+archives, comes to name during the run.
+
+No git call of the script asks for a textconv or diff driver, a
+signature, an editor or automatic maintenance, and the snapshot and
+leak-check reads read no index and no file content and write to no
+terminal. So no other program that git can run from its configuration
+or from attributes runs during a git call of the script.
+
+The git calls of the tools that the script runs are covered only by
+the lazy-fetch, attribute and filter settings.
+
+The run fails closed unless the throwaway worktree's HEAD is at the
+dry-run commit once moved there. The git commit-tree runs with commit
+signing turned off, so the dry-run commit is never signed. A git error
+in either check, in reading the filter drivers, or in making or
+reading the dry-run commit or moving HEAD to it, fails the run with
+exit 1 and is never read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -119,14 +128,18 @@ cleanup's included, to run with hooks and the core.fsmonitor program
 turned off and to start no program other than git, every one after
 the first 3 and the GIT_ATTR_SOURCE check also to run with the
 attribute settings and both configured filter drivers turned off, and
-every one to run with lazy fetching turned off. 1 more requires the
-residual and the 2 remainders that the script's header states, and the
-residual of the test that its docstring states, to be the same, word
-for word, in every text that repeats them: the docstring, this message
-as .github/squash/290.txt commits it, and the description and this
-message at the top of the export. CI has neither of the last 2, so
-there the case compares the header and the docstring with the
-committed message only, and says that it skips the other 2.
+every one to run with lazy fetching turned off. 1 more, the text
+case, requires 4 blocks, the residual and the 2 remainders that the
+script's header states and the residual of the test that its
+docstring states, each to be 1 whole paragraph, the same word for
+word in every text that holds it, so a word added before a block's
+first words or after its last words fails it too. The docstring
+repeats the residual; this message as .github/squash/290.txt commits
+it, and the description and this message at the top of the export,
+repeat all 4. CI has neither of the last 2, so there the case
+compares the header's residual with the docstring's copy and each of
+the 4 blocks with the committed message, and says that it skips the
+other 2.
 
 Residual of the test: stand-ins replace the packaging, the
 gates and the site rewrite, which the next step of release-dry-run.yml
@@ -172,8 +185,17 @@ fails the case on the filter settings against the script before the
 line-ending fix, which reads git's message followed by a blank line,
 or without its newline, as git's refusal, and fails each of 6 script
 mutants that the 67-case suite passes, or its fail-closed cases for
-the 2 that change only a failure path, and each of 6 one-word mutants
-of the texts that its text case passes. The release dry run
+the 2 that change only a failure path, and each of 6 mutants of the
+texts, each changing 1 word, that its text case passes. The suite of
+the NUL fix, still of 69 cases, gives the first git check-attr 6 more
+outcomes and fails the script before that fix, which reads git's
+message with a NUL byte after it, before it, inside it or before its
+newline as git's refusal, since a command substitution drops every NUL
+byte; that fix compares standard error with cmp. It fails each of 5
+mutants of that fix, and its text case, which now reads each block as
+1 whole paragraph, fails each of 7 mutants of the texts that add words
+before or after a block in its paragraph, which the text case before
+it passes. The release dry run
 workflow and tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

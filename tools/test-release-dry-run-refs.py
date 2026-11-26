@@ -97,11 +97,13 @@ and no real race is run.
 
 A case expected to pass must exit 0 with the script's success message. A ref case expected to fail
 must exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison,
-print the whole before snapshot and the whole after one; when it fails on the leak check, it must
-print the leak check's sentence with the dry run's commit, followed by the refs that the case puts
-on that commit or a descendant of it. The test reads those snapshots itself, with git, after the
-case's setup and once the run has ended, in the format that the failure message prints. Each ref
-case also checks that its writes took effect: it compares the whole-repository listing of git
+print that comparison's sentence, which says that a ref changed during the run, not who changed it,
+and the whole before snapshot and the whole after one; when it fails on the leak check, it must
+print the leak check's sentence, which says that no ref may contain the dry run's commit, with that
+commit, followed by the refs that the case puts on that commit or a descendant of it. The test
+reads those snapshots itself, with git, after the case's setup and once the run has ended, in the
+format that the failure message prints. Each ref case also checks that its writes took effect: it
+compares the whole-repository listing of git
 for-each-ref, which the old whole-repository hash compared, taken after the case's setup and again
 after the run, and requires exactly the refs that the case names to differ, so the old check failed
 exactly the ref cases that name one. Case 20 also requires its new branch to be at a child of the
@@ -194,25 +196,29 @@ info/attributes file, names the empty tree or reads the filter drivers that the 
 dry run's commit name, git ls-tree and git check-attr, refused in turn, with the git check-attr that
 asks git to refuse a GIT_ATTR_SOURCE that names no tree refused with another message than git's
 own for that refusal, at exit 128 or at exit 1, or given git's own message at exit 1, or at exit
-128 with another line after it or before it, with a blank line after it or before it, or without
-the newline that ends it, with an info/attributes file that cannot be read, since it is a folder,
-and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the script's message,
-never read as an empty listing; in a repository with no tag and no note it passes. A refused call
-is made by a git wrapper, first on PATH, that records every call and prints "wrapper: refused" and
-the argument it refuses and exits 128, or the status the case names, when it is given that
-argument, from the call that the case names on, and otherwise runs git. git's own message is given
-by a git wrapper, first on PATH, that writes the standard error that the case names, byte for byte,
-and exits with the status the case names, on each git check-attr call not given --source, and
-otherwise runs git. The git that ignores GIT_ATTR_SOURCE is a git wrapper, first on PATH, that
-removes it from the environment of every call. Each of these wrappers, and the one of the case of
-an info/attributes file that cannot be read, which refuses nothing, also records, in order, every
+128 with another line after it or before it, with a blank line after it or before it, without the
+newline that ends it, with a NUL byte after it, before it, inside it or before its newline, or with
+a carriage return or a space before its newline, with an info/attributes file that cannot be read,
+since it is a folder, and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the
+script's message, never read as an empty listing; in a repository with no tag and no note it
+passes. A refused call is made by a git wrapper, first on PATH, that records every call and prints
+"wrapper: refused" and the argument it refuses and exits 128, or the status the case names, when it
+is given that argument, from the call that the case names on, and otherwise runs git. git's own
+message is given by a git wrapper, first on PATH, that writes the standard error that the case
+names, byte for byte, from a file, and exits with the status the case names, on each git check-attr
+call not given --source, and otherwise runs git. The git that ignores GIT_ATTR_SOURCE is a git
+wrapper, first on PATH, that removes it from the environment of every call. Each of these
+wrappers, and the one of the case of an info/attributes file that cannot be read, which refuses
+nothing, also records, in order, every
 git call and, through a python3 wrapper first on PATH, every run of python3, which runs every tool
 of the script and every Python program of its own. Each failing case requires the script's message
 to be the last line of its output, the script's version line to be printed exactly when the
 failing call comes after the script's read of the version, and, after the failing call or run,
 nothing to be recorded other than the exit cleanup's git worktree remove and, when the failing call
 is git ls-tree or git check-attr of the pipeline that reads the filter drivers of the dry-run
-commit, the other call of that pipeline, so the run must end at that call. These 11 cases make no ref
+commit, the other call of that pipeline, so the run must end at that call. Each run given git's own
+message by the wrapper must also leave in its TMPDIR no entry that mktemp names, so the script must
+remove the file in which its check writes standard error. These 11 cases make no ref
 writes and do not use the git stand-in, so they reach none of its points and compare no listing.
 The first 2 run the copy of the script in a folder that holds no commit of it, and they require the
 wrapper to have recorded only the reads of the before snapshot that precede the failure. They also
@@ -225,17 +231,20 @@ case shows which git call the script makes first in a repository whose HEAD reso
 1 more case, the locale case, runs the dry run with LC_ALL removed from its environment, LANG set
 to C.UTF-8 and LANGUAGE to fr, with a git wrapper, first on PATH, that records the LC_ALL of each git
 check-attr not given --source, and requires the run to pass and that check to run once, with LC_ALL
-set to C. No git with a translation of its messages is run, so the case shows the locale that the
-check gives git, not that git would translate its message without it.
+set to C, and to leave in its TMPDIR no entry that mktemp names. No git with a translation of its
+messages is run, so the case shows the locale that the check gives git, not that git would
+translate its message without it.
 
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
 HEAD, since its parent, tree, identity, dates and message are. It then points a lightweight tag and
 an annotated tag at that commit, a tag at a child of it, and 2 notes refs at that commit and at that
 child, and runs the dry run again. Since nothing moves those refs, the 2 snapshots agree; the run
-must fail on the leak check alone, naming exactly those 5 refs, with the whole-repository listing
-unchanged. Every ref case that writes a tag or a note fails on the snapshot comparison, before the
-leak check, so this case is the one that requires the leak check to list tags and notes.
+must fail on the leak check alone, with its sentence, which says that no ref may contain the dry
+run's commit, not that the run changed a ref, naming exactly those 5 refs, with the
+whole-repository listing unchanged. Every ref case that writes a tag or a note fails on the
+snapshot comparison, before the leak check, so this case is the one that requires the leak check
+to list tags and notes.
 
 1 more case turns commit signing on in the fixture's configuration, with a gpg.program stand-in
 that records each call and fails, and first checks, in a repository of its own, that git commit
@@ -299,15 +308,20 @@ since no git call of the script runs a diff.
 1 more case, the text case, compares 4 blocks that are repeated word for word, each run of
 whitespace read as 1 space: the residual, the remainder of the filter settings and the remainder of
 the tools' git calls, which the comment lines at the top of the script state, and the residual of
-the test, which this docstring states. Each must be there once and the same in the text that states
-it and in each text that repeats it: the residual in this docstring, and all 4 in the squash message
-that .github/squash/290.txt commits and in the description and the squash message that the export
-of the branch holds as PR-BODY.md and SQUASH-MSG at the top of the repository. The script's header,
-this docstring and the committed squash message are read in every checkout, CI included. PR-BODY.md
-and SQUASH-MSG are not committed, so a checkout of the branch or of main lacks them, and there the
-case compares every other text and skips each missing one in a subtest that says so: in CI no copy
-in the description is compared, and the squash message is compared only as committed. It is the
-only case that reads the script's text, and it reads only those comment lines.
+the test, which this docstring states. Each block is 1 whole paragraph, the lines from a blank line
+or the start of its text to the next blank line or the end of it. Each must be there once, start
+with its first words, end with its last words and be the same in the text that states it and in
+each text that repeats it, so a word added, removed or changed anywhere in its paragraph, before
+its first words or after its last words included, in any of those texts fails the case: the
+residual in this docstring, and all 4 in the squash message that .github/squash/290.txt commits
+and in the description and the squash message that the export of the branch holds as PR-BODY.md
+and SQUASH-MSG at the top of the repository. The script's header, this docstring and the
+committed squash message are read in every checkout, CI included. PR-BODY.md and SQUASH-MSG are
+not committed, so a checkout of the branch or of main lacks them, and there the case compares
+every other text and skips each missing one in a subtest that says so: in CI the header's residual
+is compared with this docstring's copy, each of the 4 blocks with the committed squash message, and
+no copy in the description. It is the only case that reads the script's text, and it reads only
+those comment lines.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -351,7 +365,11 @@ DRY_RUN = REPO_ROOT / "tools" / "release-dry-run.sh"
 # The bound in seconds on each git or bash process a case starts.
 TIMEOUT = 120
 REAP_TIMEOUT = 5
-MESSAGE = "the dry run changed a git ref, which it must never do"
+# The sentence with which the snapshot comparison fails, and the one with which the leak check
+# fails. Neither says who wrote the ref: another worktree's write fails the comparison too, and a ref
+# that held the dry run's commit before the run fails the leak check too.
+SNAPSHOT_MESSAGE = "a git ref that the dry run must never move changed during the run"
+LEAK_MESSAGE = "no git ref may contain the dry-run commit at the end of the run"
 # The text a snapshot mismatch must print: the whole before snapshot, then the whole after one.
 BEFORE = "before:\n{before}\nand after:\n{after}\n"
 # The date every run stamps, and the success message of a run at the fixture's version.
@@ -610,6 +628,13 @@ def recording_python(folder: Path, env: dict) -> str:
     return f"printf 'git %s\\n' \"$*\" >> {events}\n"
 
 
+def temporary_files(folder: Path) -> list:
+    """The names of the entries of folder, the TMPDIR of a case, that start with tmp., as the names
+    that mktemp gives by its default template do, such as the file in which the script's check of
+    GIT_ATTR_SOURCE writes standard error and the folder of its throwaway worktree."""
+    return sorted(entry.name for entry in folder.iterdir() if entry.name.startswith("tmp."))
+
+
 def events(folder: Path) -> list:
     """The git calls and python3 runs that the wrappers in folder recorded, in order."""
     return (folder / "events").read_text(encoding="utf-8").splitlines()
@@ -666,13 +691,15 @@ def refusing_git(folder: Path, env: dict, refused: str | None = None, status: in
     return folder
 
 
-def mimicking_git(folder: Path, env: dict, status: int, message: str) -> Path:
+def mimicking_git(folder: Path, env: dict, status: int, message: bytes) -> Path:
     """A folder holding a git wrapper that, on each git check-attr call not given --source, writes
     message, byte for byte, on standard error and exits status without running git, and runs git for
-    every other call. It records each call in folder/events, with every python3 run, as
+    every other call. It writes message from the file folder/stderr, since a shell argument cannot
+    hold a NUL byte. It records each call in folder/events, with every python3 run, as
     recording_python does."""
     folder.mkdir()
     record = recording_python(folder, env)
+    (folder / "stderr").write_bytes(message)
     (folder / "git").write_text(
         "#!/bin/sh\n"
         + record +
@@ -683,7 +710,7 @@ def mimicking_git(folder: Path, env: dict, status: int, message: str) -> Path:
         "  if [ \"${arg}\" = --source ]; then source=yes; fi\n"
         "done\n"
         "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
-        f"  printf '%s' {shlex.quote(message)} >&2\n"
+        f"  cat {shlex.quote(str(folder / 'stderr'))} >&2\n"
         f"  exit {status}\n"
         "fi\n"
         f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
@@ -767,8 +794,9 @@ git -C "${other}" update-ref refs/remotes/origin/main "${fetched}\""""
 # before snapshot and {after} for the after one, and the refs whose line in the whole-repository
 # listing differs between the end of the setup and the end of the run, which the old
 # whole-repository hash compared, so the old hash failed the case exactly when that tuple is not
-# empty). A case expected to fail must print MESSAGE; one expected to fail closed must exit 1 with
-# its texts and need not print MESSAGE.
+# empty). A case expected to fail must print the sentence of the check it fails, SNAPSHOT_MESSAGE
+# when its texts hold BEFORE and LEAK_MESSAGE otherwise; one expected to fail closed must exit 1 with
+# its texts and need print neither.
 CASES = (
     ("01 the dry run alone", "", "", "", "pass", (), ()),
     ("02 a concurrent commit on a branch in another worktree", "", CONCURRENT_COMMIT, "", "pass", (),
@@ -1082,7 +1110,8 @@ class RefComparisonCases(unittest.TestCase):
                              f"{out}{err}")
             self.assertNotIn(SUCCESS, out, f"case {name}: the dry run printed its success message")
             if outcome == "fail":
-                self.assertIn(MESSAGE, err, f"case {name}: the failure does not say {MESSAGE!r}\n{err}")
+                message = SNAPSHOT_MESSAGE if BEFORE in texts else LEAK_MESSAGE
+                self.assertIn(message, err, f"case {name}: the failure does not say {message!r}\n{err}")
             for text in texts:
                 if "{after}" in text:
                     self.assertIsNotNone(after_snapshot, f"case {name}: the after snapshot could not be read")
@@ -1298,22 +1327,35 @@ class FailClosedCases(unittest.TestCase):
                 self.assertIn(f"wrapper: refused {refused}", err)
                 self.assert_stops(code, out, err, message, reached_version)
                 self.assert_ends_at(wrapper, nth_call(refused, after + 1), partners)
-        # (the exit status, the standard error of the first git check-attr, byte for byte): git's own
-        # message for the refusal of a GIT_ATTR_SOURCE that names no tree, at another exit status than 128,
-        # or at 128 with another line after it or before it, with a blank line after it or before it, or
-        # without the newline that ends it, is not that refusal either.
-        refusal = "fatal: bad --attr-source or GIT_ATTR_SOURCE"
-        for status, stderr in ((1, f"{refusal}\n"), (128, f"{refusal}\nerror: and another reason\n"),
-                               (128, f"error: an earlier reason\n{refusal}\n"), (128, f"{refusal}\n\n"),
-                               (128, f"\n{refusal}\n"), (128, refusal)):
+        # (the exit status, the standard error of the first git check-attr, byte for byte, the text of it
+        # that the run must print, as cat -v shows it): git's own message for the refusal of a
+        # GIT_ATTR_SOURCE that names no tree, at another exit status than 128, or at 128 with another line
+        # after it or before it, with a blank line after it or before it, without the newline that ends
+        # it, with a NUL byte after it, before it, inside it or before its newline, or with a carriage
+        # return or a space before its newline, is not that refusal either. A command substitution drops
+        # every NUL byte, so only a comparison of the bytes themselves fails the 4 NUL outcomes.
+        refusal = b"fatal: bad --attr-source or GIT_ATTR_SOURCE"
+        shown = refusal.decode("ascii")
+        for status, stderr, printed in (
+                (1, refusal + b"\n", shown), (128, refusal + b"\nerror: and another reason\n",
+                                              f"{shown}\nerror: and another reason"),
+                (128, b"error: an earlier reason\n" + refusal + b"\n", f"error: an earlier reason\n{shown}"),
+                (128, refusal + b"\n\n", shown), (128, b"\n" + refusal + b"\n", shown), (128, refusal, shown),
+                (128, refusal + b"\n\0", f"{shown}\n^@"), (128, b"\0" + refusal + b"\n", f"^@{shown}"),
+                (128, b"fatal: bad\0 --attr-source or GIT_ATTR_SOURCE\n",
+                 "fatal: bad^@ --attr-source or GIT_ATTR_SOURCE"),
+                (128, refusal + b"\0\n", f"{shown}^@"), (128, refusal + b"\r\n", f"{shown}^M"),
+                (128, refusal + b" \n", f"{shown} \n")):
             with self.subTest(status=status, stderr=stderr), tempfile.TemporaryDirectory() as name:
                 fixture = Fixture(Path(name))
                 wrapper = mimicking_git(fixture.tmp / "wrapper", fixture.env, status, stderr)
                 code, out, err = run_script(fixture.script, fixture.env, wrapper)
-                self.assertIn(stderr.strip("\n"), err)
+                self.assertIn(printed, err)
                 self.assert_stops(code, out, err, f"{source}, so the dry run cannot show that git reads that "
                                   f"variable (git check-attr exit {status})", False)
                 self.assert_ends_at(wrapper, attribute_source_check)
+                self.assertEqual(temporary_files(fixture.tmp), [],
+                                 "the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR")
 
     def test_the_attribute_source_check_runs_in_the_c_locale(self):
         # The caller's environment names a locale other than C, in which a git with a translation of its
@@ -1329,6 +1371,8 @@ class FailClosedCases(unittest.TestCase):
             self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
             self.assertEqual(log.read_text(encoding="utf-8").splitlines() if log.exists() else [], ["C"],
                              "the check of GIT_ATTR_SOURCE did not run once with LC_ALL set to C")
+            self.assertEqual(temporary_files(fixture.tmp), [],
+                             "the run left the file of its check of GIT_ATTR_SOURCE, or its worktree, in TMPDIR")
 
     def test_an_info_attributes_file_that_cannot_be_read_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1386,7 +1430,8 @@ class HeldCommitCases(unittest.TestCase):
             self.assertEqual(fixture.git("for-each-ref"), listing, "the whole-repository listing changed")
             self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
             self.assertNotIn("before:\n", err, "the run failed on the snapshot comparison")
-            self.assertTrue(err.endswith(f"{MESSAGE}; these refs contain its commit {dry}:\nrefs/notes/held\n"
+            self.assertNotIn(SNAPSHOT_MESSAGE, err, "the run failed on the snapshot comparison")
+            self.assertTrue(err.endswith(f"{LEAK_MESSAGE}; these refs contain its commit {dry}:\nrefs/notes/held\n"
                                          "refs/notes/held-child\nrefs/tags/held-annotated\nrefs/tags/held-child\n"
                                          "refs/tags/held-light\n"),
                             f"the leak check did not name exactly the tags and notes that hold the commit\n{err}")
@@ -1905,7 +1950,8 @@ SQUASH_MESSAGE = REPO_ROOT / "SQUASH-MSG"
 COMMITTED = ".github/squash/290.txt"
 EXPORTED = {"PR-BODY.md": DESCRIPTION, "SQUASH-MSG": SQUASH_MESSAGE}
 # (name, the text that states the block, first words, last words, the texts that repeat it) of each
-# block that is repeated word for word.
+# block that is repeated word for word. Each block is 1 whole paragraph, which starts with its first
+# words and ends with its last words, in every text that holds it.
 REPEATED = (
     ("the residual", HEADER, "Residual: the proof does not catch", "between the 2 snapshots.",
      (DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
@@ -1929,16 +1975,30 @@ def header_text(script: str) -> str:
     return "\n".join(lines)
 
 
+def paragraphs(text: str) -> list:
+    """The paragraphs of text, each a run of lines that holds no blank line, from a blank line or the
+    start of text to a blank line or its end, with each run of whitespace read as 1 space."""
+    found, lines = [], []
+    for line in text.split("\n") + [""]:
+        if line.strip():
+            lines.append(line)
+        elif lines:
+            found.append(" ".join(" ".join(lines).split()))
+            lines = []
+    return found
+
+
 def repeated_block(text: str, first: str, last: str):
-    """The block of text, each run of whitespace read as 1 space, from its only occurrence of first
-    through the first later occurrence of last, or None when first occurs other than once or last
-    does not follow it."""
-    flat = " ".join(text.split())
-    if flat.count(first) != 1:
+    """The paragraph of text that holds first, each run of whitespace read as 1 space, or None when
+    first occurs in text other than once, or when that paragraph does not start with first or does
+    not end with last. So the block is the whole paragraph, and a word added, removed or changed
+    anywhere in it, before first or after last included, changes or loses the block."""
+    if " ".join(text.split()).count(first) != 1:
         return None
-    start = flat.index(first)
-    end = flat.find(last, start + len(first))
-    return None if end < 0 else flat[start:end + len(last)]
+    for paragraph in paragraphs(text):
+        if first in paragraph:
+            return paragraph if paragraph.startswith(first) and paragraph.endswith(last) else None
+    return None
 
 
 def first_difference(block: str, other: str) -> str:
@@ -1953,7 +2013,8 @@ def first_difference(block: str, other: str) -> str:
 class RepeatedTextCases(unittest.TestCase):
     def test_each_repeated_block_is_the_same_in_every_text_that_holds_it(self):
         # Each block of REPEATED, read from the text that states it and from each text that repeats it,
-        # must be there once and the same, word for word, in each. The script's header, this test's
+        # must be there once, as 1 whole paragraph that starts with its first words and ends with its
+        # last words, and be the same, word for word, in each. The script's header, this test's
         # docstring and the committed squash message are read in every checkout, CI included. The
         # description and the squash message at the top of the repository are read only where they are
         # there; a checkout that lacks either skips that text alone, in a subtest that says so, and
@@ -1973,14 +2034,14 @@ class RepeatedTextCases(unittest.TestCase):
         for name, source, first, last, copies in REPEATED:
             with self.subTest(block=name):
                 stated = repeated_block(texts[source], first, last)
-                self.assertIsNotNone(stated, f"{name}: {source} holds no block from {first!r} to {last!r}, or "
-                                     "holds its first words other than once")
+                self.assertIsNotNone(stated, f"{name}: {source} holds no paragraph that starts with {first!r} "
+                                     f"and ends with {last!r}, or holds its first words other than once")
                 for place in copies:
                     if place not in texts:
                         continue
                     block = repeated_block(texts[place], first, last)
-                    self.assertIsNotNone(block, f"{name}: {place} holds no block from {first!r} to {last!r}, "
-                                         "or holds its first words other than once")
+                    self.assertIsNotNone(block, f"{name}: {place} holds no paragraph that starts with {first!r} "
+                                         f"and ends with {last!r}, or holds its first words other than once")
                     self.assertEqual(block, stated, f"{name}: {place} differs from {source} at "
                                      f"{first_difference(block, stated)}")
 

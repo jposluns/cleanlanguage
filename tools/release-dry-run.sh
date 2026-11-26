@@ -40,20 +40,25 @@
 # calls list the filter drivers, find the info/attributes file and name the
 # empty tree, read no index and pass no file content through a filter,
 # although the configuration that they read can include a file that lies in
-# a worktree. So no filter runs
-# during a git call of the dry run, whatever the configuration that git reads
-# in any worktree defines, other than a driver that the info/attributes file,
-# or the tree that git archive archives, comes to name during the run. The run
-# fails unless git refuses a GIT_ATTR_SOURCE that names no tree with exit 128
-# and its own message for that refusal. No git call of the script asks
-# for a textconv or diff driver, a signature, an editor or automatic
-# maintenance, and the reads of the 2 snapshots and the leak check read no
-# index and no file content and write to no terminal. So no other program that
-# git can run from its configuration or from attributes runs during a git call
-# of the script, and the run fails unless the HEAD of the throwaway worktree
-# is at the dry-run commit once the script has moved it there. The git calls
-# of the tools that the script runs are covered only by the lazy-fetch,
-# attribute and filter settings.
+# a worktree. The run fails unless git refuses a GIT_ATTR_SOURCE that names
+# no tree with exit 128 and its own message for that refusal, alone on
+# standard error.
+#
+# So no filter runs during a git call of the dry run, whatever the
+# configuration that git reads in any worktree defines, other than a driver
+# that the info/attributes file, or the tree that git archive archives, comes
+# to name during the run.
+#
+# No git call of the script asks for a textconv or diff driver, a signature,
+# an editor or automatic maintenance, and the reads of the 2 snapshots and the
+# leak check read no index and no file content and write to no terminal. So no
+# other program that git can run from its configuration or from attributes
+# runs during a git call of the script, and the run fails unless the HEAD of
+# the throwaway worktree is at the dry-run commit once the script has moved it
+# there.
+#
+# The git calls of the tools that the script runs are covered only by the
+# lazy-fetch, attribute and filter settings.
 #
 # Residual: the proof does not catch the deletion of any ref outside tags and
 # notes other than the branch the script's worktree has checked out, such as
@@ -128,7 +133,10 @@ ref_snapshot() {
 # ref_leak_check COMMIT: fail unless no ref that git for-each-ref lists from
 # repo_root contains COMMIT, the dry-run commit, so a branch, tag, note,
 # remote-tracking ref or other such ref created or moved onto it, or onto a
-# descendant of it, fails the run. The HEAD and the per-worktree refs of any
+# descendant of it, fails the run, and so does such a ref that already
+# contained it before the run, as a ref left on the same commit by an earlier
+# run at the same HEAD can. So its message says that a ref contains the
+# commit, not who wrote that ref. The HEAD and the per-worktree refs of any
 # other worktree, and a ref outside refs/ other than HEAD, such as ORIG_HEAD,
 # of any worktree, are not listed, so they are not checked. The listing reads
 # every commit's parents as its object records them: replace refs are turned
@@ -143,7 +151,7 @@ ref_leak_check() {
     for-each-ref --contains "$1" --format='%(refname)')" \
     || fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"
   [ -z "${holders}" ] \
-    || fail "the dry run changed a git ref, which it must never do; these refs contain its commit $1:
+    || fail "no git ref may contain the dry-run commit at the end of the run; these refs contain its commit $1:
 ${holders}"
 }
 
@@ -284,19 +292,30 @@ turn_off_filters "${filter_drivers}${attributes_drivers}"
 # not translated. Exit 0 fails the run as a git that ignores the variable,
 # and any other exit status or message fails it too, since a git that ignores
 # the variable can fail the call for another reason. Standard error is
-# compared byte for byte, its line ending included: the capture ends it with
-# a dot, which is removed after, since a command substitution removes every
-# newline at the end of what it captures, which would read the message
-# followed by blank lines, or without its newline, as git's message.
+# written to a temporary file, and cmp compares that file byte for byte with
+# the message and its newline, so a NUL byte, a carriage return, a space, a
+# blank line or another line anywhere in it fails the run. It is not compared
+# in a shell variable, since a command substitution drops every NUL byte and
+# every newline at the end of what it captures. On a failure the file is
+# shown through cat -v, which shows a NUL byte as ^@ and a carriage return as
+# ^M, and the file is removed before the run goes on or fails.
+attr_source_log="$(mktemp)" \
+  || fail "could not make a temporary file for the standard error of the check of GIT_ATTR_SOURCE"
 attr_source_rc=0
-attr_source_err="$(GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh 2>&1 >/dev/null \
-  && attr_status=0 || attr_status=$?; printf '.'; exit "${attr_status}")" \
-  || attr_source_rc=$?
+GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/release-dry-run.sh \
+  2>"${attr_source_log}" >/dev/null || attr_source_rc=$?
+attr_source_cmp=0
+printf 'fatal: bad --attr-source or GIT_ATTR_SOURCE\n' | cmp -s - "${attr_source_log}" || attr_source_cmp=$?
+attr_source_err="$(cat -v "${attr_source_log}" && printf '.')" || attr_source_err="."
+rm -f "${attr_source_log}" || fail "could not remove the temporary file ${attr_source_log}"
 attr_source_err="${attr_source_err%.}"
 if [ "${attr_source_rc}" -eq 0 ]; then
   fail "git ignores GIT_ATTR_SOURCE, so the dry run cannot keep the attribute files of its worktree out of reach"
 fi
-if [ "${attr_source_rc}" -ne 128 ] || [ "${attr_source_err}" != "fatal: bad --attr-source or GIT_ATTR_SOURCE"$'\n' ]; then
+if [ "${attr_source_cmp}" -gt 1 ]; then
+  fail "could not compare the standard error of the check of GIT_ATTR_SOURCE with git's message (cmp exit ${attr_source_cmp})"
+fi
+if [ "${attr_source_rc}" -ne 128 ] || [ "${attr_source_cmp}" -ne 0 ]; then
   [ -z "${attr_source_err}" ] || printf '%s\n' "${attr_source_err%$'\n'}" >&2
   fail "git did not refuse a GIT_ATTR_SOURCE that names no tree as it refuses such a source, so the dry run cannot show that git reads that variable (git check-attr exit ${attr_source_rc})"
 fi
@@ -606,9 +625,12 @@ python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_ta
 #    contains the dry-run commit. A write that the header's residual names
 #    does not fail it, whoever makes it; the header states the proof and that
 #    residual in full.
+#    The comparison sees that a ref changed, not who changed it, since a
+#    write that another worktree makes fails it too, so its message says that
+#    a ref changed during the run, not that the dry run changed it.
 refs_after="$(ref_snapshot)"
 [ "${refs_before}" = "${refs_after}" ] \
-  || fail "the dry run changed a git ref, which it must never do; the HEAD of ${repo_root}, and every tag and note, before:
+  || fail "a git ref that the dry run must never move changed during the run; the HEAD of ${repo_root}, and every tag and note, before:
 ${refs_before}
 and after:
 ${refs_after}"
