@@ -8,9 +8,10 @@ could itself move, read from the worktree that holds the script before
 and after: the branch HEAD names, or that it is detached; the commit
 HEAD resolves to; and every tag and note with its object name. It
 prints both snapshots on a mismatch, so the failure names the ref that
-differs. It then fails when any ref of any namespace contains the
-dry-run commit, which the script records after its commit. A git error
-in either check fails the run and is never read as an empty listing.
+differs. It then fails when a ref that git for-each-ref lists from that
+worktree contains the dry-run commit, which the script records after
+its commit. A git error in either check fails the run and is never
+read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -21,28 +22,30 @@ checked-out branch, such as another branch, a remote-tracking ref,
 refs/stash or a refs/replace/ ref; a move or creation of such a ref at
 a commit that does not contain the dry-run commit, or at an object
 that peels to no commit, such as a tree or a blob; or such a deletion,
-move or creation made by a commit hook. The script's header states
-that residual. A write that another worktree makes during the run
-still fails it when it is a tag or a note, the HEAD of the script's
-worktree or its checked-out branch, or a ref put on the dry-run commit
-or a descendant of it. TODO 279 does not record which ref moved on the
-PR 284 gate, so whether this change would have avoided that failure
-is unknown.
+move or creation made by a commit hook. Before and after, it does not
+see the HEAD or the per-worktree refs of any other worktree, even on
+the dry-run commit. The script's header states that residual. A write
+that another worktree makes during the run still fails it when it is a
+tag or a note, the HEAD of the script's worktree or its checked-out
+branch, or a listed ref put on the dry-run commit or a descendant of
+it. TODO 279 does not record which ref moved on the PR 284 gate, so
+whether this change would have avoided that failure is unknown.
 
-tools/test-release-dry-run-refs.py runs the script's own functions,
-before line, dry-run commit line and step 6, extracted by content
-anchors, in throwaway repositories in a temporary folder. It refuses a
-script that defines one of those functions again, or assigns the
-before or dry-run commit variable again, on any other line. It runs 27
-ref cases, with concurrency modelled as sequenced writes from a second
-worktree, each checking that exactly the refs it names change, 6 cases
-on fail-closed reading and structure, and 3 that remove, repeat or add
-again each extraction anchor, function and variable. Its first version
-of 21 cases, run against the unchanged script, failed the concurrent
-cases and passed the detached commit; against this change all 36 cases
-pass. Each of 14 mutants that remove 1 stated rule failed at least 1
-case of the previous 33-case suite, and each of 10 later mutants fails
-at least 1 of the 36. The release dry run workflow and
+tools/test-release-dry-run-refs.py runs the whole script, copied byte
+for byte into throwaway repositories with stand-ins for the tools it
+calls, so bash itself reads every line of it. Earlier revisions ran
+parts of the script picked out by text patterns, which kept missing
+new spellings of a binding. A git stand-in first on PATH makes each
+case's writes from a second worktree before the dry run adds its
+worktree, and the dry run's own writes after its commit. It runs 29
+ref cases, each checking that exactly the refs it names change, and 5
+on fail-closed reading. Its first version of 21 cases, run against the
+unchanged script, failed the concurrent cases and passed the detached
+commit; against this change all 34 cases pass. Each of 14 mutants that
+remove 1 stated rule failed at least 1 case of the 33-case suite, each
+of 10 later mutants failed at least 1 case of the 36-case suite, and
+each of 9 script mutants that the 36-case suite passed fails at least
+1 case of the 34. The release dry run workflow and
 tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

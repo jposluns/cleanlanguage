@@ -15,11 +15,12 @@
 # worktree when the script is run from there, as release-dry-run.yml runs
 # it), that it moved no tag, no note, and not the HEAD of the script's
 # worktree (the branch HEAD names and the commit HEAD resolves to), and that
-# no ref of any namespace contains the dry-run commit. A ref that another
-# worktree writes during the run fails the proof only when it is a tag or a
-# note, when it is the HEAD of the script's worktree or the branch that
-# worktree has checked out, or when it is created or moved onto the dry-run
-# commit or a descendant of it; any other such write is outside the proof.
+# no ref that git for-each-ref lists from the script's worktree contains the
+# dry-run commit. A ref that another worktree writes during the run fails the
+# proof only when it is a tag or a note, when it is the HEAD of the script's
+# worktree or the branch that worktree has checked out, or when it is such a
+# listed ref created or moved onto the dry-run commit or a descendant of it;
+# any other such write is outside the proof.
 #
 # Residual: the proof does not catch the deletion of any ref outside tags and
 # notes other than the branch the script's worktree has checked out, such as
@@ -27,9 +28,11 @@
 # move or creation of such a ref at a commit that does not contain the dry-run
 # commit, or at an object that peels to no commit, such as a tree or a blob; or
 # such a deletion, move or creation made by a commit hook, which the dry-run
-# commit runs. It also does not see the throwaway worktree's own per-worktree
-# refs, anything the exit cleanup does, or a ref moved and then restored
-# between the 2 snapshots.
+# commit runs. It also does not see the HEAD or the per-worktree refs of any
+# worktree other than the script's worktree, the throwaway worktree included,
+# so another worktree's HEAD or per-worktree ref put on the dry-run commit
+# does not fail it; anything the exit cleanup does; or a ref moved and then
+# restored between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -85,11 +88,12 @@ ref_snapshot() {
   printf 'HEAD ref: %s\nHEAD commit: %s\n%s\n' "${head_ref}" "${head_commit}" "${listing}"
 }
 
-# ref_leak_check COMMIT: fail unless no ref of any namespace in repo_root
-# contains COMMIT, the dry-run commit, so a branch, tag, note or
-# remote-tracking ref created or moved onto it, or onto a descendant of it,
-# fails the run. A failing git call fails the run and is never read as an
-# empty listing.
+# ref_leak_check COMMIT: fail unless no ref that git for-each-ref lists from
+# repo_root contains COMMIT, the dry-run commit, so a branch, tag, note,
+# remote-tracking ref or other such ref created or moved onto it, or onto a
+# descendant of it, fails the run. The HEAD and the per-worktree refs of any
+# other worktree are not listed, so they are not checked. A failing git call
+# fails the run and is never read as an empty listing.
 ref_leak_check() {
   local holders
   holders="$(git -C "${repo_root}" for-each-ref --contains "$1" --format='%(refname)')" \
@@ -368,9 +372,10 @@ python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_ta
   --checksum "${checksum}" --date "${dry_date}" --check
 
 # 6. Prove that the dry run moved no tag, no note and not the HEAD of the
-#    script's worktree, and that no ref of any namespace contains the dry-run
-#    commit. A write that the header's residual names does not fail it,
-#    whoever makes it; the header states the proof and that residual in full.
+#    script's worktree, and that no ref that git for-each-ref lists from it
+#    contains the dry-run commit. A write that the header's residual names
+#    does not fail it, whoever makes it; the header states the proof and that
+#    residual in full.
 refs_after="$(ref_snapshot)"
 [ "${refs_before}" = "${refs_after}" ] \
   || fail "the dry run changed a git ref, which it must never do; the HEAD of ${repo_root}, and every tag and note, before:
