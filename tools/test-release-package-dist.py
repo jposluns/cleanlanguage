@@ -378,11 +378,16 @@ reference digest. The cases, all in that clone:
     such call has let 1 start.
     The subtests of test_trace_refuses_what_it_cannot_read name
     further examples in their labels. Each pattern, text, set and table
-    at module level that decides what the reader reads, and each tuple
-    that the code of a reader function holds as a constant, is compared
-    whole with its value at this head, so that any edit to 1 of them
-    fails the case, not only 1 that a trace of the case shows; the
-    docstring of test_trace_reader_values_are_pinned names them.
+    at module level that decides what the reader reads, and the tuple
+    at each place where the code of a reader function holds 1 as a
+    constant, is compared whole with its value at this head, each table
+    member in order where it has an order and each value with its type,
+    so that any edit to 1 of them fails the case, not only 1 that a
+    trace of the case shows; the docstring of
+    test_trace_reader_values_are_pinned names them. The code of the
+    reader functions is not pinned beyond those tuples, so an edit to
+    that code, such as 1 that applies a pattern with match in place of
+    fullmatch, is held only as far as the traces of the case hold it.
 
 Each case starts with no dist/ in the clone.
 
@@ -3352,25 +3357,50 @@ class TraceReaderTests(unittest.TestCase):
         "TRACE_ESCAPE": re.compile(r"\\(?:x([0-9A-Fa-f]{2})|([0-7]{1,3})|(.))", re.S),
         "TRACE_ESCAPES": {"a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r", "t": b"\t", "v": b"\v"},
     }
-    # The tuples that the code of each reader function holds as constants:
-    # the sets of call names and of results that it tests a call for, and
-    # the defaults and keyword names that it passes.
+    # The tuple at each place where the code of each reader function holds
+    # 1 as a constant, in the order of its source: the sets of call names
+    # and of results that it tests a call for, and the defaults and keyword
+    # names that it passes. A tuple that 2 places hold is listed for each.
     READER_TUPLES = {
-        "trace_bytes": set(), "trace_string": set(), "trace_folder": set(), "trace_arguments": set(),
-        "trace_unread": set(), "trace_call": set(), "trace_records": {("result_given",), (None, "")},
-        "traced_path": set(), "traced_removals": {("chdir", "fchdir"), (None, "?"), (None, "?", "0")},
+        "trace_bytes": [], "trace_string": [], "trace_folder": [], "trace_arguments": [],
+        "trace_unread": [], "trace_call": [], "trace_records": [(None, ""), ("result_given",), ("result_given",)],
+        "traced_path": [], "traced_removals": [(None, "?"), ("chdir", "fchdir"), (None, "?"), (None, "?", "0")],
     }
 
     @staticmethod
-    def code_tuples(code) -> set:
-        """The tuples among the constants of code and of the code nested in it."""
-        found = set()
-        for constant in code.co_consts:
-            if isinstance(constant, tuple):
-                found.add(constant)
-            elif hasattr(constant, "co_consts"):
-                found |= TraceReaderTests.code_tuples(constant)
-        return found
+    def typed(value):
+        """value with the type of each value in it, the items of a dict in
+        their order, the members of a set in no order and a pattern by its
+        source and its flags, so that == on 2 such values compares each of
+        these, which == on the values themselves does not."""
+        typed = TraceReaderTests.typed
+        if isinstance(value, dict):
+            return type(value), tuple((typed(key), typed(member)) for key, member in value.items())
+        if isinstance(value, (tuple, list)):
+            return type(value), tuple(typed(member) for member in value)
+        if isinstance(value, (set, frozenset)):
+            return type(value), frozenset(typed(member) for member in value)
+        if isinstance(value, re.Pattern):
+            return type(value), typed(value.pattern), value.flags
+        return type(value), value
+
+    @staticmethod
+    def code_tuples(code) -> list:
+        """The tuple that code, or code nested in it, loads as a constant at
+        each place of the source, in the order of the source. The compiler
+        keeps 1 constant for tuples that are equal, so the constants of code
+        alone do not show at how many places, or where, a tuple stands."""
+        import dis
+        places, codes = {}, [code]
+        while codes:
+            current = codes.pop()
+            for instruction in dis.get_instructions(current):
+                if instruction.opcode in dis.hasconst and isinstance(instruction.argval, tuple):
+                    if None in instruction.positions:
+                        raise AssertionError("the compiler gives no place for the tuple %r" % (instruction.argval,))
+                    places[tuple(instruction.positions)] = instruction.argval
+            codes.extend(constant for constant in current.co_consts if hasattr(constant, "co_consts"))
+        return [places[place] for place in sorted(places)]
 
     def test_trace_reader_values_are_pinned(self):
         """Each pattern, text, set and table at module level that decides
@@ -3382,23 +3412,25 @@ class TraceReaderTests(unittest.TestCase):
         traces can hold in full, since such an edit may admit only a form
         that no trace holds. The names at module level that start with
         TRACE_ are those of READER_VALUES. The code of each reader function
-        holds as constants the tuples of READER_TUPLES and no other, so
-        that a set of call names or of results written in that code is
-        pinned the same way. An edit that is meant changes these tables
-        with it. The code of the reader functions is not pinned beyond
-        these tuples, so an edit to that code, such as 1 that applies a
-        pattern with match in place of fullmatch, is held only by the
-        traces of the other tests."""
+        holds as constants the tuples of READER_TUPLES and no other, 1 at
+        each place of its source that holds 1, in the order of the source,
+        each with its type, so that a set of call names or of results
+        written in that code is pinned as those tables are, also where
+        another place of the same function holds an equal tuple. An edit
+        that is meant changes these tables with it. The code of the reader
+        functions is not pinned beyond these tuples, so an edit to that
+        code, such as 1 that applies a pattern with match in place of
+        fullmatch, is held only by the traces of the other tests."""
         module = globals()
         with self.subTest("the names at module level that start with TRACE_"):
             self.assertEqual(sorted(name for name in module if name.startswith("TRACE_")),
                              sorted(name for name in self.READER_VALUES if name.startswith("TRACE_")))
         for name, value in self.READER_VALUES.items():
             with self.subTest(name):
-                self.assertEqual((type(module.get(name)), module.get(name)), (type(value), value))
+                self.assertEqual(self.typed(module.get(name)), self.typed(value))
         for name, tuples in self.READER_TUPLES.items():
             with self.subTest("the tuples of the code of %s" % name):
-                self.assertEqual(self.code_tuples(module[name].__code__), tuples)
+                self.assertEqual(self.typed(self.code_tuples(module[name].__code__)), self.typed(tuples))
 
 
 if __name__ == "__main__":

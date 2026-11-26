@@ -143,10 +143,14 @@ unchanged.
   "resumed with ?" in its label.
 - A new test compares whole, with its value at this head, each
   pattern, text, set and table at module level that decides what
-  the reader reads, each pattern by its source and its flags, and
-  the tuples that the code of each reader function holds as
-  constants, among them the call names and the results that
-  traced_removals tests a call for. A list of traces holds only the
+  the reader reads, each pattern by its source and its flags and
+  each member of a table in order where it has an order and each
+  value with its type, and the tuple at each place where the code
+  of a reader function holds 1 as a constant, in the order of the
+  source, among them the call names and the results that
+  traced_removals tests a call for, so that an edit that makes 1
+  place hold a tuple that another place of the same function holds
+  fails it too. A list of traces holds only the
   forms that it names: 19 edits to those patterns and to
   FORKING_CALLS, each of which makes the reader read a form that it
   refuses here, passed case 27 without this test and fail it now.
