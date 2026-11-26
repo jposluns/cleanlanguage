@@ -27,10 +27,10 @@ the work tree, each read is of the entry at its tracked path in the work tree. T
 prevent a read outside the work tree by a process that moves a folder or file that the gate
 opened out of it during the run: an opened folder or file is read wherever it is moved, and a
 process that can move it can as well put any bytes at the tracked paths. After the read the
-gate checks that each folder and the file that it opened is still the entry at its name in the
-folder before it, and refuses the bytes that it read when one is not. On a system without
-O_NOFOLLOW the gate refuses to run, since without it no path can be opened without following a
-symbolic link.
+gate checks that each folder and the file that it opened is still in its place, the entry at its
+name in the folder before it, and refuses the bytes that it read when one is not. The cases that
+remain are in the list below. On a system without O_NOFOLLOW the gate refuses to run, since
+without it no path can be opened without following a symbolic link.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
@@ -95,16 +95,16 @@ repository.
 
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
-of a file whose work-tree copy differs (in CI they are equal); a folder of the work tree that is a
-mount point and a file that is a hard link, each read where it stands; a folder or file that
-another process moves out of the work tree after the gate opens it, whose bytes the gate reads
-wherever it is, and refuses only when that folder or file is not back in its place at the check
-after the read, since that check sees only where it is then; the reads of git ls-files, of the
-repository that git finds from the open root folder, its index and its configuration, which can
-lie outside the work tree; whether a line is a true statement of a licence; whether the
-owner of a row is right, which is reviewed prose; and the named exceptions' own lines. A row
-counts lines per file, so fixing 1 line and adding another of the same kind in the same file
-passes.
+of a file whose work-tree copy differs (in CI they are equal); a folder or file of the work tree
+that is a mount point, such as a bind mount over a tracked file, and a file that is a hard link,
+each read where it stands; a folder or file that another process moves out of the work tree after
+the gate opens it, whose bytes the gate reads wherever it is, and refuses only when that folder or
+file is not back in its place at the check after the read, since that check sees only where it is
+then; the reads of git ls-files, of the repository that git finds from the open root folder, its
+index and its configuration, which can lie outside the work tree; whether a line is a true
+statement of a licence; whether the owner of a row is right, which is reviewed prose; and the named
+exceptions' own lines. A row counts lines per file, so fixing 1 line and adding another of the same
+kind in the same file passes.
 """
 
 from __future__ import annotations
@@ -231,11 +231,14 @@ def read_file(root: int, path: str, problems: list):
 
     root is the descriptor of the root folder, which the caller opened once and closes. The path is
     opened 1 part at a time from it, each part inside the folder opened before it and none through a
-    symbolic link, so neither a symbolic link nor a replaced root can lead a read outside the work
-    tree. After the read each folder and the file that were opened must still be the entry at their
-    name in the folder before them, or the bytes read are refused. This refuses bytes; it prevents no
-    read: a folder or file that another process moves out of the work tree after its open is read
-    wherever it is, and its bytes are accepted when it is back in its place at that check."""
+    symbolic link, so neither a symbolic link in the work tree, made before or during the run, nor a
+    root replaced after the open can lead a read outside the work tree. After the read each folder
+    and the file that were opened must still be in their place, the entry at their name in the
+    folder before them, or the bytes read are refused. This refuses bytes; it prevents no read: a
+    folder or file that another process moves out of the work tree after its open is read wherever
+    it is, and its bytes are accepted when it is back in its place at that check. The other cases
+    that remain, such as a folder or file of the work tree that is a mount point, are in the list of
+    the module docstring."""
     not_regular = f"{shown(path)}: the tracked path is not a regular file in the work tree"
     parts = path.split("/")
     # An absolute path has an empty first part.

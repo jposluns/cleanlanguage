@@ -18,11 +18,14 @@ search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES
 takes no template (--template=), so no hook, exclude file or description of a template reaches
 the repository. So the result depends on the case alone. The caller's environment is read for 2
 things only, and the tests build settings from them: where git is, whose folder is the PATH of
-each process, and where Python's tempfile makes the temporary folder, which holds HOME and the
-repository. The folder in which a case builds
-its repository, the temporary folder or, in 2 cases, a folder named case inside it, is the value
-of GIT_CEILING_DIRECTORIES and the working folder of each process that the case starts; the git
-that the gate starts works in the root folder that the gate opened. Each stand-in git below and
+each process but the 1 named below, and where Python's tempfile makes the temporary folder, which
+holds HOME and the repository. The folder in which a case builds a repository, the temporary
+folder or, in 2 cases, a folder named case inside it, is the value of GIT_CEILING_DIRECTORIES and
+the working folder of each process that the case starts with an environment built from the one
+of that repository; the git that the gate starts works in the root folder that the gate opened.
+The 1 other process, which the case for a git found through a relative PATH entry starts, works
+in a folder named relative inside the temporary folder and gets PATH alone, the relative folder
+bin there, which holds a link to the git found. Each stand-in git below and
 each probe process records the environment that it gets, and the case requires it to equal those
 values exactly.
 

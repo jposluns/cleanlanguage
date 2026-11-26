@@ -41,14 +41,19 @@ not UTF-8. When git ls-files lists entries and the gate can read none
 of them, it names each entry and no other cause. It opens the
 repository root once, as a folder, before git runs, starts git in that
 open folder and opens each tracked path 1 part at a time from it,
-never through a symbolic link, so neither a symbolic link in the work
-tree nor a root replaced after the open can lead a read outside it.
-It does not prevent a read outside the work tree by a process that
-moves a folder or file that the gate opened out of it during the run,
-a process that could as well put any bytes at the tracked paths;
-after each read it checks that each folder and the file that it
-opened is still in its place, and refuses the bytes that it read when
-one is not. The cases that remain are in the list below. It runs git
+never through a symbolic link. So neither a symbolic link in the work
+tree, made before or during the run, nor a root replaced after the
+open can lead a read outside it, and while no other process moves a
+folder or file of the work tree, each read is of the entry at its
+tracked path in the work tree. The gate does not prevent a read
+outside the work tree by a process that moves a folder or file that
+the gate opened out of it during the run: an opened folder or file is
+read wherever it is moved, and a process that can move it can as well
+put any bytes at the tracked paths. After the read the gate checks
+that each folder and the file that it opened is still in its place,
+the entry at its name in the folder before it, and refuses the bytes
+that it read when one is not. The cases that remain are in the list
+below. It runs git
 with a fixed argument list and no shell and treats file content as
 data. It
 makes git's message and an error's text 1 line and cuts them to 300
@@ -64,10 +69,11 @@ The gate's docstring states what it does not cover. Not covered:
 another spelling of a licence, such as one in words without the 3
 terms, a term split over 2 lines or a lookalike character outside
 ASCII; untracked and ignored files; the index copy of a file whose
-work-tree copy differs (in CI they are equal); a folder of the work
-tree that is a mount point and a file that is a hard link, each read
-where it stands; a folder or file that another process moves out of
-the work tree after the gate opens it, whose bytes the gate reads
+work-tree copy differs (in CI they are equal); a folder or file of the
+work tree that is a mount point, such as a bind mount over a tracked
+file, and a file that is a hard link, each read where it stands; a
+folder or file that another process moves out of the work tree after
+the gate opens it, whose bytes the gate reads
 wherever it is, and refuses only when that folder or file is not back
 in its place at the check after the read, since that check sees only
 where it is then; the reads of git ls-files, of the repository that
