@@ -17,22 +17,33 @@ that name for step 6, never reading a later HEAD, and moves the
 throwaway worktree's HEAD to it with git update-ref, which fails if
 that HEAD is no longer at the parent it read. Every git call of the
 script after the before snapshot other than the reads of step 6, the
-exit cleanup's included, runs with hooks, the core.fsmonitor program,
-a pager and every filter driver that the configuration read from the
-script's worktree defines turned off, and every git process of the dry
-run with lazy fetching turned off. No git call of the script asks for
-a textconv or diff driver, a signature, an editor or automatic
-maintenance, and the snapshot and leak-check reads read no index and
-no file content and write to no terminal. So no program that git can
-run from its configuration or from attributes runs during a git call
-of the script, other than a filter driver that only configuration read
-inside the throwaway worktree defines; the tools that the script runs
-are covered only by the lazy-fetch setting. The run fails closed
-unless that HEAD is at the commit once moved. The git
-commit-tree runs with commit signing turned off, so the dry-run commit
-is never signed. A git error in either check, or in making or
-reading the dry-run commit or moving HEAD to it, fails the run with
-exit 1 and is never read as an empty listing.
+exit cleanup's included, runs with hooks, the core.fsmonitor program
+and a pager turned off, and every git process of the dry run with lazy
+fetching turned off. After its first 3 git calls past the before
+snapshot, which list the filter drivers, find the info/attributes file
+and name the empty tree, every git process of the dry run, its tools'
+included, reads no attribute file other than info/attributes and, in
+git archive, the .gitattributes files of the tree it archives, and
+runs with every filter driver turned off that the configuration read
+from the script's worktree defines or that info/attributes names, and,
+from the dry-run commit on, every one that an attribute gives a path
+of that commit. A driver name with an equals sign fails the run, as
+does a git that ignores GIT_ATTR_SOURCE. So no filter runs during a
+git call of the dry run, whatever the configuration that git reads in
+any worktree defines, other than a driver that the info/attributes
+file, or the tree that git archive archives, comes to name during the
+run. No git call of the script asks for a textconv or diff driver, a
+signature, an editor or automatic maintenance, and the snapshot and
+leak-check reads read no index and no file content and write to no
+terminal. So no other program that git can run from its configuration
+or from attributes runs during a git call of the script; the tools
+that the script runs are covered only by the lazy-fetch, attribute and
+filter settings. The run fails closed unless that HEAD is at the
+commit once moved. The git commit-tree runs with commit signing
+turned off, so the dry-run commit is never signed. A git error in
+either check, in reading the filter drivers, or in making or reading
+the dry-run commit or moving HEAD to it, fails the run with exit 1
+and is never read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -76,22 +87,30 @@ case 31 must stop at the dry-run commit, before the fifth, and case 43
 must stop when the move of that HEAD to it fails, before the fourth.
 Each ref case checks that exactly the refs it names change, and that
 the dry-run commit has the parent, identity, dates, message and tree
-it must have. Its 8 cases on fail-closed reading make no writes: 7
-require the run to end at the read that fails, and 1, with no tag and
-no note, requires it to pass. 1 more case turns commit signing on in
-the configuration and requires the dry run to pass without signing,
-and 1 more writes 8 hooks to the configured hook folder and requires
-the dry run to pass with none of them run. 6 more each configure
-programs that git runs from its configuration or from attributes: a
-core.fsmonitor program, clean and smudge filters, a process filter, a
-pager with the run on a terminal, textconv and diff drivers, and the
-upload-pack program of a promisor remote; each requires the dry run
-to run none of them, the last by failing closed at its read of a
-missing blob. 1 more reads git's trace2 log and requires every git
-call of the script after the before snapshot other than the reads of
-step 6, the exit cleanup's included, to run with hooks, the
-core.fsmonitor program and filters turned off and to start no program
-other than git, and every one to run with lazy fetching turned off.
+it must have. Its 11 cases on fail-closed reading make no ref writes:
+10 require the run to end at the call that fails, and 1, with no tag
+and no note, requires it to pass. 1 more case turns commit signing on
+in the configuration and requires the dry run to pass without
+signing, and 1 more writes 8 hooks to the configured hook folder and
+requires the dry run to pass with none of them run. 6 more each
+configure programs that git runs from its configuration or from
+attributes: a core.fsmonitor program, clean and smudge filters, a
+process filter, a pager with the run on a terminal, textconv and diff
+drivers, and the upload-pack program of a promisor remote; each
+requires the dry run to run none of them, the last by failing closed
+at its read of a missing blob. 1 more defines 3 filter drivers only
+for linked worktrees, through a conditional include, and gives them
+paths through info/attributes, a committed .gitattributes file and
+core.attributesFile, with a packager stand-in that runs git archive;
+the dry run must pass with none of them run. 1 more requires a driver
+named a=b to fail the run before any of its commands runs. 1 more
+reads git's trace2 log and requires every git call of the script
+after the before snapshot other than the reads of step 6, the exit
+cleanup's included, to run with hooks and the core.fsmonitor program
+turned off and to start no program other than git, every one after
+the first 3 and the GIT_ATTR_SOURCE check also to run with the
+attribute settings and both configured filter drivers turned off, and
+every one to run with lazy fetching turned off.
 Residual of the test: stand-ins replace the packaging, the
 gates and the site rewrite, which the next step of release-dry-run.yml
 runs with the real tools, and the script runs with a git stand-in
@@ -105,7 +124,7 @@ default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 61 cases pass. Each of 14 mutants that remove
+against this change all 66 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
 later mutants failed at least 1 case of the 36-case suite, each of 9
 script mutants that the 36-case suite passed fails at least 1 case of
@@ -123,7 +142,17 @@ plumbing fix. The 61-case suite fails 6 cases against the script
 before the configured-program fix, the core.fsmonitor case among them,
 whose run passes there while that program runs 6 times and makes the
 parent of the dry-run commit, and fails each of 12 mutants of that
-fix. The release dry run workflow and tools/run_all_checks.sh
+fix. The 66-case suite fails 6 tests against the script before the
+attribute fix, the linked-worktree filter case among them, whose run
+passes there while 3 filter drivers that only the configuration of a
+linked worktree defines run 35 times, and fails each of 15 mutants of
+that fix. The release dry run workflow and tools/run_all_checks.sh
 run it before the dry run, and tools/test-run-all-checks.py records
 the new digest of tools/run_all_checks.sh after a reading of the whole
 script. The workflow header now counts 7 test suites.
+
+tools/test-version-selectors.sh now reads the dry run's version
+selector in the form that runs git with git_off, runs the script's own
+git_off line before it, refuses an extracted block that is not a run
+of whole lines of its source, and requires its 4 structural checks to
+run for each of its 3 sites.

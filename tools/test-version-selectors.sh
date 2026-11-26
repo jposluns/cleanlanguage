@@ -14,7 +14,7 @@
 # including on the two NUL cases the previous shell-only form got wrong.
 #
 # The four selector sites:
-#   1. tools/release-dry-run.sh              (git show HEAD:SKILL.md | skill-version.py)
+#   1. tools/release-dry-run.sh              (git "${git_off[@]}" show HEAD:SKILL.md | skill-version.py)
 #   2. .github/workflows/release-skill.yml   (skill-version.py SKILL.md working tree,
 #                                             and main via git show FETCH_HEAD | skill-version.py)
 #   3. tools/check-portable-text-sync.sh     (version_of helper: skill-version.py "$1")
@@ -24,7 +24,12 @@
 #   B. The selector block of each other site is EXTRACTED from its real source
 #      and run in that site's real producer environment (a throwaway git repo for
 #      the git-show reads; a throwaway working tree for the file reads), with the
-#      shared extractor copied in so the real relative call resolves.
+#      shared extractor copied in so the real relative call resolves. The
+#      release-dry-run.sh block runs after that script's own git_off line, also
+#      extracted, since its git call takes its options from git_off. Each
+#      extracted block must be a run of whole lines of its source as read now,
+#      so a copy that has gone stale, or one edited in this test, fails before
+#      it is run.
 #   C. Every fixture's expected value is computed by a Python oracle that applies
 #      the gates' own universal-newline read and VERSION_LINE / SKILL_VERSION
 #      regexes, so the sites are pinned to the gates' rule, not to hardcoded
@@ -42,7 +47,9 @@
 #   E. A structural guard asserts the OLD loose sed selector is gone (fixed-string
 #      match, so it genuinely detects the loose selector still on main), the old
 #      hand-rolled first-line sed is gone, and each site calls skill-version.py
-#      the expected number of times.
+#      the expected number of times (2 counts). A tally then requires all 4
+#      structural checks to have run for each of the 3 sites, so a check that
+#      is dropped, or that stops running for a site, fails the test.
 #
 # Fixtures include a LARGE (>64KB) valid file (each site must return the version
 # AND exit 0: the SIGPIPE regression test), CRLF and lone-CR cases, malformed
@@ -60,8 +67,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 fails=0
-pass() { printf 'ok   - %s\n' "$1"; }
-fail() { printf 'FAIL - %s\n' "$1" >&2; fails=$((fails + 1)); }
+# Every structural check reports through pass or fail, which count it here.
+structural_run=0
+note_structural() {
+  case "$1" in "structural: "*) structural_run=$((structural_run + 1)) ;; esac
+}
+pass() { printf 'ok   - %s\n' "$1"; note_structural "$1"; }
+fail() { printf 'FAIL - %s\n' "$1" >&2; fails=$((fails + 1)); note_structural "$1"; }
 
 assert_eq() { # label expected actual
   if [ "$2" = "$3" ]; then pass "$1"; else
@@ -114,6 +126,13 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
   assert_eq "structural: isolated skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
 done
+# All 4 checks above must have run for every site, so a check that is dropped,
+# or a site left out of the loop, fails here.
+structural_per_site=4
+structural_want=$((structural_per_site * ${#skillver_count[@]}))
+structural_got="${structural_run}"
+assert_eq "structural: all ${structural_per_site} checks ran for each of the ${#skillver_count[@]} sites" \
+  "${structural_want}" "${structural_got}"
 
 # --- The gates' own rule, as a Python oracle ---------------------------------
 # Reads the file with universal newlines (newline=None), exactly as Path.read_text
@@ -171,14 +190,37 @@ extract_block() { # file start end
   ' "$1"
 }
 
+# release-dry-run.sh runs the git call of its selector with the options in its
+# git_off array, so its own git_off line is extracted too, and run_dry runs it
+# before the block.
+GIT_OFF_LINE="$(extract_block tools/release-dry-run.sh 'git_off=(' ')')"
 DRY_BLOCK="$(extract_block tools/release-dry-run.sh \
-  'if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
+  'if ! version="$(git "${git_off[@]}" show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
 WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
   'if ! version="$(python3 -I tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"' 'fi')"
 WF_MAIN_BLOCK="$(extract_block .github/workflows/release-skill.yml \
   'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
-for name in DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
+declare -A block_source=(
+  [GIT_OFF_LINE]=tools/release-dry-run.sh
+  [DRY_BLOCK]=tools/release-dry-run.sh
+  [WF_LOCAL_BLOCK]=.github/workflows/release-skill.yml
+  [WF_MAIN_BLOCK]=.github/workflows/release-skill.yml
+)
+# is_line_run FILE TEXT: succeed only when TEXT is a run of whole lines of FILE.
+is_line_run() {
+  local src
+  src="$(cat "$1")"
+  case $'\n'"${src}"$'\n' in
+    *$'\n'"$2"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+for name in GIT_OFF_LINE DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
   [ -n "${!name}" ] || { echo "Could not extract ${name} from its source" >&2; exit 1; }
+  # The block must be the source's own lines as they stand now, so a copy that
+  # has gone stale, or one edited in this test, is refused before it is run.
+  is_line_run "${block_source[$name]}" "${!name}" \
+    || { echo "${name} is not a run of whole lines of ${block_source[$name]}" >&2; exit 1; }
 done
 
 git_id=(-c user.email=t@t -c user.name=t -c commit.gpgsign=false)
@@ -192,7 +234,8 @@ git_id=(-c user.email=t@t -c user.name=t -c commit.gpgsign=false)
 # Site 3: version_of, reading the fixture file directly.
 run_version_of() { version_of "$1"; }
 
-# Site 1: release-dry-run.sh, reading git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md.
+# Site 1: release-dry-run.sh, reading git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md
+# with the options of its own git_off line.
 run_dry() { # fixture-file
   local repo out rc
   repo="$(mktemp -d)"
@@ -214,6 +257,7 @@ run_dry() { # fixture-file
     set -uo pipefail
     exec 2>/dev/null
     fail() { exit 1; }
+    eval "${GIT_OFF_LINE}"
     eval "${DRY_BLOCK}"
     status=$?
     printf '%s' "${version}"

@@ -16,16 +16,22 @@ created or moved onto the dry run's commit or a descendant of it; any other such
 the proof. The dry run's commit is the commit that the script's git commit-tree writes and prints,
 which the script saves and step 6 reads, never a later HEAD. Every git call of the script after the
 before snapshot other than the reads of step 6, the exit cleanup's included, runs with hooks, the
-core.fsmonitor program, a pager and every filter driver that the configuration read from the
-script's worktree defines turned off, and every git process of the dry run with lazy fetching
-turned off, so no program that git can run from its configuration or from attributes runs during a
-git call of the script, other than a filter driver that only configuration read inside the
-throwaway worktree defines; the run fails unless the HEAD of the throwaway worktree is at that
-commit once the script has moved it there, and the move fails unless that HEAD is still at the
-parent the script read. The leak check reads with replace refs, the graft file and the shallow file
-turned off, so no refs/replace/ ref, graft or shallow boundary can hide a ref that contains the
-commit. The git commit-tree that makes the commit runs with commit signing turned off, so the dry
-run's commit is never signed.
+core.fsmonitor program and a pager turned off, and every git process of the dry run with lazy
+fetching turned off. Every git process of the dry run that starts after the first 3 git calls that
+follow the before snapshot, its tools' included, reads no attribute file other than the
+info/attributes file of the repository and, in git archive, the .gitattributes files of the tree it
+archives, and runs with every filter driver turned off that the configuration read from the
+script's worktree defines or that the info/attributes file names, and, from the dry-run commit on,
+every one that an attribute gives a path of that commit. So no program that git can run from its
+configuration or from attributes runs during a git call of the script, and no filter during a git
+call of its tools, whatever the configuration that git reads in any worktree defines, other than a
+driver that the info/attributes file, or the tree that git archive archives, comes to name during
+the run; the run fails unless git refuses a GIT_ATTR_SOURCE that names no tree, and unless the HEAD
+of the throwaway worktree is at that commit once the script has moved it there, and the move fails
+unless that HEAD is still at the parent the script read. The leak check reads with replace refs, the
+graft file and the shallow file turned off, so no refs/replace/ ref, graft or shallow boundary can
+hide a ref that contains the commit. The git commit-tree that makes the commit runs with commit
+signing turned off, so the dry run's commit is never signed.
 
 The script's header states the residual of the proof in these words:
 
@@ -177,17 +183,22 @@ The ref cases, each with its expected outcome:
 - 44, the dry run's worktree is attached to feature after it is added: passes, the dry run's commit
   is a child of feature, and feature does not move.
 
-The 8 fail-closed cases run the whole script too: in a folder that is not a repository, in a
+The 11 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
 listing that git refuses in the before snapshot, with one that git refuses only in step 6, with a
-leak check that git refuses, and with each git call that makes or reads the dry run's commit or
-moves HEAD to it refused in turn, each fails with exit 1 and the script's message, never read as an
-empty listing; in a repository with no tag and no note it passes. A refused call is made by a git
-wrapper, first on PATH, that records every call and exits 128, or the status the case names, when
-it is given the argument it refuses, from the call that the case names on, and otherwise runs git.
-Each failing case requires the script's message to be the last line of its output, and the script's
-version line to be printed exactly when the failing read comes after the before snapshot, so the
-run must end at that read. These 8 cases make no writes and do not use the git stand-in, so they
+leak check that git refuses, with each git call that makes or reads the dry run's commit or moves
+HEAD to it refused in turn, with each git call that lists the filter drivers, finds the
+info/attributes file, names the empty tree or reads the filter drivers that the attributes of the
+dry run's commit name refused in turn, with an info/attributes file that cannot be read, since it
+is a folder, and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the script's
+message, never read as an empty listing; in a repository with no tag and no note it passes. A
+refused call is made by a git wrapper, first on PATH, that records every call and exits 128, or the
+status the case names, when it is given the argument it refuses, from the call that the case names
+on, and otherwise runs git. The git that ignores GIT_ATTR_SOURCE is a git wrapper, first on PATH,
+that removes it from the environment of every call. Each failing case requires the script's message
+to be the last line of its output, and the script's version line to be printed exactly when the
+failing call comes after the script's read of the version, so the run must end at that call. These
+11 cases make no ref writes and do not use the git stand-in, so they
 reach none of its points and compare no listing. The first 2 run the copy of the script in a folder
 that holds no commit of it, and they require the wrapper to have recorded only the reads of the
 before snapshot that precede the failure. They also turn on git's own trace2 log, which each run of
@@ -218,21 +229,43 @@ then pass with no hook run and the whole-repository listing unchanged.
 of which records its name when it runs, and first check, in a repository of their own, that git
 then runs each of them: a core.fsmonitor program, which on its third run in a linked worktree also
 moves that worktree's HEAD to a new child of it; clean and smudge commands of a required filter
-driver that the main worktree's info/attributes gives every path; a process command of such a
-driver; a pager for each subcommand that the script runs, with the run's standard output on a
-pseudo-terminal; textconv and diff command drivers that info/attributes gives every path, and
-diff.external; and, in a partial clone made without blobs, the upload-pack program of its promisor
-remote. The dry run must pass with none of them run and the whole-repository listing unchanged, or,
-in the partial clone, fail closed at its read of the version with no fetch run. 1 more case, whose
-configuration names a hook folder, a core.fsmonitor program and the commands of a filter driver,
-reads git's trace2 log of a run and requires every run of git that the script starts after the
-before snapshot, other than the reads of step 6, the exit cleanup's git worktree remove included, to
-run with core.hooksPath set to the null device, core.fsmonitor set to false and the commands of a
-configured filter driver empty, and every run of git, the reads of the 2 snapshots and the leak
-check included, to run with lazy fetching turned off; the reads must start no program, and the
-other runs no program other than git, and no automatic maintenance or fetch, although the case's
-gc.auto and maintenance.auto ask for it. The textconv and diff driver case passes against the
-script before these settings too, since no git call of the script runs a diff.
+driver that the main worktree's info/attributes gives every path; the process command of a driver,
+not required, that info/attributes gives every path; a pager for each subcommand that the script
+runs, with the run's standard output on a pseudo-terminal; textconv and diff command drivers that
+info/attributes gives every path, and diff.external; and, in a partial clone made without blobs,
+the upload-pack program of its promisor remote. The dry run must pass with none of them run and the
+whole-repository listing unchanged, or, in the partial clone, fail closed at its read of the version
+with no fetch run.
+
+1 more case, the linked-worktree filter case, configures the clean and smudge commands of 3 filter
+drivers only in a file that a conditional include adds to the configuration of a linked worktree,
+so the listing of the filter drivers from the main worktree does not see them: info/attributes
+gives the first to 1 path, a .gitattributes file committed in the tree that the dry run releases
+gives the second to every path under site/, and the file that core.attributesFile names gives the
+third to every path under site-src/. The packager's stand-in also runs git archive of HEAD, as
+tools/release-package.sh does. The case first checks, in a repository of its own, that a git
+worktree add then runs the smudge command of each driver, and that a git archive in that worktree
+runs that of the second although GIT_ATTR_SOURCE names the empty tree. The dry run must then pass
+with none of them run and the whole-repository listing unchanged. 1 more case gives every path,
+through info/attributes, a filter driver named a=b, whose commands either the configuration that
+the listing reads or only that of a linked worktree defines, and requires the run to fail with
+exit 1 at the script's refusal of that name, before its read of the version, with no command of the
+driver run.
+
+1 more case, whose configuration names a hook folder, a core.fsmonitor program, an attributes file
+and the commands of 2 filter drivers, reads git's trace2 log of a run and requires every run of git
+that the script starts after the before snapshot, other than the reads of step 6, the exit
+cleanup's git worktree remove included, to run with core.hooksPath set to the null device and
+core.fsmonitor set to false, and each of them other than the first 3, which list the filter
+drivers, find the info/attributes file and name the empty tree before the attribute and filter
+settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, which sets
+its own, also to run with GIT_ATTR_NOSYSTEM set, GIT_ATTR_SOURCE set to the empty tree,
+core.attributesFile set to the null device and the commands of both configured filter drivers
+empty; every run of git, the reads of the 2 snapshots and the leak check included, must run with
+lazy fetching turned off; the reads must start no program, and the other runs no program other
+than git, and no automatic maintenance or fetch, although the case's gc.auto and maintenance.auto
+ask for it. The textconv and diff driver case passes against the script before these settings too,
+since no git call of the script runs a diff.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -284,6 +317,8 @@ DRY_DATE = "2026-01-02"
 DRY_IDENTITY = "release-dry-run <release-dry-run@invalid>"
 DRY_EPOCH = int(datetime.datetime.fromisoformat(f"{DRY_DATE}T12:00:00+00:00").timestamp())
 SUCCESS = "release-dry-run: every step, gate, and assertion passed for v1.0.1 (nothing was published).\n"
+# The name of the empty tree in a repository of SHA-1 object names, as the fixture's are.
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 # The stand-in for every Python tool the script runs, named by its file name.
 STUB = r'''"""A stand-in for a tool of the release path, chosen by its file name, for the ref cases."""
@@ -1065,6 +1100,48 @@ class FailClosedCases(unittest.TestCase):
             code, out, err = run_script(fixture.script, fixture.env)
             self.assertEqual((code, SUCCESS in out), (0, True), err)
 
+    def test_a_git_call_of_the_filter_settings_that_fails_fails(self):
+        # (the argument refused, the message that must end the run, whether the run reaches the version
+        # line): each git call that lists the filter drivers, finds the info/attributes file, names the
+        # empty tree or reads the filter drivers that the attributes of the dry-run commit name fails the
+        # run with exit 1. The first git check-attr, which asks git to refuse a GIT_ATTR_SOURCE that names
+        # no tree, is refused too, which the script reads as that refusal.
+        for refused, message, reached_version in (
+                ("--get-regexp", "release-dry-run: could not list the filter drivers of ", False),
+                ("--git-path", "release-dry-run: could not find the info/attributes file of ", False),
+                ("hash-object", "release-dry-run: could not name the empty tree of ", False),
+                ("check-attr", "release-dry-run: could not read the filter drivers that the attributes of the "
+                               "dry-run commit ", True),
+        ):
+            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env, refused)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                self.assertIn(f"wrapper: refused {refused}", err)
+                self.assert_stops(code, out, err, message, reached_version)
+
+    def test_an_info_attributes_file_that_cannot_be_read_fails(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            (fixture.main / ".git" / "info" / "attributes").mkdir()
+            code, out, err = run_script(fixture.script, fixture.env)
+            self.assert_stops(code, out, err,
+                              "release-dry-run: could not read the filter drivers that .git/info/attributes names",
+                              False)
+
+    def test_a_git_that_ignores_the_attribute_source_fails(self):
+        # A git wrapper, first on PATH, removes GIT_ATTR_SOURCE from the environment of every call, as a
+        # git that does not read it would ignore it.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            wrapper = fixture.tmp / "ignoring"
+            wrapper.mkdir()
+            (wrapper / "git").write_text(f"#!/bin/sh\nunset GIT_ATTR_SOURCE\nexec {shlex.quote(real_git(fixture.env))} "
+                                         '"$@"\n', encoding="utf-8")
+            (wrapper / "git").chmod(0o755)
+            code, out, err = run_script(fixture.script, fixture.env, wrapper)
+            self.assert_stops(code, out, err, "release-dry-run: git ignores GIT_ATTR_SOURCE", False)
+
 
 def signing(env: dict, program: Path) -> dict:
     """env with commit signing turned on and gpg.program set to program, as GIT_CONFIG_COUNT
@@ -1176,6 +1253,16 @@ def recorder(path: Path, name: str, log: Path, body: str = "cat\n") -> str:
                     encoding="utf-8")
     path.chmod(0o755)
     return str(path)
+
+
+def worktree_only(fixture: "Fixture", repository: Path, settings: dict) -> None:
+    """Give the configuration of repository a conditional include, for every git folder under
+    worktrees/, of a new file that holds settings, so git reads them only in a linked worktree of
+    repository, and a listing read from its main worktree does not see them."""
+    path = repository.parent / f"{repository.name}-worktree-only.config"
+    for key, value in settings.items():
+        fixture.git("config", "-f", str(path), key, value)
+    fixture.git("-C", str(repository), "config", "includeIf.gitdir:**/worktrees/**.path", str(path))
 
 
 def run_on_terminal(args: list, env: dict, cwd: Path, timeout: float = TIMEOUT):
@@ -1384,27 +1471,129 @@ class ConfiguredProgramCases(unittest.TestCase):
                                                       "line"), f"the run did not end at its read of the version\n{err}")
             self.assertFalse(log.exists(), "these programs ran during the dry run: " + self.ran(log))
 
+    def test_no_filter_that_only_a_linked_worktree_defines_runs(self):
+        # 3 filter drivers that only configuration read in a linked worktree defines, through a
+        # conditional include, so the listing of the filter drivers from the script's worktree does not
+        # see them. The repository's info/attributes gives the first to file, a .gitattributes file in
+        # the tree that the dry run releases gives the second to every path under site/, and the file
+        # that core.attributesFile names gives the third to every path under site-src/. The packager's
+        # stand-in also runs git archive of HEAD, as tools/release-package.sh does.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            drivers = ("linked-info", "linked-tree", "linked-global")
+            settings = {f"filter.{driver}.{command}": recorder(fixture.tmp / f"{driver}-{command}",
+                                                               f"{driver}-{command}", log)
+                        for driver in drivers for command in ("clean", "smudge")}
+            global_attributes = fixture.tmp / "attributes"
+            global_attributes.write_text("site-src/** filter=linked-global\n", encoding="utf-8")
+            env = configured(fixture.env, {"core.attributesFile": str(global_attributes)})
+            info = "file filter=linked-info\n"
+            tree = "site/** filter=linked-tree\n"
+            # The probe: in a repository of its own, git worktree add runs the smudge command of each
+            # driver, and git archive in that worktree runs that of the second although GIT_ATTR_SOURCE
+            # names the empty tree.
+            probe = fixture.tmp / "probe"
+            probe.mkdir()
+            self.assertEqual(run_bounded(["git", "init", "-q"], env, probe)[0], 0)
+            for path, text in (("file", "probe\n"), ("site/page", "probe\n"), ("site-src/data", "probe\n"),
+                               (".gitattributes", tree)):
+                (probe / path).parent.mkdir(parents=True, exist_ok=True)
+                (probe / path).write_text(text, encoding="utf-8")
+            (probe / ".git" / "info" / "attributes").write_text(info, encoding="utf-8")
+            worktree_only(fixture, probe, settings)
+            linked = fixture.tmp / "probe-worktree"
+            for args in (["git", "add", "-A"], ["git", "commit", "-q", "-m", "Probe"],
+                         ["git", "worktree", "add", "-q", "--detach", str(linked)]):
+                code, _, err = run_bounded(args, env, probe)
+                self.assertEqual(code, 0, f"the probe's {' '.join(args)} exited {code}: {err}")
+            ran = set(self.ran(log).split())
+            self.assertEqual(sorted({f"{driver}-smudge" for driver in drivers} - ran), [],
+                             "git worktree add does not run the smudge command of each of these drivers")
+            log.unlink()
+            code, _, err = run_bounded(["git", "archive", "--format=tar", "-o", os.devnull, "HEAD"],
+                                       dict(env, GIT_ATTR_SOURCE=EMPTY_TREE), linked)
+            self.assertEqual(code, 0, f"the probe's git archive exited {code}: {err}")
+            self.assertIn("linked-tree-smudge", self.ran(log).split(),
+                          "git archive does not read the attributes of the tree it archives")
+            log.unlink()
+            (fixture.main / ".gitattributes").write_text(tree, encoding="utf-8")
+            (fixture.main / "tools" / "release-package.sh").write_text(
+                '#!/bin/sh\ngit archive --format=tar HEAD > /dev/null || exit 1\n'
+                'exec python3 -I "$(dirname "$0")/release-package.py" "$@"\n', encoding="utf-8")
+            fixture.git("add", ".gitattributes", "tools/release-package.sh")
+            fixture.git("commit", "-q", "-m", "Attributes")
+            (fixture.main / ".git" / "info" / "attributes").write_text(info, encoding="utf-8")
+            worktree_only(fixture, fixture.main, settings)
+            self.assertEqual(run_bounded(["git", "config", "--name-only", "--get-regexp", "^filter\\."], env,
+                                         fixture.main)[0], 1, "the listing from the main worktree sees a driver")
+            self.assert_none_ran(fixture, env, log)
+
+    def test_a_filter_driver_whose_name_holds_an_equals_sign_fails(self):
+        # A driver named a=b, which info/attributes gives every path: git -c would read the equals sign as
+        # the end of the setting's name, so the dry run cannot turn it off and must fail before it runs
+        # it, whether the configuration that the listing reads defines it or only that of a linked
+        # worktree does.
+        for where in ("listed", "linked"):
+            with self.subTest(where=where), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                log = fixture.tmp / "programs-ran"
+                settings = {"filter.a=b.clean": recorder(fixture.tmp / "clean", "clean", log),
+                            "filter.a=b.smudge": recorder(fixture.tmp / "smudge", "smudge", log)}
+                env = configured(fixture.env, settings) if where == "listed" else fixture.env
+                probe = fixture.tmp / "probe"
+                probe.mkdir()
+                self.assertEqual(run_bounded(["git", "init", "-q"], env, probe)[0], 0)
+                (probe / ".git" / "info" / "attributes").write_text("* filter=a=b\n", encoding="utf-8")
+                (probe / "file").write_text("probe\n", encoding="utf-8")
+                if where == "linked":
+                    worktree_only(fixture, probe, settings)
+                for args in (["git", "add", "file"], ["git", "commit", "-q", "-m", "Probe"],
+                             ["git", "worktree", "add", "-q", "--detach", str(fixture.tmp / "probe-worktree")]):
+                    code, _, err = run_bounded(args, env, probe)
+                    self.assertEqual(code, 0, f"the probe's {' '.join(args)} exited {code}: {err}")
+                self.assertIn("smudge", self.ran(log).split(), "git does not run the smudge command of a=b")
+                log.unlink()
+                (fixture.main / ".git" / "info" / "attributes").write_text("* filter=a=b\n", encoding="utf-8")
+                if where == "linked":
+                    worktree_only(fixture, fixture.main, settings)
+                code, out, err = run_script(fixture.script, env)
+                self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
+                self.assertEqual(last_line(err), "release-dry-run: could not turn off the filter driver a=b, whose "
+                                                 "name holds an equals sign", err)
+                self.assertNotIn(VERSION_LINE, out)
+                self.assertFalse(log.exists(), "these programs ran during the dry run: " + self.ran(log))
+
     def test_every_git_call_runs_with_the_programs_turned_off(self):
         # git's trace2 log records, for each run of git, the settings it runs with and the programs it
         # starts. Every run of git that the script starts after the before snapshot, other than the reads
-        # of step 6, must run with hooks, the core.fsmonitor program and the configured filter driver
-        # turned off and lazy fetching turned off, the exit cleanup's git worktree remove included, and
-        # start no program other than git, and no automatic maintenance or fetch; the reads of the 2
-        # snapshots and the leak check must run with lazy fetching turned off and start no program.
+        # of step 6, must run with hooks and the core.fsmonitor program turned off and lazy fetching
+        # turned off, the exit cleanup's git worktree remove included, and start no program other than
+        # git, and no automatic maintenance or fetch; each such run other than the first 3, which list the
+        # filter drivers, find the info/attributes file and name the empty tree before the attribute and
+        # filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, must
+        # also run with GIT_ATTR_NOSYSTEM, GIT_ATTR_SOURCE set to the empty tree, core.attributesFile set
+        # to the null device and both configured filter drivers turned off. The reads of the 2 snapshots
+        # and the leak check must run with lazy fetching turned off and start no program.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             trace = fixture.tmp / "trace2"
-            # The configuration names a hook folder and a core.fsmonitor program, so a run of git that
-            # does not turn them off records their values, not those of the script's settings.
+            # The configuration names a hook folder, a core.fsmonitor program and an attributes file, so a
+            # run of git that does not turn them off records their values, not those of the script's
+            # settings. It defines 2 filter drivers, so a script that turns off only the first fails.
             env = configured(fixture.env, {"filter.probe.clean": "false", "filter.probe.smudge": "false",
-                                           "filter.probe.process": "false", "gc.auto": "1",
+                                           "filter.probe.process": "false", "filter.second.clean": "false",
+                                           "filter.second.smudge": "false", "filter.second.process": "false",
+                                           "filter.second.required": "true", "gc.auto": "1",
                                            "maintenance.auto": "true",
-                                           "core.fsmonitor": str(fixture.tmp / "fsmonitor")})
+                                           "core.fsmonitor": str(fixture.tmp / "fsmonitor"),
+                                           "core.attributesFile": str(fixture.tmp / "attributes")})
             keys = [env[f"GIT_CONFIG_KEY_{index}"] for index in range(int(env["GIT_CONFIG_COUNT"]))]
             (fixture.tmp / "git-hooks").mkdir()
             env[f"GIT_CONFIG_VALUE_{keys.index('core.hooksPath')}"] = str(fixture.tmp / "git-hooks")
-            env.update(GIT_TRACE2_EVENT=str(trace), GIT_TRACE2_CONFIG_PARAMS="core.hooksPath,core.fsmonitor,filter.*",
-                       GIT_TRACE2_ENV_VARS="GIT_NO_LAZY_FETCH")
+            env.update(GIT_TRACE2_EVENT=str(trace),
+                       GIT_TRACE2_CONFIG_PARAMS="core.hooksPath,core.fsmonitor,core.attributesFile,filter.*",
+                       GIT_TRACE2_ENV_VARS="GIT_NO_LAZY_FETCH,GIT_ATTR_NOSYSTEM,GIT_ATTR_SOURCE")
             code, out, err = run_script(fixture.script, env)
             self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
             runs = {}
@@ -1419,7 +1608,10 @@ class ConfiguredProgramCases(unittest.TestCase):
                     run["children"].append(event.get("argv"))
             off = {"core.hookspath": "/dev/null", "core.fsmonitor": "false", "filter.probe.clean": "",
                    "filter.probe.smudge": "", "filter.probe.process": "", "filter.probe.required": "false",
-                   "GIT_NO_LAZY_FETCH": "1"}
+                   "filter.second.clean": "", "filter.second.smudge": "", "filter.second.process": "",
+                   "filter.second.required": "false", "core.attributesfile": "/dev/null",
+                   "GIT_ATTR_NOSYSTEM": "1", "GIT_ATTR_SOURCE": EMPTY_TREE, "GIT_NO_LAZY_FETCH": "1"}
+            early = ("core.hookspath", "core.fsmonitor", "GIT_NO_LAZY_FETCH")
             reads = {"symbolic-ref", "rev-parse", "for-each-ref"}
             seen = []
             for run in runs.values():
@@ -1429,10 +1621,13 @@ class ConfiguredProgramCases(unittest.TestCase):
                                      f"the read {argv} ran without lazy fetching turned off, or started a program")
                     continue
                 seen.append(" ".join(argv))
-                # The listing of the filter drivers runs before they are turned off, and reads no file.
+                # The listing of the filter drivers, the lookup of the info/attributes file and the naming
+                # of the empty tree run before the attribute and filter settings exist, and read no file
+                # content; the check that git refuses a GIT_ATTR_SOURCE that names no tree sets its own.
                 wanted = off
-                if "--get-regexp" in argv:
-                    wanted = {key: off[key] for key in ("core.hookspath", "core.fsmonitor", "GIT_NO_LAZY_FETCH")}
+                if ("--get-regexp" in argv or "--git-path" in argv or "hash-object" in argv
+                        or "check-attr" in argv and "--source" not in argv):
+                    wanted = {key: off[key] for key in early}
                 self.assertEqual({key: run["params"].get(key) for key in wanted}, wanted,
                                  f"git {' '.join(argv)} ran without every program turned off")
                 # A program that git starts is a run of git itself, which this loop checks in turn, and
@@ -1441,9 +1636,10 @@ class ConfiguredProgramCases(unittest.TestCase):
                     self.assertTrue(child and child[0] == "git" and child[1:2] not in (["gc"], ["maintenance"],
                                                                                     ["fetch"]),
                                     f"git {' '.join(argv)} started {child}")
-            for call in ("config --name-only --get-regexp", "show HEAD:", "worktree add --detach", "add -u",
-                         "write-tree", "rev-parse --verify HEAD", "commit-tree -p", "update-ref --no-deref",
-                         "worktree remove --force"):
+            for call in ("config --name-only --get-regexp", "rev-parse --git-path info/attributes",
+                         "hash-object -t tree --stdin", "check-attr filter --", "show HEAD:", "worktree add --detach",
+                         "add -u", "write-tree", "rev-parse --verify HEAD", "commit-tree -p", "update-ref --no-deref",
+                         "ls-tree -r --name-only", "check-attr --source", "worktree remove --force"):
                 self.assertTrue(any(call in run for run in seen), f"no run of git {call} was recorded: {seen}")
 
 
