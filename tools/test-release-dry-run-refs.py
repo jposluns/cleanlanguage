@@ -1,53 +1,73 @@
 #!/usr/bin/env python3
 """Tests the ref comparison of tools/release-dry-run.sh by running the whole script in throwaway
-repositories.
+folders.
 
 The dry run proves at exit that it moved no tag, no note and not the HEAD of the worktree that holds
-the script, and that no ref that git for-each-ref lists from that worktree contains its own commit;
-it does not prove that it moved no other ref (cases 12, 13, 23 and 27), and it does not see the HEAD
-or the per-worktree refs of any other worktree (cases 15, 28 and 29). It snapshots, from the
-worktree that holds the script (repo_root, which in these cases is the main worktree of the case's
-repository), the branch that HEAD names (or that HEAD is detached), the commit that HEAD resolves
-to, and every tag and note with its object name, before its run and again in step 6, and fails when
-the 2 snapshots differ. Step 6 also fails when a ref that git for-each-ref lists from repo_root
-contains the dry run's own commit. A ref other than a tag, a note, that worktree's HEAD or the
-branch it has checked out that another worktree moves during the run, as a commit on another
-branch or a fetch that moves a remote-tracking ref does, is outside that comparison, so it no
-longer fails the run unless it then contains the dry run's commit.
+the script, and that no ref that git for-each-ref lists from that worktree contains its own commit.
+It snapshots, from the worktree that holds the script (repo_root, which in these cases is the main
+worktree of the case's repository), the branch that HEAD names (or that HEAD is detached), the
+commit that HEAD resolves to, and every tag and note with its object name, before its run and again
+in step 6, and fails when the 2 snapshots differ. Step 6 also fails when a ref that git
+for-each-ref lists from repo_root contains the dry run's own commit. A ref that another worktree
+writes during the run, as a commit on another branch or a fetch that moves a remote-tracking ref
+does, fails the run only when it is a tag or a note, when it is the HEAD of repo_root or the branch
+that worktree has checked out, or when it is a ref that git for-each-ref lists from repo_root,
+created or moved onto the dry run's commit or a descendant of it; any other such write is outside
+the proof.
 
-This test runs the real script, not an excerpt of it. Each case builds a repository in a temporary
-folder whose commits hold a copy of tools/release-dry-run.sh, byte for byte, and stand-ins for the
-tools it calls, and runs that copy with bash from the main worktree, so bash itself reads every line
-of the script, in whatever spelling, and every line runs as it would in release-dry-run.yml. The
-stand-ins are 1 small Python program, written under the name of each Python tool, and a
-tools/release-package.sh that runs it: they read and stamp the versions and dates, build a fixed
-archive, refuse a release date that the Released line does not name, write the site files that the
-script's assertions read, and pass every gate. The repository has branches main, feature and
-other (other checked out in a second worktree), a lightweight tag v1.0.0, an annotated tag v0.9.0
-and refs/remotes/origin/main.
+The script's header states the residual of the proof in these words:
 
-A case's writes are made by a git stand-in, first on PATH for the run, that runs the real git for
-every call. When the script first asks git to add a worktree, the stand-in makes the case's writes
-that it attributes to another worktree, before it adds the worktree. When the script's own commit
-of the dry run has been made, the stand-in records that commit and makes the case's writes that the
-dry run makes, in the dry run's worktree. So the before snapshot must precede the dry run's first
-ref write, and the leak check must read the commit that the dry run made in its own worktree; a
-script in which either does not hold fails a case. Every case requires both points to have been
-reached and its writes to have succeeded. Concurrency is modelled as sequenced writes, which a
+Residual: the proof does not catch the deletion of any ref outside tags and notes other than the
+branch the script's worktree has checked out, such as another branch, a remote-tracking ref,
+refs/stash or a refs/replace/ ref; a move or creation of such a ref at a commit that does not
+contain the dry-run commit, or at an object that peels to no commit, such as a tree or a blob; or
+such a deletion, move or creation made by a commit hook, which the dry-run commit runs. It does not
+see the HEAD or the per-worktree refs of any worktree other than the script's worktree, the
+throwaway worktree included, or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any
+worktree, the script's worktree included, so such a ref put on the dry-run commit does not fail it.
+It does not see anything the exit cleanup does, or a ref moved and then restored between the 2
+snapshots.
+
+Cases 12, 13, 23 and 27 show the first sentence of that residual, and cases 15, 28, 29 and 30 the
+second.
+
+This test runs the real script, not an excerpt of it. Each ref case builds a repository in a
+temporary folder whose commits hold a copy of tools/release-dry-run.sh, byte for byte, and
+stand-ins for the tools it calls, and runs that copy with bash from the main worktree, so bash
+itself reads every line of the script, in whatever spelling, and runs every line that the run
+reaches, with the stand-ins in place of the tools, the git stand-in below first on PATH and the
+fixed environment below, not those of release-dry-run.yml. The stand-ins are 1 small Python
+program, written under the name of each Python tool, and a tools/release-package.sh that runs it:
+they read and stamp the versions and dates, build a fixed archive, refuse a release date that the
+Released line does not name, write the site files that the script's assertions read, and pass every
+gate. The repository has branches main, feature and other (other checked out in a second
+worktree), a lightweight tag v1.0.0, an annotated tag v0.9.0 and refs/remotes/origin/main.
+
+A ref case's writes are made by a git stand-in, first on PATH for the run, that runs the real git
+for every call. When the script first asks git to add a worktree, the stand-in makes the case's
+writes that it attributes to another worktree, before it adds the worktree. When the script's own
+commit of the dry run has been made, the stand-in records that commit and makes the case's writes
+that the dry run makes, in the dry run's worktree. So the before snapshot must precede the dry run's
+first ref write, and the leak check must read the commit that the dry run made in its own worktree;
+a script in which either does not hold fails a ref case. Every ref case requires both points to have
+been reached and its writes to have succeeded. Concurrency is modelled as sequenced writes, which a
 snapshot comparison cannot tell from a race, and no real race is run.
 
-A case expected to pass must exit 0 with the script's success message. A case expected to fail must
-exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison, print
-the whole before snapshot and the whole after one. The test reads those snapshots itself, with git,
-after the case's setup and once the run has ended, in the format that the failure message prints.
-Each case also checks that its writes took effect: it compares the whole-repository listing of git
+A case expected to pass must exit 0 with the script's success message. A ref case expected to fail
+must exit 1 without it, print the ref that differs and, when it fails on the snapshot comparison,
+print the whole before snapshot and the whole after one; when it fails on the leak check, it must
+print the leak check's sentence with the dry run's commit, followed by the refs that the case puts
+on that commit or a descendant of it. The test reads those snapshots itself, with git, after the
+case's setup and once the run has ended, in the format that the failure message prints. Each ref
+case also checks that its writes took effect: it compares the whole-repository listing of git
 for-each-ref, which the old whole-repository hash compared, taken after the case's setup and again
 after the run, and requires exactly the refs that the case names to differ, so the old check failed
-exactly the cases that name one. Case 20 also requires its new branch to be at a child of the dry
-run's commit, case 27 requires its ref to be at a tree, and cases 28 and 29 require the other
-worktree's ref and HEAD to be at the dry run's commit.
+exactly the ref cases that name one. Case 20 also requires its new branch to be at a child of the
+dry run's commit, case 27 requires its ref to be at a tree, cases 28 and 29 require the other
+worktree's ref and HEAD to be at the dry run's commit, and case 30 requires ORIG_HEAD of the main
+worktree to be at the dry run's commit.
 
-The cases, each with its expected outcome:
+The ref cases, each with its expected outcome:
 
 - 01, the dry run alone: passes.
 - 02, a concurrent commit on a branch in another worktree: passes.
@@ -62,7 +82,7 @@ The cases, each with its expected outcome:
 - 09, the dry run puts its commit on the detached HEAD of the main worktree: fails, naming HEAD's
   commit (the old whole-repository hash passed it, since git for-each-ref lists no HEAD).
 - 10, the dry run adds a note: fails, naming the notes ref.
-- 11, the dry run points a remote-tracking ref at its commit: fails, naming that ref.
+- 11, the dry run points a remote-tracking ref at its commit: fails, naming its commit and that ref.
 - 12, the dry run deletes a branch other than the checked-out one: passes, an accepted residual.
 - 13, the dry run moves a remote-tracking ref to a commit that already existed: passes, an accepted
   residual.
@@ -94,13 +114,18 @@ The cases, each with its expected outcome:
   accepted residual, since git for-each-ref lists no other worktree's per-worktree refs.
 - 29, another worktree checks out the dry run's commit on a detached HEAD: passes, an accepted
   residual, since git for-each-ref lists no HEAD.
+- 30, the dry run points ORIG_HEAD of the main worktree at its commit: passes, a blind spot before
+  and after, since git for-each-ref lists no ref outside refs/.
 
-The fail-closed cases run the whole script too: in a folder that is not a repository, in a
+The 5 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a tag and note listing that git refuses after
 both HEAD reads succeed, and with a leak check that git refuses, each fails with the script's
 message, never read as an empty listing; in a repository with no tag and no note it passes. A
 refused call is made by a git wrapper, first on PATH, that exits 128 when it is given the argument
-it refuses and otherwise runs git.
+it refuses and otherwise runs git. These 5 cases make no writes and do not use the git stand-in, so
+they reach neither of its points and compare no listing. The first 2 run the copy of the script in
+a folder that holds no commit of it, and since each requires a message of the before snapshot,
+they also require that snapshot to be the script's first git call.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -109,12 +134,12 @@ committer dates, and DRY_DATE fixed. Every process is bounded by a timeout, runs
 own, and is killed with its process group when it ends or times out; nothing is left running in the
 background.
 
-Residual: the stand-ins replace the packaging, the gates and the site rewrite, which
-tools/release-dry-run.sh runs with the real tools in the next step of release-dry-run.yml. The
-cases catch a change to the script only when it changes what a case observes, so a change that acts
-only outside these cases, such as one that tests for the stand-ins or for the workflow's
-environment, or that moves a ref no case writes, is not caught. The cases run on the git of this
-machine with its default ref backend.
+Residual of the test: stand-ins replace the packaging, the gates and the site rewrite, which the
+next step of release-dry-run.yml runs with the real tools, and the script runs with a git stand-in
+first on PATH and an environment that the test fixes, not those of that workflow. A change to the
+script is caught only when it changes what a case observes, so a change that acts only outside the
+cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
+ref no case writes, is not caught. The cases run on 1 git version with its default ref backend.
 
 Usage: python3 -I tools/test-release-dry-run-refs.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -354,7 +379,8 @@ def refusing_git(folder: Path, env: dict, refused: str) -> Path:
 
 
 def run_script(script: Path, env: dict, first_on_path: Path | None = None):
-    """Run the copy of the script with bash from its repository root, as the workflow runs it."""
+    """Run the copy of the script with bash from its repository root, the folder from which the
+    workflow runs the script."""
     env = dict(env)
     if first_on_path is not None:
         env["PATH"] = str(first_on_path) + os.pathsep + env["PATH"]
@@ -398,8 +424,8 @@ CASES = (
     ("10 the dry run adds a note", "", "", "git notes add -m dry HEAD", "fail",
      (BEFORE, "refs/notes/commits"), ("refs/notes/commits",)),
     ("11 the dry run points a remote-tracking ref at its commit", "", "",
-     "git update-ref refs/remotes/origin/main HEAD", "fail", ("refs/remotes/origin/main",),
-     ("refs/remotes/origin/main",)),
+     "git update-ref refs/remotes/origin/main HEAD", "fail",
+     ("these refs contain its commit {dry}:\nrefs/remotes/origin/main\n",), ("refs/remotes/origin/main",)),
     ("12 the dry run deletes a branch other than the checked-out one", "", "",
      'git -C "${repo_root}" branch -q -D feature', "pass", (), ("refs/heads/feature",)),
     ("13 the dry run moves a remote-tracking ref to a commit that already existed", "", "",
@@ -442,6 +468,8 @@ CASES = (
      'git -C "${other}" update-ref refs/worktree/leak "${dry}"', "pass", (), ()),
     ("29 another worktree checks out the dry run's commit on a detached HEAD", "", "",
      'git -C "${other}" checkout -q --detach "${dry}"', "pass", (), ()),
+    ("30 the dry run points ORIG_HEAD of the main worktree at its commit", "", "",
+     'git -C "${repo_root}" update-ref ORIG_HEAD "${dry}"', "pass", (), ()),
 )
 
 
@@ -578,6 +606,9 @@ class RefComparisonCases(unittest.TestCase):
                              "case 29: the other worktree's HEAD is not at the dry run's commit")
             code, _, _ = run_bounded(["git", "symbolic-ref", "-q", "HEAD"], fixture.env, fixture.other)
             self.assertEqual(code, 1, "case 29: the other worktree's HEAD is not detached")
+        if name.startswith("30 "):
+            self.assertEqual(fixture.git("rev-parse", "--verify", "ORIG_HEAD").strip(), dry,
+                             "case 30: ORIG_HEAD of the main worktree is not at the dry run's commit")
 
 
 def case_method(case: tuple):

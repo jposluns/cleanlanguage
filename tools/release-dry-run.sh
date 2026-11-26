@@ -28,11 +28,12 @@
 # move or creation of such a ref at a commit that does not contain the dry-run
 # commit, or at an object that peels to no commit, such as a tree or a blob; or
 # such a deletion, move or creation made by a commit hook, which the dry-run
-# commit runs. It also does not see the HEAD or the per-worktree refs of any
+# commit runs. It does not see the HEAD or the per-worktree refs of any
 # worktree other than the script's worktree, the throwaway worktree included,
-# so another worktree's HEAD or per-worktree ref put on the dry-run commit
-# does not fail it; anything the exit cleanup does; or a ref moved and then
-# restored between the 2 snapshots.
+# or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any worktree,
+# the script's worktree included, so such a ref put on the dry-run commit does
+# not fail it. It does not see anything the exit cleanup does, or a ref moved
+# and then restored between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -92,7 +93,8 @@ ref_snapshot() {
 # repo_root contains COMMIT, the dry-run commit, so a branch, tag, note,
 # remote-tracking ref or other such ref created or moved onto it, or onto a
 # descendant of it, fails the run. The HEAD and the per-worktree refs of any
-# other worktree are not listed, so they are not checked. A failing git call
+# other worktree, and a ref outside refs/ other than HEAD, such as ORIG_HEAD,
+# of any worktree, are not listed, so they are not checked. A failing git call
 # fails the run and is never read as an empty listing.
 ref_leak_check() {
   local holders
