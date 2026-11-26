@@ -15,8 +15,10 @@ that worktree has checked out, or when it is a ref that git for-each-ref lists f
 created or moved onto the dry run's commit or a descendant of it; any other such write is outside
 the proof. The dry run's commit is the one the script names before git commit runs, and the run
 fails unless git commit leaves the HEAD of the throwaway worktree at it, so a hook that moves that
-HEAD cannot point the leak check at another commit. The leak check reads with replace refs turned
-off, so a refs/replace/ ref cannot hide a ref that contains the commit.
+HEAD cannot point the leak check at another commit. The leak check reads with replace refs, the
+graft file and the shallow file turned off, so no refs/replace/ ref, graft or shallow boundary can
+hide a ref that contains the commit. Both git calls that make or name the commit run with commit
+signing turned off, so the dry run's commit is never signed.
 
 The script's header states the residual of the proof in these words:
 
@@ -74,8 +76,9 @@ after the run, and requires exactly the refs that the case names to differ, so t
 exactly the ref cases that name one. Case 20 also requires its new branch to be at a child of the
 dry run's commit, case 27 requires its ref to be at a tree, cases 28 and 29 require the other
 worktree's ref and HEAD to be at the dry run's commit, case 30 requires ORIG_HEAD of the main
-worktree to be at the dry run's commit, and case 36 requires its new branch to be at a child of the
-dry run's commit that its replace ref shows with no parent.
+worktree to be at the dry run's commit, case 31 requires the HEAD that its failure names to be at a
+child of the dry run's commit, and cases 36, 37 and 38 require their new branch to be at a child of
+the dry run's commit that their replace ref, graft or shallow entry shows with no parent.
 
 The ref cases, each with its expected outcome:
 
@@ -136,6 +139,8 @@ The ref cases, each with its expected outcome:
 - 35, the dry run points per-worktree refs of the main worktree at its commit: fails, naming both.
 - 36, the dry run points a new branch at a descendant of its commit and hides that commit's parent
   with a replace ref: fails, naming the branch.
+- 37, as 36 with a graft in place of the replace ref: fails, naming the branch.
+- 38, as 36 with a shallow entry in place of the replace ref: fails, naming the branch.
 
 The 8 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
@@ -150,8 +155,16 @@ line to be printed exactly when the failing read comes after the before snapshot
 end at that read. These 8 cases make no writes and do not use the git stand-in, so they reach none
 of its points and compare no listing. The first 2 run the copy of the script in a folder that holds
 no commit of it, and they require the wrapper to have recorded only the reads of the before
-snapshot that precede the failure, so they also require that snapshot to be the script's first git
-call.
+snapshot that precede the failure. They also turn on git's own trace2 log, which each run of git
+writes whatever path it is started by, and require it to record a start of git for exactly those
+reads, so they require that snapshot to be the script's first git call, made through PATH or by any
+other path. A git call that turns that log off is not seen.
+
+1 more case turns commit signing on in the fixture's configuration, with a gpg.program stand-in
+that records each call and fails, and first checks, in a repository of its own, that git commit
+then tries to sign and fails. The dry run must pass without calling that stand-in, since the script
+turns signing off for the git commit that makes its commit, and for the git commit-tree that names
+it, which on the git version the cases ran on does not sign under that setting.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -439,6 +452,17 @@ def git_log(folder: Path) -> list:
     return (folder / "log").read_text(encoding="utf-8").splitlines()
 
 
+def git_starts(log: Path) -> list:
+    """The arguments of each run of git that git's trace2 log at log records, in order, without the
+    program name: every run of git writes a start line there, whatever path it is started by."""
+    starts = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        fields = line.split(None, 3)
+        if len(fields) == 4 and fields[2] == "start":
+            starts.append(fields[3].split(" ", 1)[1] if " " in fields[3] else "")
+    return starts
+
+
 def last_line(err: str) -> str:
     """The last line of err, the message of the failure that ended the run."""
     lines = err.rstrip("\n").split("\n")
@@ -541,8 +565,10 @@ CASES = (
     ("31 a hook of the dry-run commit keeps that commit in a ref and moves the worktree's HEAD to a child of it",
      "", "",
      'git update-ref refs/keep/dry HEAD\nchild="$(git commit-tree -p HEAD -m Hook \'HEAD^{tree}\')"\n'
-     'git update-ref --no-deref HEAD "${child}"', "fail closed",
-     ("release-dry-run: the dry-run commit left the HEAD of its worktree at ", "not at the dry-run commit {dry};"),
+     'git update-ref --no-deref HEAD "${child}"\nprintf \'%s\\n\' "${child}" > "${REF_CASE_HOOKS}/child"',
+     "fail closed",
+     ("release-dry-run: the dry-run commit left the HEAD of its worktree at {child}, not at the dry-run commit "
+      "{dry}; a hook moved that HEAD or changed the commit\n",),
      ("refs/keep/dry",)),
     ("32 the dry run moves an existing tag after its last step", "", "", "", "fail",
      (BEFORE, "{dry} refs/tags/v1.0.0"), ("refs/tags/v1.0.0",)),
@@ -559,6 +585,14 @@ CASES = (
      'child="$(git commit-tree -p "${dry}" -m Descendant "${dry}^{tree}")"\ngit update-ref refs/heads/carry "${child}"\n'
      'git replace "${child}" "$(git commit-tree -m Replacement "${dry}^{tree}")"', "fail",
      ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry", "refs/replace/{carry}")),
+    ("37 the dry run hides a new branch at a descendant of its commit with a graft", "", "",
+     'child="$(git commit-tree -p "${dry}" -m Descendant "${dry}^{tree}")"\ngit update-ref refs/heads/carry "${child}"\n'
+     'printf \'%s\\n\' "${child}" >> "$(git rev-parse --git-path info/grafts)"', "fail",
+     ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry",)),
+    ("38 the dry run hides a new branch at a descendant of its commit with a shallow entry", "", "",
+     'child="$(git commit-tree -p "${dry}" -m Descendant "${dry}^{tree}")"\ngit update-ref refs/heads/carry "${child}"\n'
+     'printf \'%s\\n\' "${child}" >> "$(git rev-parse --git-path shallow)"', "fail",
+     ("these refs contain its commit {dry}:\nrefs/heads/carry\n",), ("refs/heads/carry",)),
 )
 # The late writes of the cases that make them, by case number: writes the dry run makes in its
 # worktree once the check of step 5, its last step before step 6, has passed, with ${dry} naming the
@@ -701,6 +735,12 @@ class RefComparisonCases(unittest.TestCase):
             for text in texts:
                 if "{after}" in text:
                     self.assertIsNotNone(after_snapshot, f"case {name}: the after snapshot could not be read")
+                if "{child}" in text:
+                    self.assertTrue((fixture.hooks / "child").exists(), f"case {name}: the case recorded no child")
+                    child = (fixture.hooks / "child").read_text(encoding="utf-8").strip()
+                    self.assertEqual(fixture.git("rev-parse", "--verify", f"{child}^").strip(), dry,
+                                     f"case {name}: the HEAD it moved is not at a child of the dry run's commit")
+                    text = text.replace("{child}", child)
                 wanted = text.format(dry=dry, before=snapshot, after=after_snapshot)
                 self.assertIn(wanted, err, f"case {name}: the failure does not name {wanted!r}\n{err}")
         if name.startswith("20 "):
@@ -725,6 +765,14 @@ class RefComparisonCases(unittest.TestCase):
                              dry, "case 36: refs/heads/carry is not at a child of the dry run's commit")
             self.assertEqual(fixture.git("rev-list", "--count", "refs/heads/carry").strip(), "1",
                              "case 36: the replace ref does not hide the parent of refs/heads/carry")
+        if name.startswith(("37 ", "38 ")):
+            parents = [line for line in fixture.git("--no-replace-objects", "cat-file", "-p",
+                                                    "refs/heads/carry").splitlines() if line.startswith("parent ")]
+            self.assertEqual(parents, [f"parent {dry}"],
+                             f"case {name}: refs/heads/carry is not at a child of the dry run's commit")
+            self.assertEqual(fixture.git("rev-list", "--count", "refs/heads/carry").strip(), "1",
+                             f"case {name}: the {'graft' if number == '37' else 'shallow entry'} does not hide "
+                             "the parent of refs/heads/carry")
 
 
 def case_method(case: tuple):
@@ -755,13 +803,15 @@ class FailClosedCases(unittest.TestCase):
     def test_a_folder_that_is_not_a_repository_fails(self):
         with tempfile.TemporaryDirectory() as name:
             tmp = Path(name)
-            env = environment(tmp)
+            env = dict(environment(tmp), GIT_TRACE2=str(tmp / "trace2"))
             wrapper = refusing_git(tmp / "wrapper", env)
             code, out, err = run_script(place_script(tmp / "plain"), env, wrapper)
             self.assert_stops(code, out, err, "release-dry-run: could not read the branch HEAD names", False)
             calls = git_log(wrapper)
             self.assertEqual(len(calls), 1, f"the script made other git calls than the branch read: {calls}")
             self.assertTrue(calls[0].startswith("-C ") and calls[0].endswith(" symbolic-ref -q HEAD"), calls)
+            self.assertEqual(git_starts(tmp / "trace2"), calls,
+                             "git's trace2 log records other runs of git than the branch read")
 
     def test_a_head_that_resolves_to_no_commit_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -769,6 +819,7 @@ class FailClosedCases(unittest.TestCase):
             env = environment(tmp)
             script = place_script(tmp / "unborn")
             self.assertEqual(run_bounded(["git", "init", "-q", "-b", "main"], env, tmp / "unborn")[0], 0)
+            env = dict(env, GIT_TRACE2=str(tmp / "trace2"))
             wrapper = refusing_git(tmp / "wrapper", env)
             code, out, err = run_script(script, env, wrapper)
             self.assert_stops(code, out, err, "release-dry-run: could not resolve HEAD to a commit", False)
@@ -776,6 +827,8 @@ class FailClosedCases(unittest.TestCase):
             self.assertEqual(len(calls), 2, f"the script made other git calls than the 2 HEAD reads: {calls}")
             self.assertTrue(calls[0].startswith("-C ") and calls[0].endswith(" symbolic-ref -q HEAD"), calls)
             self.assertTrue(calls[1].startswith("-C ") and calls[1].endswith(" rev-parse --verify -q HEAD"), calls)
+            self.assertEqual(git_starts(tmp / "trace2"), calls,
+                             "git's trace2 log records other runs of git than the 2 HEAD reads")
 
     def test_a_branch_read_with_another_failing_status_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -836,6 +889,40 @@ class FailClosedCases(unittest.TestCase):
             self.assertEqual(fixture.git("for-each-ref", "refs/tags", "refs/notes"), "")
             code, out, err = run_script(fixture.script, fixture.env)
             self.assertEqual((code, SUCCESS in out), (0, True), err)
+
+
+def signing(env: dict, program: Path) -> dict:
+    """env with commit signing turned on and gpg.program set to program, as GIT_CONFIG_COUNT
+    entries."""
+    env = dict(env)
+    count = int(env["GIT_CONFIG_COUNT"])
+    keys = [env[f"GIT_CONFIG_KEY_{index}"] for index in range(count)]
+    env[f"GIT_CONFIG_VALUE_{keys.index('commit.gpgSign')}"] = "true"
+    env[f"GIT_CONFIG_KEY_{count}"] = "gpg.program"
+    env[f"GIT_CONFIG_VALUE_{count}"] = str(program)
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
+
+
+class SigningCases(unittest.TestCase):
+    def test_signing_turned_on_in_the_configuration_passes(self):
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            called = fixture.tmp / "signed"
+            program = fixture.tmp / "gpg"
+            program.write_text(f"#!/bin/sh\n: > {shlex.quote(str(called))}\nexit 1\n", encoding="utf-8")
+            program.chmod(0o755)
+            env = signing(fixture.env, program)
+            (fixture.tmp / "probe").mkdir()
+            self.assertEqual(run_bounded(["git", "init", "-q"], env, fixture.tmp / "probe")[0], 0)
+            code, _, err = run_bounded(["git", "commit", "-q", "--allow-empty", "-m", "Probe"], env,
+                                       fixture.tmp / "probe")
+            self.assertTrue(code != 0 and called.exists(),
+                            f"the configuration does not make git sign a commit: exit {code}\n{err}")
+            called.unlink()
+            code, out, err = run_script(fixture.script, env)
+            self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
+            self.assertFalse(called.exists(), "the dry run asked git to sign a commit")
 
 
 if __name__ == "__main__":

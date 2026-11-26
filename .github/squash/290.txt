@@ -10,12 +10,15 @@ detached; the commit HEAD resolves to; and every tag and note with its
 object name. It prints both snapshots on a mismatch, so the failure
 names the ref that differs. It then fails when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit,
-read with replace refs turned off. The script names that commit before
+read with replace refs, grafts and the shallow file turned off, so
+none of them can hide such a ref. The script names that commit before
 git commit runs and fails closed unless git commit leaves the
 throwaway worktree's HEAD at it, so a hook that moves that HEAD cannot
-point the check at another commit. A git error in either check, or in
-making or reading the dry-run commit, fails the run with exit 1 and is
-never read as an empty listing.
+point the check at another commit. The git commit-tree that names it
+and the git commit that makes it run with commit signing turned off,
+so the dry-run commit is never signed. A git error in either check,
+or in making or reading the dry-run commit, fails the run with exit 1
+and is never read as an empty listing.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -38,25 +41,28 @@ worktree included, so such a ref put on the dry-run commit does not
 fail it. It does not see anything the exit cleanup does, or a ref
 moved and then restored between the 2 snapshots.
 
-A graft file or a shallow file, neither of which is a ref, can still
-hide a ref from the leak check. A write that another worktree makes
-during the run still fails it when it is a tag or a note, the HEAD of
-the script's worktree or its checked-out branch, or a listed ref put
-on the dry-run commit or a descendant of it. TODO 279 does not record
-which ref moved on the PR 284 gate, so whether this change would have
-avoided that failure is unknown.
+A write that another worktree makes during the run still fails it
+when it is a tag or a note, the HEAD of the script's worktree or its
+checked-out branch, or a listed ref put on the dry-run commit or a
+descendant of it. TODO 279 does not record which ref moved on the PR
+284 gate, so whether this change would have avoided that failure is
+unknown.
 
 tools/test-release-dry-run-refs.py runs the whole script, copied byte
 for byte into throwaway folders with stand-ins for the tools it calls,
-so bash itself reads every line of it. Its 36 ref cases each build a
-repository and make writes at 3 points: a git stand-in first on PATH
-makes another worktree's writes before the dry run adds its worktree,
-and, inside the dry run's git commit once it has made its commit, the
-dry run's own writes, or in cases 28 and 29 another worktree's; the
-stand-in of step 5 makes late writes after that step. Each ref case
-checks that exactly the refs it names change. Its 8 cases on
-fail-closed reading make no writes and require the run to end at the
-read that fails. Residual of the test: stand-ins replace the
+so bash itself reads every line of it. Its 38 ref cases each build a
+repository and make writes at up to 3 points: a git stand-in first on
+PATH makes another worktree's writes before the dry run adds its
+worktree, and, inside the dry run's git commit once it has made its
+commit, the dry run's own writes, or in cases 28 and 29 another
+worktree's; the stand-in of step 5 makes late writes after that step.
+Every ref case but case 31 must reach all 3 points; case 31 must stop
+at the dry-run commit, before the third. Each ref case checks that
+exactly the refs it names change. Its 8 cases on fail-closed reading
+make no writes: 7 require the run to end at the read that fails, and
+1, with no tag and no note, requires it to pass. 1 more case turns
+commit signing on in the configuration and requires the dry run to
+pass without signing. Residual of the test: stand-ins replace the
 packaging, the gates and the site rewrite, which the next step of
 release-dry-run.yml runs with the real tools, and the script runs with
 a git stand-in first on PATH and an environment that the test fixes,
@@ -69,14 +75,18 @@ its default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 44 cases pass. Each of 14 mutants that remove
+against this change all 47 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
 later mutants failed at least 1 case of the 36-case suite, each of 9
 script mutants that the 36-case suite passed fails at least 1 case of
 the 34-case suite and of the 35-case suite, and each of 13 script
 mutants of the capture fix, 8 of which the 35-case suite passed, fails
-at least 1 case of the 44-case suite. The release dry run workflow and
-tools/run_all_checks.sh run it before the dry run, and
-tools/test-run-all-checks.py records the new digest of
+at least 1 case of the 44-case suite. The 47-case suite fails cases
+37 and 38 against the script before the graft and shallow fix, and
+fails each of 6 script mutants that remove 1 rule of the leak check,
+the signing rule of git commit or the HEAD in the message of case 31,
+or that call git by its absolute path before the before snapshot. The
+release dry run workflow and tools/run_all_checks.sh run it before the
+dry run, and tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The
 workflow header now counts 7 test suites.

@@ -16,7 +16,8 @@
 # it), that it moved no tag, no note, and not the HEAD of the script's
 # worktree (the branch HEAD names and the commit HEAD resolves to), and that
 # no ref that git for-each-ref lists from the script's worktree contains the
-# dry-run commit. A ref that another worktree writes during the run fails the
+# dry-run commit, read with replace refs, the graft file and the shallow file
+# turned off. A ref that another worktree writes during the run fails the
 # proof only when it is a tag or a note, when it is the HEAD of the script's
 # worktree or the branch that worktree has checked out, or when it is such a
 # listed ref created or moved onto the dry-run commit or a descendant of it;
@@ -97,13 +98,17 @@ ref_snapshot() {
 # remote-tracking ref or other such ref created or moved onto it, or onto a
 # descendant of it, fails the run. The HEAD and the per-worktree refs of any
 # other worktree, and a ref outside refs/ other than HEAD, such as ORIG_HEAD,
-# of any worktree, are not listed, so they are not checked. Replace refs are
-# turned off for the listing, so a refs/replace/ ref cannot hide a ref that
-# contains COMMIT. A failing git call fails the run and is never read as an
-# empty listing.
+# of any worktree, are not listed, so they are not checked. The listing reads
+# every commit's parents as its object records them: replace refs are turned
+# off, and the graft file and the shallow file are each set to an empty path,
+# which git reads as no file, so no refs/replace/ ref, graft or shallow
+# boundary can give a descendant of COMMIT other parents and hide a ref that
+# contains it. A failing git call fails the run and is never read as an empty
+# listing.
 ref_leak_check() {
   local holders
-  holders="$(git -C "${repo_root}" --no-replace-objects for-each-ref --contains "$1" --format='%(refname)')" \
+  holders="$(GIT_GRAFT_FILE='' git -C "${repo_root}" --no-replace-objects --shallow-file '' \
+    for-each-ref --contains "$1" --format='%(refname)')" \
     || fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"
   [ -z "${holders}" ] \
     || fail "the dry run changed a git ref, which it must never do; these refs contain its commit $1:
@@ -218,7 +223,10 @@ python3 -I -c 'import json,sys; v=json.load(open("cleanlanguage/.claude-plugin/p
 # commit runs can move the HEAD of this worktree, so the run fails unless that
 # HEAD is at the named commit when git commit returns, and the leak check reads
 # the named commit, never a later HEAD. Its object is in the store the worktree
-# shares with repo_root, so repo_root resolves it. Every git call here fails
+# shares with repo_root, so repo_root resolves it. Both git commit-tree and git
+# commit run with commit signing turned off, whatever the configuration asks,
+# since a signature would make the commit git commit makes differ from the
+# named one, so the dry-run commit is never signed. Every git call here fails
 # the run with exit 1 on an error.
 dry_message="Dry run: version ${dry_version}"
 git add -u || fail "could not stage the dry-run version bump"
