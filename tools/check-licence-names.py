@@ -12,8 +12,8 @@ that holds a NUL byte, with no line number.
 
 The tracked files are the entries that git ls-files --stage -z lists for the repository at the
 root, run with a fixed argument list and no shell. File content is data: no line of a file is
-run, parsed as code or printed whole; a problem line shows only fields of an allowlist row,
-written as the output paragraph below states.
+run, parsed as code or printed whole; besides the gate's own words and counts, a problem line
+shows only the fields that the output paragraph below names, written as that paragraph states.
 
 The allowlist, tools/licence-names-allowlist.tsv, is UTF-8 text with LF line ends. A line that is
 empty or starts with # is skipped. Every other line is a row of exactly 4 fields separated by a
@@ -22,30 +22,34 @@ literal text matched with its letter case. The count is canonical ASCII decimal:
 [1-9][0-9]* in full, so a sign, a space, a leading zero, a digit outside ASCII or any other
 spelling is a bad count. It is compared as text with the decimal number of claimed lines, so a
 count of any length is read. A row claims each matching line of its path that holds its marker
-and the marker of no other row of that path. The gate fails on:
+and the marker of no other row of that path.
 
-- a matching line that no row of its path claims (unclaimed);
-- a matching line that holds the markers of 2 or more rows of its path (ambiguous), which none
-  of those rows claims, so a broad marker cannot quietly take lines of another kind;
-- a row whose claimed lines differ in number from its count (stale), fewer or more, which
-  includes a row whose lines are gone; a row of a path that cannot be read is not reported
-  stale, since its lines are unknown;
-- a malformed row: another number of fields, a carriage return, a bad count or owner, an empty
-  marker, a path that is not tracked, a path of a named exception, or the path and marker of an
-  earlier row that has 4 fields and no carriage return, whether or not that earlier row is well
-  formed. A malformed row claims nothing.
+The gate fails on a matching line that no row of its path claims (unclaimed); on a matching line
+that holds the markers of 2 or more rows of its path (ambiguous), which none of those rows claims,
+so a broad marker cannot quietly take lines of another kind; on a row whose claimed lines differ
+in number from its count (stale), fewer or more, which includes a row whose lines are gone, though
+a row of a path that cannot be read is not reported stale, since its lines are unknown; and on a
+malformed row, which claims nothing: a row with a number of fields other than 4, a carriage
+return, a count that is not canonical ASCII decimal, an owner other than unit-2, unit-3 or keep,
+an empty marker, a path that is not tracked, a path of a named exception, or the path and marker
+of an earlier row that has 4 fields and no carriage return, whether or not that earlier row is
+well formed.
 
 The named exceptions are the gate's own 3 files, NAMED_EXCEPTIONS: this gate, the allowlist and
 tools/test-check-licence-names.py. Their lines are not compared, since they must hold the terms.
 Each must be tracked and must hold at least 1 matching line, so the list cannot quietly cover a
 file that needs no exemption.
 
-Fail closed: the gate exits 1, naming the cause, and turns no error into an empty or clean
-result, when git ls-files cannot run, fails or lists nothing; when it gives an entry that cannot
+The gate fails closed, exiting 1 and naming the cause, and turns no error into an empty or clean
+result: when git ls-files cannot run, fails or lists nothing; when it gives an entry that cannot
 be read (one with no tab, or without exactly 3 fields before its tab); when an entry is unmerged
 (a stage other than 0); when a tracked path has a mode other than 100644 or 100755, such as a
 symbolic link (120000) or a submodule (160000); when a tracked path is not a regular file in the
-work tree, or cannot be opened or read; and when the allowlist cannot be read or is not UTF-8.
+work tree (which includes a path that is absolute, a path with a part that is empty, a single dot
+or 2 dots, and a path with a parent at any depth that is a symbolic link or anything else but a
+folder) or cannot be opened or read; and when the allowlist cannot be read or is not UTF-8. When
+git ls-files lists entries and the gate can read none of them, it names each entry and no other
+cause.
 
 Output and exit codes. Each problem goes to standard error, prefixed "check-licence-names: ",
 then, without --list, the line "check-licence-names: checked: N lines in M files; P problem(s)"
@@ -54,10 +58,10 @@ exceptions. Git's message (its standard error, read as UTF-8 with U+FFFD in plac
 are not UTF-8) and an error's text are first made 1 line, each run of whitespace that Python's
 str.split finds written as 1 space, or dropped at either end, and cut to their first 300
 characters. Then, in every field that a problem line or --list shows (a path, count, owner,
-marker, mode, stage, entry of git ls-files, git's message or an error's text), each character
-outside printable ASCII is written once as \\xHH, \\uHHHH or \\UHHHHHHHH, and a backslash as
-\\\\, so no control byte reaches the output and no escape is cut. Exit 0 when the allowlist and
-the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown option (argparse's
+marker, mode, stage, entry of git ls-files, git's exit code, git's message or an error's text),
+each character outside printable ASCII is written once as \\xHH, \\uHHHH or \\UHHHHHHHH, and a
+backslash as \\\\, so no control byte reaches the output and no escape is cut. Exit 0 when the
+allowlist and the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown option (argparse's
 own code). --list prints "path:count" for each file outside the named exceptions with a matching
 line, then "total: N lines in M files". It does not parse the allowlist, so it reports no
 unclaimed or ambiguous line, no stale or malformed row and no allowlist that is not UTF-8. It
@@ -69,10 +73,11 @@ points the gate at another repository.
 
 Not covered: another spelling of a licence, such as one in words without the 3 terms, a term split
 over 2 lines or a lookalike character outside ASCII; untracked and ignored files; the index copy
-of a file whose work-tree copy differs (in CI they are equal); whether a line is a true statement
-of a licence; whether the owner of a row is right, which is reviewed prose; and the named
-exceptions' own lines. A row counts lines per file, so fixing 1 line and adding another of the
-same kind in the same file passes.
+of a file whose work-tree copy differs (in CI they are equal); a folder of the work tree that is a
+mount point and a file that is a hard link, each read where it stands; whether a line is a true
+statement of a licence; whether the owner of a row is right, which is reviewed prose; and the
+named exceptions' own lines. A row counts lines per file, so fixing 1 line and adding another of
+the same kind in the same file passes.
 """
 
 from __future__ import annotations
@@ -129,10 +134,11 @@ def tracked(root: Path, problems: list):
         detail = shown(" ".join(done.stderr.decode("utf-8", "replace").split())[:300])
         problems.append(f"git ls-files exited {done.returncode}, so no tracked file can be listed: {detail}")
         return None
-    entries = {}
+    entries, listed = {}, 0
     for entry in done.stdout.split(b"\0"):
         if not entry:
             continue
+        listed += 1
         info, tab, raw = entry.partition(b"\t")
         fields = info.split()
         if not tab or len(fields) != 3:
@@ -144,34 +150,55 @@ def tracked(root: Path, problems: list):
             problems.append(f"{shown(path)}: an unmerged index entry (stage {shown(stage)}), so the gate "
                             "cannot tell which version is tracked")
         entries.setdefault(path, mode)
-    if not entries:
+    if not listed:
         problems.append("git ls-files lists no tracked file, so there is nothing to compare")
         return None
-    return entries
+    # When git listed entries and each was refused above with its own problem, nothing is compared.
+    return entries or None
 
 
 def read_file(root: Path, path: str, problems: list):
-    """The bytes of the regular work-tree file at path, or None, with a problem, when it cannot be read."""
-    full = root / path
-    try:
-        info = os.lstat(full)
-    except OSError as error:
-        problems.append(f"{shown(path)}: cannot read the tracked file: {error_text(error)}")
+    """The bytes of the regular work-tree file at path, or None, with a problem, when it cannot be read.
+
+    The path is opened 1 part at a time from the root, each part inside the folder opened before it and
+    none through a symbolic link, so no tracked path is read from outside the work tree."""
+    not_regular = f"{shown(path)}: the tracked path is not a regular file in the work tree"
+    parts = path.split("/")
+    # An absolute path has an empty first part.
+    if any(part in ("", ".", "..") for part in parts):
+        problems.append(f"{not_regular}, since it is not a plain relative path")
         return None
-    if not stat.S_ISREG(info.st_mode):
-        problems.append(f"{shown(path)}: the tracked path is not a regular file in the work tree")
-        return None
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
+    folder = None
     try:
-        fd = os.open(full, flags)
+        folder = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        for number, part in enumerate(parts[:-1], 1):
+            not_folder = f"{not_regular}, since its parent {shown('/'.join(parts[:number]))} is not a folder in the work tree"
+            if not stat.S_ISDIR(os.lstat(part, dir_fd=folder).st_mode):
+                problems.append(not_folder)
+                return None
+            inner = os.open(part, folder_flags, dir_fd=folder)
+            os.close(folder)
+            folder = inner
+            if not stat.S_ISDIR(os.fstat(folder).st_mode):
+                problems.append(not_folder)
+                return None
+        if not stat.S_ISREG(os.lstat(parts[-1], dir_fd=folder).st_mode):
+            problems.append(not_regular)
+            return None
+        fd = os.open(parts[-1], os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0), dir_fd=folder)
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                problems.append(f"{shown(path)}: the tracked path is not a regular file in the work tree")
+                problems.append(not_regular)
                 return None
             return handle.read()
     except OSError as error:
         problems.append(f"{shown(path)}: cannot read the tracked file: {error_text(error)}")
         return None
+    finally:
+        if folder is not None:
+            os.close(folder)
 
 
 def matching_lines(data: bytes) -> list:

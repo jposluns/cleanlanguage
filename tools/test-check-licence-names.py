@@ -5,9 +5,11 @@ Each case builds a throwaway git repository in a temporary folder (git init and 
 and no identity are needed, since the gate reads the index and the work tree). The repository
 holds the gate's 3 files: a copy of the gate and of this test from this test's own folder, and an
 allowlist with 1 row, README.md, 1, keep, CC BY-SA 4.0, for README.md, whose 1 matching line holds
-that marker. The gate runs as a separate process, python3 -I with --root, with the git
-configuration of the machine and of the user left out and the search for a repository stopped at
-the temporary folder, so the result depends on the case alone.
+that marker. The gate runs as a separate process, python3 -I with --root, with every environment
+variable whose name starts with GIT_ removed, so no git setting or path reaches it from the
+caller's environment; the git configuration of the machine and of the user left out; git's
+messages in the C locale (LC_ALL=C); no template for git init; and the search for a repository
+stopped at the temporary folder, so the result depends on the case alone.
 
 Every refusal case that runs the gate first runs it on the unchanged repository, a control that
 must exit 0 and print exactly the summary line, or for a case of --list exactly the list. It then
@@ -26,21 +28,23 @@ byte that reaches the output unescaped, in any field, fails the case.
 The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
 line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes stay in their
-line; near misses of the 3 terms match nothing; an untracked file is not read; an unknown option
-exits 2.
+line; near misses of the 3 terms match nothing; an untracked file is not read; an executable
+tracked file is read like any other; an unknown option exits 2.
 
-5 cases call the gate's read_file in a separate python3 -I process that loads the gate by file
-path. 1 reads a regular file as a control. The other 4 replace os.lstat or os.fdopen in that
-process alone, to reach what a race or a failing disk could cause: an open descriptor that is not
-a regular file, a symbolic link that appears after the lstat check, and a read error, once with
-the system's text and once with a text of whitespace, characters outside printable ASCII, a
-backslash and more than 300 characters, whose problem line is compared whole: the text must come
-out as 1 line, cut to 300 characters and then escaped. 3 cases give the gate a stand-in git, a
-Python script alone on its PATH. 1 exits 3 with a message like that text, and its problem line,
-compared whole, must show it the same way. 2 list the repository's 4 files and 2 entries that
-cannot be read, 1 with no tab and 1 with 2 fields before its tab, to the gate and to --list. A
-case for a file whose mode the runner can still read after chmod 000, as root can, is skipped
-and says so.
+5 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
+path: 1 reads a regular file as a control, and 4 replace os.lstat or os.fdopen in that process
+alone to reach an open descriptor that is not a regular file, a symbolic link that appears after
+the lstat check, and a read error, once with the system's text and once with a text of
+whitespace, characters outside printable ASCII, a backslash and more than 300 characters. These
+reach what a race or a failing disk could cause. The problem line of that last text is compared
+whole: the text must come out as 1 line, cut to 300 characters and then escaped. 6 cases give the
+gate a stand-in git, a Python script alone on its PATH: 1 exits 3 with a message like that text;
+1 lists the repository's 4 files and paths that are not plain relative, 1 of them leading out of
+the work tree, to the gate and to --list; and 4 list 3 entries that cannot be read, 1 with no tab,
+1 with 2 fields before its tab and 1 with 4, to the gate and to --list, 2 beside the repository's
+4 files and 2 alone. The problem line of the first, compared whole, must show the message the
+same way. A case for a file whose mode the runner can still read after chmod 000, as root can, is
+skipped and says so.
 
 Exit 0 when every case passes; 1 otherwise.
 """
@@ -80,12 +84,16 @@ ODD_TAIL = "\t\x1b[31m\r\n  d\xe9j\xe0 \\ vu\x0b\x1c\xa0\N{LINE SEPARATOR}" + "\
 ODD_SHOWN = "\\x1b[31m d\\xe9j\\xe0 \\\\ vu "
 ODD_RAW_LENGTH = 16
 # What a stand-in git lists: the 4 files of the repository, as git ls-files --stage -z would, then
-# an entry with no tab and an entry with 2 fields before its tab.
+# an entry with no tab, an entry with 2 fields before its tab and an entry with 4.
 LISTING = b"".join(b"100644 " + b"0" * 40 + b" 0\t" + path.encode("ascii") + b"\0"
                    for path in ("README.md", *NAMED_EXCEPTIONS))
-BAD_ENTRIES = b"100644 n\x1bo 0\0" + b"100644 bad\tmi\x1bss.md\0"
+BAD_ENTRIES = (b"100644 n\x1bo 0\0" + b"100644 bad\tmi\x1bss.md\0"
+               + b"100644 " + b"0" * 40 + b" 0 more\tsur\x1bplus.md\0")
 BAD_ENTRY_PROBLEMS = (PREFIX + "git ls-files gave an entry that cannot be read: 100644 n\\x1bo 0",
-                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 bad\\x09mi\\x1bss.md")
+                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 bad\\x09mi\\x1bss.md",
+                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 " + "0" * 40
+                      + " 0 more\\x09sur\\x1bplus.md")
+NOT_PLAIN = " the tracked path is not a regular file in the work tree, since it is not a plain relative path"
 PROBE = """
 import errno, importlib.util, json, os, sys
 ODD_ERROR = """ + repr(ODD_TAIL) + """
@@ -119,7 +127,7 @@ print(json.dumps({"data": None if data is None else data.decode("latin-1"), "pro
 
 
 class Repo:
-    """A throwaway git repository holding the gate's 3 files, the allowlist and README.md."""
+    """A throwaway git repository of 4 files: the gate's 3 files, the allowlist among them, and README.md."""
 
     def __init__(self, base: Path):
         self.base = base
@@ -129,11 +137,12 @@ class Repo:
         shutil.copyfile(SELF, self.root / "tools" / "test-check-licence-names.py")
         self.write(ALLOWLIST, (HEADER + ROW + "\n").encode("utf-8"))
         self.write("README.md", README)
-        self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
-                        GIT_CEILING_DIRECTORIES=str(base))
-        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
-            self.env.pop(name, None)
-        self.git("init", "-q")
+        # Every GIT_ variable goes, among them GIT_DIR, GIT_CONFIG_COUNT with its keys and values,
+        # and GIT_CONFIG_PARAMETERS, before the settings of the case are put in.
+        self.env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_CEILING_DIRECTORIES=str(base),
+                        LC_ALL="C")
+        self.git("init", "-q", "--template=")
         self.git("add", "-A")
 
     def write(self, rel: str, data: bytes) -> None:
@@ -158,6 +167,15 @@ class Repo:
     def track(self, rel: str, data: bytes) -> None:
         self.write(rel, data)
         self.git("add", "--", rel)
+
+    def track_executable(self, rel: str, data: bytes) -> None:
+        """Track rel as an executable file, and fail unless git lists it with mode 100755."""
+        self.write(rel, data)
+        (self.root / rel).chmod(0o755)
+        self.git("add", "--", rel)
+        listed = self.git("ls-files", "--stage", "--", rel)
+        if not listed.startswith("100755 "):
+            raise AssertionError(f"git does not track {rel} as executable: {listed!r}")
 
     def gate(self, *args: str, env: dict | None = None):
         done = subprocess.run([sys.executable, "-I", str(GATE), "--root", str(self.root), *args],
@@ -261,6 +279,12 @@ class Controls(GateCase):
         self.repo.write("untracked.md", b"ShareAlike\n")
         self.control()
 
+    def test_executable_file_is_read(self):
+        self.repo.track_executable("tool.sh", b"#!/bin/sh\n# CC BY-SA 4.0\n")
+        self.repo.add_row("tool.sh\t1\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+        self.passes("README.md:1\ntool.sh:1\ntotal: 2 lines in 2 files\n", "--list")
+
     def test_unknown_option_exits_2(self):
         code, out, err = self.run_gate("--bogus")
         self.assertEqual((code, out), (2, ""), err)
@@ -286,6 +310,23 @@ class Refusals(GateCase):
                 self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
                 self.repo.git("rm", "-q", "-f", name)
                 self.control()
+
+    def test_term_inside_other_letters_or_digits(self):
+        # The search is for a substring, so a term with a letter or digit on each side still matches.
+        self.control()
+        for number, term in enumerate((b"xBY-SAx", b"9ShareAlike9", b"aCreative Commonsz"), 1):
+            with self.subTest(term=term):
+                name = f"inside{number}.md"
+                self.repo.track(name, b"plain\n" + term + b"\n")
+                self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
+                self.repo.git("rm", "-q", "-f", name)
+                self.control()
+
+    def test_unclaimed_line_in_an_executable_file(self):
+        self.control()
+        self.repo.track_executable("tool.sh", b"#!/bin/sh\n# CC BY-SA 4.0\n")
+        self.refused("tool.sh:2: names a licence term and no allowlist row claims it",
+                     out_text=PREFIX + "checked: 2 lines in 2 files; 1 problem(s)\n")
 
     def test_line_ends_only_at_a_line_feed(self):
         self.control()
@@ -343,7 +384,8 @@ class Refusals(GateCase):
     def test_two_markers_on_one_line(self):
         self.control()
         self.repo.add_row("README.md\t1\tunit-3\tBY-SA 4.0")
-        # A line that 2 rows claim is claimed by neither, so each row, of count 1, claims 0 lines and is stale.
+        # A line that holds the markers of 2 rows is claimed by neither, so each row, of count 1, claims 0
+        # lines and is stale.
         self.refused("README.md:3: holds the markers of allowlist rows 2, 3, so it is ambiguous and no row claims it",
                      also=("allowlist row 2 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s)",
                            "allowlist row 3 (unit-3, marker 'BY-SA 4.0') is stale: it claims 0 line(s)"))
@@ -448,6 +490,66 @@ class Refusals(GateCase):
         self.refused(f"{PREFIX}README.md: the tracked path is not a regular file in the work tree",
                      out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
 
+    def test_parent_that_is_not_a_folder_in_the_work_tree(self):
+        # The file that a parent link would reach holds no term, so a gate that read through the link
+        # would report the row of the tracked file as stale in place of this cause.
+        self.control()
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"no term\n")
+        (self.repo.root / "elsewhere").mkdir()
+        (self.repo.root / "elsewhere" / "notes.md").write_bytes(b"no term\n")
+        cases = (("sub/notes.md", "sub", "a link to a folder outside the work tree"),
+                 ("deep/sub/notes.md", "deep/sub", "a link to a folder outside the work tree"),
+                 ("sub/notes.md", "sub", "a link to a folder inside the work tree"),
+                 ("deep/sub/notes.md", "deep", "a file"))
+        for path, parent, kind in cases:
+            with self.subTest(path=path, parent=parent, kind=kind):
+                self.repo.track(path, b"ShareAlike\n")
+                self.repo.add_row(f"{path}\t1\tkeep\tShareAlike")
+                self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+                shutil.rmtree(self.repo.root / parent)
+                if kind == "a file":
+                    (self.repo.root / parent).write_bytes(b"no term\n")
+                else:
+                    target = outside if "outside" in kind else Path("elsewhere")
+                    os.symlink(target, self.repo.root / parent)
+                self.refused(f"{PREFIX}{path}: the tracked path is not a regular file in the work tree, since its "
+                             f"parent {parent} is not a folder in the work tree",
+                             out_text=PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n")
+                (self.repo.root / parent).unlink()
+                self.repo.git("rm", "-q", "--cached", "--", path)
+                self.repo.set_rows(ROW)
+                self.control()
+
+    def test_list_fails_on_a_parent_that_is_not_a_folder(self):
+        self.repo.track("sub/notes.md", b"ShareAlike\n")
+        self.passes("README.md:1\nsub/notes.md:1\ntotal: 2 lines in 2 files\n", "--list")
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"no term\n")
+        shutil.rmtree(self.repo.root / "sub")
+        os.symlink(outside, self.repo.root / "sub")
+        self.refused(f"{PREFIX}sub/notes.md: the tracked path is not a regular file in the work tree, since its "
+                     "parent sub is not a folder in the work tree", "--list",
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
+    def test_path_that_is_not_plain_relative(self):
+        # Each path would reach a file with a matching line if the gate opened it as written: 1 outside
+        # the work tree and the others README.md.
+        self.control()
+        (self.repo.base / "outside.md").write_bytes(b"CC BY-SA 4.0\n")
+        absolute = str(self.repo.root / "README.md")
+        paths = ("../outside.md", absolute, "./README.md", "tools//../README.md", "tools/../README.md")
+        listing = LISTING + b"".join(b"100644 " + b"0" * 40 + b" 0\t" + path.encode("ascii") + b"\0"
+                                     for path in paths)
+        env = self.fake_git(listing, b"", 0)
+        causes = [f"{PREFIX}{path}:{NOT_PLAIN}" for path in paths]
+        self.refused(causes[0], also=tuple(causes[1:]), env=env,
+                     out_text=PREFIX + f"checked: 1 lines in 1 files; {len(paths)} problem(s)\n")
+        self.refused(causes[0], "--list", also=tuple(causes[1:]), env=env,
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
     def test_work_tree_fifo_at_a_regular_entry(self):
         self.control()
         (self.repo.root / "README.md").unlink()
@@ -549,7 +651,13 @@ class Refusals(GateCase):
         self.control()
         self.refused(BAD_ENTRY_PROBLEMS[0], also=BAD_ENTRY_PROBLEMS[1:],
                      env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
-                     out_text=PREFIX + "checked: 1 lines in 1 files; 2 problem(s)\n")
+                     out_text=PREFIX + "checked: 1 lines in 1 files; 3 problem(s)\n")
+
+    def test_only_entries_that_cannot_be_read(self):
+        # git listed entries, so the gate names each and not an empty listing as a cause.
+        self.control()
+        self.refused(BAD_ENTRY_PROBLEMS[0], also=BAD_ENTRY_PROBLEMS[1:], env=self.fake_git(BAD_ENTRIES, b"", 0),
+                     out_text=PREFIX + "checked: 0 lines in 0 files; 3 problem(s)\n")
 
     def test_empty_index(self):
         self.control()
@@ -572,6 +680,30 @@ class Refusals(GateCase):
         self.refused(BAD_ENTRY_PROBLEMS[0], "--list", also=BAD_ENTRY_PROBLEMS[1:],
                      env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
                      out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
+    def test_list_fails_on_only_entries_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.refused(BAD_ENTRY_PROBLEMS[0], "--list", also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(BAD_ENTRIES, b"", 0), out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_when_git_cannot_run(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        empty = self.repo.base / "no-commands"
+        empty.mkdir()
+        self.refused(f"{PREFIX}cannot run git ls-files, so no tracked file can be listed: FileNotFoundError", "--list",
+                     env=dict(self.repo.env, PATH=str(empty)), out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_outside_a_git_repository(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        shutil.rmtree(self.repo.root / ".git")
+        self.refused(f"{PREFIX}git ls-files exited 128, so no tracked file can be listed: fatal: not a git repository",
+                     "--list", out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_on_an_empty_index(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.repo.git("rm", "-r", "--cached", "-q", ".")
+        self.refused(f"{PREFIX}git ls-files lists no tracked file, so there is nothing to compare", "--list",
+                     out_text="total: 0 lines in 0 files\n")
 
     def test_file_content_is_data(self):
         self.control()
