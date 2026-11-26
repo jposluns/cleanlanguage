@@ -28,7 +28,7 @@ or without exactly 3 fields before its tab); when an entry is unmerged
 100644 or 100755, such as a symbolic link (120000) or a submodule
 (160000); when a tracked path is not a regular file in the work tree
 (which includes a path that is absolute, a path with a part that is
-empty, a single dot or 2 dots, and a path with a parent at any depth
+empty, 1 dot or 2 dots, and a path with a parent at any depth
 that is a symbolic link or anything else but a folder) or cannot be
 opened or read; and when the allowlist cannot be read or is not UTF-8.
 When git ls-files lists entries and the gate can read none of them, it
@@ -67,15 +67,17 @@ requires exit 1, exactly 1 summary line on standard output (for
 lines that match, 1 for 1, the cause and any consequence that the case
 names with its reason, with none left over. Each subtest makes its
 change to the unchanged repository. No run of the gate may write a
-character outside printable ASCII. 5 cases call the gate's file reader
+character outside printable ASCII. 7 cases call the gate's file reader
 in a separate python3 -I process that loads the gate by file path: 1
-reads a regular file as a control, and 4 replace os.lstat or os.fdopen
+reads a regular file as a control, and 6 replace os.lstat or os.fdopen
 in that process alone to reach an open descriptor that is not a
-regular file, a symbolic link that appears after the lstat check, and
-a read error, once with the system's text and once with a text of
-whitespace, characters outside printable ASCII, a backslash and more
-than 300 characters. 6 cases give the gate a stand-in git, a Python
-script alone on its PATH: 1 exits 3 with a message like that text; 1
+regular file, a symbolic link that appears after the lstat check, a
+symbolic link to a folder outside the work tree and a file, each in
+place of a parent after the lstat check, and a read error, once with
+the system's text and once with a text of whitespace, characters
+outside printable ASCII, a backslash and more than 300 characters.
+6 cases give the gate a stand-in git, a Python script alone on its
+PATH: 1 exits 3 with a message like that text; 1
 lists the repository's 4 files and paths that are not plain relative,
 1 of them leading out of the work tree, to the gate and to --list; and
 4 list 3 entries that cannot be read, 1 with no tab, 1 with 2 fields

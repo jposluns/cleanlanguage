@@ -45,7 +45,7 @@ result: when git ls-files cannot run, fails or lists nothing; when it gives an e
 be read (one with no tab, or without exactly 3 fields before its tab); when an entry is unmerged
 (a stage other than 0); when a tracked path has a mode other than 100644 or 100755, such as a
 symbolic link (120000) or a submodule (160000); when a tracked path is not a regular file in the
-work tree (which includes a path that is absolute, a path with a part that is empty, a single dot
+work tree (which includes a path that is absolute, a path with a part that is empty, 1 dot
 or 2 dots, and a path with a parent at any depth that is a symbolic link or anything else but a
 folder) or cannot be opened or read; and when the allowlist cannot be read or is not UTF-8. When
 git ls-files lists entries and the gate can read none of them, it names each entry and no other
@@ -57,8 +57,9 @@ goes to standard output, where N and M count the matching lines and files outsid
 exceptions. Git's message (its standard error, read as UTF-8 with U+FFFD in place of bytes that
 are not UTF-8) and an error's text are first made 1 line, each run of whitespace that Python's
 str.split finds written as 1 space, or dropped at either end, and cut to their first 300
-characters. Then, in every field that a problem line or --list shows (a path, count, owner,
-marker, mode, stage, entry of git ls-files, git's exit code, git's message or an error's text),
+characters. Then, in every field that a problem line or --list shows (a path, line number,
+allowlist row number, count, owner, marker, mode, stage, entry of git ls-files, git's exit code,
+git's message or an error's text),
 each character outside printable ASCII is written once as \\xHH, \\uHHHH or \\UHHHHHHHH, and a
 backslash as \\\\, so no control byte reaches the output and no escape is cut. Exit 0 when the
 allowlist and the tree agree; 1 on any problem; 2 on a bad invocation, such as an unknown option (argparse's

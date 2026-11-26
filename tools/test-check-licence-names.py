@@ -5,11 +5,18 @@ Each case builds a throwaway git repository in a temporary folder (git init and 
 and no identity are needed, since the gate reads the index and the work tree). The repository
 holds the gate's 3 files: a copy of the gate and of this test from this test's own folder, and an
 allowlist with 1 row, README.md, 1, keep, CC BY-SA 4.0, for README.md, whose 1 matching line holds
-that marker. The gate runs as a separate process, python3 -I with --root, with every environment
-variable whose name starts with GIT_ removed, so no git setting or path reaches it from the
-caller's environment; the git configuration of the machine and of the user left out; git's
-messages in the C locale (LC_ALL=C); no template for git init; and the search for a repository
-stopped at the temporary folder, so the result depends on the case alone.
+that marker. The gate runs as a separate process, python3 -I with --root. The gate, git and the
+probe process below each get an environment built from fixed values alone, so no variable of the
+caller's environment, such as XDG_CONFIG_HOME, HOME or a variable whose name starts with GIT_,
+reaches them: PATH, the folder of the git found on the caller's PATH; HOME, an empty folder; the
+git configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
+GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
+search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init takes
+no template (--template=), so no hook, exclude file or description of a template reaches the
+repository. So the result depends on the case alone. The caller's environment is read for 2
+things only, neither of which reaches a process as a setting: where git is (PATH) and where
+Python's tempfile makes the temporary folder. Each stand-in git below and each probe process
+records the environment that it gets, and the case requires it to equal those values exactly.
 
 Every refusal case that runs the gate first runs it on the unchanged repository, a control that
 must exit 0 and print exactly the summary line, or for a case of --list exactly the list. It then
@@ -29,15 +36,22 @@ The controls of their own: the unchanged repository reports 1 line in 1 file and
 --list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
 line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes stay in their
 line; near misses of the 3 terms match nothing; an untracked file is not read; an executable
-tracked file is read like any other; an unknown option exits 2.
+tracked file is read like any other; an unknown option exits 2; git settings in the caller's
+environment that would ignore README.md or point git at another repository change no result; and
+git init leaves .git with no hook, exclude file or description, which only a template gives.
 
-5 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
-path: 1 reads a regular file as a control, and 4 replace os.lstat or os.fdopen in that process
+7 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
+path: 1 reads a regular file as a control, and 6 replace os.lstat or os.fdopen in that process
 alone to reach an open descriptor that is not a regular file, a symbolic link that appears after
-the lstat check, and a read error, once with the system's text and once with a text of
-whitespace, characters outside printable ASCII, a backslash and more than 300 characters. These
+the lstat check, a symbolic link to a folder outside the work tree and a file, each in place of a
+parent after the lstat check, and a read error, once with the system's text and once with a text
+of whitespace, characters outside printable ASCII, a backslash and more than 300 characters. These
 reach what a race or a failing disk could cause. The problem line of that last text is compared
-whole: the text must come out as 1 line, cut to 300 characters and then escaped. 6 cases give the
+whole: the text must come out as 1 line, cut to 300 characters and then escaped. A parent link
+sits at depth 1 and at depth 2, and each parent case runs once with os.O_DIRECTORY and once with
+it removed, as on a system without it, so the gate must open each parent without following a
+link, and must refuse a parent that is not a folder when it opens it and, without
+os.O_DIRECTORY, when it checks the folder that it opened. 6 cases give the
 gate a stand-in git, a Python script alone on its PATH: 1 exits 3 with a message like that text;
 1 lists the repository's 4 files and paths that are not plain relative, 1 of them leading out of
 the work tree, to the gate and to --list; and 4 list 3 entries that cannot be read, 1 with no tab,
@@ -61,8 +75,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
+# Where git is, found once on the caller's PATH: with the temporary folder that tempfile picks, the
+# only value that the tests take from the caller's environment. Its folder is the PATH of each process.
+FOUND_GIT = shutil.which("git")
 GATE = HERE / "check-licence-names.py"
 SELF = HERE / "test-check-licence-names.py"
 ALLOWLIST = "tools/licence-names-allowlist.tsv"
@@ -98,6 +116,7 @@ PROBE = """
 import errno, importlib.util, json, os, sys
 ODD_ERROR = """ + repr(ODD_TAIL) + """
 from pathlib import Path
+environment = dict(os.environ)
 gate_path, mode, root, name, decoy = sys.argv[1:6]
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("gate", gate_path)
@@ -106,6 +125,12 @@ spec.loader.exec_module(gate)
 real_lstat, real_fdopen = os.lstat, os.fdopen
 if mode in ("descriptor", "swap"):
     os.lstat = lambda path, *args, **kwargs: real_lstat(decoy)
+if mode in ("parent", "parent-bare"):
+    # Each part before the last passes the lstat check as the folder decoy does.
+    last = name.rsplit("/", 1)[-1]
+    os.lstat = lambda path, *args, **kwargs: real_lstat(path, *args, **kwargs) if path == last else real_lstat(decoy)
+if mode == "parent-bare" and hasattr(os, "O_DIRECTORY"):
+    del os.O_DIRECTORY
 if mode in ("read-error", "odd-error"):
     text = os.strerror(errno.EIO) if mode == "read-error" else ODD_ERROR
     class Failing:
@@ -122,7 +147,8 @@ if mode in ("read-error", "odd-error"):
     os.fdopen = lambda *args, **kwargs: Failing(real_fdopen(*args, **kwargs))
 problems = []
 data = gate.read_file(Path(root), name, problems)
-print(json.dumps({"data": None if data is None else data.decode("latin-1"), "problems": problems}))
+print(json.dumps({"data": None if data is None else data.decode("latin-1"), "problems": problems,
+                  "environment": environment}))
 """
 
 
@@ -137,11 +163,21 @@ class Repo:
         shutil.copyfile(SELF, self.root / "tools" / "test-check-licence-names.py")
         self.write(ALLOWLIST, (HEADER + ROW + "\n").encode("utf-8"))
         self.write("README.md", README)
-        # Every GIT_ variable goes, among them GIT_DIR, GIT_CONFIG_COUNT with its keys and values,
-        # and GIT_CONFIG_PARAMETERS, before the settings of the case are put in.
-        self.env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
-        self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_CEILING_DIRECTORIES=str(base),
-                        LC_ALL="C")
+        if FOUND_GIT is None:
+            raise AssertionError("no git is on the caller's PATH")
+        home = base / "home"
+        home.mkdir()
+        # Built from fixed values alone, so no variable of the caller's environment, such as
+        # XDG_CONFIG_HOME, whose git/ignore git would read, HOME, GIT_DIR or GIT_CONFIG_COUNT,
+        # reaches git, the gate or the probe.
+        self.env = {
+            "PATH": str(Path(FOUND_GIT).parent),
+            "HOME": str(home),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CEILING_DIRECTORIES": str(base),
+            "LC_ALL": "C",
+        }
         self.git("init", "-q", "--template=")
         self.git("add", "-A")
 
@@ -189,11 +225,25 @@ class GateCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.repo = Repo(Path(self.tmp.name))
+        self.stand_in = None
+
+    def built_environment(self, path: str) -> dict:
+        """The environment that each process of the case must get, with path as its PATH. It is
+        written out here apart from Repo, so a change to the environment that Repo builds fails."""
+        return {"PATH": path, "HOME": str(self.repo.base / "home"), "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CEILING_DIRECTORIES": str(self.repo.base), "LC_ALL": "C"}
 
     def run_gate(self, *args: str, env: dict | None = None):
         code, out, err = self.repo.gate(*args, env=env)
         shown = [char for char in out + err if char != "\n" and not " " <= char <= "~"]
         self.assertEqual(shown, [], f"the output holds characters outside printable ASCII:\n{out}{err}")
+        if env is not None and env is self.stand_in:
+            record = self.repo.base / "git-environment.json"
+            self.assertTrue(record.exists(), "the gate did not run the stand-in git")
+            given = json.loads(record.read_text(encoding="utf-8"))
+            record.unlink()
+            self.assertEqual(given, self.built_environment(str(self.repo.base / "fake-git")),
+                             "the stand-in git got another environment")
         return code, out, err
 
     def passes(self, out_text: str = CONTROL_OUT, *args: str):
@@ -229,22 +279,30 @@ class GateCase(unittest.TestCase):
         return err
 
     def fake_git(self, stdout: bytes, stderr: bytes, code: int) -> dict:
-        """The gate's environment with a stand-in git alone on PATH: a script that writes stdout and
-        stderr and exits with code, whatever its arguments."""
+        """The gate's environment with a stand-in git alone on PATH: a script that records the
+        environment it gets, writes stdout and stderr and exits with code, whatever its arguments."""
         folder = self.repo.base / "fake-git"
         folder.mkdir()
         script = folder / "git"
-        script.write_text(f"#!{sys.executable} -I\nimport sys\nsys.stdout.buffer.write({stdout!r})\n"
-                          f"sys.stderr.buffer.write({stderr!r})\nsys.exit({code})\n", encoding="ascii")
+        record = self.repo.base / "git-environment.json"
+        script.write_text(f"#!{sys.executable} -I\nimport json, os, sys\n"
+                          f"with open({str(record)!r}, 'w', encoding='utf-8') as out:\n"
+                          "    json.dump(dict(os.environ), out)\n"
+                          f"sys.stdout.buffer.write({stdout!r})\n"
+                          f"sys.stderr.buffer.write({stderr!r})\nsys.exit({code})\n", encoding="utf-8")
         script.chmod(0o755)
-        return dict(self.repo.env, PATH=str(folder))
+        self.stand_in = dict(self.repo.env, PATH=str(folder))
+        return self.stand_in
 
     def probe(self, mode: str, name: str, decoy: str):
         done = subprocess.run([sys.executable, "-I", "-c", PROBE, str(GATE), mode, str(self.repo.root), name,
                                str(self.repo.root / decoy)], capture_output=True, stdin=subprocess.DEVNULL,
-                              timeout=60)
+                              env=self.repo.env, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
-        return json.loads(done.stdout)
+        result = json.loads(done.stdout)
+        self.assertEqual(result.pop("environment"), self.built_environment(str(Path(FOUND_GIT).parent)),
+                         "the probe process got another environment")
+        return result
 
 
 class Controls(GateCase):
@@ -293,6 +351,28 @@ class Controls(GateCase):
     def test_read_file_returns_a_regular_file(self):
         self.assertEqual(self.probe("plain", "README.md", "README.md"),
                          {"data": README.decode("latin-1"), "problems": []})
+
+    def test_git_settings_of_the_caller_change_no_result(self):
+        # If any of these reached git, git add -A would leave README.md out, through the excludes file
+        # under XDG_CONFIG_HOME or HOME or the core.excludesFile of GIT_CONFIG_COUNT, or git would look
+        # for the repository at GIT_DIR, so the repository built under them would not pass.
+        caller = self.repo.base / "caller"
+        for folder in (caller / "git", caller / ".config" / "git"):
+            folder.mkdir(parents=True)
+            (folder / "ignore").write_bytes(b"*.md\n")
+        (caller / "exclude").write_bytes(b"*.md\n")
+        settings = {"XDG_CONFIG_HOME": str(caller), "HOME": str(caller), "GIT_DIR": str(caller / "none"),
+                    "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.excludesFile",
+                    "GIT_CONFIG_VALUE_0": str(caller / "exclude")}
+        with mock.patch.dict(os.environ, settings):
+            self.repo = Repo(self.repo.base / "case")
+            self.control()
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_git_init_takes_no_template(self):
+        # A template gives .git its hooks, its info/exclude, which git add reads, and its description.
+        made = sorted(entry.name for entry in (self.repo.root / ".git").iterdir())
+        self.assertEqual([name for name in made if name in ("branches", "description", "hooks", "info")], [], made)
 
 
 class Refusals(GateCase):
@@ -581,6 +661,40 @@ class Refusals(GateCase):
         self.assertEqual(len(result["problems"]), 1, result)
         self.assertTrue(result["problems"][0].startswith(
             f"link.md: cannot read the tracked file: OSError: [Errno {errno.ELOOP}]"), result)
+
+    def test_parent_link_after_the_lstat_check(self):
+        # Each link leads to a folder outside the work tree whose notes.md holds a term, so a reader
+        # that followed it would return those bytes.
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"OUTSIDE BYTES CC BY-SA 4.0\n")
+        (self.repo.root / "deep").mkdir()
+        os.symlink(outside, self.repo.root / "sub")
+        os.symlink(outside, self.repo.root / "deep" / "sub")
+        for mode in ("parent", "parent-bare"):
+            for name in ("sub/notes.md", "deep/sub/notes.md"):
+                with self.subTest(mode=mode, name=name):
+                    result = self.probe(mode, name, "tools")
+                    self.assertIsNone(result["data"], result)
+                    self.assertEqual(len(result["problems"]), 1, result)
+                    self.assertTrue(result["problems"][0].startswith(f"{name}: cannot read the tracked file: "),
+                                    result)
+
+    def test_parent_file_after_the_lstat_check(self):
+        (self.repo.root / "flat").write_bytes(b"no term\n")
+        with self.subTest(mode="parent"):
+            # Opened as a folder, the file is refused at once.
+            result = self.probe("parent", "flat/notes.md", "tools")
+            self.assertIsNone(result["data"], result)
+            self.assertEqual(len(result["problems"]), 1, result)
+            self.assertTrue(result["problems"][0].startswith(
+                f"flat/notes.md: cannot read the tracked file: NotADirectoryError: [Errno {errno.ENOTDIR}]"), result)
+        with self.subTest(mode="parent-bare"):
+            # Without os.O_DIRECTORY the file opens, and the check of what was opened refuses it.
+            self.assertEqual(self.probe("parent-bare", "flat/notes.md", "tools"),
+                             {"data": None, "problems": ["flat/notes.md: the tracked path is not a regular file in "
+                                                         "the work tree, since its parent flat is not a folder in "
+                                                         "the work tree"]})
 
     def test_read_error(self):
         self.assertEqual(self.probe("read-error", "README.md", "README.md"),
