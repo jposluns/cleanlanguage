@@ -68,14 +68,17 @@ submodule are not read; an address inside compressed or encoded binary content p
 since the scan neither decompresses nor decodes, unless that content holds the address as
 it is; an at sign outside ASCII, such as a confusable like the fullwidth or the small
 commercial at sign, passes, and so does an at sign written as an HTML character reference,
-such as the decimal or the named form, or percent-encoded, since the scan searches only for
-the ASCII at sign; an address whose local part ends, right before the at sign, in a byte
-that the local part does not name, such as a letter outside ASCII, a tilde, an exclamation
-mark, or an apostrophe, passes, since its local part is then empty; an address with a
-quoted local part, with a domain written with letters outside ASCII or as a literal in
-square brackets, with an underscore in its domain, or with a dot of its domain written as an
-HTML character reference or percent-encoded, can pass, since the scan reads raw bytes and a
-byte that a run does not name ends that run: the local part, which ends right before the at
+such as the decimal or the named form, percent-encoded, as a backslash escape, such as
+`\x40`, `\100`, or the JSON or JavaScript escape of U+0040, or as quoted-printable `=40`,
+since the scan searches only for the ASCII at sign; an address with a space right after the
+at sign passes, since its domain run is then empty; an address whose local part ends, right
+before the at sign, in a byte that the local part does not name, such as a letter outside
+ASCII, a tilde, an exclamation mark, or an apostrophe, passes, since its local part is then
+empty; an address with a quoted local part, with a domain written with letters outside ASCII
+or as a literal in square brackets, with an underscore in its domain, with a zero-width
+space or a soft hyphen inside its domain, or with a dot of its domain written as an HTML
+character reference or percent-encoded, can pass, since the scan reads raw bytes and a byte
+that a run does not name ends that run: the local part, which ends right before the at
 sign, names ASCII letters, digits, and the 5 characters `.`, `_`, `%`, `+`, and `-`, and the
 domain run, which starts right after it, names ASCII letters, digits, dots, and hyphens;
 surfaces that are not files in this tree, such as a pull request title, description, or

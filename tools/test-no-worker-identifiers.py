@@ -23,10 +23,14 @@ right before it is not 1 of those named for the local part or it starts the data
 candidate, and neither does 1 whose domain run ends no domain. Reading bytes keeps every tracked
 file in scope, images included, with no decode failure.
 
-Work. Each byte is read a bounded number of times: once in a local part, once in a domain run,
-and once more for the letters after a dot. Each candidate is tested with slices no longer than
-its last label or an exempt name. So the work grows linearly with the size of a file, and text
-that holds no at sign costs 1 search for it.
+Work. Each byte is read a bounded number of times. The searches for an at sign, for a dot, and
+for the line feeds that give the line number and the line of a hit each read only from where
+the previous search of their kind stopped; each byte lies in at most 1 local part and 1 domain
+run, and the letters after a dot are read once more to end a domain. Each candidate is tested
+with slices no longer than its last label or an exempt name, and each hit is digested once,
+over its longest candidate that is not exempt, which lies inside its local part and domain run.
+So the work grows linearly with the size of a file, and text that holds no at sign costs 1
+search for it.
 
 The alphabetic last label keeps out text such as an action pinned to a plain version tag, whose
 last label starts with a digit, or to a 40-character commit, whose domain part holds no dot.
@@ -60,16 +64,16 @@ sha256 of the path name, with the digest of the hit, and every other failure for
 hit in its content, an unreadable file, or a stale allowlist entry) names the path by that same
 digest.
 
-Report. A failure names the file, the line number, 1 more than the number of line feeds before
-the hit, and the first 16 hexadecimal digits of the sha256 of the hit, the longest candidate of
-its at sign that is not exempt. It never holds the text of the hit or of its line, and it names
-a path whose name holds a hit only by the digest of that name, so this suite copies no address
-that it catches, in a file or in a path name, into the CI log. Any other path is written as
-printable_path() gives it: each character that is not printable, such as a line feed, a carriage
-return, or the escape byte that starts a terminal escape sequence, and each backslash, is
-written as a backslash escape, so each failure is 1 line of printable text and no control
-character of a path name reaches the CI log. A stale allowlist entry is named by its file, its
-position, and the same digest of its text. On a red run, the tree case prints
+Report. A failure names 3 items: the file; the line number, which is 1 more than the number of
+line feeds before the hit; and the first 16 hexadecimal digits of the sha256 of the hit, the
+longest candidate of its at sign that is not exempt. It never holds the text of the hit or of
+its line, and it names a path whose name holds a hit only by the digest of that name, so this
+suite copies no address that it catches, in a file or in a path name, into the CI log. Any other
+path is written as printable_path() gives it: each character that is not printable, such as a
+line feed, a carriage return, or the escape byte that starts a terminal escape sequence, and
+each backslash, is written as a backslash escape, so each failure is 1 line of printable text
+and no control character of a path name reaches the CI log. A stale allowlist entry is named by
+its file, its position, and the same digest of its text. On a red run, the tree case prints
 every failure in full, 1 to a line after a count, and never through a list comparison, which
 unittest shortens when it is long, so no failure is dropped from the CI log.
 
@@ -104,14 +108,17 @@ the target of a tracked symbolic link, and the content of a submodule are not re
 inside compressed or encoded binary content passes, since the scan neither decompresses nor
 decodes, unless that content holds the address as it is; an at sign outside ASCII, such as a
 confusable like the fullwidth or the small commercial at sign, passes, and so does an at sign
-written as an HTML character reference, such as the decimal or the named form, or
-percent-encoded, since only the byte of the ASCII at sign is searched; an address whose local
+written as an HTML character reference, such as the decimal or the named form, percent-encoded,
+as a backslash escape, such as \\x40, \\100, or the JSON or JavaScript escape of U+0040, or as
+quoted-printable =40, since only the byte of the ASCII at sign is searched; an address with a
+space right after the at sign passes, since its domain run is then empty; an address whose local
 part ends, right before the at sign, in a byte that the local part does not name, such as a
 letter outside ASCII, a tilde, an exclamation mark, or an apostrophe, passes, since its local
 part is then empty; an address with a quoted local part, with a domain written with letters
-outside ASCII or as a literal in square brackets, with an underscore in its domain, or with a dot
-of its domain written as an HTML character reference or percent-encoded, can pass, since a byte
-that the runs above do not name ends a run; a surface that is not a file in this tree, such as a
+outside ASCII or as a literal in square brackets, with an underscore in its domain, with a
+zero-width space or a soft hyphen inside its domain, or with a dot of its domain written as an
+HTML character reference or percent-encoded, can pass, since a byte that the runs above do not
+name ends a run; a surface that is not a file in this tree, such as a
 pull request title, description, or comment, is not reached, and tools/check-pr-text.py carries
 no identifier pattern today. The digest of a hit or of a path name lets a reader who already
 holds a guess of the address confirm the guess; it does not reveal the address. A path name is
@@ -463,7 +470,8 @@ class PatternSelfCheck(unittest.TestCase):
         domain = self.PLACEHOLDER_DOMAIN
         self.assertEqual(len(hits_in(caught(local, domain).encode("ascii"))), 1)
         forms = (
-            ("a seat label or a bare account handle", (local,)),
+            ("a seat label", ("seat-label-example",)),
+            ("a bare account handle", (local, "@" + local)),
             ("a numeric account identifier", ("0123456789" + "01",)),
             ("an address split across lines", (
                 local + "\n" + "@" + domain, caught(local, "\n" + domain),
@@ -474,10 +482,15 @@ class PatternSelfCheck(unittest.TestCase):
                 local + " at " + domain, local + " [at] " + domain, local + " (at) " + domain)),
             ("an at sign outside ASCII, the fullwidth or the small commercial at sign", (
                 local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain)),
-            ("an at sign written as a decimal, hexadecimal, or named character reference", (
+            ("an at sign written as an HTML character reference, decimal, hexadecimal, or named", (
                 local + "&#" + "64;" + domain, local + "&#x" + "40;" + domain,
                 local + "&com" + "mat;" + domain)),
             ("a percent-encoded at sign", (local + "%" + "40" + domain,)),
+            ("an at sign written as a backslash escape", (
+                local + "\\u" + "0040" + domain, local + "\\x" + "40" + domain,
+                local + "\\" + "100" + domain)),
+            ("an at sign written as quoted-printable", (local + "=" + "40" + domain,)),
+            ("a space right after the at sign", (local + "@" + " " + domain,)),
             ("a local part that ends in a letter outside ASCII, a tilde, an exclamation mark, or an"
              " apostrophe", (
                  "jos" + chr(233) + "@" + domain, "a~" + "@" + domain, "a!" + "@" + domain,
@@ -489,7 +502,14 @@ class PatternSelfCheck(unittest.TestCase):
                 caught(local, chr(252) + "ber" + "." + "com"))),
             ("a domain written as a literal in square brackets", (caught(local, "[192.0.2.1]"),)),
             ("an underscore in the domain", (caught(local, "placeholder_mail" + "." + "com"),)),
-            ("a dot of the domain written as a decimal, hexadecimal, or named character reference", (
+            ("a zero-width space inside the domain", (
+                caught(local, "placeholder-mail" + chr(0x200B) + "." + "com"),
+                caught(local, "place" + chr(0x200B) + "holder-mail" + "." + "com"))),
+            ("a soft hyphen inside the domain", (
+                caught(local, "placeholder-mail" + chr(0xAD) + "." + "com"),
+                caught(local, "place" + chr(0xAD) + "holder-mail" + "." + "com"))),
+            ("a dot of the domain written as an HTML character reference, decimal, hexadecimal, or"
+             " named", (
                 caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
                 caught(local, "placeholder-mail" + "&#x" + "2E;" + "com"),
                 caught(local, "placeholder-mail" + "&per" + "iod;" + "com"))),
@@ -1114,6 +1134,34 @@ class FixtureRepository(unittest.TestCase):
         self.assert_tree_output_escapes([
             ("erase" + "\x1b[1A\x1b[2K" + "line.txt", "erase" + "\\x1b[1A\\x1b[2K" + "line.txt"),
             ("csi" + "\x9b1A\x9b2K" + "line.txt", "csi" + "\\u009b1A\\u009b2K" + "line.txt")])
+
+    def test_a_backslash_in_a_path_name_is_escaped_in_the_output(self):
+        # A name that holds the 4 characters \x0a and a name that holds a line feed: with the
+        # backslash escaped, the 2 names give 2 texts.
+        self.assert_tree_output_escapes([
+            ("text" + "\\" + "x0afeed.txt", "text" + "\\x5c" + "x0afeed.txt"),
+            ("text" + "\n" + "feed.txt", "text" + "\\x0a" + "feed.txt")])
+
+    def test_a_byte_that_is_not_valid_utf_8_in_a_path_name_is_escaped_in_the_output(self):
+        # os.fsdecode() gives the byte 0xff as a surrogate, which is written as \xff, the byte. A
+        # file system that refuses a name that is not valid UTF-8, as on macOS, skips this case.
+        rel = os.fsdecode(b"raw" + b"\xff" + b".txt")
+        try:
+            (self.root / rel).write_bytes(b"")
+            (self.root / rel).unlink()
+        except OSError:
+            self.skipTest("the file system refuses a name that is not valid UTF-8")
+        self.assert_tree_output_escapes([(rel, "raw" + "\\xff" + ".txt")])
+
+    def test_a_bidirectional_override_in_a_path_name_is_escaped_in_the_output(self):
+        # A character at U+00A0 or above that is not printable: the right-to-left override,
+        # which would show the rest of the failure line reversed on screen.
+        self.assert_tree_output_escapes([("bidi" + chr(0x202E) + "txt.md", "bidi" + "\\u202e" + "txt.md")])
+
+    def test_an_astral_character_that_is_not_printable_in_a_path_name_is_escaped_in_the_output(self):
+        # A character above U+FFFF that is not printable: a tag character, which a terminal
+        # shows as nothing.
+        self.assert_tree_output_escapes([("tag" + chr(0xE0041) + "name.txt", "tag" + "\\U000e0041" + "name.txt")])
 
 
 def tree_report(failures, read):
