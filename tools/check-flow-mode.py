@@ -193,11 +193,11 @@ PARAGRAPHS = [
     ("FAILED LEG", "FAILED LEG (every family, every tier):",
      "205b52031f15672704d3a10e7b0b367a28cc6f38da3cb97f79d149130af74ae3"),
     ("the CODEX ROLE LIMIT", "CODEX ROLE LIMIT: ",
-     "bf963078ff3d181f83f457ad7aad1294461d8b9f0a17bbbc21bb5be1dcb46843"),
+     "f5b7e46ec3daa0fae964b46f7d2f61047afb2d35a178af421321214aefeab0a7"),
     ("the tiers paragraph", "The tiers (light, substantive, and sensitive)",
      "6a4d7ca0524b52a69295cd0a39d0eb8ab3dfc50a1baa0e0041f09789e9a926d7"),
     ("VERIFIER DIVERSITY", "VERIFIER DIVERSITY (QA, every tier):",
-     "eb1f7fc8e9bb4929122a59dbed2fe04ba7629339393a87f6adb23ae85510a70d"),
+     "97ff9815749b3a1cdc9db681c4f7a1a7143f83b58564f96e0d2312f8704ae290"),
 ]
 DIGEST_LINE = "     \"{}\"),"
 TABLE_FILE = "tools/check-flow-mode.py"
