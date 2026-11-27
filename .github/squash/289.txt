@@ -3,19 +3,17 @@ Hold the kind and span claims of the install-page pin (#289)
 Make the self-checks of tools/test-install-page.py hold what its
 docstrings say about the reader pin of check 7, and word those
 docstrings so that they claim no more than the checks hold. The gate,
-tools/check-install-page.py, is byte identical, so GATE_SHA256 and
-READER_SHA256 are unchanged. GATE_SHA256 stays
-88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7, the
-sha256 of the gate before and after this change. READER_SHA256 maps
-each of the 27 names that the reader pin holds to its own digest, so
-this message lists none of them.
+tools/check-install-page.py, is byte identical, so GATE_SHA256 stays
+88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7, its
+sha256, and READER_SHA256 stays as it is. READER_SHA256 maps each of
+the 27 names that the reader pin holds to its own digest, so this
+message lists none of them.
 
 - Capture tuple, list and dict when the test is imported, as
-  PLAIN_CONTAINERS beside PLAIN_TYPES, and compare the exact type of a
-  value with them by identity in plain_data(). Each kind, plain data
-  included, is then compared by identity with a type that the test
-  captured when it was imported (PLAIN_TYPES, PLAIN_CONTAINERS,
-  PIN_KINDS).
+  PLAIN_CONTAINERS beside PLAIN_TYPES, so that plain_data(), as
+  pin_value() does, compares the exact type of a value by identity
+  with a type that the test captured when it was imported
+  (PLAIN_TYPES, PLAIN_CONTAINERS, PIN_KINDS).
 - Add capture_problems(): with re.Pattern, types.ModuleType, the
   test's REPO_ROOT, str, bytes, int, float, bool, tuple, list or dict
   rebound to a stand-in, 1 name at a time, pin_value() must still
@@ -32,11 +30,11 @@ this message lists none of them.
   for each of the 10 kinds that FINAL_KINDS does not name, an instance
   of a bare subclass, so that each kind test of pin_value() and
   plain_data() must match the exact type. FINAL_KINDS names the kinds
-  of the 3 tuples that Python lets no class subclass (bool, NoneType
+  of these tuples that Python lets no class subclass (bool, NoneType
   and re.Pattern), not every such kind that Python has. A subclass
   that cannot be made fails the check, and so does a kind of
   FINAL_KINDS that Python lets a class subclass or that is in none of
-  the 3 tuples. The 19 committed refused values are kept.
+  these tuples. The 19 committed refused values are kept.
 - Run the 2 replacements of REQUESTED_FILES on 3 base gates: the
   committed gate, one in which its statement shares its line with
   LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
@@ -54,9 +52,11 @@ this message lists none of them.
   an alias holds as a name that it binds, but a name that is read, a
   type comment and the fields of UNBOUND_FIELDS, and of an import only
   the name that each alias binds, so it fails closed and finds a type
-  parameter. Hold it with SECOND_BINDINGS, 21 sources that each bind
+  parameter. Hold it with SECOND_BINDINGS, 26 sources that each bind
   or declare REQUESTED_FILES 1 more time, a nonlocal statement, a
-  dotted import and a from import among them, in each of which it must
+  dotted import, a from import, an augmented and an annotated
+  assignment, an async for, an async with and a type alias among
+  them, in each of which it must
   find the name exactly 2 times, and with LINE_BINDINGS, 17 sources,
   each with the lines at which it must find the name: 14 sources with
   a 2nd or 3rd binding on the line of a binding, by each kind of node
@@ -72,18 +72,27 @@ this message lists none of them.
   after the last line, an assignment inside a false conditional, a for
   over nothing and a parameter of a def. The reader pin must give
   exactly 1 problem for each, which starts by naming the lines at
-  which the gate binds the name.
+  which the gate binds the name: the line of its statement and the
+  line of the source added.
+- Hold the whole problem that the reader pin gives for PIN_PLAIN on
+  each base gate: that REQUESTED_FILES differs from its pin, with the
+  sha256 of reader_pin_text() of the statement and value of PIN_PLAIN
+  and the digest that READER_SHA256 records.
 - Add control_problems(): with a name of the test rebound to a
   stand-in for 1 call, each rule of capture_problems(),
   pin_value_problems() and scope_sentence_problems() that its
-  docstring lists must make that check fail, each of the 2 parts of
-  the shared-line layout and of the reflowed layout included, each
+  docstring lists must make that check fail, each part of the
+  shared-line layout and of the reflowed layout included, each
   broken alone by its own stand-ins, and both parts of the shared-line
   layout broken together, so an edit that removes such a rule from its
   check alone fails. binding_sites() stand-ins that find each binding
-  2 times or 1 line lower tell the exact rules of SECOND_BINDINGS and
-  LINE_BINDINGS from a bound of at least 2 and from a count of lines,
-  and a reader pin stand-in that finds no problem holds GATE_BINDINGS.
+  2 times, the 1st binding of each name 1 more time or each binding 1
+  line lower tell the exact rules of SECOND_BINDINGS and LINE_BINDINGS
+  from another count, from a bound and from a count of lines. Reader
+  pin stand-ins that find no problem, give each problem 2 times or
+  name another line and another digest hold the rules of exactly 1
+  problem of GATE_BINDINGS and of the replacements, with its lines and
+  its digest.
   The rules of the span and of the restore are held by those checks as
   they run. An edit of a check and of its control together rests on
   review (residual 4).
