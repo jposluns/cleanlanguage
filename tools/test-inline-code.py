@@ -226,6 +226,8 @@ CASES = [
     ("a <!--> comment with no handler", before_main_end(HOME, "<!-->x<!-- y -->"), 1),
     ("a <!---> comment with no handler", before_main_end(HOME, "<!--->x<!-- y -->"), 1),
     ("an ordinary comment", before_main_end(HOME, "<!-- y -->"), 0),
+    ("<!--> inside an attribute value, which is no comment", edit(LICENSE, "<h1>", '<h1 title="<!-->">'), 1,
+        "the text '<!-->' in an HTML page"),
     ("an svg element",before_main_end(LICENSE, "<svg></svg>"), 1),
     ("a math element", before_main_end(LICENSE, "<math></math>"), 1),
     ("an iframe element", before_main_end(LICENSE, '<iframe src="/"></iframe>'), 1),

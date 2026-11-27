@@ -3059,6 +3059,19 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
+# The pattern of the text <!--> or <!--->, the same as RAW_SHORT_COMMENT, which check 9 of tools/check-inline-code.py
+# uses. TODO 255 records that the earlier <!--> case of check_disclosure_states() pins Python 3.14.4's html.parser
+# reading of <!--> and fails under Python 3.14.7. That earlier case had the test page of the <!--> case below and
+# expected no failure. TODO 255 records nothing about <!--->. Before parsing, disclosure_d4_section() searches the whole
+# text with this pattern and raises ShortCommentRefused on a match, rather than read <!--> or <!---> with the running
+# interpreter's HTMLParser.
+SHORT_COMMENT = re.compile(r"<!---?>")
+
+
+class ShortCommentRefused(Exception):
+    """disclosure_d4_section()'s refusal of a text that SHORT_COMMENT matches."""
+
+
 def disclosure_d4_section(text: str) -> str | None:
     """D-4's own text in the source of a Disclosure page, or None if the page has no h2 element whose id attribute is
     d-4. The section starts at the first such heading, whatever its other attributes, their order or their quoting, and
@@ -3075,9 +3088,14 @@ def disclosure_d4_section(text: str) -> str | None:
     {{release.sum_block}}, or the rail at <!--rail-->, writes an h2 element or a label into D-4: that element ends the
     section on the built page but not here. With scripting on, a label or an h2 element inside a noscript in D-4 ends
     the section here but not in HTML. On markup that the generator refuses, by its page source grammar or its page
-    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), the two can differ further;
-    for example, HTML closes <!--> at once, where HTMLParser reads a comment to the next --> or --!>, so this reading
-    skips a label or an h2 element between them."""
+    source tree rules (tools/build-site.py, "Page source grammar" and "Page source tree"), this reading and HTML can
+    differ further. Before parsing, this reading searches the whole text with SHORT_COMMENT, the pattern of the text
+    <!--> or <!--->, and raises ShortCommentRefused on a match, so on a text with a match the result of this reading
+    does not come from HTMLParser; TODO 255 records a case that pins Python 3.14.4's reading of <!--> and fails under
+    Python 3.14.7 (SHORT_COMMENT). This reading parses every other text with the running interpreter's HTMLParser."""
+    short = SHORT_COMMENT.search(text)
+    if short is not None:
+        raise ShortCommentRefused(f"the text {short.group(0)}, which the generator refuses")
     starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
     bounds: list[int] = []
 
@@ -3109,18 +3127,29 @@ def check_disclosure_states(failures: list[str]) -> int:
     in D-4 only once, so it binds no sentence that restates a phrase in other words, and no quotation of a phrase while
     D-4 holds that phrase elsewhere, such as the limitation's quotation of the note while the claim quotes it. The test
     pages check the section reading: D-4's heading with an extra attribute, D-4 as the last entry before the blocks that
-    follow the entries, and a page with no D-4 heading, among others."""
+    follow the entries, and a page with no D-4 heading, among others. d4_failures() has 1 except clause around the
+    call of its reader, for ShortCommentRefused, which d4_failures() makes a failure; check_disclosure_states() has no
+    except clause around its calls of d4_failures() with disclosure_d4_section(). A stand-in reader case checks the
+    catch in d4_failures() for 2 exception classes only: the stand-in's ShortCommentRefused must become a failure, and
+    the stand-in's ValueError must pass out of d4_failures() unchanged. So that case fails when the catch is widened to
+    except Exception or to except (ShortCommentRefused, ValueError), and passes when the catch is widened to except
+    (ShortCommentRefused, LookupError, TypeError, AttributeError, AssertionError). That case catches the ValueError
+    itself, so that case does not check that check_disclosure_states() lets such an exception pass."""
     generator = load_module(GENERATOR)
     phrases = {name: getattr(generator, name) for name in ("CHECKSUM_PENDING_NOTE", "CHECKSUM_PUBLISHED_PHRASE")}
     note, published = phrases.values()
 
-    def d4_failures(text: str, where: str) -> list[str]:
-        section = disclosure_d4_section(text)
+    def d4_failures(text: str, where: str, read=disclosure_d4_section) -> list[str]:
+        try:
+            section = read(text)
+        except ShortCommentRefused as error:
+            return [f"{where} holds {error}"]
         if section is None:
             return [f"{where} has no D-4 heading, an h2 element whose id attribute is d-4"]
         return [f"D-4 of {where} lacks {name}, {phrase!r}" for name, phrase in phrases.items() if phrase not in section]
 
     lacks_note = [f"D-4 of the test page lacks CHECKSUM_PENDING_NOTE, {note!r}"]
+    short = "the test page holds the text {}, which the generator refuses"
     entry_4 = f'<p class="lbl sec">Entry 4</p>\n<h2 id="d-4">Four</h2>\n<p>{published} 1.</p>\n'
     blocks = ('<p class="lbl blk">Your browser</p>\n<p>{}</p>\n<p class="lbl blk">Security</p>\n<p>Report.</p>\n'
               '<div class="next"><p class="lbl">Next</p><a class="start" href="/">Home</a>\n</div>\n')
@@ -3153,9 +3182,20 @@ def check_disclosure_states(failures: list[str]) -> int:
         ("no D-4 heading but an h2 element with 2 id attributes, the first x and the second d-4",
          f'<p class="lbl sec">Entry 3</p>\n<h2 id="x" id="d-4">Three</h2>\n<p>{note}; {published} 1.</p>\n',
          ["the test page has no D-4 heading, an h2 element whose id attribute is d-4"]),
-        ("the note after <!--> and an Entry 5 label, which HTMLParser reads as 1 comment up to the next --> (the "
-         "generator refuses <!-->)", entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n'
-         '<h2 id="d-5">Five</h2>\n', []),
+        # The <!--> and <!---> cases expect the refusal (SHORT_COMMENT). The <!----> case expects no refusal and the
+        # lacks-note failure: on the test page of the <!----> case, the note follows an Entry 5 label that follows
+        # <!---->. A reading in which <!----> never closes and the rest of the input becomes comment text puts the note
+        # in D-4, and the case then fails. The case does not show that disclosure_d4_section() parses <!----> as a
+        # comment: disclosure_d4_section() records only where start tags stand, so a reading that passes <!----> on as
+        # text and goes on after <!----> gives the same result.
+        ("the note after <!--> and an Entry 5 label (the generator refuses <!-->)",
+         entry_4 + f'<!--><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
+         [short.format("<!-->")]),
+        ("the note after <!---> and an Entry 5 label (the generator refuses <!--->)",
+         entry_4 + f'<!---><p class="lbl sec">Entry 5</p><!---->\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n',
+         [short.format("<!--->")]),
+        ("the note only after an empty comment <!----> and an Entry 5 label",
+         entry_4 + f'<!----><p class="lbl sec">Entry 5</p>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
         ("the note only after an Entry 5 label on a div element",
          entry_4 + f'<div class="lbl sec">Entry 5</div>\n<p>{note}.</p>\n<h2 id="d-5">Five</h2>\n', lacks_note),
         ("the note directly before the next h2 heading on its line", entry_4 + f'{note}<h2 id="d-5">Five</h2>\n', []),
@@ -3168,6 +3208,29 @@ def check_disclosure_states(failures: list[str]) -> int:
             failures.append(f"disclosure states: the test page with {case} gave {got}, expected {expected}")
     text = (REPO_ROOT / "site-src" / "pages" / "disclosure.html").read_text(encoding="utf-8")
     failures.extend(f"disclosure states: {failure}" for failure in d4_failures(text, "site-src/pages/disclosure.html"))
+    # A stand-in reader that raises, in place of disclosure_d4_section(), checks the catch in d4_failures() for 2
+    # exception classes only: the stand-in's ShortCommentRefused must become the failure line, and the stand-in's
+    # ValueError must pass out of d4_failures() unchanged instead of becoming a case result. So the stand-in reader case
+    # fails when the catch is widened to except Exception or to except (ShortCommentRefused, ValueError), and passes
+    # when the catch is widened to except (ShortCommentRefused, LookupError, TypeError, AttributeError, AssertionError).
+    def raising(error: Exception):
+        def read(text: str) -> str | None:
+            raise error
+        return read
+
+    refused = d4_failures("", "the test page", raising(ShortCommentRefused("a planted refusal")))
+    if refused != ["the test page holds a planted refusal"]:
+        failures.append(f"disclosure states: a stand-in reader that raises ShortCommentRefused gave {refused}, "
+                        "expected ['the test page holds a planted refusal']")
+    stray = ValueError("a planted error")
+    try:
+        got = d4_failures("", "the test page", raising(stray))
+    except ValueError as error:
+        if error is not stray:
+            raise
+    else:
+        failures.append(f"disclosure states: a stand-in reader that raises a ValueError gave {got}, expected the "
+                        "ValueError to pass out")
     sum_url = generator.release_tokens(PIN_VERSION, f"v{PIN_VERSION}", PIN_CHECKSUM)["release.sum_url"]
     states = (("placeholder", generator.PLACEHOLDER_CHECKSUM, "CHECKSUM_PENDING_NOTE"),
               ("published", PIN_CHECKSUM, "CHECKSUM_PUBLISHED_PHRASE"))
@@ -3189,7 +3252,7 @@ def check_disclosure_states(failures: list[str]) -> int:
         failures.append(f"disclosure states: a stand-in rendering empty in both states gave {planted}, expected "
                         f"{expected}")
     failures.extend(f"disclosure states: {failure}" for failure in state_failures(generator.sum_tokens))
-    return 2 + len(cases)
+    return 3 + len(cases)
 
 
 # The pin of the whole verify page: the sha256 of each state's rendering by
