@@ -1,0 +1,28 @@
+Remove the codex seat from the panel of a critical change (#296)
+
+Under the maintainer decision of Entry 257 (2026-11-27), recorded for
+TODO 313, a critical change, a security-control review included, is
+never sent to codex. Its panel is claude plus gemini only, its
+convergence needs both seats, and the third family is recorded as
+unavailable by that decision, which is how this project now meets the
+vendored clause that a critical change adds a third family. A change
+that is not critical keeps its codex seat from the sixth DISCOVERY
+round onwards, on a neutral brief, as Entry 90 set.
+
+.claude/rules/external/verifier-panel.md and the CODEX ROLE LIMIT and
+VERIFIER DIVERSITY paragraphs of .claude/commands/flow.md now state
+that rule. An owed codex seat is filled only from the sixth DISCOVERY
+round of a change that is not critical. The codex stand-in for an
+unreachable gemini, and the reassignment of the seat of any other
+unreachable family to codex, apply only to a change that is not
+critical; on a critical change such a seat stays owed. Entry 257
+supersedes, for a critical change, the codex seat that Entry 124 gave
+it and the coordinator rulings that put codex on its panel.
+
+tools/check-flow-mode.py takes the 2 new pinned sha256 values of those
+paragraphs that the check itself reports; no other line changes.
+
+The vendored verifier-diversity rule and its corpus copy stay
+byte-identical. The definition of a critical change, the floor that it
+is never graded light, the rule that no second pass by a family already
+on the panel fills a seat, and the tests and the lint are unchanged.
