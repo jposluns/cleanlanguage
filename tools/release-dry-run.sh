@@ -2,10 +2,10 @@
 #
 # Proves the local, side-effect-free part of the release path without publishing.
 #
-# The release path does four things a test can prove without touching GitHub:
+# The release path does 4 things a test can prove without touching GitHub:
 # validate and package the skill, rewrite the site at the new release, stamp the
 # modified dates that rewrite implies, and satisfy the gates the site pull
-# request must pass. This script runs all four against a throwaway git worktree,
+# request must pass. This script runs all 4 against a throwaway git worktree,
 # at a synthetic next version, and asserts the results. The side-effecting steps
 # are deliberately absent here: the tag push and gh release stay in the workflow,
 # the site checksum flip and its pull request are performed by the orchestrator
@@ -18,13 +18,18 @@
 # no ref that git for-each-ref lists from the script's worktree contains the
 # dry-run commit, read with replace refs, the graft file and the shallow file
 # turned off. In a shallow clone that reading finds the parents of a commit at
-# the shallow boundary missing, and the leak check can then name a ref that
-# does not contain the dry-run commit and so fail the run;
+# the shallow boundary missing, and the leak check can then fail the run on
+# git's message about them or naming a ref that does not contain the dry-run
+# commit;
 # release-dry-run.yml checks out the whole history, so its run is not
-# shallow. A ref that another worktree writes during the run fails the
-# proof only when it is a tag or a note, when it is the HEAD of the script's
-# worktree or the branch that worktree has checked out, or when it is such a
-# listed ref created or moved onto the dry-run commit or a descendant of it;
+# shallow. The tag and note listing of each snapshot and the listing of the
+# leak check fail the run when git writes anything to standard error while it
+# lists, as when git for-each-ref skips a ref whose name it rejects, with a
+# warning, and still exits 0. A ref that another worktree writes during the
+# run fails the proof only when it is a tag or a note, when it is the HEAD of
+# the script's worktree or the branch that worktree has checked out, or when
+# it is such a listed ref created or moved onto the dry-run commit or a
+# descendant of it;
 # any other such write is outside the proof. The dry-run commit is the commit
 # that git commit-tree writes and prints, which the script saves and step 6
 # reads, never a later HEAD. Every git call of the script after the before
@@ -68,10 +73,11 @@
 # notes other than the branch the script's worktree has checked out, such as
 # another branch, a remote-tracking ref, refs/stash or a refs/replace/ ref; or
 # a move or creation of such a ref at a commit that does not contain the
-# dry-run commit, or at an object that peels to no commit, such as a tree or a
-# blob. It does not see the HEAD or the per-worktree refs of any
-# worktree other than the script's worktree, the throwaway worktree included,
-# or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any worktree,
+# dry-run commit, at an annotated tag that peels to such a commit, or at an
+# object that peels to no commit, such as a tree or a blob. It does not see
+# the HEAD or the per-worktree refs of any worktree other than the script's
+# worktree, the throwaway worktree included, or a ref outside refs/ other than
+# HEAD, such as ORIG_HEAD, of any worktree,
 # the script's worktree included, so such a ref put on the dry-run commit does
 # not fail it. It does not see a write to a ref made after the after snapshot,
 # such as a tag that another worktree makes then, other than a ref that the
@@ -121,7 +127,8 @@ fail() {
 # that step 6 compares: the branch HEAD names, or "detached"; the commit HEAD
 # resolves to; and every tag and note with its object name. An empty tag and
 # note listing is legitimate. Any git error fails the run, so an error is never
-# read as an empty listing.
+# read as an empty listing, and so does any text that git writes to standard
+# error while it lists them (see listed_refs below).
 ref_snapshot() {
   local head_ref head_rc=0 head_commit listing
   head_ref="$(git -C "${repo_root}" symbolic-ref -q HEAD)" || head_rc=$?
@@ -132,9 +139,35 @@ ref_snapshot() {
   esac
   head_commit="$(git -C "${repo_root}" rev-parse --verify -q HEAD)" \
     || fail "could not resolve HEAD to a commit in ${repo_root}"
-  listing="$(git -C "${repo_root}" for-each-ref --format='%(objectname) %(refname)' refs/tags refs/notes)" \
-    || fail "could not list the tags and notes of ${repo_root}"
-  printf 'HEAD ref: %s\nHEAD commit: %s\n%s\n' "${head_ref}" "${head_commit}" "${listing}"
+  listing="$(git -C "${repo_root}" for-each-ref --format='ref %(objectname) %(refname)' refs/tags refs/notes 2>&1)" \
+    || { [ -z "${listing}" ] || printf '%s\n' "${listing}" >&2; fail "could not list the tags and notes of ${repo_root}"; }
+  listed_refs "${listing}" "the tags and notes of ${repo_root}"
+  printf 'HEAD ref: %s\nHEAD commit: %s\n%s\n' "${head_ref}" "${head_commit}" "${listed}"
+}
+
+# listed_refs OUTPUT WHAT: set listed to OUTPUT, the standard output and
+# standard error of a git for-each-ref whose format starts each ref's line with
+# "ref ", with that start taken off each line, or show the other lines of
+# OUTPUT and fail the run, naming WHAT, unless every line of OUTPUT starts so.
+# git for-each-ref skips a ref whose name it rejects, with a warning on
+# standard error, and still exits 0, so a listing during which git writes to
+# standard error fails the run and is never read as complete without that ref.
+listed_refs() {
+  local line other=""
+  listed=""
+  if [ -n "$1" ]; then
+    while IFS= read -r line; do
+      case "${line}" in
+        "ref "*) listed+="${line#ref }"$'\n' ;;
+        *) other+="${line}"$'\n' ;;
+      esac
+    done <<< "$1"
+  fi
+  if [ -n "${other}" ]; then
+    printf '%s' "${other}" >&2
+    fail "git wrote other text than the listing of $2, such as a warning for a ref that it skips, so that listing cannot be read as complete"
+  fi
+  listed="${listed%$'\n'}"
 }
 
 # ref_leak_check COMMIT: fail unless no ref that git for-each-ref lists from
@@ -151,17 +184,22 @@ ref_snapshot() {
 # which git reads as no file, so no refs/replace/ ref, graft or shallow
 # boundary can give a descendant of COMMIT other parents and hide a ref that
 # contains it. In a shallow clone, git then finds the parents of a commit at
-# the shallow boundary missing, and it can list a ref that does not contain
-# COMMIT, so there the run can fail naming refs that do not contain it. A
-# failing git call fails the run and is never read as an empty listing.
+# the shallow boundary missing, and it can say so on standard error or list a
+# ref that does not contain COMMIT, so there the run can fail on that text or
+# naming refs that do not contain it. A failing git call fails the run and is
+# never read as an empty listing, and so does any text that git writes to
+# standard error while it lists them, such as the warning with which it skips
+# a ref whose name it rejects (listed_refs).
 ref_leak_check() {
   local holders
   holders="$(GIT_GRAFT_FILE='' git -C "${repo_root}" --no-replace-objects --shallow-file '' \
-    for-each-ref --contains "$1" --format='%(refname)')" \
-    || fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"
-  [ -z "${holders}" ] \
+    for-each-ref --contains "$1" --format='ref %(refname)' 2>&1)" \
+    || { [ -z "${holders}" ] || printf '%s\n' "${holders}" >&2
+         fail "could not list the refs of ${repo_root} that contain the dry-run commit $1"; }
+  listed_refs "${holders}" "the refs of ${repo_root} that contain the dry-run commit $1"
+  [ -z "${listed}" ] \
     || fail "no git ref may contain the dry-run commit at the end of the run; these refs contain its commit $1:
-${holders}"
+${listed}"
 }
 
 dry_date="${DRY_DATE:-$(date -u +%F)}"
@@ -301,8 +339,9 @@ turn_off_filters "${filter_drivers}${attributes_drivers}"
 # as HUP, INT or TERM causes included. A removal that fails there leaves its
 # entry behind. A signal that no trap can catch, such as KILL, leaves both
 # behind, and a signal that ends the run after mktemp has made the file or the
-# folder and before the script holds its name leaves that entry behind, since
-# the exit cleanup then has no name to remove.
+# folder and before the script holds its name, or after the script has cleared
+# the name of the file and before it has removed the file, as below, leaves
+# that entry behind, since the exit cleanup then has no name to remove.
 attr_source_log=""
 worktree=""
 cleanup() {
@@ -330,11 +369,14 @@ trap cleanup EXIT
 # in a shell variable, since a command substitution drops every NUL byte and
 # every newline at the end of what it captures. On a failure the file is
 # shown through cat -v, which shows a NUL byte as ^@ and a carriage return as
-# ^M. The run removes the file before it goes on or fails, and then clears its
-# name, so that the exit cleanup cannot remove a file that another process
-# makes later under that name; the exit cleanup above tries to remove it on any
-# other exit once the script holds its name, such as one that a signal causes
-# while git runs.
+# ^M. Before it goes on or fails, the run clears the name of the file, so that
+# the exit cleanup cannot remove a file that another process makes later under
+# that name, and then tries to remove the file itself, and fails if that
+# removal fails, which leaves the file behind; a signal that ends the run
+# between that clearing and that removal leaves the file behind too, since the
+# exit cleanup then has no name to remove. The exit cleanup above tries to
+# remove the file on any other exit once the script holds its name, such as one
+# that a signal causes while git runs.
 attr_source_log="$(mktemp)" \
   || fail "could not make a temporary file for the standard error of the check of GIT_ATTR_SOURCE"
 attr_source_rc=0
@@ -343,8 +385,9 @@ GIT_ATTR_SOURCE=.. LC_ALL=C git "${git_off[@]}" check-attr filter -- tools/relea
 attr_source_cmp=0
 printf 'fatal: bad --attr-source or GIT_ATTR_SOURCE\n' | cmp -s - "${attr_source_log}" || attr_source_cmp=$?
 attr_source_err="$(cat -v "${attr_source_log}" && printf '.')" || attr_source_err="."
-rm -f "${attr_source_log}" || fail "could not remove the temporary file ${attr_source_log}"
+attr_source_file="${attr_source_log}"
 attr_source_log=""
+rm -f "${attr_source_file}" || fail "could not remove the temporary file ${attr_source_file}"
 attr_source_err="${attr_source_err%.}"
 if [ "${attr_source_rc}" -eq 0 ]; then
   fail "git ignores GIT_ATTR_SOURCE, so the dry run cannot keep the attribute files of its worktree out of reach"
@@ -359,7 +402,7 @@ fi
 
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
 # strict rule the release gates apply; a malformed first line is rejected here,
-# never skipped to a later matching line. One shared strict extractor,
+# never skipped to a later matching line. 1 shared strict extractor,
 # tools/skill-version.py, does the reading and validation for every site, so the
 # shell, the workflow, and the Python gates agree byte for byte (including on a
 # NUL, which the old capture-then-sed form silently stripped). The raw blob is
@@ -392,7 +435,7 @@ grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/ski
 # A real bump above the undated baseline also stamps the Released line (item 26)
 # with the UTC day of the release, so stamp the dry-run date directly after the
 # Version line: insert the line when HEAD carries none (the undated baseline)
-# and replace its value otherwise, keeping the two-space hard break. The
+# and replace its value otherwise, keeping the 2-space hard break. The
 # shared extractor then confirms the stamped value.
 python3 -I - "${dry_date}" <<'PYDATE'
 import sys
@@ -435,7 +478,7 @@ esac
   || fail "could not set the dry-run Released date in SKILL.md (read ${stamped}, wanted ${dry_date})"
 
 # The plugin manifest carries the same version, and release-package.sh asserts the
-# two agree. A real release bumps both together, so the dry run must too, or it
+# 2 agree. A real release bumps both together, so the dry run must too, or it
 # would fail on a mismatch it created itself.
 python3 -I - "${dry_version}" <<'PYVER'
 import json, pathlib, sys
@@ -505,20 +548,20 @@ sj = pathlib.Path("site-src/site.json"); t = sj.read_text(encoding="utf-8")
 for page_id in ("install", "verify"):
     t, n = re.subn(r'(\{"id": "' + page_id + r'", [^\n]*?"modified": ")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
     if n != 1:
-        sys.exit(f"seed: expected one modified date for {page_id} in site-src/site.json, got {n}")
+        sys.exit(f"seed: expected 1 modified date for {page_id} in site-src/site.json, got {n}")
 sj.write_text(t, encoding="utf-8")
 for f in ("site/install/index.html", "site/verify/index.html"):
     p = pathlib.Path(f); t = p.read_text(encoding="utf-8")
     t, a = re.subn(r'(<meta property="article:modified_time" content=")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
     t, b = re.subn(r'("dateModified":\s*")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
     if a != 1 or b != 1:
-        sys.exit(f"seed: expected one modified stamp and one dateModified in {f}, got {a} and {b}")
+        sys.exit(f"seed: expected 1 modified stamp and 1 dateModified in {f}, got {a} and {b}")
     p.write_text(t, encoding="utf-8")
 sm = pathlib.Path("site/sitemap.xml"); t = sm.read_text(encoding="utf-8")
 for slug in ("install", "verify"):
     t, n = re.subn(r'(<loc>https://cleanlanguage\.ai/' + slug + r'/</loc>\s*<lastmod>)\d{4}-\d{2}-\d{2}(</lastmod>)', rf'\g<1>{d}\g<2>', t, count=1)
     if n != 1:
-        sys.exit(f"seed: expected one sitemap lastmod for /{slug}/, got {n}")
+        sys.exit(f"seed: expected 1 sitemap lastmod for /{slug}/, got {n}")
 sm.write_text(t, encoding="utf-8")
 PYSEED
 grep -q "article:modified_time\" content=\"${seed_date}\"" site/install/index.html \
@@ -640,7 +683,7 @@ assert_contains site/_redirects "^/privacy/ https://posluns.ca/privacy/ 301$"
 assert_contains site/_redirects "^/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301$"
 assert_contains site/_redirects "^/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301$"
 # grep -q exits on its first match, so the entry is captured first and read
-# from a here-string: a pipe into it would rest on the writer making a single
+# from a here-string: a pipe into it would rest on the writer making only 1
 # write, and any later write would take a SIGPIPE that pipefail reports.
 for name in install verify; do
   entry="$(grep -A1 "<loc>https://cleanlanguage.ai/${name}/</loc>" site/sitemap.xml)" \

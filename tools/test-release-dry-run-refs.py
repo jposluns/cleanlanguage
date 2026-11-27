@@ -32,7 +32,12 @@ GIT_ATTR_SOURCE that names no tree with exit 128 and its own message for that re
 the HEAD of the throwaway worktree is at that commit once the script has moved it there, and the
 move fails unless that HEAD is still at the parent the script read. The leak check reads with
 replace refs, the graft file and the shallow file turned off, so no refs/replace/ ref, graft or
-shallow boundary can hide a ref that contains the commit. The git commit-tree that makes the
+shallow boundary can hide a ref that contains the commit; in a shallow clone, git then finds the
+parents of a commit at the shallow boundary missing, so there the leak check can fail the run on
+git's message about them or naming a ref that does not contain the commit, and no case runs in a
+shallow clone. The tag and note listing of each snapshot and the listing of the leak check fail
+the run when git writes anything to standard error while it lists, as when git for-each-ref skips
+a ref whose name it rejects, with a warning, and still exits 0. The git commit-tree that makes the
 commit runs with commit signing turned off, so the dry run's commit is never signed.
 
 The script's header states the residual of the proof in these words:
@@ -40,10 +45,11 @@ The script's header states the residual of the proof in these words:
 Residual: the proof does not catch the deletion of any ref outside tags and notes other than the
 branch the script's worktree has checked out, such as another branch, a remote-tracking ref,
 refs/stash or a refs/replace/ ref; or a move or creation of such a ref at a commit that does not
-contain the dry-run commit, or at an object that peels to no commit, such as a tree or a blob. It
-does not see the HEAD or the per-worktree refs of any worktree other than the script's worktree,
-the throwaway worktree included, or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any
-worktree, the script's worktree included, so such a ref put on the dry-run commit does not fail it.
+contain the dry-run commit, at an annotated tag that peels to such a commit, or at an object that
+peels to no commit, such as a tree or a blob. It does not see the HEAD or the per-worktree refs of
+any worktree other than the script's worktree, the throwaway worktree included, or a ref outside
+refs/ other than HEAD, such as ORIG_HEAD, of any worktree, the script's worktree included, so such
+a ref put on the dry-run commit does not fail it.
 It does not see a write to a ref made after the after snapshot, such as a tag that another worktree
 makes then, other than a ref that the leak check, which follows that snapshot, finds to contain the
 dry-run commit. It does not see anything the exit cleanup does, or a ref moved and then restored
@@ -260,8 +266,18 @@ GIT_ATTR_SOURCE, once it has recorded the entries that mktemp names in the run's
 requires that entry list to hold 1 entry, the file in which the check writes standard error, the
 run to stop before its read of the version, and the run to leave in its TMPDIR no entry that
 mktemp names, so the script must remove that file on an exit that such a signal causes while the
-check's git call runs. No case sends a signal while mktemp runs, or makes a removal of the exit
-cleanup fail.
+check's git call runs. 1 more signal case ends a run with TERM, which an rm stand-in, first on PATH,
+sends to the process group of the run once it has removed that file, when the script removes it,
+and has made a new file under its name, as another process that mktemp gives that name would; the
+case requires the run to leave in its TMPDIR only that new file, with the text the stand-in wrote
+in it, so the script must clear the name of the file before it removes it. No case sends a signal
+while mktemp runs, or makes a removal of the exit cleanup fail.
+
+1 more case, the skipped-ref case, writes a ref whose name git rejects, as a file of the ref store,
+before the run: a tag, which the tag and note listing of the before snapshot skips with a warning,
+and, in turn, a branch, which only the leak check lists. The run must fail with exit 1 at that
+listing, with the script's message that git wrote other text than the listing, after git's warning
+that names the ref, and print the version line only in the run with the branch.
 
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
@@ -330,7 +346,9 @@ the first 3, which list the filter drivers, find the info/attributes file and na
 before the attribute and filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE
 that names no tree, which sets its own, also to run with GIT_ATTR_NOSYSTEM set, GIT_ATTR_SOURCE set
 to the empty tree, core.attributesFile set to the null device and the commands of both configured
-filter drivers empty; every run of git, the reads of the 2 snapshots and the leak check included,
+filter drivers empty; each of those 4 is exempt from these settings only in the argument form and
+with the GIT_ATTR_SOURCE that the script gives it, and only once, so a later run in that form must
+run with them; every run of git, the reads of the 2 snapshots and the leak check included,
 must run with lazy fetching turned off; the reads must start no program, and the other runs no
 program other than git, and no automatic maintenance or fetch, although the case's gc.auto and
 maintenance.auto ask for it. A run in the form of those reads is a git symbolic-ref, rev-parse or
@@ -830,6 +848,38 @@ def signalling_git(folder: Path, env: dict, name: str, entries: Path) -> Path:
         "fi\n"
         f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
+    return folder
+
+
+def signalling_rm(folder: Path, env: dict, name: str) -> Path:
+    """A folder holding an rm stand-in that, the first time it is given a regular file of TMPDIR whose
+    name starts with tmp., as the script's removal of the file of its check of GIT_ATTR_SOURCE is,
+    removes that file with rm, writes the line later to a new file under its name, as another process
+    that mktemp gives that name would, then sends the signal name to its process group, which is that
+    of the run, and exits 1 if that signal does not end it; it runs rm for every other call."""
+    real = shutil.which("rm", path=env["PATH"])
+    if real is None:
+        raise AssertionError("no rm on PATH")
+    folder.mkdir()
+    mark = shlex.quote(str(folder / "signalled"))
+    (folder / "rm").write_text(
+        "#!/bin/sh\n"
+        f"if [ ! -e {mark} ]; then\n"
+        "  for arg in \"$@\"; do\n"
+        "    case \"${arg}\" in\n"
+        "      \"${TMPDIR}\"/tmp.*)\n"
+        "        if [ -f \"${arg}\" ]; then\n"
+        f"          : > {mark}\n"
+        f"          {shlex.quote(real)} -f \"${{arg}}\" || exit 1\n"
+        "          printf 'later\\n' > \"${arg}\"\n"
+        f"          kill -{name} 0\n"
+        "          exit 1\n"
+        "        fi ;;\n"
+        "    esac\n"
+        "  done\n"
+        "fi\n"
+        f"exec {shlex.quote(real)} \"$@\"\n", encoding="utf-8")
+    (folder / "rm").chmod(0o755)
     return folder
 
 
@@ -1548,6 +1598,47 @@ class SignalCases(unittest.TestCase):
                                  f"the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR after "
                                  f"{name_of_signal} (exit {code})")
 
+    def test_a_signal_during_the_removal_of_the_file_of_the_check_removes_no_later_file(self):
+        # TERM, sent to the process group of the run by an rm stand-in once it has removed the file in
+        # which the check of GIT_ATTR_SOURCE writes standard error and has made a new file under its
+        # name, as another process that mktemp gives that name would, ends the run. The exit cleanup
+        # must not remove that new file, so the script must clear the name before it removes the file.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            stand_in = signalling_rm(fixture.tmp / "stand-in", fixture.env, "TERM")
+            code, out, err = run_script(fixture.script, fixture.env, stand_in)
+            self.assertTrue((stand_in / "signalled").exists(), f"the rm stand-in was not run\n{out}{err}")
+            self.assertNotEqual(code, 0, f"the run did not end with a failure\n{out}{err}")
+            self.assertNotIn(SUCCESS, out)
+            self.assertNotIn(VERSION_LINE, out, f"the run went on past the check\n{out}{err}")
+            left = temporary_files(fixture.tmp)
+            self.assertEqual(len(left), 1, f"the run did not leave in TMPDIR only the file made later: {left}")
+            self.assertEqual((fixture.tmp / left[0]).read_text(encoding="utf-8"), "later\n",
+                             "the file left in TMPDIR is not the file made later under that name")
+
+
+class SkippedRefCases(unittest.TestCase):
+    def test_a_ref_that_git_skips_with_a_warning_fails(self):
+        # git for-each-ref skips a ref whose name it rejects, with a warning on standard error, and still
+        # exits 0. A tag of such a name, which the tag and note listing of the before snapshot skips, must
+        # fail the run there, before its read of the version, and a branch of such a name, which only the
+        # leak check lists, must fail it there, after that read, each with the script's message.
+        for kind, ref, message, reached_version in (
+                ("tag", "refs/tags/bad..name",
+                 "release-dry-run: git wrote other text than the listing of the tags and notes of ", False),
+                ("branch", "refs/heads/bad..name",
+                 "release-dry-run: git wrote other text than the listing of the refs of ", True),
+        ):
+            with self.subTest(ref=kind), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                head = fixture.git("rev-parse", "HEAD").strip()
+                (fixture.main / ".git" / ref).write_text(head + "\n", encoding="ascii")
+                code, out, err = run_script(fixture.script, fixture.env)
+                self.assertEqual((code, SUCCESS in out), (1, False), f"exit {code}\n{out}{err}")
+                self.assertTrue(last_line(err).startswith(message), f"the run did not end with {message!r}\n{err}")
+                self.assertIn(ref, err.rstrip("\n").split("\n")[-2], f"git's warning does not name {ref}\n{err}")
+                self.assertEqual(VERSION_LINE in out, reached_version, f"{out}{err}")
+
 
 class HeldCommitCases(unittest.TestCase):
     def test_a_tag_or_note_that_already_holds_the_dry_run_commit_fails(self):
@@ -2044,8 +2135,10 @@ class ConfiguredProgramCases(unittest.TestCase):
         # filter drivers, find the info/attributes file and name the empty tree before the attribute and
         # filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, must
         # also run with GIT_ATTR_NOSYSTEM, GIT_ATTR_SOURCE set to the empty tree, core.attributesFile set
-        # to the null device and both configured filter drivers turned off. Every run in the form of those
-        # reads must run with lazy fetching turned off and start no program.
+        # to the null device and both configured filter drivers turned off; each of those 4 is exempt
+        # only in the argument form and with the GIT_ATTR_SOURCE that the script gives it, and only once.
+        # Every run in the form of those reads must run with lazy fetching turned off and start no
+        # program.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             trace = fixture.tmp / "trace2"
@@ -2084,6 +2177,17 @@ class ConfiguredProgramCases(unittest.TestCase):
                    "GIT_ATTR_NOSYSTEM": "1", "GIT_ATTR_SOURCE": EMPTY_TREE, "GIT_NO_LAZY_FETCH": "1"}
             early = ("core.hookspath", "core.fsmonitor", "GIT_NO_LAZY_FETCH")
             reads = {"symbolic-ref", "rev-parse", "for-each-ref"}
+            # The 4 runs that need only the early settings, each in the argument form that the script gives
+            # it, after the options of git_off, with the GIT_ATTR_SOURCE that it runs with: the first 3,
+            # before the attribute and filter settings exist, and the check that git refuses a
+            # GIT_ATTR_SOURCE that names no tree. Each is exempt from the other settings only in that form
+            # and only once, so a later run in that form, or a repeat of one of them, must run with them.
+            git_off = ["--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+            exempt = {("config", "--name-only", "--get-regexp", "^filter\\."): None,
+                      ("rev-parse", "--git-path", "info/attributes"): None,
+                      ("hash-object", "-t", "tree", "--stdin"): None,
+                      ("check-attr", "filter", "--", "tools/release-dry-run.sh"): ".."}
+            exempted = []
             seen = []
             for run in runs.values():
                 argv = run["argv"] or []
@@ -2098,8 +2202,10 @@ class ConfiguredProgramCases(unittest.TestCase):
                 # include a file that lies in a worktree; the check that git refuses a GIT_ATTR_SOURCE that
                 # names no tree sets its own.
                 wanted = off
-                if ("--get-regexp" in argv or "--git-path" in argv or "hash-object" in argv
-                        or "check-attr" in argv and "--source" not in argv):
+                form = tuple(argv[len(git_off):]) if argv[:len(git_off)] == git_off else None
+                if (form in exempt and form not in exempted
+                        and run["params"].get("GIT_ATTR_SOURCE") == exempt[form]):
+                    exempted.append(form)
                     wanted = {key: off[key] for key in early}
                 self.assertEqual({key: run["params"].get(key) for key in wanted}, wanted,
                                  f"git {' '.join(argv)} ran without every program turned off")

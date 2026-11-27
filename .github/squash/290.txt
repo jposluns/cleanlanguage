@@ -12,9 +12,13 @@ names the ref that differs. It then fails when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit,
 read with replace refs, grafts and the shallow file turned off, so
 none of them can hide such a ref; in a shallow clone that reading can
-name a ref that does not contain the commit, and so fail the run.
+fail the run on git's message about the missing parents or naming a
+ref that does not contain the commit.
 release-dry-run.yml checks out the whole history, so its run is not
-shallow. Neither failure says who wrote the
+shallow. A tag and note listing or a leak-check listing during which
+git writes to standard error fails the run, since git for-each-ref
+skips a ref whose name it rejects with a warning and still exits 0.
+Neither failure says who wrote the
 ref, since another worktree's write, or a ref that held the dry-run
 commit before the run, fails the run too. The script makes that commit
 with git commit-tree, which prints the name of the commit it writes,
@@ -65,9 +69,11 @@ tries to remove that file and the throwaway worktree once the script
 holds the name of each; a removal that fails leaves its entry behind,
 and so does a signal that ends the run after mktemp has made the file
 or the worktree's folder and before the script holds its name, or one
-that no trap can catch, such as KILL. Once the run has removed that
-file itself, it clears the file's name, so the exit cleanup cannot
-remove a file that another process makes later under that name.
+that no trap can catch, such as KILL. Before the run removes that file
+itself, it clears the file's name, so the exit cleanup cannot remove a
+file that another process makes later under that name; a signal that
+ends the run between that clearing and that removal leaves the file
+behind, and so does a failure of that removal, which fails the run.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -80,8 +86,9 @@ Residual: the proof does not catch the deletion of any ref outside
 tags and notes other than the branch the script's worktree has checked
 out, such as another branch, a remote-tracking ref, refs/stash or a
 refs/replace/ ref; or a move or creation of such a ref at a commit
-that does not contain the dry-run commit, or at an object that peels
-to no commit, such as a tree or a blob. It does not see the HEAD or
+that does not contain the dry-run commit, at an annotated tag that
+peels to such a commit, or at an object that peels to no commit, such
+as a tree or a blob. It does not see the HEAD or
 the per-worktree refs of any worktree other than the script's
 worktree, the throwaway worktree included, or a ref outside refs/
 other than HEAD, such as ORIG_HEAD, of any worktree, the script's
@@ -124,10 +131,15 @@ requires its check of GIT_ATTR_SOURCE to run with LC_ALL set to C,
 its temporary file to be gone before the run goes on, and a file made
 later under that file's name to be left in place, 1 more ends the
 run with HUP, INT or TERM during that check and requires that file to
-be gone, and 1 more leaves tags and notes refs on the dry-run commit
-of an earlier run, or on a child of it, and requires the leak check to
-name them. 1 more case turns commit signing on in the configuration
-and requires the dry run to pass without signing, and 1 more writes 8
+be gone, 1 more ends it with TERM once the script has removed that
+file and another file is made under its name, and requires that other
+file to be left in place, 1 more writes a tag, and in turn a branch,
+whose name git rejects, and requires the run to fail at the listing
+that skips it, and 1 more leaves tags and notes refs on the dry-run
+commit of an earlier run, or on a child of it, and requires the leak
+check to name them. 1 more case turns commit signing on in the
+configuration and requires the dry run to pass without signing, and 1
+more writes 8
 hooks to the configured hook folder and requires the dry run to pass
 with none of them run. 7 more each configure programs that git runs
 from its configuration or from attributes: a core.fsmonitor program,
@@ -148,8 +160,10 @@ the 2 snapshots or the leak check, wherever the script makes it, the
 exit cleanup's included, to run with hooks and the core.fsmonitor
 program turned off and to start no program other than git, every one
 after the first 3 and the GIT_ATTR_SOURCE check also to run with the
-attribute settings and both configured filter drivers turned off, and
-every one to run with lazy fetching turned off. 1 more, the text
+attribute settings and both configured filter drivers turned off,
+those 4 being exempt only in the argument form and with the
+GIT_ATTR_SOURCE that the script gives each, and only once, and every
+one to run with lazy fetching turned off. 1 more, the text
 case, requires 4 blocks, the residual and the 2 remainders that the
 script's header states and the residual of the test that its
 docstring states, each to be 1 whole paragraph, the same word for
@@ -179,7 +193,7 @@ The cases run on 1 git version with its default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
-against this change all 72 cases pass. Each of 14 mutants that remove
+against this change all 74 cases pass. Each of 14 mutants that remove
 1 stated rule failed at least 1 case of the 33-case suite, each of 10
 later mutants failed at least 1 case of the 36-case suite, each of 9
 script mutants that the 36-case suite passed fails at least 1 case of
@@ -228,7 +242,11 @@ and each of 4 mutants of that fix. The suite of the claims fix, still
 of 72 cases, fails in its locale case a script that does not clear
 the name of that file once it has removed it, and in both runs of its
 pager case, the core.pager run included, a script without --no-pager.
-The release dry run
+The suite of the listing fix, of 74 cases, fails the script before
+that fix in its skipped-ref case, whose run passes there with a tag or
+a branch whose name git rejects, and in its new signal case, and fails
+each of 3 mutants of that fix, 1 of which the trace2 case before it
+passes. The release dry run
 workflow and tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

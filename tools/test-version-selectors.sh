@@ -2,8 +2,9 @@
 #
 # Cross-consumer contract for the shell and CI Version: selectors.
 #
-# Four selector sites read the skill version. They are now consolidated onto ONE
-# shared strict extractor, tools/skill-version.py, which reads the content the way
+# 4 selector reads, at the 3 sites below, read the skill version. They are now
+# consolidated onto 1 shared strict extractor, tools/skill-version.py, which
+# reads the content the way
 # the Python release gates do (a universal-newline text read) and applies the
 # gates' own VERSION_LINE / SKILL_VERSION regexes: the FIRST ^Version: line is
 # authoritative and must be a bare X.Y.Z; a malformed first line is REJECTED,
@@ -11,9 +12,9 @@
 # straight to the extractor (a file path, or a pipe that it reads to the end),
 # there is no early-quit sed and so no SIGPIPE on a large file, and the shell
 # sites no longer strip NUL: they now agree with the Python gates BYTE FOR BYTE,
-# including on the two NUL cases the previous shell-only form got wrong.
+# including on the 2 NUL cases the previous shell-only form got wrong.
 #
-# The four selector sites:
+# The 3 selector sites, which hold those 4 reads:
 #   1. tools/release-dry-run.sh              (git "${git_off[@]}" show HEAD:SKILL.md | skill-version.py)
 #   2. .github/workflows/release-skill.yml   (skill-version.py SKILL.md working tree,
 #                                             and main via git show FETCH_HEAD | skill-version.py)
@@ -56,12 +57,12 @@
 #      hand-rolled first-line sed is gone, and each site calls skill-version.py
 #      the expected number of times (2 counts). A tally then requires each of
 #      the 4 structural checks to have run once for each of the 3 sites, and
-#      for no other site, so a check that is dropped, or run twice in place of
+#      for no other site, so a check that is dropped, or run 2 times in place of
 #      another, or that stops running for a site, fails the test.
 #
 # Fixtures include a LARGE (>64KB) valid file (each site must return the version
 # AND exit 0: the SIGPIPE regression test), CRLF and lone-CR cases, malformed
-# first lines (rejected), and the two NUL cases: a NUL before the word on the
+# first lines (rejected), and the 2 NUL cases: a NUL before the word on the
 # first line (the gate and now the sites select the later clean line), and a NUL
 # inside the first version line (rejected by the gate and now by the sites too).
 #
@@ -151,7 +152,7 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
 done
 # Each of the 4 checks above must have run exactly once for each site that
 # skillver_count names, and for no other site, so a check that is dropped, or
-# run twice in place of another, and a site left out of the loop, or replaced
+# run 2 times in place of another, and a site left out of the loop, or replaced
 # by another site or by a second run of a named one, fails here.
 structural_checks=(loose sed count isolated)
 structural_wrong=""
