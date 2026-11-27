@@ -1,0 +1,23 @@
+Add the no-worker-identifiers rule and its email check (#292)
+
+Add the adopter-owned rule under .claude/rules/external/ that bars any
+worker email address, account identifier, seat label or other
+third-party identifier from every public or potentially public
+surface, and link it from the Adopted governance section of
+.claude/CLAUDE.md.
+
+Add tools/test-no-worker-identifiers.py, which scans the raw bytes of
+every file that git ls-files lists for email-shaped text. The
+maintainer's own address and the reserved documentation domains are
+exempt, and 1 exact-line allowlist entry covers the URL-userinfo
+fixture in tools/test-release-links.py; a stale entry fails. A failed
+git call, a missing file or an unreadable file fails closed. Each
+caught example in the suite is assembled at run time, so its source
+holds no matchable text.
+
+Run the suite as a named step of the Orchestration registry workflow,
+mirror it in tools/run_all_checks.sh, and record the new sha256 of
+that script in tools/test-run-all-checks.py, which pins it.
+
+Residual: the check covers the email class only. Seat labels, bare
+handles and numeric account identifiers rest on the rule itself.
