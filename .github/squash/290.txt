@@ -1,93 +1,45 @@
 Scope the release dry run's ref check to refs it can move (#290)
 
-tools/release-dry-run.sh hashed the whole git for-each-ref listing
-before its run and in step 6, so a ref that another worktree moved
-during the run failed it, although the dry run had moved nothing (TODO
-279, seen on the PR 284 gate). Step 6 now compares only the refs that
-the dry run could itself move, read from the worktree that holds the
-script before and after: the branch HEAD names, or that it is
-detached; the commit HEAD resolves to; and every tag and note with its
-object name. It prints both snapshots on a mismatch, so the failure
-names the ref that differs. It then fails when a ref that git
-for-each-ref lists from that worktree contains the dry-run commit,
-read with replace refs, grafts and the shallow file turned off, so
-none of them can hide such a ref. In a shallow clone, the leak check,
-which reads with the shallow file turned off, finds the parents of a
-commit at the shallow boundary missing, so there it can fail the run
-on git's message about them or naming a ref that does not contain the
-dry-run commit; release-dry-run.yml checks out the whole history, so
-its run is not shallow. The tag and note listing of each snapshot and
-the listing of the leak check fail the run when git writes anything
-to standard error while it lists, as when git for-each-ref skips a ref
-whose name it rejects, with a warning, and still exits 0. Neither
-failure says who wrote the ref, since another worktree's write, or a
-ref that held the dry-run commit before the run, fails the run too.
-The script makes that commit with git commit-tree, which prints the
-name of the commit it writes, saves that name for step 6, never
-reading a later HEAD, and moves the throwaway worktree's HEAD to it
-with git update-ref, which fails if that HEAD is no longer at the
-parent it read. Every git call of the script after the before
-snapshot other than the reads of step 6, the exit cleanup's git
-worktree remove included, runs with hooks, the core.fsmonitor program
-and a pager turned off, whatever the configuration asks, and every git
-process of the dry run runs with lazy fetching from a promisor remote
-turned off. After its first 3 git calls past the before
-snapshot, which list the filter drivers, find the info/attributes file
-and name the empty tree, every git process of the dry run, its tools'
-included, reads no attribute file other than info/attributes and, in
-git archive, the .gitattributes files of the tree it archives and, in
-the git check-attr that reads the filter drivers of the dry-run
-commit, those of that commit, and runs with every filter driver turned
-off that the configuration read from the script's worktree defines or
-that info/attributes names, and, from step 1 on, every one that an
-attribute gives a path of the dry-run commit. A driver name with an
-equals sign fails the run, as does a git that does not refuse a
-GIT_ATTR_SOURCE that names no tree with exit 128 and its own message
-for that refusal alone on standard error, which cmp compares byte for
-byte.
+Step 6 of tools/release-dry-run.sh no longer compares a hash of the
+whole git for-each-ref listing. It compares 2 snapshots of these refs,
+taken before the run and in step 6 from the worktree that holds the
+script: the branch that HEAD names, or the word detached; the commit
+that HEAD resolves to; and every tag and note with its object name. On
+a mismatch it prints both snapshots, so the failure names the ref that
+differs. A leak check then fails the run when a ref that git
+for-each-ref lists from that worktree contains the dry-run commit. The
+script's header states what step 6 proves, how the script makes and
+reads the dry-run commit, and which programs, attribute files and
+filter drivers its git calls keep out of reach.
 
-So no filter runs during a git call of the dry run, whatever the
-configuration that git reads in any worktree defines, other than a
-driver that the info/attributes file, or the tree that git archive
-archives, comes to name during the run.
+The new suite tools/test-release-dry-run-refs.py runs the whole
+script, with stand-ins for its tools, in throwaway repositories; its
+docstring states how each of its 74 cases is built and what it
+requires. .github/workflows/release-dry-run.yml and
+tools/run_all_checks.sh run it before the dry run, and SCRIPT_SHA256
+in tools/test-run-all-checks.py records the sha256 of the changed
+tools/run_all_checks.sh. tools/test-version-selectors.sh now runs the
+dry run's version selector in its new form, after the script's own git
+settings, and requires each of its 4 structural checks to run once for
+each of its 3 sites.
 
-No git call of the script asks for a textconv or diff driver, a
-signature, an editor or automatic maintenance, and the reads of the 2
-snapshots and the leak check read no index and no file content and
-write to no terminal. So no other program that git can run from its
-configuration or from attributes runs during a git call of the script.
-
-The git calls of the tools that the script runs are covered only by
-the lazy-fetch, attribute and filter settings.
-
-The run fails closed unless the throwaway worktree's HEAD is at the
-dry-run commit once moved there. git commit-tree runs with commit
-signing turned off, whatever the configuration asks, so the dry-run
-commit is never signed. A git error
-in either check, in reading the filter drivers, or in making or
-reading the dry-run commit or moving HEAD to it, fails the run with
-exit 1 and is never read as an empty listing. The exit cleanup is set
-before the GIT_ATTR_SOURCE check makes its temporary file, and runs on
-every exit of the run, one that HUP, INT or TERM causes included. It
-tries to remove that file and the throwaway worktree once the script
-holds the name of each; a removal that fails leaves its entry behind,
-and so does a signal that ends the run after mktemp has made the file
-or the worktree's folder and before the script holds its name, or one
-that no trap can catch, such as KILL. Before it goes on or fails, the
-run clears the name of the temporary file of the check of
-GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a file that
-another process makes later under that name, and then tries to remove
-the file itself, and fails if that removal fails; a signal that ends
-the run between that clearing and that removal, or a failure of that
-removal, leaves the file behind, since the exit cleanup then has no
-name to remove.
+A ref that git for-each-ref lists, moved by another worktree of the
+same repository during the run, changed the old hash and failed the
+dry run, although the dry run had moved nothing. TODO 279 asks for a
+comparison of only the refs that the dry run could itself move, after
+such a failure on the PR 284 gate; it does not record which ref moved
+there, so whether this change would have avoided that failure is
+unknown.
 
 This narrows a release-integrity check on purpose and needs the
-maintainer's acceptance. Step 6 newly catches a commit on a detached
-HEAD, and a detach or an attach at the same commit, which the old hash
-missed because git for-each-ref lists no HEAD. The script's header
-states what step 6 no longer catches, and what it does not see, in
-these words:
+maintainer's acceptance. The script still publishes nothing: it holds
+no gh call and no git push. release-dry-run.yml keeps its permissions
+and its other steps. What step 6 no longer catches, and what it does
+not see, is the header's residual, the first of the copies below.
+
+The suite's text case requires the paragraphs and sentences below,
+copied from the script's comments and the suite's docstring, to appear
+here word for word:
 
 Residual: the proof does not catch the deletion of any ref outside
 tags and notes other than the branch the script's worktree has checked
@@ -95,100 +47,31 @@ out, such as another branch, a remote-tracking ref, refs/stash or a
 refs/replace/ ref; or a move or creation of such a ref at a commit
 that does not contain the dry-run commit, at an annotated tag that
 peels to such a commit, or at an object that peels to no commit, such
-as a tree or a blob. It does not see the HEAD or
-the per-worktree refs of any worktree other than the script's
-worktree, the throwaway worktree included, or a ref outside refs/
-other than HEAD, such as ORIG_HEAD, of any worktree, the script's
-worktree included, so such a ref put on the dry-run commit does not
-fail it. It does not see a write to a ref made after the after
-snapshot, such as a tag that another worktree makes then, other than
-a ref that the leak check, which follows that snapshot, finds to
-contain the dry-run commit. It does not see anything the exit cleanup
-does, or a ref moved and then restored between the 2 snapshots. None
-of these limits holds for a ref whose name git rejects, that git
-for-each-ref would list from the script's worktree and that is there
-when a listing of the run meets it, as the tag and note listing of
-each snapshot meets a tag or a note and the listing of the leak check
-meets any such ref: such a ref fails the run, whoever writes it and
-whenever, at the first listing that meets it, where the run ends,
-since git writes a warning to standard error while that listing
-runs.
+as a tree or a blob. It does not see the HEAD or the per-worktree refs
+of any worktree other than the script's worktree, the throwaway
+worktree included, or a ref outside refs/ other than HEAD, such as
+ORIG_HEAD, of any worktree, the script's worktree included, so such a
+ref put on the dry-run commit does not fail it. It does not see a
+write to a ref made after the after snapshot, such as a tag that
+another worktree makes then, other than a ref that the leak check,
+which follows that snapshot, finds to contain the dry-run commit. It
+does not see anything the exit cleanup does, or a ref moved and then
+restored between the 2 snapshots. None of these limits holds for a ref
+whose name git rejects, that git for-each-ref would list from the
+script's worktree and that is there when a listing of the run meets
+it, as the tag and note listing of each snapshot meets a tag or a note
+and the listing of the leak check meets any such ref: such a ref fails
+the run, whoever writes it and whenever, at the first listing that
+meets it, where the run ends, since git writes a warning to standard
+error while that listing runs.
 
-A ref that another worktree writes during the run fails the proof
-only when it is a tag or a note, when it is the HEAD of the script's
-worktree or the branch that worktree has checked out, when it is a ref
-that git for-each-ref lists from the script's worktree, created or
-moved onto the dry-run commit or a descendant of it, or when git fails
-or writes to standard error while it lists the refs of a snapshot or
-of the leak check, as it does for a ref whose name it rejects; any
-other such write is outside the proof. TODO 279 does not record which
-ref moved on the PR 284 gate, so whether this change would have
-avoided that failure is unknown.
+So no filter runs during a git call of the dry run, whatever the
+configuration that git reads in any worktree defines, other than a
+driver that the info/attributes file, or the tree that git archive
+archives, comes to name during the run.
 
-tools/test-release-dry-run-refs.py runs the whole script, copied byte
-for byte into throwaway folders with stand-ins for the tools it calls,
-so bash itself reads every line of it. Its 44 ref cases each build a
-repository and make writes at up to 5 points: a git stand-in first on
-PATH makes another worktree's writes before the dry run adds its
-worktree, the move of that worktree once it is added in cases 42 and
-44, its move after the dry run reads the parent of its commit in case
-43, and, once the dry run's worktree is at the commit its git
-commit-tree wrote, the dry run's own writes, or in cases 28 and 29
-another worktree's; the stand-in of step 5 makes late writes after
-that step. Every ref case but cases 31 and 43 must reach all 5 points;
-case 31 must stop at the dry-run commit, before the fifth, and case 43
-must stop when the move of that HEAD to it fails, before the fourth.
-Each ref case checks that exactly the refs it names change, and that
-the dry-run commit has the parent, identity, dates, message and tree
-it must have. Its 12 cases on fail-closed reading make no ref writes:
-11 require the run to end at the call or tool that fails, with no
-later step, tool or git call other than the exit cleanup and the other
-call of a pipeline, a mktemp, cmp or rm of the GIT_ATTR_SOURCE check
-that fails among them, and 1, with no tag and no note, requires it to
-pass. 1 more case runs the dry run in a caller locale other than C and
-requires its check of GIT_ATTR_SOURCE to run with LC_ALL set to C,
-its temporary file to be gone before the run goes on, and a file made
-later under that file's name to be left in place, 1 more ends the
-run with HUP, INT or TERM during that check and requires the run to
-end by that signal and that file to be gone, 1 more ends it with TERM
-once the script has removed that file and another file is made under
-its name, and requires the run to end by TERM and that other file to
-be left in place, 1 more writes a tag, and in turn a branch,
-whose name git rejects, and requires the run to fail at the listing
-that skips it, and 1 more leaves tags and notes refs on the dry-run
-commit of an earlier run, or on a child of it, and requires the leak
-check to name them. 1 more case turns commit signing on in the
-configuration and requires the dry run to pass without signing, and 1
-more writes 8
-hooks to the configured hook folder and requires the dry run to pass
-with none of them run. 7 more each configure programs that git runs
-from its configuration or from attributes: a core.fsmonitor program,
-clean and smudge filters, a process filter, pagers that pager.<command>
-and core.pager name with the run on a terminal, textconv and diff
-drivers, an editor and a sequence editor,
-and the upload-pack program of a promisor remote; each
-requires the dry run to run none of them, the last by failing closed
-at its read of a missing blob. 1 more defines 3 filter drivers only
-for linked worktrees, through a conditional include, and gives them
-paths through info/attributes, a committed .gitattributes file and
-core.attributesFile, with a packager stand-in that runs git archive;
-the dry run must pass with none of them run. 1 more requires a driver
-named a=b to fail the run before any of its commands runs. 1 more
-reads git's trace2 log and requires every git call of the script
-after the before snapshot other than one in the form of the reads of
-the 2 snapshots or the leak check, wherever the script makes it, the
-exit cleanup's included, to run with hooks and the core.fsmonitor
-program turned off and to start no program other than git, every one
-to run with lazy fetching turned off, and every one after the first 3
-and the GIT_ATTR_SOURCE check also to run with the attribute settings
-and both configured filter drivers turned off. Each of those 4 is
-exempt from these settings only in the argument form and with the
-GIT_ATTR_SOURCE that the script gives it, and only once, so a later
-run in that form must run with them. 1 more, the text case, requires
-the texts that state or repeat what the script and the test do to
-agree, as its docstring states, and this message to be the same byte
-for byte as .github/squash/290.txt commits it and as SQUASH-MSG at the
-top of the export.
+The git calls of the tools that the script runs are covered only by
+the lazy-fetch, attribute and filter settings.
 
 Residual of the test: stand-ins replace the packaging, the gates and
 the site rewrite, which the next step of release-dry-run.yml runs with
@@ -207,86 +90,44 @@ read, or a change to a text that the checkout lacks, as CI lacks
 PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its
 default ref backend.
 
-The test's first version of 21 cases, run against the unchanged
-script, failed the concurrent cases and passed the detached commit;
-against this change all 74 cases pass. Each of 14 mutants that remove
-1 stated rule failed at least 1 case of the 33-case suite, each of 10
-later mutants failed at least 1 case of the 36-case suite, each of 9
-script mutants that the 36-case suite passed fails at least 1 case of
-the 34-case suite and of the 35-case suite, and each of 13 script
-mutants of the capture fix, 8 of which the 35-case suite passed, fails
-at least 1 case of the 44-case suite. The 47-case suite fails cases
-37 and 38 against the script before the graft and shallow fix, and
-fails each of 6 script mutants that remove 1 rule of the leak check,
-the signing rule of git commit or the HEAD in the message of case 31,
-or that call git by its absolute path before the before snapshot. The
-52-case suite fails the hook case against the script before the
-plumbing fix, whose run passes there while a hook keeps the commit
-that git commit made in a ref, and fails each of 11 mutants of the
-plumbing fix. The 61-case suite fails 6 cases against the script
-before the configured-program fix, the core.fsmonitor case among them,
-whose run passes there while that program runs 6 times and makes the
-parent of the dry-run commit, and fails each of 12 mutants of that
-fix. The 66-case suite fails 6 tests against the script before the
-attribute fix, the linked-worktree filter case among them, whose run
-passes there while 3 filter drivers that only the configuration of a
-linked worktree defines run 35 times, and fails each of 15 mutants of
-that fix. The 67-case suite fails 2 tests against the script and the
-texts before the refusal fix, the case on the filter settings, in
-which that script reads 4 other outcomes of its first git check-attr
-as git's refusal of a GIT_ATTR_SOURCE that names no tree, and the text
-case, and fails each of 4 mutants of that fix. The 69-case suite
-fails the case on the filter settings against the script before the
-line-ending fix, which reads git's message followed by a blank line,
-or without its newline, as git's refusal, and fails each of 6 script
-mutants that the 67-case suite passes, or its fail-closed cases for
-the 2 that change only a failure path, and each of 6 mutants of the
-texts, each changing 1 word, that its text case passes. The suite of
-the NUL fix, still of 69 cases, gives the first git check-attr 6 more
-outcomes and fails the script before that fix, which reads git's
-message with a NUL byte after it, before it, inside it or before its
-newline as git's refusal, since a command substitution drops every NUL
-byte; that fix compares standard error with cmp. It fails each of 5
-mutants of that fix, and its text case, which now reads each block as
-1 whole paragraph, fails each of 7 mutants of the texts that add words
-before or after a block in its paragraph, which the text case before
-it passes. The suite of the probe cleanup fix, of 72 cases, fails the
-script before that fix in its signal case, whose run leaves the
-temporary file of the GIT_ATTR_SOURCE check when HUP, INT or TERM ends
-it, and fails each of 6 rule removals that the 69-case suite passes
-and each of 4 mutants of that fix. The suite of the claims fix, still
-of 72 cases, fails in its locale case a script that does not clear
-the name of that file once it has removed it, and in both runs of its
-pager case, the core.pager run included, a script without --no-pager.
-The suite of the listing fix, of 74 cases, fails the script before
-that fix in its skipped-ref case, whose run passes there with a tag or
-a branch whose name git rejects, and in its new signal case, and fails
-each of 3 mutants of that fix, 1 of which the trace2 case before it
-passes. The suite of the text fix, still of 74 cases, fails each of 2
-script mutants that ignore the signal of a signal case, whose run the
-signal cases before that fix pass, and each of 5 mutants of the texts,
-each changing 1 word of 1 repeated sentence. The suite of the drift
-fix, still of 74 cases, was run against 6 mutants, each failing the
-text case, run alone: 1 word changed in the description's copy of a
-sentence of the header; a copy of the shallow-clone caveat with 1 word
-changed put back in the comment of ref_leak_check; 1 word changed in
-the script's comment that states the clearing sentence; a copy of the
-exemption of the trace2 case with 1 word changed put in that case's
-comment; 1 word changed in .github/squash/290.txt alone; and a folder
-that holds .git without .github/squash/290.txt. A folder that holds
-.github/squash/290.txt but no .git passes the text case, and a copy of
-the tools that holds neither passes the suite and skips the committed
-message. The release
-dry run workflow and tools/run_all_checks.sh run it before the dry run,
-and tools/test-run-all-checks.py records the new digest of
-tools/run_all_checks.sh after a reading of the whole script. The
-workflow header now counts 7 test suites.
+The tag and note listing of each snapshot and the listing of the leak
+check fail the run when git writes anything to standard error while it
+lists, as when git for-each-ref skips a ref whose name it rejects, with
+a warning, and still exits 0. A ref that another worktree writes during
+the run fails the proof only when it is a tag or a note, when it is the
+HEAD of the script's worktree or the branch that worktree has checked
+out, when it is a ref that git for-each-ref lists from the script's
+worktree, created or moved onto the dry-run commit or a descendant of
+it, or when git fails or writes to standard error while it lists the
+refs of a snapshot or of the leak check, as it does for a ref whose
+name it rejects; any other such write is outside the proof. In a
+shallow clone, the leak check, which reads with the shallow file turned
+off, finds the parents of a commit at the shallow boundary missing, so
+there it can fail the run on git's message about them or naming a ref
+that does not contain the dry-run commit; release-dry-run.yml checks
+out the whole history, so its run is not shallow. Before it goes on or
+fails, the run clears the name of the temporary file of the check of
+GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a file that
+another process makes later under that name, and then tries to remove
+the file itself, and fails if that removal fails; a signal that ends
+the run between that clearing and that removal, or a failure of that
+removal, leaves the file behind, since the exit cleanup then has no
+name to remove.
 
-tools/test-version-selectors.sh now reads the dry run's version
-selector in the form that runs git with git_off, runs the script's own
-settings before it, from its exports of TZ and GIT_NO_LAZY_FETCH
-through its check of GIT_ATTR_SOURCE, git_off and the attribute and
-filter settings included, refuses an extracted block that is not a
-run of whole lines of its source, and requires each of its 4
-structural checks to run once for each of its 3 sites and for no
-other site.
+On the trace2 case, the suite's docstring says: Each of those 4 is
+exempt from these settings only in the argument form and with the
+GIT_ATTR_SOURCE that the script gives it, and only once, so a later
+run in that form must run with them.
+
+Checks, run from the top of a checkout of the branch, each followed by
+the line it ends with:
+
+  python3 -I tools/test-release-dry-run-refs.py
+    OK (skipped=2), after Ran 74 tests and the time taken
+  python3 -I tools/test-no-qa-labels.py
+    OK, after Ran 63 tests and the time taken
+  python3 -I tools/test-run-all-checks.py
+    OK: 19 workflows, 84 run steps, 73 command lines in
+    tools/run_all_checks.sh, 10 behaviour cases, 17 reading cases
+  python3 -I tools/check-pr-text.py --squash .github/squash/290.txt
+    pr-text: 0 defect(s)
