@@ -1,7 +1,7 @@
 Add the no-worker-identifiers rule and its email check (#292)
 
 Add the adopter-owned rule under .claude/rules/external/ that bars any
-worker email address, account identifier, seat label or other
+worker email address, account identifier, seat label, or other
 third-party identifier from every public or potentially public
 surface, and link it from the Adopted governance section of
 .claude/CLAUDE.md.
@@ -14,10 +14,10 @@ candidate cannot hide another, with work that grows linearly with the
 file. The maintainer's own address and the reserved documentation
 domains are exempt, and 1 exact-line allowlist entry covers the
 URL-userinfo fixture in tools/test-release-links.py; a stale entry
-fails. A failure names the file, the line number and a digest of the
+fails. A failure names the file, the line number, and a digest of the
 match, never its text, and names a path whose name holds a match only
 by a digest of the path name. A failed git call, a git that cannot
-start, a missing file or an unreadable file fails closed. Each caught
+start, a missing file, or an unreadable file fails closed. Each caught
 example in the suite is assembled at run time, so its source holds no
 matchable text.
 
@@ -27,6 +27,6 @@ tools/run_all_checks.sh, and record the new sha256 of that script in
 tools/test-run-all-checks.py, which pins it.
 
 Residual: the check covers the email class only. Seat labels, bare
-handles and numeric account identifiers rest on the rule itself, and
+handles, and numeric account identifiers rest on the rule itself, and
 a surface that is not a file, such as a pull request description, is
 not reached.

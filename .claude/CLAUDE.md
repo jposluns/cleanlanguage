@@ -69,7 +69,7 @@ originals; the 3 concrete clauses they drop are restored in
 
 The adopter-owned rule
 [`rules/external/no-worker-identifiers.md`](rules/external/no-worker-identifiers.md) bars
-any worker email address, account identifier, seat label or other third-party identifier
+any worker email address, account identifier, seat label, or other third-party identifier
 from every public or potentially public surface; `tools/test-no-worker-identifiers.py`
 enforces its email class on every tracked file.
 

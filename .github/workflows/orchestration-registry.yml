@@ -63,7 +63,7 @@ name: Orchestration registry
 # A further step (tools/test-no-worker-identifiers.py) fails when a tracked file holds
 # email-shaped text, read around every at sign, that is neither the maintainer's address nor at
 # a reserved documentation domain and is not on a line of its reviewed exact-line allowlist, or
-# when a tracked path name holds such text; a failure names the file, the line number and a
+# when a tracked path name holds such text; a failure names the file, the line number, and a
 # digest of the match, never its text, and names a path whose name holds a match only by a
 # digest of the path name.
 #
