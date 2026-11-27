@@ -99,49 +99,64 @@ every other expected digest but 1; and that 1, which the digest case computes in
 with hashlib.sha256. So a change to digest() or to its length, such as 1 that copies the hit in
 hexadecimal, fails a case.
 
-Residual: the scan catches the email class only. A seat label, a bare account handle, or a
-numeric account identifier passes it, because a committed pattern that names a real label would
-itself publish the label; those forms rest on the rule, on the standing line that every QA and
-drafting brief carries, and on any scan the maintainer keeps outside the repository. An address
-split across lines, assembled by code, or written with the word "at" passes; an untracked file,
-the target of a tracked symbolic link, and the content of a submodule are not read; an address
-inside compressed or encoded binary content passes, since the scan neither decompresses nor
-decodes, unless that content holds the address as it is; an at sign outside ASCII, such as a
-confusable like the fullwidth or the small commercial at sign, passes, and so does an at sign
-written as an HTML character reference, such as the decimal or the named form, percent-encoded,
-as a backslash escape, such as \\x40, \\100, or the JSON or JavaScript escape of U+0040, or as
-quoted-printable =40, since only the byte of the ASCII at sign is searched; an address with a
-space right after the at sign passes, since its domain run is then empty; an address whose local
-part ends, right before the at sign, in a byte that the local part does not name, such as a
-letter outside ASCII, a tilde, an exclamation mark, or an apostrophe, passes, since its local
-part is then empty; an address with a quoted local part, with a domain written with letters
-outside ASCII or as a literal in square brackets, with an underscore in its domain, with a
-zero-width space or a soft hyphen inside its domain, or with a dot of its domain written as an
-HTML character reference or percent-encoded, can pass, since a byte that the runs above do not
-name ends a run; a surface that is not a file in this tree, such as a
-pull request title, description, or comment, is not reached, and tools/check-pr-text.py carries
-no identifier pattern today. The digest of a hit or of a path name lets a reader who already
-holds a guess of the address confirm the guess; it does not reveal the address. A path name is
-held back only from the output of this suite: git, and any other step of a workflow that lists
-or names files, can still print it. On a red run, unittest also prints a traceback for each
-failed case, which holds the absolute path of this file in the checkout, and a failed self-check
-can print the values that it compared, the path of its temporary folder among them, so a
-checkout path or a temporary folder path that holds an address reaches the CI log. A label that
-leaked into the history of an older pull request and was removed later is held for the
-maintainer and is out of scope for this rule's enforcement. Each form of text that this residual
-names as passing is pinned by its own subtest, named for the form, of
-test_each_residual_text_form_gives_no_candidate, apart from compressed or encoded content, which
-is pinned by its own case, test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest
-for each compression or encoding. Each place that this residual names as not read is pinned by
-its own case: test_an_untracked_file_is_not_read,
-test_the_target_of_a_tracked_symbolic_link_is_not_read, and
-test_the_content_of_a_submodule_is_not_read. A surface that is not a file in this tree is outside
-the input of the suite, so no case pins it.
+Spellings that the scan catches, a closed set: outside the exemptions and the allowlisted lines,
+the scan catches an address when, and only when, its text holds all 4 of these parts, in any
+letter case: a local part of 1 or more ASCII letters, digits, dots, underscores, percent signs,
+plus signs, or hyphens; right after it, the ASCII at sign itself, the 1 byte 0x40; right after
+that, a domain run of ASCII letters, digits, dots, or hyphens; and in that run, a dot with at
+least 1 byte of the run before it and 2 or more ASCII letters right after it. Every other
+spelling of an address passes, whatever its encoding or inserted character. Examples only, not
+a complete list, of other spellings that pass where they leave those 4 parts incomplete: an
+address split across lines; an address assembled by code; an address written with the word at;
+an at sign outside ASCII, the fullwidth or the small commercial at sign; an at sign written as
+an HTML character reference, decimal, hexadecimal, or named; a percent-encoded at sign; an at
+sign written as a backslash escape; an at sign written as quoted-printable; a space, a tab, a
+carriage return, a less-than sign, or a zero-width space right after the at sign; a local part
+that ends in a letter outside ASCII, a tilde, an exclamation mark, or an apostrophe; a quoted
+local part; a domain written with letters outside ASCII; a domain written as a literal in
+square brackets; an underscore in the domain; a zero-width space inside the domain; a soft
+hyphen inside the domain; a zero-width joiner, a zero-width non-joiner, a word joiner, or a
+byte order mark inside the domain; a dot of the domain written as an HTML character reference,
+decimal, hexadecimal, or named; a percent-encoded dot of the domain; a dot of the domain
+written as a backslash escape; a dot of the domain written as quoted-printable; a dot of the
+domain written as the word dot, bare or in square brackets; a fullwidth or an ideographic full
+stop in place of a dot of the domain; and a space before a dot of the domain. Each of the 4
+parts is pinned by its own subtest of test_each_caught_spelling_is_caught, and each example by
+its own subtest of test_each_example_of_a_spelling_that_passes_gives_no_candidate, each named
+with the words of the lists above, and test_this_docstring_states_each_caught_spelling_and_example
+fails when either list above and the names of those subtests differ.
+
+Residual: the scan catches the email class only, and within it only the closed set of spellings
+above. A seat label, a bare account handle, or a numeric account identifier passes it, because a
+committed pattern that names a real label would itself publish the label; those forms rest on
+the rule, on the standing line that every QA and drafting brief carries, and on any scan the
+maintainer keeps outside the repository. An untracked file, the target of a tracked symbolic
+link, and the content of a submodule are not read; an address inside compressed or encoded
+binary content passes, since the scan neither decompresses nor decodes, unless that content
+holds the address as it is; a surface that is not a file in this tree, such as a pull request
+title, description, or comment, is not reached, and tools/check-pr-text.py carries no
+identifier pattern today. The digest of a hit or of a path name lets a reader who already holds
+a guess of the address confirm the guess; it does not reveal the address. A path name is held
+back only from the output of this suite: git, and any other step of a workflow that lists or
+names files, can still print it. On a red run, unittest also prints a traceback for each failed
+case, which holds the absolute path of this file in the checkout, and a failed self-check can
+print the values that it compared, the path of its temporary folder among them, so a checkout
+path or a temporary folder path that holds an address reaches the CI log. A label that leaked
+into the history of an older pull request and was removed later is held for the maintainer and
+is out of scope for this rule's enforcement. Each of the 3 forms that name no address, the seat
+label, the bare account handle, and the numeric account identifier, is pinned by its own
+subtest, named for the form, of test_each_residual_text_form_gives_no_candidate, and compressed
+or encoded content is pinned by its own case,
+test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest for each compression or
+encoding. Each place that this residual names as not read is pinned by its own case:
+test_an_untracked_file_is_not_read, test_the_target_of_a_tracked_symbolic_link_is_not_read, and
+test_the_content_of_a_submodule_is_not_read. A surface that is not a file in this tree is
+outside the input of the suite, so no case pins it.
 
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
 or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
-also ends a shorter domain that is not reserved, such as 1 at mail.corp under example.com or 1
+also ends a shorter domain that is not reserved, such as 1 at mail.corp.example.com or 1
 that appends the label example to an ordinary domain, is caught, since that shorter candidate
 is not exempt, and is reworded to a reserved domain with no such shorter domain; and an action
 pinned to a version tag in which a dot is followed directly by 2 or more letters, such as
@@ -317,8 +332,9 @@ def printable_path(rel):
     escape byte that starts a terminal escape sequence, or the 8-bit control sequence introducer,
     and each backslash, is written as a backslash escape: \\xHH for a character below 0x80 and for
     a byte of the name that is not valid UTF-8, which os.fsdecode() gives as a surrogate, and
-    \\uHHHH or \\UHHHHHHHH with its code point for any other. Every backslash of the result starts
-    an escape, so no 2 path names give the same text.
+    \\uHHHH or \\UHHHHHHHH with its code point for any other. So DEL, 0x7f, is written as \\x7f.
+    Every other character, a printable character outside ASCII included, stays as it is. Every
+    backslash of the result starts an escape, so no 2 path names give the same text.
     """
     parts = []
     for char in rel:
@@ -460,11 +476,11 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertEqual(self.digests(address.decode("ascii")), [hashlib.sha256(address).hexdigest()[:16]])
 
     def test_each_residual_text_form_gives_no_candidate(self):
-        """Each form of text that the residual states passes gives no candidate, in its own subtest.
+        """Each of the 3 forms that name no address and that the residual states pass gives no candidate.
 
         Each subtest is named for its form and holds every text of that form, each assembled at
-        run time; it fails when any of those texts gives a candidate. The control, the same
-        address written plainly, is caught.
+        run time; it fails when any of those texts gives a candidate. The control, an address
+        written plainly, is caught.
         """
         local = "worker-label-example"
         domain = self.PLACEHOLDER_DOMAIN
@@ -473,6 +489,61 @@ class PatternSelfCheck(unittest.TestCase):
             ("a seat label", ("seat-label-example",)),
             ("a bare account handle", (local, "@" + local)),
             ("a numeric account identifier", ("0123456789" + "01",)),
+        )
+        for form, texts in forms:
+            with self.subTest(form=form):
+                self.assertEqual([candidates(text.encode("utf-8")) for text in texts],
+                                 [[] for _ in texts])
+
+    def caught_spellings(self):
+        """(part, ((text, longest candidate), ...)) for each of the 4 parts of the caught spellings.
+
+        Each part is named with the words of the module docstring, and each text, assembled at run
+        time, holds all 4 parts and varies the part of its subtest over what the docstring names
+        for it, in upper and lower case.
+        """
+        domain = self.PLACEHOLDER_DOMAIN
+        plain = caught("worker-label-example", domain)
+        whole = [(caught(local, domain), caught(local, domain))
+                 for local in ("worker", "WORKER", "w", "worker2", "0123", "w.orker", "w_orker",
+                               "w%orker", "w+orker", "w-orker")]
+        runs = [(caught("worker", name), caught("worker", name))
+                for name in ("placeholdermail" + "." + "com", "PLACEHOLDER-MAIL" + "." + "COM",
+                             "mail2" + "." + "com", "mail" + "." + "placeholder-mail" + "." + "com",
+                             "placeholder-mail" + "." + "com")]
+        return (
+            ("a local part of 1 or more ASCII letters, digits, dots, underscores, percent signs, plus"
+             " signs, or hyphens", whole),
+            ("right after it, the ASCII at sign itself, the 1 byte 0x40", [(plain, plain)]),
+            ("right after that, a domain run of ASCII letters, digits, dots, or hyphens", runs),
+            ("in that run, a dot with at least 1 byte of the run before it and 2 or more ASCII letters"
+             " right after it", [
+                 (caught("worker", "h" + "." + "co"), caught("worker", "h" + "." + "co")),
+                 (caught("worker", "host" + "." + "com1"), caught("worker", "host" + "." + "com")),
+                 (caught("worker", "host" + "." + "co-uk"), caught("worker", "host" + "." + "co"))]),
+        )
+
+    def test_each_caught_spelling_is_caught(self):
+        """Each of the 4 parts of the caught spellings, in its own subtest: every text is caught.
+
+        Each text gives 1 hit, whose longest candidate is the expected address and whose digest
+        is that of the address, so a change to what the scan reads for a part fails its subtest.
+        """
+        for part, texts in self.caught_spellings():
+            with self.subTest(part=part):
+                for text, address in texts:
+                    self.assertEqual(text.encode("ascii")[text.index("@")], 0x40)
+                    self.assertEqual(self.texts(text)[-1], address)
+                    self.assertEqual(self.digests(text), [sha256_prefix(address.encode("ascii"))])
+
+    def passing_spellings(self):
+        """(form, texts) for each example of a spelling that passes, named as the docstring names it.
+
+        Each text is assembled at run time.
+        """
+        local = "worker-label-example"
+        domain = self.PLACEHOLDER_DOMAIN
+        return (
             ("an address split across lines", (
                 local + "\n" + "@" + domain, caught(local, "\n" + domain),
                 caught(local, "placeholder-mail" + "\n" + "." + "com"))),
@@ -490,7 +561,10 @@ class PatternSelfCheck(unittest.TestCase):
                 local + "\\u" + "0040" + domain, local + "\\x" + "40" + domain,
                 local + "\\" + "100" + domain)),
             ("an at sign written as quoted-printable", (local + "=" + "40" + domain,)),
-            ("a space right after the at sign", (local + "@" + " " + domain,)),
+            ("a space, a tab, a carriage return, a less-than sign, or a zero-width space right after"
+             " the at sign", (
+                local + "@" + " " + domain, local + "@" + "\t" + domain, local + "@" + "\r" + domain,
+                local + "@" + "<" + domain, local + "@" + chr(0x200B) + domain)),
             ("a local part that ends in a letter outside ASCII, a tilde, an exclamation mark, or an"
              " apostrophe", (
                  "jos" + chr(233) + "@" + domain, "a~" + "@" + domain, "a!" + "@" + domain,
@@ -508,6 +582,11 @@ class PatternSelfCheck(unittest.TestCase):
             ("a soft hyphen inside the domain", (
                 caught(local, "placeholder-mail" + chr(0xAD) + "." + "com"),
                 caught(local, "place" + chr(0xAD) + "holder-mail" + "." + "com"))),
+            ("a zero-width joiner, a zero-width non-joiner, a word joiner, or a byte order mark inside"
+             " the domain", tuple(
+                text for mark in (chr(0x200D), chr(0x200C), chr(0x2060), chr(0xFEFF))
+                for text in (caught(local, "placeholder-mail" + mark + "." + "com"),
+                             caught(local, "place" + mark + "holder-mail" + "." + "com")))),
             ("a dot of the domain written as an HTML character reference, decimal, hexadecimal, or"
              " named", (
                 caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
@@ -515,11 +594,64 @@ class PatternSelfCheck(unittest.TestCase):
                 caught(local, "placeholder-mail" + "&per" + "iod;" + "com"))),
             ("a percent-encoded dot of the domain", (
                 caught(local, "placeholder-mail" + "%" + "2E" + "com"),)),
+            ("a dot of the domain written as a backslash escape", (
+                caught(local, "placeholder-mail" + "\\x" + "2e" + "com"),
+                caught(local, "placeholder-mail" + "\\u" + "002e" + "com"),
+                caught(local, "placeholder-mail" + "\\" + "056" + "com"))),
+            ("a dot of the domain written as quoted-printable", (
+                caught(local, "placeholder-mail" + "=" + "2E" + "com"),)),
+            ("a dot of the domain written as the word dot, bare or in square brackets", (
+                caught(local, "placeholder-mail" + " dot " + "com"),
+                caught(local, "placeholder-mail" + "[dot]" + "com"))),
+            ("a fullwidth or an ideographic full stop in place of a dot of the domain", (
+                caught(local, "placeholder-mail" + chr(0xFF0E) + "com"),
+                caught(local, "placeholder-mail" + chr(0x3002) + "com"))),
+            ("a space before a dot of the domain", (
+                caught(local, "placeholder-mail" + " " + "." + "com"),)),
         )
-        for form, texts in forms:
+
+    def test_each_example_of_a_spelling_that_passes_gives_no_candidate(self):
+        """Each example of a spelling that passes gives no candidate, in its own subtest.
+
+        Each subtest is named for its example, as the docstring names it, and holds every text of
+        that example; it fails when any of those texts gives a candidate. The control, the same
+        address written plainly, is caught.
+        """
+        self.assertEqual(len(hits_in(caught("worker-label-example", self.PLACEHOLDER_DOMAIN).encode("ascii"))), 1)
+        for form, texts in self.passing_spellings():
             with self.subTest(form=form):
                 self.assertEqual([candidates(text.encode("utf-8")) for text in texts],
                                  [[] for _ in texts])
+
+    def stated_list(self, text, lead):
+        """The items of the list in text that follows lead and ends at the next full stop.
+
+        The text is read with each run of whitespace as 1 space, and the items are split at each
+        semicolon and space, with the "and " that opens the last item removed.
+        """
+        flat = " ".join(text.split())
+        start = flat.index(lead) + len(lead)
+        items = flat[start:flat.index(".", start)].split("; ")
+        if items[-1].startswith("and "):
+            items[-1] = items[-1][len("and "):]
+        return items
+
+    def test_this_docstring_states_each_caught_spelling_and_example(self):
+        """The module docstring names each caught part and each example as its subtest is named.
+
+        The docstring states that every other spelling passes, and its 2 lists name, in order,
+        exactly the subtests of test_each_caught_spelling_is_caught and of
+        test_each_example_of_a_spelling_that_passes_gives_no_candidate, so a change to the text or
+        to a subtest fails here until the other follows it.
+        """
+        doc = globals()["__doc__"]
+        self.assertIn("Every other spelling of an address passes, whatever its encoding or inserted"
+                      " character.", " ".join(doc.split()))
+        self.assertEqual(self.stated_list(doc, "its text holds all 4 of these parts, in any letter case: "),
+                         [part for part, _ in self.caught_spellings()])
+        self.assertEqual(self.stated_list(doc, "Examples only, not a complete list, of other spellings that"
+                                               " pass where they leave those 4 parts incomplete: "),
+                         [form for form, _ in self.passing_spellings()])
 
     def test_compressed_or_encoded_content_gives_no_candidate(self):
         """An address inside compressed or encoded binary content gives no candidate.
@@ -744,7 +876,7 @@ class FixtureRepository(unittest.TestCase):
 
     def test_an_address_in_a_path_name_fails_naming_the_path_by_its_digest_only(self):
         # A regular file whose name and content each hold an address, and a symbolic link whose name
-        # holds one: each failure names its path by the digest of the path name, never the name.
+        # holds 1: each failure names its path by the digest of the path name, never the name.
         address = caught("worker-label-example", "placeholder-mail" + "." + "com")
         rel = "docs/" + address + ".md"
         link = "to-" + address
@@ -1162,6 +1294,18 @@ class FixtureRepository(unittest.TestCase):
         # A character above U+FFFF that is not printable: a tag character, which a terminal
         # shows as nothing.
         self.assert_tree_output_escapes([("tag" + chr(0xE0041) + "name.txt", "tag" + "\\U000e0041" + "name.txt")])
+
+    def test_a_delete_character_in_a_path_name_is_escaped_as_a_byte_in_the_output(self):
+        # DEL, 0x7f, is not printable and lies below 0x80, so it is written as \x7f, the byte, not
+        # by the code point form of a character at 0x80 or above.
+        self.assert_tree_output_escapes([("del" + chr(0x7F) + "name.txt", "del" + "\\x7f" + "name.txt")])
+
+    def test_a_printable_character_outside_ascii_in_a_path_name_stays_raw_in_the_output(self):
+        # A printable letter outside ASCII, in the Latin-1 range and above it, and a printable
+        # character above U+FFFF: each stays as it is, and only what is not printable is escaped.
+        rel = "caf" + chr(0xE9) + "-" + chr(0x540D) + "-" + chr(0x1D400) + ".txt"
+        self.assertTrue(rel.isprintable())
+        self.assert_tree_output_escapes([(rel, rel)])
 
 
 def tree_report(failures, read):

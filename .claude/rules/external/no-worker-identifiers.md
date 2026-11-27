@@ -58,35 +58,46 @@ git, and names a file that cannot be read as every failure names its file. So no
 line copies an address that the scan catches, in a file or in a path name, or that such
 environment text holds.
 
-Residual: the scan catches the email class only. A seat label, a bare account handle, or a
-numeric account identifier passes it, because a committed pattern that names a real label
-would itself publish the label; those forms rest on this rule, on the standing line that
-every QA and drafting brief carries, and on any scan the maintainer keeps outside the
-repository. An address split across lines, assembled by code, or written with the word "at"
-passes; an untracked file, the target of a tracked symbolic link, and the content of a
-submodule are not read; an address inside compressed or encoded binary content passes,
-since the scan neither decompresses nor decodes, unless that content holds the address as
-it is; an at sign outside ASCII, such as a confusable like the fullwidth or the small
-commercial at sign, passes, and so does an at sign written as an HTML character reference,
-such as the decimal or the named form, percent-encoded, as a backslash escape, such as
-`\x40`, `\100`, or the JSON or JavaScript escape of U+0040, or as quoted-printable `=40`,
-since the scan searches only for the ASCII at sign; an address with a space right after the
-at sign passes, since its domain run is then empty; an address whose local part ends, right
-before the at sign, in a byte that the local part does not name, such as a letter outside
-ASCII, a tilde, an exclamation mark, or an apostrophe, passes, since its local part is then
-empty; an address with a quoted local part, with a domain written with letters outside ASCII
-or as a literal in square brackets, with an underscore in its domain, with a zero-width
-space or a soft hyphen inside its domain, or with a dot of its domain written as an HTML
-character reference or percent-encoded, can pass, since the scan reads raw bytes and a byte
-that a run does not name ends that run: the local part, which ends right before the at
-sign, names ASCII letters, digits, and the 5 characters `.`, `_`, `%`, `+`, and `-`, and the
-domain run, which starts right after it, names ASCII letters, digits, dots, and hyphens;
-surfaces that are not files in this tree, such as a pull request title, description, or
-comment, are not reached by the scan, and `tools/check-pr-text.py` carries no identifier
-pattern today. The suite pins each form of text in this list that passes with its own
-subtest, named for the form, apart from compressed or encoded content, which has its own
-case, and each place in this list that is not read with its own case; a surface that is not
-a file in this tree is outside its input, so no case pins it. The digest of a
+Spellings that the scan catches, a closed set: outside the exemptions and the allowlisted
+lines, the scan catches an address when, and only when, its text holds all 4 of these parts,
+in any letter case: a local part of 1 or more ASCII letters, digits, dots, underscores,
+percent signs, plus signs, or hyphens; right after it, the ASCII at sign itself, the 1 byte
+0x40; right after that, a domain run of ASCII letters, digits, dots, or hyphens; and in that
+run, a dot with at least 1 byte of the run before it and 2 or more ASCII letters right after
+it. Every other spelling of an address passes, whatever its encoding or inserted character.
+Examples only, not a complete list, of other spellings that pass where they leave those 4
+parts incomplete: an address split across lines; an address assembled by code; an address
+written with the word at; an at sign outside ASCII, the fullwidth or the small commercial at
+sign; an at sign written as an HTML character reference, decimal, hexadecimal, or named; a
+percent-encoded at sign; an at sign written as a backslash escape; an at sign written as
+quoted-printable; a space, a tab, a carriage return, a less-than sign, or a zero-width space
+right after the at sign; a local part that ends in a letter outside ASCII, a tilde, an
+exclamation mark, or an apostrophe; a quoted local part; a domain written with letters
+outside ASCII; a domain written as a literal in square brackets; an underscore in the
+domain; a zero-width space inside the domain; a soft hyphen inside the domain; a zero-width
+joiner, a zero-width non-joiner, a word joiner, or a byte order mark inside the domain; a
+dot of the domain written as an HTML character reference, decimal, hexadecimal, or named; a
+percent-encoded dot of the domain; a dot of the domain written as a backslash escape; a dot
+of the domain written as quoted-printable; a dot of the domain written as the word dot, bare
+or in square brackets; a fullwidth or an ideographic full stop in place of a dot of the
+domain; and a space before a dot of the domain. The suite pins each of the 4 parts and each
+example with its own subtest, named with the words of these lists, and 1 case of the suite
+fails when the lists in its own docstring and the names of those subtests differ.
+
+Residual: the scan catches the email class only, and within it only the closed set of
+spellings above. A seat label, a bare account handle, or a numeric account identifier
+passes it, because a committed pattern that names a real label would itself publish the
+label; those forms rest on this rule, on the standing line that every QA and drafting brief
+carries, and on any scan the maintainer keeps outside the repository. An untracked file, the
+target of a tracked symbolic link, and the content of a submodule are not read; an address
+inside compressed or encoded binary content passes, since the scan neither decompresses nor
+decodes, unless that content holds the address as it is; surfaces that are not files in
+this tree, such as a pull request title, description, or comment, are not reached by the
+scan, and `tools/check-pr-text.py` carries no identifier pattern today. The suite pins each
+of the 3 forms in this list that name no address with its own subtest, named for the form,
+compressed or encoded content with its own case, and each place in this list that is not
+read with its own case; a surface that is not a file in this tree is outside its input, so
+no case pins it. The digest of a
 match or of a path name lets a reader who already holds a guess of the address confirm the
 guess, though it does not reveal the address. A path name is held back only from the output
 of the scan: git, and any other step of a workflow that lists or names files, can still
