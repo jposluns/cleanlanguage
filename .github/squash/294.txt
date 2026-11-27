@@ -10,10 +10,11 @@ maintainer decided on 2026-11-27 to move the pin to 2.1.318, the
 version that the host CLI reports, so that CI and the local full gate
 validate the manifests with the same CLI.
 
-The change also rewrites 3 comments of that workflow and keeps their
+The change also rewrites 2 comments of that workflow and keeps their
 meaning: line 20 now says that a dependency release must not fail an
-unrelated pull request, where it said "red", and lines 3 and 15 write
-the numerals 3 and 1 in place of words.
+unrelated pull request, where it said "red", and line 3 writes the
+numeral 3 in place of a word. It also adds this message as
+.github/squash/294.txt.
 
 8 lines keep 2.1.310 on purpose, because none of them is the pin:
 
@@ -58,7 +59,7 @@ This search lists the 8 lines above and no other:
 --exclude-dir=squash leaves out .github/squash, where this message
 names the old version 3 times.
 
-The orchestrator runs the full gate, tools/run_all_checks.sh, on the
-head of this pull request before it merges, and the Plugin manifests
-job in CI runs the CLI at the new pin. This message gives no result of
-either run.
+The plugin_manifests step of tools/run_all_checks.sh refuses to
+validate unless claude --version on the host reports the pinned
+version, and the Plugin manifests job in CI installs the CLI at the
+pin. This message credits no run of either to any commit.

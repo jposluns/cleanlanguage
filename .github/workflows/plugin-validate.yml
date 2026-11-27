@@ -12,7 +12,7 @@ name: Plugin manifests
 #      changes how marketplace validation recurses into plugin sources.
 #   3. The skill's own frontmatter is read by NEITHER of those runs. The validator
 #      only performs the frontmatter pass when the holding directory is named
-#      `skills`, so the skill is staged into 1 and validated there. `--strict` is
+#      `skills`, so the skill is staged into one and validated there. `--strict` is
 #      load-bearing: a missing frontmatter block is reported as a WARNING, and
 #      without --strict the step exits 0 and proves nothing.
 #
