@@ -53,8 +53,16 @@
 # although the configuration that they read can include a file that lies in
 # a worktree. The run fails unless git refuses a GIT_ATTR_SOURCE that names
 # no tree with exit 128 and its own message for that refusal, alone on
-# standard error. A filter driver whose name holds an equals sign fails the
-# run.
+# standard error. The run fails when a name holds an equals sign among the
+# filter driver names that it turns off: the name inside each filter setting
+# that git config lists from the script's worktree, the rest of each word of
+# the info/attributes file that starts with filter=, and each value that git
+# check-attr prints for the filter attribute of a path of the dry-run commit;
+# so a word of the info/attributes file that starts with filter= and holds
+# another equals sign fails the run, even in a comment. The run fails
+# whenever one of the script's own checks fails, or a tool that the script
+# calls refuses or fails, unless the script handles that outcome itself. The
+# checks that this header names are examples, not a full list.
 #
 # So no filter runs during a git call of the dry run, whatever the
 # configuration that git reads in any worktree defines, other than a driver

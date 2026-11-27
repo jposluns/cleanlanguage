@@ -8,15 +8,22 @@ that HEAD resolves to; and every tag and note with its object name. On
 a mismatch it prints both snapshots, so the failure names the ref that
 differs. A leak check then fails the run when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit. The
-script's header states what step 6 proves and how the script makes and
-reads the dry-run commit. It also states the conditions on which a run
-can now fail where it passed before: the script's git calls after the
-before snapshot, other than those that the header exempts, run with
-hooks, core.fsmonitor, the pager and lazy fetching turned off and with
-the header's attribute and filter settings; a filter driver whose name
-holds an equals sign fails the run; and so does a git that does not
-refuse a GIT_ATTR_SOURCE that names no tree with exit 128 and its own
-message.
+script's header states what step 6 proves, how the script makes and
+reads the dry-run commit, and which programs, attribute files and
+filter drivers its git calls keep out of reach. The run fails whenever
+one of the script's own checks fails, or a tool that the script calls
+refuses or fails, unless the script handles that outcome itself. So a
+check or a tool call that this change adds can fail a run that passed
+before. Examples of such checks, not a full list, are the leak check,
+the check that git refuses a GIT_ATTR_SOURCE that names no tree with
+exit 128 and its own message, and the check that the next sentence
+states. The run fails when a name holds an equals sign among the filter
+driver names that it turns off: the name inside each filter setting
+that git config lists from the script's worktree, the rest of each word
+of the info/attributes file that starts with filter=, and each value
+that git check-attr prints for the filter attribute of a path of the
+dry-run commit; so a word of the info/attributes file that starts with
+filter= and holds another equals sign fails the run, even in a comment.
 
 The new suite tools/test-release-dry-run-refs.py runs the whole
 script, with stand-ins for its tools, in throwaway folders; its
@@ -27,7 +34,8 @@ in tools/test-run-all-checks.py records the sha256 of the changed
 tools/run_all_checks.sh. tools/test-version-selectors.sh now runs the
 dry run's version selector in its new form, after the script's own git
 settings, and requires each of its 4 structural checks to run once for
-each of its 3 sites.
+each of its 3 sites. The change also adds .github/squash/290.txt, its
+squash message.
 
 A ref that git for-each-ref lists, moved by another worktree of the
 same repository during the run, changed the old hash and failed the
@@ -121,14 +129,19 @@ removal, leaves the file behind, since the exit cleanup then has no
 name to remove.
 
 The suite's trace2 case reads git's trace2 log of a run. It requires
-every git call that the script makes after the before snapshot, other
-than the reads of step 6, to run with the attribute and filter
-settings, except 4, each in the argument form that the script gives
-it: the first 3, which run before those settings exist, and the check
-of GIT_ATTR_SOURCE, which sets its own. Each of those 4 is exempt from
-these settings only in the argument form and with the GIT_ATTR_SOURCE
-that the script gives it, and only once, so a later run in that form
-must run with them.
+every run of git that the script starts after the before snapshot,
+other than a run in the form of the reads of the 2 snapshots or of the
+leak check, to run with the attribute and filter settings, except 4,
+each in the argument form that the script gives it: the first 3, which
+run before those settings exist, and the check of GIT_ATTR_SOURCE,
+which sets its own. Each of those 4 is exempt from these settings only
+in the argument form and with the GIT_ATTR_SOURCE that the script gives
+it, and only once, so a later run in that form must run with them. A
+run in the form of those reads is a git symbolic-ref, rev-parse or
+for-each-ref given -C and the path of the main worktree first, or a git
+call given --contains; the case reads every such run as one of those
+reads, wherever the script makes it, so it does not show that the
+script makes such a call only in the 2 snapshots and the leak check.
 
 The checks that ran, and the line that each ended with, are in the
 description of pull request 290.

@@ -2357,8 +2357,10 @@ class RepeatedTextCases(unittest.TestCase):
                 texts[place] = path.read_text(encoding="utf-8")
             else:
                 with self.subTest(text=place):
-                    self.skipTest(f"{place} is not at the top of the repository, as in a checkout, so its copies "
-                                  "of the repeated blocks are not compared; every other text is")
+                    self.skipTest(f"{place} is not at the top of the repository, as in a checkout, so it is left "
+                                  "out of the repeated blocks, the repeated sentences, the check for changed copies "
+                                  "and, for SQUASH-MSG, the byte comparison of the 2 squash messages; every other "
+                                  "text is compared")
         for name, source_text, first, last, copies in REPEATED:
             with self.subTest(block=name):
                 stated = repeated_block(texts[source_text], first, last)
