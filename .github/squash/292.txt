@@ -8,16 +8,18 @@ surface, and link it from the Adopted governance section of
 
 Add tools/test-no-worker-identifiers.py, which reads the raw bytes of
 every regular file that git ls-files lists (a tracked symbolic link
-and a submodule are not read) and takes every candidate address
-around every at sign, so an exempt candidate cannot hide another, with
-work that grows linearly with the file. The maintainer's own address
-and the reserved documentation domains are exempt, and 1 exact-line
-allowlist entry covers the URL-userinfo fixture in
-tools/test-release-links.py; a stale entry fails. A failure names the
-file, the line number and a digest of the match, never its text. A
-failed git call, a git that cannot start, a missing file or an
-unreadable file fails closed. Each caught example in the suite is
-assembled at run time, so its source holds no matchable text.
+and a submodule are not read) and the name of every path it lists,
+and takes every candidate address around every at sign, so an exempt
+candidate cannot hide another, with work that grows linearly with the
+file. The maintainer's own address and the reserved documentation
+domains are exempt, and 1 exact-line allowlist entry covers the
+URL-userinfo fixture in tools/test-release-links.py; a stale entry
+fails. A failure names the file, the line number and a digest of the
+match, never its text, and names a path whose name holds a match only
+by a digest of the path name. A failed git call, a git that cannot
+start, a missing file or an unreadable file fails closed. Each caught
+example in the suite is assembled at run time, so its source holds no
+matchable text.
 
 Run the suite as a named step of the Orchestration registry workflow,
 name it in the header of that workflow, mirror it in
