@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests the Released-line checks (item 26, G1 and G2) in
-# tools/check-portable-text-sync.sh, and its 29000-character label on the
+# tools/check-portable-text-sync.sh, and its 28000-character label on the
 # generated full file (case 10).
 #
 # G1: the skill must carry a well-formed "Released: YYYY-MM-DD" line directly
@@ -561,16 +561,16 @@ undated_fixture 1.0.14
 set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
 
-# 10. The 29k label: the generated full file, and so its byte-equal twin, may
-#     hold at most 29000 characters by wc -m. pad_full TARGET appends a line
+# 10. The 28k label: the generated full file, and so its byte-equal twin, may
+#     hold at most 28000 characters by wc -m. pad_full TARGET appends a line
 #     of U+00E9 (e with an acute accent, 1 character and 2 bytes in UTF-8)
 #     after a blank line at the end of the fixture skill, which adds its
 #     length plus 2 characters to the full file, regenerates, and fails the
 #     case unless the full file then holds exactly TARGET characters. The
 #     padded file then holds more bytes than characters, so a gate that
-#     counted bytes would refuse it at 29000 and print another count at 29001.
-#     At 29000 the case expects record to succeed and the gate to pass; at
-#     29001 it expects the gate to fail with the label line as its whole last
+#     counted bytes would refuse it at 28000 and print another count at 28001.
+#     At 28000 the case expects record to succeed and the gate to pass; at
+#     28001 it expects the gate to fail with the label line as its whole last
 #     line, so a label check that printed the line but did not stop the gate
 #     fails the case. The case needs a wc -m that gives the characters of the
 #     full file, not its bytes: where wc -m gives bytes, the count after
@@ -598,14 +598,14 @@ PYPAD
   fi
 }
 undated_fixture 1.0.14
-if pad_full 29000; then
-  if record; then pass "a full file of 29000 characters records"; else fail "a full file of 29000 characters records"; fi
-  expect_pass "a full file of 29000 characters is within its label"
+if pad_full 28000; then
+  if record; then pass "a full file of 28000 characters records"; else fail "a full file of 28000 characters records"; fi
+  expect_pass "a full file of 28000 characters is within its label"
 fi
 undated_fixture 1.0.14
-if pad_full 29001; then
-  expect_fail_line "a full file of 29001 characters is over its label" \
-    "${full} is 29001 chars, over its 29000 label."
+if pad_full 28001; then
+  expect_fail_line "a full file of 28001 characters is over its label" \
+    "${full} is 28001 chars, over its 28000 label."
 fi
 
 if [ "${fails}" -ne 0 ]; then

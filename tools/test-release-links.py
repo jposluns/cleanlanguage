@@ -1062,13 +1062,14 @@ class WriterTest(unittest.TestCase):
                      "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301",
                      "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301",
                      "/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302",
-                     "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302",
+                     "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-28k.md 302",
+                     "/downloads/cleanlanguage-instructions-29k.md /downloads/cleanlanguage-instructions-28k.md 302",
                      "/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302",
                      "/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302",
                      f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{self.next}/cleanlanguage-{self.next}.zip 302"):
             self.assertIn(line + "\n", redirects)
-        # The 14 fixed and release lines, and 1 line for each of the 22 logo files the site no longer serves.
-        self.assertEqual(len(redirects.splitlines()), 14 + 22)
+        # The 15 fixed and release lines, and 1 line for each of the 22 logo files the site no longer serves.
+        self.assertEqual(len(redirects.splitlines()), 15 + 22)
 
     def test_the_committed_redirects_match_the_writer(self):
         # The committed file is exactly what the writer writes for the current release, so a release keeps it.
@@ -1695,12 +1696,12 @@ class OldNameTest(unittest.TestCase):
         return {new: old for _, old, new in self.renames(self.REPO)}
 
     def test_no_committed_file_names_an_old_name(self):
-        self.assertEqual(len(self.renames(self.REPO)), 4)
+        self.assertEqual(len(self.renames(self.REPO)), 5)
         self.assertEqual(self.references(self.REPO), [])
 
     def test_an_old_name_outside_its_rule_fails(self):
         old = self.old()
-        whole, n29 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-29k.md"]
+        whole, n29 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-28k.md"]
         n11, n8 = old["cleanlanguage-instructions-11k.md"], old["cleanlanguage-instructions-8k.md"]
         blob = "https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/"
         raw = "https://raw.githubusercontent.com/jposluns/cleanlanguage/main/site/downloads/"
@@ -2004,7 +2005,8 @@ FIXED_LINES = ("/claude/download {zip_url} 302\n"
                "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions-11k.md 301\n"
                "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-instructions-11k.md 301\n"
                "/downloads/cleanlanguage.md /downloads/cleanlanguage-instructions.md 302\n"
-               "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-29k.md 302\n"
+               "/downloads/cleanlanguage-29k.md /downloads/cleanlanguage-instructions-28k.md 302\n"
+               "/downloads/cleanlanguage-instructions-29k.md /downloads/cleanlanguage-instructions-28k.md 302\n"
                "/downloads/cleanlanguage-11k.md /downloads/cleanlanguage-instructions-11k.md 302\n"
                "/downloads/cleanlanguage-8k.md /downloads/cleanlanguage-instructions-8k.md 302\n"
                "/privacy https://posluns.ca/privacy/ 301\n"

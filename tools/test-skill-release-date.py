@@ -1483,7 +1483,7 @@ class BuilderCarriesReleasedTest(unittest.TestCase):
                 capture_output=True, text=True,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            for name in ("cleanlanguage-instructions.md", "cleanlanguage-instructions-29k.md"):
+            for name in ("cleanlanguage-instructions.md", "cleanlanguage-instructions-28k.md"):
                 with self.subTest(name):
                     out = (root / "site" / "downloads" / name).read_text(encoding="utf-8")
                     self.assertEqual(out.count("Released:"), 1)

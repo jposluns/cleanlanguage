@@ -16,7 +16,7 @@
         "cleanlanguage/skills/cleanlanguage/references/",
         "tools/build-portable-text.py"
       ],
-      "target": "site/downloads/cleanlanguage-instructions-29k.md"
+      "target": "site/downloads/cleanlanguage-instructions-28k.md"
     },
     {
       "kind": "file",

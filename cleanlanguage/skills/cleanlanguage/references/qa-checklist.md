@@ -8,14 +8,13 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
-- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source?
 
 ## Directness
 
 - Does the first sentence contain the answer, decision, finding, request, or purpose?
 - Can any introductory sentence be removed without loss?
 - Is the required action explicit?
-- Is an intensifier or connector such as "highly relevant" or "aligns closely with" standing in for a direct statement?
+- Is an intensifier or connector standing in for a direct statement?
 
 ## Ownership and consequence
 
@@ -46,11 +45,7 @@ Review finished prose against these questions.
 
 ## Mechanics
 
-- Use the selected spelling variant consistently: Oxford English with `-ize` by default, or the variant the user's instructions name.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
-- Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
 - Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only in quoted language, official titles, product names, standards text, or contractual wording.
 - Use punctuation and capitalization consistently.
 - Preserve channel-specific formatting requirements.
-- Do not end with an optional offer or generic engagement prompt.

@@ -48,7 +48,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 - Use Oxford English and `-ize` spellings where both forms are valid; when the user's instructions select a different spelling variant, such as Canadian, British with `-ise` endings, or American, apply that variant consistently.
 - Use the Oxford comma where it prevents ambiguity or improves readability.
 - Use numerals for quantities, measurements, versions, and dates: `3 findings`, `version 1.0.12`, `14 October`, `5 km`. Keep established terminology and proper names in their canonical form even where that departs from numerals: `World War II`, `the Big Four`, `nine-to-five`.
-- When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with `that`: write `the auditor confirmed that the exception was approved`, not `the auditor confirmed the exception was approved`, where `the exception` reads as the object until the verb that follows forces a re-parse.
+- When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with `that`: write `the auditor confirmed that the exception was approved`, not `the auditor confirmed the exception was approved`.
 - Use `that` when words separate the verb from its clause, and in each coordinated clause.
 - Include `that` where it improves clarity or resolves ambiguity, and whenever you are in doubt; omit it only where the sentence reads equally clearly without it. Never insert it before a plain noun object: write `confirm the owner`, not `confirm that the owner`.
 - Always follow `ensure` with `that` and a clause, never a bare noun: write `ensure that you are compliant`, not `ensure compliance`.
@@ -59,7 +59,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 - Distinguish verified facts, reasonable inferences, estimates, and speculation.
 - State uncertainty directly. Do not manufacture confidence.
 - Match the user's natural bluntness when it remains professionally appropriate.
-- When the user supplies a draft or a correction, keep their vocabulary and directness rather than a generic executive voice; when they reject a phrase as generated, rewrite the sentence rather than swap in a synonym with the same cadence.
+- When the user supplies a draft or a correction, keep their vocabulary and directness rather than a generic executive voice.
 - Do not add praise, reassurance, validation, or conversational filler unless the situation calls for it.
 - Do not end with optional offers, generic invitations, or engagement prompts.
 
@@ -76,7 +76,7 @@ Do not write these, and remove or rewrite them where found; in Audit mode, flag 
 - repetitive 3-part rhetorical structures used without substantive need;
 - meta-commentary about what the document will do;
 - empty intensifiers, softeners, and business jargon;
-- formulaic executive phrasing used as default connection or emphasis, such as `highly relevant`, `aligns closely with`, or `I would value discussions with`, and catalogue-style topic lists that reproduce a source list without intent;
+- formulaic executive phrasing used as default connection or emphasis, and catalogue-style topic lists that reproduce a source list without intent;
 - every em dash and en dash, converted to the punctuation the sentence needs (a semicolon, colon, comma, or parentheses, or a restructure);
 - abstract claims that conceal the actor, evidence, consequence, or required action;
 - prose that sounds supportive, inspirational, or polished at the expense of precision.
@@ -393,14 +393,13 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
-- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source?
 
 ### Directness
 
 - Does the first sentence contain the answer, decision, finding, request, or purpose?
 - Can any introductory sentence be removed without loss?
 - Is the required action explicit?
-- Is an intensifier or connector such as "highly relevant" or "aligns closely with" standing in for a direct statement?
+- Is an intensifier or connector standing in for a direct statement?
 
 ### Ownership and consequence
 
@@ -431,14 +430,10 @@ Review finished prose against these questions.
 
 ### Mechanics
 
-- Use the selected spelling variant consistently: Oxford English with `-ize` by default, or the variant the user's instructions name.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
-- Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
 - Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only in quoted language, official titles, product names, standards text, or contractual wording.
 - Use punctuation and capitalization consistently.
 - Preserve channel-specific formatting requirements.
-- Do not end with an optional offer or generic engagement prompt.
 
 ## Examples
 
@@ -465,14 +460,6 @@ I wanted to take a moment to flag that the vendor contract expires on 31 March.
 #### Preferred
 
 The vendor contract expires on 31 March.
-
-#### Weak
-
-As we navigate today's fast-moving threat landscape, the firewall rules have not been reviewed since January.
-
-#### Preferred
-
-The firewall rules have not been reviewed since January.
 
 #### Weak
 
@@ -545,14 +532,6 @@ The agenda looks highly relevant to my work, particularly the sessions on regula
 The agenda covers 3 areas I work on: regulatory interoperability, cyber resilience, and audit readiness.
 
 Keep the same topics and state the writer's connection to them, rather than asserting relevance with an intensifier.
-
-#### Abstract-noun frame
-
-My main areas of interest are AI governance and cybersecurity.
-
-#### Preferred, as a direct statement
-
-I am interested in AI governance and cybersecurity.
 
 ### Incident status
 
