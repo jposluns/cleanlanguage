@@ -48,14 +48,19 @@ sha256 of the gate before and after this change.
   comments of its base gate. The builders' only source is GATE_BYTES,
   so neither states or checks a rule of its own about its source.
 - Make binding_sites(), which the reader pin reads, walk the whole
-  syntax tree and read each string that a node holds as a name that it
-  binds, but a name that is read, a type comment and the fields of
-  UNBOUND_FIELDS, and of an import the name that each alias binds, so
-  it fails closed and finds a type parameter. Hold it with
+  syntax tree and read each string that a node other than an import or
+  an alias holds as a name that it binds, but a name that is read, a
+  type comment and the fields of UNBOUND_FIELDS, and of an import only
+  the name that each alias binds, so it fails closed and finds a type
+  parameter. Hold it with
   SECOND_BINDINGS, 21 sources that each bind or declare REQUESTED_FILES
   once more, a nonlocal statement, a dotted import and a from import
   among them, in
-  each of which it must find the name exactly twice.
+  each of which it must find the name exactly 2 times, and with
+  LINE_BINDINGS, 4 sources, each with the lines at which it must find
+  the name: a 2nd binding on the line of the statement that binds it
+  and on the next line, and a from import of a module of that name and
+  an import of it as qz, which bind another name.
 - Add control_problems(): with a name of the test rebound to a
   stand-in for 1 call, each rule of capture_problems(),
   pin_value_problems() and scope_sentence_problems() that its

@@ -3171,9 +3171,10 @@ UNBOUND_FIELDS = frozenset({("Attribute", "attr"), ("Constant", "kind"), ("Const
 def binding_sites(tree: ast.Module) -> dict[str, list[int]]:
     """Each name that the source of tree binds or declares anywhere, at any depth and in any scope, with the line of
     each node that does, found by walking the whole syntax tree: a name node that is not read (ast.Load), the name
-    that an import binds for each of its aliases (its asname, or else the 1st part of its dotted name), and each
-    other string that a node holds in a field, or in a list in a field, other than a type comment and the fields of
-    UNBOUND_FIELDS. pin_value_problems() holds it with SECOND_BINDINGS."""
+    that an import binds for each of its aliases (its asname, or else the 1st part of its dotted name) and no other
+    field of an import or of an alias, such as the module of a from import, and each other string that a node other
+    than an import or an alias holds in a field, or in a list in a field, other than a type comment and the fields of
+    UNBOUND_FIELDS. pin_value_problems() holds it with SECOND_BINDINGS and LINE_BINDINGS."""
     found: dict[str, list[int]] = collections.defaultdict(list)
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -3436,6 +3437,12 @@ SECOND_BINDINGS = ("for {name} in ():\n    pass\n", "with open('.') as {name}:\n
                    "if True:\n    import {name}.qz\n", "if True:\n    from os import {name}\n",
                    "def qz({name}):\n    pass\n", "def qz[{name}]():\n    pass\n", "def qz[*{name}]():\n    pass\n",
                    "def qz[**{name}]():\n    pass\n")
+# Check 7: sources, each with the lines at which binding_sites() must find {name} in it, so that it records the line
+# of each node that binds or declares it: a statement that binds {name} with a 2nd binding after it on its line, and
+# with a 2nd binding on the next line; and a statement that binds {name} with a from import of the module {name} and
+# with an import of {name} as qz after it, each of which binds another name.
+LINE_BINDINGS = (("{name} = (); del {name}\n", [1, 1]), ("{name} = ()\ndel {name}\n", [1, 2]),
+                 ("{name} = ()\nfrom {name} import qz\n", [1]), ("{name} = ()\nimport {name} as qz\n", [1]))
 
 
 def pin_shared_gate(source: bytes) -> bytes:
@@ -3480,7 +3487,8 @@ def pin_value_problems() -> list[str]:
     each such subclass that cannot be made, for each kind of FINAL_KINDS that Python lets a class subclass, and for
     each kind of FINAL_KINDS that is in none of the 3 tuples; unless reader_pin_text() raises it for a value with
     __wrapped__ that a statement other than a def binds; unless binding_sites() finds PIN_NAME bound or declared
-    exactly twice in each source of SECOND_BINDINGS after a statement that binds it; and unless, on each of 3 base
+    exactly 2 times in each source of SECOND_BINDINGS after a statement that binds it, and at exactly the lines that
+    LINE_BINDINGS gives for each of its sources; and unless, on each of 3 base
     gates, the committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME by
     exactly 1 statement at its top level, and reader_pin_problems(), given the gate with that statement, as the
     syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem, which says that REQUESTED_FILES cannot
@@ -3680,7 +3688,12 @@ def pin_value_problems() -> list[str]:
         source = bound + text.format(name=PIN_NAME)
         sites = binding_sites(ast.parse(source)).get(PIN_NAME, [])
         if len(sites) != 2:
-            problems.append(f"binding_sites() finds {PIN_NAME} at lines {sites} in {source!r}, not twice")
+            problems.append(f"binding_sites() finds {PIN_NAME} at lines {sites} in {source!r}, not 2 times")
+    for text, lines in LINE_BINDINGS:
+        source = text.format(name=PIN_NAME)
+        sites = binding_sites(ast.parse(source)).get(PIN_NAME, [])
+        if sorted(sites) != lines:
+            problems.append(f"binding_sites() finds {PIN_NAME} at lines {sites} in {source!r}, not at lines {lines}")
     bases = [("the committed gate", GATE_BYTES)]
     for label, build, shared in (("the shared-line gate", pin_shared_gate, True),
                                  ("the reflowed gate", pin_reflowed_gate, False)):
@@ -3848,8 +3861,9 @@ def control_problems() -> list[str]:
     kind of the 3 tuples that the committed FINAL_KINDS names, whose bare subclass cannot be made, for int, whose
     subclass can, for slice, which is in none of the 3 tuples, and for map, whose bare subclass cannot be made with no
     arguments; with binding_sites() rebound to a stand-in that finds no binding, a problem for each of the 21 sources
-    of SECOND_BINDINGS; with both builders rebound to stand-ins that return their source unchanged, a problem for each
-    built base gate, which lacks the layout of its builder; with 1 builder at a time rebound to a stand-in that
+    of SECOND_BINDINGS and for each of the 4 sources of LINE_BINDINGS; with both builders rebound to stand-ins that
+    return their source unchanged, a problem for each built base gate, which lacks the layout of its builder; with 1
+    builder at a time rebound to a stand-in that
     changes the result of the builder so that it breaks exactly 1 of the 2 parts of its layout, 5 stand-ins for the
     shared-line layout, which move each of its 3 statements out of its place or drop its comment, and 4 stand-ins for
     the reflowed layout, which put its statement on 2 lines or on 4 lines, drop its comment or put a statement that
@@ -3968,7 +3982,8 @@ def control_problems() -> list[str]:
         return source
 
     expect("pin_value_problems() with binding_sites() finding no binding", pin_value_problems,
-           [("binding_sites() finds ", ", not twice")] * 21, binding_sites=lambda tree: {})
+           [("binding_sites() finds ", ", not 2 times")] * 21 + [("binding_sites() finds ", ", not at lines ")] * 4,
+           binding_sites=lambda tree: {})
     expect("pin_value_problems() with builders that return their source", pin_value_problems,
            [(f"{label}, {name}() of tools/{GATE.name}, is not in the layout", "")
             for label, name in (("the shared-line gate", "shared_stand_in"), ("the reflowed gate", "reflowed_stand_in"))],
