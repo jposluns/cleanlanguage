@@ -9,12 +9,13 @@ worktree of the case's repository), the branch that HEAD names (or that HEAD is 
 commit that HEAD resolves to, and every tag and note with its object name, before its run and again
 in step 6, and fails when the 2 snapshots differ. Step 6 also fails when a ref that git
 for-each-ref lists from repo_root contains the dry run's own commit. A ref that another worktree
-writes during the run, as a commit on another branch or a fetch that moves a remote-tracking ref
-does, fails the run only when it is a tag or a note, when it is the HEAD of repo_root or the branch
-that worktree has checked out, or when it is a ref that git for-each-ref lists from repo_root,
-created or moved onto the dry run's commit or a descendant of it; any other such write is outside
-the proof. The dry run's commit is the commit that the script's git commit-tree writes and prints,
-which the script saves and step 6 reads, never a later HEAD. Every git call of the script after the
+writes during the run fails the proof only when it is a tag or a note, when it is the HEAD of the
+script's worktree or the branch that worktree has checked out, when it is a ref that git
+for-each-ref lists from the script's worktree, created or moved onto the dry-run commit or a
+descendant of it, or when git fails or writes to standard error while it lists the refs of a
+snapshot or of the leak check, as it does for a ref whose name it rejects; any other such write is
+outside the proof. The dry run's commit is the commit that the script's git commit-tree writes and
+prints, which the script saves and step 6 reads, never a later HEAD. Every git call of the script after the
 before snapshot other than the reads of step 6, the exit cleanup's included, runs with hooks, the
 core.fsmonitor program and a pager turned off, and every git process of the dry run with lazy
 fetching turned off. Every git process of the dry run that starts after the first 3 git calls that
@@ -32,12 +33,14 @@ GIT_ATTR_SOURCE that names no tree with exit 128 and its own message for that re
 the HEAD of the throwaway worktree is at that commit once the script has moved it there, and the
 move fails unless that HEAD is still at the parent the script read. The leak check reads with
 replace refs, the graft file and the shallow file turned off, so no refs/replace/ ref, graft or
-shallow boundary can hide a ref that contains the commit; in a shallow clone, git then finds the
-parents of a commit at the shallow boundary missing, so there the leak check can fail the run on
-git's message about them or naming a ref that does not contain the commit, and no case runs in a
-shallow clone. The tag and note listing of each snapshot and the listing of the leak check fail
-the run when git writes anything to standard error while it lists, as when git for-each-ref skips
-a ref whose name it rejects, with a warning, and still exits 0. The git commit-tree that makes the
+shallow boundary can hide a ref that contains the commit. In a shallow clone, the leak check, which
+reads with the shallow file turned off, finds the parents of a commit at the shallow boundary
+missing, so there it can fail the run on git's message about them or naming a ref that does not
+contain the dry-run commit; release-dry-run.yml checks out the whole history, so its run is not
+shallow. No case runs in a shallow clone. The tag and note listing of each snapshot and the
+listing of the leak check fail the run when git writes anything to standard error while it lists,
+as when git for-each-ref skips a ref whose name it rejects, with a warning, and still exits 0. The
+git commit-tree that makes the
 commit runs with commit signing turned off, so the dry run's commit is never signed.
 
 The script's header states the residual of the proof in these words:
@@ -264,13 +267,16 @@ it.
 first on PATH, sends to the process group of the run when the script runs its check of
 GIT_ATTR_SOURCE, once it has recorded the entries that mktemp names in the run's TMPDIR. The case
 requires that entry list to hold 1 entry, the file in which the check writes standard error, the
-run to stop before its read of the version, and the run to leave in its TMPDIR no entry that
-mktemp names, so the script must remove that file on an exit that such a signal causes while the
-check's git call runs. 1 more signal case ends a run with TERM, which an rm stand-in, first on PATH,
-sends to the process group of the run once it has removed that file, when the script removes it,
-and has made a new file under its name, as another process that mktemp gives that name would; the
-case requires the run to leave in its TMPDIR only that new file, with the text the stand-in wrote
-in it, so the script must clear the name of the file before it removes it. No case sends a signal
+run to end by that signal, as its exit status shows, before its read of the version, and the run to
+leave in its TMPDIR no entry that mktemp names, so the script must remove that file on an exit that
+such a signal causes while the check's git call runs. 1 more signal case ends a run with TERM,
+which an rm stand-in, first on PATH, sends to the process group of the run once it has removed that
+file, when the script removes it, and has made a new file under its name, as another process that
+mktemp gives that name would; the case requires the run to end by TERM, as its exit status shows,
+and to leave in its TMPDIR only that new file, with the text the stand-in wrote in it, so the
+script must clear the name of the file before it removes it. The git wrapper and the rm stand-in
+each exit 1 if their signal does not end them, and a run that the signal does not end fails the
+case. No case sends a signal
 while mktemp runs, or makes a removal of the exit cleanup fail.
 
 1 more case, the skipped-ref case, writes a ref whose name git rejects, as a file of the ref store,
@@ -346,10 +352,10 @@ the first 3, which list the filter drivers, find the info/attributes file and na
 before the attribute and filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE
 that names no tree, which sets its own, also to run with GIT_ATTR_NOSYSTEM set, GIT_ATTR_SOURCE set
 to the empty tree, core.attributesFile set to the null device and the commands of both configured
-filter drivers empty; each of those 4 is exempt from these settings only in the argument form and
+filter drivers empty. Each of those 4 is exempt from these settings only in the argument form and
 with the GIT_ATTR_SOURCE that the script gives it, and only once, so a later run in that form must
-run with them; every run of git, the reads of the 2 snapshots and the leak check included,
-must run with lazy fetching turned off; the reads must start no program, and the other runs no
+run with them. Every run of git, the reads of the 2 snapshots and the leak check included, must run
+with lazy fetching turned off; the reads must start no program, and the other runs no
 program other than git, and no automatic maintenance or fetch, although the case's gc.auto and
 maintenance.auto ask for it. A run in the form of those reads is a git symbolic-ref, rev-parse or
 for-each-ref given -C and the path of the main worktree first, or a git call given --contains; the
@@ -373,8 +379,15 @@ committed squash message are read in every checkout, CI included. PR-BODY.md and
 not committed, so a checkout of the branch or of main lacks them, and there the case compares
 every other text and skips each missing one in a subtest that says so: in CI the header's residual
 is compared with this docstring's copy, each of the 4 blocks with the committed squash message, and
-no copy in the description. It is the only case that reads the script's text, and it reads only
-those comment lines.
+no copy in the description. The text case also compares 5 sentences that are repeated word for
+word inside paragraphs that differ, each run of whitespace read as 1 space, and requires each text
+that holds a sentence to hold it once: the listing rule, the scope of another worktree's writes and
+the shallow-clone caveat, which the script's header states and this docstring, the squash messages
+and the description repeat; the exemption of the trace2 case, which this docstring states and the
+squash messages and the description repeat; and the clearing of the name of the file of the check
+of GIT_ATTR_SOURCE, which the squash messages and the description hold. So a word removed or
+changed inside such a sentence in any of those texts fails the case. It is the only case that reads
+the script's text, and it reads only those comment lines.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -393,8 +406,10 @@ some other cases, not with those of that workflow. A change to the
 script is caught only when it changes what a case observes, so a change that acts only outside the
 cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
 ref no case writes or stops step 6 reading one, is not caught. The text case compares only the 4
-repeated blocks, each as 1 whole paragraph, so it does not catch a paragraph added next to a block,
-a change to any other paragraph, or a change to a text that the checkout lacks, as CI lacks
+repeated blocks, each as 1 whole paragraph, and the 5 repeated sentences, each as a run of words, so
+it does not catch a paragraph added next to a block, words added next to a sentence, a change to
+any other paragraph or sentence, a change to a copy in a text that it does not read, such as a
+comment of the script below its header, or a change to a text that the checkout lacks, as CI lacks
 PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its default ref backend.
 
 Usage: python3 -I tools/test-release-dry-run-refs.py
@@ -1580,8 +1595,10 @@ class SignalCases(unittest.TestCase):
     def test_a_signal_during_the_attribute_source_check_leaves_no_file(self):
         # HUP, INT and TERM, each sent to the process group of the run while the check of GIT_ATTR_SOURCE
         # runs, as a hang-up, an interrupt typed at a terminal or a kill of the job sends it, end the run
-        # once the file in which the check writes standard error exists. The run must stop before its read
-        # of the version and leave no entry that mktemp names in TMPDIR.
+        # once the file in which the check writes standard error exists. The run must end by that signal,
+        # as its exit status shows, since the wrapper exits 1 if the signal does not end it, which a run
+        # can read as a failure of the check, stop before its read of the version and leave no entry that
+        # mktemp names in TMPDIR.
         for name_of_signal in ("HUP", "INT", "TERM"):
             with self.subTest(signal=name_of_signal), tempfile.TemporaryDirectory() as name:
                 fixture = Fixture(Path(name))
@@ -1591,7 +1608,8 @@ class SignalCases(unittest.TestCase):
                 during = entries.read_text(encoding="utf-8").splitlines() if entries.exists() else []
                 self.assertEqual(len(during), 1, f"TMPDIR did not hold 1 entry that mktemp names, the file of the "
                                  f"check, while the check ran: {during}")
-                self.assertNotEqual(code, 0, f"the run did not end with a failure\n{out}{err}")
+                self.assertEqual(code, -signal.Signals[f"SIG{name_of_signal}"],
+                                 f"the run did not end by {name_of_signal}\n{out}{err}")
                 self.assertNotIn(SUCCESS, out)
                 self.assertNotIn(VERSION_LINE, out, f"the run went on past the check\n{out}{err}")
                 self.assertEqual(temporary_files(fixture.tmp), [],
@@ -1601,14 +1619,16 @@ class SignalCases(unittest.TestCase):
     def test_a_signal_during_the_removal_of_the_file_of_the_check_removes_no_later_file(self):
         # TERM, sent to the process group of the run by an rm stand-in once it has removed the file in
         # which the check of GIT_ATTR_SOURCE writes standard error and has made a new file under its
-        # name, as another process that mktemp gives that name would, ends the run. The exit cleanup
-        # must not remove that new file, so the script must clear the name before it removes the file.
+        # name, as another process that mktemp gives that name would, ends the run, as its exit status
+        # must show, since the stand-in exits 1 if TERM does not end it, which the script reads as a failed
+        # removal. The exit cleanup must not remove that new file, so the script must clear the name before
+        # it removes the file.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             stand_in = signalling_rm(fixture.tmp / "stand-in", fixture.env, "TERM")
             code, out, err = run_script(fixture.script, fixture.env, stand_in)
             self.assertTrue((stand_in / "signalled").exists(), f"the rm stand-in was not run\n{out}{err}")
-            self.assertNotEqual(code, 0, f"the run did not end with a failure\n{out}{err}")
+            self.assertEqual(code, -signal.SIGTERM, f"the run did not end by TERM\n{out}{err}")
             self.assertNotIn(SUCCESS, out)
             self.assertNotIn(VERSION_LINE, out, f"the run went on past the check\n{out}{err}")
             left = temporary_files(fixture.tmp)
@@ -2135,10 +2155,10 @@ class ConfiguredProgramCases(unittest.TestCase):
         # filter drivers, find the info/attributes file and name the empty tree before the attribute and
         # filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, must
         # also run with GIT_ATTR_NOSYSTEM, GIT_ATTR_SOURCE set to the empty tree, core.attributesFile set
-        # to the null device and both configured filter drivers turned off; each of those 4 is exempt
-        # only in the argument form and with the GIT_ATTR_SOURCE that the script gives it, and only once.
-        # Every run in the form of those reads must run with lazy fetching turned off and start no
-        # program.
+        # to the null device and both configured filter drivers turned off. Each of those 4 is exempt from
+        # these settings only in the argument form and with the GIT_ATTR_SOURCE that the script gives it,
+        # and only once, so a later run in that form must run with them. Every run in the form of those
+        # reads must run with lazy fetching turned off and start no program.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             trace = fixture.tmp / "trace2"
@@ -2247,6 +2267,38 @@ REPEATED = (
     ("the residual of the test", DOCSTRING, "Residual of the test:", "with its default ref backend.",
      (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
 )
+# (name, sentence, the texts that hold it) of each sentence that is repeated word for word inside
+# paragraphs that differ. Each text that holds the sentence must hold it once, each run of whitespace
+# read as 1 space, so a word removed or changed inside it in any of those texts fails the case.
+EVERY_TEXT = (HEADER, DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")
+SENTENCES = (
+    ("the listing rule",
+     "The tag and note listing of each snapshot and the listing of the leak check fail the run when git writes "
+     "anything to standard error while it lists, as when git for-each-ref skips a ref whose name it rejects, "
+     "with a warning, and still exits 0.", EVERY_TEXT),
+    ("the scope of another worktree's writes",
+     "A ref that another worktree writes during the run fails the proof only when it is a tag or a note, when "
+     "it is the HEAD of the script's worktree or the branch that worktree has checked out, when it is a ref "
+     "that git for-each-ref lists from the script's worktree, created or moved onto the dry-run commit or a "
+     "descendant of it, or when git fails or writes to standard error while it lists the refs of a snapshot "
+     "or of the leak check, as it does for a ref whose name it rejects; any other such write is outside the "
+     "proof.", EVERY_TEXT),
+    ("the shallow-clone caveat",
+     "In a shallow clone, the leak check, which reads with the shallow file turned off, finds the parents of "
+     "a commit at the shallow boundary missing, so there it can fail the run on git's message about them or "
+     "naming a ref that does not contain the dry-run commit; release-dry-run.yml checks out the whole "
+     "history, so its run is not shallow.", EVERY_TEXT),
+    ("the exemption of the trace2 case",
+     "Each of those 4 is exempt from these settings only in the argument form and with the GIT_ATTR_SOURCE "
+     "that the script gives it, and only once, so a later run in that form must run with them.",
+     (DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+    ("the clearing of the name of the check's file",
+     "Before it goes on or fails, the run clears the name of the temporary file of the check of "
+     "GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a file that another process makes later under "
+     "that name, and then tries to remove the file itself, and fails if that removal fails; a signal that "
+     "ends the run between that clearing and that removal, or a failure of that removal, leaves the file "
+     "behind, since the exit cleanup then has no name to remove.", (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+)
 
 
 def header_text(script: str) -> str:
@@ -2329,6 +2381,16 @@ class RepeatedTextCases(unittest.TestCase):
                                          f"and ends with {last!r}, or holds its first words other than once")
                     self.assertEqual(block, stated, f"{name}: {place} differs from {source} at "
                                      f"{first_difference(block, stated)}")
+        # Each sentence of SENTENCES must be held once, word for word, in each text that holds it and that
+        # this checkout has.
+        for name, sentence, places in SENTENCES:
+            with self.subTest(sentence=name):
+                for place in places:
+                    if place not in texts:
+                        continue
+                    held = " ".join(texts[place].split()).count(sentence)
+                    self.assertEqual(held, 1, f"{name}: {place} holds the sentence {held} times, not once, word for "
+                                     f"word: {sentence!r}")
 
 
 if __name__ == "__main__":

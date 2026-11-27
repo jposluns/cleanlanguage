@@ -17,31 +17,33 @@
 # worktree (the branch HEAD names and the commit HEAD resolves to), and that
 # no ref that git for-each-ref lists from the script's worktree contains the
 # dry-run commit, read with replace refs, the graft file and the shallow file
-# turned off. In a shallow clone that reading finds the parents of a commit at
-# the shallow boundary missing, and the leak check can then fail the run on
-# git's message about them or naming a ref that does not contain the dry-run
-# commit;
-# release-dry-run.yml checks out the whole history, so its run is not
-# shallow. The tag and note listing of each snapshot and the listing of the
-# leak check fail the run when git writes anything to standard error while it
-# lists, as when git for-each-ref skips a ref whose name it rejects, with a
-# warning, and still exits 0. A ref that another worktree writes during the
-# run fails the proof only when it is a tag or a note, when it is the HEAD of
-# the script's worktree or the branch that worktree has checked out, or when
-# it is such a listed ref created or moved onto the dry-run commit or a
-# descendant of it;
-# any other such write is outside the proof. The dry-run commit is the commit
-# that git commit-tree writes and prints, which the script saves and step 6
-# reads, never a later HEAD. Every git call of the script after the before
-# snapshot other than the reads of step 6, the exit cleanup's git worktree
-# remove included, runs with hooks, the core.fsmonitor program and a pager
-# turned off, whatever the configuration asks, and every git process of the
-# dry run runs with lazy fetching from a promisor remote turned off. Every git
-# process of the dry run that starts after the first 3 git calls that follow
-# the before snapshot, its tools' included, reads no attribute file other
-# than the info/attributes file of the repository and, in git archive, the
-# .gitattributes files of the tree it archives and, in the git check-attr
-# that reads the filter drivers of the dry-run commit, those of that commit,
+# turned off. In a shallow clone, the leak check, which reads with the shallow
+# file turned off, finds the parents of a commit at the shallow boundary
+# missing, so there it can fail the run on git's message about them or naming
+# a ref that does not contain the dry-run commit; release-dry-run.yml checks
+# out the whole history, so its run is not shallow. The tag and note listing
+# of each snapshot and the listing of the leak check fail the run when git
+# writes anything to standard error while it lists, as when git for-each-ref
+# skips a ref whose name it rejects, with a warning, and still exits 0. A ref
+# that another worktree writes during the run fails the proof only when it is
+# a tag or a note, when it is the HEAD of the script's worktree or the branch
+# that worktree has checked out, when it is a ref that git for-each-ref lists
+# from the script's worktree, created or moved onto the dry-run commit or a
+# descendant of it, or when git fails or writes to standard error while it
+# lists the refs of a snapshot or of the leak check, as it does for a ref whose
+# name it rejects; any other such write is outside the proof. The dry-run
+# commit is the commit that git commit-tree writes and prints, which the
+# script saves and step 6 reads, never a later HEAD. Every git call of the
+# script after the before snapshot other than the reads of step 6, the exit
+# cleanup's git worktree remove included, runs with hooks, the core.fsmonitor
+# program and a pager turned off, whatever the configuration asks, and every
+# git process of the dry run runs with lazy fetching from a promisor remote
+# turned off. Every git process of the dry run that starts after the first 3
+# git calls that follow the before snapshot, its tools' included, reads no
+# attribute file other than the info/attributes file of the repository and,
+# in git archive, the .gitattributes files of the tree it archives and, in
+# the git check-attr that reads the filter drivers of the dry-run commit,
+# those of that commit,
 # and runs with the clean, smudge and process commands turned off of every
 # filter driver that the configuration read from the script's worktree
 # defines or that the info/attributes file names, and, from step 1 on, of
@@ -183,13 +185,14 @@ listed_refs() {
 # off, and the graft file and the shallow file are each set to an empty path,
 # which git reads as no file, so no refs/replace/ ref, graft or shallow
 # boundary can give a descendant of COMMIT other parents and hide a ref that
-# contains it. In a shallow clone, git then finds the parents of a commit at
-# the shallow boundary missing, and it can say so on standard error or list a
-# ref that does not contain COMMIT, so there the run can fail on that text or
-# naming refs that do not contain it. A failing git call fails the run and is
-# never read as an empty listing, and so does any text that git writes to
-# standard error while it lists them, such as the warning with which it skips
-# a ref whose name it rejects (listed_refs).
+# contains it. In a shallow clone, the leak check, which reads with the shallow
+# file turned off, finds the parents of a commit at the shallow boundary
+# missing, so there it can fail the run on git's message about them or naming
+# a ref that does not contain the dry-run commit; release-dry-run.yml checks
+# out the whole history, so its run is not shallow. A failing git call fails
+# the run and is never read as an empty listing, and so does any text that git
+# writes to standard error while it lists them, such as the warning with which
+# it skips a ref whose name it rejects (listed_refs).
 ref_leak_check() {
   local holders
   holders="$(GIT_GRAFT_FILE='' git -C "${repo_root}" --no-replace-objects --shallow-file '' \
@@ -339,9 +342,9 @@ turn_off_filters "${filter_drivers}${attributes_drivers}"
 # as HUP, INT or TERM causes included. A removal that fails there leaves its
 # entry behind. A signal that no trap can catch, such as KILL, leaves both
 # behind, and a signal that ends the run after mktemp has made the file or the
-# folder and before the script holds its name, or after the script has cleared
-# the name of the file and before it has removed the file, as below, leaves
-# that entry behind, since the exit cleanup then has no name to remove.
+# folder and before the script holds its name leaves that entry behind, since
+# the exit cleanup then has no name to remove; the run's own removal of the
+# file, below, has a window of the same kind.
 attr_source_log=""
 worktree=""
 cleanup() {
@@ -369,12 +372,13 @@ trap cleanup EXIT
 # in a shell variable, since a command substitution drops every NUL byte and
 # every newline at the end of what it captures. On a failure the file is
 # shown through cat -v, which shows a NUL byte as ^@ and a carriage return as
-# ^M. Before it goes on or fails, the run clears the name of the file, so that
-# the exit cleanup cannot remove a file that another process makes later under
-# that name, and then tries to remove the file itself, and fails if that
-# removal fails, which leaves the file behind; a signal that ends the run
-# between that clearing and that removal leaves the file behind too, since the
-# exit cleanup then has no name to remove. The exit cleanup above tries to
+# ^M. Before it goes on or fails, the run clears the name of the temporary file
+# of the check of GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a
+# file that another process makes later under that name, and then tries to
+# remove the file itself, and fails if that removal fails; a signal that ends
+# the run between that clearing and that removal, or a failure of that
+# removal, leaves the file behind, since the exit cleanup then has no name to
+# remove. The exit cleanup above tries to
 # remove the file on any other exit once the script holds its name, such as one
 # that a signal causes while git runs.
 attr_source_log="$(mktemp)" \
