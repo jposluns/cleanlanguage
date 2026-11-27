@@ -13,10 +13,11 @@ No worker email address, account identifier, seat label, or other third-party id
 may appear on any public or potentially public surface of this repository: commit messages
 and trailers; pull request titles, descriptions, and comments; code, tests, fixtures, docs,
 the site, release notes, and package metadata; and the names of tracked files and folders.
-2 exemptions: the maintainer's own name and email address, and the security contact in
-`site/.well-known/security.txt`, which is the maintainer's address. Internal channels use a
-role name (for example "a claude worker") where a role will do. A fixture that needs an
-address uses a reserved documentation domain, never a real account. Each of `example.com`,
+The maintainer's own name is no third-party identifier. 2 exemptions: the maintainer's own
+email address, which is also the security contact in `site/.well-known/security.txt`, and
+an address at a reserved documentation domain, as below. Internal channels use a role name
+(for example "a claude worker") where a role will do. A fixture that needs an address uses
+a reserved documentation domain, never a real account. Each of `example.com`,
 `example.org`, and `example.net` is reserved, with every domain under it; so is every domain
 under the top-level domain `.invalid`, `.test`, or `.example`. The scan passes such an
 address on any line only when every candidate that it reads at the at sign is exempt, that
@@ -45,8 +46,9 @@ ls-files that fails, that cannot be started, or that lists no path, and a file t
 lists but that cannot be read, are failures, never a skip. Each such failure gives a fixed
 category with only the exit code of git or the errno name or type of the error, never a
 diagnostic of git, the message of an exception, the error text of the system, or the path
-of the repository or of git. So the scan copies no address that it catches, in a file or in
-a path name, and no address that such environment text holds, into the public CI log.
+of the repository or of git, and names a file that cannot be read as every failure names
+its file. So no failure line copies an address that the scan catches, in a file or in a
+path name, or that such environment text holds.
 
 Residual: the scan catches the email class only. A seat label, a bare account handle, or a
 numeric account identifier passes it, because a committed pattern that names a real label
@@ -60,17 +62,22 @@ sign, passes, and so does an at sign written as an HTML character reference or
 percent-encoded, since the scan searches only for the ASCII at sign; an address whose local
 part ends, right before the at sign, in a letter outside ASCII or in a mark such as a tilde,
 an exclamation mark, or an apostrophe passes, since its local part is then empty; an
-address with a quoted local part, or with a domain written with letters outside ASCII or as
-a literal in square brackets, can pass, since the scan reads only ASCII letters, digits, and
-a few marks around an at sign; surfaces that are not files in this tree, such as a pull
-request title, description, or comment, are not reached by the scan, and
-`tools/check-pr-text.py` carries no identifier pattern today. The digest of a match or of a
-path name lets a reader who already holds a guess of the address confirm the guess, though
-it does not reveal the address. A path name is held back only from the output of the scan:
-git, and any other step of a workflow that lists or names files, can still print it, so the
-rule, not the scan, keeps an address out of a path name. A label that leaked into the
-history of an older pull request and was removed later is held for the maintainer and is
-out of scope for this rule's enforcement.
+address with a quoted local part, with a domain written with letters outside ASCII or as a
+literal in square brackets, with an underscore in its domain, or with a dot of its domain
+written as an HTML character reference or percent-encoded, can pass, since the scan reads
+only ASCII letters, digits, and a few marks around an at sign; surfaces that are not files
+in this tree, such as a pull request title, description, or comment, are not reached by the
+scan, and `tools/check-pr-text.py` carries no identifier pattern today. The digest of a
+match or of a path name lets a reader who already holds a guess of the address confirm the
+guess, though it does not reveal the address. A path name is held back only from the output
+of the scan: git, and any other step of a workflow that lists or names files, can still
+print it, so the rule, not the scan, keeps an address out of a path name. On a red run,
+unittest also prints a traceback for each failed case, which holds the absolute path of the
+suite file in the checkout, and a failed self-check can print the values that it compared,
+the path of its temporary folder among them, so a checkout path or a temporary folder path
+that holds an address reaches the CI log. A label that leaked into the history of an older
+pull request and was removed later is held for the maintainer and is out of scope for this
+rule's enforcement.
 
 Accepted false failures: a legitimate new third-party address is caught and needs a
 maintainer decision; email-shaped text that is no address is caught and is reworded to a

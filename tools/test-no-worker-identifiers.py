@@ -69,8 +69,8 @@ fixed category with only an exit code, a symbol from a fixed table, or the name 
 text from the environment: a git ls-files that fails gives its exit code; a git that cannot be
 started, and an unreadable file, give the errno name of the error, such as ENOENT, or, when the
 error carries no errno that the errno module names, the name of the type of the error; an empty
-listing gives no detail. So no diagnostic of git, no message of an exception, no error text of
-the system, and no repository path or path of the git program reaches the output, whatever
+listing gives no detail. So no failure line holds a diagnostic of git, a message of an exception,
+an error text of the system, or the path of the repository root or of the git program, whatever
 address such text holds. An unreadable file is named by its path, or by the digest of its path
 name when that name holds a hit. The content of entries of mode 120000 and 160000, a tracked
 symbolic link and a submodule, is not read.
@@ -91,13 +91,18 @@ character reference, such as the decimal or the named form, or percent-encoded, 
 only the byte of the ASCII at sign is searched; an address whose local part ends, right before
 the at sign, in a byte that the local part does not name, such as a letter outside ASCII, a
 tilde, an exclamation mark, or an apostrophe, passes, since its local part is then empty; an
-address with a quoted local part, or with a domain written with letters outside ASCII or as a
-literal in square brackets, can pass, since a byte that the runs above do not name ends a run;
-a surface that is not a file in this tree, such as a pull request title, description, or
-comment, is not reached, and tools/check-pr-text.py carries no identifier pattern today. The
-digest of a hit or of a path name lets a reader who already holds a guess of the address confirm
-the guess; it does not reveal the address. A path name is held back only from the output of
-this suite: git, and any other step of a workflow that lists or names files, can still print it.
+address with a quoted local part, with a domain written with letters outside ASCII or as a
+literal in square brackets, with an underscore in its domain, or with a dot of its domain written
+as an HTML character reference or percent-encoded, can pass, since a byte that the runs above do
+not name ends a run; a surface that is not a file in this tree, such as a pull request title,
+description, or comment, is not reached, and tools/check-pr-text.py carries no identifier pattern
+today. The digest of a hit or of a path name lets a reader who already holds a guess of the
+address confirm the guess; it does not reveal the address. A path name is held back only from the
+output of this suite: git, and any other step of a workflow that lists or names files, can still
+print it. On a red run, unittest also prints a traceback for each failed case, which holds the
+absolute path of this file in the checkout, and a failed self-check can print the values that it
+compared, the path of its temporary folder among them, so a checkout path or a temporary folder
+path that holds an address reaches the CI log.
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
 or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
@@ -387,7 +392,8 @@ class PatternSelfCheck(unittest.TestCase):
         # The forms that the residual states pass, pinned so that a change to any of them meets
         # the residual: an at sign outside ASCII, an at sign written as a character reference or
         # percent-encoded, a local part that ends right before the at sign in a byte that it does
-        # not name, and a domain literal. The control with a plain at sign is caught.
+        # not name, a domain literal, an underscore in the domain, and a dot of the domain written
+        # as a character reference or percent-encoded. The control with a plain at sign is caught.
         local = "worker-label-example"
         domain = self.PLACEHOLDER_DOMAIN
         self.assertEqual(len(hits_in(caught(local, domain).encode("ascii"))), 1)
@@ -395,7 +401,11 @@ class PatternSelfCheck(unittest.TestCase):
                      local + "&#" + "64;" + domain, local + "&com" + "mat;" + domain,
                      local + "%" + "40" + domain, "jos" + chr(233) + "@" + domain,
                      "a~" + "@" + domain, "a!" + "@" + domain, "a'" + "@" + domain,
-                     caught(local, "[192.0.2.1]")):
+                     caught(local, "[192.0.2.1]"), caught(local, "placeholder_mail" + "." + "com"),
+                     caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
+                     caught(local, "placeholder-mail" + "&#x" + "2E;" + "com"),
+                     caught(local, "placeholder-mail" + "&per" + "iod;" + "com"),
+                     caught(local, "placeholder-mail" + "%" + "2E" + "com")):
             with self.subTest(text=text):
                 self.assertEqual(candidates(text.encode("utf-8")), [])
 
