@@ -1,0 +1,22 @@
+Add a Formulaic headings class to the skill catalogue (#291)
+
+Close TODO 305 (maintainer decision Entry 242). "Why this matters" is
+a common generated heading that readers dislike, and the skill did not
+catch it: the catalogue had no rule about headings.
+references/anti-patterns.md gains a Formulaic headings section between
+Formulaic contrast and Manufactured cadence, and the Density section
+of references/qa-checklist.md gains 1 matching question.
+
+The 2 additions add 345 characters to the full download, which would
+then hold 29268 characters against its 29000 label. 11 trims in
+SKILL.md and anti-patterns.md remove 273 characters of redundant or
+filler wording and change no rule and no catalogue entry, so the full
+download and its 29k twin hold 28995. The 11k and 8k downloads each
+name the new class and trim the same number of characters elsewhere,
+so they stay at 10998 and 7996.
+
+The full downloads, the checklist and instructions pages and the
+sitemap are regenerated, and the skill-source hash is re-recorded.
+The checklist and instructions pages, whose content changed, now carry
+a modified date of 2026-11-27, so the page metadata gate accepts them.
+The version stays 1.0.15.
