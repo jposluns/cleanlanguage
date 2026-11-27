@@ -34,8 +34,7 @@ line:
     OK: 19 workflows, 83 run steps, 72 command lines in
     tools/run_all_checks.sh, 10 behaviour cases, 17 reading cases
 
-So read_pin finds exactly 1 pin in plugin-validate.yml, and the sha256
-of tools/run_all_checks.sh still equals SCRIPT_SHA256.
+So read_pin finds exactly 1 pin in plugin-validate.yml.
 
 bash tools/test-ci-status.sh exits 0 and ends with:
 
@@ -46,9 +45,15 @@ new pin, still passes the shape check:
 
     ok   required check Plugin manifests follows plugin-validate.yml
 
-grep -rn '2\.1\.310' .github tools lists the 8 lines above and no
-other.
+This search lists the 8 lines above and no other:
 
-Not run for this change: tools/run_all_checks.sh, whose
-plugin_manifests step needs claude 2.1.318 on the host, and the
-Plugin manifests job in CI.
+    grep -rnI --exclude-dir=squash '2\.1\.310' .github tools
+
+-I skips binary files, such as a cached .pyc file, and
+--exclude-dir=squash leaves out .github/squash, where this message
+names the old version 3 times.
+
+The orchestrator ran the full gate, tools/run_all_checks.sh, on the
+commit that first added this message: it exited 0 and ended with
+"==> every command passed". Not run for this change: the Plugin
+manifests job in CI.
