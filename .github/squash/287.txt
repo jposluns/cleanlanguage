@@ -158,14 +158,22 @@ then a FIFO as the root; and 1 makes the change into the root folder
 fail before git starts, as on a root folder of mode 0600 that the gate
 can open and git cannot enter. 1 case loads the test file in a python3
 -I process whose PATH is a relative folder that holds git, and requires
-the git that it finds to be an absolute path. 3 cases read no repository
-and run no gate. They require each block that a row of BLOCKS in the
-tests names to be word for word the same in each text that states it:
-the gate's docstring, the test docstring and the squash message, as the
-row names them, and, in an export for review, the description and
-SQUASH-MSG, which state every block. They compare no other text, and
-they require SQUASH-MSG to equal .github/squash/287.txt; a text that is
-not there is skipped, and the skip names it.
+the git that it finds to be an absolute path.
+
+3 cases, in RepeatedText, build no repository and run no gate; they read
+texts from the work tree. Each row of BLOCKS names a block by its
+opening and closing words, and each row of PARAGRAPHS names a whole
+paragraph by the words that start it; those opening words must occur
+once in each text that states the row. 1 case requires each block and
+paragraph to be word for word the same in the tracked texts that its row
+names: the gate's docstring, the test docstring and
+.github/squash/287.txt. 1 requires PR-BODY.md, from its third line, and
+SQUASH-MSG, which state every row, to match those texts. 1 requires
+SQUASH-MSG to equal .github/squash/287.txt byte for byte. Each run of
+whitespace counts as 1 space, and the backticks of PR-BODY.md are
+dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is
+not there, as in CI, and names it; a case that reads a tracked text that
+is not there ends in an error.
 
 The Agent Plugins manifest workflow runs the tests and the gate as 2
 new steps, and tools/run_all_checks.sh runs them as 2 new run lines.

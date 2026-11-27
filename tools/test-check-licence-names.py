@@ -16,20 +16,25 @@ configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
 GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
 search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init
 takes no template (--template=), so no hook, exclude file or description of a template reaches
-the repository. So, apart from the locale below, the result depends on the case alone. The
+the repository. So, with the locale handled as below, the result depends on the case alone. The
 caller's environment is read for 3 things only. The tests build settings from 2 of them: where
-git is, whose folder is the PATH of each process but the 1 named below, and where Python's
+git is, whose folder is the PATH of each process but the 2 named below, and where Python's
 tempfile makes the temporary folder, which holds HOME and the repository. The third is the locale
 (LC_ALL, LC_CTYPE and LANG), which python3 -I does not ignore and which sets the encoding in which
-this process writes file names. Under a locale whose encoding cannot write a name outside ASCII
-that a case uses, that case ends in an encoding error and the suite fails. The folder in which a
+this process writes file names. When that encoding is not UTF-8, the suite, run as a script,
+starts itself again as python3 -I -X utf8, in Python's UTF-8 mode, so it writes every file name
+of a case in UTF-8 whatever the locale. The folder in which a
 case builds a repository, the temporary
 folder or, in 2 cases, a folder named case inside it, is the value of GIT_CEILING_DIRECTORIES and
 the working folder of each process that the case starts with an environment built from the one
 of that repository; the git that the gate starts works in the root folder that the gate opened.
-The 1 other process, which the case for a git found through a relative PATH entry starts, works
-in a folder named relative inside the temporary folder and gets PATH alone, the relative folder
-bin there, which holds a link to the git found. Each stand-in git below and
+2 other processes get no such environment. The one that the case for a git found through a
+relative PATH entry starts works in a folder named relative inside the temporary folder and gets
+PATH alone, the relative folder bin there, which holds a link to the git found. The one that the
+case for the locale starts, the suite run as python3 -I -X utf8=0 to run only the case that
+requires the encoding of file names to be UTF-8, works in a temporary folder of its own and gets
+LC_ALL=C alone, under which, on Linux, that encoding is ASCII unless the suite starts itself
+again; the case requires it to exit 0. Each stand-in git below and
 each probe process records the environment that it gets, and the case requires it to equal those
 values exactly.
 
@@ -59,7 +64,11 @@ passed was on changed bytes of a tracked file, and must check the refusal after 
 on the repository as it was built.
 
 The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
---list prints README.md:1 and the total, and does not parse the allowlist; a line ends only at a
+--list prints README.md:1 and the total, and does not parse the allowlist; with a second matching
+line in README.md and a row of count 2, the gate reports 2 lines in 1 file and 0 problems, and
+--list prints README.md:2 and a total of 2 lines in 1 file; with no matching line outside the
+named exceptions and an allowlist with no row, the gate reports 0 lines in 0 files and 0
+problems, and --list prints a total of 0 lines in 0 files; a line ends only at a
 line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes stay in their
 line; near misses of the 3 terms match nothing; an untracked file is not read; an executable
 tracked file is read like any other; a marker is literal text, so a marker that a regular
@@ -73,7 +82,8 @@ repository or index, change no result; and git init leaves .git with no hook, ex
 description, which only a template gives, even when GIT_TEMPLATE_DIR names a template that a
 git init without --template= copies. 1 case loads the test file in a python3 -I process whose
 PATH is a relative folder that holds git, and requires the git that it finds to be an absolute
-path.
+path. 2 cases, in Startup, run no gate: 1 requires this process to write file names in UTF-8,
+and 1 runs that case in the suite started under the locale above and requires it to pass.
 
 10 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
 path: 1 reads a regular file as a control; 6 replace os.lstat or os.fdopen in that process alone
@@ -120,17 +130,16 @@ mode 0600 that the gate can open and git cannot enter.
 A case for a file whose mode the runner can still read after chmod 000, as root can, is
 skipped and says so.
 
-3 cases, in RepeatedText, read no repository and run no gate. They compare the blocks that the
-rows of BLOCKS name, and no other text, in these texts: the gate's docstring, this docstring, the
-squash message SQUASH_TEXT and, when they are at the repository root, as in an export for review,
-PR-BODY.md, the description, from its third line, and SQUASH-MSG. Each row of BLOCKS names a
-block by its opening and its closing words and names the tracked texts that state it; PR-BODY.md
-and SQUASH-MSG state every block. The opening words
-must occur exactly once in each of those texts, and the block runs from them to the end of the
-first closing words after them. Each run of whitespace is read as 1 space and the backticks of
-PR-BODY.md are dropped; no other difference passes. 1 case compares the docstrings and
-SQUASH_TEXT, 1 compares PR-BODY.md and SQUASH-MSG with them, and 1 requires SQUASH-MSG to equal
-SQUASH_TEXT byte for byte; a text that is not there is skipped, and the skip names it.
+3 cases, in RepeatedText, build no repository and run no gate; they read texts from the work
+tree. Each row of BLOCKS names a block by its opening and closing words, and each row of
+PARAGRAPHS names a whole paragraph by the words that start it; those opening words must occur
+once in each text that states the row. 1 case requires each block and paragraph to be word for
+word the same in the tracked texts that its row names: the gate's docstring, the test docstring
+and .github/squash/287.txt. 1 requires PR-BODY.md, from its third line, and SQUASH-MSG, which
+state every row, to match those texts. 1 requires SQUASH-MSG to equal .github/squash/287.txt
+byte for byte. Each run of whitespace counts as 1 space, and the backticks of PR-BODY.md are
+dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is not there, as in CI, and
+names it; a case that reads a tracked text that is not there ends in an error.
 
 Exit 0 when every case passes; 1 otherwise.
 """
@@ -153,7 +162,8 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 # Where git is, found once on the caller's PATH: with the temporary folder that tempfile picks, the
 # only value from which the tests build a setting; the locale, the only other value of the caller's
-# environment that is read, sets only the encoding of file names. Its folder is the PATH of each process.
+# environment that is read, sets only the encoding of file names, which the suite run as a script makes
+# UTF-8 (see the end of this file). Its folder is the PATH of each process.
 FOUND_GIT = shutil.which("git")
 # Made absolute, since a relative entry of the caller's PATH would be read again from the working folder
 # of each process, which is the temporary folder.
@@ -572,6 +582,24 @@ class Controls(GateCase):
         self.repo.git("add", ALLOWLIST)
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
 
+    def test_a_file_with_2_matching_lines_counts_each(self):
+        # The line total and the file total differ here, so the summary, the count of the file and the
+        # total line are each pinned to what they count.
+        self.repo.track("README.md", README + b"Licence: CC BY-SA 4.0\n")
+        self.repo.set_rows("README.md\t2\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 2 lines in 1 files; 0 problem(s)\n")
+        self.passes("README.md:2\ntotal: 2 lines in 1 files\n", "--list")
+
+    def test_no_matching_line_and_no_row_passes(self):
+        # No tracked line outside the named exceptions names a licence term and the allowlist has no
+        # row; its comment holds the matching line that a named exception must hold. Nothing is found
+        # and nothing is claimed, so the gate passes.
+        self.repo.track("README.md", b"# Example\n")
+        self.repo.write(ALLOWLIST, (HEADER + "# a row claims lines such as CC BY-SA 4.0\n").encode("utf-8"))
+        self.repo.git("add", ALLOWLIST)
+        self.passes(PREFIX + "checked: 0 lines in 0 files; 0 problem(s)\n")
+        self.passes("total: 0 lines in 0 files\n", "--list")
+
     def test_default_root_is_the_repository_that_holds_the_gate(self):
         # The copy of the gate in the repository runs with no --root, alone and with --list, so its default
         # root must be the repository of its own file.
@@ -805,7 +833,8 @@ class Refusals(GateCase):
     def test_line_matching_no_marker_of_its_file(self):
         self.control()
         self.repo.track("README.md", README + b"ShareAlike\n")
-        self.refused("README.md:4: names a licence term and no allowlist row claims it")
+        self.refused("README.md:4: names a licence term and no allowlist row claims it",
+                     out_text=PREFIX + "checked: 2 lines in 1 files; 1 problem(s)\n")
 
     def test_marker_is_matched_with_its_letter_case(self):
         self.control()
@@ -848,7 +877,7 @@ class Refusals(GateCase):
         self.control()
         self.repo.track("README.md", README + b"Licence: CC BY-SA 4.0\n")
         self.refused("README.md: allowlist row 2 (keep, marker 'CC BY-SA 4.0') is stale: it claims 2 line(s), "
-                     "the allowlist says 1")
+                     "the allowlist says 1", out_text=PREFIX + "checked: 2 lines in 1 files; 1 problem(s)\n")
 
     def test_count_of_any_length_is_read(self):
         self.control()
@@ -1581,9 +1610,10 @@ class Refusals(GateCase):
 SQUASH_TEXT = HERE.parent / ".github" / "squash" / "287.txt"
 DESCRIPTION = HERE.parent / "PR-BODY.md"
 SQUASH_COPY = HERE.parent / "SQUASH-MSG"
-# The blocks that RepeatedText compares, and no other text: for each, its name, its opening words, its
-# closing words and the tracked texts that must state it: gate, the gate's docstring; tests, this file's
-# docstring; and squash, SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG, must state every block.
+# The blocks that RepeatedText holds the same in each text that states them: for each, its name, its
+# opening words, its closing words and the tracked texts that must state it: gate, the gate's docstring;
+# tests, this file's docstring; and squash, SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG,
+# must state every block.
 BLOCKS = (
     ("the first sentence of the change", "lists the tracked files with", "in any ASCII letter case",
      ("squash",)),
@@ -1620,9 +1650,13 @@ BLOCKS = (
     ("the launcher cases", "4 cases run the gate through another python3 -I launcher", "git cannot enter.",
      ("tests", "squash")),
     ("the relative PATH case", "1 case loads the test file", "to be an absolute path.", ("tests", "squash")),
-    ("the text cases", "3 cases read no repository and run no gate.", "and the skip names it.", ("squash",)),
-    ("the skip", "a text that is not there is skipped,", "and the skip names it.", ("tests", "squash")),
     ("the digest", "tools/test-run-all-checks.py records the new digest", "of that script.", ("squash",)),
+)
+# The paragraphs that RepeatedText holds the same, each compared whole: for each, its name, its opening
+# words, which must start it, and the tracked texts that must state it, named as in BLOCKS. Each text for
+# review must state every paragraph.
+PARAGRAPHS = (
+    ("the text cases", "3 cases, in RepeatedText,", ("tests", "squash")),
 )
 
 
@@ -1631,12 +1665,50 @@ def plain(text: str, markdown: bool = False) -> str:
     return " ".join((text.replace("`", "") if markdown else text).split())
 
 
+def paragraphs(text: str) -> list:
+    """The paragraphs of text: each run of lines between lines of whitespace alone or an end of the text."""
+    found, current = [], []
+    for line in text.split("\n"):
+        if line.strip():
+            current.append(line)
+        elif current:
+            found.append("\n".join(current))
+            current = []
+    if current:
+        found.append("\n".join(current))
+    return found
+
+
 def docstring(path: Path) -> str:
     return ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")), clean=False) or ""
 
 
 class RepeatedText(unittest.TestCase):
-    """Each block that a row of BLOCKS names is the same, word for word, in every text that states it."""
+    """Each block and paragraph that a row of BLOCKS or PARAGRAPHS names is the same, word for word, in
+    every text that states it, and SQUASH-MSG equals SQUASH_TEXT byte for byte."""
+
+    def paragraph(self, name: str, source: str, raw: str, start: str, markdown: bool = False) -> str:
+        """The whole paragraph of raw that starts with start, which must occur once in raw, made plain."""
+        count = plain(raw, markdown).count(start)
+        self.assertEqual(count, 1,
+                         f"{source}: the opening words of {name}, {start!r}, occur {count} times, not once")
+        starting = [plain(part, markdown) for part in paragraphs(raw) if plain(part, markdown).startswith(start)]
+        self.assertEqual(len(starting), 1, f"{source}: no paragraph starts with the opening words of {name}, "
+                         f"{start!r}")
+        return starting[0]
+
+    def pieces(self, source: str, raw: str, markdown: bool = False, kind: str | None = None) -> dict:
+        """{name: block or paragraph} for each row that names kind as a tracked text, or for every row
+        when kind is None, as a text for review states them all."""
+        text = plain(raw, markdown)
+        found = {}
+        for name, start, end, sources in BLOCKS:
+            if kind is None or kind in sources:
+                found[name] = self.block(name, source, text, start, end)
+        for name, start, sources in PARAGRAPHS:
+            if kind is None or kind in sources:
+                found[name] = self.paragraph(name, source, raw, start, markdown)
+        return found
 
     def block(self, name: str, source: str, text: str, start: str, end: str) -> str:
         count = text.count(start)
@@ -1658,15 +1730,19 @@ class RepeatedText(unittest.TestCase):
                           f"{' '.join(words[at:at + 8])!r} against {' '.join(theirs[at:at + 8])!r}")
 
     def tracked_blocks(self) -> dict:
-        """{name: {text: block}} for the 3 tracked texts: the 2 docstrings and SQUASH_TEXT."""
-        texts = {"gate": ("the docstring of " + GATE.name, plain(docstring(GATE))),
-                 "tests": ("the docstring of " + SELF.name, plain(docstring(SELF))),
-                 "squash": (SQUASH_TEXT.name, plain(SQUASH_TEXT.read_text(encoding="utf-8")))}
-        return {name: {texts[kind][0]: self.block(name, texts[kind][0], texts[kind][1], start, end)
-                       for kind in sources}
-                for name, start, end, sources in BLOCKS}
+        """{name: {text: block or paragraph}} for the 3 tracked texts: the 2 docstrings and SQUASH_TEXT."""
+        texts = {"gate": ("the docstring of " + GATE.name, docstring(GATE)),
+                 "tests": ("the docstring of " + SELF.name, docstring(SELF)),
+                 "squash": (SQUASH_TEXT.name, SQUASH_TEXT.read_text(encoding="utf-8"))}
+        copies = {}
+        for kind, (source, raw) in texts.items():
+            for name, piece in self.pieces(source, raw, kind=kind).items():
+                copies.setdefault(name, {})[source] = piece
+        return copies
 
     def test_each_block_is_the_same_in_the_tracked_texts(self):
+        names = [row[0] for row in BLOCKS + PARAGRAPHS]
+        self.assertEqual(len(names), len(set(names)), "2 rows of BLOCKS and PARAGRAPHS have the same name")
         for name, copies in self.tracked_blocks().items():
             with self.subTest(block=name):
                 self.same(name, copies)
@@ -1681,10 +1757,9 @@ class RepeatedText(unittest.TestCase):
                 if markdown:
                     # The description is the body of the pull request, from the third line of PR-BODY.md.
                     text = "".join(text.splitlines(keepends=True)[2:])
-                text = plain(text, markdown)
-                for name, start, end, sources in BLOCKS:
+                for name, piece in self.pieces(path.name, text, markdown).items():
                     copies = dict(found[name])
-                    copies[path.name] = self.block(name, path.name, text, start, end)
+                    copies[path.name] = piece
                     self.same(name, copies)
 
     def test_squash_message_equals_its_committed_copy(self):
@@ -1694,6 +1769,28 @@ class RepeatedText(unittest.TestCase):
                          f"{SQUASH_COPY.name} differs from {SQUASH_TEXT.relative_to(HERE.parent)}")
 
 
+class Startup(unittest.TestCase):
+    """The suite writes the file names of its cases in UTF-8 whatever the caller's locale."""
+
+    def test_file_names_are_written_in_utf8(self):
+        self.assertEqual(sys.getfilesystemencoding(), "utf-8")
+
+    def test_suite_starts_again_in_utf8_mode_under_another_locale(self):
+        # Under LC_ALL=C with Python's UTF-8 mode turned off, Python on Linux writes file names in ASCII,
+        # so the case above passes in that process only when the suite starts itself again in UTF-8 mode.
+        with tempfile.TemporaryDirectory() as folder:
+            done = subprocess.run([sys.executable, "-I", "-X", "utf8=0", str(SELF),
+                                   "Startup.test_file_names_are_written_in_utf8"], capture_output=True,
+                                  env={"LC_ALL": "C"}, cwd=folder, stdin=subprocess.DEVNULL, timeout=60)
+        report = done.stderr.decode("utf-8", "replace")
+        self.assertEqual(done.returncode, 0, report)
+        self.assertIn("Ran 1 test", report)
+
+
 if __name__ == "__main__":
+    if sys.getfilesystemencoding() != "utf-8" and not sys.flags.utf8_mode:
+        # A locale whose encoding is not UTF-8 would make this process write the file names of the cases in
+        # that encoding, which cannot hold every name a case uses; UTF-8 mode makes them UTF-8.
+        os.execv(sys.executable, [sys.executable, "-I", "-X", "utf8", str(SELF), *sys.argv[1:]])
     result = unittest.main(exit=False, verbosity=1).result
     sys.exit(0 if result.wasSuccessful() else 1)
