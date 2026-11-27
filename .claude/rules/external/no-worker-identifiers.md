@@ -19,10 +19,11 @@ exactly the maintainer's own email address, which is also the security contact i
 `site/.well-known/security.txt`; (2) the domain of the candidate is reserved for
 documentation: its last label is `invalid`, `test`, or `example`, or it is, or ends with a
 dot and then, `example.com`, `example.org`, or `example.net`. An at sign passes only when
-every candidate that the scan reads at it is exempt, under either exemption, so an address
-passes only when each shorter domain that it holds, ending after 2 or more letters that
-follow a dot, gives an exempt candidate as well: an address at `example.com`, at
-`mail.example.org`, or at a name directly under `.test` passes, and 1 at
+every candidate that the scan reads at it is exempt, under either exemption, or when it lies
+in a file on a line that the reviewed exact-line allowlist holds for that file. So, off such
+a line, an address passes only when each shorter domain that it holds, ending after 2 or
+more letters that follow a dot, gives an exempt candidate as well: an address at
+`example.com`, at `mail.example.org`, or at a name directly under `.test` passes, and 1 at
 `mail.corp.example.com` is caught, since `mail.corp` is not reserved. Internal channels use
 a role name (for example "a claude worker") where a role will do. A fixture that needs an
 address uses a reserved documentation domain, never a real account. Other email-shaped text
@@ -42,10 +43,13 @@ address, and its work grows linearly with the size of a file. A failure names th
 line number, and a digest of the match, never the matched text or the line. A red run
 prints every failure in full, 1 to a line, never through a list comparison that unittest
 shortens when it is long. A path whose name holds a hit is never named: every failure for
-it, the hit in its name included, names it by a digest of the path name. The suite takes
-each expected digest from a source apart from the helper that makes the digest: a
-known-answer literal, an expected-digest helper that calls `hashlib` directly, or, in 1
-case, `hashlib` called in the case itself. It fails closed: a git ls-files that fails, that
+it, the hit in its name included, names it by a digest of the path name. Any other path name
+is printed with each character that is not printable, such as a line feed, a carriage return,
+or the escape byte of a terminal escape sequence, and each backslash written as a backslash
+escape, so each failure is 1 line and no control character of a path name reaches the CI
+log. The suite takes each expected digest from a source apart from the helper that makes the
+digest: a known-answer literal, an expected-digest helper that calls `hashlib` directly, or,
+in 1 case, `hashlib` called in the case itself. It fails closed: a git ls-files that fails, that
 cannot be started, or that lists no path, and a file that git lists but that cannot be
 read, are failures, never a skip. Each such failure gives a fixed category with only the
 exit code of git or the errno name or type of the error, never a diagnostic of git, the

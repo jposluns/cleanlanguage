@@ -18,13 +18,16 @@ reserved for documentation: its last label is invalid, test, or
 example, or it is, or ends with a dot and then, example.com,
 example.org, or example.net. An at sign passes only when every
 candidate that the scan reads at it is exempt, under either
-exemption, so an address passes only when each shorter domain that it
-holds, ending after 2 or more letters that follow a dot, gives an
-exempt candidate as well. 1 exact-line allowlist entry covers the
-URL-userinfo fixture in tools/test-release-links.py; a stale entry
-fails. A failure names the file, the line number, and a digest of the
-match, never its text, and names a path whose name holds a match only
-by a digest of the path name; a red run prints every failure in full.
+exemption, or when it lies in a file on a line that the reviewed
+exact-line allowlist holds for that file. So, off such a line, an
+address passes only when each shorter domain that it holds, ending
+after 2 or more letters that follow a dot, gives an exempt candidate
+as well. 1 exact-line allowlist entry covers the URL-userinfo fixture
+in tools/test-release-links.py; a stale entry fails. A failure names
+the file, the line number, and a digest of the match, never its text,
+and names a path whose name holds a match only by a digest of the path
+name; a red run prints every failure in full, 1 to a line, with each
+control character of a path name escaped.
 A failed git call, a git that cannot start, an empty listing, a
 missing file, or an unreadable file fails closed. Each caught example
 in the suite is assembled at run time, so its source holds no

@@ -42,12 +42,13 @@ letter case:
    example.org, or example.net (RESERVED_DOMAINS).
 
 An at sign passes only when every candidate that the scan reads at it is exempt, under either
-exemption, so an address passes only when each shorter domain that it holds, ending after 2 or
-more letters that follow a dot, gives an exempt candidate as well. An at sign with 1 or more
-candidates that are not exempt is a hit, reported 1 time. A hit
-passes when its line is in ALLOWLIST, the reviewed set of exact line texts, by file, for
-email-shaped text that is no address. An allowlist entry that is not the exact text of a line of
-its file that holds a hit is a failure, so the allowlist cannot silently go stale.
+exemption, or when it lies in a file on a line that the reviewed exact-line allowlist holds for
+that file. So, off such a line, an address passes only when each shorter domain that it holds,
+ending after 2 or more letters that follow a dot, gives an exempt candidate as well. An at sign
+with 1 or more candidates that are not exempt is a hit, reported 1 time. A hit passes when its
+line is in ALLOWLIST, the reviewed set of exact line texts, by file, for email-shaped text that
+is no address. An allowlist entry that is not the exact text of a line of its file that holds a
+hit is a failure, so the allowlist cannot silently go stale.
 
 Path names. The whole name of every path that git lists, the names of its folders included, is
 scanned as its raw bytes in the same way, with no allowlist, for a tracked symbolic link and a
@@ -63,8 +64,12 @@ Report. A failure names the file, the line number, 1 more than the number of lin
 the hit, and the first 16 hexadecimal digits of the sha256 of the hit, the longest candidate of
 its at sign that is not exempt. It never holds the text of the hit or of its line, and it names
 a path whose name holds a hit only by the digest of that name, so this suite copies no address
-that it catches, in a file or in a path name, into the CI log. A stale allowlist entry is named
-by its file, its position, and the same digest of its text. On a red run, the tree case prints
+that it catches, in a file or in a path name, into the CI log. Any other path is written as
+printable_path() gives it: each character that is not printable, such as a line feed, a carriage
+return, or the escape byte that starts a terminal escape sequence, and each backslash, is
+written as a backslash escape, so each failure is 1 line of printable text and no control
+character of a path name reaches the CI log. A stale allowlist entry is named by its file, its
+position, and the same digest of its text. On a red run, the tree case prints
 every failure in full, 1 to a line after a count, and never through a list comparison, which
 unittest shortens when it is long, so no failure is dropped from the CI log.
 
@@ -296,15 +301,42 @@ def tracked_files(root, git=GIT):
     return sorted(entries.items())
 
 
-def path_label(rel):
-    """The name of the path rel in a failure: rel, or path sha256 and the digest of its name.
+def printable_path(rel):
+    """The path rel as 1 line of printable text, each character that is not printable escaped.
 
-    The digest stands for the path whenever its name holds a hit, so that no failure copies it.
+    A character that str.isprintable() rejects, such as a line feed, a carriage return, the
+    escape byte that starts a terminal escape sequence, or the 8-bit control sequence introducer,
+    and each backslash, is written as a backslash escape: \\xHH for a character below 0x80 and for
+    a byte of the name that is not valid UTF-8, which os.fsdecode() gives as a surrogate, and
+    \\uHHHH or \\UHHHHHHHH with its code point for any other. Every backslash of the result starts
+    an escape, so no 2 path names give the same text.
+    """
+    parts = []
+    for char in rel:
+        value = ord(char)
+        if char.isprintable() and char != "\\":
+            parts.append(char)
+        elif value < 0x80:
+            parts.append("\\x{:02x}".format(value))
+        elif 0xDC80 <= value <= 0xDCFF:
+            parts.append("\\x{:02x}".format(value - 0xDC00))
+        elif value <= 0xFFFF:
+            parts.append("\\u{:04x}".format(value))
+        else:
+            parts.append("\\U{:08x}".format(value))
+    return "".join(parts)
+
+
+def path_label(rel):
+    """The name of the path rel in a failure: path sha256 and the digest of its name, or rel.
+
+    The digest stands for the path whenever its name holds a hit, so that no failure copies it;
+    any other path is written by printable_path(), so that no failure holds a control character.
     """
     name = os.fsencode(rel)
     if hits_in(name):
         return "path sha256 " + digest(name)
-    return rel
+    return printable_path(rel)
 
 
 def scan(root, allowlist, git=GIT):
@@ -316,8 +348,9 @@ def scan(root, allowlist, git=GIT):
     allowlist entry, a git ls-files that fails with its exit code, a git that cannot be started
     with the category of its error, or a git ls-files that lists no path. No failure holds the
     text of a hit or of its line, a path whose name holds a hit is named only by the digest of
-    its name, and no failure holds a diagnostic of git, the message of an exception, the error
-    text of the system, or the path of root or of git.
+    its name, any other path is written by printable_path(), so each failure is 1 line with no
+    control character, and no failure holds a diagnostic of git, the message of an exception,
+    the error text of the system, or the path of root or of git.
     """
     try:
         entries = tracked_files(root, git)
@@ -333,7 +366,7 @@ def scan(root, allowlist, git=GIT):
     for rel, mode in entries:
         name = os.fsencode(rel)
         name_hits = hits_in(name)
-        label = "path sha256 " + digest(name) if name_hits else rel
+        label = "path sha256 " + digest(name) if name_hits else printable_path(rel)
         for _, _, _, hit in name_hits:
             failures.append("{}: email-shaped text in the path name, sha256 {}".format(label, hit))
         if mode in UNREAD_MODES:
@@ -1021,9 +1054,60 @@ class FixtureRepository(unittest.TestCase):
         self.assertEqual(len(dropped), 0, "{} of {} failures dropped".format(len(dropped), len(failures)))
         self.assert_no_address(lines)
 
+    # The control characters that must never reach the output raw: every character below 0x20
+    # but the line feed that ends each output line, 0x7f, and the 8-bit controls 0x80 to 0x9f,
+    # among them the 8-bit control sequence introducer that starts a terminal escape sequence.
+    RAW_CONTROLS = frozenset(chr(value) for value in list(range(0x20)) + list(range(0x7F, 0xA0))) - {"\n"}
+
+    def assert_tree_output_escapes(self, names):
+        """The tree case, run on 1 file for each path in names, prints each failure as 1 line.
+
+        names holds (path, the escaped text that names it in a failure). Each file holds a hit, so
+        each path is named in a failure. The output must hold each failure as a whole line, and no
+        character of RAW_CONTROLS and no address.
+        """
+        line, hit = self.address_line()
+        for rel, _ in names:
+            self.add(rel, line.decode("ascii"))
+        failures, read = scan(self.root, {})
+        self.assertEqual((failures, read),
+                         ([shown + ":1: email-shaped text, sha256 " + hit for _, shown in sorted(names)],
+                          len(names)))
+        stream = io.StringIO()
+        tree_case = unittest.defaultTestLoader.loadTestsFromTestCase(NoWorkerIdentifiersInTree)
+        with mock.patch.dict(globals(), {"ROOT": self.root, "ALLOWLIST": {}}):
+            result = unittest.TextTestRunner(stream=stream, verbosity=0).run(tree_case)
+        self.assertEqual((result.testsRun, len(result.failures), len(result.errors)), (1, 1, 0))
+        output = stream.getvalue()
+        raw = sorted({"0x{:02x}".format(ord(char)) for char in output if char in self.RAW_CONTROLS})
+        self.assertEqual(raw, [], "raw control characters in the output")
+        lines = output.split("\n")
+        self.assertIn("AssertionError: {} failure(s) in {} files read:".format(len(names), len(names)), lines)
+        dropped = [failure for failure in failures if failure not in lines]
+        self.assertEqual(len(dropped), 0, "{} of {} failures not a whole line".format(len(dropped), len(failures)))
+        self.assert_no_address(lines)
+
+    def test_a_line_feed_in_a_path_name_is_escaped_in_the_output(self):
+        self.assert_tree_output_escapes([("line" + "\n" + "feed.txt", "line" + "\\x0a" + "feed.txt")])
+
+    def test_a_carriage_return_in_a_path_name_is_escaped_in_the_output(self):
+        self.assert_tree_output_escapes([("carriage" + "\r" + "return.txt",
+                                          "carriage" + "\\x0d" + "return.txt")])
+
+    def test_a_terminal_escape_sequence_in_a_path_name_is_escaped_in_the_output(self):
+        # Cursor up 1 line and erase it, once with the escape byte and once with the 8-bit
+        # control sequence introducer, each of which would hide an earlier failure line on screen.
+        self.assert_tree_output_escapes([
+            ("erase" + "\x1b[1A\x1b[2K" + "line.txt", "erase" + "\\x1b[1A\\x1b[2K" + "line.txt"),
+            ("csi" + "\x9b1A\x9b2K" + "line.txt", "csi" + "\\u009b1A\\u009b2K" + "line.txt")])
+
 
 def tree_report(failures, read):
-    """The message of a red tree case: a count, then every failure in full, 1 to a line."""
+    """The message of a red tree case: a count, then every failure in full, 1 to a line.
+
+    Each failure is 1 line of printable text, since scan() names each path by printable_path()
+    or by a digest.
+    """
     return "\n".join(["{} failure(s) in {} files read:".format(len(failures), read)] + failures)
 
 
