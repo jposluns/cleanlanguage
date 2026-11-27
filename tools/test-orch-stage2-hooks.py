@@ -1643,7 +1643,8 @@ class T14PosturePins(Stage2Harness):
 # far past the 1 s timeout that the enforcement test declares and below the 120 s hook bound. It does
 # nothing else, so a test that uses it asks it to do nothing but record its start before the declared
 # timeout fires. A hook that waits the sleep out sees it end by itself after 100 s, and the call check
-# of the enforcement test refuses that call, as its outcome is not TimeoutExpired.
+# of the enforcement test refuses that call, as its outcome is not TimeoutExpired, if the hook still
+# exits within the 120 s hook bound; if it does not, the "exited" check of that test refuses it first.
 
 # Runs in a separate python3 -I process: argv[1] is the report file, argv[2] the hook bound and argv[3]
 # the cleanup bound, both in seconds, and argv[4:] the command that runs the hook. It makes itself the

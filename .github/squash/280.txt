@@ -320,30 +320,33 @@ accepts only an int. It does not catch a check that rejects 60, as the
 hook then passes its 60 s fallback for the declared 60, the same value.
 
 Neither enumerator test catches: a stall after the timeout, or before
-the hook starts the enumerator, that lets it exit within 120 s, which
+the hook starts the enumerator, that lets it exit within 120 s, such as
+a 5 s sleep in the except handler or before the enumerator starts, which
 the 15 s bound in main as of #275 (Refresh the vendored AIQT hooks
-plugin) caught only when the whole call then passed 15 s, as a 5 s
-stall after the 1 s timeout need not make it; a floor of 0.001 or
-below; a cap of a declared timeout between 60 s and 600 s, such as
-min(timeout, 60) or min(timeout, 300), which the declared-timeout test
-no longer catches, as it declares at most ENUM_TIMEOUT, 60 s, since
-write_registry refuses a declared timeout over it; a cap of 600 or
-above, which changes nothing; rounding to 3 or more decimal places; a
-change to a declared value other than the 4 tested, such as 60 s for
-any value from 10 to 599; a change to the 60 s fallback, such as
-30 s; a change to which values the check rejects that still accepts
-0.001, 1, 7.5 and 60, such as one that
-rejects JSON true, which the unchanged hook takes as 1 s; a check
-that rejects 60 and still accepts 0.001, 1 and 7.5, as the hook then
-passes its 60 s fallback for the declared 60, the same value; and a hook
-that also stops the processes that the enumerator starts, against the
-unchanged hook, whose timeout stops only the enumerator's own process,
-as the sleeping enumerator is 1 process. The tests do not time the
-effective timeout: enforcement rests on subprocess.run honouring its
-timeout, seen once as TimeoutExpired. A hook that starts the
-enumerator other than through subprocess.run fails both tests even if
-correct. The stage 1 tests take the hook's restore note as the account
-of what its first probe met.
+plugin) caught only when the whole call then passed 15 s, as a 5 s stall
+after the 1 s timeout need not make it; a floor of 0.001 or below, such
+as max(timeout, 0.001); a cap of a declared timeout between 60 s and
+600 s, such as min(timeout, 60) or min(timeout, 300), which the
+declared-timeout test no longer catches, as it declares at most
+ENUM_TIMEOUT, 60 s, since write_registry refuses a declared timeout over
+it; a cap of 600 or above, such as min(timeout, 600), which changes
+nothing, as the hook's check already rejects a value above 600; rounding
+to 3 or more decimal places, such as round(timeout, 3); a change to a
+declared value other than the 4 tested, such as 60 s for any value from
+10 to 599; a change to the 60 s fallback, such as 30 s; a change to
+which values the check rejects (not a number, 0 or below, or above 600)
+that still accepts 0.001, 1, 7.5 and 60, such as one that rejects JSON
+true, which the unchanged hook takes as 1 s, or one that rejects each
+value over 60; a check that rejects 60 and still accepts 0.001, 1 and
+7.5, such as 0 < timeout < 60, as the hook then passes its 60 s fallback
+for the declared 60, the same value; and a hook that also stops the
+processes that the enumerator starts, against the unchanged hook, whose
+timeout stops only the enumerator's own process, as the sleeping
+enumerator is 1 process. The tests do not time the effective timeout:
+enforcement rests on subprocess.run honouring its timeout, seen once as
+TimeoutExpired. A hook that starts the enumerator other than through
+subprocess.run fails both tests even if correct. The stage 1 tests take
+the hook's restore note as the account of what its first probe met.
 
 The enforcement test counts no heartbeat. A heartbeat design needs
 the enumerator to write the hook's process id to a FIFO within the
@@ -365,18 +368,20 @@ does not check those messages against their diffs, and it does not list
 or correct their statements. Some of those statements are not borne out
 by their diffs, and later messages of the branch correct some of them,
 so a reader should take a statement of one of those messages as borne
-out only where this message makes it too. Below, the branch's 27
-commits up to and including the one that carries this message are
-numbered from 1, its first, to 27, that one, with the merge commit
-that merges main as of #275 (Refresh the vendored AIQT hooks plugin)
-as 9, and the merge commits that merge the 2 later commits of
-main as 24 and 25; commit 21 changes no file, and commit 23 is a text
-fix. Commit 26, "Describe the second join of main and its coverage
-gap", is a text fix, and commit 27, "Count the newest commits and
-correct the 60 s and 120 s claims", corrects this message, the
-description of the pull request and the comments of the 2 enumerator
-tests in tools/test-orch-stage2-hooks.py. Up to commit 27, no other
-commit is on the branch.
+out only where this message makes it too. Below, the branch's 28 commits
+up to and including the one that carries this message are numbered from
+1, its first, to 28, that one, with the merge commit that merges main as
+of #275 (Refresh the vendored AIQT hooks plugin) as 9, and the merge
+commits that merge the 2 later commits of main as 24 and 25; commit 21
+changes no file, and commit 23 is a text fix. Commit 26, "Describe the
+second join of main and its coverage gap", is a text fix; commit 27,
+"Count the text commits and correct the 60 s claim", corrects this
+message, the description of the pull request and the comments of the 2
+enumerator tests in tools/test-orch-stage2-hooks.py; and commit 28,
+"Correct the text commit subjects and match the residual lists",
+corrects this message, the description of the pull request and the
+comment of the T15EnumeratorTimeout section of that file. Up to commit
+28, no other commit is on the branch.
 
 Commit 25 resolves 3 conflict blocks in
 tools/test-orch-stage2-hooks.py, where main's changes refuse a
