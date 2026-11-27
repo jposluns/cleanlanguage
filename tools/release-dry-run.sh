@@ -88,8 +88,11 @@
 # restored between the 2 snapshots. None of these limits holds for a ref whose
 # name git rejects, that git for-each-ref would list from the script's
 # worktree and that is there when the leak check lists: such a ref fails the
-# run, whoever writes it and whenever, since git then writes a warning to
-# standard error while that listing runs.
+# run, whoever writes it and whenever, at the first listing that meets it,
+# which for a tag or a note there when a snapshot lists is the tag and note
+# listing of that snapshot, before the leak check lists, and otherwise the
+# listing of the leak check, since git writes a warning to standard error
+# while that listing runs.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
