@@ -54,9 +54,10 @@
 #   E. A structural guard asserts the OLD loose sed selector is gone (fixed-string
 #      match, so it genuinely detects the loose selector still on main), the old
 #      hand-rolled first-line sed is gone, and each site calls skill-version.py
-#      the expected number of times (2 counts). A tally then requires all 4
-#      structural checks to have run for each of the 3 sites, so a check that
-#      is dropped, or that stops running for a site, fails the test.
+#      the expected number of times (2 counts). A tally then requires each of
+#      the 4 structural checks to have run once for each of the 3 sites, and
+#      for no other site, so a check that is dropped, or run twice in place of
+#      another, or that stops running for a site, fails the test.
 #
 # Fixtures include a LARGE (>64KB) valid file (each site must return the version
 # AND exit 0: the SIGPIPE regression test), CRLF and lone-CR cases, malformed
@@ -74,10 +75,25 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 fails=0
-# Every structural check reports through pass or fail, which count it here.
-structural_run=0
+# Every structural check reports through pass or fail, which count it here by
+# the check, read from the words of its label, and by the site, read from the
+# end of its label, so the tally below can require each check once for each
+# site.
+declare -A structural_seen=()
 note_structural() {
-  case "$1" in "structural: "*) structural_run=$((structural_run + 1)) ;; esac
+  local check site
+  case "$1" in
+    "structural: no loose Version selector in "*|"structural: loose Version selector still present in "*)
+      check=loose ;;
+    "structural: no hand-rolled first-line sed selector in "*|"structural: hand-rolled first-line sed selector still present in "*)
+      check=sed ;;
+    "structural: isolated "*" call count in "*) check=isolated ;;
+    "structural: "*" call count in "*) check=count ;;
+    *) return 0 ;;
+  esac
+  site="${1#* in }"
+  site="${site%% (expected *}"
+  structural_seen["${check} ${site}"]=$(( ${structural_seen["${check} ${site}"]:-0} + 1 ))
 }
 pass() { printf 'ok   - %s\n' "$1"; note_structural "$1"; }
 fail() { printf 'FAIL - %s\n' "$1" >&2; fails=$((fails + 1)); note_structural "$1"; }
@@ -133,13 +149,24 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
   assert_eq "structural: isolated skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
 done
-# All 4 checks above must have run for every site, so a check that is dropped,
-# or a site left out of the loop, fails here.
-structural_per_site=4
-structural_want=$((structural_per_site * ${#skillver_count[@]}))
-structural_got="${structural_run}"
-assert_eq "structural: all ${structural_per_site} checks ran for each of the ${#skillver_count[@]} sites" \
-  "${structural_want}" "${structural_got}"
+# Each of the 4 checks above must have run exactly once for each site that
+# skillver_count names, and for no other site, so a check that is dropped, or
+# run twice in place of another, and a site left out of the loop, or replaced
+# by another site or by a second run of a named one, fails here.
+structural_checks=(loose sed count isolated)
+structural_wrong=""
+for site in "${!skillver_count[@]}"; do
+  for check in "${structural_checks[@]}"; do
+    runs="${structural_seen["${check} ${site}"]:-0}"
+    [ "${runs}" -eq 1 ] || structural_wrong+=" [${check} check of ${site}: ${runs} runs]"
+  done
+done
+for pair in "${!structural_seen[@]}"; do
+  site="${pair#* }"
+  [ -n "${skillver_count[${site}]+set}" ] || structural_wrong+=" [${pair%% *} check of ${site}: not a named site]"
+done
+assert_eq "structural: each of the ${#structural_checks[@]} checks ran once for each of the ${#skillver_count[@]} sites" \
+  "" "${structural_wrong}"
 
 # --- The gates' own rule, as a Python oracle ---------------------------------
 # Reads the file with universal newlines (newline=None), exactly as Path.read_text

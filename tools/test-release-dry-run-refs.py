@@ -22,8 +22,8 @@ follow the before snapshot, its tools' included, reads no attribute file other t
 info/attributes file of the repository and, in git archive, the .gitattributes files of the tree it
 archives and, in the git check-attr that reads the filter drivers of the dry-run commit, those of
 that commit, and runs with every filter driver turned off that the configuration read from the
-script's worktree defines or that the info/attributes file names, and, from the dry-run commit on,
-every one that an attribute gives a path of that commit. So no program other than a filter that git
+script's worktree defines or that the info/attributes file names, and, from step 1 on, every one
+that an attribute gives a path of the dry-run commit. So no program other than a filter that git
 can run from its configuration or from attributes runs during a git call of the script, and no
 filter during a git call of the dry run, its tools' included, whatever the configuration that git
 reads in any worktree defines, other than a driver that the info/attributes file, or the tree that
@@ -44,11 +44,13 @@ contain the dry-run commit, or at an object that peels to no commit, such as a t
 does not see the HEAD or the per-worktree refs of any worktree other than the script's worktree,
 the throwaway worktree included, or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any
 worktree, the script's worktree included, so such a ref put on the dry-run commit does not fail it.
-It does not see anything the exit cleanup does, or a ref moved and then restored between the 2
-snapshots.
+It does not see a write to a ref made after the after snapshot, such as a tag that another worktree
+makes then, other than a ref that the leak check, which follows that snapshot, finds to contain the
+dry-run commit. It does not see anything the exit cleanup does, or a ref moved and then restored
+between the 2 snapshots.
 
 Cases 12, 13, 23 and 27 show the first sentence of that residual, and cases 15, 28, 29 and 30 the
-second.
+second. No case shows the third or the fourth.
 
 This test runs the real script, not an excerpt of it. Each ref case builds a repository in a
 temporary folder whose commits hold a copy of tools/release-dry-run.sh, byte for byte, and
@@ -187,7 +189,7 @@ The ref cases, each with its expected outcome:
 - 44, the dry run's worktree is attached to feature after it is added: passes, the dry run's commit
   is a child of feature, and feature does not move.
 
-The 11 fail-closed cases run the whole script too: in a folder that is not a repository, in a
+The 12 fail-closed cases run the whole script too: in a folder that is not a repository, in a
 repository whose HEAD resolves to no commit, with a branch read that exits 2, with a tag and note
 listing that git refuses in the before snapshot, with one that git refuses only in step 6, with a
 leak check that git refuses, with each git call that makes or reads the dry run's commit or moves
@@ -199,26 +201,35 @@ own for that refusal, at exit 128 or at exit 1, or given git's own message at ex
 128 with another line after it or before it, with a blank line after it or before it, without the
 newline that ends it, with a NUL byte after it, before it, inside it or before its newline, or with
 a carriage return or a space before its newline, with an info/attributes file that cannot be read,
-since it is a folder, and with a git that ignores GIT_ATTR_SOURCE, each fails with exit 1 and the
-script's message, never read as an empty listing; in a repository with no tag and no note it
-passes. A refused call is made by a git wrapper, first on PATH, that records every call and prints
+since it is a folder, with a git that ignores GIT_ATTR_SOURCE, and, in the check of
+GIT_ATTR_SOURCE, with a mktemp that fails, a temporary file that standard error cannot be written
+to, a cmp that cannot compare and an rm that cannot remove, each in turn, each fails with exit 1
+and the script's message, never read as an empty listing; in a repository with no tag and no note
+it passes. A refused call is made by a git wrapper, first on PATH, that records every call and prints
 "wrapper: refused" and the argument it refuses and exits 128, or the status the case names, when it
 is given that argument, from the call that the case names on, and otherwise runs git. git's own
 message is given by a git wrapper, first on PATH, that writes the standard error that the case
 names, byte for byte, from a file, and exits with the status the case names, on each git check-attr
 call not given --source, and otherwise runs git. The git that ignores GIT_ATTR_SOURCE is a git
-wrapper, first on PATH, that removes it from the environment of every call. Each of these
-wrappers, and the one of the case of an info/attributes file that cannot be read, which refuses
-nothing, also records, in order, every
+wrapper, first on PATH, that removes it from the environment of every call. A failing mktemp, cmp
+or rm is a stand-in of that name, first on PATH: the mktemp stand-in exits 1, or prints the name of
+a file in a folder that does not exist, so that the redirection of standard error to it fails; the
+cmp stand-in exits 2, as cmp does when it cannot compare; and the rm stand-in exits 1 and removes
+nothing. A run that a stand-in fails must record nothing after the check of GIT_ATTR_SOURCE, or,
+when that check's git call does not run, after the naming of the empty tree. Each of these
+wrappers, and the ones of the case of an info/attributes file that cannot be read and of the case
+of those stand-ins, which refuse nothing, also records, in order, every
 git call and, through a python3 wrapper first on PATH, every run of python3, which runs every tool
 of the script and every Python program of its own. Each failing case requires the script's message
 to be the last line of its output, the script's version line to be printed exactly when the
 failing call comes after the script's read of the version, and, after the failing call or run,
 nothing to be recorded other than the exit cleanup's git worktree remove and, when the failing call
 is git ls-tree or git check-attr of the pipeline that reads the filter drivers of the dry-run
-commit, the other call of that pipeline, so the run must end at that call. Each run given git's own
-message by the wrapper must also leave in its TMPDIR no entry that mktemp names, so the script must
-remove the file in which its check writes standard error. These 11 cases make no ref
+commit, the other call of that pipeline, so the run must end at that call. Each run of the case on
+the filter settings and of the case of a git that ignores GIT_ATTR_SOURCE, and each run of the case
+of the stand-ins other than the one whose rm removes nothing, must also leave in its TMPDIR no entry
+that mktemp names, so the script must remove the file in which its check writes standard error on
+each of those paths. These 12 cases make no ref
 writes and do not use the git stand-in, so they reach none of its points and compare no listing.
 The first 2 run the copy of the script in a folder that holds no commit of it, and they require the
 wrapper to have recorded only the reads of the before snapshot that precede the failure. They also
@@ -231,9 +242,18 @@ case shows which git call the script makes first in a repository whose HEAD reso
 1 more case, the locale case, runs the dry run with LC_ALL removed from its environment, LANG set
 to C.UTF-8 and LANGUAGE to fr, with a git wrapper, first on PATH, that records the LC_ALL of each git
 check-attr not given --source, and requires the run to pass and that check to run once, with LC_ALL
-set to C, and to leave in its TMPDIR no entry that mktemp names. No git with a translation of its
-messages is run, so the case shows the locale that the check gives git, not that git would
-translate its message without it.
+set to C, and to leave in its TMPDIR no entry that mktemp names. The wrapper also records the
+entries that mktemp names in that TMPDIR when the script reads the version, and the case requires
+there to be none, so the script must remove the file of its check before the run goes on. No git
+with a translation of its messages is run, so the case shows the locale that the check gives git,
+not that git would translate its message without it.
+
+1 more case, the signal case, ends a run with HUP, INT or TERM, each in turn, which a git wrapper,
+first on PATH, sends to the process group of the run when the script runs its check of
+GIT_ATTR_SOURCE, once it has recorded the entries that mktemp names in the run's TMPDIR. The case
+requires that entry list to hold 1 entry, the file in which the check writes standard error, the
+run to stop before its read of the version, and the run to leave in its TMPDIR no entry that
+mktemp names, so the script must remove that file on an exit that a signal causes.
 
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
@@ -263,14 +283,15 @@ that hides the commit made from the leak check would. The case first checks, in 
 own, that a git commit and a git worktree add then run the first 6 of those hooks. The dry run must
 then pass with no hook run and the whole-repository listing unchanged.
 
-6 more cases each configure programs that git runs from its configuration or from attributes, each
+7 more cases each configure programs that git runs from its configuration or from attributes, each
 of which records its name when it runs, and first check, in a repository of their own, that git
 then runs each of them: a core.fsmonitor program, which on its third run in a linked worktree also
 moves that worktree's HEAD to a new child of it; clean and smudge commands of a required filter
 driver that the main worktree's info/attributes gives every path; the process command of a driver,
 not required, that info/attributes gives every path; a pager for each subcommand that the script
 runs, with the run's standard output on a pseudo-terminal; textconv and diff command drivers that
-info/attributes gives every path, and diff.external; and, in a partial clone made without blobs,
+info/attributes gives every path, and diff.external; an editor that core.editor names and one that
+sequence.editor names; and, in a partial clone made without blobs,
 the upload-pack program of its promisor remote. The dry run must pass with none of them run and the
 whole-repository listing unchanged, or, in the partial clone, fail closed at its read of the version
 with no fetch run.
@@ -338,8 +359,10 @@ next step of release-dry-run.yml runs with the real tools, and the script runs w
 first on PATH and an environment that the test fixes, not those of that workflow. A change to the
 script is caught only when it changes what a case observes, so a change that acts only outside the
 cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
-ref no case writes or stops step 6 reading one, is not caught. The cases run on 1 git version with
-its default ref backend.
+ref no case writes or stops step 6 reading one, is not caught. The text case compares only the 4
+repeated blocks, each as 1 whole paragraph, so it does not catch a paragraph added next to a block,
+a change to any other paragraph, or a change to a text that the checkout lacks, as CI lacks
+PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its default ref backend.
 
 Usage: python3 -I tools/test-release-dry-run-refs.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -730,9 +753,41 @@ def ignoring_git(folder: Path, env: dict) -> Path:
     return folder
 
 
-def locale_recording_git(folder: Path, env: dict, log: Path) -> Path:
+def locale_recording_git(folder: Path, env: dict, log: Path, entries: Path) -> Path:
     """A folder holding a git wrapper that, on each git check-attr call not given --source, appends the
-    value of LC_ALL in its environment, or "unset", as a line of log, and runs git for every call."""
+    value of LC_ALL in its environment, or "unset", as a line of log, and, on each git show call, the
+    word show and then the name of each entry of TMPDIR that starts with tmp., each as a line of
+    entries, and runs git for every call."""
+    folder.mkdir()
+    (folder / "git").write_text(
+        "#!/bin/sh\n"
+        "attr=no\n"
+        "source=no\n"
+        "show=no\n"
+        "for arg in \"$@\"; do\n"
+        "  if [ \"${arg}\" = check-attr ]; then attr=yes; fi\n"
+        "  if [ \"${arg}\" = --source ]; then source=yes; fi\n"
+        "  if [ \"${arg}\" = show ]; then show=yes; fi\n"
+        "done\n"
+        "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
+        f"  printf '%s\\n' \"${{LC_ALL-unset}}\" >> {shlex.quote(str(log))}\n"
+        "fi\n"
+        "if [ \"${show}\" = yes ]; then\n"
+        f"  printf 'show\\n' >> {shlex.quote(str(entries))}\n"
+        "  for entry in \"${TMPDIR}\"/tmp.*; do\n"
+        f"    if [ -e \"${{entry}}\" ]; then printf '%s\\n' \"${{entry##*/}}\" >> {shlex.quote(str(entries))}; fi\n"
+        "  done\n"
+        "fi\n"
+        f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
+    (folder / "git").chmod(0o755)
+    return folder
+
+
+def signalling_git(folder: Path, env: dict, name: str, entries: Path) -> Path:
+    """A folder holding a git wrapper that, on each git check-attr call not given --source, appends the
+    name of each entry of TMPDIR that starts with tmp. as a line of entries, then sends the signal name
+    to its process group, which is that of the run, and exits 1 if that signal does not end it; it runs
+    git for every other call."""
     folder.mkdir()
     (folder / "git").write_text(
         "#!/bin/sh\n"
@@ -743,7 +798,11 @@ def locale_recording_git(folder: Path, env: dict, log: Path) -> Path:
         "  if [ \"${arg}\" = --source ]; then source=yes; fi\n"
         "done\n"
         "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
-        f"  printf '%s\\n' \"${{LC_ALL-unset}}\" >> {shlex.quote(str(log))}\n"
+        "  for entry in \"${TMPDIR}\"/tmp.*; do\n"
+        f"    if [ -e \"${{entry}}\" ]; then printf '%s\\n' \"${{entry##*/}}\" >> {shlex.quote(str(entries))}; fi\n"
+        "  done\n"
+        f"  kill -{name} 0\n"
+        "  exit 1\n"
         "fi\n"
         f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
@@ -1327,6 +1386,8 @@ class FailClosedCases(unittest.TestCase):
                 self.assertIn(f"wrapper: refused {refused}", err)
                 self.assert_stops(code, out, err, message, reached_version)
                 self.assert_ends_at(wrapper, nth_call(refused, after + 1), partners)
+                self.assertEqual(temporary_files(fixture.tmp), [],
+                                 "the run left the file of its check of GIT_ATTR_SOURCE, or its worktree, in TMPDIR")
         # (the exit status, the standard error of the first git check-attr, byte for byte, the text of it
         # that the run must print, as cat -v shows it): git's own message for the refusal of a
         # GIT_ATTR_SOURCE that names no tree, at another exit status than 128, or at 128 with another line
@@ -1366,11 +1427,15 @@ class FailClosedCases(unittest.TestCase):
             env = {key: value for key, value in fixture.env.items() if key != "LC_ALL"}
             env.update(LANG="C.UTF-8", LANGUAGE="fr")
             log = fixture.tmp / "locales"
-            wrapper = locale_recording_git(fixture.tmp / "wrapper", env, log)
+            entries = fixture.tmp / "entries"
+            wrapper = locale_recording_git(fixture.tmp / "wrapper", env, log, entries)
             code, out, err = run_script(fixture.script, env, wrapper)
             self.assertEqual((code, SUCCESS in out), (0, True), f"exit {code}\n{out}{err}")
             self.assertEqual(log.read_text(encoding="utf-8").splitlines() if log.exists() else [], ["C"],
                              "the check of GIT_ATTR_SOURCE did not run once with LC_ALL set to C")
+            self.assertEqual(entries.read_text(encoding="utf-8").splitlines() if entries.exists() else [], ["show"],
+                             "the file of the check of GIT_ATTR_SOURCE was still in TMPDIR when the script read the "
+                             "version, or the script did not read it once")
             self.assertEqual(temporary_files(fixture.tmp), [],
                              "the run left the file of its check of GIT_ATTR_SOURCE, or its worktree, in TMPDIR")
 
@@ -1395,6 +1460,61 @@ class FailClosedCases(unittest.TestCase):
             code, out, err = run_script(fixture.script, fixture.env, wrapper)
             self.assert_stops(code, out, err, "release-dry-run: git ignores GIT_ATTR_SOURCE", False)
             self.assert_ends_at(wrapper, attribute_source_check)
+            self.assertEqual(temporary_files(fixture.tmp), [],
+                             "the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR")
+
+    def test_a_tool_of_the_attribute_source_check_that_fails_fails(self):
+        # (the tool that a stand-in, first on PATH, replaces, the stand-in's commands, the message that must
+        # end the run, whether the check's git call runs, whether the run must leave no entry that mktemp
+        # names in TMPDIR): a mktemp that fails; a mktemp that names a file in a folder that does not
+        # exist, so that the redirection of standard error to it fails, git does not run and cmp cannot
+        # read the file; a cmp that cannot compare, which exits 2; and an rm that cannot remove the file
+        # each fail the run with exit 1 and the script's message, before its read of the version. The rm
+        # stand-in removes nothing, so that run leaves the file.
+        compare = ("release-dry-run: could not compare the standard error of the check of GIT_ATTR_SOURCE with "
+                   "git's message (cmp exit 2)")
+        for tool, commands, message, checked, clean in (
+                ("mktemp", "exit 1\n", "release-dry-run: could not make a temporary file for the standard error of "
+                 "the check of GIT_ATTR_SOURCE", False, True),
+                ("mktemp", "printf '%s\\n' \"${TMPDIR}/missing/stderr\"\n", compare, False, True),
+                ("cmp", "cat > /dev/null\nexit 2\n", compare, True, True),
+                ("rm", "exit 1\n", "release-dry-run: could not remove the temporary file ", True, False)):
+            with self.subTest(tool=tool, commands=commands), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env)
+                (wrapper / tool).write_text("#!/bin/sh\n" + commands, encoding="utf-8")
+                (wrapper / tool).chmod(0o755)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                self.assert_stops(code, out, err, message, False)
+                self.assertEqual(any(attribute_source_check(event) for event in events(wrapper)), checked,
+                                 f"the check's git call {'did not run' if checked else 'ran'}: {events(wrapper)}")
+                self.assert_ends_at(wrapper, attribute_source_check if checked else nth_call("hash-object", 1))
+                if clean:
+                    self.assertEqual(temporary_files(fixture.tmp), [],
+                                     "the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR")
+
+
+class SignalCases(unittest.TestCase):
+    def test_a_signal_during_the_attribute_source_check_leaves_no_file(self):
+        # HUP, INT and TERM, each sent to the process group of the run while the check of GIT_ATTR_SOURCE
+        # runs, as a hang-up, an interrupt typed at a terminal or a kill of the job sends it, end the run
+        # once the file in which the check writes standard error exists. The run must stop before its read
+        # of the version and leave no entry that mktemp names in TMPDIR.
+        for name_of_signal in ("HUP", "INT", "TERM"):
+            with self.subTest(signal=name_of_signal), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                entries = fixture.tmp / "entries"
+                wrapper = signalling_git(fixture.tmp / "wrapper", fixture.env, name_of_signal, entries)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                during = entries.read_text(encoding="utf-8").splitlines() if entries.exists() else []
+                self.assertEqual(len(during), 1, f"TMPDIR did not hold 1 entry that mktemp names, the file of the "
+                                 f"check, while the check ran: {during}")
+                self.assertNotEqual(code, 0, f"the run did not end with a failure\n{out}{err}")
+                self.assertNotIn(SUCCESS, out)
+                self.assertNotIn(VERSION_LINE, out, f"the run went on past the check\n{out}{err}")
+                self.assertEqual(temporary_files(fixture.tmp), [],
+                                 f"the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR after "
+                                 f"{name_of_signal} (exit {code})")
 
 
 class HeldCommitCases(unittest.TestCase):
@@ -1739,6 +1859,19 @@ class ConfiguredProgramCases(unittest.TestCase):
             log.unlink()
             self.assert_none_ran(fixture, env, log)
 
+    def test_no_editor_runs(self):
+        # An editor that core.editor names, which git commit runs for a message it is not given, and one
+        # that sequence.editor names, which git rebase -i runs for its list of commits.
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            log = fixture.tmp / "programs-ran"
+            env = configured(fixture.env, {
+                "core.editor": recorder(fixture.tmp / "editor", "editor", log, "printf 'Probe\\n' > \"$1\"\n"),
+                "sequence.editor": recorder(fixture.tmp / "sequence-editor", "sequence-editor", log, ":\n")})
+            self.probe(fixture, env, log, [["git", "commit", "-q", "--allow-empty"],
+                                           ["git", "rebase", "-q", "-i", "HEAD"]], {"editor", "sequence-editor"})
+            self.assert_none_ran(fixture, env, log)
+
     def test_no_lazy_fetch_runs(self):
         # A partial clone of the fixture made without blobs: the dry run must fail closed at its first read
         # of a missing blob, without fetching it from the promisor remote, whose upload-pack program records
@@ -1916,8 +2049,10 @@ class ConfiguredProgramCases(unittest.TestCase):
                     continue
                 seen.append(" ".join(argv))
                 # The listing of the filter drivers, the lookup of the info/attributes file and the naming
-                # of the empty tree run before the attribute and filter settings exist, and read no file
-                # content; the check that git refuses a GIT_ATTR_SOURCE that names no tree sets its own.
+                # of the empty tree run before the attribute and filter settings exist, and read no index
+                # and pass no file content through a filter, although the configuration that they read can
+                # include a file that lies in a worktree; the check that git refuses a GIT_ATTR_SOURCE that
+                # names no tree sets its own.
                 wanted = off
                 if ("--get-regexp" in argv or "--git-path" in argv or "hash-object" in argv
                         or "check-attr" in argv and "--source" not in argv):

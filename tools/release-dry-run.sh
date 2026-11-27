@@ -35,8 +35,8 @@
 # that reads the filter drivers of the dry-run commit, those of that commit,
 # and runs with the clean, smudge and process commands turned off of every
 # filter driver that the configuration read from the script's worktree
-# defines or that the info/attributes file names, and, from the dry-run commit
-# on, of every one that an attribute gives a path of that commit; those 3
+# defines or that the info/attributes file names, and, from step 1 on, of
+# every one that an attribute gives a path of the dry-run commit; those 3
 # calls list the filter drivers, find the info/attributes file and name the
 # empty tree, read no index and pass no file content through a filter,
 # although the configuration that they read can include a file that lies in
@@ -69,8 +69,11 @@
 # worktree other than the script's worktree, the throwaway worktree included,
 # or a ref outside refs/ other than HEAD, such as ORIG_HEAD, of any worktree,
 # the script's worktree included, so such a ref put on the dry-run commit does
-# not fail it. It does not see anything the exit cleanup does, or a ref moved
-# and then restored between the 2 snapshots.
+# not fail it. It does not see a write to a ref made after the after snapshot,
+# such as a tag that another worktree makes then, other than a ref that the
+# leak check, which follows that snapshot, finds to contain the dry-run commit.
+# It does not see anything the exit cleanup does, or a ref moved and then
+# restored between the 2 snapshots.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -284,6 +287,25 @@ empty_tree="$(git "${git_off[@]}" hash-object -t tree --stdin < /dev/null)" \
 export GIT_ATTR_NOSYSTEM=1 GIT_ATTR_SOURCE="${empty_tree}"
 export_settings core.attributesFile=/dev/null
 turn_off_filters "${filter_drivers}${attributes_drivers}"
+# The exit cleanup is the one path that removes what the run leaves in TMPDIR:
+# the temporary file of the check of GIT_ATTR_SOURCE below, while it exists,
+# and the throwaway worktree, once it exists. It is set before either exists,
+# and bash runs it on every exit of the run from here on, an exit through fail
+# or one that a signal such as HUP, INT or TERM causes included; a signal that
+# no trap can catch, such as KILL, leaves both behind.
+attr_source_log=""
+worktree=""
+cleanup() {
+  if [ -n "${attr_source_log}" ]; then
+    rm -f "${attr_source_log}" || true
+  fi
+  if [ -n "${worktree}" ]; then
+    cd "${repo_root}"
+    git "${git_off[@]}" worktree remove --force "${worktree}" >/dev/null 2>&1 || true
+    rm -rf "${worktree}"
+  fi
+}
+trap cleanup EXIT
 # A git that ignores GIT_ATTR_SOURCE would read the attribute files of the
 # throwaway worktree, so the run fails unless git refuses a GIT_ATTR_SOURCE
 # that names no tree. Only the refusal that git gives such a source counts:
@@ -298,7 +320,9 @@ turn_off_filters "${filter_drivers}${attributes_drivers}"
 # in a shell variable, since a command substitution drops every NUL byte and
 # every newline at the end of what it captures. On a failure the file is
 # shown through cat -v, which shows a NUL byte as ^@ and a carriage return as
-# ^M, and the file is removed before the run goes on or fails.
+# ^M, and the file is removed before the run goes on or fails, or by the exit
+# cleanup above on any other exit, such as one that a signal causes while git
+# runs.
 attr_source_log="$(mktemp)" \
   || fail "could not make a temporary file for the standard error of the check of GIT_ATTR_SOURCE"
 attr_source_rc=0
@@ -308,6 +332,7 @@ attr_source_cmp=0
 printf 'fatal: bad --attr-source or GIT_ATTR_SOURCE\n' | cmp -s - "${attr_source_log}" || attr_source_cmp=$?
 attr_source_err="$(cat -v "${attr_source_log}" && printf '.')" || attr_source_err="."
 rm -f "${attr_source_log}" || fail "could not remove the temporary file ${attr_source_log}"
+attr_source_log=""
 attr_source_err="${attr_source_err%.}"
 if [ "${attr_source_rc}" -eq 0 ]; then
   fail "git ignores GIT_ATTR_SOURCE, so the dry run cannot keep the attribute files of its worktree out of reach"
@@ -337,16 +362,11 @@ dry_tag="v${dry_version}"
 echo "release-dry-run: version ${version} at HEAD; dry-run version ${dry_version}; date ${dry_date}."
 
 worktree="$(mktemp -d)"
-cleanup() {
-  cd "${repo_root}"
-  git "${git_off[@]}" worktree remove --force "${worktree}" >/dev/null 2>&1 || true
-  rm -rf "${worktree}"
-}
-trap cleanup EXIT
-# Like every later git call of the script, git worktree add runs with git_off
-# and the attribute and filter settings exported above, so no hook,
-# core.fsmonitor program or pager runs inside it, and no filter other than a
-# driver that the info/attributes file comes to name during the run.
+# Like every later git call of the script other than the reads of step 6, the
+# exit cleanup's included, git worktree add runs with git_off and the
+# attribute and filter settings exported above, so no hook, core.fsmonitor
+# program or pager runs inside it, and no filter other than a driver that the
+# info/attributes file comes to name during the run.
 git "${git_off[@]}" worktree add --detach "${worktree}" HEAD >/dev/null
 cd "${worktree}"
 
