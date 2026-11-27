@@ -67,6 +67,12 @@ completion, and clarify before acting. The AIQT renderings are terser than the
 originals; the 3 concrete clauses they drop are restored in
 [`rules/external/aiqt-adopter-supplements.md`](rules/external/aiqt-adopter-supplements.md).
 
+The adopter-owned rule
+[`rules/external/no-worker-identifiers.md`](rules/external/no-worker-identifiers.md) bars
+any worker email address, account identifier, seat label or other third-party identifier
+from every public or potentially public surface; `tools/test-no-worker-identifiers.py`
+enforces its email class on every tracked file.
+
 The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
 blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
 for dev-time sessions through [`settings.json`](settings.json) and the local
