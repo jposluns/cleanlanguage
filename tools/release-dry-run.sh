@@ -85,7 +85,11 @@
 # such as a tag that another worktree makes then, other than a ref that the
 # leak check, which follows that snapshot, finds to contain the dry-run commit.
 # It does not see anything the exit cleanup does, or a ref moved and then
-# restored between the 2 snapshots.
+# restored between the 2 snapshots. None of these limits holds for a ref whose
+# name git rejects, that git for-each-ref would list from the script's
+# worktree and that is there when the leak check lists: such a ref fails the
+# run, whoever writes it and whenever, since git then writes a warning to
+# standard error while that listing runs.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -185,11 +189,8 @@ listed_refs() {
 # off, and the graft file and the shallow file are each set to an empty path,
 # which git reads as no file, so no refs/replace/ ref, graft or shallow
 # boundary can give a descendant of COMMIT other parents and hide a ref that
-# contains it. In a shallow clone, the leak check, which reads with the shallow
-# file turned off, finds the parents of a commit at the shallow boundary
-# missing, so there it can fail the run on git's message about them or naming
-# a ref that does not contain the dry-run commit; release-dry-run.yml checks
-# out the whole history, so its run is not shallow. A failing git call fails
+# contains it. The header states what the listing finds in a shallow clone.
+# A failing git call fails
 # the run and is never read as an empty listing, and so does any text that git
 # writes to standard error while it lists them, such as the warning with which
 # it skips a ref whose name it rejects (listed_refs).
@@ -701,8 +702,7 @@ python3 -I tools/set-release-links.py --version "${dry_version}" --tag "${dry_ta
 
 # 6. Prove that the dry run moved no tag, no note and not the HEAD of the
 #    script's worktree, and that no ref that git for-each-ref lists from it
-#    contains the dry-run commit. A write that the header's residual names
-#    does not fail it, whoever makes it; the header states the proof and that
+#    contains the dry-run commit. The header states the proof and its
 #    residual in full.
 #    The comparison sees that a ref changed, not who changed it, since a
 #    write that another worktree makes fails it too, so its message says that

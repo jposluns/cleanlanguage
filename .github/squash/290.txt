@@ -26,11 +26,12 @@ The script makes that commit with git commit-tree, which prints the
 name of the commit it writes, saves that name for step 6, never
 reading a later HEAD, and moves the throwaway worktree's HEAD to it
 with git update-ref, which fails if that HEAD is no longer at the
-parent it read. Every git call of the
-script after the before snapshot other than the reads of step 6, the
-exit cleanup's included, runs with hooks, the core.fsmonitor program
-and a pager turned off, and every git process of the dry run with lazy
-fetching turned off. After its first 3 git calls past the before
+parent it read. Every git call of the script after the before
+snapshot other than the reads of step 6, the exit cleanup's git
+worktree remove included, runs with hooks, the core.fsmonitor program
+and a pager turned off, whatever the configuration asks, and every git
+process of the dry run runs with lazy fetching from a promisor remote
+turned off. After its first 3 git calls past the before
 snapshot, which list the filter drivers, find the info/attributes file
 and name the empty tree, every git process of the dry run, its tools'
 included, reads no attribute file other than info/attributes and, in
@@ -51,17 +52,18 @@ driver that the info/attributes file, or the tree that git archive
 archives, comes to name during the run.
 
 No git call of the script asks for a textconv or diff driver, a
-signature, an editor or automatic maintenance, and the snapshot and
-leak-check reads read no index and no file content and write to no
-terminal. So no other program that git can run from its configuration
-or from attributes runs during a git call of the script.
+signature, an editor or automatic maintenance, and the reads of the 2
+snapshots and the leak check read no index and no file content and
+write to no terminal. So no other program that git can run from its
+configuration or from attributes runs during a git call of the script.
 
 The git calls of the tools that the script runs are covered only by
 the lazy-fetch, attribute and filter settings.
 
 The run fails closed unless the throwaway worktree's HEAD is at the
-dry-run commit once moved there. The git commit-tree runs with commit
-signing turned off, so the dry-run commit is never signed. A git error
+dry-run commit once moved there. git commit-tree runs with commit
+signing turned off, whatever the configuration asks, so the dry-run
+commit is never signed. A git error
 in either check, in reading the filter drivers, or in making or
 reading the dry-run commit or moving HEAD to it, fails the run with
 exit 1 and is never read as an empty listing. The exit cleanup is set
@@ -102,7 +104,12 @@ fail it. It does not see a write to a ref made after the after
 snapshot, such as a tag that another worktree makes then, other than
 a ref that the leak check, which follows that snapshot, finds to
 contain the dry-run commit. It does not see anything the exit cleanup
-does, or a ref moved and then restored between the 2 snapshots.
+does, or a ref moved and then restored between the 2 snapshots. None
+of these limits holds for a ref whose name git rejects, that git
+for-each-ref would list from the script's worktree and that is there
+when the leak check lists: such a ref fails the run, whoever writes it
+and whenever, since git then writes a warning to standard error while
+that listing runs.
 
 A ref that another worktree writes during the run fails the proof
 only when it is a tag or a note, when it is the HEAD of the script's
@@ -174,41 +181,30 @@ and the GIT_ATTR_SOURCE check also to run with the attribute settings
 and both configured filter drivers turned off. Each of those 4 is
 exempt from these settings only in the argument form and with the
 GIT_ATTR_SOURCE that the script gives it, and only once, so a later
-run in that form must run with them. 1 more, the text
-case, requires 4 blocks, the residual and the 2 remainders that the
-script's header states and the residual of the test that its
-docstring states, each to be 1 whole paragraph, the same word for
-word in every text that holds it, so a word added before a block's
-first words or after its last words fails it too. It also requires 5
-sentences that are repeated inside paragraphs that differ, the
-listing rule, the scope of another worktree's writes, the
-shallow-clone caveat, the exemption of the trace2 case and the
-clearing of the name of the check's file, to be held once, word for
-word, in each text that holds them. The docstring
-repeats the residual; this message as .github/squash/290.txt commits
-it, and the description and this message at the top of the export,
-repeat all 4. CI has neither of the last 2, so there the case
-compares the header's residual with the docstring's copy and each of
-the 4 blocks with the committed message, and says that it skips the
-other 2.
+run in that form must run with them. 1 more, the text case, requires
+the texts that state or repeat what the script and the test do to
+agree, as its docstring states: 4 repeated blocks, 5 repeated
+sentences, no sentence that is a changed copy of a sentence of another
+of those texts, and this message the same byte for byte as
+.github/squash/290.txt commits it and as SQUASH-MSG at the top of the
+export.
 
-Residual of the test: stand-ins replace the packaging, the
-gates and the site rewrite, which the next step of release-dry-run.yml
-runs with the real tools, and the script runs with an environment that
-the test fixes, with a git stand-in first on PATH in the ref cases and
-a git wrapper there in some other cases, not with those of that
-workflow. A change to the script is caught only when it changes
-what a case observes, so a change that acts only outside the cases,
-such as one that tests for the stand-ins or for the workflow's
-environment, or that moves a ref no case writes or stops step 6
-reading one, is not caught. The text case compares only the 4 repeated
-blocks, each as 1 whole paragraph, and the 5 repeated sentences, each
-as a run of words, so it does not catch a paragraph added next to a
-block, words added next to a sentence, a change to any other paragraph
-or sentence, a change to a copy in a text that it does not read, such
-as a comment of the script below its header, or a change to a text
-that the checkout lacks, as CI lacks PR-BODY.md and SQUASH-MSG.
-The cases run on 1 git version with its default ref backend.
+Residual of the test: stand-ins replace the packaging, the gates and
+the site rewrite, which the next step of release-dry-run.yml runs with
+the real tools, and the script runs with an environment that the test
+fixes, with a git stand-in first on PATH in the ref cases and a git
+wrapper there in some other cases, not with those of that workflow. A
+change to the script is caught only when it changes what a case
+observes, so a change that acts only outside the cases, such as one
+that tests for the stand-ins or for the workflow's environment, or that
+moves a ref no case writes or stops step 6 reading one, is not caught.
+The text case does not catch a paragraph added next to a block, words
+added next to a repeated sentence, a copy changed so far that its words
+are less than 85 percent alike to those of the sentence it copies, a
+fact restated in other words, a change in a text that it does not
+read, or a change to a text that the checkout lacks, as CI lacks
+PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its
+default ref backend.
 
 The test's first version of 21 cases, run against the unchanged
 script, failed the concurrent cases and passed the detached commit;
@@ -268,7 +264,15 @@ each of 3 mutants of that fix, 1 of which the trace2 case before it
 passes. The suite of the text fix, still of 74 cases, fails each of 2
 script mutants that ignore the signal of a signal case, whose run the
 signal cases before that fix pass, and each of 5 mutants of the texts,
-each changing 1 word of 1 repeated sentence. The release dry run
+each changing 1 word of 1 repeated sentence. The suite of the drift
+fix, still of 74 cases, fails in its text case each of 6 mutants: 3
+that put a copy of a repeated sentence with 1 word changed in the
+description, in a comment of the script below its header or in a
+comment of the suite, 1 that changes 1 word of the script's comment
+copy of the clearing sentence, 1 that changes 1 word of the committed
+message alone, and a folder that holds .git without the committed
+message; a copy of the tools that holds neither passes and skips that
+message. The release dry run
 workflow and tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

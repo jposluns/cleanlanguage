@@ -2,64 +2,13 @@
 """Tests the ref comparison of tools/release-dry-run.sh by running the whole script in throwaway
 folders.
 
-The dry run proves at exit that it moved no tag, no note and not the HEAD of the worktree that holds
-the script, and that no ref that git for-each-ref lists from that worktree contains its own commit.
-It snapshots, from the worktree that holds the script (repo_root, which in these cases is the main
-worktree of the case's repository), the branch that HEAD names (or that HEAD is detached), the
-commit that HEAD resolves to, and every tag and note with its object name, before its run and again
-in step 6, and fails when the 2 snapshots differ. Step 6 also fails when a ref that git
-for-each-ref lists from repo_root contains the dry run's own commit. A ref that another worktree
-writes during the run fails the proof only when it is a tag or a note, when it is the HEAD of the
-script's worktree or the branch that worktree has checked out, when it is a ref that git
-for-each-ref lists from the script's worktree, created or moved onto the dry-run commit or a
-descendant of it, or when git fails or writes to standard error while it lists the refs of a
-snapshot or of the leak check, as it does for a ref whose name it rejects; any other such write is
-outside the proof. The dry run's commit is the commit that the script's git commit-tree writes and
-prints, which the script saves and step 6 reads, never a later HEAD. Every git call of the script after the
-before snapshot other than the reads of step 6, the exit cleanup's included, runs with hooks, the
-core.fsmonitor program and a pager turned off, and every git process of the dry run with lazy
-fetching turned off. Every git process of the dry run that starts after the first 3 git calls that
-follow the before snapshot, its tools' included, reads no attribute file other than the
-info/attributes file of the repository and, in git archive, the .gitattributes files of the tree it
-archives and, in the git check-attr that reads the filter drivers of the dry-run commit, those of
-that commit, and runs with every filter driver turned off that the configuration read from the
-script's worktree defines or that the info/attributes file names, and, from step 1 on, every one
-that an attribute gives a path of the dry-run commit. So no program other than a filter that git
-can run from its configuration or from attributes runs during a git call of the script, and no
-filter during a git call of the dry run, its tools' included, whatever the configuration that git
-reads in any worktree defines, other than a driver that the info/attributes file, or the tree that
-git archive archives, comes to name during the run; the run fails unless git refuses a
-GIT_ATTR_SOURCE that names no tree with exit 128 and its own message for that refusal, and unless
-the HEAD of the throwaway worktree is at that commit once the script has moved it there, and the
-move fails unless that HEAD is still at the parent the script read. The leak check reads with
-replace refs, the graft file and the shallow file turned off, so no refs/replace/ ref, graft or
-shallow boundary can hide a ref that contains the commit. In a shallow clone, the leak check, which
-reads with the shallow file turned off, finds the parents of a commit at the shallow boundary
-missing, so there it can fail the run on git's message about them or naming a ref that does not
-contain the dry-run commit; release-dry-run.yml checks out the whole history, so its run is not
-shallow. No case runs in a shallow clone. The tag and note listing of each snapshot and the
-listing of the leak check fail the run when git writes anything to standard error while it lists,
-as when git for-each-ref skips a ref whose name it rejects, with a warning, and still exits 0. The
-git commit-tree that makes the
-commit runs with commit signing turned off, so the dry run's commit is never signed.
-
-The script's header states the residual of the proof in these words:
-
-Residual: the proof does not catch the deletion of any ref outside tags and notes other than the
-branch the script's worktree has checked out, such as another branch, a remote-tracking ref,
-refs/stash or a refs/replace/ ref; or a move or creation of such a ref at a commit that does not
-contain the dry-run commit, at an annotated tag that peels to such a commit, or at an object that
-peels to no commit, such as a tree or a blob. It does not see the HEAD or the per-worktree refs of
-any worktree other than the script's worktree, the throwaway worktree included, or a ref outside
-refs/ other than HEAD, such as ORIG_HEAD, of any worktree, the script's worktree included, so such
-a ref put on the dry-run commit does not fail it.
-It does not see a write to a ref made after the after snapshot, such as a tag that another worktree
-makes then, other than a ref that the leak check, which follows that snapshot, finds to contain the
-dry-run commit. It does not see anything the exit cleanup does, or a ref moved and then restored
-between the 2 snapshots.
-
-Cases 12, 13, 23 and 27 show the first sentence of that residual, and cases 15, 28, 29 and 30 the
-second. No case shows the third or the fourth.
+The script's header states what the dry run proves at exit, how it proves it, what it does not
+catch and the rules that its git calls keep; this docstring does not repeat them, and states what the
+cases do and what they show. In these cases the script's worktree is the main worktree of the case's
+repository, and no case runs in a clone made shallow, although case 38 writes a shallow entry. Cases
+12, 13, 23 and 27 show the first sentence of the header's residual, and cases 15, 28, 29 and 30 the
+second. No case shows the third or the fourth. The run with the branch in the skipped-ref case shows
+the fifth for a ref written before the run; no case writes such a ref during the run.
 
 This test runs the real script, not an excerpt of it. Each ref case builds a repository in a
 temporary folder whose commits hold a copy of tools/release-dry-run.sh, byte for byte, and
@@ -364,30 +313,34 @@ that the script makes such a call only in the 2 snapshots and the leak check. Th
 driver case passes against the script before these settings too, since no git call of the script
 runs a diff.
 
-1 more case, the text case, compares 4 blocks that are repeated word for word, each run of
-whitespace read as 1 space: the residual, the remainder of the filter settings and the remainder of
-the tools' git calls, which the comment lines at the top of the script state, and the residual of
-the test, which this docstring states. Each block is 1 whole paragraph, the lines from a blank line
-or the start of its text to the next blank line or the end of it. Each must be there once, start
-with its first words, end with its last words and be the same in the text that states it and in
-each text that repeats it, so a word added, removed or changed anywhere in its paragraph, before
-its first words or after its last words included, in any of those texts fails the case: the
-residual in this docstring, and all 4 in the squash message that .github/squash/290.txt commits
-and in the description and the squash message that the export of the branch holds as PR-BODY.md
-and SQUASH-MSG at the top of the repository. The script's header, this docstring and the
-committed squash message are read in every checkout, CI included. PR-BODY.md and SQUASH-MSG are
-not committed, so a checkout of the branch or of main lacks them, and there the case compares
-every other text and skips each missing one in a subtest that says so: in CI the header's residual
-is compared with this docstring's copy, each of the 4 blocks with the committed squash message, and
-no copy in the description. The text case also compares 5 sentences that are repeated word for
-word inside paragraphs that differ, each run of whitespace read as 1 space, and requires each text
-that holds a sentence to hold it once: the listing rule, the scope of another worktree's writes and
-the shallow-clone caveat, which the script's header states and this docstring, the squash messages
-and the description repeat; the exemption of the trace2 case, which this docstring states and the
-squash messages and the description repeat; and the clearing of the name of the file of the check
-of GIT_ATTR_SOURCE, which the squash messages and the description hold. So a word removed or
-changed inside such a sentence in any of those texts fails the case. It is the only case that reads
-the script's text, and it reads only those comment lines.
+1 more case, the text case, makes 4 checks on the texts that state or repeat what the script and the
+test do: the comment lines at the top of the script, called its header here, the script's other
+comment lines, this docstring, the test's comment lines, the squash message that
+.github/squash/290.txt commits, and the description and the squash message that the export of the
+branch holds as PR-BODY.md and SQUASH-MSG at the top of the repository. First, 4 blocks are
+repeated word for word, each run of whitespace read as 1 space: the residual, the remainder of the
+filter settings and the remainder of the tools' git calls, which the header states, and the
+residual of the test, which this docstring states. Each block is 1 whole paragraph, the lines from a
+blank line or the start of its text to the next blank line or the end of it, and each must be there
+once, start with its first words, end with its last words and be the same in the text that states
+it and in the 2 squash messages and the description, so a word added, removed or changed anywhere in
+its paragraph fails the case. Second, 5 sentences that are repeated inside paragraphs that differ
+must each be held once, word for word, in each text that holds them: the listing rule, the scope of
+another worktree's writes and the shallow-clone caveat, which the header states; the exemption of
+the trace2 case, which this docstring states; and the clearing of the name of the file of the check
+of GIT_ATTR_SOURCE, which the script's other comment lines state; each also in the 2 squash
+messages and, other than the exemption, in the description. Third, no sentence of 8 words or more
+in 1 of these texts may be a changed copy of a sentence of another: each pair of sentences from 2
+of them whose words difflib.SequenceMatcher finds at least 85 percent alike must be equal, once
+each run of whitespace is read as 1 space and backticks are dropped, a sentence ending at a full
+stop, a semicolon or a colon followed by a space. The 2 squash messages are not compared with each
+other in this way; fourth, they must be equal byte for byte. The header, the script's other comment lines, this
+docstring, the test's comment lines and the committed squash message are read in every checkout,
+CI included, and the case fails when a folder that holds .git lacks the committed squash message.
+PR-BODY.md and SQUASH-MSG are not committed, so a checkout lacks them. A folder that lacks
+PR-BODY.md or SQUASH-MSG, or that holds neither .git nor the committed squash message, as a copy of
+the tools can, skips each missing text in a subtest that says so and compares every other text. It
+is the only case that reads the script's text, and it reads only its comment lines.
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -402,15 +355,14 @@ with it.
 Residual of the test: stand-ins replace the packaging, the gates and the site rewrite, which the
 next step of release-dry-run.yml runs with the real tools, and the script runs with an environment
 that the test fixes, with a git stand-in first on PATH in the ref cases and a git wrapper there in
-some other cases, not with those of that workflow. A change to the
-script is caught only when it changes what a case observes, so a change that acts only outside the
-cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
-ref no case writes or stops step 6 reading one, is not caught. The text case compares only the 4
-repeated blocks, each as 1 whole paragraph, and the 5 repeated sentences, each as a run of words, so
-it does not catch a paragraph added next to a block, words added next to a sentence, a change to
-any other paragraph or sentence, a change to a copy in a text that it does not read, such as a
-comment of the script below its header, or a change to a text that the checkout lacks, as CI lacks
-PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its default ref backend.
+some other cases, not with those of that workflow. A change to the script is caught only when it
+changes what a case observes, so a change that acts only outside the cases, such as one that tests
+for the stand-ins or for the workflow's environment, or that moves a ref no case writes or stops
+step 6 reading one, is not caught. The text case does not catch a paragraph added next to a block,
+words added next to a repeated sentence, a copy changed so far that its words are less than 85
+percent alike to those of the sentence it copies, a fact restated in other words, a change in a
+text that it does not read, or a change to a text that the checkout lacks, as CI lacks PR-BODY.md
+and SQUASH-MSG. The cases run on 1 git version with its default ref backend.
 
 Usage: python3 -I tools/test-release-dry-run-refs.py
 Exit status: 0 when every case passes, 1 otherwise.
@@ -420,8 +372,10 @@ from __future__ import annotations
 
 import ast
 import datetime
+import difflib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -1734,11 +1688,8 @@ class SigningCases(unittest.TestCase):
             self.assertFalse(called.exists(), "the dry run asked git to sign a commit")
 
 
-# 8 hooks that git runs around a commit, a checkout, an index write or a ref update, each written to
-# the hook folder of the hook case: each records its name in the log of that case. The commit-msg
-# hook also adds a trailer to the message, and the post-commit hook keeps the commit just made in
-# refs/keep/hooked and moves HEAD to the commit of the same tree and parent with the dry run's
-# message, made with git commit-tree, as a hook that hides the commit made from the leak check would.
+# The 8 hooks of the hook case, which the docstring describes, with what each does beside recording
+# its name in the log of that case; the post-commit hook keeps its commit in refs/keep/hooked.
 HOOK_NAMES = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "post-checkout",
               "reference-transaction", "post-index-change", "pre-auto-gc")
 HOOK_ACTIONS = {
@@ -2051,12 +2002,8 @@ class ConfiguredProgramCases(unittest.TestCase):
             self.assertFalse(log.exists(), "these programs ran during the dry run: " + self.ran(log))
 
     def test_no_filter_that_only_a_linked_worktree_defines_runs(self):
-        # 3 filter drivers that only configuration read in a linked worktree defines, through a
-        # conditional include, so the listing of the filter drivers from the script's worktree does not
-        # see them. The repository's info/attributes gives the first to file, a .gitattributes file in
-        # the tree that the dry run releases gives the second to every path under site/, and the file
-        # that core.attributesFile names gives the third to every path under site-src/. The packager's
-        # stand-in also runs git archive of HEAD, as tools/release-package.sh does.
+        # The docstring describes this case: its 3 drivers, the paths that each is given and the
+        # packager's stand-in that runs git archive. The first is given to the path named file.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             log = fixture.tmp / "programs-ran"
@@ -2069,9 +2016,7 @@ class ConfiguredProgramCases(unittest.TestCase):
             env = configured(fixture.env, {"core.attributesFile": str(global_attributes)})
             info = "file filter=linked-info\n"
             tree = "site/** filter=linked-tree\n"
-            # The probe: in a repository of its own, git worktree add runs the smudge command of each
-            # driver, and git archive in that worktree runs that of the second although GIT_ATTR_SOURCE
-            # names the empty tree.
+            # The probe of the case, in a repository of its own, as the docstring states.
             probe = fixture.tmp / "probe"
             probe.mkdir()
             self.assertEqual(run_bounded(["git", "init", "-q"], env, probe)[0], 0)
@@ -2145,20 +2090,8 @@ class ConfiguredProgramCases(unittest.TestCase):
 
     def test_every_git_call_runs_with_the_programs_turned_off(self):
         # git's trace2 log records, for each run of git, the settings it runs with and the programs it
-        # starts. Every run of git that the script starts after the before snapshot, other than a run in
-        # the form of the reads of the 2 snapshots or of the leak check, which is a git symbolic-ref,
-        # rev-parse or for-each-ref given -C and the path of the main worktree first, or a git call given
-        # --contains, wherever the script makes it, must run with hooks and the core.fsmonitor program
-        # turned off and lazy fetching
-        # turned off, the exit cleanup's git worktree remove included, and start no program other than
-        # git, and no automatic maintenance or fetch; each such run other than the first 3, which list the
-        # filter drivers, find the info/attributes file and name the empty tree before the attribute and
-        # filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, must
-        # also run with GIT_ATTR_NOSYSTEM, GIT_ATTR_SOURCE set to the empty tree, core.attributesFile set
-        # to the null device and both configured filter drivers turned off. Each of those 4 is exempt from
-        # these settings only in the argument form and with the GIT_ATTR_SOURCE that the script gives it,
-        # and only once, so a later run in that form must run with them. Every run in the form of those
-        # reads must run with lazy fetching turned off and start no program.
+        # starts. The docstring states which runs must have which settings, the 4 runs exempt from some
+        # of them and the runs that this case reads as the reads of the 2 snapshots and the leak check.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             trace = fixture.tmp / "trace2"
@@ -2242,63 +2175,69 @@ class ConfiguredProgramCases(unittest.TestCase):
                 self.assertTrue(any(call in run for run in seen), f"no run of git {call} was recorded: {seen}")
 
 
-# The texts that state or repeat blocks word for word: the script's header and this test's docstring,
-# which every checkout holds; the squash message as .github/squash/290.txt commits it, which every
-# checkout of the branch holds; and the description and the squash message as the export of the
-# branch holds them at the top of the repository, PR-BODY.md and SQUASH-MSG, which no checkout holds,
-# since neither is committed.
+# The texts that state or repeat what the script and the test do: the script's header, its other
+# comment lines, this test's docstring and its comment lines, which every checkout holds; the squash
+# message as .github/squash/290.txt commits it, which every checkout of the branch holds; and the
+# description and the squash message as the export of the branch holds them at the top of the
+# repository, PR-BODY.md and SQUASH-MSG, which no checkout holds, since neither is committed.
 HEADER = "the script's header"
+SCRIPT_COMMENTS = "the script's other comment lines"
 DOCSTRING = "the test's docstring"
+TEST_COMMENTS = "the test's comment lines"
 COMMITTED_SQUASH = REPO_ROOT / ".github" / "squash" / "290.txt"
 DESCRIPTION = REPO_ROOT / "PR-BODY.md"
 SQUASH_MESSAGE = REPO_ROOT / "SQUASH-MSG"
 COMMITTED = ".github/squash/290.txt"
 EXPORTED = {"PR-BODY.md": DESCRIPTION, "SQUASH-MSG": SQUASH_MESSAGE}
+# The 2 squash messages and the description, which repeat what the other texts state.
+HOUSE = (COMMITTED, "PR-BODY.md", "SQUASH-MSG")
 # (name, the text that states the block, first words, last words, the texts that repeat it) of each
 # block that is repeated word for word. Each block is 1 whole paragraph, which starts with its first
 # words and ends with its last words, in every text that holds it.
 REPEATED = (
-    ("the residual", HEADER, "Residual: the proof does not catch", "between the 2 snapshots.",
-     (DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+    ("the residual", HEADER, "Residual: the proof does not catch", "standard error while that listing runs.",
+     HOUSE),
     ("the filter remainder", HEADER, "So no filter runs during a git call of the dry run,",
-     "comes to name during the run.", (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+     "comes to name during the run.", HOUSE),
     ("the tools remainder", HEADER, "The git calls of the tools that the script runs", "attribute and filter settings.",
-     (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
-    ("the residual of the test", DOCSTRING, "Residual of the test:", "with its default ref backend.",
-     (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+     HOUSE),
+    ("the residual of the test", DOCSTRING, "Residual of the test:", "with its default ref backend.", HOUSE),
 )
 # (name, sentence, the texts that hold it) of each sentence that is repeated word for word inside
 # paragraphs that differ. Each text that holds the sentence must hold it once, each run of whitespace
 # read as 1 space, so a word removed or changed inside it in any of those texts fails the case.
-EVERY_TEXT = (HEADER, DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")
 SENTENCES = (
     ("the listing rule",
      "The tag and note listing of each snapshot and the listing of the leak check fail the run when git writes "
      "anything to standard error while it lists, as when git for-each-ref skips a ref whose name it rejects, "
-     "with a warning, and still exits 0.", EVERY_TEXT),
+     "with a warning, and still exits 0.", (HEADER,) + HOUSE),
     ("the scope of another worktree's writes",
      "A ref that another worktree writes during the run fails the proof only when it is a tag or a note, when "
      "it is the HEAD of the script's worktree or the branch that worktree has checked out, when it is a ref "
      "that git for-each-ref lists from the script's worktree, created or moved onto the dry-run commit or a "
      "descendant of it, or when git fails or writes to standard error while it lists the refs of a snapshot "
      "or of the leak check, as it does for a ref whose name it rejects; any other such write is outside the "
-     "proof.", EVERY_TEXT),
+     "proof.", (HEADER,) + HOUSE),
     ("the shallow-clone caveat",
      "In a shallow clone, the leak check, which reads with the shallow file turned off, finds the parents of "
      "a commit at the shallow boundary missing, so there it can fail the run on git's message about them or "
      "naming a ref that does not contain the dry-run commit; release-dry-run.yml checks out the whole "
-     "history, so its run is not shallow.", EVERY_TEXT),
+     "history, so its run is not shallow.", (HEADER,) + HOUSE),
     ("the exemption of the trace2 case",
      "Each of those 4 is exempt from these settings only in the argument form and with the GIT_ATTR_SOURCE "
      "that the script gives it, and only once, so a later run in that form must run with them.",
-     (DOCSTRING, COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+     (DOCSTRING, COMMITTED, "SQUASH-MSG")),
     ("the clearing of the name of the check's file",
      "Before it goes on or fails, the run clears the name of the temporary file of the check of "
      "GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a file that another process makes later under "
      "that name, and then tries to remove the file itself, and fails if that removal fails; a signal that "
      "ends the run between that clearing and that removal, or a failure of that removal, leaves the file "
-     "behind, since the exit cleanup then has no name to remove.", (COMMITTED, "PR-BODY.md", "SQUASH-MSG")),
+     "behind, since the exit cleanup then has no name to remove.", (SCRIPT_COMMENTS,) + HOUSE),
 )
+# A sentence of fewer words than SHORTEST is not compared for drift, and 2 sentences of 2 texts whose
+# words difflib.SequenceMatcher finds at least ALIKE alike must be equal.
+SHORTEST = 8
+ALIKE = 0.85
 
 
 def header_text(script: str) -> str:
@@ -2309,6 +2248,20 @@ def header_text(script: str) -> str:
         if not line.startswith("#"):
             break
         lines.append(line[2:] if line.startswith("# ") else line[1:])
+    return "\n".join(lines)
+
+
+def comment_text(source: str, skip_header: bool) -> str:
+    """The comment lines of source after its first line, each a line whose first character other than
+    a space is #, without their comment marks and the spaces around them; when skip_header, without
+    the comment lines at the top that header_text reads."""
+    lines, in_header = [], skip_header
+    for line in source.splitlines()[1:]:
+        if in_header and line.startswith("#"):
+            continue
+        in_header = False
+        if line.strip().startswith("#"):
+            lines.append(line.strip().lstrip("#").strip())
     return "\n".join(lines)
 
 
@@ -2347,20 +2300,58 @@ def first_difference(block: str, other: str) -> str:
     return f"word {min(len(words), len(others)) + 1}, where the shorter block ends"
 
 
+def sentences(text: str) -> list:
+    """The sentences of text of at least SHORTEST words, once backticks are dropped and each run of
+    whitespace is read as 1 space, each ending at a full stop, a semicolon or a colon followed by a
+    space, or at the end of text, each listed once."""
+    flat = " ".join(text.replace("`", "").split())
+    return list(dict.fromkeys(part for part in re.split(r"(?<=[.;:]) ", flat) if len(part.split()) >= SHORTEST))
+
+
+def drifted_copies(texts: dict) -> list:
+    """Each pair of sentences of 2 texts of texts, other than the 2 squash messages, that differ
+    although difflib.SequenceMatcher finds their words at least ALIKE alike, each as 2 lines that name
+    the text and quote the sentence."""
+    found = []
+    split = {name: [(part, part.split()) for part in sentences(text)] for name, text in texts.items()}
+    names = list(texts)
+    for index, name in enumerate(names):
+        for other in names[index + 1:]:
+            if {name, other} == {COMMITTED, "SQUASH-MSG"}:
+                continue
+            for sentence, words in split[name]:
+                matcher = difflib.SequenceMatcher(None, autojunk=False)
+                matcher.set_seq2(words)
+                for another, other_words in split[other]:
+                    if sentence == another or 2 * min(len(words), len(other_words)) < ALIKE * (
+                            len(words) + len(other_words)):
+                        continue
+                    matcher.set_seq1(other_words)
+                    if matcher.real_quick_ratio() >= ALIKE and matcher.quick_ratio() >= ALIKE \
+                            and matcher.ratio() >= ALIKE:
+                        found.append(f"{name}: {sentence!r}\n{other}: {another!r}")
+    return found
+
+
 class RepeatedTextCases(unittest.TestCase):
-    def test_each_repeated_block_is_the_same_in_every_text_that_holds_it(self):
-        # Each block of REPEATED, read from the text that states it and from each text that repeats it,
-        # must be there once, as 1 whole paragraph that starts with its first words and ends with its
-        # last words, and be the same, word for word, in each. The script's header, this test's
-        # docstring and the committed squash message are read in every checkout, CI included. The
-        # description and the squash message at the top of the repository are read only where they are
-        # there; a checkout that lacks either skips that text alone, in a subtest that says so, and
-        # still compares every other text.
+    def test_each_repeated_text_is_the_same_in_every_text_that_holds_it(self):
+        # The docstring states the 4 checks of this case, the texts that it reads and when it skips 1.
+        script = DRY_RUN.read_text(encoding="utf-8")
+        source = Path(__file__).read_text(encoding="utf-8")
         texts = {
-            HEADER: header_text(DRY_RUN.read_text(encoding="utf-8")),
-            DOCSTRING: ast.get_docstring(ast.parse(Path(__file__).read_text(encoding="utf-8")), clean=False) or "",
-            COMMITTED: COMMITTED_SQUASH.read_text(encoding="utf-8"),
+            HEADER: header_text(script),
+            SCRIPT_COMMENTS: comment_text(script, True),
+            DOCSTRING: ast.get_docstring(ast.parse(source), clean=False) or "",
+            TEST_COMMENTS: comment_text(source, False),
         }
+        if COMMITTED_SQUASH.is_file():
+            texts[COMMITTED] = COMMITTED_SQUASH.read_text(encoding="utf-8")
+        else:
+            with self.subTest(text=COMMITTED):
+                self.assertFalse((REPO_ROOT / ".git").exists(),
+                                 f"{COMMITTED} is missing from a folder that holds .git, as a checkout does")
+                self.skipTest(f"{COMMITTED} is not in this folder, which holds no .git, so its copies are not "
+                              "compared; every other text is")
         for place, path in EXPORTED.items():
             if path.is_file():
                 texts[place] = path.read_text(encoding="utf-8")
@@ -2368,10 +2359,10 @@ class RepeatedTextCases(unittest.TestCase):
                 with self.subTest(text=place):
                     self.skipTest(f"{place} is not at the top of the repository, as in a checkout, so its copies "
                                   "of the repeated blocks are not compared; every other text is")
-        for name, source, first, last, copies in REPEATED:
+        for name, source_text, first, last, copies in REPEATED:
             with self.subTest(block=name):
-                stated = repeated_block(texts[source], first, last)
-                self.assertIsNotNone(stated, f"{name}: {source} holds no paragraph that starts with {first!r} "
+                stated = repeated_block(texts[source_text], first, last)
+                self.assertIsNotNone(stated, f"{name}: {source_text} holds no paragraph that starts with {first!r} "
                                      f"and ends with {last!r}, or holds its first words other than once")
                 for place in copies:
                     if place not in texts:
@@ -2379,10 +2370,8 @@ class RepeatedTextCases(unittest.TestCase):
                     block = repeated_block(texts[place], first, last)
                     self.assertIsNotNone(block, f"{name}: {place} holds no paragraph that starts with {first!r} "
                                          f"and ends with {last!r}, or holds its first words other than once")
-                    self.assertEqual(block, stated, f"{name}: {place} differs from {source} at "
+                    self.assertEqual(block, stated, f"{name}: {place} differs from {source_text} at "
                                      f"{first_difference(block, stated)}")
-        # Each sentence of SENTENCES must be held once, word for word, in each text that holds it and that
-        # this checkout has.
         for name, sentence, places in SENTENCES:
             with self.subTest(sentence=name):
                 for place in places:
@@ -2391,6 +2380,14 @@ class RepeatedTextCases(unittest.TestCase):
                     held = " ".join(texts[place].split()).count(sentence)
                     self.assertEqual(held, 1, f"{name}: {place} holds the sentence {held} times, not once, word for "
                                      f"word: {sentence!r}")
+        with self.subTest(check="changed copies"):
+            found = drifted_copies(texts)
+            self.assertEqual(found, [], f"{len(found)} pairs of sentences are changed copies of each other, not "
+                             "equal copies:\n" + "\n".join(found))
+        if COMMITTED in texts and "SQUASH-MSG" in texts:
+            with self.subTest(check="the 2 squash messages"):
+                self.assertEqual(COMMITTED_SQUASH.read_bytes(), SQUASH_MESSAGE.read_bytes(),
+                                 f"{COMMITTED} and SQUASH-MSG differ")
 
 
 if __name__ == "__main__":
