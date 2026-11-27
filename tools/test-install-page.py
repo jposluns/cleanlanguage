@@ -3157,28 +3157,36 @@ READER_SHA256 = {
 }
 
 
+# Check 7: the fields of the syntax tree that hold a string but bind or declare no name, each as the name of the class
+# of its node and of the field: an attribute, the kind and the value of a constant, the source text of an
+# interpolation, the keywords of a class pattern, the tag of a type: ignore comment and the keyword of a call.
+# binding_sites() reads each other string that a node holds, but in a type comment, as a name that the node binds or
+# declares, so that it fails closed: an entry left out here makes it find more, not less.
+UNBOUND_FIELDS = frozenset({("Attribute", "attr"), ("Constant", "kind"), ("Constant", "value"),
+                            ("Interpolation", "str"), ("MatchClass", "kwd_attrs"), ("TypeIgnore", "tag"),
+                            ("keyword", "arg")})
+
+
 def binding_sites(tree: ast.Module) -> dict[str, list[int]]:
-    """Each name that the source of tree binds or declares anywhere, with the line of each place that does: a def or a
-    class, a target of an assignment, a for, a with, a walrus or a del, an import, an except handler, a match capture,
-    a parameter, and a global or a nonlocal statement, at any depth and in any scope."""
+    """Each name that the source of tree binds or declares anywhere, at any depth and in any scope, with the line of
+    each node that does, found by walking the whole syntax tree: a name node that is not read (ast.Load), the name
+    that an import binds for each of its aliases (its asname, or else the 1st part of its dotted name), and each other
+    string that a node holds in a field, or in a list in a field, other than a type comment and the fields of
+    UNBOUND_FIELDS. So each kind of node that binds or declares a name, a def, a class, a parameter, a type parameter,
+    an except handler, a match capture and a global or a nonlocal statement among them, is found with no branch of
+    its own."""
     found: dict[str, list[int]] = collections.defaultdict(list)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names = [node.name]
-        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            names = [node.id]
+        if isinstance(node, ast.Name):
+            names = [] if isinstance(node.ctx, ast.Load) else [node.id]
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             names = [alias.asname or alias.name.split(".")[0] for alias in node.names]
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            names = list(node.names)
-        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-            names = [node.name] if node.name else []
-        elif isinstance(node, ast.MatchMapping):
-            names = [node.rest] if node.rest else []
-        elif isinstance(node, ast.arg):
-            names = [node.arg]
-        else:
+        elif isinstance(node, ast.alias):
             names = []
+        else:
+            names = [item for field, value in ast.iter_fields(node)
+                     if field != "type_comment" and (type(node).__name__, field) not in UNBOUND_FIELDS
+                     for item in (value if isinstance(value, list) else [value]) if isinstance(item, str)]
         for name in names:
             found[name].append(node.lineno)
     return found
@@ -3434,10 +3442,9 @@ def sole_binding(statement: ast.stmt, name: str) -> bool:
 def other_binding(tree: ast.Module, name: str, statement: ast.stmt) -> str:
     """Why name is bound or declared in tree other than by statement alone, or "" if it is not: a star import anywhere
     in tree, which can bind any name, or a list of the places at which binding_sites() finds name bound or declared,
-    at any depth and in any scope, that is not exactly the line of statement, once. So a 2nd binding by any statement,
-    such as a def, a class, an assignment, an import, a for, a with, a del, an assignment expression, an except
-    handler, a match capture, a global statement or an assignment inside an if, is found, on another line or on the
-    line of statement."""
+    at any depth and in any scope, that is not exactly the line of statement, once. So a 2nd binding or declaration by
+    any node of the syntax tree that binding_sites() reads as one is found, on another line or on the line of
+    statement."""
     if any(alias.name == "*" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names):
         return "the source holds a star import, which can bind any name"
     sites = binding_sites(tree).get(name, [])
@@ -3471,17 +3478,18 @@ def kept_statements(source: bytes, result: bytes, ordered: bool) -> None:
 
 def pin_shared_gate(source: bytes) -> bytes:
     """source with the statements of PIN_NEIGHBOURS moved from their own lines onto the line of the statement of
-    PIN_NAME, the 1st before it and the 2nd after it, joined by "; ", with a comment after them, each statement found
-    by the syntax tree. It raises ValueError unless each of the 3 names is bound by exactly 1 statement at the top level
-    of source, a simple statement on 1 line that binds its name and no other name (sole_binding()), so that no 2 of the
-    3 names share a statement, whose move would drop or repeat a binding; unless source binds or declares each of the
-    3 names nowhere else, by any statement, at any depth or in any scope, and holds no star import (other_binding());
-    unless those of PIN_NEIGHBOURS stand alone on their lines; unless the logical line of the statement of PIN_NAME
-    ends on its line (ends_its_line()), so that a statement after it that a backslash continuation carries onto the
-    next line, like any other continuation of that logical line, is refused; and unless the result holds the
-    statements of source (kept_statements(), in any order), so that a statement after that of PIN_NAME on its line,
-    which the comment would take in, is refused, not dropped. A statement before that of PIN_NAME on its line is
-    accepted and kept there, before the 3 statements."""
+    PIN_NAME, the 1st before it and the 2nd after it, with a comment after them, each statement found by the syntax
+    tree. It raises ValueError unless each of the 3 names is bound by exactly 1 statement at the top level of source,
+    a simple statement on 1 line that binds its name and no other name (sole_binding()), so that no 2 of the 3 names
+    share a statement, whose move would drop or repeat a binding; unless source binds or declares each of the 3 names
+    nowhere else, at any depth or in any scope, by any node that binding_sites() reads as a binding, and holds no star
+    import (other_binding()); unless those of PIN_NEIGHBOURS stand alone on their lines; unless the logical line of
+    the statement of PIN_NAME ends on its line (ends_its_line()), so that a statement after it that a backslash
+    continuation carries onto the next line, like any other continuation of that logical line, is refused; and unless
+    the result holds the statements of source (kept_statements(), in any order), so that a statement after that of
+    PIN_NAME on its line, which the comment would take in, is refused, not dropped. A statement before that of
+    PIN_NAME on its line is accepted and kept, unless a rule above refuses it: a statement of PIN_NEIGHBOURS there,
+    for example, does not stand alone on its line."""
     tree = ast.parse(source)
     found = {}
     for name in (PIN_NAME, *PIN_NEIGHBOURS):
@@ -3521,13 +3529,13 @@ def pin_reflowed_gate(source: bytes) -> bytes:
     and an opening parenthesis, its value on a line of its own, and the closing parenthesis with a comment after it,
     the statement found by the syntax tree. It raises ValueError unless PIN_NAME is bound by exactly 1 statement at the
     top level of source, an assignment (=) on 1 line that binds that name and no other name (sole_binding()), so that
-    its value lies on 1 line too; unless source binds or declares PIN_NAME nowhere else, by any statement, at any depth
-    or in any scope, and holds no star import (other_binding()); unless the logical line of that statement ends on its
-    line (ends_its_line()), so that a statement after it that a backslash continuation carries onto the next line,
-    like any other continuation of that logical line, is refused; and unless the result holds the statements of source
-    in the same order (kept_statements()), so that a
-    statement after that of PIN_NAME on its line, which the comment would take in, is refused, not dropped. A
-    statement before that of PIN_NAME on its line is accepted and kept there, before the reflowed statement."""
+    its value lies on 1 line too; unless source binds or declares PIN_NAME nowhere else, at any depth or in any scope,
+    by any node that binding_sites() reads as a binding, and holds no star import (other_binding()); unless the
+    logical line of that statement ends on its line (ends_its_line()), so that a statement after it that a backslash
+    continuation carries onto the next line, like any other continuation of that logical line, is refused; and unless
+    the result holds the statements of source in the same order (kept_statements()), so that a statement after that
+    of PIN_NAME on its line, which the comment would take in, is refused, not dropped. A statement before that of
+    PIN_NAME on its line is accepted and kept, unless a rule above refuses it."""
     tree = ast.parse(source)
     statements = top_statements(tree, PIN_NAME)
     if (len(statements) != 1 or not isinstance(statements[0], ast.Assign) or not sole_binding(statements[0], PIN_NAME)
@@ -3564,8 +3572,11 @@ def pin_value_problems() -> list[str]:
     ValueError on each source given them here that their docstrings refuse, among them an unpacking assignment to
     PIN_NAME, statements that 2 of the 3 names of PIN_NAME and PIN_NEIGHBOURS share, a statement in which an
     assignment expression binds another name, a statement of PIN_NAME on 2 lines, a statement after that of PIN_NAME
-    on its line or carried onto the next line by a backslash continuation, a 2nd binding or declaration of each name
-    that the builder moves or reflows by each of 8 kinds of statement, and a star import; and unless each gives the
+    on its line or carried onto the next line by a backslash continuation, a statement of PIN_NEIGHBOURS before that
+    of PIN_NAME on its line, a 2nd binding or declaration of each name that the builder moves or reflows by each of
+    the 18 kinds of second_bindings, which give each field that binding_sites() reads as a binding a source of its
+    own, but the names of a nonlocal statement, which needs another binding of its name, and a star import; and
+    unless each gives the
     layout of its docstring (below) for each source given it here that its docstring accepts, among them an import, an
     augmented assignment and, for each builder, a statement before that of PIN_NAME on its line; and unless, on each
     of 3 base gates, the committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME
@@ -3573,20 +3584,19 @@ def pin_value_problems() -> list[str]:
     statement that binds PIN_NAME, as the syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem,
     which says that REQUESTED_FILES cannot be pinned, and, given it replaced by PIN_PLAIN, exactly 1 problem, which
     gives the new digest of REQUESTED_FILES. Before it replaces a statement of the 2 built base gates, it requires
-    that each has the layout that the docstring of its builder gives, each part of that layout checked apart: on the
-    shared-line gate, the statements of LOADED_SEGMENTS, PIN_NAME and REDIRECT_TARGETS on 1 line, in that order, and
-    a comment after the last of them; on the reflowed gate, the statement of PIN_NAME on exactly 3 lines, its 1st line
-    holding from the statement's start only the name, = and an opening parenthesis, its 2nd line some code of its
-    value and no comment, its last line only its closing parenthesis up to the statement's end, and a comment after
-    it, so that its value lies alone on the 2nd line. So a builder that returns its source unchanged, or that breaks
-    any 1 part of its layout, fails. It also requires that reader_pin_problems() gives no problem on that base gate,
-    which is otherwise no faithful stand-in for the committed one. control_problems() holds that this check fails
-    with each of these rules broken, each part of each layout included. A comment or
-    another statement on the line of that statement stays outside the replaced span, and a reflow of it is replaced
-    whole; the check holds both on a gate in which the statement shares its line with LOADED_SEGMENTS and
-    REDIRECT_TARGETS and a comment, and on one in which it spans 3 lines with a comment after it: another statement by
-    the reader pin, and a comment by a problem unless each gate with the statement replaced keeps the comments of its
-    base gate, in order, as the tokenizer reads them."""
+    that each has the layout that the docstring of its builder gives, in 2 parts, each checked apart: on the
+    shared-line gate, the line of the statement of PIN_NAME, parsed alone, ends with the statements of
+    LOADED_SEGMENTS, PIN_NAME and REDIRECT_TARGETS, in that order, and a comment comes after the last of them; on the
+    reflowed gate, the statement of PIN_NAME, from its start to its end, is exactly 3 lines, the name, = and an
+    opening parenthesis, then its value alone, indented by 4 spaces, then the closing parenthesis, and a comment comes
+    after it. So a builder that returns its source unchanged, or that breaks either part of its layout, fails. It
+    also requires that reader_pin_problems() gives no problem on that base gate, which is otherwise no faithful
+    stand-in for the committed one. control_problems() holds that this check fails with each of these rules broken,
+    each part of each layout included. A comment or another statement on the line of that statement stays outside
+    the replaced span, and a reflow of it is replaced whole; the check holds both on a gate in which the statement
+    shares its line with LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and on one in which it spans 3 lines
+    with a comment after it: another statement by the reader pin, and a comment by a problem unless each gate with
+    the statement replaced keeps the comments of its base gate, in order, as the tokenizer reads them."""
 
     def comments(source: bytes) -> list[str]:
         """The comments of source, in order, as the tokenizer reads them."""
@@ -3595,17 +3605,17 @@ def pin_value_problems() -> list[str]:
 
     def layout(shared: bool, gate: bytes) -> str:
         """How gate departs from the layout that the docstring of pin_shared_gate(), if shared, or else of
-        pin_reflowed_gate() gives, each part that it breaks named apart, joined by "; ", or "" if it has that layout.
-        The parts on the shared-line gate: the statements of LOADED_SEGMENTS, PIN_NAME and REDIRECT_TARGETS on 1 line,
-        in that order, and a comment after the last of them. The parts on the reflowed gate: the statement of PIN_NAME
-        on exactly 3 lines, its 1st line holding from the statement's start only the name, = and an opening
-        parenthesis, its 2nd line some code of its value and no comment, as the tokenizer reads them, its last line
-        only its closing parenthesis up to the statement's end, and a comment after it. With the 1st and the last line
-        so, the value lies on the 2nd line alone."""
+        pin_reflowed_gate() gives, each of its 2 parts that it breaks named apart, or "" if it has that layout. Each
+        part is 1 comparison of what gate holds with what the rule gives, so that an edit that drops a piece of the
+        rule from 1 side of it alone also fails on the real builder's result. On the shared-line gate: the line of the
+        statement of PIN_NAME, parsed alone, ends with the statements of LOADED_SEGMENTS, PIN_NAME and
+        REDIRECT_TARGETS, in that order, as ast.dump() gives each, so that each lies whole on that line; and a comment
+        comes after the last of them. On the reflowed gate: the text of the statement of PIN_NAME, from its start to
+        its end, is exactly 3 lines, the name, = and an opening parenthesis, then its value alone, indented by 4
+        spaces, then the closing parenthesis; and a comment comes after it."""
         try:
             tree = ast.parse(gate)
-            tokens = list(tokenize.tokenize(io.BytesIO(gate).readline))
-        except (SyntaxError, tokenize.TokenError) as error:
+        except SyntaxError as error:
             return f"it does not parse: {error!r}"
         names = (PIN_NEIGHBOURS[0], PIN_NAME, PIN_NEIGHBOURS[1]) if shared else (PIN_NAME,)
         found = [top_statements(tree, name) for name in names]
@@ -3616,33 +3626,26 @@ def pin_value_problems() -> list[str]:
         if shared:
             before, pinned, after = (statements[0] for statements in found)
             moved = f"the statements of {PIN_NEIGHBOURS[0]}, {PIN_NAME} and {PIN_NEIGHBOURS[1]}"
-            on_1_line = len({line for statement in (before, pinned, after)
-                             for line in (statement.lineno, statement.end_lineno)}) == 1
-            in_order = ((before.end_lineno, before.end_col_offset) <= (pinned.lineno, pinned.col_offset)
-                        and (pinned.end_lineno, pinned.end_col_offset) <= (after.lineno, after.col_offset))
+            try:
+                alone = [ast.dump(statement) for statement in ast.parse(rows[pinned.lineno - 1]).body[-3:]]
+            except SyntaxError:
+                alone = []
             last = max((before, pinned, after), key=lambda statement: (statement.end_lineno, statement.end_col_offset))
-            commented = rows[last.end_lineno - 1][last.end_col_offset:].lstrip().startswith(b"#")
-            if not on_1_line:
-                departures.append(f"{moved} are not on 1 line")
-            if not in_order:
-                departures.append(f"{moved} are not in that order")
-            if not commented:
+            if alone != [ast.dump(statement) for statement in (before, pinned, after)]:
+                departures.append(f"the line of the statement of {PIN_NAME}, parsed alone, does not end with {moved}, "
+                                  "in that order")
+            if not rows[last.end_lineno - 1][last.end_col_offset:].lstrip().startswith(b"#"):
                 departures.append(f"{moved} have no comment after the last of them")
             return "; ".join(departures)
         pinned = found[0][0]
         reflowed = f"the statement of {PIN_NAME}"
-        second = [token for token in tokens if token.start[0] == pinned.lineno + 1
-                  and token.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT)]
-        value_alone = bool(second) and all(token.type != tokenize.COMMENT for token in second)
-        if pinned.end_lineno != pinned.lineno + 2:
-            departures.append(f"{reflowed} does not span exactly 3 lines")
-        if rows[pinned.lineno - 1][pinned.col_offset:].rstrip() != f"{PIN_NAME} = (".encode("utf-8"):
-            departures.append(f"the 1st line of {reflowed} holds more or less than its name, = and an opening "
-                              "parenthesis")
-        if not value_alone:
-            departures.append(f"the 2nd line of {reflowed} holds no code of its value, or a comment")
-        if rows[pinned.end_lineno - 1][:pinned.end_col_offset].strip() != b")":
-            departures.append(f"the last line of {reflowed} holds more or less than its closing parenthesis")
+        head = sum(map(len, rows[:pinned.lineno - 1])) + pinned.col_offset
+        tail = sum(map(len, rows[:pinned.end_lineno - 1])) + pinned.end_col_offset
+        value = ast.get_source_segment(gate.decode("utf-8"), pinned.value) if isinstance(pinned, ast.Assign) else None
+        wanted = None if value is None else [f"{PIN_NAME} = (".encode("utf-8"), b"    " + value.encode("utf-8"), b")"]
+        if gate[head:tail].split(b"\n") != wanted:
+            departures.append(f"{reflowed} is not exactly 3 lines, its name, = and an opening parenthesis, its value "
+                              "alone, and its closing parenthesis")
         if not rows[pinned.end_lineno - 1][pinned.end_col_offset:].lstrip().startswith(b"#"):
             departures.append(f"{reflowed} has no comment after it")
         return "; ".join(departures)
@@ -3792,9 +3795,15 @@ def pin_value_problems() -> list[str]:
     # each builder, a statement in which an assignment expression binds another name and a statement after that of
     # PIN_NAME on its line, which the comment of the builder would take in; a statement of PIN_NAME on 3 lines for
     # pin_reflowed_gate(), and an annotation with no value, which binds no name, for pin_shared_gate(); then, for each
-    # builder, a statement after that of PIN_NAME that a backslash continuation carries onto the next line, a 2nd
-    # binding or declaration of each name that the builder moves or reflows by each of the 8 kinds of statement of
-    # second_bindings, and a star import.
+    # builder, a statement after that of PIN_NAME that a backslash continuation carries onto the next line, and for
+    # pin_shared_gate() a statement of the 1st neighbour before that of PIN_NAME on its line; then, for each builder, a
+    # 2nd binding or declaration of each name that it moves or reflows by each of the 18 kinds of second_bindings,
+    # which give each field that binding_sites() reads as a binding a source of its own: a name stored by an
+    # assignment inside an if, a for, a with or an assignment expression, a name deleted, an except handler, a match
+    # capture, a match star and the rest of a mapping pattern, a global statement, a def, an async def and a class
+    # inside an if, an import inside an if, a parameter, and a type parameter of each of its 3 kinds; the names of a
+    # nonlocal statement have no source of their own, since such a statement needs another binding of its name; and
+    # a star import.
     refused_by_builder = [(pin_reflowed_gate, b'REQUESTED_FILES, EXTRA = (("favicon.ico",), 1)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES = EXTRA = ("favicon.ico",)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES: tuple = ("favicon.ico",)\n'),
@@ -3825,11 +3834,18 @@ def pin_value_problems() -> list[str]:
     shared_base = b'LOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = ("favicon.ico",)\nREDIRECT_TARGETS = "assets/"\n'
     refused_by_builder += [(pin_reflowed_gate, b'REQUESTED_FILES = ("favicon.ico",); \\\nEXTRA = 1\n'),
                  (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = ("favicon.ico",); \\\nEXTRA = 1\n'
+                                   b'REDIRECT_TARGETS = "assets/"\n'),
+                 (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",); REQUESTED_FILES = ("favicon.ico",)\n'
                                    b'REDIRECT_TARGETS = "assets/"\n')]
     second_bindings = ("for {name} in ():\n    pass\n", "with open('.') as {name}:\n    pass\n",
                        "if True:\n    {name} = 1\n", "del {name}\n", "({name} := 1)\n",
                        "try:\n    pass\nexcept Exception as {name}:\n    pass\n",
-                       "match 1:\n    case {name}:\n        pass\n", "global {name}\n")
+                       "match 1:\n    case {name}:\n        pass\n", "match []:\n    case [*{name}]:\n        pass\n",
+                       "match {{}}:\n    case {{**{name}}}:\n        pass\n", "global {name}\n",
+                       "if True:\n    def {name}():\n        pass\n", "if True:\n    async def {name}():\n        pass\n",
+                       "if True:\n    class {name}:\n        pass\n", "if True:\n    import os as {name}\n",
+                       "def qz({name}):\n    pass\n", "def qz[{name}]():\n    pass\n", "def qz[*{name}]():\n    pass\n",
+                       "def qz[**{name}]():\n    pass\n")
     refused_by_builder += [(pin_reflowed_gate, reflowed_base + text.format(name=PIN_NAME).encode("utf-8"))
                  for text in second_bindings]
     refused_by_builder += [(pin_shared_gate, shared_base + text.format(name=name).encode("utf-8"))
@@ -3842,7 +3858,7 @@ def pin_value_problems() -> list[str]:
         except ValueError:
             pass
     # Sources that the docstrings of the 2 builders accept, each of which must give the layout of that docstring: for
-    # each builder, a statement of PIN_NAME after another on its line, with an import and an augmented assignment for
+    # each builder, a statement before that of PIN_NAME on its line, with an import and an augmented assignment for
     # pin_shared_gate() and with a comment after it for pin_reflowed_gate().
     for build, shared, source in ((pin_shared_gate, True, b'import os as LOADED_SEGMENTS\n'
                                    b'EXTRA = 1; REQUESTED_FILES = ("favicon.ico",)\nREDIRECT_TARGETS += "assets/"\n'),
@@ -3883,7 +3899,8 @@ def pin_value_problems() -> list[str]:
             problems.append(f"{label} could not be parsed, so its statement of {PIN_NAME} was not found: {error!r}")
             continue
         if len(statements) != 1:
-            problems.append(f"{label} binds {PIN_NAME} by {len(statements)} statements at its top level, not by 1")
+            problems.append(f"{label} binds {PIN_NAME} by {len(statements)} statements at its top level, not by 1 "
+                            "statement")
             continue
         # The statement's span in the base gate: its lines as the syntax tree counts them, and its columns, which are
         # offsets in the UTF-8 bytes of a line, so that a comment or another statement beside it stays outside the span.
@@ -4022,12 +4039,14 @@ def control_problems() -> list[str]:
     value with __wrapped__; with FINAL_KINDS rebound to (int, slice) and map added to PLAIN_TYPES, a problem for each
     kind of the 3 tuples that the committed FINAL_KINDS names, whose bare subclass cannot be made, for int, whose
     subclass can, for slice, which is in none of the 3 tuples, and for map, whose bare subclass cannot be made with no
-    arguments; with both builders rebound to stand-ins that return their source unchanged, a problem for each of the 16
-    sources that pin_reflowed_gate() refuses and the 36 sources that pin_shared_gate() refuses, 1 problem for the
+    arguments; with both builders rebound to stand-ins that return their source unchanged, a problem for each of the 26
+    sources that pin_reflowed_gate() refuses and the 67 sources that pin_shared_gate() refuses, 1 problem for the
     source that each accepts, and 1 problem for each built base gate, which lacks the layout of its builder; with 1
-    builder at a time rebound to a stand-in that changes the result of the builder so that it breaks exactly 1 part
-    of its layout, for each of the 3 parts of the shared-line layout and the 5 parts of the reflowed layout, a problem
-    that names that part for the source that the builder accepts and for its built base gate; with both rebound to a
+    builder at a time rebound to a stand-in that changes the result of the builder so that it breaks exactly 1 of the
+    2 parts of its layout, 5 stand-ins for the shared-line layout, which move each of its 3 statements out of its
+    place or drop its comment, and 6 for the reflowed layout, which change each of its 3 lines or their count, empty
+    its 2nd line or drop its comment, a problem that names that part for the source that the builder accepts and for
+    its built base gate; with both rebound to a
     stand-in that raises ValueError on every source, a problem for the source that each accepts and for each built
     base gate, which could not be built; with GATE_BYTES rebound to the gate with a 2nd statement of PIN_NAME after it,
     a problem that the committed gate binds PIN_NAME by 2 statements; with both builders rebound to stand-ins that add
@@ -4035,8 +4054,8 @@ def control_problems() -> list[str]:
     stand-in; and with PIN_SUBCLASS rebound to PIN_PLAIN and PIN_PLAIN to PIN_PLAIN with a comment after it, a problem
     on each of the 3 base gates that it does not give the 1 problem that starts as written, and 1 problem that it does
     not keep the comments. A problem unless scope_sentence_problems() fails a source whose docstring holds no
-    SCOPE_SENTENCE, 1 source whose module docstring holds it without SCOPE_RESIDUAL, and 1 source whose class
-    docstring does so.
+    SCOPE_SENTENCE, 1 source whose module docstring holds it without SCOPE_RESIDUAL, and 1 source each whose class,
+    def or async def docstring does so.
     The rules of the span, which the committed and the 2 built base gates hold, and of capture_problems()'s restore in
     its finally clause are held by those checks as they run. An edit that removes a rule from its check and from this
     one too rests on review (residual 4 of the module docstring)."""
@@ -4131,8 +4150,8 @@ def control_problems() -> list[str]:
         return source
 
     expect("pin_value_problems() with builders that return their source", pin_value_problems,
-           [("reflowed_stand_in() rewrites ", ", not raising ValueError")] * 16
-           + [("shared_stand_in() rewrites ", ", not raising ValueError")] * 36
+           [("reflowed_stand_in() rewrites ", ", not raising ValueError")] * 26
+           + [("shared_stand_in() rewrites ", ", not raising ValueError")] * 67
            + [(f"{name}() rewrites ", "not in the layout of its docstring")
               for name in ("reflowed_stand_in", "shared_stand_in")]
            + [(f"{label}, {name}() of tools/{GATE.name}, is not in the layout", "")
@@ -4176,29 +4195,40 @@ def control_problems() -> list[str]:
     reflowed_name = f"the statement of {PIN_NAME}"
     # Each stand-in breaks exactly 1 part of the layout of its builder and keeps every statement of the result, so
     # that the built base gate stays a faithful stand-in and the problem for that part is the one that it must give.
-    parts = (("pin_shared_gate", "the shared-line gate", f"{shared_names} are not on 1 line",
+    # The shared-line stand-ins move each of the 3 statements out of its place, or drop the comment; the reflowed ones
+    # change each of the 3 lines or their count, leave the 2nd line empty, or drop the comment.
+    on_line = f"the line of the statement of {PIN_NAME}, parsed alone, does not end with {shared_names}, in that order"
+    reflowed_text = (f"{reflowed_name} is not exactly 3 lines, its name, = and an opening parenthesis, its value alone, "
+                     "and its closing parenthesis")
+    parts = (("pin_shared_gate", "the shared-line gate", on_line,
               moved("shared_off_line",
                     lambda before, pinned, after, rest: before + b"; " + pinned + b"\n" + after + rest)),
-             ("pin_shared_gate", "the shared-line gate", f"{shared_names} are not in that order",
+             ("pin_shared_gate", "the shared-line gate", on_line,
+              moved("shared_before_off_line",
+                    lambda before, pinned, after, rest: before + b"\n" + pinned + b"; " + after + rest)),
+             ("pin_shared_gate", "the shared-line gate", on_line,
               moved("shared_out_of_order",
                     lambda before, pinned, after, rest: pinned + b"; " + before + b"; " + after + rest)),
+             ("pin_shared_gate", "the shared-line gate", on_line,
+              moved("shared_pinned_last",
+                    lambda before, pinned, after, rest: before + b"; " + after + b"; " + pinned + rest)),
              ("pin_shared_gate", "the shared-line gate", f"{shared_names} have no comment after the last of them",
               moved("shared_uncommented",
                     lambda before, pinned, after, rest: before + b"; " + pinned + b"; " + after + b"\n")),
-             ("pin_reflowed_gate", "the reflowed gate", f"{reflowed_name} does not span exactly 3 lines",
+             ("pin_reflowed_gate", "the reflowed gate", reflowed_text,
               reflowed("reflowed_on_4_lines", lambda first, value, last: [first, value, b"\n", last])),
-             ("pin_reflowed_gate", "the reflowed gate",
-              f"the 1st line of {reflowed_name} holds more or less than its name, = and an opening parenthesis",
+             ("pin_reflowed_gate", "the reflowed gate", reflowed_text,
               reflowed("reflowed_head_commented",
                        lambda first, value, last: [first.rstrip(b"\r\n") + b"  # qz\n", value, last])),
-             ("pin_reflowed_gate", "the reflowed gate",
-              f"the 2nd line of {reflowed_name} holds no code of its value, or a comment",
+             ("pin_reflowed_gate", "the reflowed gate", reflowed_text,
               reflowed("reflowed_value_commented",
                        lambda first, value, last: [first, value.rstrip(b"\r\n") + b"  # qz\n", last])),
-             ("pin_reflowed_gate", "the reflowed gate",
-              f"the last line of {reflowed_name} holds more or less than its closing parenthesis",
+             ("pin_reflowed_gate", "the reflowed gate", reflowed_text,
               reflowed("reflowed_value_on_last_line",
                        lambda first, value, last: [first, b"    (" + value.lstrip(), b")" + last])),
+             ("pin_reflowed_gate", "the reflowed gate", reflowed_text,
+              reflowed("reflowed_value_line_empty",
+                       lambda first, value, last: [first, b"\n", b"    " + value.strip() + last])),
              ("pin_reflowed_gate", "the reflowed gate", f"{reflowed_name} has no comment after it",
               reflowed("reflowed_uncommented", lambda first, value, last: [first, value, b")\n"])))
     for builder, label, departure, stand_in in parts:
@@ -4216,7 +4246,7 @@ def control_problems() -> list[str]:
               for label in ("the shared-line gate", "the reflowed gate")],
            pin_reflowed_gate=refusing, pin_shared_gate=refusing)
     expect("pin_value_problems() with a committed gate that binds PIN_NAME twice", pin_value_problems,
-           [(f"the committed gate binds {PIN_NAME} by 2 statements at its top level, not by 1", "")],
+           [(f"the committed gate binds {PIN_NAME} by 2 statements at its top level, not by 1 statement", "")],
            GATE_BYTES=GATE_BYTES + f"\n{PIN_NAME} = ()\n".encode("utf-8"))
     rebinding = f"\n{PIN_NEIGHBOURS[0]} = ()\n".encode("utf-8")
     expect("pin_value_problems() with builders that add a binding", pin_value_problems,
@@ -4237,7 +4267,12 @@ def control_problems() -> list[str]:
             ("a module docstring that holds SCOPE_SENTENCE alone", f"{quote}{SCOPE_SENTENCE}{quote}\n",
              "the module docstring states the scope of the reader pin without the words "),
             ("a class docstring that holds SCOPE_SENTENCE alone", f"class Qz:\n    {quote}{SCOPE_SENTENCE}{quote}\n",
-             "the docstring of Qz() states the scope of the reader pin without the words ")):
+             "the docstring of Qz() states the scope of the reader pin without the words "),
+            ("a def docstring that holds SCOPE_SENTENCE alone", f"def qz():\n    {quote}{SCOPE_SENTENCE}{quote}\n",
+             "the docstring of qz() states the scope of the reader pin without the words "),
+            ("an async def docstring that holds SCOPE_SENTENCE alone",
+             f"async def qy():\n    {quote}{SCOPE_SENTENCE}{quote}\n",
+             "the docstring of qy() states the scope of the reader pin without the words ")):
         expect(f"scope_sentence_problems() given {what}", lambda: scope_sentence_problems(source), [(start, "")])
     return problems
 

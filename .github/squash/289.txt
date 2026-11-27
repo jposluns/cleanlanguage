@@ -38,7 +38,12 @@ sha256 of the gate before and after this change.
   LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
   it spans 3 lines with a comment after it. Each built gate must first
   pass the reader pin and have the layout of its builder's docstring,
-  each part of that layout checked apart, and each gate with the
+  each of the 2 parts of that layout checked apart by 1 comparison
+  (on the shared-line gate, the line of REQUESTED_FILES, parsed alone,
+  ends with the 3 statements in that order, and a comment follows
+  them; on the reflowed gate, the statement is exactly 3 lines, its
+  name, = and an opening parenthesis, its value alone, and the closing
+  parenthesis, and a comment follows it), and each gate with the
   statement replaced must keep the comments of its base gate.
 - Make both gate builders raise ValueError rather than drop, repeat or
   change a statement or a binding of their source. Each statement that
@@ -47,8 +52,12 @@ sha256 of the gate before and after this change.
   an unpacking assignment to REQUESTED_FILES and pin_shared_gate() a
   statement that 2 of its 3 names share. Each builder also refuses a
   source that binds or declares a name that it moves or reflows
-  anywhere else, by any statement, at any depth or in any scope, and a
-  source that holds a star import. pin_reflowed_gate() takes only an
+  anywhere else, at any depth or in any scope, and a source that holds
+  a star import. binding_sites(), which the reader pin reads too, walks
+  the whole syntax tree and reads each string that a node holds as a
+  name that it binds, but a name that is read, the aliases of an
+  import, a type comment and the fields of UNBOUND_FIELDS, so it fails
+  closed and finds a type parameter. pin_reflowed_gate() takes only an
   assignment on 1 line, so that its result spans exactly 3 lines. The
   logical line of the statement of REQUESTED_FILES must end on its
   line, so a statement after it that a backslash continuation carries
@@ -56,17 +65,19 @@ sha256 of the gate before and after this change.
   every top-level statement of its source, so a statement after that
   of REQUESTED_FILES on its line, which the builder's comment would
   take in, is refused, not dropped. A statement before that of
-  REQUESTED_FILES on its line is accepted and kept there. Give the
-  builders 52 sources that their docstrings refuse, each of which must
+  REQUESTED_FILES on its line is accepted and kept, unless another
+  rule refuses it, as it refuses a statement of LOADED_SEGMENTS there.
+  Give the builders 93 sources that their docstrings refuse, a 2nd
+  binding by each of 18 kinds of binding among them, each of which must
   raise ValueError, and 2 sources that they accept, each with a
   statement before that of REQUESTED_FILES on its line, each of which
   must give the layout of its builder's docstring.
 - Add control_problems(): with a name of the test rebound to a
   stand-in for 1 call, each rule of capture_problems(),
   pin_value_problems() and scope_sentence_problems() that its
-  docstring lists must make that check fail, each of the 3 parts of
-  the shared-line layout and the 5 parts of the reflowed layout
-  included, each broken alone by its own stand-in, so an edit that
+  docstring lists must make that check fail, each of the 2 parts of
+  the shared-line layout and of the reflowed layout included, each
+  broken alone by its own stand-ins, so an edit that
   removes such a rule from its check alone fails; the rules of the
   span and of the restore are held by those checks as they run. An
   edit of a check and of its control together rests on review
