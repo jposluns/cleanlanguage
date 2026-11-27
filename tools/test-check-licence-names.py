@@ -42,10 +42,11 @@ stand-in git below and
 each probe process records the environment that it gets, and the case requires it to equal those
 values exactly.
 
-Every refusal case that runs the gate first runs it on the unchanged repository, a control that
-must exit 0 and print exactly the summary line, or for a case of --list exactly the list; the
-helper that checks a refusal fails the case when no run of the gate passed earlier in that case
-on the repository as it was built, the same index and the same bytes in each tracked file. It then
+Every refusal case that runs the gate, but the case that pins the rule of the helper below, first
+runs it on the unchanged repository, a control that must exit 0 and print exactly the summary
+line, or for a case of --list exactly the list; the helper that checks a refusal fails the case
+when no run of the gate passed earlier in that case on the repository as it was built, the same
+index and the same bytes in each tracked file. It then
 makes the change that it tests, to the repository, to the PATH that the gate is given or, through
 a launcher, to the gate's process; a change can take more than 1 step, such as tracking a file
 and then deleting it from the work tree, or tracking 2 files. It then requires exit 1; problem
@@ -149,12 +150,12 @@ names it; a case that reads a tracked text that is not there ends in an error. 1
 TextRules, builds no repository and runs no gate either. It requires a row of PARAGRAPHS to name
 this paragraph, and it runs those 3 cases on texts and rows of its own, with other line breaks in
 each text, backticks in PR-BODY.md and opening words in its first line. Each must pass on those
-texts as written; a case that compares a text must fail when a word of a block or the last word
-of a paragraph differs in it, when a text for review lacks a block, when opening words occur
-twice or do not start their paragraph and, for the tracked texts, when 2 rows have the same name;
-the byte comparison must fail when SQUASH-MSG gains 1 byte; and each case must skip and name each
-text for review that is not there, and end in an error when a tracked text that it reads is not
-there, also when no text for review is there.
+texts as written; a case that compares a text must fail when a word of a block, a word inside a
+paragraph or the last word of a paragraph differs in it, when a text for review lacks a block,
+when opening words occur twice or do not start their paragraph and, for the tracked texts, when 2
+rows have the same name; the byte comparison must fail when SQUASH-MSG gains 1 byte; and each
+case must skip and name each text for review that is not there, and end in an error when a
+tracked text that it reads is not there, also when no text for review is there.
 
 Exit 0 when every case passes; 1 otherwise.
 """
@@ -1810,11 +1811,12 @@ SQUASH_COPY_SKIP = "SQUASH-MSG is not at the repository root"
 
 
 class TextRules(unittest.TestCase):
-    """The cases of RepeatedText, run on texts and rows of their own, keep each rule that they state."""
+    """The cases of RepeatedText, run on texts and rows of their own, keep the rules that the module
+    docstring names for TextRules."""
 
-    def outcomes(self, texts: dict, blocks: tuple = RULE_BLOCKS) -> list:
+    def outcomes(self, texts: dict, blocks: tuple = RULE_BLOCKS, paragraphs: tuple = RULE_PARAGRAPHS) -> list:
         """(outcome, skip reasons) of each case of RepeatedText, run in this process on texts, where None
-        leaves a text out, and on blocks and RULE_PARAGRAPHS."""
+        leaves a text out, and on blocks and paragraphs."""
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
             (base / "tools").mkdir()
@@ -1827,7 +1829,7 @@ class TextRules(unittest.TestCase):
                                      SELF=base / "tools" / "tests.py",
                                      SQUASH_TEXT=base / ".github" / "squash" / "287.txt",
                                      DESCRIPTION=base / "PR-BODY.md", SQUASH_COPY=base / "SQUASH-MSG",
-                                     BLOCKS=blocks, PARAGRAPHS=RULE_PARAGRAPHS):
+                                     BLOCKS=blocks, PARAGRAPHS=paragraphs):
                 for name in TEXT_CASES:
                     result = unittest.TestResult()
                     RepeatedText(name).run(result)
@@ -1855,11 +1857,22 @@ class TextRules(unittest.TestCase):
                 changed("tools/tests.py", "it here.", "it there."), [FAILS, FAILS, PASSES]),
             "the last word of a paragraph differs in a text for review": (
                 changed("PR-BODY.md", "it here.", "it there."), [PASSES, FAILS, PASSES]),
+            # A word inside a paragraph, which leaves its opening words and its last word as they were.
+            "a word inside a paragraph differs in a tracked text": (
+                changed("tools/tests.py", "this paragraph", "that paragraph"), [FAILS, FAILS, PASSES]),
+            "a word inside a paragraph differs in a text for review": (
+                changed("PR-BODY.md", "`this` paragraph", "`that` paragraph"), [PASSES, FAILS, PASSES]),
             "a text for review lacks a block": (
                 changed("PR-BODY.md", "Open words of the `block` run to\nits close words.\n\n", ""),
                 [PASSES, FAILS, PASSES]),
             "opening words occur twice": (changed("tools/gate.py", '\n"""\n', '\n\nOpen words again.\n"""\n'),
                                           [FAILS, FAILS, PASSES]),
+            # The opening words of a paragraph again, in a paragraph that they do not start, so the paragraph
+            # that they start is as it was and only the rule that they occur once fails.
+            "opening words of a paragraph occur twice in a tracked text": (
+                changed("tools/tests.py", '\n"""\n', '\n\nThen Para words again.\n"""\n'), [FAILS, FAILS, PASSES]),
+            "opening words of a paragraph occur twice in a text for review": (
+                changed("PR-BODY.md", "it here.\n", "it here.\n\nThen Para words again.\n"), [PASSES, FAILS, PASSES]),
             "opening words do not start their paragraph": (
                 changed("tools/tests.py", "Para words", "So Para words", ".github/squash/287.txt", "PR-BODY.md",
                         "SQUASH-MSG"), [FAILS, FAILS, PASSES]),
@@ -1880,6 +1893,9 @@ class TextRules(unittest.TestCase):
                 self.assertEqual(self.outcomes(texts), wanted)
         with self.subTest(change="2 rows have the same name"):
             self.assertEqual(self.outcomes(RULE_TEXTS, RULE_BLOCKS + RULE_BLOCKS), [FAILS, PASSES, PASSES])
+        with self.subTest(change="2 rows of PARAGRAPHS have the same name"):
+            self.assertEqual(self.outcomes(RULE_TEXTS, paragraphs=RULE_PARAGRAPHS + RULE_PARAGRAPHS),
+                             [FAILS, PASSES, PASSES])
 
 
 class Startup(unittest.TestCase):

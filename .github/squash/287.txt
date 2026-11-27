@@ -92,7 +92,8 @@ in the same file passes.
 
 The tests build throwaway git repositories and run the gate with no
 setting of git taken from the caller's environment or configuration.
-Each refusal case that runs the gate first runs it on the unchanged
+Each refusal case that runs the gate, but the case that pins the rule
+of the helper that checks a refusal, first runs it on the unchanged
 repository, which must pass, then makes the change that it tests, to the
 repository, to the gate's PATH or, through a launcher, to the gate's
 process, in 1 or more steps, such as tracking a file and then deleting
@@ -178,10 +179,11 @@ repository and runs no gate either. It requires a row of PARAGRAPHS to
 name this paragraph, and it runs those 3 cases on texts and rows of its
 own, with other line breaks in each text, backticks in PR-BODY.md and
 opening words in its first line. Each must pass on those texts as
-written; a case that compares a text must fail when a word of a block or
-the last word of a paragraph differs in it, when a text for review lacks
-a block, when opening words occur twice or do not start their paragraph
-and, for the tracked texts, when 2 rows have the same name; the byte
+written; a case that compares a text must fail when a word of a block,
+a word inside a paragraph or the last word of a paragraph differs in
+it, when a text for review lacks a block, when opening words occur
+twice or do not start their paragraph and, for the tracked texts, when
+2 rows have the same name; the byte
 comparison must fail when SQUASH-MSG gains 1 byte; and each case must
 skip and name each text for review that is not there, and end in an
 error when a tracked text that it reads is not there, also when no text
