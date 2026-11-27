@@ -46,7 +46,18 @@ Avoid repeated constructions such as:
 - "This is not merely X; it is Y."
 - "It does not just X. It also Y."
 
-Use contrast only when the distinction is materially useful. Otherwise state the actual conclusion directly.
+Use contrast only when the distinction is materially useful. Otherwise state the conclusion directly.
+
+## Formulaic headings
+
+Replace stock signposts that name no subject:
+
+- "Why this matters"
+- "Key takeaways"
+- "The bottom line"
+- "Final thoughts"
+
+A heading names its actual subject: write "Cost of a late release", not "Why this matters".
 
 ## Manufactured cadence
 

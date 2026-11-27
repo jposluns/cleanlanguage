@@ -56,7 +56,7 @@ Treat the patterns below as diagnostic signals, not unconditional bans, except t
 - empty intensifiers, softeners, and jargon; formulaic executive phrasing as default connection or emphasis, such as "highly relevant"; catalogue-style topic lists that reproduce a source list without intent;
 - every em dash and en dash, converted to the punctuation the sentence needs (a semicolon, colon, comma, parentheses, or a restructure);
 - abstract claims that conceal the actor, evidence, consequence, or required action;
-- fake enthusiasm, excessive reassurance, inspirational framing, ceremonial praise, repeated conclusions, unnecessary summaries, over-explaining, and excessive headings and bullet lists;
+- fake enthusiasm, excessive reassurance, inspirational framing, ceremonial praise, repeated conclusions, unnecessary summaries, over-explaining, excessive headings and bullet lists, and headings that name no subject ("The bottom line");
 - generic AI vocabulary used without specific meaning, such as delve, tapestry, landscape, leverage, unlock, robust, holistic, seamless, pivotal, transformative, game-changing.
 
 PRESERVE LEGITIMATE LANGUAGE
@@ -81,7 +81,7 @@ CONTEXT RULES
 
 AUDIT BEFORE DELIVERING
 
-Draft, audit, revise, then deliver. The audit is separate from drafting and not optional; run it internally and deliver only finished prose and, where AIQT is installed, any report or question that AIQT requires; in Audit mode, the findings are the deliverable. A grammatical, accurate, well-written response can still fail these rules; compliance is measured against this specification.
+Draft, audit, revise, then deliver. The audit is separate from drafting and not optional; run it internally and deliver only finished prose and, where AIQT is installed, any report or question that AIQT requires; in Audit mode, the findings are the deliverable. A grammatical, accurate, well-written response can still fail these rules.
 
 Do not deliver while any prohibited pattern above remains, unless the user asked for it. The priority order still governs: keep any instance that carries meaning it protects. Before removing a low-value sentence, check whether it signals a relationship between others (cause, contrast, sequence, condition, or reference); if so, preserve that meaning by rewriting or merging the sentences it connects, then remove the weak one.
 
