@@ -378,16 +378,23 @@ reference digest. The cases, all in that clone:
     such call has let 1 start.
     The subtests of test_trace_refuses_what_it_cannot_read name
     further examples in their labels. Each pattern, text, set and table
-    at module level that decides what the reader reads, and the tuple
-    at each place where the code of a reader function holds 1 as a
-    constant, is compared whole with its value at this head, each table
-    member in order where it has an order and each value with its type,
-    so that any edit to 1 of them fails the case, not only 1 that a
-    trace of the case shows; the docstring of
-    test_trace_reader_values_are_pinned names them. The code of the
-    reader functions is not pinned beyond those tuples, so an edit to
-    that code, such as 1 that applies a pattern with match in place of
-    fullmatch, is held only as far as the traces of the case hold it.
+    at module level that decides what the reader reads, the constant at
+    each place where the code of a reader function loads 1, and the
+    defaults of each reader function, are compared whole with their
+    values at this head, each table member in order where it has an
+    order and each value with its type, so that any edit to 1 of them
+    fails the case, not only 1 that a trace of the case shows; the
+    docstring of test_trace_reader_values_are_pinned names them. The pin
+    of each place rests on CPython 3.14, the version that
+    .python-version names: on which values its compiler makes
+    constants, and on the place, the line and column where it starts
+    and ends, that it gives each instruction that loads 1; under -X
+    no_debug_ranges, which drops the columns, the pin fails, and on
+    another version READER_CONSTANTS may need to change. The code of
+    the reader functions is not pinned beyond those constants and
+    defaults, so an edit to that code, such as 1 that applies a pattern
+    with match in place of fullmatch, is held only as far as the traces
+    of the case hold it.
 
 Each case starts with no dist/ in the clone.
 
@@ -2542,14 +2549,18 @@ class TraceReaderTests(unittest.TestCase):
 
     @staticmethod
     def removal_coordinates(forms) -> set:
-        """Each (name, index, key) for the path at index of each name of
-        REMOVING_CALLS and each key that forms, given whether
-        REMOVING_CALLS reads that path against a descriptor, gives for it.
-        The coverage subtests compare these with the coordinates of the
-        traces that they hold, so that a name, path or descriptor form of
-        REMOVING_CALLS with no trace fails them."""
-        return {(name, index, key) for name, paths in REMOVING_CALLS.items()
-                for index, (descriptor, _) in enumerate(paths) for key in forms(descriptor is not None)}
+        """Each (name, index, descriptor, position, key) for the path at
+        index of each name of REMOVING_CALLS, which REMOVING_CALLS reads
+        from the argument at position against the argument at descriptor,
+        or with no descriptor where descriptor is None, and each key that
+        forms, given whether REMOVING_CALLS reads that path against a
+        descriptor, gives for it. The coverage subtests compare these with
+        the coordinates of the traces that they hold, which take the
+        descriptor and the position from removing_paths, so that a name, a
+        path, an argument position or a descriptor form of REMOVING_CALLS
+        with no trace fails them."""
+        return {(name, index, descriptor, position, key) for name, paths in REMOVING_CALLS.items()
+                for index, (descriptor, position) in enumerate(paths) for key in forms(descriptor is not None)}
 
     def removals(self, *lines: str) -> tuple:
         """traced_removals of a trace that holds lines, whose first process
@@ -2669,10 +2680,11 @@ class TraceReaderTests(unittest.TestCase):
         then made, and, against its own descriptor, in a process with no
         maker. The test derives each path, and the descriptor that it is
         read against, from SIGNATURES by the descriptor rule, not from
-        REMOVING_CALLS, and a subtest fails if a name, a path or a
-        descriptor form that REMOVING_CALLS gives has no such trace, in a
-        kind of process above; it takes the descriptor forms and the kinds
-        of process that it wants from a list of its own, not from the
+        REMOVING_CALLS, and a subtest fails if a name, a path, the
+        positions of the arguments that give that path and its descriptor,
+        or a descriptor form that REMOVING_CALLS gives has no such trace,
+        in a kind of process above; it takes the descriptor forms and the
+        kinds of process that it wants from a list of its own, not from the
         tables that write the traces. A fork or vfork that strace left
         unfinished and resumed with the id of its child at the next line
         is read as the call, so that the child does not follow a later
@@ -2770,7 +2782,7 @@ class TraceReaderTests(unittest.TestCase):
         held = set()
         for name in self.SIGNATURES:
             paths = self.removing_paths(name)
-            for index, (descriptor, _) in enumerate(paths):
+            for index, (descriptor, own_position) in enumerate(paths):
                 for form in (("against its own descriptor", "against AT_FDCWD") if descriptor is not None
                              else ("with no descriptor",)):
                     for process, (before, pid) in processes.items():
@@ -2787,7 +2799,7 @@ class TraceReaderTests(unittest.TestCase):
                             expected.append(None if folder is None else (pid, name, folder + "/" + path))
                         if None in expected:
                             continue
-                        held.add((name, index, (form, process)))
+                        held.add((name, index, descriptor, own_position, (form, process)))
                         with self.subTest("a relative path %s as the %s path of %s, in %s"
                                           % (form, self.PATH_ORDINALS[index], name, process)):
                             removed, _ = self.removals(*before, "%d   %s) = 0" % (pid, self.removing_call(name, given)))
@@ -2873,9 +2885,10 @@ class TraceReaderTests(unittest.TestCase):
         made and in a process with no maker. The test derives each path,
         and the descriptor that it is read against, from SIGNATURES by the
         descriptor rule, not from REMOVING_CALLS, and a subtest fails if a
-        name, a path or a descriptor form that REMOVING_CALLS gives has no
-        such pin, in a kind of process and with a result above; it takes
-        the descriptors, the kinds of process and the results that it
+        name, a path, the positions of the arguments that give that path
+        and its descriptor, or a descriptor form that REMOVING_CALLS gives
+        has no such pin, in a kind of process and with a result above; it
+        takes the descriptors, the kinds of process and the results that it
         wants from lists of its own, not from the tables that write the
         pins, and the results from PIN_RESULTS, which names each form,
         not from CUT_SHORT or MADE. A relative chdir whose result is 0 in a
@@ -3176,7 +3189,7 @@ class TraceReaderTests(unittest.TestCase):
         held = set()
         for name in self.SIGNATURES:
             paths = self.removing_paths(name)
-            for index, (descriptor, _) in enumerate(paths):
+            for index, (descriptor, own_position) in enumerate(paths):
                 cases = [("with no descriptor" if descriptor is None else "against AT_FDCWD", "AT_FDCWD</clone/sub>",
                           "a process with no maker", relative)]
                 if descriptor is not None:
@@ -3196,7 +3209,7 @@ class TraceReaderTests(unittest.TestCase):
                         pinned["a relative path %s %s %s, in %s" % (
                             where, place, "with the result 0" if result == "the result 0" else "in the form " + result,
                             process)] = ([*before, *lines], error)
-                        held.add((name, index, (where, process, result)))
+                        held.add((name, index, descriptor, own_position, (where, process, result)))
         # wanted takes its descriptors, kinds of process and results from
         # lists of its own, not from descriptors, processes, results,
         # CUT_SHORT or MADE, so that an entry dropped from those is still
@@ -3333,9 +3346,11 @@ class TraceReaderTests(unittest.TestCase):
 
     # The value at this head of each name at module level that decides what
     # the reader reads: each pattern with its flags, each text that ends a
-    # call cut short or names an unread call, the calls that the test asks
-    # strace for, and each table of calls and of escapes. A trace shows only
-    # the forms that it holds, so these are compared whole, not by traces.
+    # call cut short, and each table of calls and of escapes; and of 2 names
+    # that no reader function loads: TRACED_CALLS, the calls that the test
+    # asks strace for, and TRACE_UNREAD, the text of an unread call that
+    # some tests write. A trace shows only the forms that it holds, so these
+    # are compared whole, not by traces.
     READER_VALUES = {
         "TRACED_CALLS": ("unlink", "unlinkat", "rmdir", "rename", "renameat", "renameat2",
                          "chdir", "fchdir", "clone", "clone3", "fork", "vfork"),
@@ -3357,15 +3372,56 @@ class TraceReaderTests(unittest.TestCase):
         "TRACE_ESCAPE": re.compile(r"\\(?:x([0-9A-Fa-f]{2})|([0-7]{1,3})|(.))", re.S),
         "TRACE_ESCAPES": {"a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r", "t": b"\t", "v": b"\v"},
     }
-    # The tuple at each place where the code of each reader function holds
-    # 1 as a constant, in the order of its source: the sets of call names
-    # and of results that it tests a call for, and the defaults and keyword
-    # names that it passes. A tuple that 2 places hold is listed for each.
-    READER_TUPLES = {
-        "trace_bytes": [], "trace_string": [], "trace_folder": [], "trace_arguments": [],
-        "trace_unread": [], "trace_call": [], "trace_records": [(None, ""), ("result_given",), ("result_given",)],
-        "traced_path": [], "traced_removals": [(None, "?"), ("chdir", "fchdir"), (None, "?"), (None, "?", "0")],
+    # The constant at each place where the code of each reader function
+    # loads 1, in the order that code_constants gives: the texts, numbers
+    # and sets of call names and of results that it reads with or tests a
+    # call for, the defaults and keyword names that it passes, and the texts
+    # of its errors. A constant that 2 places load is listed for each.
+    READER_CONSTANTS = {
+        "trace_bytes": [
+            0, "latin-1", 16, 8, 255, "latin-1", None, "latin-1"
+        ],
+        "trace_string": [
+            "the trace gives the path %r, which is not 1 whole string in hex escapes", 1
+        ],
+        "trace_folder": [
+            "the trace gives the descriptor %r, which the test cannot read", 1, "AT_FDCWD", None, 2, 2, " (deleted)",
+            "the trace gives the descriptor %r, with no path that the test can use"
+        ],
+        "trace_arguments": [
+            0, 0, "", 0, "\\", 1, "", '"<', '"', '"', ">", "{[(", 1, "}])", 1, ",", 0, 1, 1, None
+        ],
+        "trace_unread": [
+            "(", ""
+        ],
+        "trace_call": [
+            "the trace holds a call that the test cannot read: %r", "?",
+            "the trace gives a result for a call that it cut short: %r", None, "(", None, None,
+            "the trace holds a call that the test cannot read: %r", "(", "?",
+            "the trace gives a result for a call whose arguments strace could not read: %r", None, None, "???",
+            "the trace holds a call that the test cannot read: %r"
+        ],
+        "trace_records": [
+            "latin-1", "the trace holds a line that the test cannot read: %r", 1, 2, "+++",
+            "the trace shows process %d after the call at which it ended: %r", "---", (None, ""), 1, "(",
+            "the trace resumes a call that it did not start: %r", 2,
+            "the trace starts a call of process %d before it resumes the last", None, None, 1,
+            "the trace starts a call of process %d before it resumes the last", ("result_given",), None, False, -1, 1,
+            ("result_given",), False
+        ],
+        "traced_path": [
+            "the trace gives the relative path %r in a current folder that it does not show, after a change of "
+            "folder or a making of a process that strace cut short"
+        ],
+        "traced_removals": [
+            "the trace records no call", 0, 0, 0, "the trace shows process %d, which no traced call made", 1, None, 0,
+            ", ", 0, (None, "?"), 1, ("chdir", "fchdir"), "0", 0, 0, None, 0, "chdir", 0, 0, 0, (None, "?"), 0, None,
+            (None, "?", "0"), 0, "the trace holds the call %s, which the test did not ask strace for"
+        ],
     }
+    # The defaults of each reader function that has any, positional and
+    # keyword-only; each other reader function has none.
+    READER_DEFAULTS = {"trace_call": ((True,), None)}
 
     @staticmethod
     def typed(value):
@@ -3385,22 +3441,35 @@ class TraceReaderTests(unittest.TestCase):
         return type(value), value
 
     @staticmethod
-    def code_tuples(code) -> list:
-        """The tuple that code, or code nested in it, loads as a constant at
-        each place of the source, in the order of the source. The compiler
-        keeps 1 constant for tuples that are equal, so the constants of code
-        alone do not show at how many places, or where, a tuple stands."""
+    def code_constants(code) -> list:
+        """The constant that code, or code nested in it, loads at each place
+        of the source, in the order of the source: by the line and then the
+        column where the place starts, and then by the line and the column
+        where it ends; constants that the same place loads stand in the
+        order of their instructions. A tuple of the keyword names that a
+        call passes stands at the place of that call, which starts before
+        its arguments. The compiler keeps 1 constant for constants that are
+        equal, so the constants of code alone do not show at how many
+        places, or where, a constant stands. The pin of each place rests on
+        CPython 3.14, the version that .python-version names: on which
+        values its compiler makes constants, and on the place, the line and
+        column where it starts and ends, that it gives each instruction
+        that loads 1; under -X no_debug_ranges, which drops the columns, the
+        pin fails, and on another version READER_CONSTANTS may need to
+        change."""
         import dis
-        places, codes = {}, [code]
+        places, codes = [], [code]
         while codes:
             current = codes.pop()
             for instruction in dis.get_instructions(current):
-                if instruction.opcode in dis.hasconst and isinstance(instruction.argval, tuple):
+                if instruction.opcode in dis.hasconst or instruction.opname == "LOAD_SMALL_INT":
                     if None in instruction.positions:
-                        raise AssertionError("the compiler gives no place for the tuple %r" % (instruction.argval,))
-                    places[tuple(instruction.positions)] = instruction.argval
+                        raise AssertionError("the compiler gives no place for the constant %r"
+                                             % (instruction.argval,))
+                    line, end_line, column, end_column = instruction.positions
+                    places.append(((line, column, end_line, end_column), instruction.argval))
             codes.extend(constant for constant in current.co_consts if hasattr(constant, "co_consts"))
-        return [places[place] for place in sorted(places)]
+        return [constant for _, constant in sorted(places, key=lambda place: place[0])]
 
     def test_trace_reader_values_are_pinned(self):
         """Each pattern, text, set and table at module level that decides
@@ -3410,17 +3479,29 @@ class TraceReaderTests(unittest.TestCase):
         edit to 1 of them fails this test, among them each edit that makes
         the reader read a form that it now refuses, which no list of
         traces can hold in full, since such an edit may admit only a form
-        that no trace holds. The names at module level that start with
-        TRACE_ are those of READER_VALUES. The code of each reader function
-        holds as constants the tuples of READER_TUPLES and no other, 1 at
-        each place of its source that holds 1, in the order of the source,
-        each with its type, so that a set of call names or of results
-        written in that code is pinned as those tables are, also where
-        another place of the same function holds an equal tuple. An edit
-        that is meant changes these tables with it. The code of the reader
-        functions is not pinned beyond these tuples, so an edit to that
-        code, such as 1 that applies a pattern with match in place of
-        fullmatch, is held only by the traces of the other tests."""
+        that no trace holds. READER_VALUES also holds 2 names that no
+        reader function loads: TRACED_CALLS, the calls that the test asks
+        strace for, and TRACE_UNREAD, the text of an unread call that some
+        tests write. The names at module level that start with TRACE_ are
+        those of READER_VALUES. The code of each reader function loads the
+        constants of READER_CONSTANTS and no other, 1 at each place of its
+        source that loads 1, in the order that code_constants gives, each
+        with its type: a text, a number, None, True or False, or a tuple or
+        frozenset, which the compiler makes of a set of call names or of
+        results written in that code, each pinned as those tables are, also
+        where another place of the same function loads an equal constant.
+        Each reader function has the defaults of READER_DEFAULTS and no
+        other. The pin of each place rests on CPython 3.14, the version
+        that .python-version names: on which values its compiler makes
+        constants, and on the place, the line and column where it starts
+        and ends, that it gives each instruction that loads 1; under -X
+        no_debug_ranges, which drops the columns, the pin fails, and on
+        another version READER_CONSTANTS may need to change. An edit that
+        is meant changes these tables with it. The code of the reader
+        functions is not pinned beyond these constants and defaults, so an
+        edit to that code, such as 1 that applies a pattern with match in
+        place of fullmatch, is held only by the traces of the other
+        tests."""
         module = globals()
         with self.subTest("the names at module level that start with TRACE_"):
             self.assertEqual(sorted(name for name in module if name.startswith("TRACE_")),
@@ -3428,9 +3509,13 @@ class TraceReaderTests(unittest.TestCase):
         for name, value in self.READER_VALUES.items():
             with self.subTest(name):
                 self.assertEqual(self.typed(module.get(name)), self.typed(value))
-        for name, tuples in self.READER_TUPLES.items():
-            with self.subTest("the tuples of the code of %s" % name):
-                self.assertEqual(self.typed(self.code_tuples(module[name].__code__)), self.typed(tuples))
+        for name, constants in self.READER_CONSTANTS.items():
+            with self.subTest("the constants of the code of %s" % name):
+                self.assertEqual(self.typed(self.code_constants(module[name].__code__)), self.typed(constants))
+        with self.subTest("the defaults of the reader functions"):
+            defaults = {name: (module[name].__defaults__, module[name].__kwdefaults__) for name in self.READER_CONSTANTS}
+            self.assertEqual(self.typed({name: value for name, value in defaults.items() if value != (None, None)}),
+                             self.typed(self.READER_DEFAULTS))
 
 
 if __name__ == "__main__":

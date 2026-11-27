@@ -133,7 +133,9 @@ unchanged.
   manual page names them, not from the reader's table of removals,
   which a mutant of the reader may change. A subtest of the refusal
   test and 1 of the folder test fail if a name of that table, a path
-  that it gives or a descriptor form of that path has no subtest.
+  that it gives, the positions of the arguments that give that path
+  and its descriptor, or a descriptor form of that path has no
+  subtest.
   Each takes the forms and the kinds of process that it wants from
   lists of its own, not from the tables that write the subtests, so
   that an entry dropped from such a table fails it; the refusal test
@@ -145,17 +147,27 @@ unchanged.
   pattern, text, set and table at module level that decides what
   the reader reads, each pattern by its source and its flags and
   each member of a table in order where it has an order and each
-  value with its type, and the tuple at each place where the code
-  of a reader function holds 1 as a constant, in the order of the
-  source, among them the call names and the results that
-  traced_removals tests a call for, so that an edit that makes 1
-  place hold a tuple that another place of the same function holds
-  fails it too. A list of traces holds only the
-  forms that it names: 19 edits to those patterns and to
-  FORKING_CALLS, each of which makes the reader read a form that it
-  refuses here, passed case 27 without this test and fail it now.
-  An edit to other code of the reader functions is held only as far
-  as the traces of the other tests hold it.
+  value with its type, and also the calls that the test asks strace
+  for and the text of an unread call that some tests write, which
+  no reader function loads; the constant at each place where the
+  code of a reader function loads 1, each with its type, in the
+  order of the source, by the line and then the column where the
+  place starts, among them the call names and the results that
+  traced_removals tests a call for, written as a tuple or as a set,
+  so that an edit that makes 1 place load a constant that another
+  place of the same function loads fails it too; and the defaults
+  of each reader function. The pin of each place rests on CPython
+  3.14, the version that .python-version names: on which values its
+  compiler makes constants, and on the place, the line and column
+  where it starts and ends, that it gives each instruction that
+  loads 1; under -X no_debug_ranges, which drops the columns, the
+  pin fails, and on another version READER_CONSTANTS may need to
+  change. A list of traces holds only the forms that it names: 19
+  edits to those patterns and to FORKING_CALLS, each of which makes
+  the reader read a form that it refuses here, are expected to pass
+  the other tests of case 27 and to fail this test. An edit to other
+  code of the reader functions is held only as far as the traces of
+  the other tests hold it.
 
 Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
 is expected to give 6 tests, OK, here and 3 tests, OK, on main. Each
