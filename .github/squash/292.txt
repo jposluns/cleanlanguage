@@ -7,16 +7,21 @@ surface, and link it from the Adopted governance section of
 .claude/CLAUDE.md.
 
 Add tools/test-no-worker-identifiers.py, which reads the raw bytes of
-every regular file that git ls-files lists and the name of every path
-it lists, and takes every candidate address around every at sign, so
-an exempt candidate cannot hide another, with work that grows linearly
-with the file. 2 exemptions, each tested on a candidate folded to lower
-case, so each holds in any letter case: (1) the candidate is exactly
-the maintainer's own email address; (2) the domain of the candidate is
-reserved for documentation: its last label is invalid, test, or
-example, or it is, or ends with a dot and then, example.com,
-example.org, or example.net. An at sign passes only when every
-candidate that the scan reads at it is exempt, under either
+the stored blob of every entry that git ls-files --stage lists and the
+name of every path it lists, and takes every candidate address around
+every at sign, so an exempt candidate cannot hide another, with work
+that grows linearly with the file. It reads each blob that the index
+names through 1 git cat-file batch call, never the working copy, so no
+attribute, filter, encoding, such as a working-tree-encoding of
+UTF-16LE, or state of the working copy changes what is scanned; a
+tracked symbolic link is scanned by its own stored target text, not by
+the file that it points to. 2 exemptions, each tested on a candidate
+folded to lower case, so each holds in any letter case: (1) the
+candidate is exactly the maintainer's own email address; (2) the
+domain of the candidate is reserved for documentation: its last label
+is invalid, test, or example, or it is, or ends with a dot and then,
+example.com, example.org, or example.net. An at sign passes only when
+every candidate that the scan reads at it is exempt, under either
 exemption, or when it lies in a file on a line that the reviewed
 exact-line allowlist holds for that file. So, off such a line, an
 address passes only when each shorter domain that it holds, ending
@@ -24,22 +29,29 @@ after 2 or more letters that follow a dot, gives an exempt candidate
 as well. 1 exact-line allowlist entry covers the URL-userinfo fixture
 in tools/test-release-links.py; a stale entry fails.
 
-A failure names the file, the line number, and a digest of the match,
-never the matched text or the line. A path whose name holds a match is
-named in each of its failures only by a digest of the path name; any
+Only a hit in the content of a file names a line: that failure names
+the file, the line number, and a digest of the match. A hit in a path
+name names the path and a digest of the match, and no line; a stale
+allowlist entry names its file, its position, and a digest of its
+text, and no line; and the fail-closed failures below name no line and
+no digest of a match. No failure holds the matched text or the line.
+A path whose name holds a match is named in each of its failures only
+by a digest of the path name; any
 other path name is printed with each character that is not printable,
 such as a line feed, a carriage return, or the escape byte of a
 terminal escape sequence, and each backslash written as a backslash
 escape, so each failure is 1 line. A red run prints every failure in
 full, 1 to a line after a count, never through a list comparison that
-unittest shortens. A failed git call, a git that cannot start, an
-empty listing, a missing file, and an unreadable file are failures,
-never a skip, and each gives only a fixed category with the exit code
-of git or the errno name or type of the error, never a diagnostic of
-git, the message of an exception, the error text of the system, or the
-path of the repository or of git; a missing or unreadable file is
-named by its repository path, or, when its path name holds a match,
-only by a digest of the path name, as every failure names its file.
+unittest shortens. A failed git ls-files or git cat-file call, a git
+that cannot start, an empty listing, and a blob that cannot be read are
+failures, never a skip, and each gives only a fixed category with the
+exit code of git, the errno name or type of the error, or a fixed word
+for the blob (missing, not a blob, or unexpected reply), never a
+diagnostic of git, the message of an exception, the error text of the
+system, or the path of the repository or of git; a failed git call
+names no path, and a blob that cannot be read is named by its
+repository path, or, when its path name holds a match, only by a
+digest of the path name, as every failure names its file.
 Each caught example in the suite is assembled at run time, so its
 source holds no matchable text.
 
@@ -88,10 +100,14 @@ a numeric account identifier passes it, because a committed pattern
 that names a real label would itself publish the label; those forms
 rest on the rule, on the standing line that every QA and drafting brief
 carries, and on any scan the maintainer keeps outside the repository.
-An untracked file, the target of a tracked symbolic link, and the
-content of a submodule are not read. An address inside compressed or
-encoded binary content passes, since the scan neither decompresses nor
-decodes, unless that content holds the address as it is. A surface that
+An untracked file, the file that a tracked symbolic link points to,
+and the content of a submodule are not read; a tracked symbolic link
+is scanned only by its own target text. A file kept outside git, for
+example by Git LFS, whose blob is a pointer, is scanned only as its
+stored pointer, so an address in the file that the pointer names
+passes. An address inside compressed or encoded binary content passes,
+since the scan neither decompresses nor decodes, unless that content
+holds the address as it is. A surface that
 is not a file in this tree, such as a pull request title, description,
 or comment, is not reached, and tools/check-pr-text.py carries no
 identifier pattern today. The suite pins each of the 3 forms that name

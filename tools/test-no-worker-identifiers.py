@@ -4,12 +4,23 @@
 The adopter-owned rule .claude/rules/external/no-worker-identifiers.md bars any worker email
 address, account identifier, seat label, or other third-party identifier from every public or
 potentially public surface of this repository. This suite enforces the email class of that rule
-on every file that git ls-files --stage lists at the repository root, and on the name of every
-path it lists, the vendored trees .aiqt/, .baseline/, plugin/, .claude/rules/aiqt/, and
-.claude/rules/security/ included. A pack update that imports a third-party address therefore
-fails here and needs a maintainer decision; the vendored files are never edited to pass.
+on the stored blob of every file that git ls-files --stage lists at the repository root, and on
+the name of every path it lists, the vendored trees .aiqt/, .baseline/, plugin/,
+.claude/rules/aiqt/, and .claude/rules/security/ included. A pack update that imports a
+third-party address therefore fails here and needs a maintainer decision; the vendored files are
+never edited to pass.
 
-Candidates, read from the raw bytes of each file, and of each path name, by candidates(). The
+Input. The content of each entry is read from the stored blob that the index names, never from
+the working copy: git ls-files --stage gives the mode and the object name of each entry, and 1
+call of git cat-file --batch, with replace objects off, gives the raw bytes of those blobs. So no
+attribute, filter, or encoding, such as a working-tree-encoding of UTF-16LE, and no state of the
+working copy, such as a file that is changed, removed, or replaced by a folder, changes what is
+scanned: each file is scanned as the bytes that git stores and publishes. A tracked symbolic
+link, mode 120000, is scanned by its own target text, the blob that git stores for it, never by
+the file that it points to. The object of a submodule, mode 160000, is a commit of another
+repository and is not read.
+
+Candidates, read from the raw bytes of each blob, and of each path name, by candidates(). The
 scan visits every at sign, so no candidate can hide another. Around each at sign it takes the
 local part, the longest run of ASCII letters, digits, and the 5 characters . _ % + - that ends
 right before it, and the domain run, the longest run of ASCII letters, digits, dots, and
@@ -21,7 +32,7 @@ part, the at sign, and that domain. So a reserved name at the end of a longer do
 hide the candidate that stops before it. An at sign whose local part is empty, because the byte
 right before it is not 1 of those named for the local part or it starts the data, gives no
 candidate, and neither does 1 whose domain run ends no domain. Reading bytes keeps every tracked
-file in scope, images included, with no decode failure.
+blob in scope, images included, with no decode failure.
 
 Work. Each byte is read a bounded number of times. The searches for an at sign, for a dot, and
 for the line feeds that give the line number and the line of a hit each read only from where
@@ -61,33 +72,40 @@ space, a tab, a line feed, a double quote, a backslash, or a byte outside ASCII,
 not, is read and scanned as it is. A path name that holds a hit is never written: each hit in it
 is a failure that names the path as path sha256 and the first 16 hexadecimal digits of the
 sha256 of the path name, with the digest of the hit, and every other failure for that path (a
-hit in its content, an unreadable file, or a stale allowlist entry) names the path by that same
+hit in its content, an unreadable blob, or a stale allowlist entry) names the path by that same
 digest.
 
-Report. A failure names 3 items: the file; the line number, which is 1 more than the number of
-line feeds before the hit; and the first 16 hexadecimal digits of the sha256 of the hit, the
-longest candidate of its at sign that is not exempt. It never holds the text of the hit or of
-its line, and it names a path whose name holds a hit only by the digest of that name, so this
-suite copies no address that it catches, in a file or in a path name, into the CI log. Any other
-path is written as printable_path() gives it: each character that is not printable, such as a
-line feed, a carriage return, or the escape byte that starts a terminal escape sequence, and
-each backslash, is written as a backslash escape, so each failure is 1 line of printable text
-and no control character of a path name reaches the CI log. A stale allowlist entry is named by
-its file, its position, and the same digest of its text. On a red run, the tree case prints
-every failure in full, 1 to a line after a count, and never through a list comparison, which
-unittest shortens when it is long, so no failure is dropped from the CI log.
+Report. What each failure names: a hit in the content of a file names 3 items, the file, the line
+number, which is 1 more than the number of line feeds before the hit, and the first 16
+hexadecimal digits of the sha256 of the hit, the longest candidate of its at sign that is not
+exempt, and it is the only failure that names a line; a hit in a path name names the path and
+the digest of the hit, and no line; a stale allowlist entry names its file, its position, and
+the same digest of its text, and no line; and the fail-closed failures below name no line and no
+digest of a hit: a blob that cannot be read names its path and a fixed category, and a git call
+that fails, that cannot be started, or that lists no path names no path either, only a fixed
+category. No failure holds the text of a hit or of its line, and each names a path whose name
+holds a hit only by the digest of that name, so this suite copies no address that it catches, in
+a file or in a path name, into the CI log. Any other path is written as printable_path() gives
+it: each character that is not printable, such as a line feed, a carriage return, or the escape
+byte that starts a terminal escape sequence, and each backslash, is written as a backslash
+escape, so each failure is 1 line of printable text and no control character of a path name
+reaches the CI log. On a red run, the tree case prints every failure in full, 1 to a line after
+a count, and never through a list comparison, which unittest shortens when it is long, so no
+failure is dropped from the CI log.
 
-It fails closed: a git ls-files that fails, that cannot be started, or that lists no path, and a
-listed file that is missing or cannot be read, are failures, never a skip. Each such failure is a
-fixed category with only an exit code, a symbol from a fixed table, or the name of a type, never
-text from the environment: a git ls-files that fails gives its exit code; a git that cannot be
-started, and an unreadable file, give the errno name of the error, such as ENOENT, or, when the
-error carries no errno that the errno module names, the name of the type of the error; an empty
-listing gives no detail. So no failure line holds a diagnostic of git, a message of an exception,
-an error text of the system, or the path of the repository root or of the git program, whatever
-address such text holds. An unreadable file is named by its path, or by the digest of its path
-name when that name holds a hit. The content of entries of mode 120000 and 160000, a tracked
-symbolic link and a submodule, is not read.
+It fails closed: a git ls-files that fails, that cannot be started, or that lists no path, a git
+cat-file that fails or that cannot be started, and a listed entry whose stored blob cannot be
+read, are failures, never a skip. Each such failure is a fixed category with only an exit code, a
+symbol from a fixed table, a fixed word, or the name of a type, never text from the environment:
+a git ls-files or a git cat-file that fails gives its exit code; a git that cannot be started
+gives the errno name of the error, such as ENOENT, or, when the error carries no errno that the
+errno module names, the name of the type of the error; a blob that cannot be read gives missing,
+when git holds no such object, not a blob, when the object is of another type, or unexpected
+reply, when git cat-file does not answer for that object as requested; an empty listing gives no
+detail. So no failure line holds a diagnostic of git, a message of an exception, an error text of
+the system, or the path of the repository root or of the git program, whatever address such text
+holds. An unreadable blob is named by its path, or by the digest of its path name when that name
+holds a hit.
 
 Each caught example in the self-checks below is assembled at run time from parts, so this file's
 own source holds no text that candidates() takes as a candidate and the suite needs no entry for
@@ -130,16 +148,19 @@ Residual: the scan catches the email class only, and within it only the closed s
 above. A seat label, a bare account handle, or a numeric account identifier passes it, because a
 committed pattern that names a real label would itself publish the label; those forms rest on
 the rule, on the standing line that every QA and drafting brief carries, and on any scan the
-maintainer keeps outside the repository. An untracked file, the target of a tracked symbolic
-link, and the content of a submodule are not read; an address inside compressed or encoded
-binary content passes, since the scan neither decompresses nor decodes, unless that content
-holds the address as it is; a surface that is not a file in this tree, such as a pull request
-title, description, or comment, is not reached, and tools/check-pr-text.py carries no
-identifier pattern today. The digest of a hit or of a path name lets a reader who already holds
-a guess of the address confirm the guess; it does not reveal the address. A path name is held
-back only from the output of this suite: git, and any other step of a workflow that lists or
-names files, can still print it. On a red run, unittest also prints a traceback for each failed
-case, which holds the absolute path of this file in the checkout, and a failed self-check can
+maintainer keeps outside the repository. An untracked file, the file that a tracked symbolic
+link points to, and the content of a submodule are not read; a tracked symbolic link is scanned
+only by its own target text. A file kept outside git, for example by Git LFS, whose blob is a
+pointer, is scanned only as its stored pointer, so an address in the file that the pointer
+names passes. An address inside compressed or encoded binary content passes, since the scan
+neither decompresses nor decodes, unless that content holds the address as it is; a surface
+that is not a file in this tree, such as a pull request title, description, or comment, is not
+reached, and tools/check-pr-text.py carries no identifier pattern today. The digest of a hit or
+of a path name lets a reader who already holds a guess of the address confirm the guess; it does
+not reveal the address. A path name is held back only from the output of this suite: git, and
+any other step of a workflow that lists or names files, can still print it. On a red run,
+unittest also prints a traceback for each failed case, which holds the absolute path of this
+file in the checkout, and a failed self-check can
 print the values that it compared, the path of its temporary folder among them, so a checkout
 path or a temporary folder path that holds an address reaches the CI log. A label that leaked
 into the history of an older pull request and was removed later is held for the maintainer and
@@ -149,9 +170,11 @@ subtest, named for the form, of test_each_residual_text_form_gives_no_candidate,
 or encoded content is pinned by its own case,
 test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest for each compression or
 encoding. Each place that this residual names as not read is pinned by its own case:
-test_an_untracked_file_is_not_read, test_the_target_of_a_tracked_symbolic_link_is_not_read, and
-test_the_content_of_a_submodule_is_not_read. A surface that is not a file in this tree is
-outside the input of the suite, so no case pins it.
+test_an_untracked_file_is_not_read,
+test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read,
+test_the_content_of_a_submodule_is_not_read, and
+test_a_file_kept_outside_git_is_scanned_only_as_its_stored_pointer. A surface that is not a file
+in this tree is outside the input of the suite, so no case pins it.
 
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
@@ -190,8 +213,10 @@ LOCAL_BYTES = DOMAIN_BYTES | frozenset(b"_%+")
 MAINTAINER = "jeff" + "@" + "posluns.ca"
 RESERVED_LAST_LABELS = ("invalid", "test", "example")
 RESERVED_DOMAINS = ("example.com", "example.org", "example.net")
-# The modes of a symbolic link and of a submodule in the output of git ls-files --stage.
-UNREAD_MODES = ("120000", "160000")
+# The mode of a submodule in the output of git ls-files --stage, whose object is a commit of
+# another repository and is not read. A symbolic link, mode 120000, is read: its stored blob is
+# its own target text.
+UNREAD_MODES = ("160000",)
 GIT = "git"
 DIGEST_DIGITS = 16
 
@@ -310,9 +335,10 @@ def error_category(error):
 
 
 def tracked_files(root, git=GIT):
-    """(repository-relative path, mode) for each entry that git ls-files --stage lists at root.
+    """(repository-relative path, mode, object name) for each entry of git ls-files --stage.
 
-    Each path appears 1 time, in sorted order. A git ls-files that fails raises
+    The object name is that of the stored blob that the index names for the path. Each path
+    appears 1 time, in sorted order. A git ls-files that fails raises
     subprocess.CalledProcessError, and a git that cannot be started raises OSError.
     """
     listed = subprocess.run([git, "-C", str(root), "ls-files", "--stage", "-z"],
@@ -321,8 +347,45 @@ def tracked_files(root, git=GIT):
     for entry in listed.split(b"\0"):
         if entry:
             info, _, path = entry.partition(b"\t")
-            entries[os.fsdecode(path)] = info.split()[0].decode("ascii")
-    return sorted(entries.items())
+            fields = info.split()
+            entries[os.fsdecode(path)] = (fields[0].decode("ascii"), fields[1].decode("ascii"))
+    return [(rel, mode, name) for rel, (mode, name) in sorted(entries.items())]
+
+
+def stored_blobs(root, names, git=GIT):
+    """{object name: the raw bytes of its stored blob, or a fixed category} for each of names.
+
+    1 call of git cat-file --batch reads every object from the object store at root, with
+    replace objects off, so no attribute, filter, encoding, or state of the working copy changes
+    the bytes. An object that cannot be read as a blob gives 1 fixed word in place of its bytes:
+    missing, when git reports no such object; not a blob, when the object is of another type; or
+    unexpected reply, when the reply does not answer for that object as requested, in which case
+    every later object gives it too. A git cat-file that fails raises
+    subprocess.CalledProcessError, and a git that cannot be started raises OSError.
+    """
+    request = b"".join(name.encode("ascii") + b"\n" for name in names)
+    reply = subprocess.run([git, "--no-replace-objects", "-C", str(root), "cat-file", "--batch"],
+                           input=request, capture_output=True, check=True).stdout
+    blobs = {}
+    position = 0
+    for name in names:
+        header_end = reply.find(b"\n", position)
+        header = reply[position:header_end].split(b" ") if header_end >= 0 else []
+        if header[:1] != [name.encode("ascii")] or len(header) not in (2, 3):
+            break
+        if len(header) == 2:
+            blobs[name] = "missing" if header[1] == b"missing" else "unexpected reply"
+            position = header_end + 1
+            continue
+        size = int(header[2]) if header[2].isdigit() else -1
+        body_end = header_end + 1 + size
+        if size < 0 or reply[body_end:body_end + 1] != b"\n":
+            break
+        blobs[name] = reply[header_end + 1:body_end] if header[1] == b"blob" else "not a blob"
+        position = body_end + 1
+    for name in names:
+        blobs.setdefault(name, "unexpected reply")
+    return blobs
 
 
 def printable_path(rel):
@@ -365,17 +428,18 @@ def path_label(rel):
 
 
 def scan(root, allowlist, git=GIT):
-    """(failures, number of files read) for the tracked files and path names at root.
+    """(failures, number of blobs read) for the stored blobs and path names of the entries at root.
 
-    A hit in a file passes on a line that allowlist holds for that file. A failure is a line of
+    The content of each entry is its stored blob, from stored_blobs(), never the working copy. A
+    hit in a file passes on a line that allowlist holds for that file. A failure is a line of
     text: a hit in a path name as a digest of the path and of the hit, a hit in a file as
-    path:line: and a digest, a file that cannot be read with the category of its error, a stale
-    allowlist entry, a git ls-files that fails with its exit code, a git that cannot be started
-    with the category of its error, or a git ls-files that lists no path. No failure holds the
-    text of a hit or of its line, a path whose name holds a hit is named only by the digest of
-    its name, any other path is written by printable_path(), so each failure is 1 line with no
-    control character, and no failure holds a diagnostic of git, the message of an exception,
-    the error text of the system, or the path of root or of git.
+    path:line: and a digest, a blob that cannot be read with its fixed category, a stale
+    allowlist entry, a git ls-files or a git cat-file that fails with its exit code, a git that
+    cannot be started with the category of its error, or a git ls-files that lists no path. No
+    failure holds the text of a hit or of its line, a path whose name holds a hit is named only
+    by the digest of its name, any other path is written by printable_path(), so each failure is
+    1 line with no control character, and no failure holds a diagnostic of git, the message of
+    an exception, the error text of the system, or the path of root or of git.
     """
     try:
         entries = tracked_files(root, git)
@@ -385,10 +449,17 @@ def scan(root, allowlist, git=GIT):
         return ["git ls-files failed: git could not be started: {}".format(error_category(error))], 0
     if not entries:
         return ["git ls-files listed no file"], 0
+    names = sorted({name for _, mode, name in entries if mode not in UNREAD_MODES})
+    try:
+        blobs = stored_blobs(root, names, git)
+    except subprocess.CalledProcessError as error:
+        return ["git cat-file failed: exit {}".format(error.returncode)], 0
+    except OSError as error:
+        return ["git cat-file failed: git could not be started: {}".format(error_category(error))], 0
     failures = []
     read = 0
     used = set()
-    for rel, mode in entries:
+    for rel, mode, object_name in entries:
         name = os.fsencode(rel)
         name_hits = hits_in(name)
         label = "path sha256 " + digest(name) if name_hits else printable_path(rel)
@@ -396,10 +467,9 @@ def scan(root, allowlist, git=GIT):
             failures.append("{}: email-shaped text in the path name, sha256 {}".format(label, hit))
         if mode in UNREAD_MODES:
             continue
-        try:
-            data = (Path(root) / rel).read_bytes()
-        except OSError as error:
-            failures.append("{}: unreadable: {}".format(label, error_category(error)))
+        data = blobs[object_name]
+        if isinstance(data, str):
+            failures.append("{}: unreadable: {}".format(label, data))
             continue
         read += 1
         allowed = {line.encode("utf-8") for line in allowlist.get(rel, ())}
@@ -847,11 +917,29 @@ class FixtureRepository(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root)] + list(args), check=True, capture_output=True,
                        stdin=subprocess.DEVNULL, env=env)
 
+    def git_out(self, *args, data=b""):
+        """The output of git at the fixture, its last line feed removed, with data as its input."""
+        env = dict(os.environ, GIT_CEILING_DIRECTORIES=self.tmp.name)
+        return subprocess.run(["git", "-C", str(self.root)] + list(args), check=True, capture_output=True,
+                              input=data, env=env).stdout.decode("ascii").strip()
+
     def add(self, rel, text):
         path = self.root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode("utf-8"))
         self.git("add", "--", rel)
+
+    def add_entry(self, mode, object_name, rel):
+        """An index entry for rel that names object_name, with no file behind it."""
+        self.git("update-index", "--add", "--cacheinfo", "{},{},{}".format(mode, object_name, rel))
+
+    def missing_object(self):
+        """The object name of a blob that the repository does not hold."""
+        return self.git_out("hash-object", "--stdin", data=b"never written\n")
+
+    def tree_object(self):
+        """The object name of an empty tree, written to the repository."""
+        return self.git_out("mktree")
 
     def test_a_clean_repository_passes(self):
         text = "Contact: mailto:" + MAINTAINER + "\n" + caught("t", "x" + "." + "invalid") + "\n"
@@ -876,7 +964,8 @@ class FixtureRepository(unittest.TestCase):
 
     def test_an_address_in_a_path_name_fails_naming_the_path_by_its_digest_only(self):
         # A regular file whose name and content each hold an address, and a symbolic link whose name
-        # holds 1: each failure names its path by the digest of the path name, never the name.
+        # holds 1: each failure names its path by the digest of the path name, never the name. The
+        # link is read as its own target text, which holds no address.
         address = caught("worker-label-example", "placeholder-mail" + "." + "com")
         rel = "docs/" + address + ".md"
         link = "to-" + address
@@ -884,7 +973,7 @@ class FixtureRepository(unittest.TestCase):
         os.symlink("docs", self.root / link)
         self.git("add", "--", link)
         failures, read = scan(self.root, {})
-        self.assertEqual(read, 1)
+        self.assertEqual(read, 2)
         named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
         self.assertEqual(failures, [
             named + ": email-shaped text in the path name, sha256 " + sha256_prefix((address + ".md").encode("ascii")),
@@ -975,28 +1064,40 @@ class FixtureRepository(unittest.TestCase):
             self.assertNotIn("worker-label-example", failure)
             self.assertNotIn("placeholder-mail", failure)
 
-    def test_an_unreadable_file_is_named_by_its_errno_name_or_error_type_only(self):
-        # Read errors whose error text and path each hold an address: 1 with an errno that the
-        # errno module names, 1 with none whose only argument is the path, and 1 with an errno
-        # outside that table. Each failure holds the errno name or the name of the type only.
+    def test_an_unreadable_blob_is_named_by_a_fixed_category_only(self):
+        # Entries whose stored object is missing or is no blob, 1 of them at a path that holds an
+        # address: each failure holds the fixed category only, and names that path by its digest.
         rel = caught("worker", "placeholder-mail" + "." + "com")
         named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
-        self.add(rel, "text\n")
-        self.add("plain.txt", "text\n")
-        full = str(self.root / rel)
-        for error, text in ((PermissionError(errno.EACCES, "denied for " + full, full), "EACCES"),
-                            (OSError(full), "OSError"),
-                            (OSError(1 << 20, "no errno name for " + full, full), "OSError")):
+        self.add_entry("100644", self.missing_object(), rel)
+        self.add_entry("100644", self.missing_object(), "plain.txt")
+        self.add_entry("100644", self.tree_object(), "tree.txt")
+        self.assertEqual(scan(self.root, {}), ([
+            "plain.txt: unreadable: missing",
+            "tree.txt: unreadable: not a blob",
+            named + ": email-shaped text in the path name, sha256 " + sha256_prefix(rel.encode("ascii")),
+            named + ": unreadable: missing"], 0))
+
+    def test_a_blob_read_that_fails_names_only_its_exit_code_or_errno_name_or_error_type(self):
+        # A git cat-file that fails with a diagnostic that holds an address, and start errors whose
+        # text holds it: each failure is the exit code alone, or the errno name, or the name of
+        # the type when the error has no errno name. The listing before it runs as usual.
+        self.add("a.txt", "text\n")
+        program = str(self.address_folder() / "no-such-git")
+        run = subprocess.run
+        for error, text in ((subprocess.CalledProcessError(128, [GIT], output=b"", stderr=program.encode()),
+                             "exit 128"),
+                            (OSError(errno.EACCES, "denied for " + program, program),
+                             "git could not be started: EACCES"),
+                            (OSError(program), "git could not be started: OSError")):
             with self.subTest(text=text):
-                self.assertIn(rel, str(error))
-                with mock.patch.object(type(self.root), "read_bytes", side_effect=error):
+                def blob_read_fails(args, **kwargs):
+                    if "cat-file" in args:
+                        raise error
+                    return run(args, **kwargs)
+                with mock.patch.object(subprocess, "run", side_effect=blob_read_fails):
                     failures, read = scan(self.root, {})
-                self.assertEqual(read, 0)
-                self.assertEqual(failures, [
-                    "plain.txt: unreadable: " + text,
-                    named + ": email-shaped text in the path name, sha256 " + sha256_prefix(rel.encode("ascii")),
-                    named + ": unreadable: " + text])
-                self.assert_no_address(failures)
+                self.assertEqual((failures, read), (["git cat-file failed: " + text], 0))
 
     def test_a_failed_listing_names_only_its_exit_code(self):
         # A real git that fails in a folder whose path holds an address, so that its diagnostic
@@ -1041,13 +1142,12 @@ class FixtureRepository(unittest.TestCase):
     def test_an_unreadable_file_or_stale_entry_of_such_a_path_names_only_its_digest(self):
         rel = caught("worker", "placeholder-mail" + "." + "com")
         named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
-        self.add(rel, "text\n")
-        (self.root / rel).unlink()
+        self.add_entry("100644", self.missing_object(), rel)
         failures, _ = scan(self.root, {rel: ("gone",)})
         self.assertEqual(len(failures), 3, failures)
         self.assertEqual(failures[0], named + ": email-shaped text in the path name, sha256 "
                          + sha256_prefix(rel.encode("ascii")))
-        self.assertTrue(failures[1].startswith(named + ": unreadable: "), failures)
+        self.assertEqual(failures[1], named + ": unreadable: missing")
         self.assertEqual(failures[2], named + ": stale allowlist entry 1, no line that holds a hit, sha256 "
                          + sha256_prefix(b"gone"))
         for failure in failures:
@@ -1105,18 +1205,13 @@ class FixtureRepository(unittest.TestCase):
             "t.py: stale allowlist entry 2, no line that holds a hit, sha256 "
             + sha256_prefix(exempt_only.encode("ascii"))], 1))
 
-    def test_a_missing_tracked_file_fails_naming_it(self):
-        self.add("gone.txt", "text\n")
-        (self.root / "gone.txt").unlink()
-        self.assertEqual(scan(self.root, {}), (["gone.txt: unreadable: ENOENT"], 0))
+    def test_a_missing_stored_blob_fails_naming_it(self):
+        self.add_entry("100644", self.missing_object(), "gone.txt")
+        self.assertEqual(scan(self.root, {}), (["gone.txt: unreadable: missing"], 0))
 
-    def test_an_unreadable_tracked_file_fails_naming_it(self):
-        self.add("odd.txt", "text\n")
-        (self.root / "odd.txt").unlink()
-        (self.root / "odd.txt").mkdir()
-        failures, _ = scan(self.root, {})
-        self.assertEqual(len(failures), 1, failures)
-        self.assertTrue(failures[0].startswith("odd.txt: unreadable: "), failures)
+    def test_a_stored_object_that_is_no_blob_fails_naming_it(self):
+        self.add_entry("100644", self.tree_object(), "odd.txt")
+        self.assertEqual(scan(self.root, {}), (["odd.txt: unreadable: not a blob"], 0))
 
     def test_a_failed_git_call_fails(self):
         # A folder that does not exist, so git -C fails wherever the temporary folder lies.
@@ -1139,11 +1234,56 @@ class FixtureRepository(unittest.TestCase):
         self.assertEqual(len(failures), 1, failures)
         self.assertTrue(failures[0].startswith("git ls-files listed no file"), failures)
 
-    def test_a_symbolic_link_is_not_read(self):
+    def test_a_symbolic_link_is_read_as_its_own_target_text(self):
+        # A link whose target text holds no address passes, and its blob is read.
         self.add("real.txt", "text\n")
         os.symlink("real.txt", self.root / "link.txt")
         self.git("add", "--", "link.txt")
-        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.assertEqual(scan(self.root, {}), ([], 2))
+
+    def test_a_symbolic_link_whose_own_target_text_holds_an_address_fails(self):
+        # The target text is the stored blob of the link; the file it names does not exist, so a
+        # scan that follows the link instead reads nothing there.
+        address = caught("worker-label-example", "placeholder-mail" + "." + "com")
+        os.symlink(address, self.root / "link.txt")
+        self.git("add", "--", "link.txt")
+        self.assertFalse((self.root / "link.txt").exists())
+        self.assertEqual(scan(self.root, {}), (["link.txt:1: email-shaped text, sha256 "
+                                                + sha256_prefix(address.encode("ascii"))], 1))
+
+    def test_a_working_tree_encoding_file_whose_blob_holds_an_address_fails(self):
+        """A file that git turns into UTF-16LE in the working copy is scanned as its stored blob.
+
+        The attribute working-tree-encoding makes git store the file as UTF-8 and write it out
+        as UTF-16LE, so the working copy gives no candidate while the blob, which git publishes,
+        holds the address as it is.
+        """
+        line, hit = self.address_line()
+        self.add(".gitattributes", "enc.txt text working-tree-encoding=UTF-16LE\n")
+        working = line.decode("ascii").encode("utf-16-le")
+        (self.root / "enc.txt").write_bytes(working)
+        self.git("add", "--", "enc.txt")
+        self.assertEqual(candidates((self.root / "enc.txt").read_bytes()), [])
+        self.assertEqual(self.git_out("cat-file", "blob", ":enc.txt").encode("ascii") + b"\n", line)
+        self.assertEqual(scan(self.root, {}), (["enc.txt:1: email-shaped text, sha256 " + hit], 2))
+
+    def test_the_state_of_the_working_copy_does_not_change_what_is_scanned(self):
+        """A stored blob that holds an address fails whatever the working copy holds at its path.
+
+        The working copy is rewritten without the address, then removed, then replaced by a
+        folder; the index is left as it is, so each scan reads the same blob.
+        """
+        line, hit = self.address_line()
+        self.add("note.txt", line.decode("ascii"))
+        expected = (["note.txt:1: email-shaped text, sha256 " + hit], 1)
+        self.assertEqual(scan(self.root, {}), expected)
+        path = self.root / "note.txt"
+        path.write_bytes(b"text\n")
+        self.assertEqual(scan(self.root, {}), expected)
+        path.unlink()
+        self.assertEqual(scan(self.root, {}), expected)
+        path.mkdir()
+        self.assertEqual(scan(self.root, {}), expected)
 
     def test_a_submodule_is_not_read(self):
         # A submodule entry with no checkout behind it, which a read would report as missing.
@@ -1167,10 +1307,11 @@ class FixtureRepository(unittest.TestCase):
         self.git("add", "--", "untracked.txt")
         self.assertEqual(scan(self.root, {}), (["untracked.txt:1: email-shaped text, sha256 " + hit], 2))
 
-    def test_the_target_of_a_tracked_symbolic_link_is_not_read(self):
+    def test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read(self):
         """A tracked link to an address-bearing file outside the repository passes.
 
-        The control: the same file, tracked in the repository, fails.
+        The link is read as its own target text, a path that holds no address. The control: the
+        same file, tracked in the repository, fails.
         """
         line, hit = self.address_line()
         target = Path(self.tmp.name) / "outside.txt"
@@ -1178,9 +1319,24 @@ class FixtureRepository(unittest.TestCase):
         self.add("real.txt", "text\n")
         os.symlink(str(target), self.root / "link.txt")
         self.git("add", "--", "link.txt")
-        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.assertEqual(scan(self.root, {}), ([], 2))
         self.add("copy.txt", line.decode("ascii"))
-        self.assertEqual(scan(self.root, {}), (["copy.txt:1: email-shaped text, sha256 " + hit], 2))
+        self.assertEqual(scan(self.root, {}), (["copy.txt:1: email-shaped text, sha256 " + hit], 3))
+
+    def test_a_file_kept_outside_git_is_scanned_only_as_its_stored_pointer(self):
+        """A file whose blob is a pointer, as Git LFS stores it, is scanned as that pointer.
+
+        The pointer is staged and the working copy then holds the address, as a checkout that
+        fetches the file would; the scan passes. The control: the same text, staged, fails.
+        """
+        line, hit = self.address_line()
+        pointer = ("version https://git-lfs.github.com/spec/v1\noid sha256:" + hashlib.sha256(line).hexdigest()
+                   + "\nsize {}\n".format(len(line)))
+        self.add("big.bin", pointer)
+        (self.root / "big.bin").write_bytes(line)
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.git("add", "--", "big.bin")
+        self.assertEqual(scan(self.root, {}), (["big.bin:1: email-shaped text, sha256 " + hit], 1))
 
     def test_the_content_of_a_submodule_is_not_read(self):
         """A submodule whose checkout holds an address-bearing file passes.

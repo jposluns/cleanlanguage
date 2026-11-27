@@ -36,11 +36,19 @@ a line of its file that holds a hit fails.
 Mechanical coverage: `tools/test-no-worker-identifiers.py` scans every tracked file, the
 vendored trees included, for email-shaped text outside the exemptions and the allowlisted
 lines, and scans the whole name of every tracked path, its folder names included, in the
-same way with no allowlist, for a symbolic link and a submodule as for a file. It fails the
-Orchestration registry workflow and `tools/run_all_checks.sh` on a hit. It reads every
-candidate address around every at sign, so an exempt candidate cannot hide an overlapping
-address, and its work grows linearly with the size of a file. A failure names the file, the
-line number, and a digest of the match, never the matched text or the line. A red run
+same way with no allowlist, for a symbolic link and a submodule as for a file. It reads the
+content of each tracked entry from the stored blob that the index names, through
+`git ls-files --stage` and 1 `git cat-file --batch` call, never from the working copy, so no
+attribute, filter, encoding, such as a `working-tree-encoding` of UTF-16LE, or state of the
+working copy changes what is scanned; a tracked symbolic link is scanned by its own stored
+target text, not by the file that it points to. It fails the Orchestration registry workflow
+and `tools/run_all_checks.sh` on a hit. It reads every candidate address around every at
+sign, so an exempt candidate cannot hide an overlapping address, and its work grows linearly
+with the size of a file. Only a hit in the content of a file names a line: that failure names
+the file, the line number, and a digest of the match. A hit in a path name names the path and
+a digest of the match, and no line; a stale allowlist entry names its file, its position, and
+a digest of its text, and no line; and the fail-closed failures below name no line and no
+digest of a match. No failure holds the matched text or the line. A red run
 prints every failure in full, 1 to a line, never through a list comparison that unittest
 shortens when it is long. A path whose name holds a hit is never named: every failure for
 it, the hit in its name included, names it by a digest of the path name. Any other path name
@@ -50,11 +58,13 @@ escape, so each failure is 1 line and no control character of a path name reache
 log. The suite takes each expected digest from a source apart from the helper that makes the
 digest: a known-answer literal, an expected-digest helper that calls `hashlib` directly, or,
 in 1 case, `hashlib` called in the case itself. It fails closed: a git ls-files that fails, that
-cannot be started, or that lists no path, and a file that git lists but that cannot be
-read, are failures, never a skip. Each such failure gives a fixed category with only the
-exit code of git or the errno name or type of the error, never a diagnostic of git, the
-message of an exception, the error text of the system, or the path of the repository or of
-git, and names a file that cannot be read as every failure names its file. So no failure
+cannot be started, or that lists no path, a git cat-file that fails or that cannot be
+started, and a tracked entry whose stored blob cannot be read, are failures, never a skip.
+Each such failure gives a fixed category with only the exit code of git, the errno name or
+type of the error, or a fixed word for a blob that cannot be read (missing, not a blob, or
+unexpected reply), never a diagnostic of git, the message of an exception, the error text of
+the system, or the path of the repository or of git. A failure of a git call names no path;
+a blob that cannot be read is named as every failure names its file. So no failure
 line copies an address that the scan catches, in a file or in a path name, or that such
 environment text holds.
 
@@ -89,7 +99,10 @@ spellings above. A seat label, a bare account handle, or a numeric account ident
 passes it, because a committed pattern that names a real label would itself publish the
 label; those forms rest on this rule, on the standing line that every QA and drafting brief
 carries, and on any scan the maintainer keeps outside the repository. An untracked file, the
-target of a tracked symbolic link, and the content of a submodule are not read; an address
+file that a tracked symbolic link points to, and the content of a submodule are not read; a
+tracked symbolic link is scanned only by its own target text. A file kept outside git, for
+example by Git LFS, whose blob is a pointer, is scanned only as its stored pointer, so an
+address in the file that the pointer names passes. An address
 inside compressed or encoded binary content passes, since the scan neither decompresses nor
 decodes, unless that content holds the address as it is; surfaces that are not files in
 this tree, such as a pull request title, description, or comment, are not reached by the
