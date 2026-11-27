@@ -112,9 +112,16 @@ The test holds the code of the gate by 2 layers.
    syntax tree: 1 gate in which that statement shares its line with
    LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and 1 gate in which
    it spans 3 lines with a comment after it, each comment kept, and each
-   built gate in that layout, each part of it checked apart, and that
-   binding_sites() finds a 2nd binding by each source of SECOND_BINDINGS.
-   control_problems() fails unless each
+   built gate in that layout, each part of it checked apart; that
+   binding_sites() finds a 2nd binding by each source of SECOND_BINDINGS,
+   and finds each binding of each source of LINE_BINDINGS at its line,
+   for each kind of node that binds or declares a name a source that
+   binds it 2 or 3 times on 1 line included; and that, on the committed
+   gate, the reader pin fails by its binding check for each source of
+   GATE_BINDINGS, a 2nd binding of REQUESTED_FILES on the line of its
+   statement or by a later statement that leaves 1 statement at the top
+   level that binds it and its value as they were. control_problems()
+   fails unless each
    rule of capture_problems(), pin_value_problems() and
    scope_sentence_problems() that its docstring lists makes its check
    fail on a stand-in that breaks that rule; the rules of the span and of
@@ -3421,7 +3428,7 @@ PIN_PLAIN = 'REQUESTED_FILES = tuple(("favicon.ico",))'
 PIN_NEIGHBOURS = ("LOADED_SEGMENTS", "REDIRECT_TARGETS")
 
 
-# Check 7: sources that each bind or declare {name} once, each by a kind of node that binding_sites() reads as a
+# Check 7: sources that each bind or declare {name} 1 time, each by a kind of node that binding_sites() reads as a
 # binding: a name stored by a for, a with, an assignment inside an if or an assignment expression, a name deleted, an
 # except handler, a match capture, a match star and the rest of a mapping pattern, a global and a nonlocal
 # statement, a def, an async def and a class inside an if, an import with an asname, a dotted import and a from
@@ -3438,11 +3445,35 @@ SECOND_BINDINGS = ("for {name} in ():\n    pass\n", "with open('.') as {name}:\n
                    "def qz({name}):\n    pass\n", "def qz[{name}]():\n    pass\n", "def qz[*{name}]():\n    pass\n",
                    "def qz[**{name}]():\n    pass\n")
 # Check 7: sources, each with the lines at which binding_sites() must find {name} in it, so that it records the line
-# of each node that binds or declares it: a statement that binds {name} with a 2nd binding after it on its line, and
-# with a 2nd binding on the next line; and a statement that binds {name} with a from import of the module {name} and
-# with an import of {name} as qz after it, each of which binds another name.
-LINE_BINDINGS = (("{name} = (); del {name}\n", [1, 1]), ("{name} = ()\ndel {name}\n", [1, 2]),
+# of each node that binds or declares it. 14 sources bind {name} 2 or 3 times on 1 line, so that each kind of node
+# that binds or declares a name on 1 line does so on a line where binding_sites() has already found {name}, as
+# ast.walk() visits them, but a def, an async def, a class and an except handler, which it visits first on their
+# line: a name deleted, a lambda parameter, a def and its parameter, an async def and its parameter, a class and its
+# type parameter, a def and its type parameter of each other kind, 2 imports with an asname, 2 from imports, 2
+# global and 2 nonlocal statements, an except handler and a name stored in its body, and match captures, a match
+# star and the rest of a mapping pattern. 1 source binds {name} on the line after its 1st binding. 2 sources bind
+# {name} with a from import of the module {name} and with an import of {name} as qz after it, each of which binds
+# another name.
+LINE_BINDINGS = (("{name} = (); del {name}\n", [1, 1]), ("{name} = (lambda {name}: 0)\n", [1, 1]),
+                 ("def {name}({name}): pass\n", [1, 1]), ("async def {name}(*, {name}): pass\n", [1, 1]),
+                 ("class {name}[{name}]: pass\n", [1, 1]), ("def {name}[*{name}](): pass\n", [1, 1]),
+                 ("def {name}[**{name}](): pass\n", [1, 1]), ("import os as {name}; import sys as {name}\n", [1, 1]),
+                 ("from os import {name}; from sys import {name}\n", [1, 1]),
+                 ("global {name}; global {name}\n", [1, 1]),
+                 ("def qz():\n    nonlocal {name}; nonlocal {name}\n", [2, 2]),
+                 ("try: pass\nexcept Exception as {name}: {name} = ()\n", [2, 2]),
+                 ("match ():\n    case [{name}, {{**{name}}}, *{name}]: pass\n", [2, 2, 2]),
+                 ("match ():\n    case [{{**{name}}}, {name}]: pass\n", [2, 2]), ("{name} = ()\ndel {name}\n", [1, 2]),
                  ("{name} = ()\nfrom {name} import qz\n", [1]), ("{name} = ()\nimport {name} as qz\n", [1]))
+# Check 7: 2nd bindings of PIN_NAME that pin_value_problems() adds to the committed gate, each of which leaves 1
+# statement at the gate's top level that binds PIN_NAME and leaves its value as it was, so that the reader pin must
+# fail by the lines at which binding_sites() finds PIN_NAME, not by its count of statements: each as True, put on the
+# line of PIN_NAME's statement before it, or False, put after the gate's last line, and its text. On that line: an
+# assignment expression, a comprehension and a lambda parameter; after the last line: an assignment inside a false
+# conditional, a for over nothing and a parameter of a def.
+GATE_BINDINGS = ((True, "({name} := ()); "), (True, "[{name} for {name} in ()]; "), (True, "(lambda {name}: 0); "),
+                 (False, "\nif False:\n    {name} = ()\n"), (False, "\nfor {name} in ():\n    pass\n"),
+                 (False, "\ndef qz({name}):\n    pass\n"))
 
 
 def pin_shared_gate(source: bytes) -> bytes:
@@ -3488,12 +3519,14 @@ def pin_value_problems() -> list[str]:
     each kind of FINAL_KINDS that is in none of the 3 tuples; unless reader_pin_text() raises it for a value with
     __wrapped__ that a statement other than a def binds; unless binding_sites() finds PIN_NAME bound or declared
     exactly 2 times in each source of SECOND_BINDINGS after a statement that binds it, and at exactly the lines that
-    LINE_BINDINGS gives for each of its sources; and unless, on each of 3 base
+    LINE_BINDINGS gives for each of its sources; unless reader_pin_problems(), given the committed gate with each
+    source of GATE_BINDINGS added, gives exactly 1 problem, which starts by naming the lines at which the gate binds
+    PIN_NAME; and unless, on each of 3 base
     gates, the committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME by
     exactly 1 statement at its top level, and reader_pin_problems(), given the gate with that statement, as the
     syntax tree places it, replaced by PIN_SUBCLASS, gives exactly 1 problem, which says that REQUESTED_FILES cannot
-    be pinned, and, given it replaced by PIN_PLAIN, exactly 1 problem, which gives the new digest of REQUESTED_FILES,
-    and each gate with the statement replaced keeps the comments of its base gate, as the tokenizer reads them.
+    be pinned, and, given it replaced by PIN_PLAIN, exactly 1 problem, which says that REQUESTED_FILES differs from
+    its pin, and each gate with the statement replaced keeps the comments of its base gate, as the tokenizer reads them.
     Before it replaces the statement of a built base gate, it requires that reader_pin_problems() gives no problem on
     it, since it is otherwise no faithful stand-in for the committed gate, and that it has the layout of the
     docstring of its builder, in 2 parts, each checked apart (layout()). So a builder that returns its source
@@ -3694,6 +3727,16 @@ def pin_value_problems() -> list[str]:
         sites = binding_sites(ast.parse(source)).get(PIN_NAME, [])
         if sorted(sites) != lines:
             problems.append(f"binding_sites() finds {PIN_NAME} at lines {sites} in {source!r}, not at lines {lines}")
+    gate_rows = GATE_BYTES.splitlines(keepends=True)
+    pinned_statement = top_statements(ast.parse(GATE_BYTES), PIN_NAME)[0]
+    offset = sum(map(len, gate_rows[:pinned_statement.lineno - 1])) + pinned_statement.col_offset
+    for on_line, text in GATE_BINDINGS:
+        added = text.format(name=PIN_NAME).encode("utf-8")
+        found = reader_pin_problems(GATE_BYTES[:offset] + added + GATE_BYTES[offset:] if on_line
+                                    else GATE_BYTES + added)
+        if len(found) != 1 or not found[0].startswith(f"tools/{GATE.name} binds {PIN_NAME} at lines "):
+            problems.append(f"reader_pin_problems() gives {found!r} on the committed gate with {added!r} added, not 1 "
+                            f"problem that it binds {PIN_NAME} more than 1 time")
     bases = [("the committed gate", GATE_BYTES)]
     for label, build, shared in (("the shared-line gate", pin_shared_gate, True),
                                  ("the reflowed gate", pin_reflowed_gate, False)):
@@ -3860,8 +3903,11 @@ def control_problems() -> list[str]:
     value with __wrapped__; with FINAL_KINDS rebound to (int, slice) and map added to PLAIN_TYPES, a problem for each
     kind of the 3 tuples that the committed FINAL_KINDS names, whose bare subclass cannot be made, for int, whose
     subclass can, for slice, which is in none of the 3 tuples, and for map, whose bare subclass cannot be made with no
-    arguments; with binding_sites() rebound to a stand-in that finds no binding, a problem for each of the 21 sources
-    of SECOND_BINDINGS and for each of the 4 sources of LINE_BINDINGS; with both builders rebound to stand-ins that
+    arguments; with binding_sites() rebound to a stand-in that finds no binding, and to 1 that finds each binding 2
+    times, a problem for each of the 21 sources of SECOND_BINDINGS and for each of the 17 sources of LINE_BINDINGS;
+    with binding_sites() rebound to a stand-in that finds each binding 1 line lower, a problem for each of the 17
+    sources of LINE_BINDINGS; with reader_pin_problems() rebound to a stand-in that finds no problem, a problem for
+    each of the 6 sources of GATE_BINDINGS; with both builders rebound to stand-ins that
     return their source unchanged, a problem for each built base gate, which lacks the layout of its builder; with 1
     builder at a time rebound to a stand-in that
     changes the result of the builder so that it breaks exactly 1 of the 2 parts of its layout, 5 stand-ins for the
@@ -3981,9 +4027,20 @@ def control_problems() -> list[str]:
     def shared_stand_in(source: bytes) -> bytes:
         return source
 
-    expect("pin_value_problems() with binding_sites() finding no binding", pin_value_problems,
-           [("binding_sites() finds ", ", not 2 times")] * 21 + [("binding_sites() finds ", ", not at lines ")] * 4,
-           binding_sites=lambda tree: {})
+    real_sites = binding_sites
+    for what, stand_in in (("finding no binding", lambda tree: {}),
+                           ("finding each binding 2 times",
+                            lambda tree: {name: lines * 2 for name, lines in real_sites(tree).items()})):
+        expect(f"pin_value_problems() with binding_sites() {what}", pin_value_problems,
+               [("binding_sites() finds ", ", not 2 times")] * 21
+               + [("binding_sites() finds ", ", not at lines ")] * 17, binding_sites=stand_in)
+    expect("pin_value_problems() with binding_sites() finding each binding 1 line lower", pin_value_problems,
+           [("binding_sites() finds ", ", not at lines ")] * 17,
+           binding_sites=lambda tree: {name: [line + 1 for line in lines] for name, lines in real_sites(tree).items()})
+    expect("pin_value_problems() with a reader pin that finds no problem", pin_value_problems,
+           [(f"reader_pin_problems() gives [] on the committed gate with {text.format(name=PIN_NAME).encode()!r} "
+             "added, not 1 problem", "") for _, text in GATE_BINDINGS],
+           reader_pin_problems=lambda source=None: [])
     expect("pin_value_problems() with builders that return their source", pin_value_problems,
            [(f"{label}, {name}() of tools/{GATE.name}, is not in the layout", "")
             for label, name in (("the shared-line gate", "shared_stand_in"), ("the reflowed gate", "reflowed_stand_in"))],
@@ -4073,7 +4130,7 @@ def control_problems() -> list[str]:
            [(f"{label}, refusing() of tools/{GATE.name}, could not be built or read", "")
               for label in ("the shared-line gate", "the reflowed gate")],
            pin_reflowed_gate=refusing, pin_shared_gate=refusing)
-    expect("pin_value_problems() with a committed gate that binds PIN_NAME twice", pin_value_problems,
+    expect("pin_value_problems() with a committed gate that binds PIN_NAME by 2 statements", pin_value_problems,
            [(f"the committed gate binds {PIN_NAME} by 2 statements at its top level, not by 1 statement", "")],
            GATE_BYTES=GATE_BYTES + f"\n{PIN_NAME} = ()\n".encode("utf-8"))
     rebinding = f"\n{PIN_NEIGHBOURS[0]} = ()\n".encode("utf-8")

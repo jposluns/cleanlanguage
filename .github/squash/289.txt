@@ -6,7 +6,9 @@ docstrings so that they claim no more than the checks hold. The gate,
 tools/check-install-page.py, is byte identical, so GATE_SHA256 and
 READER_SHA256 are unchanged. GATE_SHA256 stays
 88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7, the
-sha256 of the gate before and after this change.
+sha256 of the gate before and after this change. READER_SHA256 maps
+each of the 27 names that the reader pin holds to its own digest, so
+this message lists none of them.
 
 - Capture tuple, list and dict when the test is imported, as
   PLAIN_CONTAINERS beside PLAIN_TYPES, and compare the exact type of a
@@ -52,26 +54,39 @@ sha256 of the gate before and after this change.
   an alias holds as a name that it binds, but a name that is read, a
   type comment and the fields of UNBOUND_FIELDS, and of an import only
   the name that each alias binds, so it fails closed and finds a type
-  parameter. Hold it with
-  SECOND_BINDINGS, 21 sources that each bind or declare REQUESTED_FILES
-  once more, a nonlocal statement, a dotted import and a from import
-  among them, in
-  each of which it must find the name exactly 2 times, and with
-  LINE_BINDINGS, 4 sources, each with the lines at which it must find
-  the name: a 2nd binding on the line of the statement that binds it
-  and on the next line, and a from import of a module of that name and
-  an import of it as qz, which bind another name.
+  parameter. Hold it with SECOND_BINDINGS, 21 sources that each bind
+  or declare REQUESTED_FILES 1 more time, a nonlocal statement, a
+  dotted import and a from import among them, in each of which it must
+  find the name exactly 2 times, and with LINE_BINDINGS, 17 sources,
+  each with the lines at which it must find the name: 14 sources with
+  a 2nd or 3rd binding on the line of a binding, by each kind of node
+  that binds or declares a name on 1 line, a lambda parameter
+  included, 1 source with a 2nd binding on the next line, and a from
+  import of a module of that name and an import of it as qz, which
+  bind another name.
+- Hold the binding check of the reader pin itself with GATE_BINDINGS,
+  6 sources that each add a 2nd binding of REQUESTED_FILES to the
+  committed gate and leave 1 statement at its top level that binds it
+  and its value as they were: on the line of its statement, an
+  assignment expression, a comprehension and a lambda parameter, and
+  after the last line, an assignment inside a false conditional, a for
+  over nothing and a parameter of a def. The reader pin must give
+  exactly 1 problem for each, which starts by naming the lines at
+  which the gate binds the name.
 - Add control_problems(): with a name of the test rebound to a
   stand-in for 1 call, each rule of capture_problems(),
   pin_value_problems() and scope_sentence_problems() that its
   docstring lists must make that check fail, each of the 2 parts of
   the shared-line layout and of the reflowed layout included, each
   broken alone by its own stand-ins, and both parts of the shared-line
-  layout broken together, so an edit that
-  removes such a rule from its check alone fails; the rules of the
-  span and of the restore are held by those checks as they run. An
-  edit of a check and of its control together rests on review
-  (residual 4).
+  layout broken together, so an edit that removes such a rule from its
+  check alone fails. binding_sites() stand-ins that find each binding
+  2 times or 1 line lower tell the exact rules of SECOND_BINDINGS and
+  LINE_BINDINGS from a bound of at least 2 and from a count of lines,
+  and a reader pin stand-in that finds no problem holds GATE_BINDINGS.
+  The rules of the span and of the restore are held by those checks as
+  they run. An edit of a check and of its control together rests on
+  review (residual 4).
 - Rewrite the fixture PIN_SUBCLASS as 1 simple statement with the same
   meaning, a deliberate change of its contract: a class statement
   cannot follow a semicolon, so the committed form does not parse on
@@ -79,10 +94,10 @@ sha256 of the gate before and after this change.
 - Add to pin_value()'s docstring that it writes a module, a class or a
   path by its name, so a helper that such a module, class or path
   carries is in no digest here, and mark its refused values as
-  examples. The pin holds
-  the values that a reviewed gate defines in ordinary code, and
-  scope_sentence_problems() fails each docstring of the file that says
-  so without the words "a module, a class or a path by its name".
+  examples. The pin holds the values that a reviewed gate defines in
+  ordinary code, and scope_sentence_problems() fails each docstring of
+  the file that says so without the words "a module, a class or a path
+  by its name".
 - Rewrite the module docstring's account of the kind tests and of
   pin_value_problems() with only what these checks hold.
 - Leave .github/squash/269.txt unchanged: this change edits no merged
@@ -94,30 +109,8 @@ Checks, each with its expected outcome:
 - python3 -I tools/check-install-page.py: exit 0, and its sha256
   equals GATE_SHA256 before and after this change.
 - Each mutant that the description names, 1 or 2 exact replacements
-  in a copy of the test: exit 1 with this change, or, where the
-  description says "in process", the problems of the checks of the pin
-  run in process, with the problems that the description names, and
-  exit 0 on main before this change for each mutant whose code main
-  holds.
+  in a copy of the test: in each tree, the outcome that the
+  description gives for it, by the command that the description gives
+  for that outcome.
 - python3 -I tools/check-pr-text.py on the description and on this
   message: exit 0, 0 defects.
-
-What TODO 283 records:
-
-- The 5 gaps between the docstrings and the self-checks that the
-  review of pull request 269 reported are each closed by a check
-  above: the capture of the kinds, the refusal of a subclass of int,
-  float or bytes, the capture of tuple, list and dict, the columns of
-  the replaced span and the residual of pin_value()'s scope sentence.
-  The 2nd is widened to bool and None, the 4th to a span that ends at
-  the end of its 1st line and to a span that takes in a comment after
-  the statement, and the 1st to str, bytes, int, float and bool.
-- pin_value()'s docstring gives its refused values as examples and
-  points to pin_value_problems(), which names the values that it
-  holds.
-- The fixture PIN_SUBCLASS changes its contract deliberately, for the
-  reason above.
-- GATE_SHA256 and READER_SHA256 are unchanged. READER_SHA256 is no
-  single value: it maps each of the 27 names that the reader pin holds
-  to its own digest, so this message lists none of the 27 digests; its
-  statement in the test is the same before and after this change.
