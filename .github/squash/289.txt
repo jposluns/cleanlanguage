@@ -1,0 +1,125 @@
+Hold the kind and span claims of the install-page pin (#289)
+
+Make the self-checks of tools/test-install-page.py hold what its
+docstrings say about the reader pin of check 7, and word those
+docstrings so that they claim no more than the checks hold. The gate,
+tools/check-install-page.py, is byte identical, so GATE_SHA256 stays
+88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7, its
+sha256, and READER_SHA256 stays as it is. READER_SHA256 maps each of
+the 27 names that the reader pin holds to its own digest, so this
+message lists none of them.
+
+- Capture tuple, list and dict when the test is imported, as
+  PLAIN_CONTAINERS beside PLAIN_TYPES, so that plain_data(), as
+  pin_value() does, compares the exact type of a value by identity
+  with a type that the test captured when it was imported
+  (PLAIN_TYPES, PLAIN_CONTAINERS, PIN_KINDS).
+- Add capture_problems(): with re.Pattern, types.ModuleType, the
+  test's REPO_ROOT, str, bytes, int, float, bool, tuple, list or dict
+  rebound to a stand-in, 1 name at a time, pin_value() must still
+  write a real value of that kind as before and refuse an instance of
+  the stand-in, and each name must be restored once the last of them
+  has been rebound. control_problems() holds the 1st rule for each of
+  the 11 names and the restore for each of them but dict, the last,
+  which the finally clause restores. The exact type of a value, and
+  type(None), are read with the builtin type(), which a rebinding of a
+  builtin can change, a class that the reader pin does not see
+  (residual 2); no check holds the capture of type.
+- Derive refusal cases from the 3 capture tuples: for each of their 13
+  kinds, an object whose class gives the kind as its __class__, and,
+  for each of the 10 kinds that FINAL_KINDS does not name, an instance
+  of a bare subclass, so that each kind test of pin_value() and
+  plain_data() must match the exact type. FINAL_KINDS names the kinds
+  of these tuples that Python lets no class subclass (bool, NoneType
+  and re.Pattern), not every such kind that Python has. A subclass
+  that cannot be made fails the check, and so does a kind of
+  FINAL_KINDS that Python lets a class subclass or that is in none of
+  these tuples. The 19 committed refused values are kept.
+- Run the 2 replacements of REQUESTED_FILES on 3 base gates: the
+  committed gate, one in which its statement shares its line with
+  LOADED_SEGMENTS and REDIRECT_TARGETS and a comment, and one in which
+  it spans 3 lines with a comment after it. Each built gate must first
+  pass the reader pin and have the layout of its builder's docstring,
+  each of the 2 parts of that layout checked apart (on the shared-line
+  gate, the line of REQUESTED_FILES, parsed alone, ends with the 3
+  statements in that order, and a comment follows them; on the
+  reflowed gate, the statement spans exactly 3 lines, and a comment
+  follows it), and each gate with the statement replaced must keep the
+  comments of its base gate. The builders' only source is GATE_BYTES,
+  so neither states or checks a rule of its own about its source.
+- Make binding_sites(), which the reader pin reads, walk the whole
+  syntax tree and read each string that a node other than an import or
+  an alias holds as a name that it binds, but a name that is read, a
+  type comment and the fields of UNBOUND_FIELDS, and of an import only
+  the name that each alias binds, so it fails closed and finds a type
+  parameter. Hold it with SECOND_BINDINGS, 26 sources that each bind
+  or declare REQUESTED_FILES 1 more time, a nonlocal statement, a
+  dotted import, a from import, an augmented and an annotated
+  assignment, an async for, an async with and a type alias among
+  them, in each of which it must
+  find the name exactly 2 times, and with LINE_BINDINGS, 17 sources,
+  each with the lines at which it must find the name: 14 sources with
+  a 2nd or 3rd binding on the line of a binding, by each kind of node
+  that binds or declares a name on 1 line, a lambda parameter
+  included, 1 source with a 2nd binding on the next line, and a from
+  import of a module of that name and an import of it as qz, which
+  bind another name.
+- Hold the binding check of the reader pin itself with GATE_BINDINGS,
+  6 sources that each add a 2nd binding of REQUESTED_FILES to the
+  committed gate and leave 1 statement at its top level that binds it
+  and its value as they were: on the line of its statement, an
+  assignment expression, a comprehension and a lambda parameter, and
+  after the last line, an assignment inside a false conditional, a for
+  over nothing and a parameter of a def. The reader pin must give
+  exactly 1 problem for each, which starts by naming the lines at
+  which the gate binds the name: the line of its statement and the
+  line of the source added.
+- Hold the whole problem that the reader pin gives for PIN_PLAIN on
+  each base gate: that REQUESTED_FILES differs from its pin, with the
+  sha256 of reader_pin_text() of the statement and value of PIN_PLAIN
+  and the digest that READER_SHA256 records.
+- Add control_problems(): with a name of the test rebound to a
+  stand-in for 1 call, each rule of capture_problems(),
+  pin_value_problems() and scope_sentence_problems() that its
+  docstring lists must make that check fail, each part of the
+  shared-line layout and of the reflowed layout included, each
+  broken alone by its own stand-ins, and both parts of the shared-line
+  layout broken together, so an edit that removes such a rule from its
+  check alone fails. binding_sites() stand-ins that find each binding
+  2 times, the 1st binding of each name 1 more time or each binding 1
+  line lower tell the exact rules of SECOND_BINDINGS and LINE_BINDINGS
+  from another count, from a bound and from a count of lines. Reader
+  pin stand-ins that find no problem, give each problem 2 times or
+  name another line and another digest hold the rules of exactly 1
+  problem of GATE_BINDINGS and of the replacements, with its lines and
+  its digest.
+  The rules of the span and of the restore are held by those checks as
+  they run. An edit of a check and of its control together rests on
+  review (residual 4).
+- Rewrite the fixture PIN_SUBCLASS as 1 simple statement with the same
+  meaning, a deliberate change of its contract: a class statement
+  cannot follow a semicolon, so the committed form does not parse on
+  the shared-line gate.
+- Add to pin_value()'s docstring that it writes a module, a class or a
+  path by its name, so a helper that such a module, class or path
+  carries is in no digest here, and mark its refused values as
+  examples. The pin holds the values that a reviewed gate defines in
+  ordinary code, and scope_sentence_problems() fails each docstring of
+  the file that says so without the words "a module, a class or a path
+  by its name".
+- Rewrite the module docstring's account of the kind tests and of
+  pin_value_problems() with only what these checks hold.
+- Leave .github/squash/269.txt unchanged: this change edits no merged
+  squash record.
+
+Checks, each with its expected outcome:
+
+- python3 -I tools/test-install-page.py: exit 0, "all 623 cases".
+- python3 -I tools/check-install-page.py: exit 0, and its sha256
+  equals GATE_SHA256 before and after this change.
+- Each mutant that the description names, 1 or 2 exact replacements
+  in a copy of the test: in each tree, the outcome that the
+  description gives for it, by the command that the description gives
+  for that outcome.
+- python3 -I tools/check-pr-text.py on the description and on this
+  message: exit 0, 0 defects.
