@@ -58,8 +58,3 @@ This search lists the 8 lines above and no other:
 -I skips binary files, such as a cached .pyc file, and
 --exclude-dir=squash leaves out .github/squash, where this message
 names the old version 3 times.
-
-The plugin_manifests step of tools/run_all_checks.sh refuses to
-validate unless claude --version on the host reports the pinned
-version, and the Plugin manifests job in CI installs the CLI at the
-pin. This message credits no run of either to any commit.
