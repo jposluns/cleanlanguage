@@ -11,7 +11,10 @@ object name. It prints both snapshots on a mismatch, so the failure
 names the ref that differs. It then fails when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit,
 read with replace refs, grafts and the shallow file turned off, so
-none of them can hide such a ref. Neither failure says who wrote the
+none of them can hide such a ref; in a shallow clone that reading can
+name a ref that does not contain the commit, and so fail the run.
+release-dry-run.yml checks out the whole history, so its run is not
+shallow. Neither failure says who wrote the
 ref, since another worktree's write, or a ref that held the dry-run
 commit before the run, fails the run too. The script makes that commit
 with git commit-tree, which prints the name of the commit it writes,
@@ -56,9 +59,15 @@ signing turned off, so the dry-run commit is never signed. A git error
 in either check, in reading the filter drivers, or in making or
 reading the dry-run commit or moving HEAD to it, fails the run with
 exit 1 and is never read as an empty listing. The exit cleanup is set
-before the GIT_ATTR_SOURCE check makes its temporary file, and removes
-that file and the throwaway worktree on every exit of the run, one
-that HUP, INT or TERM causes included.
+before the GIT_ATTR_SOURCE check makes its temporary file, and runs on
+every exit of the run, one that HUP, INT or TERM causes included. It
+tries to remove that file and the throwaway worktree once the script
+holds the name of each; a removal that fails leaves its entry behind,
+and so does a signal that ends the run after mktemp has made the file
+or the worktree's folder and before the script holds its name, or one
+that no trap can catch, such as KILL. Once the run has removed that
+file itself, it clears the file's name, so the exit cleanup cannot
+remove a file that another process makes later under that name.
 
 This narrows a release-integrity check on purpose and needs the
 maintainer's acceptance. Step 6 newly catches a commit on a detached
@@ -111,8 +120,9 @@ later step, tool or git call other than the exit cleanup and the other
 call of a pipeline, a mktemp, cmp or rm of the GIT_ATTR_SOURCE check
 that fails among them, and 1, with no tag and no note, requires it to
 pass. 1 more case runs the dry run in a caller locale other than C and
-requires its check of GIT_ATTR_SOURCE to run with LC_ALL set to C and
-its temporary file to be gone before the run goes on, 1 more ends the
+requires its check of GIT_ATTR_SOURCE to run with LC_ALL set to C,
+its temporary file to be gone before the run goes on, and a file made
+later under that file's name to be left in place, 1 more ends the
 run with HUP, INT or TERM during that check and requires that file to
 be gone, and 1 more leaves tags and notes refs on the dry-run commit
 of an earlier run, or on a child of it, and requires the leak check to
@@ -121,8 +131,9 @@ and requires the dry run to pass without signing, and 1 more writes 8
 hooks to the configured hook folder and requires the dry run to pass
 with none of them run. 7 more each configure programs that git runs
 from its configuration or from attributes: a core.fsmonitor program,
-clean and smudge filters, a process filter, a pager with the run on a
-terminal, textconv and diff drivers, an editor and a sequence editor,
+clean and smudge filters, a process filter, pagers that pager.<command>
+and core.pager name with the run on a terminal, textconv and diff
+drivers, an editor and a sequence editor,
 and the upload-pack program of a promisor remote; each
 requires the dry run to run none of them, the last by failing closed
 at its read of a missing blob. 1 more defines 3 filter drivers only
@@ -132,10 +143,11 @@ core.attributesFile, with a packager stand-in that runs git archive;
 the dry run must pass with none of them run. 1 more requires a driver
 named a=b to fail the run before any of its commands runs. 1 more
 reads git's trace2 log and requires every git call of the script
-after the before snapshot other than the reads of step 6, the exit
-cleanup's included, to run with hooks and the core.fsmonitor program
-turned off and to start no program other than git, every one after
-the first 3 and the GIT_ATTR_SOURCE check also to run with the
+after the before snapshot other than one in the form of the reads of
+the 2 snapshots or the leak check, wherever the script makes it, the
+exit cleanup's included, to run with hooks and the core.fsmonitor
+program turned off and to start no program other than git, every one
+after the first 3 and the GIT_ATTR_SOURCE check also to run with the
 attribute settings and both configured filter drivers turned off, and
 every one to run with lazy fetching turned off. 1 more, the text
 case, requires 4 blocks, the residual and the 2 remainders that the
@@ -152,9 +164,10 @@ other 2.
 
 Residual of the test: stand-ins replace the packaging, the
 gates and the site rewrite, which the next step of release-dry-run.yml
-runs with the real tools, and the script runs with a git stand-in
-first on PATH and an environment that the test fixes, not those of
-that workflow. A change to the script is caught only when it changes
+runs with the real tools, and the script runs with an environment that
+the test fixes, with a git stand-in first on PATH in the ref cases and
+a git wrapper there in some other cases, not with those of that
+workflow. A change to the script is caught only when it changes
 what a case observes, so a change that acts only outside the cases,
 such as one that tests for the stand-ins or for the workflow's
 environment, or that moves a ref no case writes or stops step 6
@@ -211,7 +224,11 @@ it passes. The suite of the probe cleanup fix, of 72 cases, fails the
 script before that fix in its signal case, whose run leaves the
 temporary file of the GIT_ATTR_SOURCE check when HUP, INT or TERM ends
 it, and fails each of 6 rule removals that the 69-case suite passes
-and each of 4 mutants of that fix. The release dry run
+and each of 4 mutants of that fix. The suite of the claims fix, still
+of 72 cases, fails in its locale case a script that does not clear
+the name of that file once it has removed it, and in both runs of its
+pager case, the core.pager run included, a script without --no-pager.
+The release dry run
 workflow and tools/run_all_checks.sh run it before the dry run, and
 tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

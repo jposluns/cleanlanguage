@@ -242,18 +242,26 @@ case shows which git call the script makes first in a repository whose HEAD reso
 1 more case, the locale case, runs the dry run with LC_ALL removed from its environment, LANG set
 to C.UTF-8 and LANGUAGE to fr, with a git wrapper, first on PATH, that records the LC_ALL of each git
 check-attr not given --source, and requires the run to pass and that check to run once, with LC_ALL
-set to C, and to leave in its TMPDIR no entry that mktemp names. The wrapper also records the
-entries that mktemp names in that TMPDIR when the script reads the version, and the case requires
-there to be none, so the script must remove the file of its check before the run goes on. No git
-with a translation of its messages is run, so the case shows the locale that the check gives git,
-not that git would translate its message without it.
+set to C. The wrapper also records the entries that mktemp names in that TMPDIR while that check
+runs and when the script reads the version, and then makes a file under the name of each entry
+that it recorded while the check ran, as another process that mktemp gives that name once the
+script has freed it would. The case requires there to be 1 entry while the check runs, the file in
+which it writes standard error, and none when the script reads the version, so the script must
+remove that file before the run goes on, and requires the run to leave in its TMPDIR no entry that
+mktemp names other than the file made later under that name, with the text that the wrapper wrote
+in it, so the exit cleanup must not remove a file that another process makes under the name of a
+file that the run has already removed. No git with a translation of its messages is run, so the
+case shows the locale that the check gives git, not that git would translate its message without
+it.
 
 1 more case, the signal case, ends a run with HUP, INT or TERM, each in turn, which a git wrapper,
 first on PATH, sends to the process group of the run when the script runs its check of
 GIT_ATTR_SOURCE, once it has recorded the entries that mktemp names in the run's TMPDIR. The case
 requires that entry list to hold 1 entry, the file in which the check writes standard error, the
 run to stop before its read of the version, and the run to leave in its TMPDIR no entry that
-mktemp names, so the script must remove that file on an exit that a signal causes.
+mktemp names, so the script must remove that file on an exit that such a signal causes while the
+check's git call runs. No case sends a signal while mktemp runs, or makes a removal of the exit
+cleanup fail.
 
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
@@ -288,8 +296,10 @@ of which records its name when it runs, and first check, in a repository of thei
 then runs each of them: a core.fsmonitor program, which on its third run in a linked worktree also
 moves that worktree's HEAD to a new child of it; clean and smudge commands of a required filter
 driver that the main worktree's info/attributes gives every path; the process command of a driver,
-not required, that info/attributes gives every path; a pager for each subcommand that the script
-runs, with the run's standard output on a pseudo-terminal; textconv and diff command drivers that
+not required, that info/attributes gives every path; a pager that pager.<command> names for each
+subcommand that the script runs and, in a second run, one that core.pager names, with
+pager.<command> set to true for each of those subcommands, each with the run's standard output on a
+pseudo-terminal; textconv and diff command drivers that
 info/attributes gives every path, and diff.external; an editor that core.editor names and one that
 sequence.editor names; and, in a partial clone made without blobs,
 the upload-pack program of its promisor remote. The dry run must pass with none of them run and the
@@ -313,18 +323,22 @@ driver run.
 
 1 more case, whose configuration names a hook folder, a core.fsmonitor program, an attributes file
 and the commands of 2 filter drivers, reads git's trace2 log of a run and requires every run of git
-that the script starts after the before snapshot, other than the reads of step 6, the exit
-cleanup's git worktree remove included, to run with core.hooksPath set to the null device and
-core.fsmonitor set to false, and each of them other than the first 3, which list the filter
-drivers, find the info/attributes file and name the empty tree before the attribute and filter
-settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, which sets
-its own, also to run with GIT_ATTR_NOSYSTEM set, GIT_ATTR_SOURCE set to the empty tree,
-core.attributesFile set to the null device and the commands of both configured filter drivers
-empty; every run of git, the reads of the 2 snapshots and the leak check included, must run with
-lazy fetching turned off; the reads must start no program, and the other runs no program other
-than git, and no automatic maintenance or fetch, although the case's gc.auto and maintenance.auto
-ask for it. The textconv and diff driver case passes against the script before these settings too,
-since no git call of the script runs a diff.
+that the script starts after the before snapshot, other than a run in the form of the reads of the
+2 snapshots or of the leak check, the exit cleanup's git worktree remove included, to run with
+core.hooksPath set to the null device and core.fsmonitor set to false, and each of them other than
+the first 3, which list the filter drivers, find the info/attributes file and name the empty tree
+before the attribute and filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE
+that names no tree, which sets its own, also to run with GIT_ATTR_NOSYSTEM set, GIT_ATTR_SOURCE set
+to the empty tree, core.attributesFile set to the null device and the commands of both configured
+filter drivers empty; every run of git, the reads of the 2 snapshots and the leak check included,
+must run with lazy fetching turned off; the reads must start no program, and the other runs no
+program other than git, and no automatic maintenance or fetch, although the case's gc.auto and
+maintenance.auto ask for it. A run in the form of those reads is a git symbolic-ref, rev-parse or
+for-each-ref given -C and the path of the main worktree first, or a git call given --contains; the
+case reads every such run as one of those reads, wherever the script makes it, so it does not show
+that the script makes such a call only in the 2 snapshots and the leak check. The textconv and diff
+driver case passes against the script before these settings too, since no git call of the script
+runs a diff.
 
 1 more case, the text case, compares 4 blocks that are repeated word for word, each run of
 whitespace read as 1 space: the residual, the remainder of the filter settings and the remainder of
@@ -355,8 +369,9 @@ session or timeout of its own: it runs in that process group, unless it leaves i
 with it.
 
 Residual of the test: stand-ins replace the packaging, the gates and the site rewrite, which the
-next step of release-dry-run.yml runs with the real tools, and the script runs with a git stand-in
-first on PATH and an environment that the test fixes, not those of that workflow. A change to the
+next step of release-dry-run.yml runs with the real tools, and the script runs with an environment
+that the test fixes, with a git stand-in first on PATH in the ref cases and a git wrapper there in
+some other cases, not with those of that workflow. A change to the
 script is caught only when it changes what a case observes, so a change that acts only outside the
 cases, such as one that tests for the stand-ins or for the workflow's environment, or that moves a
 ref no case writes or stops step 6 reading one, is not caught. The text case compares only the 4
@@ -755,10 +770,13 @@ def ignoring_git(folder: Path, env: dict) -> Path:
 
 def locale_recording_git(folder: Path, env: dict, log: Path, entries: Path) -> Path:
     """A folder holding a git wrapper that, on each git check-attr call not given --source, appends the
-    value of LC_ALL in its environment, or "unset", as a line of log, and, on each git show call, the
-    word show and then the name of each entry of TMPDIR that starts with tmp., each as a line of
-    entries, and runs git for every call."""
+    value of LC_ALL in its environment, or "unset", as a line of log, and the name of each entry of
+    TMPDIR that starts with tmp. as a line of folder/names; on each git show call, appends the word
+    show and then the name of each such entry, each as a line of entries, and then writes the line
+    later to a file of TMPDIR under each name that folder/names holds, as another process that mktemp
+    gives that name would; and runs git for every call."""
     folder.mkdir()
+    names = shlex.quote(str(folder / "names"))
     (folder / "git").write_text(
         "#!/bin/sh\n"
         "attr=no\n"
@@ -771,12 +789,18 @@ def locale_recording_git(folder: Path, env: dict, log: Path, entries: Path) -> P
         "done\n"
         "if [ \"${attr}\" = yes ] && [ \"${source}\" = no ]; then\n"
         f"  printf '%s\\n' \"${{LC_ALL-unset}}\" >> {shlex.quote(str(log))}\n"
+        "  for entry in \"${TMPDIR}\"/tmp.*; do\n"
+        f"    if [ -e \"${{entry}}\" ]; then printf '%s\\n' \"${{entry##*/}}\" >> {names}; fi\n"
+        "  done\n"
         "fi\n"
         "if [ \"${show}\" = yes ]; then\n"
         f"  printf 'show\\n' >> {shlex.quote(str(entries))}\n"
         "  for entry in \"${TMPDIR}\"/tmp.*; do\n"
         f"    if [ -e \"${{entry}}\" ]; then printf '%s\\n' \"${{entry##*/}}\" >> {shlex.quote(str(entries))}; fi\n"
         "  done\n"
+        f"  if [ -e {names} ]; then\n"
+        "    while IFS= read -r entry; do printf 'later\\n' > \"${TMPDIR}/${entry}\"; done < " + names + "\n"
+        "  fi\n"
         "fi\n"
         f"exec {shlex.quote(real_git(env))} \"$@\"\n", encoding="utf-8")
     (folder / "git").chmod(0o755)
@@ -1315,7 +1339,7 @@ class FailClosedCases(unittest.TestCase):
             self.assertIn("wrapper: refused refs/tags", err)
             self.assert_stops(code, out, err, "release-dry-run: could not list the tags and notes", True)
             self.assertEqual(sum("refs/tags" in call.split() for call in git_log(wrapper)), 2,
-                             "the tag and note listing was not read exactly twice")
+                             "the tag and note listing was not read exactly 2 times")
             self.assert_ends_at(wrapper, nth_call("refs/tags", 2))
 
     def test_a_leak_check_that_git_refuses_fails(self):
@@ -1421,7 +1445,9 @@ class FailClosedCases(unittest.TestCase):
     def test_the_attribute_source_check_runs_in_the_c_locale(self):
         # The caller's environment names a locale other than C, in which a git with a translation of its
         # messages would translate its refusal; the check must still run with LC_ALL set to C, and the
-        # run must pass.
+        # run must pass. Once the script has removed the file of its check, the wrapper makes a file
+        # under that name, as another process that mktemp gives the name would, and the run must leave
+        # that file in place, so the script must clear the name of the file it has removed.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             env = {key: value for key, value in fixture.env.items() if key != "LC_ALL"}
@@ -1436,8 +1462,14 @@ class FailClosedCases(unittest.TestCase):
             self.assertEqual(entries.read_text(encoding="utf-8").splitlines() if entries.exists() else [], ["show"],
                              "the file of the check of GIT_ATTR_SOURCE was still in TMPDIR when the script read the "
                              "version, or the script did not read it once")
-            self.assertEqual(temporary_files(fixture.tmp), [],
-                             "the run left the file of its check of GIT_ATTR_SOURCE, or its worktree, in TMPDIR")
+            names = (wrapper / "names").read_text(encoding="utf-8").splitlines() if (wrapper / "names").exists() else []
+            self.assertEqual(len(names), 1, f"TMPDIR did not hold 1 entry that mktemp names, the file of the check, "
+                             f"while the check ran: {names}")
+            self.assertEqual(temporary_files(fixture.tmp), names,
+                             "the run removed the file made later under the name of the file of its check of "
+                             "GIT_ATTR_SOURCE, or left that file or its worktree in TMPDIR")
+            self.assertEqual((fixture.tmp / names[0]).read_text(encoding="utf-8"), "later\n",
+                             "the file made later under the name of the file of the check was changed")
 
     def test_an_info_attributes_file_that_cannot_be_read_fails(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1823,13 +1855,22 @@ class ConfiguredProgramCases(unittest.TestCase):
             self.assert_none_ran(fixture, env, log)
 
     def test_no_pager_runs_on_a_terminal(self):
-        with tempfile.TemporaryDirectory() as name:
-            fixture = Fixture(Path(name))
-            log = fixture.tmp / "programs-ran"
-            pager = recorder(fixture.tmp / "pager", "pager", log)
-            env = configured(fixture.env, {f"pager.{command}": pager for command in SUBCOMMANDS})
-            self.probe(fixture, env, log, [["git", "add", "file"]], {"pager"}, on_terminal=True)
-            self.assert_none_ran(fixture, env, log, on_terminal=True)
+        # A pager that pager.<command> names for each subcommand that the script runs, and, in a second
+        # run, one that core.pager names, with pager.<command> set to true for each of them, so that git
+        # pages each of them with the pager that core.pager names.
+        for where in ("pager.<command>", "core.pager"):
+            with self.subTest(where=where), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                log = fixture.tmp / "programs-ran"
+                pager = recorder(fixture.tmp / "pager", "pager", log)
+                if where == "core.pager":
+                    settings = {f"pager.{command}": "true" for command in SUBCOMMANDS}
+                    settings["core.pager"] = pager
+                else:
+                    settings = {f"pager.{command}": pager for command in SUBCOMMANDS}
+                env = configured(fixture.env, settings)
+                self.probe(fixture, env, log, [["git", "add", "file"]], {"pager"}, on_terminal=True)
+                self.assert_none_ran(fixture, env, log, on_terminal=True)
 
     def test_no_textconv_or_diff_driver_runs(self):
         with tempfile.TemporaryDirectory() as name:
@@ -1993,15 +2034,18 @@ class ConfiguredProgramCases(unittest.TestCase):
 
     def test_every_git_call_runs_with_the_programs_turned_off(self):
         # git's trace2 log records, for each run of git, the settings it runs with and the programs it
-        # starts. Every run of git that the script starts after the before snapshot, other than the reads
-        # of step 6, must run with hooks and the core.fsmonitor program turned off and lazy fetching
+        # starts. Every run of git that the script starts after the before snapshot, other than a run in
+        # the form of the reads of the 2 snapshots or of the leak check, which is a git symbolic-ref,
+        # rev-parse or for-each-ref given -C and the path of the main worktree first, or a git call given
+        # --contains, wherever the script makes it, must run with hooks and the core.fsmonitor program
+        # turned off and lazy fetching
         # turned off, the exit cleanup's git worktree remove included, and start no program other than
         # git, and no automatic maintenance or fetch; each such run other than the first 3, which list the
         # filter drivers, find the info/attributes file and name the empty tree before the attribute and
         # filter settings exist, and the check that git refuses a GIT_ATTR_SOURCE that names no tree, must
         # also run with GIT_ATTR_NOSYSTEM, GIT_ATTR_SOURCE set to the empty tree, core.attributesFile set
-        # to the null device and both configured filter drivers turned off. The reads of the 2 snapshots
-        # and the leak check must run with lazy fetching turned off and start no program.
+        # to the null device and both configured filter drivers turned off. Every run in the form of those
+        # reads must run with lazy fetching turned off and start no program.
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             trace = fixture.tmp / "trace2"

@@ -17,7 +17,11 @@
 # worktree (the branch HEAD names and the commit HEAD resolves to), and that
 # no ref that git for-each-ref lists from the script's worktree contains the
 # dry-run commit, read with replace refs, the graft file and the shallow file
-# turned off. A ref that another worktree writes during the run fails the
+# turned off. In a shallow clone that reading finds the parents of a commit at
+# the shallow boundary missing, and the leak check can then name a ref that
+# does not contain the dry-run commit and so fail the run;
+# release-dry-run.yml checks out the whole history, so its run is not
+# shallow. A ref that another worktree writes during the run fails the
 # proof only when it is a tag or a note, when it is the HEAD of the script's
 # worktree or the branch that worktree has checked out, or when it is such a
 # listed ref created or moved onto the dry-run commit or a descendant of it;
@@ -146,8 +150,10 @@ ref_snapshot() {
 # off, and the graft file and the shallow file are each set to an empty path,
 # which git reads as no file, so no refs/replace/ ref, graft or shallow
 # boundary can give a descendant of COMMIT other parents and hide a ref that
-# contains it. A failing git call fails the run and is never read as an empty
-# listing.
+# contains it. In a shallow clone, git then finds the parents of a commit at
+# the shallow boundary missing, and it can list a ref that does not contain
+# COMMIT, so there the run can fail naming refs that do not contain it. A
+# failing git call fails the run and is never read as an empty listing.
 ref_leak_check() {
   local holders
   holders="$(GIT_GRAFT_FILE='' git -C "${repo_root}" --no-replace-objects --shallow-file '' \
@@ -287,12 +293,16 @@ empty_tree="$(git "${git_off[@]}" hash-object -t tree --stdin < /dev/null)" \
 export GIT_ATTR_NOSYSTEM=1 GIT_ATTR_SOURCE="${empty_tree}"
 export_settings core.attributesFile=/dev/null
 turn_off_filters "${filter_drivers}${attributes_drivers}"
-# The exit cleanup is the one path that removes what the run leaves in TMPDIR:
-# the temporary file of the check of GIT_ATTR_SOURCE below, while it exists,
-# and the throwaway worktree, once it exists. It is set before either exists,
-# and bash runs it on every exit of the run from here on, an exit through fail
-# or one that a signal such as HUP, INT or TERM causes included; a signal that
-# no trap can catch, such as KILL, leaves both behind.
+# The exit cleanup is the only path that tries to remove what the run leaves in
+# TMPDIR: the temporary file of the check of GIT_ATTR_SOURCE below, while the
+# script holds its name, and the throwaway worktree, once the script holds the
+# name of its folder. It is set before either exists, and bash runs it on every
+# exit of the run from here on, an exit through fail or one that a signal such
+# as HUP, INT or TERM causes included. A removal that fails there leaves its
+# entry behind. A signal that no trap can catch, such as KILL, leaves both
+# behind, and a signal that ends the run after mktemp has made the file or the
+# folder and before the script holds its name leaves that entry behind, since
+# the exit cleanup then has no name to remove.
 attr_source_log=""
 worktree=""
 cleanup() {
@@ -320,9 +330,11 @@ trap cleanup EXIT
 # in a shell variable, since a command substitution drops every NUL byte and
 # every newline at the end of what it captures. On a failure the file is
 # shown through cat -v, which shows a NUL byte as ^@ and a carriage return as
-# ^M, and the file is removed before the run goes on or fails, or by the exit
-# cleanup above on any other exit, such as one that a signal causes while git
-# runs.
+# ^M. The run removes the file before it goes on or fails, and then clears its
+# name, so that the exit cleanup cannot remove a file that another process
+# makes later under that name; the exit cleanup above tries to remove it on any
+# other exit once the script holds its name, such as one that a signal causes
+# while git runs.
 attr_source_log="$(mktemp)" \
   || fail "could not make a temporary file for the standard error of the check of GIT_ATTR_SOURCE"
 attr_source_rc=0
