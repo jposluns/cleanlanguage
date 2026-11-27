@@ -31,17 +31,20 @@ that holds no at sign costs 1 search for it.
 The alphabetic last label keeps out text such as an action pinned to a plain version tag, whose
 last label starts with a digit, or to a 40-character commit, whose domain part holds no dot.
 
-A candidate is exempt when, folded to lower case:
+Exemptions. 2 exemptions, each tested on a candidate folded to lower case, so each holds in any
+letter case:
 
-1. It is exactly the maintainer's own address, MAINTAINER. This covers the security contact in
-   site/.well-known/security.txt, the plugin metadata, the security-txt checker and its tests,
-   and the mixed-case form in the vendored specification.
-2. Its domain is reserved for documentation: its last label is in RESERVED_LAST_LABELS, or the
-   domain is, or ends with a dot and then, 1 of RESERVED_DOMAINS.
+1. The candidate is exactly the maintainer's own email address, MAINTAINER. This covers the
+   security contact in site/.well-known/security.txt, the plugin metadata, the security-txt
+   checker and its tests, and the mixed-case form in the vendored specification.
+2. The domain of the candidate is reserved for documentation: its last label is invalid, test,
+   or example (RESERVED_LAST_LABELS), or it is, or ends with a dot and then, example.com,
+   example.org, or example.net (RESERVED_DOMAINS).
 
-An at sign is a hit when 1 or more of its candidates is not exempt; it is reported 1 time. So an
-address at a reserved domain passes only when every candidate of its at sign is exempt: each
-shorter domain that its domain run ends must be reserved as well. A hit
+An at sign passes only when every candidate that the scan reads at it is exempt, under either
+exemption, so an address passes only when each shorter domain that it holds, ending after 2 or
+more letters that follow a dot, gives an exempt candidate as well. An at sign with 1 or more
+candidates that are not exempt is a hit, reported 1 time. A hit
 passes when its line is in ALLOWLIST, the reviewed set of exact line texts, by file, for
 email-shaped text that is no address. An allowlist entry that is not the exact text of a line of
 its file that holds a hit is a failure, so the allowlist cannot silently go stale.
@@ -61,7 +64,9 @@ the hit, and the first 16 hexadecimal digits of the sha256 of the hit, the longe
 its at sign that is not exempt. It never holds the text of the hit or of its line, and it names
 a path whose name holds a hit only by the digest of that name, so this suite copies no address
 that it catches, in a file or in a path name, into the CI log. A stale allowlist entry is named
-by its file, its position, and the same digest of its text.
+by its file, its position, and the same digest of its text. On a red run, the tree case prints
+every failure in full, 1 to a line after a count, and never through a list comparison, which
+unittest shortens when it is long, so no failure is dropped from the CI log.
 
 It fails closed: a git ls-files that fails, that cannot be started, or that lists no path, and a
 listed file that is missing or cannot be read, are failures, never a skip. Each such failure is a
@@ -77,32 +82,48 @@ symbolic link and a submodule, is not read.
 
 Each caught example in the self-checks below is assembled at run time from parts, so this file's
 own source holds no text that candidates() takes as a candidate and the suite needs no entry for
-itself. Each expected digest in the self-checks is computed in the case with hashlib.sha256 and
-its first 16 hexadecimal digits, never with digest(), so a change to digest() or to its length,
-such as 1 that copies the hit in hexadecimal, fails a case.
+itself. The expected digests of the self-checks come from 3 sources, none of them digest(): a
+known-answer literal, the first 16 hexadecimal digits of the sha256 of the bytes abc, which the
+digest case compares with both sha256_prefix() and digest(); sha256_prefix(), the
+expected-digest helper, which takes the first 16 hexadecimal digits of hashlib.sha256 and gives
+every other expected digest but 1; and that 1, which the digest case computes in its own body
+with hashlib.sha256. So a change to digest() or to its length, such as 1 that copies the hit in
+hexadecimal, fails a case.
 
-Residual: the email class only. A seat label, a bare account handle, or a numeric account
-identifier passes, since a committed pattern that names a real label would itself publish it. An
-address split across lines, assembled by code, or written with the word "at" passes; an
-untracked file, the target of a tracked symbolic link, the content of a submodule, and an address
-inside compressed or encoded binary content pass; an at sign outside ASCII, such as a confusable
-like the fullwidth or the small commercial at sign, passes; an at sign written as an HTML
-character reference, such as the decimal or the named form, or percent-encoded, passes, since
-only the byte of the ASCII at sign is searched; an address whose local part ends, right before
-the at sign, in a byte that the local part does not name, such as a letter outside ASCII, a
-tilde, an exclamation mark, or an apostrophe, passes, since its local part is then empty; an
-address with a quoted local part, with a domain written with letters outside ASCII or as a
-literal in square brackets, with an underscore in its domain, or with a dot of its domain written
-as an HTML character reference or percent-encoded, can pass, since a byte that the runs above do
-not name ends a run; a surface that is not a file in this tree, such as a pull request title,
-description, or comment, is not reached, and tools/check-pr-text.py carries no identifier pattern
-today. The digest of a hit or of a path name lets a reader who already holds a guess of the
-address confirm the guess; it does not reveal the address. A path name is held back only from the
-output of this suite: git, and any other step of a workflow that lists or names files, can still
-print it. On a red run, unittest also prints a traceback for each failed case, which holds the
-absolute path of this file in the checkout, and a failed self-check can print the values that it
-compared, the path of its temporary folder among them, so a checkout path or a temporary folder
-path that holds an address reaches the CI log.
+Residual: the scan catches the email class only. A seat label, a bare account handle, or a
+numeric account identifier passes it, because a committed pattern that names a real label would
+itself publish the label; those forms rest on the rule, on the standing line that every QA and
+drafting brief carries, and on any scan the maintainer keeps outside the repository. An address
+split across lines, assembled by code, or written with the word "at" passes; an untracked file,
+the target of a tracked symbolic link, and the content of a submodule are not read; an address
+inside compressed or encoded binary content passes, since the scan neither decompresses nor
+decodes, unless that content holds the address as it is; an at sign outside ASCII, such as a
+confusable like the fullwidth or the small commercial at sign, passes, and so does an at sign
+written as an HTML character reference, such as the decimal or the named form, or
+percent-encoded, since only the byte of the ASCII at sign is searched; an address whose local
+part ends, right before the at sign, in a byte that the local part does not name, such as a
+letter outside ASCII, a tilde, an exclamation mark, or an apostrophe, passes, since its local
+part is then empty; an address with a quoted local part, with a domain written with letters
+outside ASCII or as a literal in square brackets, with an underscore in its domain, or with a dot
+of its domain written as an HTML character reference or percent-encoded, can pass, since a byte
+that the runs above do not name ends a run; a surface that is not a file in this tree, such as a
+pull request title, description, or comment, is not reached, and tools/check-pr-text.py carries
+no identifier pattern today. The digest of a hit or of a path name lets a reader who already
+holds a guess of the address confirm the guess; it does not reveal the address. A path name is
+held back only from the output of this suite: git, and any other step of a workflow that lists
+or names files, can still print it. On a red run, unittest also prints a traceback for each
+failed case, which holds the absolute path of this file in the checkout, and a failed self-check
+can print the values that it compared, the path of its temporary folder among them, so a
+checkout path or a temporary folder path that holds an address reaches the CI log. A label that
+leaked into the history of an older pull request and was removed later is held for the
+maintainer and is out of scope for this rule's enforcement. Each form of text and each place
+that this residual names as passing or not read is pinned by a case below; a surface that is
+not a file in this tree is outside the input of the suite, so no case pins it. The cases:
+test_each_residual_text_form_gives_no_candidate,
+test_compressed_or_encoded_content_gives_no_candidate, test_an_untracked_file_is_not_read,
+test_the_target_of_a_tracked_symbolic_link_is_not_read, and
+test_the_content_of_a_submodule_is_not_read.
+
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
 or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
@@ -115,13 +136,19 @@ unless every domain that the tag ends is exempt, as in v1.2.3-pre.test.1, whose 
 reserved last label, or v1.0.0-rc.example.com, while a tag whose every dot is followed by a
 digit, such as v1.2.3-rc.1, passes.
 """
+import base64
+import bz2
 import errno
+import gzip
 import hashlib
+import io
+import lzma
 import os
 import subprocess
 import tempfile
 import time
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -345,8 +372,10 @@ def caught(local, domain):
 def sha256_prefix(data):
     """The expected digest of the bytes data, from hashlib directly and never from digest().
 
-    The cases build every expected digest with this, so a change to digest(), to DIGEST_DIGITS,
-    or to what a failure names fails a case rather than changing the expected text with it.
+    The cases build their expected digests with this, apart from the known-answer literal and
+    the 1 direct hashlib.sha256 check of the digest case, so a change to digest(), to
+    DIGEST_DIGITS, or to what a failure names fails a case rather than changing the expected text
+    with it.
     """
     return hashlib.sha256(data).hexdigest()[:16]
 
@@ -388,19 +417,35 @@ class PatternSelfCheck(unittest.TestCase):
         address = caught("worker-label-example", self.PLACEHOLDER_DOMAIN).encode("ascii")
         self.assertEqual(self.digests(address.decode("ascii")), [hashlib.sha256(address).hexdigest()[:16]])
 
-    def test_each_stated_residual_form_gives_no_candidate(self):
-        # The forms that the residual states pass, pinned so that a change to any of them meets
-        # the residual: an at sign outside ASCII, an at sign written as a character reference or
-        # percent-encoded, a local part that ends right before the at sign in a byte that it does
-        # not name, a domain literal, an underscore in the domain, and a dot of the domain written
-        # as a character reference or percent-encoded. The control with a plain at sign is caught.
+    def test_each_residual_text_form_gives_no_candidate(self):
+        """Each form of text that the residual states passes gives no candidate.
+
+        The set, each assembled at run time: a bare account handle or label and a numeric
+        account identifier; an address split across lines, assembled by code, or written with
+        the word at; an at sign outside ASCII, the fullwidth and the small commercial at sign;
+        an at sign written as a decimal, hexadecimal, or named character reference or
+        percent-encoded; a local part that ends right before the at sign in a letter outside
+        ASCII, a tilde, an exclamation mark, or an apostrophe; a quoted local part; a domain
+        written with letters outside ASCII or as a literal in square brackets; an underscore in
+        the domain; and a dot of the domain written as a decimal, hexadecimal, or named character
+        reference or percent-encoded. The control, the same address written plainly, is caught.
+        """
         local = "worker-label-example"
         domain = self.PLACEHOLDER_DOMAIN
         self.assertEqual(len(hits_in(caught(local, domain).encode("ascii"))), 1)
-        for text in (local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain,
-                     local + "&#" + "64;" + domain, local + "&com" + "mat;" + domain,
-                     local + "%" + "40" + domain, "jos" + chr(233) + "@" + domain,
+        for text in (local, "0123456789" + "01",
+                     local + "\n" + "@" + domain, caught(local, "\n" + domain),
+                     caught(local, "placeholder-mail" + "\n" + "." + "com"),
+                     "\"" + local + "\" + \"" + "@" + "\" + \"" + domain + "\"",
+                     local + " at " + domain, local + " [at] " + domain, local + " (at) " + domain,
+                     local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain,
+                     local + "&#" + "64;" + domain, local + "&#x" + "40;" + domain,
+                     local + "&com" + "mat;" + domain, local + "%" + "40" + domain,
+                     "jos" + chr(233) + "@" + domain,
                      "a~" + "@" + domain, "a!" + "@" + domain, "a'" + "@" + domain,
+                     "\"" + local + "\"" + "@" + domain, "\"worker label\"" + "@" + domain,
+                     caught(local, "plac" + chr(233) + "holder" + "." + "com"),
+                     caught(local, chr(252) + "ber" + "." + "com"),
                      caught(local, "[192.0.2.1]"), caught(local, "placeholder_mail" + "." + "com"),
                      caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
                      caught(local, "placeholder-mail" + "&#x" + "2E;" + "com"),
@@ -408,6 +453,28 @@ class PatternSelfCheck(unittest.TestCase):
                      caught(local, "placeholder-mail" + "%" + "2E" + "com")):
             with self.subTest(text=text):
                 self.assertEqual(candidates(text.encode("utf-8")), [])
+
+    def test_compressed_or_encoded_content_gives_no_candidate(self):
+        """An address inside compressed or encoded binary content gives no candidate.
+
+        The set: zlib, gzip, bz2, and lzma compression, and base64, hexadecimal, UTF-16, and
+        UTF-32 encoding of 8 lines that each hold an address. The control: those lines, before
+        they are compressed or encoded, give 8 hits, and no form holds a line as it is. Content
+        that holds the address as it is, such as a block that lzma stores uncompressed when it
+        cannot shrink it, is caught; the lines repeat so that each compressor shrinks them.
+        """
+        line = ("contact " + caught("worker-label-example", self.PLACEHOLDER_DOMAIN) + "\n").encode("ascii")
+        plain = line * 8
+        self.assertEqual(len(hits_in(plain)), 8)
+        for name, data in (("zlib", zlib.compress(plain)), ("gzip", gzip.compress(plain, mtime=0)),
+                           ("bz2", bz2.compress(plain)), ("lzma", lzma.compress(plain)),
+                           ("base64", base64.b64encode(plain)), ("hex", plain.hex().encode("ascii")),
+                           ("utf-16", plain.decode("ascii").encode("utf-16")),
+                           ("utf-16-be", plain.decode("ascii").encode("utf-16-be")),
+                           ("utf-32", plain.decode("ascii").encode("utf-32"))):
+            with self.subTest(form=name):
+                self.assertNotIn(line, data)
+                self.assertEqual(candidates(data), [])
 
     def test_an_exempt_candidate_hides_no_other(self):
         # A prefix, an at sign, a dotted local part that ends in a reserved label, a 2nd at sign,
@@ -885,13 +952,92 @@ class FixtureRepository(unittest.TestCase):
         self.git("update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",sub")
         self.assertEqual(scan(self.root, {}), ([], 1))
 
+    def address_line(self):
+        """A line that holds an address assembled at run time, and the expected digest of its hit."""
+        address = caught("worker-label-example", "placeholder-mail" + "." + "com")
+        line = ("x " + address + "\n").encode("ascii")
+        self.assertEqual(len(hits_in(line)), 1)
+        return line, sha256_prefix(address.encode("ascii"))
+
+    def test_an_untracked_file_is_not_read(self):
+        """An address-bearing file that git does not list passes; the control: once added, it fails."""
+        line, hit = self.address_line()
+        self.add("tracked.txt", "text\n")
+        (self.root / "untracked.txt").write_bytes(line)
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.git("add", "--", "untracked.txt")
+        self.assertEqual(scan(self.root, {}), (["untracked.txt:1: email-shaped text, sha256 " + hit], 2))
+
+    def test_the_target_of_a_tracked_symbolic_link_is_not_read(self):
+        """A tracked link to an address-bearing file outside the repository passes.
+
+        The control: the same file, tracked in the repository, fails.
+        """
+        line, hit = self.address_line()
+        target = Path(self.tmp.name) / "outside.txt"
+        target.write_bytes(line)
+        self.add("real.txt", "text\n")
+        os.symlink(str(target), self.root / "link.txt")
+        self.git("add", "--", "link.txt")
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.add("copy.txt", line.decode("ascii"))
+        self.assertEqual(scan(self.root, {}), (["copy.txt:1: email-shaped text, sha256 " + hit], 2))
+
+    def test_the_content_of_a_submodule_is_not_read(self):
+        """A submodule whose checkout holds an address-bearing file passes.
+
+        The control: the same file, tracked in the repository, fails.
+        """
+        line, hit = self.address_line()
+        self.add("real.txt", "text\n")
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "note.txt").write_bytes(line)
+        self.git("update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",sub")
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.add("copy.txt", line.decode("ascii"))
+        self.assertEqual(scan(self.root, {}), (["copy.txt:1: email-shaped text, sha256 " + hit], 2))
+
+    def test_a_red_tree_case_prints_every_failure_in_full(self):
+        """The tree case, run on a repository with more failures than unittest shows in a diff.
+
+        The failures, as a list, are longer than the default diff limit of unittest, so a list
+        comparison would shorten them. The output of the run must hold every failure that the
+        scan returns as a whole line, and no address.
+        """
+        line, _ = self.address_line()
+        for index in range(40):
+            self.add("f{:02d}.txt".format(index), line.decode("ascii"))
+        failures, read = scan(self.root, {})
+        self.assertEqual((len(failures), read), (40, 40))
+        self.assertGreater(len(repr(failures)), unittest.TestCase.maxDiff)
+        stream = io.StringIO()
+        tree_case = unittest.defaultTestLoader.loadTestsFromTestCase(NoWorkerIdentifiersInTree)
+        with mock.patch.dict(globals(), {"ROOT": self.root, "ALLOWLIST": {}}):
+            result = unittest.TextTestRunner(stream=stream, verbosity=0).run(tree_case)
+        self.assertEqual((result.testsRun, len(result.failures), len(result.errors)), (1, 1, 0))
+        lines = stream.getvalue().splitlines()
+        self.assertIn("AssertionError: 40 failure(s) in 40 files read:", lines)
+        dropped = [failure for failure in failures if failure not in lines]
+        self.assertEqual(len(dropped), 0, "{} of {} failures dropped".format(len(dropped), len(failures)))
+        self.assert_no_address(lines)
+
+
+def tree_report(failures, read):
+    """The message of a red tree case: a count, then every failure in full, 1 to a line."""
+    return "\n".join(["{} failure(s) in {} files read:".format(len(failures), read)] + failures)
+
 
 class NoWorkerIdentifiersInTree(unittest.TestCase):
-    """Every tracked file of this repository holds no hit outside the allowlist."""
+    """Every tracked file of this repository holds no hit outside the allowlist.
+
+    A red run prints every failure through tree_report(), never through a list comparison,
+    which unittest shortens when it is long.
+    """
 
     def test_every_tracked_file(self):
         failures, read = scan(ROOT, ALLOWLIST)
-        self.assertEqual(failures, [], "{} failure(s) in {} files read".format(len(failures), read))
+        if failures:
+            self.fail(tree_report(failures, read))
         self.assertGreater(read, 0)
 
 

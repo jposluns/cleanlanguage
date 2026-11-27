@@ -11,16 +11,24 @@ every regular file that git ls-files lists (a tracked symbolic link
 and a submodule are not read) and the name of every path it lists,
 and takes every candidate address around every at sign, so an exempt
 candidate cannot hide another, with work that grows linearly with the
-file. The maintainer's own address is exempt, and so is an address at
-a reserved documentation domain when every candidate of its at sign
-is exempt. 1 exact-line allowlist entry covers the URL-userinfo
-fixture in tools/test-release-links.py; a stale entry fails. A
-failure names the file, the line number, and a digest of the match,
-never its text, and names a path whose name holds a match only by a
-digest of the path name. A failed git call, a git that cannot start,
-an empty listing, a missing file, or an unreadable file fails closed.
-Each caught example in the suite is assembled at run time, so its
-source holds no matchable text.
+file. 2 exemptions, each tested on a candidate folded to lower case,
+so each holds in any letter case: (1) the candidate is exactly the
+maintainer's own email address; (2) the domain of the candidate is
+reserved for documentation: its last label is invalid, test, or
+example, or it is, or ends with a dot and then, example.com,
+example.org, or example.net. An at sign passes only when every
+candidate that the scan reads at it is exempt, under either
+exemption, so an address passes only when each shorter domain that it
+holds, ending after 2 or more letters that follow a dot, gives an
+exempt candidate as well. 1 exact-line allowlist entry covers the
+URL-userinfo fixture in tools/test-release-links.py; a stale entry
+fails. A failure names the file, the line number, and a digest of the
+match, never its text, and names a path whose name holds a match only
+by a digest of the path name; a red run prints every failure in full.
+A failed git call, a git that cannot start, an empty listing, a
+missing file, or an unreadable file fails closed. Each caught example
+in the suite is assembled at run time, so its source holds no
+matchable text.
 
 Run the suite as a named step of the Orchestration registry workflow,
 name it in the header of that workflow, mirror it in
@@ -30,4 +38,6 @@ tools/test-run-all-checks.py, which pins it.
 Residual: the check covers the email class only. Seat labels, bare
 handles, and numeric account identifiers rest on the rule itself, and
 a surface that is not a file, such as a pull request description, is
-not reached.
+not reached. The full residual list, with each form that passes and
+each place that is not read, is in the rule,
+.claude/rules/external/no-worker-identifiers.md.
