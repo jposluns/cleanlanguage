@@ -3160,8 +3160,9 @@ READER_SHA256 = {
 # Check 7: the fields of the syntax tree that hold a string but bind or declare no name, each as the name of the class
 # of its node and of the field: an attribute, the kind and the value of a constant, the source text of an
 # interpolation, the keywords of a class pattern, the tag of a type: ignore comment and the keyword of a call.
-# binding_sites() reads each other string that a node holds, but in a type comment, as a name that the node binds or
-# declares, so that it fails closed: an entry left out here makes it find more, not less.
+# binding_sites() reads each other string that a node other than an import or its aliases holds, but in a type comment,
+# as a name that the node binds or declares, so that it fails closed: an entry left out here makes it find more, not
+# less. Of an import it reads only the names that its aliases bind, not the module of a from import.
 UNBOUND_FIELDS = frozenset({("Attribute", "attr"), ("Constant", "kind"), ("Constant", "value"),
                             ("Interpolation", "str"), ("MatchClass", "kwd_attrs"), ("TypeIgnore", "tag"),
                             ("keyword", "arg")})
@@ -3170,11 +3171,11 @@ UNBOUND_FIELDS = frozenset({("Attribute", "attr"), ("Constant", "kind"), ("Const
 def binding_sites(tree: ast.Module) -> dict[str, list[int]]:
     """Each name that the source of tree binds or declares anywhere, at any depth and in any scope, with the line of
     each node that does, found by walking the whole syntax tree: a name node that is not read (ast.Load), the name
-    that an import binds for each of its aliases (its asname, or else the 1st part of its dotted name), and each other
-    string that a node holds in a field, or in a list in a field, other than a type comment and the fields of
-    UNBOUND_FIELDS. So each kind of node that binds or declares a name, a def, a class, a parameter, a type parameter,
-    an except handler, a match capture and a global or a nonlocal statement among them, is found with no branch of
-    its own."""
+    that an import binds for each of its aliases (its asname, or else the 1st part of its dotted name), and no other
+    field of an import or an alias, such as the module of a from import, and each other string that a node holds in a
+    field, or in a list in a field, other than a type comment and the fields of UNBOUND_FIELDS. So each kind of node
+    that binds or declares a name, a def, a class, a parameter, a type parameter, an except handler, a match capture
+    and a global or a nonlocal statement among them, is found with no branch of its own."""
     found: dict[str, list[int]] = collections.defaultdict(list)
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
@@ -3463,16 +3464,17 @@ def ends_its_line(source: bytes, statement: ast.stmt) -> bool:
     return False
 
 
-def kept_statements(source: bytes, result: bytes, ordered: bool) -> None:
+def kept_statements(source: bytes, result: bytes) -> None:
     """Raise ValueError unless result parses and holds the statements at the top level of source, as ast.dump() gives
-    each with no positions, each as many times as source holds it, and, if ordered, in the same order, so that a builder
-    of a base gate drops, repeats or changes no statement, and so no binding, of source."""
+    each with no positions, each as many times as source holds it, in any order, so that a builder of a base gate
+    drops, repeats or changes no statement, and so no binding, of source, even a statement that source also holds
+    elsewhere."""
     try:
         made = [ast.dump(statement) for statement in ast.parse(result).body]
     except SyntaxError as error:
         raise ValueError(f"the rewritten source does not parse: {error!r}") from None
     held = [ast.dump(statement) for statement in ast.parse(source).body]
-    if (made != held) if ordered else (sorted(made) != sorted(held)):
+    if sorted(made) != sorted(held):
         raise ValueError("the rewritten source drops, repeats or changes a statement of the source")
 
 
@@ -3486,10 +3488,10 @@ def pin_shared_gate(source: bytes) -> bytes:
     import (other_binding()); unless those of PIN_NEIGHBOURS stand alone on their lines; unless the logical line of
     the statement of PIN_NAME ends on its line (ends_its_line()), so that a statement after it that a backslash
     continuation carries onto the next line, like any other continuation of that logical line, is refused; and unless
-    the result holds the statements of source (kept_statements(), in any order), so that a statement after that of
-    PIN_NAME on its line, which the comment would take in, is refused, not dropped. A statement before that of
-    PIN_NAME on its line is accepted and kept, unless a rule above refuses it: a statement of PIN_NEIGHBOURS there,
-    for example, does not stand alone on its line."""
+    the result holds the statements of source (kept_statements()), so that a statement after that of PIN_NAME on its
+    line, which the comment would take in, is refused, not dropped, even where source holds the same statement
+    elsewhere. A statement before that of PIN_NAME on its line is accepted and kept, unless a rule above refuses it: a
+    statement of PIN_NEIGHBOURS there, for example, does not stand alone on its line."""
     tree = ast.parse(source)
     found = {}
     for name in (PIN_NAME, *PIN_NEIGHBOURS):
@@ -3520,7 +3522,7 @@ def pin_shared_gate(source: bytes) -> bytes:
     for name in PIN_NEIGHBOURS:
         rows[found[name].lineno - 1] = b"\n"
     result = b"".join(rows)
-    kept_statements(source, result, ordered=False)
+    kept_statements(source, result)
     return result
 
 
@@ -3533,9 +3535,9 @@ def pin_reflowed_gate(source: bytes) -> bytes:
     by any node that binding_sites() reads as a binding, and holds no star import (other_binding()); unless the
     logical line of that statement ends on its line (ends_its_line()), so that a statement after it that a backslash
     continuation carries onto the next line, like any other continuation of that logical line, is refused; and unless
-    the result holds the statements of source in the same order (kept_statements()), so that a statement after that
-    of PIN_NAME on its line, which the comment would take in, is refused, not dropped. A statement before that of
-    PIN_NAME on its line is accepted and kept, unless a rule above refuses it."""
+    the result holds the statements of source (kept_statements()), so that a statement after that of PIN_NAME on its
+    line, which the comment would take in, is refused, not dropped, even where source holds the same statement
+    elsewhere. A statement before that of PIN_NAME on its line is accepted and kept, unless a rule above refuses it."""
     tree = ast.parse(source)
     statements = top_statements(tree, PIN_NAME)
     if (len(statements) != 1 or not isinstance(statements[0], ast.Assign) or not sole_binding(statements[0], PIN_NAME)
@@ -3553,7 +3555,7 @@ def pin_reflowed_gate(source: bytes) -> bytes:
     tail = sum(map(len, rows[:statement.end_lineno - 1])) + statement.end_col_offset
     result = (source[:head] + f"{PIN_NAME} = (\n    {value}\n)  # reflowed by pin_reflowed_gate()".encode("utf-8")
               + source[tail:])
-    kept_statements(source, result, ordered=True)
+    kept_statements(source, result)
     return result
 
 
@@ -3572,11 +3574,13 @@ def pin_value_problems() -> list[str]:
     ValueError on each source given them here that their docstrings refuse, among them an unpacking assignment to
     PIN_NAME, statements that 2 of the 3 names of PIN_NAME and PIN_NEIGHBOURS share, a statement in which an
     assignment expression binds another name, a statement of PIN_NAME on 2 lines, a statement after that of PIN_NAME
-    on its line or carried onto the next line by a backslash continuation, a statement of PIN_NEIGHBOURS before that
-    of PIN_NAME on its line, a 2nd binding or declaration of each name that the builder moves or reflows by each of
-    the 18 kinds of second_bindings, which give each field that binding_sites() reads as a binding a source of its
-    own, but the names of a nonlocal statement, which needs another binding of its name, and a star import; and
-    unless each gives the
+    on its line or carried onto the next line by a backslash continuation, a statement after that of PIN_NAME on its
+    line that the source also holds before it, an import of a name that pin_shared_gate() moves with another name, a
+    statement of PIN_NEIGHBOURS before that of PIN_NAME on its line, a 2nd binding or declaration of each name that
+    the builder moves or reflows by each of the 19 kinds of second_bindings, which give each field that
+    binding_sites() reads as a binding a source of its own, and on the line of its statement, inside it and, for
+    PIN_NAME, before it, and a star import; unless sole_binding() takes an annotated assignment with a value to the
+    name alone; and unless each gives the
     layout of its docstring (below) for each source given it here that its docstring accepts, among them an import, an
     augmented assignment and, for each builder, a statement before that of PIN_NAME on its line; and unless, on each
     of 3 base gates, the committed gate, pin_shared_gate() of it and pin_reflowed_gate() of it, the gate binds PIN_NAME
@@ -3609,10 +3613,11 @@ def pin_value_problems() -> list[str]:
         part is 1 comparison of what gate holds with what the rule gives, so that an edit that drops a piece of the
         rule from 1 side of it alone also fails on the real builder's result. On the shared-line gate: the line of the
         statement of PIN_NAME, parsed alone, ends with the statements of LOADED_SEGMENTS, PIN_NAME and
-        REDIRECT_TARGETS, in that order, as ast.dump() gives each, so that each lies whole on that line; and a comment
-        comes after the last of them. On the reflowed gate: the text of the statement of PIN_NAME, from its start to
-        its end, is exactly 3 lines, the name, = and an opening parenthesis, then its value alone, indented by 4
-        spaces, then the closing parenthesis; and a comment comes after it."""
+        REDIRECT_TARGETS, in that order, as ast.dump() gives each, so that each lies whole on that line; and the rest
+        of the line of the last of them, after it and its leading white space, starts with a comment. On the reflowed
+        gate: the text of the statement of PIN_NAME, from its start to its end, is exactly 3 lines, the name, = and an
+        opening parenthesis, then its value alone, indented by 4 spaces, then the closing parenthesis; and the rest of
+        its last line, after it and its leading white space, starts with a comment."""
         try:
             tree = ast.parse(gate)
         except SyntaxError as error:
@@ -3797,13 +3802,15 @@ def pin_value_problems() -> list[str]:
     # pin_reflowed_gate(), and an annotation with no value, which binds no name, for pin_shared_gate(); then, for each
     # builder, a statement after that of PIN_NAME that a backslash continuation carries onto the next line, and for
     # pin_shared_gate() a statement of the 1st neighbour before that of PIN_NAME on its line; then, for each builder, a
-    # 2nd binding or declaration of each name that it moves or reflows by each of the 18 kinds of second_bindings,
-    # which give each field that binding_sites() reads as a binding a source of its own: a name stored by an
-    # assignment inside an if, a for, a with or an assignment expression, a name deleted, an except handler, a match
-    # capture, a match star and the rest of a mapping pattern, a global statement, a def, an async def and a class
-    # inside an if, an import inside an if, a parameter, and a type parameter of each of its 3 kinds; the names of a
-    # nonlocal statement have no source of their own, since such a statement needs another binding of its name; and
-    # a star import.
+    # statement after that of PIN_NAME on its line that the source also holds before it, which a comparison of the
+    # statements as a set would miss, and for pin_shared_gate() an import of the 1st neighbour with another name;
+    # then, for each builder, a 2nd binding or declaration of each name that it moves or reflows by each of the 19
+    # kinds of second_bindings, which give each field that binding_sites() reads as a binding a source of its own: a
+    # name stored by an assignment inside an if, a for, a with or an assignment expression, a name deleted, an except
+    # handler, a match capture, a match star and the rest of a mapping pattern, a global and a nonlocal statement,
+    # which parses with no other binding of its name, a def, an async def and a class inside an if, an import inside
+    # an if, a parameter, and a type parameter of each of its 3 kinds; then a 2nd binding on the line of the statement,
+    # a parameter of a lambda inside it for each name and a del before it for PIN_NAME; and a star import.
     refused_by_builder = [(pin_reflowed_gate, b'REQUESTED_FILES, EXTRA = (("favicon.ico",), 1)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES = EXTRA = ("favicon.ico",)\n'),
                           (pin_reflowed_gate, b'REQUESTED_FILES: tuple = ("favicon.ico",)\n'),
@@ -3836,12 +3843,18 @@ def pin_value_problems() -> list[str]:
                  (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = ("favicon.ico",); \\\nEXTRA = 1\n'
                                    b'REDIRECT_TARGETS = "assets/"\n'),
                  (pin_shared_gate, b'LOADED_SEGMENTS = ("assets",); REQUESTED_FILES = ("favicon.ico",)\n'
+                                   b'REDIRECT_TARGETS = "assets/"\n'),
+                 (pin_reflowed_gate, b'EXTRA = 1\nREQUESTED_FILES = ("favicon.ico",); EXTRA = 1\n'),
+                 (pin_shared_gate, b'EXTRA = 1\nLOADED_SEGMENTS = ("assets",)\nREQUESTED_FILES = ("favicon.ico",); '
+                                   b'EXTRA = 1\nREDIRECT_TARGETS = "assets/"\n'),
+                 (pin_shared_gate, b'import os, LOADED_SEGMENTS\nREQUESTED_FILES = ("favicon.ico",)\n'
                                    b'REDIRECT_TARGETS = "assets/"\n')]
     second_bindings = ("for {name} in ():\n    pass\n", "with open('.') as {name}:\n    pass\n",
                        "if True:\n    {name} = 1\n", "del {name}\n", "({name} := 1)\n",
                        "try:\n    pass\nexcept Exception as {name}:\n    pass\n",
                        "match 1:\n    case {name}:\n        pass\n", "match []:\n    case [*{name}]:\n        pass\n",
                        "match {{}}:\n    case {{**{name}}}:\n        pass\n", "global {name}\n",
+                       "def qz():\n    nonlocal {name}\n",
                        "if True:\n    def {name}():\n        pass\n", "if True:\n    async def {name}():\n        pass\n",
                        "if True:\n    class {name}:\n        pass\n", "if True:\n    import os as {name}\n",
                        "def qz({name}):\n    pass\n", "def qz[{name}]():\n    pass\n", "def qz[*{name}]():\n    pass\n",
@@ -3850,6 +3863,13 @@ def pin_value_problems() -> list[str]:
                  for text in second_bindings]
     refused_by_builder += [(pin_shared_gate, shared_base + text.format(name=name).encode("utf-8"))
                  for name in (PIN_NAME, *PIN_NEIGHBOURS) for text in second_bindings]
+    refused_by_builder += [(pin_reflowed_gate, reflowed_base.replace(b"= ", b"= (lambda REQUESTED_FILES: 0)(1) or ")),
+                 (pin_reflowed_gate, b"del REQUESTED_FILES; " + reflowed_base)]
+    refused_by_builder += [(pin_shared_gate, shared_base.replace(f"{name} = ".encode("utf-8"),
+                                                                 f"{name} = (lambda {name}: 0)(1) or ".encode("utf-8")))
+                 for name in (PIN_NAME, *PIN_NEIGHBOURS)]
+    refused_by_builder += [(pin_shared_gate, shared_base.replace(b"REQUESTED_FILES = ",
+                                                                 b"del REQUESTED_FILES; REQUESTED_FILES = "))]
     refused_by_builder += [(pin_reflowed_gate, reflowed_base + b"from os import *\n"),
                  (pin_shared_gate, shared_base + b"from os import *\n")]
     for build, source in refused_by_builder:
@@ -3857,6 +3877,10 @@ def pin_value_problems() -> list[str]:
             problems.append(f"{build.__name__}() rewrites {source!r} as {build(source)!r}, not raising ValueError")
         except ValueError:
             pass
+    # An annotated assignment with a value to the name alone, which sole_binding() takes, as its docstring says; no
+    # source given to the builders here holds that kind of statement.
+    if not sole_binding(ast.parse('REDIRECT_TARGETS: str = "assets/"\n').body[0], PIN_NEIGHBOURS[1]):
+        problems.append("sole_binding() refuses an annotated assignment with a value to the name alone")
     # Sources that the docstrings of the 2 builders accept, each of which must give the layout of that docstring: for
     # each builder, a statement before that of PIN_NAME on its line, with an import and an augmented assignment for
     # pin_shared_gate() and with a comment after it for pin_reflowed_gate().
@@ -4029,24 +4053,27 @@ def control_problems() -> list[str]:
     or a source given to scope_sentence_problems(). A problem unless capture_problems() gives:
     with pin_value() rebound to a stand-in that reads each of the 11 kinds by its name when it is called, a problem for
     an instance of each name's stand-in (re.Pattern, types.ModuleType, REPO_ROOT, str, bytes, int, float, bool, tuple,
-    list and dict); with 1 stand-in that writes a real value otherwise while str is rebound, a problem that it does not
-    write it as before; and with 1 stand-in that rebinds re.Pattern while dict is rebound, a problem that re.Pattern
-    was not restored,
-    after which re.Pattern is restored. A problem unless pin_value_problems() gives: with pin_value() rebound to a
+    list and dict); with 1 stand-in that writes a real value otherwise while any of the 11 names is rebound, a problem
+    for each name that it does not write it as before; and with 1 stand-in that, while dict is rebound, rebinds each of
+    the other 10 names, a problem for each of those 10 names that it was not restored, after which each name is
+    restored. A problem unless pin_value_problems() gives: with pin_value() rebound to a
     stand-in that writes every value, a problem for each of the 10 plain values that it does not write by its repr(),
     for each of the 19 committed refused values, for each derived object whose class gives a kind of the 3 tuples as
     its __class__, for each derived instance of a bare subclass of a kind that FINAL_KINDS does not name, and for the
     value with __wrapped__; with FINAL_KINDS rebound to (int, slice) and map added to PLAIN_TYPES, a problem for each
     kind of the 3 tuples that the committed FINAL_KINDS names, whose bare subclass cannot be made, for int, whose
     subclass can, for slice, which is in none of the 3 tuples, and for map, whose bare subclass cannot be made with no
-    arguments; with both builders rebound to stand-ins that return their source unchanged, a problem for each of the 26
-    sources that pin_reflowed_gate() refuses and the 67 sources that pin_shared_gate() refuses, 1 problem for the
+    arguments; with both builders rebound to stand-ins that return their source unchanged, a problem for each of the 30
+    sources that pin_reflowed_gate() refuses and the 76 sources that pin_shared_gate() refuses, 1 problem for the
     source that each accepts, and 1 problem for each built base gate, which lacks the layout of its builder; with 1
     builder at a time rebound to a stand-in that changes the result of the builder so that it breaks exactly 1 of the
     2 parts of its layout, 5 stand-ins for the shared-line layout, which move each of its 3 statements out of its
-    place or drop its comment, and 6 for the reflowed layout, which change each of its 3 lines or their count, empty
-    its 2nd line or drop its comment, a problem that names that part for the source that the builder accepts and for
-    its built base gate; with both rebound to a
+    place or drop its comment, and 7 stand-ins for the reflowed layout, which change each of its 3 lines or their
+    count, empty its 2nd line, drop its comment or put a statement that holds # in a string in place of the comment,
+    a problem that names that part for the source that the builder accepts and for its built base gate; with
+    pin_shared_gate() rebound to a stand-in that puts such a statement in place of its comment, which breaks both
+    parts, since the 3 statements then no longer end their line, a problem that names each part for each of them;
+    with both rebound to a
     stand-in that raises ValueError on every source, a problem for the source that each accepts and for each built
     base gate, which could not be built; with GATE_BYTES rebound to the gate with a 2nd statement of PIN_NAME after it,
     a problem that the committed gate binds PIN_NAME by 2 statements; with both builders rebound to stand-ins that add
@@ -4055,13 +4082,13 @@ def control_problems() -> list[str]:
     on each of the 3 base gates that it does not give the 1 problem that starts as written, and 1 problem that it does
     not keep the comments. A problem unless scope_sentence_problems() fails a source whose docstring holds no
     SCOPE_SENTENCE, 1 source whose module docstring holds it without SCOPE_RESIDUAL, and 1 source each whose class,
-    def or async def docstring does so.
+    def or async def docstring does so, and gives 2 problems for 1 source whose class and def docstrings both do so.
     The rules of the span, which the committed and the 2 built base gates hold, and of capture_problems()'s restore in
     its finally clause are held by those checks as they run. An edit that removes a rule from its check and from this
     one too rests on review (residual 4 of the module docstring)."""
     space = globals()
     real_pin, real_shared, real_reflowed = pin_value, pin_shared_gate, pin_reflowed_gate
-    original_str, original_dict, original_pattern = str, dict, re.Pattern
+    original_dict = dict
     problems: list[str] = []
 
     def expect(what: str, call, wanted: list[tuple[str, str]], **values) -> None:
@@ -4092,29 +4119,38 @@ def control_problems() -> list[str]:
         kinds = [type(where[name]) if name == "REPO_ROOT" else where[name] for _, where, name in names]
         return "qz" if any(type(value) is kind for kind in kinds) else real_pin(value)
 
+    originals = [(label, where, name, where[name]) for label, where, name in names]
+
     def changing(value):
-        """pin_value(), but writing each value otherwise while str is rebound."""
+        """pin_value(), but writing each value otherwise while any of the names is rebound."""
         written = real_pin(value)
-        return written if vars(builtins)["str"] is original_str else written + " (rebound)"
+        return written if all(where[name] is held for _, where, name, held in originals) else written + " (rebound)"
 
     def unrestoring(value):
-        """pin_value(), but rebinding re.Pattern while dict is rebound."""
+        """pin_value(), but rebinding each other name while dict is rebound, once it has written value."""
+        written = real_pin(value)
         if vars(builtins)["dict"] is not original_dict:
-            vars(re)["Pattern"] = object
-        return real_pin(value)
+            for label, where, name, _ in originals:
+                if label != "dict":
+                    where[name] = object
+        return written
 
     expect("capture_problems() with each kind read by its name", capture_problems,
            [(f"with {label} rebound to a stand-in, pin_value() writes it as ", "") for label, _, _ in names],
            pin_value=reading)
-    expect("capture_problems() with a value written otherwise while str is rebound", capture_problems,
-           [("with str rebound to a stand-in, pin_value() gives ", "as before")], pin_value=changing)
+    expect("capture_problems() with a value written otherwise while a name is rebound", capture_problems,
+           [(f"with {label} rebound to a stand-in, pin_value() gives ", "as before") for label, _, _ in names],
+           pin_value=changing)
     try:
-        expect("capture_problems() with re.Pattern left rebound", capture_problems,
-               [("re.Pattern was not restored after it was rebound", "")], pin_value=unrestoring)
-        if vars(re)["Pattern"] is not original_pattern:
-            problems.append("capture_problems() leaves re.Pattern rebound after it was rebound")
+        expect("capture_problems() with each name but dict left rebound", capture_problems,
+               [(f"{label} was not restored after it was rebound", "") for label, _, _ in names if label != "dict"],
+               pin_value=unrestoring)
+        for label, where, name, held in originals:
+            if where[name] is not held:
+                problems.append(f"capture_problems() leaves {label} rebound after it was rebound")
     finally:
-        vars(re)["Pattern"] = original_pattern
+        for label, where, name, held in originals:
+            where[name] = held
 
     kinds = (*PLAIN_TYPES, *PLAIN_CONTAINERS, *PIN_KINDS)
     named = {kind: f"{kind.__module__}.{kind.__qualname__}" for kind in kinds}
@@ -4150,8 +4186,8 @@ def control_problems() -> list[str]:
         return source
 
     expect("pin_value_problems() with builders that return their source", pin_value_problems,
-           [("reflowed_stand_in() rewrites ", ", not raising ValueError")] * 26
-           + [("shared_stand_in() rewrites ", ", not raising ValueError")] * 67
+           [("reflowed_stand_in() rewrites ", ", not raising ValueError")] * 30
+           + [("shared_stand_in() rewrites ", ", not raising ValueError")] * 76
            + [(f"{name}() rewrites ", "not in the layout of its docstring")
               for name in ("reflowed_stand_in", "shared_stand_in")]
            + [(f"{label}, {name}() of tools/{GATE.name}, is not in the layout", "")
@@ -4230,12 +4266,24 @@ def control_problems() -> list[str]:
               reflowed("reflowed_value_line_empty",
                        lambda first, value, last: [first, b"\n", b"    " + value.strip() + last])),
              ("pin_reflowed_gate", "the reflowed gate", f"{reflowed_name} has no comment after it",
-              reflowed("reflowed_uncommented", lambda first, value, last: [first, value, b")\n"])))
+              reflowed("reflowed_uncommented", lambda first, value, last: [first, value, b")\n"])),
+             ("pin_reflowed_gate", "the reflowed gate", f"{reflowed_name} has no comment after it",
+              reflowed("reflowed_hash_in_string", lambda first, value, last: [first, value, b'); QZ = "#"\n'])))
     for builder, label, departure, stand_in in parts:
         expect(f"pin_value_problems() with {stand_in.__name__}() as {builder}()", pin_value_problems,
                [(f"{stand_in.__name__}() rewrites ", f"not in the layout of its docstring: {departure}"),
                 (f"{label}, {stand_in.__name__}() of tools/{GATE.name}, is not in the layout", f": {departure}")],
                **{builder: stand_in})
+    # A statement that holds # in a string, in place of the comment of the shared-line layout, breaks both of its
+    # parts, since the 3 statements then no longer end their line; each part must be named.
+    hashed = moved("shared_hash_in_string",
+                   lambda before, pinned, after, rest: before + b"; " + pinned + b"; " + after + b'; QZ = "#"\n')
+    expect("pin_value_problems() with shared_hash_in_string() as pin_shared_gate()", pin_value_problems,
+           [(start, departure) for start in ("shared_hash_in_string() rewrites ",
+                                             f"the shared-line gate, shared_hash_in_string() of tools/{GATE.name}, "
+                                             "is not in the layout")
+            for departure in (on_line, f"{shared_names} have no comment after the last of them")],
+           pin_shared_gate=hashed)
 
     def refusing(source: bytes) -> bytes:
         raise ValueError("qz")
@@ -4274,6 +4322,11 @@ def control_problems() -> list[str]:
              f"async def qy():\n    {quote}{SCOPE_SENTENCE}{quote}\n",
              "the docstring of qy() states the scope of the reader pin without the words ")):
         expect(f"scope_sentence_problems() given {what}", lambda: scope_sentence_problems(source), [(start, "")])
+    both = f"class Qz:\n    {quote}{SCOPE_SENTENCE}{quote}\ndef qz():\n    {quote}{SCOPE_SENTENCE}{quote}\n"
+    expect("scope_sentence_problems() given a class and a def docstring that each hold SCOPE_SENTENCE alone",
+           lambda: scope_sentence_problems(both),
+           [(f"the docstring of {name}() states the scope of the reader pin without the words ", "")
+            for name in ("Qz", "qz")])
     return problems
 
 

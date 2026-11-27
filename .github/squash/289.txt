@@ -19,10 +19,12 @@ sha256 of the gate before and after this change.
   rebound to a stand-in, 1 name at a time, pin_value() must still
   write a real value of that kind as before and refuse an instance of
   the stand-in, and each name must be restored once the last of them
-  has been rebound. The exact type of a value, and type(None), are
-  read with the builtin type(), which a rebinding of a builtin can
-  change, a class that the reader pin does not see (residual 2); no
-  check holds the capture of type.
+  has been rebound. control_problems() holds the 1st rule for each of
+  the 11 names and the restore for each of them but dict, the last,
+  which the finally clause restores. The exact type of a value, and
+  type(None), are read with the builtin type(), which a rebinding of a
+  builtin can change, a class that the reader pin does not see
+  (residual 2); no check holds the capture of type.
 - Derive refusal cases from the 3 capture tuples: for each of their 13
   kinds, an object whose class gives the kind as its __class__, and,
   for each of the 10 kinds that FINAL_KINDS does not name, an instance
@@ -55,29 +57,33 @@ sha256 of the gate before and after this change.
   anywhere else, at any depth or in any scope, and a source that holds
   a star import. binding_sites(), which the reader pin reads too, walks
   the whole syntax tree and reads each string that a node holds as a
-  name that it binds, but a name that is read, the aliases of an
-  import, a type comment and the fields of UNBOUND_FIELDS, so it fails
-  closed and finds a type parameter. pin_reflowed_gate() takes only an
-  assignment on 1 line, so that its result spans exactly 3 lines. The
+  name that it binds, but a name that is read, an import, of which it
+  reads only the names that its aliases bind, a type comment and the
+  fields of UNBOUND_FIELDS, so it fails closed and finds a type
+  parameter. pin_reflowed_gate() takes only an assignment on 1 line,
+  so that its result spans exactly 3 lines. The
   logical line of the statement of REQUESTED_FILES must end on its
   line, so a statement after it that a backslash continuation carries
   onto the next line is refused, and each result must parse and hold
   every top-level statement of its source, so a statement after that
   of REQUESTED_FILES on its line, which the builder's comment would
-  take in, is refused, not dropped. A statement before that of
-  REQUESTED_FILES on its line is accepted and kept, unless another
-  rule refuses it, as it refuses a statement of LOADED_SEGMENTS there.
-  Give the builders 93 sources that their docstrings refuse, a 2nd
-  binding by each of 18 kinds of binding among them, each of which must
-  raise ValueError, and 2 sources that they accept, each with a
-  statement before that of REQUESTED_FILES on its line, each of which
-  must give the layout of its builder's docstring.
+  take in, is refused, not dropped, even where the source holds the
+  same statement elsewhere. A statement before that of REQUESTED_FILES
+  on its line is accepted and kept, unless another rule refuses it, as
+  pin_shared_gate() refuses a statement of LOADED_SEGMENTS there.
+  Give the builders 106 sources that their docstrings refuse, a 2nd
+  binding by each of 19 kinds of binding, a nonlocal statement
+  included, and a 2nd binding on the line of the statement among them,
+  each of which must raise ValueError, and 2 sources that they accept,
+  each with a statement before that of REQUESTED_FILES on its line,
+  each of which must give the layout of its builder's docstring.
 - Add control_problems(): with a name of the test rebound to a
   stand-in for 1 call, each rule of capture_problems(),
   pin_value_problems() and scope_sentence_problems() that its
   docstring lists must make that check fail, each of the 2 parts of
   the shared-line layout and of the reflowed layout included, each
-  broken alone by its own stand-ins, so an edit that
+  broken alone by its own stand-ins, and both parts of the shared-line
+  layout broken together, so an edit that
   removes such a rule from its check alone fails; the rules of the
   span and of the restore are held by those checks as they run. An
   edit of a check and of its control together rests on review
@@ -104,9 +110,11 @@ Checks, each with its expected outcome:
 - python3 -I tools/check-install-page.py: exit 0, and its sha256
   equals GATE_SHA256 before and after this change.
 - Each mutant that the description names, 1 or 2 exact replacements
-  in a copy of the test: exit 1 with this change, with the problems
-  that the description names, and exit 0 on main before this change
-  for each mutant whose code main holds.
+  in a copy of the test: exit 1 with this change, or, where the
+  description says "in process", the problems of the checks of the pin
+  run in process, with the problems that the description names, and
+  exit 0 on main before this change for each mutant whose code main
+  holds.
 - python3 -I tools/check-pr-text.py on the description and on this
   message: exit 0, 0 defects.
 
@@ -122,8 +130,7 @@ What TODO 283 records:
   the statement, and the 1st to str, bytes, int, float and bool.
 - pin_value()'s docstring gives its refused values as examples and
   points to pin_value_problems(), which names the values that it
-  holds; every count in this message and the description names its
-  unit.
+  holds.
 - The fixture PIN_SUBCLASS changes its contract deliberately, for the
   reason above.
 - GATE_SHA256 and READER_SHA256 are unchanged. READER_SHA256 is no
