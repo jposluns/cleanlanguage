@@ -135,9 +135,12 @@ gate opens each entry and then puts in the place of the moved entry a
 new entry of the same kind, and then a symbolic link to the moved entry;
 and 1 removes os.O_NOFOLLOW, once with README.md and once with a path
 that holds those characters. The process opens the root with the gate's
-own opener. These reach what a race or a failing disk could cause. The
-problem line of that last text is compared whole: the text must come out
-as 1 line, cut to 300 characters and then escaped. A parent link sits at
+own opener; in the case that removes os.O_NOFOLLOW that opener refuses,
+and the process then opens the root with os.open, so the reader's own
+refusal is reached too. The replacements of os.lstat, os.fdopen and
+os.open reach what a race or a failing disk could cause. The problem
+line of that last text is compared whole: the text must come out as 1
+line, cut to 300 characters and then escaped. A parent link sits at
 depth 1 and at depth 2, and each parent case runs once with
 os.O_DIRECTORY and once with it removed, as on a system without it, so
 the gate must open each parent without following a link, and must refuse

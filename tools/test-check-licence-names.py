@@ -104,10 +104,11 @@ characters outside ASCII out of the work tree, each just after the gate opens it
 replaces os.fdopen to make each of those moves while the gate reads the file; 1 makes the same
 moves just after the gate opens each entry and then puts in the place of the moved entry a new
 entry of the same kind, and then a symbolic link to the moved entry; and 1 removes os.O_NOFOLLOW,
-once with README.md and once with a path that holds those characters. The process
-opens the root
-with the gate's own opener. These reach what a race or a failing disk could cause. The problem
-line of that last text is compared whole: the text must come out as 1 line, cut to 300
+once with README.md and once with a path that holds those characters. The process opens the root
+with the gate's own opener; in the case that removes os.O_NOFOLLOW that opener refuses, and the
+process then opens the root with os.open, so the reader's own refusal is reached too. The
+replacements of os.lstat, os.fdopen and os.open reach what a race or a failing disk could cause.
+The problem line of that last text is compared whole: the text must come out as 1 line, cut to 300
 characters and then escaped. A parent link
 sits at depth 1 and at depth 2, and each parent case runs once with os.O_DIRECTORY and once with
 it removed, as on a system without it, so the gate must open each parent without following a
@@ -1903,8 +1904,10 @@ class TextRules(unittest.TestCase):
                                           [FAILS, FAILS, PASSES]),
             # Each text for review: a word of a block, a word inside a paragraph and the last word of a
             # paragraph, so each kind of piece is compared in each text; SQUASH-MSG also fails the byte
-            # comparison. Only the pieces that a row names are compared, so a word changed outside them,
-            # such as in the first line of PR-BODY.md, is not.
+            # comparison. The 2 cases that compare words compare only the pieces that a row names, so a
+            # word changed outside them, such as in the first line of PR-BODY.md, fails neither; the byte
+            # comparison reads SQUASH-MSG and .github/squash/287.txt whole, so a word changed anywhere in 1
+            # of them, and not in the other, fails it.
             "a word of a block differs in a text for review": (
                 changed("PR-BODY.md", "of the `block`", "of a `block`"), [PASSES, FAILS, PASSES]),
             "a word of a block differs in SQUASH-MSG": (
