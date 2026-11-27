@@ -1701,7 +1701,7 @@ class OldNameTest(unittest.TestCase):
 
     def test_an_old_name_outside_its_rule_fails(self):
         old = self.old()
-        whole, n29 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-28k.md"]
+        whole, n28 = old["cleanlanguage-instructions.md"], old["cleanlanguage-instructions-28k.md"]
         n11, n8 = old["cleanlanguage-instructions-11k.md"], old["cleanlanguage-instructions-8k.md"]
         blob = "https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/"
         raw = "https://raw.githubusercontent.com/jposluns/cleanlanguage/main/site/downloads/"
@@ -1710,15 +1710,15 @@ class OldNameTest(unittest.TestCase):
             "INSTALL.md": f"1. Download the [instructions](https://cleanlanguage.ai/downloads/{whole}).\n",
             "site-src/pages/demo.html": f"<p>Read {raw}{n8} first.</p>\n",
             "site-src/pages/install.html": f"<a href=\"{blob}{whole}\">source</a>\n",
-            ".aiqt/gensrc.json": f"{{\"target\": \"site/downloads/{n29}\"}}\n",
-            ".github/workflows/sync.yml": f"# Keeps {n29} current.\n",
+            ".aiqt/gensrc.json": f"{{\"target\": \"site/downloads/{n28}\"}}\n",
+            ".github/workflows/sync.yml": f"# Keeps {n28} current.\n",
             "tools/writer.py": f"RULE = \"/downloads/{n11} /downloads/cleanlanguage-instructions-11k.md 301\"\n",
         })
         # The rule text in tools/writer.py carries 301, not 302, so it is not the rule that answers for the name.
         self.assertEqual(self.references(root), [
             f"INSTALL.md:1: {whole}",
-            f".aiqt/gensrc.json:1: {n29}",
-            f".github/workflows/sync.yml:1: {n29}",
+            f".aiqt/gensrc.json:1: {n28}",
+            f".github/workflows/sync.yml:1: {n28}",
             f"site/_headers:1: {n8}",
             f"site/_headers:2: {n11}",
             f"site-src/pages/demo.html:1: {n8}",

@@ -74,6 +74,9 @@ tools/generate-sitemap.py --write; and
 tools/portable-text-skill-source.sha256 by
 tools/check-portable-text-sync.sh --update --force.
 
+Add this message as .github/squash/295.txt, the committed squash
+message that the Pull request text gate reads.
+
 Deliberately unchanged: the hand-maintained 11k and 8k renderings, at
 10998 and 7996 characters, which already carry the governing rules in
 condensed form, hence --force; the canonical download URL; the
