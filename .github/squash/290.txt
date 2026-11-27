@@ -8,12 +8,18 @@ that HEAD resolves to; and every tag and note with its object name. On
 a mismatch it prints both snapshots, so the failure names the ref that
 differs. A leak check then fails the run when a ref that git
 for-each-ref lists from that worktree contains the dry-run commit. The
-script's header states what step 6 proves, how the script makes and
-reads the dry-run commit, and which programs, attribute files and
-filter drivers its git calls keep out of reach.
+script's header states what step 6 proves and how the script makes and
+reads the dry-run commit. It also states the conditions on which a run
+can now fail where it passed before: the script's git calls after the
+before snapshot, other than those that the header exempts, run with
+hooks, core.fsmonitor, the pager and lazy fetching turned off and with
+the header's attribute and filter settings; a filter driver whose name
+holds an equals sign fails the run; and so does a git that does not
+refuse a GIT_ATTR_SOURCE that names no tree with exit 128 and its own
+message.
 
 The new suite tools/test-release-dry-run-refs.py runs the whole
-script, with stand-ins for its tools, in throwaway repositories; its
+script, with stand-ins for its tools, in throwaway folders; its
 docstring states how each of its 74 cases is built and what it
 requires. .github/workflows/release-dry-run.yml and
 tools/run_all_checks.sh run it before the dry run, and SCRIPT_SHA256
@@ -114,20 +120,15 @@ the run between that clearing and that removal, or a failure of that
 removal, leaves the file behind, since the exit cleanup then has no
 name to remove.
 
-On the trace2 case, the suite's docstring says: Each of those 4 is
-exempt from these settings only in the argument form and with the
-GIT_ATTR_SOURCE that the script gives it, and only once, so a later
-run in that form must run with them.
+The suite's trace2 case reads git's trace2 log of a run. It requires
+every git call that the script makes after the before snapshot, other
+than the reads of step 6, to run with the attribute and filter
+settings, except 4, each in the argument form that the script gives
+it: the first 3, which run before those settings exist, and the check
+of GIT_ATTR_SOURCE, which sets its own. Each of those 4 is exempt from
+these settings only in the argument form and with the GIT_ATTR_SOURCE
+that the script gives it, and only once, so a later run in that form
+must run with them.
 
-Checks, run from the top of a checkout of the branch, each followed by
-the line it ends with:
-
-  python3 -I tools/test-release-dry-run-refs.py
-    OK (skipped=2), after Ran 74 tests and the time taken
-  python3 -I tools/test-no-qa-labels.py
-    OK, after Ran 63 tests and the time taken
-  python3 -I tools/test-run-all-checks.py
-    OK: 19 workflows, 84 run steps, 73 command lines in
-    tools/run_all_checks.sh, 10 behaviour cases, 17 reading cases
-  python3 -I tools/check-pr-text.py --squash .github/squash/290.txt
-    pr-text: 0 defect(s)
+The checks that ran, and the line that each ended with, are in the
+description of pull request 290.

@@ -53,7 +53,8 @@
 # although the configuration that they read can include a file that lies in
 # a worktree. The run fails unless git refuses a GIT_ATTR_SOURCE that names
 # no tree with exit 128 and its own message for that refusal, alone on
-# standard error.
+# standard error. A filter driver whose name holds an equals sign fails the
+# run.
 #
 # So no filter runs during a git call of the dry run, whatever the
 # configuration that git reads in any worktree defines, other than a driver
@@ -338,8 +339,8 @@ empty_tree="$(git "${git_off[@]}" hash-object -t tree --stdin < /dev/null)" \
 export GIT_ATTR_NOSYSTEM=1 GIT_ATTR_SOURCE="${empty_tree}"
 export_settings core.attributesFile=/dev/null
 turn_off_filters "${filter_drivers}${attributes_drivers}"
-# The exit cleanup is the only path that tries to remove what the run leaves in
-# TMPDIR: the temporary file of the check of GIT_ATTR_SOURCE below, while the
+# The exit cleanup tries to remove what the run leaves in TMPDIR: the
+# temporary file of the check of GIT_ATTR_SOURCE below, while the
 # script holds its name, and the throwaway worktree, once the script holds the
 # name of its folder. It is set before either exists, and bash runs it on every
 # exit of the run from here on, an exit through fail or one that a signal such
