@@ -74,12 +74,16 @@ that the local part does not name, such as a letter outside ASCII, a tilde, an e
 mark, or an apostrophe, passes, since its local part is then empty; an address with a
 quoted local part, with a domain written with letters outside ASCII or as a literal in
 square brackets, with an underscore in its domain, or with a dot of its domain written as an
-HTML character reference or percent-encoded, can pass, since the scan reads only ASCII
-letters, digits, and a few marks around an at sign; surfaces that are not files in this
-tree, such as a pull request title, description, or comment, are not reached by the scan,
-and `tools/check-pr-text.py` carries no identifier pattern today. The suite pins each form
-of text and each place in this list that passes or is not read with a case; a surface that
-is not a file in this tree is outside its input, so no case pins it. The digest of a
+HTML character reference or percent-encoded, can pass, since the scan reads raw bytes and a
+byte that a run does not name ends that run: the local part, which ends right before the at
+sign, names ASCII letters, digits, and the 5 characters `.`, `_`, `%`, `+`, and `-`, and the
+domain run, which starts right after it, names ASCII letters, digits, dots, and hyphens;
+surfaces that are not files in this tree, such as a pull request title, description, or
+comment, are not reached by the scan, and `tools/check-pr-text.py` carries no identifier
+pattern today. The suite pins each form of text in this list that passes with its own
+subtest, named for the form, apart from compressed or encoded content, which has its own
+case, and each place in this list that is not read with its own case; a surface that is not
+a file in this tree is outside its input, so no case pins it. The digest of a
 match or of a path name lets a reader who already holds a guess of the address confirm the
 guess, though it does not reveal the address. A path name is held back only from the output
 of the scan: git, and any other step of a workflow that lists or names files, can still

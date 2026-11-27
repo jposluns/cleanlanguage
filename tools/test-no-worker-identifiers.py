@@ -121,13 +121,15 @@ failed case, which holds the absolute path of this file in the checkout, and a f
 can print the values that it compared, the path of its temporary folder among them, so a
 checkout path or a temporary folder path that holds an address reaches the CI log. A label that
 leaked into the history of an older pull request and was removed later is held for the
-maintainer and is out of scope for this rule's enforcement. Each form of text and each place
-that this residual names as passing or not read is pinned by a case below; a surface that is
-not a file in this tree is outside the input of the suite, so no case pins it. The cases:
-test_each_residual_text_form_gives_no_candidate,
-test_compressed_or_encoded_content_gives_no_candidate, test_an_untracked_file_is_not_read,
+maintainer and is out of scope for this rule's enforcement. Each form of text that this residual
+names as passing is pinned by its own subtest, named for the form, of
+test_each_residual_text_form_gives_no_candidate, apart from compressed or encoded content, which
+is pinned by its own case, test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest
+for each compression or encoding. Each place that this residual names as not read is pinned by
+its own case: test_an_untracked_file_is_not_read,
 test_the_target_of_a_tracked_symbolic_link_is_not_read, and
-test_the_content_of_a_submodule_is_not_read.
+test_the_content_of_a_submodule_is_not_read. A surface that is not a file in this tree is outside
+the input of the suite, so no case pins it.
 
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
@@ -328,7 +330,7 @@ def printable_path(rel):
 
 
 def path_label(rel):
-    """The name of the path rel in a failure: path sha256 and the digest of its name, or rel.
+    """The name of rel in a failure: path sha256 and the digest of its name, or printable_path(rel).
 
     The digest stands for the path whenever its name holds a hit, so that no failure copies it;
     any other path is written by printable_path(), so that no failure holds a control character.
@@ -451,41 +453,53 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertEqual(self.digests(address.decode("ascii")), [hashlib.sha256(address).hexdigest()[:16]])
 
     def test_each_residual_text_form_gives_no_candidate(self):
-        """Each form of text that the residual states passes gives no candidate.
+        """Each form of text that the residual states passes gives no candidate, in its own subtest.
 
-        The set, each assembled at run time: a bare account handle or label and a numeric
-        account identifier; an address split across lines, assembled by code, or written with
-        the word at; an at sign outside ASCII, the fullwidth and the small commercial at sign;
-        an at sign written as a decimal, hexadecimal, or named character reference or
-        percent-encoded; a local part that ends right before the at sign in a letter outside
-        ASCII, a tilde, an exclamation mark, or an apostrophe; a quoted local part; a domain
-        written with letters outside ASCII or as a literal in square brackets; an underscore in
-        the domain; and a dot of the domain written as a decimal, hexadecimal, or named character
-        reference or percent-encoded. The control, the same address written plainly, is caught.
+        Each subtest is named for its form and holds every text of that form, each assembled at
+        run time; it fails when any of those texts gives a candidate. The control, the same
+        address written plainly, is caught.
         """
         local = "worker-label-example"
         domain = self.PLACEHOLDER_DOMAIN
         self.assertEqual(len(hits_in(caught(local, domain).encode("ascii"))), 1)
-        for text in (local, "0123456789" + "01",
-                     local + "\n" + "@" + domain, caught(local, "\n" + domain),
-                     caught(local, "placeholder-mail" + "\n" + "." + "com"),
-                     "\"" + local + "\" + \"" + "@" + "\" + \"" + domain + "\"",
-                     local + " at " + domain, local + " [at] " + domain, local + " (at) " + domain,
-                     local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain,
-                     local + "&#" + "64;" + domain, local + "&#x" + "40;" + domain,
-                     local + "&com" + "mat;" + domain, local + "%" + "40" + domain,
-                     "jos" + chr(233) + "@" + domain,
-                     "a~" + "@" + domain, "a!" + "@" + domain, "a'" + "@" + domain,
-                     "\"" + local + "\"" + "@" + domain, "\"worker label\"" + "@" + domain,
-                     caught(local, "plac" + chr(233) + "holder" + "." + "com"),
-                     caught(local, chr(252) + "ber" + "." + "com"),
-                     caught(local, "[192.0.2.1]"), caught(local, "placeholder_mail" + "." + "com"),
-                     caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
-                     caught(local, "placeholder-mail" + "&#x" + "2E;" + "com"),
-                     caught(local, "placeholder-mail" + "&per" + "iod;" + "com"),
-                     caught(local, "placeholder-mail" + "%" + "2E" + "com")):
-            with self.subTest(text=text):
-                self.assertEqual(candidates(text.encode("utf-8")), [])
+        forms = (
+            ("a seat label or a bare account handle", (local,)),
+            ("a numeric account identifier", ("0123456789" + "01",)),
+            ("an address split across lines", (
+                local + "\n" + "@" + domain, caught(local, "\n" + domain),
+                caught(local, "placeholder-mail" + "\n" + "." + "com"))),
+            ("an address assembled by code", (
+                "\"" + local + "\" + \"" + "@" + "\" + \"" + domain + "\"",)),
+            ("an address written with the word at", (
+                local + " at " + domain, local + " [at] " + domain, local + " (at) " + domain)),
+            ("an at sign outside ASCII, the fullwidth or the small commercial at sign", (
+                local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain)),
+            ("an at sign written as a decimal, hexadecimal, or named character reference", (
+                local + "&#" + "64;" + domain, local + "&#x" + "40;" + domain,
+                local + "&com" + "mat;" + domain)),
+            ("a percent-encoded at sign", (local + "%" + "40" + domain,)),
+            ("a local part that ends in a letter outside ASCII, a tilde, an exclamation mark, or an"
+             " apostrophe", (
+                 "jos" + chr(233) + "@" + domain, "a~" + "@" + domain, "a!" + "@" + domain,
+                 "a'" + "@" + domain)),
+            ("a quoted local part", (
+                "\"" + local + "\"" + "@" + domain, "\"worker label\"" + "@" + domain)),
+            ("a domain written with letters outside ASCII", (
+                caught(local, "plac" + chr(233) + "holder" + "." + "com"),
+                caught(local, chr(252) + "ber" + "." + "com"))),
+            ("a domain written as a literal in square brackets", (caught(local, "[192.0.2.1]"),)),
+            ("an underscore in the domain", (caught(local, "placeholder_mail" + "." + "com"),)),
+            ("a dot of the domain written as a decimal, hexadecimal, or named character reference", (
+                caught(local, "placeholder-mail" + "&#" + "46;" + "com"),
+                caught(local, "placeholder-mail" + "&#x" + "2E;" + "com"),
+                caught(local, "placeholder-mail" + "&per" + "iod;" + "com"))),
+            ("a percent-encoded dot of the domain", (
+                caught(local, "placeholder-mail" + "%" + "2E" + "com"),)),
+        )
+        for form, texts in forms:
+            with self.subTest(form=form):
+                self.assertEqual([candidates(text.encode("utf-8")) for text in texts],
+                                 [[] for _ in texts])
 
     def test_compressed_or_encoded_content_gives_no_candidate(self):
         """An address inside compressed or encoded binary content gives no candidate.
