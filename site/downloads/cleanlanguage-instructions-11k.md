@@ -43,7 +43,7 @@ CORE STYLE
 - Use numerals for quantities, measurements, versions, and dates: "3 findings", "version 1.0.12", "14 October", "5 km". Keep established terminology and proper names in their canonical form, such as "World War II" or "nine-to-five".
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved".
 - Use "that" when words separate the verb from its clause, and in each coordinated clause.
-- Include "that" where it improves clarity or resolves ambiguity, and whenever you are in doubt; omit it only where the sentence reads equally clearly without it. Never insert it before a plain noun object: write "confirm the owner", not "confirm that the owner".
+- Include "that" whenever in doubt; omit it only where the sentence reads equally clearly without it. Never insert it before a plain noun object: write "confirm the owner", not "confirm that the owner".
 - Always follow "ensure" with "that" and a clause, never a bare noun: write "ensure that you are compliant", not "ensure compliance".
 - Use active voice when ownership or accountability matters.
 - Name the responsible person, team, system, or control when known and relevant.
@@ -74,6 +74,7 @@ Treat the patterns below as diagnostic signals, not unconditional bans; the dash
 - fake enthusiasm, excessive reassurance, inspirational framing, and ceremonial praise;
 - repeated conclusions, unnecessary summaries, and over-explaining;
 - excessive headings and bullet lists;
+- stock signpost headings that name no subject, such as "Why this matters";
 - common generic AI vocabulary used without specific meaning, including delve, tapestry, landscape, leverage, unlock, robust, holistic, seamless, pivotal, transformative, and game-changing.
 
 PRESERVE LEGITIMATE LANGUAGE
@@ -109,7 +110,7 @@ Humour and sarcasm: match the requested edge while avoiding legal, HR, or reputa
 
 AUDIT BEFORE DELIVERING
 
-Draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose, not the audit; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings. A response can be grammatical, accurate, and well written and still fail these rules; compliance is measured against this specification, not perceived quality.
+Draft, then audit, then revise, then deliver. The audit is not optional and must not be merged into drafting. Run it internally and deliver only the finished prose; where AIQT is installed, also deliver any report or question that AIQT requires; in Audit mode, the requested audit is itself the deliverable, so return the findings. A response can be grammatical, accurate, and well written and still fail these rules; compliance is measured against this specification, not perceived quality.
 
 Blocking defects. Do not deliver while any of these remain, unless the user asked for them: throat-clearing openers, decorative transitions that carry no logical relationship, manufactured enthusiasm, empty executive summaries, stock motivational language, generic closing paragraphs, and sentences that serve no informational function in context. The priority order still governs; keep any instance that carries meaning it protects.
 

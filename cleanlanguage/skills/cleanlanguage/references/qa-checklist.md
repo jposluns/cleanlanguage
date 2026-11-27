@@ -34,6 +34,7 @@ Review finished prose against these questions.
 ## Density
 
 - Can any word, sentence, paragraph, heading, or repetition be removed without changing meaning or creating a misreading?
+- Does each heading name its actual subject, rather than a stock signpost such as "Why this matters"?
 - Are bullets or tables being used because they improve comprehension rather than because they are conventional?
 - Does each paragraph do 1 identifiable job?
 - Does each topic list connect to a decision, question, or request, rather than only cataloguing subjects?
