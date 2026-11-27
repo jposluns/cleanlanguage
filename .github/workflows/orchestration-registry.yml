@@ -60,6 +60,11 @@ name: Orchestration registry
 # outside the 7 paragraphs passes. The step after it, tools/test-check-flow-mode.py, runs a
 # case for each of those verdicts.
 #
+# A further step (tools/test-no-worker-identifiers.py) fails when a tracked file holds
+# email-shaped text, read around every at sign, that is neither the maintainer's address nor at
+# a reserved documentation domain and is not on a line of its reviewed exact-line allowlist; a
+# failure names the file, the line number and a digest of the match, never its text.
+#
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
 # steers the run. tools/test-orchestration-registry.py checks this file for the flag.

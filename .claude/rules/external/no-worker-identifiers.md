@@ -17,12 +17,20 @@ address, and the security contact in `site/.well-known/security.txt`, which is t
 maintainer's address. Internal channels use a role name (for example "a claude worker")
 where a role will do. A fixture that needs an address uses a reserved documentation domain
 (`.invalid`, `.test`, `.example`, or `example.com`, `example.org` or `example.net`), never a
-real account.
+real account. Email-shaped text that names no account is no third exemption, and the scan
+passes it only on a reviewed line: the exact-line allowlist in the suite, `ALLOWLIST`, holds
+such lines, today 1, the user details of a URL on this site's own domain in a release-link
+test, whose host must stay this site's origin; an entry that no longer matches its line fails.
 
 Mechanical coverage: `tools/test-no-worker-identifiers.py` scans every tracked file, the
-vendored trees included, for email-shaped text outside the exemptions, and fails the
-Orchestration registry workflow and `tools/run_all_checks.sh` on a hit. It fails closed: a
-file that git lists but that cannot be read is a failure naming the file, never a skip.
+vendored trees included, for email-shaped text outside the exemptions and the allowlisted
+lines, and fails the Orchestration registry workflow and `tools/run_all_checks.sh` on a hit.
+It reads every candidate address around every at sign, so an exempt candidate cannot hide an
+overlapping address, and its work grows linearly with the size of a file. A failure names the
+file, the line number and a digest of the match, never the matched text or the line, so the
+scan does not copy a leaked address into the public CI log. It fails closed: a git ls-files
+that fails or cannot be started, and a file that git lists but that cannot be read, are
+failures naming the cause or the file, never a skip.
 
 Residual: the scan catches the email class only. A seat label, a bare account handle or a
 numeric account identifier passes it, because a committed pattern that names a real label
@@ -32,6 +40,7 @@ repository. An address split across lines, assembled by code, or written with th
 passes; an untracked file, a tracked symbolic link and a submodule are not read; an address
 inside compressed or encoded binary content passes; surfaces that are not files in this
 tree, such as a pull request title, description or comment, are not reached by the scan,
-and `tools/check-pr-text.py` carries no identifier pattern today. A label that leaked into
-the history of an older pull request and was removed later is held for the maintainer and
-is out of scope for this rule's enforcement.
+and `tools/check-pr-text.py` carries no identifier pattern today. The digest in a failure
+lets a reader who already holds a guess of the address confirm the guess, though it does not
+reveal the address. A label that leaked into the history of an older pull request and was
+removed later is held for the maintainer and is out of scope for this rule's enforcement.
