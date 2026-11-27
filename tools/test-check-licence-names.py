@@ -882,8 +882,11 @@ class Refusals(GateCase):
 
     def test_removed_line_leaves_a_stale_row(self):
         self.control()
-        self.repo.track("README.md", b"# Example\n")
-        self.refused("is stale: it claims 0 line(s), the allowlist says 1")
+        # An empty file is read and holds no line, so its row is stale, unlike the row of a file that cannot be read.
+        for data in (b"# Example\n", b""):
+            with self.subTest(data=data):
+                self.repo.track("README.md", data)
+                self.refused("is stale: it claims 0 line(s), the allowlist says 1")
 
     def test_count_off_by_one(self):
         self.control()
@@ -1403,13 +1406,17 @@ class Refusals(GateCase):
     def test_named_exception_without_a_matching_line(self):
         self.control()
         contents = {ALLOWLIST: (HEADER + "README.md\t1\tkeep\tLicence:\n").encode("utf-8")}
+        # An empty file is read and holds no matching line, unlike a file that cannot be read; an empty
+        # allowlist has no row, so the line of README.md is unclaimed as well.
+        unclaimed = {ALLOWLIST: (PREFIX + "README.md:3: names a licence term and no allowlist row claims it",)}
         for path in NAMED_EXCEPTIONS:
-            with self.subTest(path=path):
-                before = (self.repo.root / path).read_bytes()
-                self.repo.track(path, contents.get(path, b"print('no term')\n"))
-                self.refused(f"{PREFIX}{path}: a named exception that holds no matching line")
-                self.repo.track(path, before)
-                self.control()
+            for data, also in ((contents.get(path, b"print('no term')\n"), ()), (b"", unclaimed.get(path, ()))):
+                with self.subTest(path=path, empty=not data):
+                    before = (self.repo.root / path).read_bytes()
+                    self.repo.track(path, data)
+                    self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", also=also)
+                    self.repo.track(path, before)
+                    self.control()
 
     def test_not_a_git_repository(self):
         self.control()
@@ -1585,13 +1592,15 @@ class Refusals(GateCase):
         self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
         contents = {ALLOWLIST: (HEADER + "README.md\t1\tkeep\tLicence:\n").encode("utf-8")}
         for path in NAMED_EXCEPTIONS:
-            with self.subTest(path=path):
-                before = (self.repo.root / path).read_bytes()
-                self.repo.track(path, contents.get(path, b"print('no term')\n"))
-                self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
-                             out_text="README.md:1\ntotal: 1 lines in 1 files\n")
-                self.repo.track(path, before)
-                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+            # An empty file is read and holds no matching line, unlike a file that cannot be read.
+            for data in (contents.get(path, b"print('no term')\n"), b""):
+                with self.subTest(path=path, empty=not data):
+                    before = (self.repo.root / path).read_bytes()
+                    self.repo.track(path, data)
+                    self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
+                                 out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                    self.repo.track(path, before)
+                    self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
 
     def test_file_content_is_data(self):
         self.control()
@@ -1853,6 +1862,16 @@ class TextRules(unittest.TestCase):
         changes = {
             "a word of a block differs": (changed("tools/gate.py", "of the block", "of a block"),
                                           [FAILS, FAILS, PASSES]),
+            # Each text for review: a word of a block, a word inside a paragraph and the last word of a
+            # paragraph, so neither text nor piece goes uncompared; SQUASH-MSG also fails the byte comparison.
+            "a word of a block differs in a text for review": (
+                changed("PR-BODY.md", "of the `block`", "of a `block`"), [PASSES, FAILS, PASSES]),
+            "a word of a block differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "of the block", "of a block"), [PASSES, FAILS, FAILS]),
+            "a word inside a paragraph differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "this paragraph", "that paragraph"), [PASSES, FAILS, FAILS]),
+            "the last word of a paragraph differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "it here.", "it there."), [PASSES, FAILS, FAILS]),
             "the last word of a paragraph differs in a tracked text": (
                 changed("tools/tests.py", "it here.", "it there."), [FAILS, FAILS, PASSES]),
             "the last word of a paragraph differs in a text for review": (
