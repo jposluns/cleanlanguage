@@ -105,8 +105,9 @@ Where a cause is also the start of the line of another cause, or a line
 must show no text of a file, the problem lines are compared whole. Each
 subtest makes its change to the unchanged repository. The helper that
 checks a refusal fails the case when no run of the gate passed earlier
-in that case on the repository as it was built. No run of the gate may
-write a character outside printable ASCII. 1 case requires the gate to
+in that case on the repository as it was built, the same index and the
+same bytes in each tracked file. No run of the gate may write a
+character outside printable ASCII. 1 case requires the gate to
 escape a tracked path that holds an escape byte, a backslash, DEL and
 characters outside ASCII in the problem lines for a file deleted from
 the work tree, a tracked symbolic link, a parent that is a file, an
@@ -133,33 +134,46 @@ while the gate reads the file; 1 makes the same moves just after the
 gate opens each entry and then puts in the place of the moved entry a
 new entry of the same kind, and then a symbolic link to the moved entry;
 and 1 removes os.O_NOFOLLOW, once with README.md and once with a path
-that holds those characters. 9 cases give the gate a stand-in git, a
-Python script alone on its PATH: 1 exits 3 with a message like that
-text; 1 lists the repository's 4 files and paths that are not plain
-relative, 1 of them leading out of the work tree, to the gate and to
---list; 1 lists the repository's 4 files and, before it exits, replaces
-the root with a symbolic link to a copy whose allowlist holds a
-malformed row and records its working folder, to the gate and to --list;
-1 lists the repository's 4 files and records the folder that it starts
-in, after a launcher has replaced the root in the same way, to the gate
-and to --list; 1 lists the repository's 4 files, an entry whose mode and
-an entry whose stage each hold an escape byte, a backslash and a byte
+that holds those characters. The process opens the root with the gate's
+own opener. These reach what a race or a failing disk could cause. The
+problem line of that last text is compared whole: the text must come out
+as 1 line, cut to 300 characters and then escaped. A parent link sits at
+depth 1 and at depth 2, and each parent case runs once with
+os.O_DIRECTORY and once with it removed, as on a system without it, so
+the gate must open each parent without following a link, and must refuse
+a parent that is not a folder when it opens it and, without
+os.O_DIRECTORY, when it checks the folder that it opened. A parent link
+must be refused with the error that opening a link without following it
+gives, NotADirectoryError with os.O_DIRECTORY and ELOOP without it,
+while a real folder at the same depth, read the same way, gives its
+file's bytes. 9 cases give the gate a stand-in git, a Python script
+alone on its PATH: 1 exits 3 with a message like that text; 1 lists the
+repository's 4 files and paths that are not plain relative, 1 of them
+leading out of the work tree, to the gate and to --list; 1 lists the
+repository's 4 files and, before it exits, replaces the root with a
+symbolic link to a copy whose allowlist holds a malformed row and
+records its working folder, to the gate and to --list; 1 lists the
+repository's 4 files and records the folder that it starts in, after a
+launcher has replaced the root in the same way, to the gate and to
+--list; 1 lists the repository's 4 files, an entry whose mode and an
+entry whose stage each hold an escape byte, a backslash and a byte
 outside ASCII, to the gate and to --list; and 4 list 3 entries that
 cannot be read, 1 with no tab, 1 with 2 fields before its tab and 1 with
 4, to the gate and to --list, 2 beside the repository's 4 files and 2
-alone. 1 case runs the gate through a python3 -I launcher that first
-removes os.O_NOFOLLOW, to the gate and to --list. 4 cases run the gate
-through another python3 -I launcher that changes the gate's process
-alone, each to the gate and to --list: 1 replaces the root after the
-gate opens it and before git starts, in the stand-in case above; 1 moves
-a folder at depth 1, the folder at depth 1 above a folder at depth 2 and
-a file out of the work tree, each just after the gate opens it and again
-while the gate reads the file; 1 removes os.O_DIRECTORY, with a file and
-then a FIFO as the root; and 1 makes the change into the root folder
-fail before git starts, as on a root folder of mode 0600 that the gate
-can open and git cannot enter. 1 case loads the test file in a python3
--I process whose PATH is a relative folder that holds git, and requires
-the git that it finds to be an absolute path.
+alone. The problem line of the first, compared whole, must show the
+message the same way. 1 case runs the gate through a python3 -I launcher
+that first removes os.O_NOFOLLOW, to the gate and to --list. 4 cases run
+the gate through another python3 -I launcher that changes the gate's
+process alone, each to the gate and to --list: 1 replaces the root after
+the gate opens it and before git starts, in the stand-in case above; 1
+moves a folder at depth 1, the folder at depth 1 above a folder at depth
+2 and a file out of the work tree, each just after the gate opens it and
+again while the gate reads the file; 1 removes os.O_DIRECTORY, with a
+file and then a FIFO as the root; and 1 makes the change into the root
+folder fail before git starts, as on a root folder of mode 0600 that the
+gate can open and git cannot enter. 1 case loads the test file in a
+python3 -I process whose PATH is a relative folder that holds git, and
+requires the git that it finds to be an absolute path.
 
 3 cases, in RepeatedText, build no repository and run no gate; they read
 texts from the work tree. Each row of BLOCKS names a block by its

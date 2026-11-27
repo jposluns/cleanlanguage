@@ -127,7 +127,8 @@ stage each hold an escape byte, a backslash and a byte outside ASCII, to the gat
 and 4 list 3 entries that cannot be read, 1 with no tab, 1 with 2 fields before its tab and 1
 with 4, to the gate and to --list, 2 beside the repository's 4 files and 2 alone. The problem
 line of the first, compared whole, must show the message the
-same way. 4 cases run the gate through another python3 -I launcher that changes the gate's
+same way. 1 case runs the gate through a python3 -I launcher that first removes os.O_NOFOLLOW, to
+the gate and to --list. 4 cases run the gate through another python3 -I launcher that changes the gate's
 process alone, each to the gate and to --list: 1 replaces the root after the gate opens it and
 before git starts, in the stand-in case above; 1 moves a folder at depth 1, the folder at depth 1
 above a folder at depth 2 and a file out of the work tree, each just after the gate opens it and
@@ -818,8 +819,10 @@ class Refusals(GateCase):
             with self.subTest(term=term):
                 name = f"case{number}.md"
                 self.repo.track(name, b"plain\n" + term + b"\n")
-                self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
-                self.repo.git("rm", "-q", "-f", name)
+                try:
+                    self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
+                finally:
+                    self.repo.git("rm", "-q", "-f", name)
                 self.control()
 
     def test_term_inside_other_letters_or_digits(self):
@@ -829,8 +832,10 @@ class Refusals(GateCase):
             with self.subTest(term=term):
                 name = f"inside{number}.md"
                 self.repo.track(name, b"plain\n" + term + b"\n")
-                self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
-                self.repo.git("rm", "-q", "-f", name)
+                try:
+                    self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
+                finally:
+                    self.repo.git("rm", "-q", "-f", name)
                 self.control()
 
     def test_unclaimed_line_in_an_executable_file(self):
@@ -858,10 +863,12 @@ class Refusals(GateCase):
         # A line that no row claims leaves its row, of count 1, claiming 0 lines, so the row is stale too.
         with self.subTest(case="marker in lower case, line in upper case"):
             self.repo.set_rows("README.md\t1\tkeep\tcc by-sa 4.0")
-            self.refused("README.md:3: names a licence term and no allowlist row claims it",
-                         also=("allowlist row 2 (keep, marker 'cc by-sa 4.0') is stale: it claims 0 line(s), "
-                               "the allowlist says 1",))
-            self.repo.set_rows(ROW)
+            try:
+                self.refused("README.md:3: names a licence term and no allowlist row claims it",
+                             also=("allowlist row 2 (keep, marker 'cc by-sa 4.0') is stale: it claims 0 line(s), "
+                                   "the allowlist says 1",))
+            finally:
+                self.repo.set_rows(ROW)
             self.control()
         with self.subTest(case="marker in upper case, line in lower case"):
             self.repo.track("README.md", b"# Example\n\nLicence: cc by-sa 4.0\n")
@@ -970,9 +977,11 @@ class Refusals(GateCase):
         shown = "a\\x1bb\\\\c\\x7f\\xe9\\u2028\\U0001f600.md"
         with self.subTest(field="path"):
             self.repo.track(name, b"CC BY-SA 4.0\n")
-            self.refused(f"{PREFIX}{shown}:1: names a licence term and no allowlist row claims it")
-            self.passes(f"README.md:1\n{shown}:1\ntotal: 2 lines in 2 files\n", "--list")
-            self.repo.git("rm", "-q", "-f", "--", name)
+            try:
+                self.refused(f"{PREFIX}{shown}:1: names a licence term and no allowlist row claims it")
+                self.passes(f"README.md:1\n{shown}:1\ntotal: 2 lines in 2 files\n", "--list")
+            finally:
+                self.repo.git("rm", "-q", "-f", "--", name)
             self.control()
         rows = (
             ("README.md\t1\tkeep\tx\x1by",
@@ -1022,17 +1031,21 @@ class Refusals(GateCase):
         with self.subTest(line="a file deleted from the work tree"):
             self.repo.track(name, b"no term\n")
             (self.repo.root / name).unlink()
-            self.refused(f"{PREFIX}{shown}: cannot read the tracked file: FileNotFoundError")
-            self.repo.git("rm", "-q", "--cached", "--", name)
+            try:
+                self.refused(f"{PREFIX}{shown}: cannot read the tracked file: FileNotFoundError")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
             self.control()
         with self.subTest(line="a tracked symbolic link"):
             os.symlink("README.md", self.repo.root / name)
             self.repo.git("add", "--", name)
             line = (f"{PREFIX}{shown}: tracked with mode 120000, not as a regular file (a symbolic link or a "
                     "submodule), so the gate cannot read it")
-            self.assertEqual(self.refused(line), line + "\n")
-            self.repo.git("rm", "-q", "--cached", "--", name)
-            (self.repo.root / name).unlink()
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
+                (self.repo.root / name).unlink()
             self.control()
         with self.subTest(line="a parent that is a file"):
             path = f"{ODD_PART}/notes.md"
@@ -1041,9 +1054,11 @@ class Refusals(GateCase):
             (self.repo.root / ODD_PART).write_bytes(b"no term\n")
             line = (f"{PREFIX}{ODD_PART_SHOWN}/notes.md: the tracked path is not a regular file in the work tree, "
                     f"since its parent {ODD_PART_SHOWN} is not a folder in the work tree")
-            self.assertEqual(self.refused(line), line + "\n")
-            (self.repo.root / ODD_PART).unlink()
-            self.repo.git("rm", "-q", "--cached", "--", path)
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                (self.repo.root / ODD_PART).unlink()
+                self.repo.git("rm", "-q", "--cached", "--", path)
             self.control()
         with self.subTest(line="an unmerged entry"):
             self.repo.track(name, b"no term\n")
@@ -1052,9 +1067,11 @@ class Refusals(GateCase):
             self.repo.git("update-index", "--index-info", stdin=info)
             line = (f"{PREFIX}{shown}: an unmerged index entry (stage 1), so the gate cannot tell which version is "
                     "tracked")
-            self.assertEqual(self.refused(line), line + "\n")
-            self.repo.git("rm", "-q", "--cached", "--", name)
-            (self.repo.root / name).unlink()
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
+                (self.repo.root / name).unlink()
             self.control()
         with self.subTest(line="a line that holds the markers of 2 rows, and their stale rows"):
             self.repo.track(name, b"CC BY-SA 4.0\n")
@@ -1082,19 +1099,21 @@ class Refusals(GateCase):
         }
         for before, change in befores.items():
             with self.subTest(before=before):
-                change()
-                if before != "no run of the gate":
-                    self.passes()
-                self.repo.track("other.md", b"CC BY-SA 4.0\n")
-                with self.assertRaises(AssertionError) as caught:
-                    self.refused(unclaimed)
-                self.assertIn(guard, str(caught.exception))
-                # Back to the repository as Repo built it. The bytes come back first, since update-index
-                # also reads README.md from the work tree.
-                self.repo.git("rm", "-q", "--cached", "--", "other.md")
-                (self.repo.root / "other.md").unlink()
-                self.repo.write("README.md", README)
-                self.repo.git("update-index", "--chmod=-x", "--", "README.md")
+                try:
+                    change()
+                    if before != "no run of the gate":
+                        self.passes()
+                    self.repo.track("other.md", b"CC BY-SA 4.0\n")
+                    with self.assertRaises(AssertionError) as caught:
+                        self.refused(unclaimed)
+                    self.assertIn(guard, str(caught.exception))
+                finally:
+                    # Back to the repository as Repo built it. The bytes come back first, since update-index
+                    # also reads README.md from the work tree.
+                    self.repo.git("rm", "-q", "--cached", "--ignore-unmatch", "--", "other.md")
+                    (self.repo.root / "other.md").unlink(missing_ok=True)
+                    self.repo.write("README.md", README)
+                    self.repo.git("update-index", "--chmod=-x", "--", "README.md")
                 self.assertEqual(self.repo.state(), self.built)
         # After a run that passed on the repository as built, the helper checks the refusal.
         self.control()
@@ -1157,21 +1176,28 @@ class Refusals(GateCase):
                  ("deep/sub/notes.md", "deep", "a file"))
         for path, parent, kind in cases:
             with self.subTest(path=path, parent=parent, kind=kind):
-                self.repo.track(path, b"ShareAlike\n")
-                self.repo.add_row(f"{path}\t1\tkeep\tShareAlike")
-                self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
-                shutil.rmtree(self.repo.root / parent)
-                if kind == "a file":
-                    (self.repo.root / parent).write_bytes(b"no term\n")
-                else:
-                    target = outside if "outside" in kind else Path("elsewhere")
-                    os.symlink(target, self.repo.root / parent)
-                self.refused(f"{PREFIX}{path}: the tracked path is not a regular file in the work tree, since its "
-                             f"parent {parent} is not a folder in the work tree",
-                             out_text=PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n")
-                (self.repo.root / parent).unlink()
-                self.repo.git("rm", "-q", "--cached", "--", path)
-                self.repo.set_rows(ROW)
+                try:
+                    self.repo.track(path, b"ShareAlike\n")
+                    self.repo.add_row(f"{path}\t1\tkeep\tShareAlike")
+                    self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+                    shutil.rmtree(self.repo.root / parent)
+                    if kind == "a file":
+                        (self.repo.root / parent).write_bytes(b"no term\n")
+                    else:
+                        target = outside if "outside" in kind else Path("elsewhere")
+                        os.symlink(target, self.repo.root / parent)
+                    self.refused(f"{PREFIX}{path}: the tracked path is not a regular file in the work tree, since "
+                                 f"its parent {parent} is not a folder in the work tree",
+                                 out_text=PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n")
+                finally:
+                    # The parent is a link or a file once the change is made, and a folder before it.
+                    entry = self.repo.root / parent
+                    if entry.is_symlink() or entry.is_file():
+                        entry.unlink()
+                    else:
+                        shutil.rmtree(entry, ignore_errors=True)
+                    self.repo.git("rm", "-q", "--cached", "--ignore-unmatch", "--", path)
+                    self.repo.set_rows(ROW)
                 self.control()
 
     def test_list_fails_on_a_parent_that_is_not_a_folder(self):
@@ -1389,9 +1415,11 @@ class Refusals(GateCase):
             with self.subTest(stage=stage):
                 info = f"0 {'0' * 40}\tREADME.md\n100644 {blob} {stage}\tREADME.md\n".encode("ascii")
                 self.repo.git("update-index", "--index-info", stdin=info)
-                self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot tell "
-                             "which version is tracked")
-                self.repo.git("add", "README.md")
+                try:
+                    self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot "
+                                 "tell which version is tracked")
+                finally:
+                    self.repo.git("add", "README.md")
                 self.control()
 
     def test_named_exception_untracked(self):
@@ -1399,8 +1427,10 @@ class Refusals(GateCase):
         for path in NAMED_EXCEPTIONS:
             with self.subTest(path=path):
                 self.repo.git("rm", "--cached", "-q", path)
-                self.refused(f"{PREFIX}{path}: a named exception that git does not track")
-                self.repo.git("add", path)
+                try:
+                    self.refused(f"{PREFIX}{path}: a named exception that git does not track")
+                finally:
+                    self.repo.git("add", path)
                 self.control()
 
     def test_named_exception_without_a_matching_line(self):
@@ -1414,8 +1444,10 @@ class Refusals(GateCase):
                 with self.subTest(path=path, empty=not data):
                     before = (self.repo.root / path).read_bytes()
                     self.repo.track(path, data)
-                    self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", also=also)
-                    self.repo.track(path, before)
+                    try:
+                        self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", also=also)
+                    finally:
+                        self.repo.track(path, before)
                     self.control()
 
     def test_not_a_git_repository(self):
@@ -1565,9 +1597,12 @@ class Refusals(GateCase):
             with self.subTest(stage=stage):
                 info = f"0 {'0' * 40}\tREADME.md\n100644 {blob} {stage}\tREADME.md\n".encode("ascii")
                 self.repo.git("update-index", "--index-info", stdin=info)
-                self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot tell "
-                             "which version is tracked", "--list", out_text="README.md:1\ntotal: 1 lines in 1 files\n")
-                self.repo.git("add", "README.md")
+                try:
+                    self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot "
+                                 "tell which version is tracked", "--list",
+                                 out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                finally:
+                    self.repo.git("add", "README.md")
                 self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
 
     def test_list_fails_on_a_file_that_cannot_be_read(self):
@@ -1575,9 +1610,11 @@ class Refusals(GateCase):
         with self.subTest(path="gone.md"):
             self.repo.track("gone.md", b"no term\n")
             (self.repo.root / "gone.md").unlink()
-            self.refused(f"{PREFIX}gone.md: cannot read the tracked file: FileNotFoundError", "--list",
-                         out_text="README.md:1\ntotal: 1 lines in 1 files\n")
-            self.repo.git("rm", "-q", "--cached", "--", "gone.md")
+            try:
+                self.refused(f"{PREFIX}gone.md: cannot read the tracked file: FileNotFoundError", "--list",
+                             out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", "gone.md")
             self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
         with self.subTest(path=ALLOWLIST):
             # --list reads the allowlist only as a named exception, so it reports 1 problem.
@@ -1597,9 +1634,11 @@ class Refusals(GateCase):
                 with self.subTest(path=path, empty=not data):
                     before = (self.repo.root / path).read_bytes()
                     self.repo.track(path, data)
-                    self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
-                                 out_text="README.md:1\ntotal: 1 lines in 1 files\n")
-                    self.repo.track(path, before)
+                    try:
+                        self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
+                                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                    finally:
+                        self.repo.track(path, before)
                     self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
 
     def test_file_content_is_data(self):
@@ -1663,16 +1702,16 @@ BLOCKS = (
     ("not covered", "Not covered:", "in the same file passes.", ("gate", "squash")),
     ("the tests' setting", "with no setting of git taken", "environment or configuration.", ("squash",)),
     ("the refusal cases", "Each refusal case that runs the gate", "outside printable ASCII.", ("squash",)),
-    ("the refusal helper", "helper that checks a refusal fails the case", "as it was built", ("tests", "squash")),
+    ("the refusal helper", "helper that checks a refusal fails the case", "the same bytes in each tracked file.",
+     ("tests", "squash")),
     ("the escaped path case", "1 case requires the gate to escape a tracked path", "and a stale row.",
      ("tests", "squash")),
     ("the refusal helper case", "1 case pins the rule of the helper", "as it was built.", ("tests", "squash")),
-    ("the reader cases", "10 cases call the gate's file reader", "a path that holds those characters.",
-     ("tests", "squash")),
-    ("the stand-in cases", "9 cases give the gate a stand-in git", "2 beside the repository's 4 files and 2 alone.",
+    ("the reader cases", "10 cases call the gate's file reader", "gives its file's bytes.", ("tests", "squash")),
+    ("the stand-in cases", "9 cases give the gate a stand-in git", "must show the message the same way.",
      ("tests", "squash")),
     ("the launcher without O_NOFOLLOW", "1 case runs the gate through a python3 -I launcher", "to --list.",
-     ("squash",)),
+     ("tests", "squash")),
     ("the launcher cases", "4 cases run the gate through another python3 -I launcher", "git cannot enter.",
      ("tests", "squash")),
     ("the relative PATH case", "1 case loads the test file", "to be an absolute path.", ("tests", "squash")),
@@ -1863,7 +1902,9 @@ class TextRules(unittest.TestCase):
             "a word of a block differs": (changed("tools/gate.py", "of the block", "of a block"),
                                           [FAILS, FAILS, PASSES]),
             # Each text for review: a word of a block, a word inside a paragraph and the last word of a
-            # paragraph, so neither text nor piece goes uncompared; SQUASH-MSG also fails the byte comparison.
+            # paragraph, so each kind of piece is compared in each text; SQUASH-MSG also fails the byte
+            # comparison. Only the pieces that a row names are compared, so a word changed outside them,
+            # such as in the first line of PR-BODY.md, is not.
             "a word of a block differs in a text for review": (
                 changed("PR-BODY.md", "of the `block`", "of a `block`"), [PASSES, FAILS, PASSES]),
             "a word of a block differs in SQUASH-MSG": (
