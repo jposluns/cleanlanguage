@@ -2,7 +2,8 @@ Serve instructions file links from this site (#293)
 
 Remove the 2 site links to site/downloads/cleanlanguage-instructions.md
 on GitHub and point the demo prompt at the copy this site serves, so no
-page depends on the repository's site/ folder being public.
+page links the GitHub blob or raw URL of that file. The disclosure
+page's link to site/_headers on GitHub is outside this change.
 
 - install.html: drop the "View the original on GitHub" sentence; the
   paragraph's link to /downloads/cleanlanguage-instructions.md stays.
