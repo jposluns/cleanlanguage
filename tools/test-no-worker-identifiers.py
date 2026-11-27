@@ -18,8 +18,10 @@ the domain run of 1 at sign can be the local part of the next, and both are read
 the domain run that has at least 1 byte of the run before it and 2 or more ASCII letters right
 after it ends a domain after those letters, and each such domain gives a candidate: the local
 part, the at sign, and that domain. So a reserved name at the end of a longer domain run cannot
-hide the candidate that stops before it. Reading bytes keeps every tracked file in scope, images
-included, with no decode failure.
+hide the candidate that stops before it. An at sign whose local part is empty, because the byte
+right before it is not 1 of those named for the local part or it starts the data, gives no
+candidate, and neither does 1 whose domain run ends no domain. Reading bytes keeps every tracked
+file in scope, images included, with no decode failure.
 
 Work. Each byte is read a bounded number of times: once in a local part, once in a domain run,
 and once more for the letters after a dot. Each candidate is tested with slices no longer than
@@ -37,7 +39,9 @@ A candidate is exempt when, folded to lower case:
 2. Its domain is reserved for documentation: its last label is in RESERVED_LAST_LABELS, or the
    domain is, or ends with a dot and then, 1 of RESERVED_DOMAINS.
 
-An at sign is a hit when 1 or more of its candidates is not exempt; it is reported 1 time. A hit
+An at sign is a hit when 1 or more of its candidates is not exempt; it is reported 1 time. So an
+address at a reserved domain passes only when every candidate of its at sign is exempt: each
+shorter domain that its domain run ends must be reserved as well. A hit
 passes when its line is in ALLOWLIST, the reviewed set of exact line texts, by file, for
 email-shaped text that is no address. An allowlist entry that is not the exact text of a line of
 its file that holds a hit is a failure, so the allowlist cannot silently go stale.
@@ -56,38 +60,55 @@ Report. A failure names the file, the line number, 1 more than the number of lin
 the hit, and the first 16 hexadecimal digits of the sha256 of the hit, the longest candidate of
 its at sign that is not exempt. It never holds the text of the hit or of its line, and it names
 a path whose name holds a hit only by the digest of that name, so this suite copies no address
-that it catches, in a file or in a path name, into the CI log. An unreadable file is named with
-the error text of the system, which holds no path, or, when the error carries no such text, with
-the name of the type of the error. A stale allowlist entry is named by its file, its position,
-and the same digest of its text.
+that it catches, in a file or in a path name, into the CI log. A stale allowlist entry is named
+by its file, its position, and the same digest of its text.
 
-It fails closed: a git ls-files that fails or that cannot be started, and a listed file that is
-missing or cannot be read, are failures that name the cause or the file, never a skip. The content
-of entries of mode 120000 and 160000, a tracked symbolic link and a submodule, is not read.
+It fails closed: a git ls-files that fails, that cannot be started, or that lists no path, and a
+listed file that is missing or cannot be read, are failures, never a skip. Each such failure is a
+fixed category with only an exit code, a symbol from a fixed table, or the name of a type, never
+text from the environment: a git ls-files that fails gives its exit code; a git that cannot be
+started, and an unreadable file, give the errno name of the error, such as ENOENT, or, when the
+error carries no errno that the errno module names, the name of the type of the error; an empty
+listing gives no detail. So no diagnostic of git, no message of an exception, no error text of
+the system, and no repository path or path of the git program reaches the output, whatever
+address such text holds. An unreadable file is named by its path, or by the digest of its path
+name when that name holds a hit. The content of entries of mode 120000 and 160000, a tracked
+symbolic link and a submodule, is not read.
 
 Each caught example in the self-checks below is assembled at run time from parts, so this file's
 own source holds no text that candidates() takes as a candidate and the suite needs no entry for
-itself.
+itself. Each expected digest in the self-checks is computed in the case with hashlib.sha256 and
+its first 16 hexadecimal digits, never with digest(), so a change to digest() or to its length,
+such as 1 that copies the hit in hexadecimal, fails a case.
 
 Residual: the email class only. A seat label, a bare account handle, or a numeric account
 identifier passes, since a committed pattern that names a real label would itself publish it. An
 address split across lines, assembled by code, or written with the word "at" passes; an
 untracked file, the target of a tracked symbolic link, the content of a submodule, and an address
-inside compressed or encoded binary content pass; an at sign outside ASCII, such as a confusable,
-passes; an address with a quoted local part, or with a domain written with letters outside
-ASCII, can pass, since a byte that the runs above do not name ends a run; a surface that is not
-a file in this tree, such as a pull request title, description, or comment, is not reached, and
-tools/check-pr-text.py carries no identifier pattern today. The digest of a hit or of a path
-name lets a reader who already holds a guess of the address confirm the guess; it does not
-reveal the address. A path name is held back only from the output of this suite: git, and any
-other step of a workflow that lists or names files, can still print it.
+inside compressed or encoded binary content pass; an at sign outside ASCII, such as a confusable
+like the fullwidth or the small commercial at sign, passes; an at sign written as an HTML
+character reference, such as the decimal or the named form, or percent-encoded, passes, since
+only the byte of the ASCII at sign is searched; an address whose local part ends, right before
+the at sign, in a byte that the local part does not name, such as a letter outside ASCII, a
+tilde, an exclamation mark, or an apostrophe, passes, since its local part is then empty; an
+address with a quoted local part, or with a domain written with letters outside ASCII or as a
+literal in square brackets, can pass, since a byte that the runs above do not name ends a run;
+a surface that is not a file in this tree, such as a pull request title, description, or
+comment, is not reached, and tools/check-pr-text.py carries no identifier pattern today. The
+digest of a hit or of a path name lets a reader who already holds a guess of the address confirm
+the guess; it does not reveal the address. A path name is held back only from the output of
+this suite: git, and any other step of a workflow that lists or names files, can still print it.
 Accepted false failures: a legitimate new third-party address is caught and needs a maintainer
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
-or is added to ALLOWLIST after review; and an action pinned to a version tag in which a dot is
-followed directly by 2 or more letters, such as v1.2.3-alpha.beta.1 or v2.0.0-rc.ab, is caught,
-since a domain then ends after those letters, unless every domain that the tag ends is exempt, as
-in v1.2.3-pre.test.1, whose letters form a reserved last label, or v1.0.0-rc.example.com, while a
-tag whose every dot is followed by a digit, such as v1.2.3-rc.1, passes.
+or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
+also ends a shorter domain that is not reserved, such as 1 at mail.corp under example.com or 1
+that appends the label example to an ordinary domain, is caught, since that shorter candidate
+is not exempt, and is reworded to a reserved domain with no such shorter domain; and an action
+pinned to a version tag in which a dot is followed directly by 2 or more letters, such as
+v1.2.3-alpha.beta.1 or v2.0.0-rc.ab, is caught, since a domain then ends after those letters,
+unless every domain that the tag ends is exempt, as in v1.2.3-pre.test.1, whose letters form a
+reserved last label, or v1.0.0-rc.example.com, while a tag whose every dot is followed by a
+digit, such as v1.2.3-rc.1, passes.
 """
 import errno
 import hashlib
@@ -216,6 +237,17 @@ def hits_in(data):
     return found
 
 
+def error_category(error):
+    """The fixed category of the OSError error: its errno name, or the name of its type.
+
+    The errno name, such as ENOENT, comes from the fixed table of the errno module; an error whose
+    errno that table does not name gives the name of its type. Neither holds text from the
+    environment, so no message, path, or error text of the system that the error carries is used.
+    """
+    name = errno.errorcode.get(error.errno) if isinstance(error.errno, int) else None
+    return name or type(error).__name__
+
+
 def tracked_files(root, git=GIT):
     """(repository-relative path, mode) for each entry that git ls-files --stage lists at root.
 
@@ -248,19 +280,21 @@ def scan(root, allowlist, git=GIT):
 
     A hit in a file passes on a line that allowlist holds for that file. A failure is a line of
     text: a hit in a path name as a digest of the path and of the hit, a hit in a file as
-    path:line: and a digest, a file that cannot be read, a stale allowlist entry, or a git
-    ls-files that fails or cannot be started. No failure holds the text of a hit or of its line,
-    and a path whose name holds a hit is named only by the digest of its name.
+    path:line: and a digest, a file that cannot be read with the category of its error, a stale
+    allowlist entry, a git ls-files that fails with its exit code, a git that cannot be started
+    with the category of its error, or a git ls-files that lists no path. No failure holds the
+    text of a hit or of its line, a path whose name holds a hit is named only by the digest of
+    its name, and no failure holds a diagnostic of git, the message of an exception, the error
+    text of the system, or the path of root or of git.
     """
     try:
         entries = tracked_files(root, git)
     except subprocess.CalledProcessError as error:
-        detail = (error.stderr or b"").decode("utf-8", "replace").strip()
-        return ["git ls-files failed: exit {} {}".format(error.returncode, detail)], 0
+        return ["git ls-files failed: exit {}".format(error.returncode)], 0
     except OSError as error:
-        return ["git ls-files failed: git could not be started: {}".format(error)], 0
+        return ["git ls-files failed: git could not be started: {}".format(error_category(error))], 0
     if not entries:
-        return ["git ls-files listed no file at {}".format(root)], 0
+        return ["git ls-files listed no file"], 0
     failures = []
     read = 0
     used = set()
@@ -275,7 +309,7 @@ def scan(root, allowlist, git=GIT):
         try:
             data = (Path(root) / rel).read_bytes()
         except OSError as error:
-            failures.append("{}: unreadable: {}".format(label, error.strerror or type(error).__name__))
+            failures.append("{}: unreadable: {}".format(label, error_category(error)))
             continue
         read += 1
         allowed = {line.encode("utf-8") for line in allowlist.get(rel, ())}
@@ -301,6 +335,15 @@ def scan(root, allowlist, git=GIT):
 def caught(local, domain):
     """An address assembled from its parts, so that this source holds no matchable text."""
     return local + "@" + domain
+
+
+def sha256_prefix(data):
+    """The expected digest of the bytes data, from hashlib directly and never from digest().
+
+    The cases build every expected digest with this, so a change to digest(), to DIGEST_DIGITS,
+    or to what a failure names fails a case rather than changing the expected text with it.
+    """
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 class PatternSelfCheck(unittest.TestCase):
@@ -330,16 +373,40 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertEqual(self.texts("contact " + address + " today"), [address])
         line = "by " + address
         self.assertEqual(hits_in(("x\n" + line + "\n").encode("ascii")),
-                         [(2, 2, 2 + len(line), digest(address.encode("ascii")))])
+                         [(2, 2, 2 + len(line), sha256_prefix(address.encode("ascii")))])
+
+    def test_the_digest_is_the_first_16_hexadecimal_digits_of_the_sha256(self):
+        # A known value pins hashlib and the length apart from both helpers; then the digest of a
+        # hit is computed in the case with hashlib directly.
+        self.assertEqual(sha256_prefix(b"abc"), "ba7816bf8f01cfea")
+        self.assertEqual(digest(b"abc"), "ba7816bf8f01cfea")
+        address = caught("worker-label-example", self.PLACEHOLDER_DOMAIN).encode("ascii")
+        self.assertEqual(self.digests(address.decode("ascii")), [hashlib.sha256(address).hexdigest()[:16]])
+
+    def test_each_stated_residual_form_gives_no_candidate(self):
+        # The forms that the residual states pass, pinned so that a change to any of them meets
+        # the residual: an at sign outside ASCII, an at sign written as a character reference or
+        # percent-encoded, a local part that ends right before the at sign in a byte that it does
+        # not name, and a domain literal. The control with a plain at sign is caught.
+        local = "worker-label-example"
+        domain = self.PLACEHOLDER_DOMAIN
+        self.assertEqual(len(hits_in(caught(local, domain).encode("ascii"))), 1)
+        for text in (local + chr(0xFF20) + domain, local + chr(0xFE6B) + domain,
+                     local + "&#" + "64;" + domain, local + "&com" + "mat;" + domain,
+                     local + "%" + "40" + domain, "jos" + chr(233) + "@" + domain,
+                     "a~" + "@" + domain, "a!" + "@" + domain, "a'" + "@" + domain,
+                     caught(local, "[192.0.2.1]")):
+            with self.subTest(text=text):
+                self.assertEqual(candidates(text.encode("utf-8")), [])
 
     def test_an_exempt_candidate_hides_no_other(self):
         # A prefix, an at sign, a dotted local part that ends in a reserved label, a 2nd at sign,
         # and a non-reserved domain: the 2nd at sign gives its own candidate, which is caught.
         address = caught("w." + "example", self.PLACEHOLDER_DOMAIN)
-        self.assertEqual(self.digests(address), [digest(address.encode("ascii"))])
+        self.assertEqual(self.digests(address), [sha256_prefix(address.encode("ascii"))])
         masked = "p" + "@" + address
         self.assertEqual(self.texts(masked), [caught("p", "w." + "example"), address])
-        self.assertEqual(self.digests(masked), [digest(address.encode("ascii"))])
+        self.assertEqual(self.digests(masked), [sha256_prefix(address.encode("ascii"))])
         # The maintainer's address in front of a 2nd at sign hides nothing either.
         behind = MAINTAINER + "@" + self.PLACEHOLDER_DOMAIN
         self.assertEqual(self.texts(behind), [MAINTAINER, caught("posluns.ca", self.PLACEHOLDER_DOMAIN)])
@@ -348,7 +415,7 @@ class PatternSelfCheck(unittest.TestCase):
         plain = caught("worker", self.PLACEHOLDER_DOMAIN)
         suffixed = plain + "." + "example"
         self.assertEqual(self.texts(suffixed), [plain, suffixed])
-        self.assertEqual(self.digests(suffixed), [digest(plain.encode("ascii"))])
+        self.assertEqual(self.digests(suffixed), [sha256_prefix(plain.encode("ascii"))])
 
     def test_the_maintainer_address_in_any_case_is_exempt(self):
         for text in (MAINTAINER, MAINTAINER.upper(), "Jeff" + "@" + "Posluns.ca"):
@@ -411,6 +478,23 @@ class PatternSelfCheck(unittest.TestCase):
                 self.assertIn(address, self.texts(address))
                 self.assertEqual(len(hits_in(address.encode("ascii"))), 1)
 
+    def test_a_reserved_domain_address_passes_only_when_every_candidate_is_exempt(self):
+        # The accepted false failure that the rule states: a whole domain that is reserved, whose
+        # run also ends a shorter domain that is not, is caught with the digest of that shorter
+        # candidate. A reserved domain whose every shorter domain is reserved as well passes.
+        for domain, shorter in (("mail.corp" + "." + "example.com", "mail.corp"),
+                                ("host.co" + "." + "test", "host.co")):
+            with self.subTest(domain=domain):
+                address = caught("fixture", domain)
+                self.assertEqual(self.texts(address)[-1], address)
+                self.assertEqual(self.digests(address),
+                                 [sha256_prefix(caught("fixture", shorter).encode("ascii"))])
+        for domain in ("mail.example" + "." + "org", "a.b.example" + "." + "com"):
+            with self.subTest(domain=domain):
+                address = caught("fixture", domain)
+                self.assertEqual(self.texts(address)[-1], address)
+                self.assertEqual(hits_in(address.encode("ascii")), [])
+
     def test_non_addresses_are_not_matched(self):
         pin = "actions/checkout" + "@" + "v4.4.0"
         commit = "actions/checkout" + "@" + "0123456789abcdef0123456789abcdef01234567"
@@ -447,7 +531,7 @@ class PatternSelfCheck(unittest.TestCase):
         caught_part = "checkout" + "@" + "v1.2.3-alpha.test.beta"
         pin = "actions/" + caught_part
         self.assertEqual(self.texts(pin), ["checkout" + "@" + "v1.2.3-alpha.test", caught_part])
-        self.assertEqual(self.digests(pin), [digest(caught_part.encode("ascii"))])
+        self.assertEqual(self.digests(pin), [sha256_prefix(caught_part.encode("ascii"))])
 
     def test_the_digest_is_that_of_the_longest_candidate_that_is_not_exempt(self):
         # 1 domain run that ends 3 domains: 2 that are not exempt and, after them, a reserved one.
@@ -455,7 +539,7 @@ class PatternSelfCheck(unittest.TestCase):
         longer = shorter + "." + "uk"
         text = longer + "." + "example"
         self.assertEqual(self.texts(text), [shorter, longer, text])
-        self.assertEqual(self.digests(text), [digest(longer.encode("ascii"))])
+        self.assertEqual(self.digests(text), [sha256_prefix(longer.encode("ascii"))])
 
     def test_long_address_free_text_costs_bounded_work(self):
         # About 150000 bytes each, with no candidate: a run with no at sign, a long local part
@@ -504,7 +588,7 @@ class FixtureRepository(unittest.TestCase):
         self.add("docs/note.md", "first\nsecond " + address + "\n")
         failures, _ = scan(self.root, {})
         self.assertEqual(failures, ["docs/note.md:2: email-shaped text, sha256 "
-                                    + digest(address.encode("ascii"))])
+                                    + sha256_prefix(address.encode("ascii"))])
         self.assertNotIn("worker-label-example", failures[0])
         self.assertNotIn("second", failures[0])
 
@@ -512,7 +596,7 @@ class FixtureRepository(unittest.TestCase):
         address = caught("w." + "example", "placeholder-mail" + "." + "com")
         self.add("m.txt", "p" + "@" + address + "\n")
         failures, _ = scan(self.root, {})
-        self.assertEqual(failures, ["m.txt:1: email-shaped text, sha256 " + digest(address.encode("ascii"))])
+        self.assertEqual(failures, ["m.txt:1: email-shaped text, sha256 " + sha256_prefix(address.encode("ascii"))])
 
     def test_an_address_in_a_path_name_fails_naming_the_path_by_its_digest_only(self):
         # A regular file whose name and content each hold an address, and a symbolic link whose name
@@ -525,12 +609,12 @@ class FixtureRepository(unittest.TestCase):
         self.git("add", "--", link)
         failures, read = scan(self.root, {})
         self.assertEqual(read, 1)
-        named = "path sha256 " + digest(rel.encode("ascii"))
+        named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
         self.assertEqual(failures, [
-            named + ": email-shaped text in the path name, sha256 " + digest((address + ".md").encode("ascii")),
-            named + ":2: email-shaped text, sha256 " + digest(address.encode("ascii")),
-            "path sha256 " + digest(link.encode("ascii")) + ": email-shaped text in the path name, sha256 "
-            + digest(link.encode("ascii"))])
+            named + ": email-shaped text in the path name, sha256 " + sha256_prefix((address + ".md").encode("ascii")),
+            named + ":2: email-shaped text, sha256 " + sha256_prefix(address.encode("ascii")),
+            "path sha256 " + sha256_prefix(link.encode("ascii")) + ": email-shaped text in the path name, sha256 "
+            + sha256_prefix(link.encode("ascii"))])
         for failure in failures:
             self.assertNotIn("worker-label-example", failure)
             self.assertNotIn("placeholder-mail", failure)
@@ -545,14 +629,14 @@ class FixtureRepository(unittest.TestCase):
             self.add(rel, "first\nsecond " + address + "\n")
         failures, read = scan(self.root, {first: ("gone",)})
         self.assertEqual(read, 2)
-        hit = digest(address.encode("ascii"))
+        hit = sha256_prefix(address.encode("ascii"))
         expected = []
         for rel in (middle, first):
-            named = "path sha256 " + digest(rel.encode("ascii"))
+            named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
             expected += [named + ": email-shaped text in the path name, sha256 " + hit,
                          named + ":2: email-shaped text, sha256 " + hit]
-        expected.append("path sha256 " + digest(first.encode("ascii"))
-                        + ": stale allowlist entry 1, no line that holds a hit, sha256 " + digest(b"gone"))
+        expected.append("path sha256 " + sha256_prefix(first.encode("ascii"))
+                        + ": stale allowlist entry 1, no line that holds a hit, sha256 " + sha256_prefix(b"gone"))
         self.assertEqual(failures, expected)
         for failure in failures:
             self.assertNotIn("worker-label-example", failure)
@@ -564,9 +648,9 @@ class FixtureRepository(unittest.TestCase):
         sub = "mods/" + address
         self.add("real.txt", "text\n")
         self.git("update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + "," + sub)
-        self.assertEqual(scan(self.root, {}), (["path sha256 " + digest(sub.encode("ascii"))
+        self.assertEqual(scan(self.root, {}), (["path sha256 " + sha256_prefix(sub.encode("ascii"))
                                                 + ": email-shaped text in the path name, sha256 "
-                                                + digest(address.encode("ascii"))], 1))
+                                                + sha256_prefix(address.encode("ascii"))], 1))
 
     def test_a_path_name_with_a_space_or_a_byte_outside_ascii_is_read_and_scanned(self):
         # Names that git quotes, or that hold a separator, when it lists paths without -z. Each
@@ -585,7 +669,7 @@ class FixtureRepository(unittest.TestCase):
             self.add(rel, "text\n")
         self.assertEqual(scan(self.root, {}), ([], len(clean)))
         address = caught("worker-label-example", "placeholder-mail" + "." + "com")
-        hit = digest(address.encode("ascii"))
+        hit = sha256_prefix(address.encode("ascii"))
         marked = (("my notes/" + address + " copy.md", hit),
                   ("caf" + chr(233) + "/" + address + "/x.md", hit))
         if raw_names:
@@ -596,7 +680,7 @@ class FixtureRepository(unittest.TestCase):
         self.assertEqual(read, len(clean) + len(marked))
         expected = []
         for rel, name_hit in sorted(marked):
-            named = "path sha256 " + digest(os.fsencode(rel))
+            named = "path sha256 " + sha256_prefix(os.fsencode(rel))
             expected += [named + ": email-shaped text in the path name, sha256 " + name_hit,
                          named + ":1: email-shaped text, sha256 " + hit]
         self.assertEqual(failures, expected)
@@ -604,37 +688,92 @@ class FixtureRepository(unittest.TestCase):
             self.assertNotIn("placeholder-mail", failure)
             self.assertTrue(failure.isascii(), failure)
 
-    def test_an_unreadable_file_is_named_by_its_error_text_or_error_type_only(self):
-        # A read error with the error text of the system, and 1 with none whose only argument is
-        # the path: each failure holds the error text or the name of the type, never the path.
+    def address_folder(self):
+        """A new folder in the temporary folder whose name is an address assembled at run time."""
+        folder = Path(self.tmp.name) / caught("worker-label-example", "placeholder-mail" + "." + "com")
+        folder.mkdir()
+        return folder
+
+    def assert_no_address(self, failures):
+        for failure in failures:
+            self.assertNotIn("worker-label-example", failure)
+            self.assertNotIn("placeholder-mail", failure)
+
+    def test_an_unreadable_file_is_named_by_its_errno_name_or_error_type_only(self):
+        # Read errors whose error text and path each hold an address: 1 with an errno that the
+        # errno module names, 1 with none whose only argument is the path, and 1 with an errno
+        # outside that table. Each failure holds the errno name or the name of the type only.
         rel = caught("worker", "placeholder-mail" + "." + "com")
-        named = "path sha256 " + digest(rel.encode("ascii"))
+        named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
         self.add(rel, "text\n")
         self.add("plain.txt", "text\n")
         full = str(self.root / rel)
-        for error, text in ((PermissionError(errno.EACCES, "Permission denied", full), "Permission denied"),
-                            (OSError(full), "OSError")):
+        for error, text in ((PermissionError(errno.EACCES, "denied for " + full, full), "EACCES"),
+                            (OSError(full), "OSError"),
+                            (OSError(1 << 20, "no errno name for " + full, full), "OSError")):
             with self.subTest(text=text):
+                self.assertIn(rel, str(error))
                 with mock.patch.object(type(self.root), "read_bytes", side_effect=error):
                     failures, read = scan(self.root, {})
                 self.assertEqual(read, 0)
                 self.assertEqual(failures, [
                     "plain.txt: unreadable: " + text,
-                    named + ": email-shaped text in the path name, sha256 " + digest(rel.encode("ascii")),
+                    named + ": email-shaped text in the path name, sha256 " + sha256_prefix(rel.encode("ascii")),
                     named + ": unreadable: " + text])
+                self.assert_no_address(failures)
+
+    def test_a_failed_listing_names_only_its_exit_code(self):
+        # A real git that fails in a folder whose path holds an address, so that its diagnostic
+        # holds the address, and a git whose given diagnostic holds it: each failure is the exit
+        # code alone.
+        missing = self.address_folder() / "missing-folder"
+        stderr = subprocess.run([GIT, "-C", str(missing), "ls-files"], capture_output=True,
+                                stdin=subprocess.DEVNULL).stderr
+        self.assertIn(b"placeholder-mail", stderr)
+        failures, read = scan(missing, {})
+        self.assertEqual(read, 0)
+        self.assertEqual(len(failures), 1, failures)
+        self.assertRegex(failures[0], r"\Agit ls-files failed: exit [0-9]+\Z")
+        self.assert_no_address(failures)
+        error = subprocess.CalledProcessError(128, [GIT], output=b"", stderr=stderr)
+        with mock.patch.object(subprocess, "run", side_effect=error):
+            self.assertEqual(scan(self.root, {}), (["git ls-files failed: exit 128"], 0))
+
+    def test_a_git_that_cannot_start_names_only_its_errno_name_or_error_type(self):
+        # A real program path that holds an address, then start errors whose text holds it: each
+        # failure is the errno name, or the name of the type when the error has no errno name.
+        self.add("a.txt", "text\n")
+        program = str(self.address_folder() / "no-such-git")
+        failures, read = scan(self.root, {}, git=program)
+        self.assertEqual((failures, read), (["git ls-files failed: git could not be started: ENOENT"], 0))
+        for error, text in ((OSError(errno.EACCES, "denied for " + program, program), "EACCES"),
+                            (OSError(program), "OSError")):
+            with self.subTest(text=text):
+                self.assertIn("placeholder-mail", str(error))
+                with mock.patch.object(subprocess, "run", side_effect=error):
+                    failures, read = scan(self.root, {})
+                self.assertEqual((failures, read), (["git ls-files failed: git could not be started: " + text], 0))
+
+    def test_an_empty_listing_names_no_path(self):
+        # An empty repository whose path holds an address: the failure names no path.
+        repo = self.address_folder() / "repo"
+        repo.mkdir()
+        subprocess.run([GIT, "-C", str(repo), "init", "-q"], check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL, env=dict(os.environ, GIT_CEILING_DIRECTORIES=self.tmp.name))
+        self.assertEqual(scan(repo, {}), (["git ls-files listed no file"], 0))
 
     def test_an_unreadable_file_or_stale_entry_of_such_a_path_names_only_its_digest(self):
         rel = caught("worker", "placeholder-mail" + "." + "com")
-        named = "path sha256 " + digest(rel.encode("ascii"))
+        named = "path sha256 " + sha256_prefix(rel.encode("ascii"))
         self.add(rel, "text\n")
         (self.root / rel).unlink()
         failures, _ = scan(self.root, {rel: ("gone",)})
         self.assertEqual(len(failures), 3, failures)
         self.assertEqual(failures[0], named + ": email-shaped text in the path name, sha256 "
-                         + digest(rel.encode("ascii")))
+                         + sha256_prefix(rel.encode("ascii")))
         self.assertTrue(failures[1].startswith(named + ": unreadable: "), failures)
         self.assertEqual(failures[2], named + ": stale allowlist entry 1, no line that holds a hit, sha256 "
-                         + digest(b"gone"))
+                         + sha256_prefix(b"gone"))
         for failure in failures:
             self.assertNotIn("placeholder-mail", failure)
 
@@ -648,7 +787,7 @@ class FixtureRepository(unittest.TestCase):
         self.assertEqual(len(failures), 2, failures)
         self.assertTrue(failures[0].startswith("t.py:1: email-shaped text, sha256 "), failures)
         self.assertEqual(failures[1], "t.py: stale allowlist entry 1, no line that holds a hit, sha256 "
-                         + digest(moved.encode("ascii")))
+                         + sha256_prefix(moved.encode("ascii")))
 
     def test_an_allowlist_entry_covers_only_its_exact_line(self):
         line = "url https://" + caught("user", "project" + "." + "ai") + "/a"
@@ -666,12 +805,34 @@ class FixtureRepository(unittest.TestCase):
                 failures, _ = scan(self.root, allowlist)
                 self.assertEqual(len(failures), 1, failures)
 
+    def test_an_allowlist_entry_applies_only_to_its_own_file(self):
+        # The same line in 2 files, with an entry for 1 of them: the line in the other file fails.
+        address = caught("user", "project" + "." + "ai")
+        line = "url https://" + address + "/a"
+        self.add("t.py", line + "\n")
+        self.add("u.py", line + "\n")
+        self.assertEqual(scan(self.root, {"t.py": (line,)}),
+                         (["u.py:1: email-shaped text, sha256 " + sha256_prefix(address.encode("ascii"))], 2))
+
+    def test_an_allowlist_entry_whose_line_holds_no_hit_is_stale(self):
+        # 3 lines, each present exactly as an entry: 1 with no at sign, 1 whose only candidate is
+        # exempt, and 1 that holds a hit. Only the last entry is used; the 2 others are stale.
+        plain = "url https://project.ai/a"
+        exempt_only = "url https://" + caught("user", "example" + "." + "com") + "/a"
+        held = "url https://" + caught("user", "project" + "." + "ai") + "/a"
+        self.assertEqual(len(candidates(exempt_only.encode("ascii"))), 1)
+        self.assertEqual(hits_in(exempt_only.encode("ascii")), [])
+        self.add("t.py", plain + "\n" + exempt_only + "\n" + held + "\n")
+        self.assertEqual(scan(self.root, {"t.py": (plain, exempt_only, held)}), ([
+            "t.py: stale allowlist entry 1, no line that holds a hit, sha256 "
+            + sha256_prefix(plain.encode("ascii")),
+            "t.py: stale allowlist entry 2, no line that holds a hit, sha256 "
+            + sha256_prefix(exempt_only.encode("ascii"))], 1))
+
     def test_a_missing_tracked_file_fails_naming_it(self):
         self.add("gone.txt", "text\n")
         (self.root / "gone.txt").unlink()
-        failures, _ = scan(self.root, {})
-        self.assertEqual(len(failures), 1, failures)
-        self.assertTrue(failures[0].startswith("gone.txt: unreadable: "), failures)
+        self.assertEqual(scan(self.root, {}), (["gone.txt: unreadable: ENOENT"], 0))
 
     def test_an_unreadable_tracked_file_fails_naming_it(self):
         self.add("odd.txt", "text\n")
