@@ -107,12 +107,12 @@ contain the dry-run commit. It does not see anything the exit cleanup
 does, or a ref moved and then restored between the 2 snapshots. None
 of these limits holds for a ref whose name git rejects, that git
 for-each-ref would list from the script's worktree and that is there
-when the leak check lists: such a ref fails the run, whoever writes it
-and whenever, at the first listing that meets it, which for a tag or a
-note there when a snapshot lists is the tag and note listing of that
-snapshot, before the leak check lists, and otherwise the listing of the
-leak check, since git writes a warning to standard error while that
-listing runs.
+when a listing of the run meets it, as the tag and note listing of
+each snapshot meets a tag or a note and the listing of the leak check
+meets any such ref: such a ref fails the run, whoever writes it and
+whenever, at the first listing that meets it, where the run ends,
+since git writes a warning to standard error while that listing
+runs.
 
 A ref that another worktree writes during the run fails the proof
 only when it is a tag or a note, when it is the HEAD of the script's
@@ -186,11 +186,9 @@ exempt from these settings only in the argument form and with the
 GIT_ATTR_SOURCE that the script gives it, and only once, so a later
 run in that form must run with them. 1 more, the text case, requires
 the texts that state or repeat what the script and the test do to
-agree, as its docstring states: 4 repeated blocks, 5 repeated
-sentences, no sentence that is a changed copy of a sentence of another
-of those texts, and this message the same byte for byte as
-.github/squash/290.txt commits it and as SQUASH-MSG at the top of the
-export.
+agree, as its docstring states, and this message to be the same byte
+for byte as .github/squash/290.txt commits it and as SQUASH-MSG at the
+top of the export.
 
 Residual of the test: stand-ins replace the packaging, the gates and
 the site rewrite, which the next step of release-dry-run.yml runs with
@@ -268,16 +266,17 @@ passes. The suite of the text fix, still of 74 cases, fails each of 2
 script mutants that ignore the signal of a signal case, whose run the
 signal cases before that fix pass, and each of 5 mutants of the texts,
 each changing 1 word of 1 repeated sentence. The suite of the drift
-fix, still of 74 cases, fails in its text case, run alone, each of 6
-mutants: 1 word changed in the description's copy of a sentence of the
-header; a copy of the shallow-clone caveat with 1 word changed put back
-in the comment of ref_leak_check; 1 word changed in the script's comment
-that states the clearing sentence; a copy of the exemption of the trace2
-case with 1 word changed put in that case's comment; 1 word changed in
-.github/squash/290.txt alone; and a folder that holds .git without
-.github/squash/290.txt. A folder that holds .github/squash/290.txt but
-no .git passes the text case, and a copy of the tools that holds
-neither passes the suite and skips the committed message. The release
+fix, still of 74 cases, was run against 6 mutants, each failing the
+text case, run alone: 1 word changed in the description's copy of a
+sentence of the header; a copy of the shallow-clone caveat with 1 word
+changed put back in the comment of ref_leak_check; 1 word changed in
+the script's comment that states the clearing sentence; a copy of the
+exemption of the trace2 case with 1 word changed put in that case's
+comment; 1 word changed in .github/squash/290.txt alone; and a folder
+that holds .git without .github/squash/290.txt. A folder that holds
+.github/squash/290.txt but no .git passes the text case, and a copy of
+the tools that holds neither passes the suite and skips the committed
+message. The release
 dry run workflow and tools/run_all_checks.sh run it before the dry run,
 and tools/test-run-all-checks.py records the new digest of
 tools/run_all_checks.sh after a reading of the whole script. The

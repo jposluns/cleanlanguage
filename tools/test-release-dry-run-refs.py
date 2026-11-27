@@ -7,8 +7,8 @@ catch and the rules that its git calls keep; this docstring does not repeat them
 cases do and what they show. In these cases the script's worktree is the main worktree of the case's
 repository, and no case runs in a clone made shallow, although case 38 writes a shallow entry. Cases
 12, 13, 23 and 27 show the first sentence of the header's residual, and cases 15, 28, 29 and 30 the
-second. No case shows the third or the fourth. The run with the branch in the skipped-ref case shows
-the fifth for a ref written before the run; no case writes such a ref during the run.
+second. No case shows the third or the fourth. Both runs of the skipped-ref case show the fifth, for a
+tag and for a branch written before the run; no case writes such a ref during the run.
 
 This test runs the real script, not an excerpt of it. Each ref case builds a repository in a
 temporary folder whose commits hold a copy of tools/release-dry-run.sh, byte for byte, and
