@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Tests for tools/check-licence-names.py, the licence-name gate.
 
-Each case builds a throwaway git repository in a temporary folder (git init and git add; no commit
-and no identity are needed, since the gate reads the index and the work tree). The repository
+Each case outside RepeatedText, TextRules and Startup, below, builds a throwaway git repository in
+a temporary folder (git init and git add; no commit and no identity are needed, since the gate
+reads the index and the work tree). The repository
 holds the gate's 3 files: a copy of the gate and of this test from this test's own folder, and an
 allowlist with 1 row, README.md, 1, keep, CC BY-SA 4.0, for README.md, whose 1 matching line holds
-that marker. The gate runs as a separate process, python3 -I, with --root in every case but 1,
-which runs it without --root; in 1 case it runs through a python3 -I launcher that first removes
-os.O_NOFOLLOW, and in 4 through another python3 -I launcher (below). The gate, git and the
+that marker. Wherever a case runs the gate, it runs as a separate process, python3 -I, with
+--root, but in 1 case, which runs it without --root; in 1 case it runs through a python3 -I
+launcher that first removes os.O_NOFOLLOW, and in 4 through another python3 -I launcher (below).
+The gate, git and the
 probe process below each run in the temporary folder and get an environment built from fixed
 values alone, so no variable of the caller's environment, such as XDG_CONFIG_HOME, HOME or a
 variable whose name starts with GIT_, is passed on to them: PATH, the folder of the git found on
@@ -16,25 +18,27 @@ configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
 GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
 search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init
 takes no template (--template=), so no hook, exclude file or description of a template reaches
-the repository. So, with the locale handled as below, the result depends on the case alone. The
-caller's environment is read for 3 things only. The tests build settings from 2 of them: where
-git is, whose folder is the PATH of each process but the 2 named below, and where Python's
-tempfile makes the temporary folder, which holds HOME and the repository. The third is the locale
-(LC_ALL, LC_CTYPE and LANG), which python3 -I does not ignore and which sets the encoding in which
-this process writes file names. When that encoding is not UTF-8, the suite, run as a script,
-starts itself again as python3 -I -X utf8, in Python's UTF-8 mode, so it writes every file name
-of a case in UTF-8 whatever the locale. The folder in which a
+the repository. The caller's environment is read for 3 things only. The tests build settings
+from 2 of them: where git is, whose folder is the PATH of each process but the 3 named below, and
+where Python's tempfile makes the temporary folder, which holds HOME and the repository. The third
+is the locale (LANG, LANGUAGE and each variable whose name starts with LC_), which python3 -I does
+not ignore. The suite, run as a script, replaces it: unless it already runs so, it starts itself
+again as python3 -I -X utf8, in Python's UTF-8 mode, with LC_ALL=C in place of each of those
+variables. So this process runs in the C locale and writes every file name of a case in UTF-8,
+whatever the caller's locale. The folder in which a
 case builds a repository, the temporary
 folder or, in 2 cases, a folder named case inside it, is the value of GIT_CEILING_DIRECTORIES and
 the working folder of each process that the case starts with an environment built from the one
 of that repository; the git that the gate starts works in the root folder that the gate opened.
-2 other processes get no such environment. The one that the case for a git found through a
+3 other processes get no such environment. The one that the case for a git found through a
 relative PATH entry starts works in a folder named relative inside the temporary folder and gets
-PATH alone, the relative folder bin there, which holds a link to the git found. The one that the
-case for the locale starts, the suite run as python3 -I -X utf8=0 to run only the case that
-requires the encoding of file names to be UTF-8, works in a temporary folder of its own and gets
-LC_ALL=C alone, under which, on Linux, that encoding is ASCII unless the suite starts itself
-again; the case requires it to exit 0. Each stand-in git below and
+PATH alone, the relative folder bin there, which holds a link to the git found. The 2 that the
+case for the locale starts each run the suite to run only the 2 cases that require this process
+to write file names in UTF-8 and to run in the C locale, each in a temporary folder of its own:
+1, run as python3 -I -X utf8=0, gets LC_ALL=C alone, under which, on Linux, Python writes file
+names in ASCII; the other gets LANG=C.UTF-8 alone, a UTF-8 locale that is not the C locale. The
+case requires each to exit 0, which each does only when the suite starts itself again. Each
+stand-in git below and
 each probe process records the environment that it gets, and the case requires it to equal those
 values exactly.
 
@@ -82,8 +86,10 @@ repository or index, change no result; and git init leaves .git with no hook, ex
 description, which only a template gives, even when GIT_TEMPLATE_DIR names a template that a
 git init without --template= copies. 1 case loads the test file in a python3 -I process whose
 PATH is a relative folder that holds git, and requires the git that it finds to be an absolute
-path. 2 cases, in Startup, run no gate: 1 requires this process to write file names in UTF-8,
-and 1 runs that case in the suite started under the locale above and requires it to pass.
+path. 3 cases, in Startup, run no gate: 1 requires this process to write file names in UTF-8; 1
+requires it to run in the C locale, with LC_ALL=C as its only variable of the locale, in UTF-8
+mode; and 1 runs those 2 cases in the suite started under each locale above and requires them to
+pass.
 
 10 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
 path: 1 reads a regular file as a control; 6 replace os.lstat or os.fdopen in that process alone
@@ -139,7 +145,16 @@ and .github/squash/287.txt. 1 requires PR-BODY.md, from its third line, and SQUA
 state every row, to match those texts. 1 requires SQUASH-MSG to equal .github/squash/287.txt
 byte for byte. Each run of whitespace counts as 1 space, and the backticks of PR-BODY.md are
 dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is not there, as in CI, and
-names it; a case that reads a tracked text that is not there ends in an error.
+names it; a case that reads a tracked text that is not there ends in an error. 1 case, in
+TextRules, builds no repository and runs no gate either. It requires a row of PARAGRAPHS to name
+this paragraph, and it runs those 3 cases on texts and rows of its own, with other line breaks in
+each text, backticks in PR-BODY.md and opening words in its first line. Each must pass on those
+texts as written; a case that compares a text must fail when a word of a block or the last word
+of a paragraph differs in it, when a text for review lacks a block, when opening words occur
+twice or do not start their paragraph and, for the tracked texts, when 2 rows have the same name;
+the byte comparison must fail when SQUASH-MSG gains 1 byte; and each case must skip and name each
+text for review that is not there, and end in an error when a tracked text that it reads is not
+there, also when no text for review is there.
 
 Exit 0 when every case passes; 1 otherwise.
 """
@@ -149,6 +164,7 @@ from __future__ import annotations
 import ast
 import errno
 import json
+import locale
 import os
 import re
 import shutil
@@ -162,8 +178,8 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 # Where git is, found once on the caller's PATH: with the temporary folder that tempfile picks, the
 # only value from which the tests build a setting; the locale, the only other value of the caller's
-# environment that is read, sets only the encoding of file names, which the suite run as a script makes
-# UTF-8 (see the end of this file). Its folder is the PATH of each process.
+# environment that is read, the suite run as a script replaces with LC_ALL=C in UTF-8 mode (see the end
+# of this file). Its folder is the PATH of each process.
 FOUND_GIT = shutil.which("git")
 # Made absolute, since a relative entry of the caller's PATH would be read again from the working folder
 # of each process, which is the temporary folder.
@@ -1769,28 +1785,147 @@ class RepeatedText(unittest.TestCase):
                          f"{SQUASH_COPY.name} differs from {SQUASH_TEXT.relative_to(HERE.parent)}")
 
 
+# The texts and rows on which TextRules runs the cases of RepeatedText, by path from the root of a
+# temporary folder: a block that the gate's docstring and the squash message state, a paragraph that
+# the test docstring and the squash message state, each with other line breaks in each text, and in
+# PR-BODY.md backticks and the block's opening words in its first line, which is not read.
+RULE_TEXTS = {
+    "tools/gate.py": '"""Lead of the gate.\n\nOpen words of the block run\nto its close words.\n"""\n',
+    "tools/tests.py": '"""Lead of the tests.\n\nPara words start this paragraph\nand end it here.\n"""\n',
+    ".github/squash/287.txt": ("Title of the squash (#1)\n\nOpen words of the block run to its close words.\n\n"
+                               "Para words start this paragraph and end\nit here.\n"),
+    "PR-BODY.md": ("Open words in a title\n\nOpen words of the `block` run to\nits close words.\n\n"
+                   "Para words start `this` paragraph\nand end it here.\n"),
+    "SQUASH-MSG": ("Title of the squash (#1)\n\nOpen words of the block run to its close words.\n\n"
+                   "Para words start this paragraph and end\nit here.\n"),
+}
+RULE_BLOCKS = (("the block", "Open words", "close words.", ("gate", "squash")),)
+RULE_PARAGRAPHS = (("the paragraph", "Para words", ("tests", "squash")),)
+TEXT_CASES = ("test_each_block_is_the_same_in_the_tracked_texts",
+              "test_each_block_is_the_same_in_the_texts_for_review",
+              "test_squash_message_equals_its_committed_copy")
+PASSES, FAILS, ERRS = ("pass", ()), ("fail", ()), ("error", ())
+DESCRIPTION_SKIP = "PR-BODY.md is not at the repository root"
+SQUASH_COPY_SKIP = "SQUASH-MSG is not at the repository root"
+
+
+class TextRules(unittest.TestCase):
+    """The cases of RepeatedText, run on texts and rows of their own, keep each rule that they state."""
+
+    def outcomes(self, texts: dict, blocks: tuple = RULE_BLOCKS) -> list:
+        """(outcome, skip reasons) of each case of RepeatedText, run in this process on texts, where None
+        leaves a text out, and on blocks and RULE_PARAGRAPHS."""
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            (base / "tools").mkdir()
+            for rel, text in texts.items():
+                if text is not None:
+                    (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (base / rel).write_text(text, encoding="utf-8")
+            found = []
+            with mock.patch.multiple(sys.modules[__name__], HERE=base / "tools", GATE=base / "tools" / "gate.py",
+                                     SELF=base / "tools" / "tests.py",
+                                     SQUASH_TEXT=base / ".github" / "squash" / "287.txt",
+                                     DESCRIPTION=base / "PR-BODY.md", SQUASH_COPY=base / "SQUASH-MSG",
+                                     BLOCKS=blocks, PARAGRAPHS=RULE_PARAGRAPHS):
+                for name in TEXT_CASES:
+                    result = unittest.TestResult()
+                    RepeatedText(name).run(result)
+                    outcome = "error" if result.errors else "fail" if result.failures else "pass"
+                    found.append((outcome, tuple(sorted(reason for _, reason in result.skipped))))
+        return found
+
+    def test_the_text_cases_keep_their_rules(self):
+        self.assertIn(("the text cases", "3 cases, in RepeatedText,", ("tests", "squash")), PARAGRAPHS,
+                      "no row of PARAGRAPHS names the paragraph that states the text cases")
+        # The control: every case passes on the texts as written.
+        self.assertEqual(self.outcomes(RULE_TEXTS), [PASSES, PASSES, PASSES])
+
+        def changed(rel: str, old: str, new: str, *more: str) -> dict:
+            texts = dict(RULE_TEXTS)
+            for name in (rel, *more):
+                self.assertEqual(texts[name].count(old), 1, (name, old))
+                texts[name] = texts[name].replace(old, new)
+            return texts
+
+        changes = {
+            "a word of a block differs": (changed("tools/gate.py", "of the block", "of a block"),
+                                          [FAILS, FAILS, PASSES]),
+            "the last word of a paragraph differs in a tracked text": (
+                changed("tools/tests.py", "it here.", "it there."), [FAILS, FAILS, PASSES]),
+            "the last word of a paragraph differs in a text for review": (
+                changed("PR-BODY.md", "it here.", "it there."), [PASSES, FAILS, PASSES]),
+            "a text for review lacks a block": (
+                changed("PR-BODY.md", "Open words of the `block` run to\nits close words.\n\n", ""),
+                [PASSES, FAILS, PASSES]),
+            "opening words occur twice": (changed("tools/gate.py", '\n"""\n', '\n\nOpen words again.\n"""\n'),
+                                          [FAILS, FAILS, PASSES]),
+            "opening words do not start their paragraph": (
+                changed("tools/tests.py", "Para words", "So Para words", ".github/squash/287.txt", "PR-BODY.md",
+                        "SQUASH-MSG"), [FAILS, FAILS, PASSES]),
+            "SQUASH-MSG gains 1 byte": (changed("SQUASH-MSG", "it here.\n", "it here. \n"), [PASSES, PASSES, FAILS]),
+            "the texts for review are not there": (dict(RULE_TEXTS, **{"PR-BODY.md": None, "SQUASH-MSG": None}),
+                                                   [PASSES, ("pass", (DESCRIPTION_SKIP, SQUASH_COPY_SKIP)),
+                                                    ("pass", (SQUASH_COPY_SKIP,))]),
+            "the gate's docstring is not there": (dict(RULE_TEXTS, **{"tools/gate.py": None}), [ERRS, ERRS, PASSES]),
+            "the test docstring is not there": (dict(RULE_TEXTS, **{"tools/tests.py": None}), [ERRS, ERRS, PASSES]),
+            "the squash message is not there": (dict(RULE_TEXTS, **{".github/squash/287.txt": None}),
+                                                [ERRS, ERRS, ERRS]),
+            "the squash message and the texts for review are not there": (
+                dict(RULE_TEXTS, **{".github/squash/287.txt": None, "PR-BODY.md": None, "SQUASH-MSG": None}),
+                [ERRS, ("pass", (DESCRIPTION_SKIP, SQUASH_COPY_SKIP)), ("pass", (SQUASH_COPY_SKIP,))]),
+        }
+        for change, (texts, wanted) in changes.items():
+            with self.subTest(change=change):
+                self.assertEqual(self.outcomes(texts), wanted)
+        with self.subTest(change="2 rows have the same name"):
+            self.assertEqual(self.outcomes(RULE_TEXTS, RULE_BLOCKS + RULE_BLOCKS), [FAILS, PASSES, PASSES])
+
+
 class Startup(unittest.TestCase):
-    """The suite writes the file names of its cases in UTF-8 whatever the caller's locale."""
+    """The suite runs in the C locale in UTF-8 mode, so it writes the file names of its cases in UTF-8,
+    whatever the caller's locale."""
 
     def test_file_names_are_written_in_utf8(self):
         self.assertEqual(sys.getfilesystemencoding(), "utf-8")
 
+    def test_process_runs_in_the_c_locale(self):
+        # Written out here apart from FIXED_ENVIRONMENT, so a change to the restart below fails.
+        variables = {name: value for name, value in os.environ.items()
+                     if name.startswith("LC_") or name in ("LANG", "LANGUAGE")}
+        self.assertEqual(variables, {"LC_ALL": "C"}, "the variables of the locale are not LC_ALL=C alone")
+        self.assertEqual(sys.flags.utf8_mode, 1, "this process does not run in Python's UTF-8 mode")
+        self.assertEqual(locale.setlocale(locale.LC_CTYPE), "C")
+
     def test_suite_starts_again_in_utf8_mode_under_another_locale(self):
-        # Under LC_ALL=C with Python's UTF-8 mode turned off, Python on Linux writes file names in ASCII,
-        # so the case above passes in that process only when the suite starts itself again in UTF-8 mode.
-        with tempfile.TemporaryDirectory() as folder:
-            done = subprocess.run([sys.executable, "-I", "-X", "utf8=0", str(SELF),
-                                   "Startup.test_file_names_are_written_in_utf8"], capture_output=True,
-                                  env={"LC_ALL": "C"}, cwd=folder, stdin=subprocess.DEVNULL, timeout=60)
-        report = done.stderr.decode("utf-8", "replace")
-        self.assertEqual(done.returncode, 0, report)
-        self.assertIn("Ran 1 test", report)
+        # Under LC_ALL=C with Python's UTF-8 mode turned off, Python on Linux writes file names in ASCII;
+        # LANG=C.UTF-8 is a UTF-8 locale that is not the C locale. So the 2 cases above pass in each of
+        # these processes only when the suite starts itself again with LC_ALL=C in UTF-8 mode.
+        callers = ((("-X", "utf8=0"), {"LC_ALL": "C"}), ((), {"LANG": "C.UTF-8"}))
+        for flags, env in callers:
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as folder:
+                done = subprocess.run([sys.executable, "-I", *flags, str(SELF),
+                                       "Startup.test_file_names_are_written_in_utf8",
+                                       "Startup.test_process_runs_in_the_c_locale"], capture_output=True,
+                                      env=env, cwd=folder, stdin=subprocess.DEVNULL, timeout=60)
+                report = done.stderr.decode("utf-8", "replace")
+                self.assertEqual(done.returncode, 0, report)
+                self.assertIn("Ran 2 tests", report)
+
+
+# The caller's environment with LC_ALL=C in place of each variable of the locale: the environment in
+# which the suite, run as a script, runs its cases.
+UNLOCALIZED = {name: value for name, value in os.environ.items()
+               if not name.startswith("LC_") and name not in ("LANG", "LANGUAGE")}
+FIXED_ENVIRONMENT = dict(UNLOCALIZED, LC_ALL="C")
 
 
 if __name__ == "__main__":
-    if sys.getfilesystemencoding() != "utf-8" and not sys.flags.utf8_mode:
-        # A locale whose encoding is not UTF-8 would make this process write the file names of the cases in
-        # that encoding, which cannot hold every name a case uses; UTF-8 mode makes them UTF-8.
-        os.execv(sys.executable, [sys.executable, "-I", "-X", "utf8", str(SELF), *sys.argv[1:]])
+    if not sys.flags.utf8_mode or dict(os.environ) != FIXED_ENVIRONMENT:
+        # The caller's locale would set the encoding in which this process writes the file names of the
+        # cases, which need not hold every name a case uses; the C locale in UTF-8 mode fixes the locale
+        # and makes those names UTF-8. Started so, the suite does not start itself again.
+        os.execve(sys.executable, [sys.executable, "-I", "-X", "utf8", str(SELF), *sys.argv[1:]],
+                  FIXED_ENVIRONMENT)
     result = unittest.main(exit=False, verbosity=1).result
     sys.exit(0 if result.wasSuccessful() else 1)

@@ -173,7 +173,19 @@ SQUASH-MSG to equal .github/squash/287.txt byte for byte. Each run of
 whitespace counts as 1 space, and the backticks of PR-BODY.md are
 dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is
 not there, as in CI, and names it; a case that reads a tracked text that
-is not there ends in an error.
+is not there ends in an error. 1 case, in TextRules, builds no
+repository and runs no gate either. It requires a row of PARAGRAPHS to
+name this paragraph, and it runs those 3 cases on texts and rows of its
+own, with other line breaks in each text, backticks in PR-BODY.md and
+opening words in its first line. Each must pass on those texts as
+written; a case that compares a text must fail when a word of a block or
+the last word of a paragraph differs in it, when a text for review lacks
+a block, when opening words occur twice or do not start their paragraph
+and, for the tracked texts, when 2 rows have the same name; the byte
+comparison must fail when SQUASH-MSG gains 1 byte; and each case must
+skip and name each text for review that is not there, and end in an
+error when a tracked text that it reads is not there, also when no text
+for review is there.
 
 The Agent Plugins manifest workflow runs the tests and the gate as 2
 new steps, and tools/run_all_checks.sh runs them as 2 new run lines.
