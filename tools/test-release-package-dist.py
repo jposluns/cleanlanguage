@@ -378,19 +378,36 @@ reference digest. The cases, all in that clone:
     such call has let 1 start.
     The subtests of test_trace_refuses_what_it_cannot_read name
     further examples in their labels. Each pattern, text, set and table
-    at module level that decides what the reader reads, the constant at
-    each place where the code of a reader function loads 1, and the
-    defaults of each reader function, are compared whole with their
-    values at this head, each table member in order where it has an
-    order and each value with its type, so that any edit to 1 of them
-    fails the case, not only 1 that a trace of the case shows; the
-    docstring of test_trace_reader_values_are_pinned names them. The pin
-    of each place rests on CPython 3.14, the version that
-    .python-version names: on which values its compiler makes
-    constants, and on the place, the line and column where it starts
-    and ends, that it gives each instruction that loads 1; under -X
-    no_debug_ranges, which drops the columns, the pin fails, and on
-    another version READER_CONSTANTS may need to change. The code of
+    at module level that decides what the reader reads, the constant
+    that the code of a reader function loads, in the order of the places
+    that load 1, and the defaults of each reader function, are compared
+    whole with their values at this head, each table member in order
+    where it has an order and each value with its type, so that any edit
+    to 1 of them fails the case, not only 1 that a trace of the case
+    shows; the docstring of test_trace_reader_values_are_pinned names
+    them. The case finds the collections at module level by the syntax
+    tree of the module, whatever their name: each name that an
+    assignment at module level binds to a value whose expression holds
+    a set, frozenset, tuple, list or dict, written out or built by a
+    comprehension or by a call of tuple, list, set, frozenset, dict or
+    sorted, or a pattern of re.compile, must be in READER_VALUES, with
+    its value, or in NON_READER_VALUES, the values that decide nothing,
+    each with a reason, and no reader function loads a name of
+    NON_READER_VALUES; so a new such value under any name fails the case
+    until it is in 1 of the 2. A value that a function builds at run
+    time, or that a statement other than an assignment binds, is not
+    found this way, nor is a text, a number or another name with no such
+    collection or pattern in its expression; of these, only the names
+    that start with TRACE_ are held, by name. The pin of the order of
+    those constants rests on CPython 3.14.4, the version that
+    .python-version names and the only version that was run: on which
+    values its compiler makes constants, and on the place, the line and
+    column where it starts and ends, that it gives each instruction that
+    loads 1, which the pin uses only to order the constants, so that an
+    edit that moves a constant to another place and keeps that order is
+    held only as far as the traces of the case hold it, not by the pin;
+    under -X no_debug_ranges, which drops the columns, the pin fails, and
+    on another version READER_CONSTANTS may need to change. The code of
     the reader functions is not pinned beyond those constants and
     defaults, so an edit to that code, such as 1 that applies a pattern
     with match in place of fullmatch, is held only as far as the traces
@@ -3372,6 +3389,45 @@ class TraceReaderTests(unittest.TestCase):
         "TRACE_ESCAPE": re.compile(r"\\(?:x([0-9A-Fa-f]{2})|([0-7]{1,3})|(.))", re.S),
         "TRACE_ESCAPES": {"a": b"\a", "b": b"\b", "f": b"\f", "n": b"\n", "r": b"\r", "t": b"\t", "v": b"\v"},
     }
+    # Each other name that module_collections finds at module level, a
+    # value that decides nothing that the reader reads, with the reason;
+    # no reader function loads any of them.
+    NON_READER_VALUES = {
+        "TOOLS": "the tools that the set-up copies into the clone",
+        "REFERENCE_EDITS": "the edits that adapt the reference packager to the licence copies",
+        "OTHER_PLANTS": "the entries of dist/ that a build must keep",
+        "STALE_VERSIONS": "the versions of the earlier outputs that plant_stale writes",
+        "LEFTOVER_WORK": "the leftover work folders that a build must keep",
+        "WIDE_LOCALES": "the locales that the locale case tries",
+        "NON_ASCII_FILES": "the names outside ASCII that the locale case plants",
+        "OUTPUT_NAME": "the output names of the packager, which the dist cases match",
+        "WORK_NAME": "the work-folder names of the packager, which the dist cases match",
+        "SHELL_VARIABLES": "the variables of the environment that no build inherits",
+        "NOT_TRAPPED": "the signals that TRAPPED_SIGNALS leaves out",
+        "TRAPPED_SIGNALS": "the signals that the signal cases send to a build",
+        "NAMED_SIGNALS": "the signals that cases of their own name",
+        "OTHER_SIGNALS": "the signals of TRAPPED_SIGNALS that no case names",
+        "SIGNAL_NAMES": "the signal names that the packager asks kill -l for",
+        "NON_LINUX_NAMES": "the signal names that a platform other than Linux may lack",
+        "SHELL_OPTIONS_OFF": "the shell options that the packager turns off",
+        "PLANT_PATHS": "the paths that the self-check of the trace expects removed outside the clone",
+        "KEPT_PATHS": "the paths that the self-check of the trace expects removed in dist/",
+        "ORACLE_FORMS": "the removals that the self-check of the trace adds to the packager",
+    }
+    # Lines that each add, at module level, a collection or pattern under a
+    # name that does not start with TRACE_ and that neither table lists,
+    # as an edit that makes the reader read through such a value would.
+    NEW_COLLECTIONS = (
+        'EXEC_CALLS = {"execve"}',
+        'EXEC_CALLS = frozenset(("execve",))',
+        'EXEC_CALLS: tuple = ("execve",)',
+        'if True:\n    EXEC_CALLS = ["execve"]',
+        'EXEC_CALLS = FORKING_CALLS + ("execve",)',
+        'EXEC_CALLS = {"execve": ((None, 0),)}',
+        'EXEC_CALLS = set(name for name in ["execve"])',
+        'EXEC_CALLS = re.compile("execve")',
+        '(EXEC_CALLS := {"execve"})',
+    )
     # The constant at each place where the code of each reader function
     # loads 1, in the order that code_constants gives: the texts, numbers
     # and sets of call names and of results that it reads with or tests a
@@ -3450,8 +3506,12 @@ class TraceReaderTests(unittest.TestCase):
         call passes stands at the place of that call, which starts before
         its arguments. The compiler keeps 1 constant for constants that are
         equal, so the constants of code alone do not show at how many
-        places, or where, a constant stands. The pin of each place rests on
-        CPython 3.14, the version that .python-version names: on which
+        places a constant stands. The list keeps only the order of the
+        constants, not their places, so the pin is a pin of that order: an
+        edit that moves a constant to another place and keeps that order
+        passes the pin and is held only as far as the traces hold it. The
+        pin of that order rests on CPython 3.14.4, the version that
+        .python-version names and the only version that was run: on which
         values its compiler makes constants, and on the place, the line and
         column where it starts and ends, that it gives each instruction
         that loads 1; under -X no_debug_ranges, which drops the columns, the
@@ -3471,6 +3531,41 @@ class TraceReaderTests(unittest.TestCase):
             codes.extend(constant for constant in current.co_consts if hasattr(constant, "co_consts"))
         return [constant for _, constant in sorted(places, key=lambda place: place[0])]
 
+    @staticmethod
+    def module_collections(source: str) -> list:
+        """The names, sorted, that an assignment at module level of source,
+        plain, annotated, augmented or with :=, binds to a value whose
+        expression holds a set, frozenset, tuple, list or dict, written out
+        or built by a comprehension or by a call of tuple, list, set,
+        frozenset, dict or sorted, or a pattern of re.compile, found by the
+        syntax tree of source, whatever the name. Module level is outside
+        each function, lambda and class, the bodies of if, for, while,
+        with, try and match there among it. A value that a function builds
+        at run time, or that a statement other than an assignment binds,
+        is not found this way."""
+        import ast
+        builders = {"tuple", "list", "set", "frozenset", "dict", "sorted", "re.compile"}
+        written = (ast.Set, ast.Tuple, ast.List, ast.Dict, ast.SetComp, ast.ListComp, ast.DictComp, ast.GeneratorExp)
+
+        def collection(value) -> bool:
+            return value is not None and any(
+                isinstance(node, written) or isinstance(node, ast.Call) and ast.unparse(node.func) in builders
+                for node in ast.walk(value))
+
+        found, nodes = set(), list(ast.parse(source).body)
+        while nodes:
+            node = nodes.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr))
+                       else [])
+            if targets and collection(node.value):
+                found.update(name.id for target in targets for name in ast.walk(target)
+                             if isinstance(name, ast.Name) and isinstance(name.ctx, ast.Store))
+            nodes.extend(ast.iter_child_nodes(node))
+        return sorted(found)
+
     def test_trace_reader_values_are_pinned(self):
         """Each pattern, text, set and table at module level that decides
         what the reader reads has its value of READER_VALUES, whole: a
@@ -3482,22 +3577,42 @@ class TraceReaderTests(unittest.TestCase):
         that no trace holds. READER_VALUES also holds 2 names that no
         reader function loads: TRACED_CALLS, the calls that the test asks
         strace for, and TRACE_UNREAD, the text of an unread call that some
-        tests write. The names at module level that start with TRACE_ are
-        those of READER_VALUES. The code of each reader function loads the
-        constants of READER_CONSTANTS and no other, 1 at each place of its
-        source that loads 1, in the order that code_constants gives, each
+        tests write. The collections at module level are found by the
+        syntax tree of the module, not by their names: each name that
+        module_collections finds, a name that an assignment at module level
+        binds to a value whose expression holds a set, frozenset, tuple,
+        list or dict, or a pattern of re.compile, is in READER_VALUES, with
+        its value, or in NON_READER_VALUES, each with the reason that it
+        decides nothing, and no reader function loads a name of
+        NON_READER_VALUES. So a new such value under any name fails this
+        test until it is in 1 of them, and a subtest holds that
+        module_collections finds EXEC_CALLS, a name that neither table
+        lists, in each line of NEW_COLLECTIONS, among them
+        EXEC_CALLS = {"execve"}, each a line that such an edit adds at
+        module level. A value that a function builds at
+        run time, or that a statement other than an assignment binds, is
+        not found this way, nor is a text, a number or another name with
+        no such collection or pattern in its expression; of these, the
+        names at module level that start with TRACE_ are those of
+        READER_VALUES. The code of each reader function loads the
+        constants of READER_CONSTANTS and no other, in the order of the
+        places of its source that load 1, which code_constants gives, each
         with its type: a text, a number, None, True or False, or a tuple or
         frozenset, which the compiler makes of a set of call names or of
         results written in that code, each pinned as those tables are, also
         where another place of the same function loads an equal constant.
         Each reader function has the defaults of READER_DEFAULTS and no
-        other. The pin of each place rests on CPython 3.14, the version
-        that .python-version names: on which values its compiler makes
-        constants, and on the place, the line and column where it starts
-        and ends, that it gives each instruction that loads 1; under -X
-        no_debug_ranges, which drops the columns, the pin fails, and on
-        another version READER_CONSTANTS may need to change. An edit that
-        is meant changes these tables with it. The code of the reader
+        other. The pin of the order of those constants rests on CPython
+        3.14.4, the version that .python-version names and the only version
+        that was run: on which values its compiler makes constants, and on
+        the place, the line and column where it starts and ends, that it
+        gives each instruction that loads 1, which the pin uses only to
+        order the constants, so that an edit that moves a constant to
+        another place and keeps that order is held only by the traces of
+        the other tests, not by the pin; under -X no_debug_ranges, which
+        drops the columns, the pin fails, and on another version
+        READER_CONSTANTS may need to change. An edit that is meant changes
+        these tables with it. The code of the reader
         functions is not pinned beyond these constants and defaults, so an
         edit to that code, such as 1 that applies a pattern with match in
         place of fullmatch, is held only by the traces of the other
@@ -3506,6 +3621,20 @@ class TraceReaderTests(unittest.TestCase):
         with self.subTest("the names at module level that start with TRACE_"):
             self.assertEqual(sorted(name for name in module if name.startswith("TRACE_")),
                              sorted(name for name in self.READER_VALUES if name.startswith("TRACE_")))
+        source = Path(__file__).read_text(encoding="utf-8")
+        listed = set(self.READER_VALUES) | set(self.NON_READER_VALUES)
+        with self.subTest("the collections at module level, whatever their name"):
+            self.assertEqual([name for name in self.module_collections(source) if name not in listed], [])
+        with self.subTest("the names of NON_READER_VALUES that a reader function loads"):
+            loaded, codes = set(), [module[name].__code__ for name in self.READER_CONSTANTS]
+            while codes:
+                current = codes.pop()
+                loaded.update(current.co_names)
+                codes.extend(constant for constant in current.co_consts if hasattr(constant, "co_consts"))
+            self.assertEqual(sorted(loaded & set(self.NON_READER_VALUES)), [])
+        for line in self.NEW_COLLECTIONS:
+            with self.subTest("a new collection at module level under any name", line=line):
+                self.assertEqual([name for name in self.module_collections(line) if name not in listed], ["EXEC_CALLS"])
         for name, value in self.READER_VALUES.items():
             with self.subTest(name):
                 self.assertEqual(self.typed(module.get(name)), self.typed(value))

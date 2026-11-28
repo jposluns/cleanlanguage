@@ -149,20 +149,38 @@ unchanged.
   each member of a table in order where it has an order and each
   value with its type, and also the calls that the test asks strace
   for and the text of an unread call that some tests write, which
-  no reader function loads; the constant at each place where the
-  code of a reader function loads 1, each with its type, in the
-  order of the source, by the line and then the column where the
+  no reader function loads; the constants that the code of a reader
+  function loads, each with its type, in the order of the places of
+  the source that load 1, by the line and then the column where the
   place starts, among them the call names and the results that
   traced_removals tests a call for, written as a tuple or as a set,
   so that an edit that makes 1 place load a constant that another
   place of the same function loads fails it too; and the defaults
-  of each reader function. The pin of each place rests on CPython
-  3.14, the version that .python-version names: on which values its
-  compiler makes constants, and on the place, the line and column
-  where it starts and ends, that it gives each instruction that
-  loads 1; under -X no_debug_ranges, which drops the columns, the
-  pin fails, and on another version READER_CONSTANTS may need to
-  change. A list of traces holds only the forms that it names: 19
+  of each reader function. It finds the collections at module level
+  by the syntax tree of the module, whatever their name: each name
+  that an assignment at module level binds to a value whose
+  expression holds a set, frozenset, tuple, list or dict, or a
+  pattern of re.compile, must be pinned with its value or listed in
+  NON_READER_VALUES, the values that decide nothing, each with a
+  reason, and no reader function may load a name of that list; so
+  a new such value under any name, such as EXEC_CALLS = {"execve"},
+  fails the test, and a subtest holds that the finder gives such a
+  name for each line of NEW_COLLECTIONS. A value
+  that a function builds at run time, or that a statement other
+  than an assignment binds, is not found this way, nor is a text, a
+  number or another name with no such collection or pattern in its
+  expression; of these, only the names that start with TRACE_ are
+  held, by name. The pin of the order of the constants rests on
+  CPython 3.14.4, the version that .python-version names and the
+  only version that was run: on which values its compiler makes
+  constants, and on the place, the line and column where it starts
+  and ends, that it gives each instruction that loads 1, which the
+  pin uses only to order the constants, so that an edit that moves
+  a constant to another place and keeps that order is held only as
+  far as the traces hold it, not by the pin; under -X
+  no_debug_ranges, which drops the columns, the pin fails, and on
+  another version READER_CONSTANTS may need to change. A list of
+  traces holds only the forms that it names: 19
   edits to those patterns and to FORKING_CALLS, each of which makes
   the reader read a form that it refuses here, are expected to pass
   the other tests of case 27 and to fail this test. An edit to other
