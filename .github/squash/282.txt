@@ -1,0 +1,257 @@
+Start group-kill test timeout once its child is ready (TODO 253) (#282)
+
+TODO 253 records 1 run of tools/test-skill-release-date-client.py
+that errored with FileNotFoundError for sleeper.pid in
+test_a_child_that_does_not_end_is_killed_with_its_group, and 3 reruns
+that passed. That is the TODO's record, not a check of this change.
+
+The sleeper, its pid file and the probe of its pid with os.kill are
+removed. The stub child now forks 1 member into its group and then
+writes 1 byte to a FIFO, alive, and the client's first wait starts
+only once the test reads that byte, polled for at most 60 seconds; the
+poll is new to this test. The test asserts the client's reason first,
+then that the byte was read when the poll ended, that the client asked
+its first wait for exactly its 1 second timeout, that the real wait
+lasted at least that long, and that the client's run, from its start
+to its return, less the poll, ended within 15 seconds; main bounds the
+whole run by 15 seconds.
+
+End of file on alive within 10 seconds after the client returns shows
+that the client killed the whole group, not only the leader: it comes
+only once every process holding the write end has ended. Its time is a
+clock read taken after the read that sees it, and a time past that
+deadline counts as not seen. Each stub process otherwise ends by
+itself 90 seconds after it enters its wait for the release, and so
+more than 90 seconds after the test's start. The check takes no end of
+file seen later than 85 seconds from that start, the 60 second poll,
+the 15 second run and the 10 second check, plus the poll's last step,
+and end of file must come before 90 seconds, or before a smaller bound
+that a caller passes in its place; a larger bound leaves the 90
+seconds as the bound, so the group's own end is never taken for the
+kill.
+
+The check sends no signal. Each stub process waits for end of file on
+a second FIFO, lifeline, whose only write end the test holds. The
+check's finally clause closes lifeline and reaps a child the client
+left unreaped if it ends within the 5 second reap grace, and the
+kernel closes lifeline when the test process ends in any other way.
+The stub makes 1 read of lifeline before it forks. On Linux, select
+reports nothing for a FIFO reader opened with no writer, and that read
+returns end of file, so a stub that starts after the release exits at
+once rather than wait out its 90 seconds. A stub process past that
+read ends at once on the release; one not yet there ends when it
+reaches it, after the rest of its start-up, which the test does not
+bound.
+
+The stub's source ignores SIGTERM, SIGINT and SIGHUP, and Python
+ignores SIGPIPE and SIGXFSZ at start-up. The stub keeps every signal
+that the test thread that starts it blocks as blocked, and every
+signal other than SIGCHLD, SIGPIPE and SIGXFSZ that the test process
+ignores as ignored. The client changes those 3 dispositions before
+exec: it resets SIGCHLD to its default in its own process, the test
+process, before it starts the child, and its Popen, with its default
+restore_signals, resets SIGPIPE and SIGXFSZ to their default action
+in the child. SIGCHLD's default action, like ignoring it, leaves the
+stub running. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ
+can end the stub before Python ignores it, and SIGTERM, SIGINT or
+SIGHUP can end it before its source ignores it if the test process
+does not ignore it.
+
+The stub's source is a constant, GROUP_STUB. The stub first reads its
+own end with float from a file, own_end, that the check writes with
+str, so a plain int or float passed as own_end reaches the stub only
+as a number; a text that float does not take raises before the stub
+opens either FIFO, and the check fails.
+
+The test patches client.wait_child to hold that first wait. A
+client.Unavailable that the patched wait raises passes through the
+client unchanged, so the check fails at its reason only when that
+exception's reason is not the timeout reason; any other exception of
+class Exception, or of a subclass of it, that it raises becomes an
+unavailable verdict in the client that names the exception, and the
+check fails at its reason; any other exception it raises, such as
+KeyboardInterrupt, passes through the client and the check.
+
+New tests run the check against a client that kills only the leader,
+one that sends SIGTERM to the group, and a client whose group kill
+raises KeyboardInterrupt, and assert that each fails or passes the
+interrupt through and that the group then ends before the stub's own
+end could come, timed from before the stub starts. Another runs it
+with an own-end bound of 0.5 seconds, below the 1 second first wait
+that the check asserts, then with the default bound and with a bound
+of 180 seconds, these 2 with a stand-in end_of_file that returns the
+check's own start reading, which the check appends to a list the
+caller passes, plus 90 seconds, the same instant and value whose sum
+is the check's default bound, so the reading is at that bound exactly
+and a bound raised above the own end by 1 second or by 0.5 seconds
+takes it for the kill and fails the test, as a test mutant for each
+raise shows, while a smaller raise may pass the test, and asserts that
+each run fails at the own-end assertion; another asserts that a stub
+started after the release exits at its first read, as no ready byte
+shows; and another asserts, on a stand-in clock, that an end of file
+seen after its deadline is not taken. A tripwire test asserts that the
+only bindings of check_group_kill, end_of_file and stub in the test
+file's syntax are
+1 def statement
+for each, counting async def, class and import statements, plain,
+annotated, augmented, := and tuple or starred assignments to a name,
+assignments to an attribute, a lambda so assigned, deletions, for,
+with, comprehension, except and match targets, parameters and keyword
+arguments, but not a name given as a string; that BoundsTest, each
+class that exists when the test runs and has it among its bases,
+directly or through other such classes, and each class in their method
+resolution orders hold no other entry with those names, that
+BoundsTest's 2 entries and the module's end_of_file are the functions
+their def statements made, judged by qualified name and first line,
+and that the test's instance has no such attribute of its own; that
+the stub makes its pinned calls in order; and that no
+name in SIGNAL_NAMES, a list of example names through which Python
+code sends a signal, appears in the check, its helpers or the stub, so
+a direct os.kill there fails it. The second of those assertions reads
+each class and the instance through the descriptors that type and
+TestCase define, not by attribute lookup, lists each namespace with
+its items method, tells classes apart by identity and takes only a
+plain str as 1 of those names, so these overrides, each of which
+another test has a case for, hide no entry from it: a class's
+__subclasses__; a metaclass's __subclasses__, __mro__, __dict__,
+__eq__ or __getattribute__, the last also giving a false __qualname__;
+an entry whose name is a str subclass; and an instance's __dict__
+property. It does not hold against all code in the test file, which
+can hide an entry by routes that the walk does not model, such as
+these 2: a metaclass whose mro method puts BoundsTest in the order of
+a class that does not have it among its bases, so that
+type.__subclasses__ does not list that class; and a dict subclass, set
+as the test's instance __dict__, whose items method leaves out an
+entry.
+Another test has a case for each of those forms of binding stub, for
+each form of binding it by a name given as a string that the second
+assertion sees on a class or an instance, for each such override, and
+for 1 form that the first 2 assertions miss; its match cases run only
+on Python 3.10 or later. The group-kill test asserts nothing about the
+client's reap; its docstring names the 2 tests that do.
+
+Unchanged from main: the 1 second timeout, the reason string, the
+real wait, kill and reap, and a 10 second window for the group to end
+after the client returns.
+
+Reduced coverage, which landing this change accepts: the test has no
+allowlist of the check's callees, no pin of the calls that start a
+process with their arguments, no type test of check and own_end, no
+check that they are not rebound, no check of the stub's calls for
+example values of own_end, and no test that a caller's value runs no
+code of its own.
+
+Residual:
+
+- What the tripwire's first 2 assertions miss: an edit that changes what
+  self.stub finds without an entry in the classes they read or an
+  attribute of the tripwire's own instance, such as a __getattribute__
+  method or an assignment to self.__class__; a class derived from
+  BoundsTest that does not exist when the tripwire runs, such as one in
+  another module; an attribute set on an instance other than the
+  tripwire's own, such as one that a subclass's setUp sets where the
+  tripwire runs as BoundsTest.<test name>, not on that subclass as the
+  whole file runs it; a replacement whose qualified name and first line,
+  which a value gives for itself, are those of the def statement; a
+  binding of check_group_kill, end_of_file or stub by a name given as a
+  string anywhere other than those classes, that instance and the
+  module's end_of_file; a change made after the tripwire runs or undone
+  before it; an edit that rebinds a name or function the tripwire calls,
+  such as class_bindings, SUBCLASSES, BoundsTest, a builtin or a
+  function of ast, or that replaces the tripwire; an edit that changes
+  the interpreter's own records, as through ctypes; and an entry hidden
+  by a route that the walk does not model, such as a metaclass whose mro
+  method puts BoundsTest in the order of a class that does not have it
+  among its bases, or a dict subclass, set as the tripwire's instance
+  __dict__, whose items method leaves out an entry. Code in the test
+  file runs in the process that the tripwire checks, so no check there
+  holds against all such code.
+- What the tripwire's name scan misses: every route to a signal other
+  than a name in SIGNAL_NAMES in the functions it reads. Such an edit
+  passes the tripwire unless it also fails 1 of its other 3 assertions:
+  it changes the stub's calls, which the STUB_CALLS pin rejects, as it
+  rejects os.__dict__["kill"](os.getppid(), 0) added to the stub, or it
+  binds check_group_kill, end_of_file or stub in a way the first 2
+  assertions reject, as they reject a subclass of BoundsTest whose stub,
+  bound by a def statement, calls getattr(os, "kill"). Passes of the
+  name scan, examples, not a complete list: in check_group_kill,
+  getattr(os, "kill") with a literal name, getattr with a computed name,
+  such as getattr(os, "ki" + "ll"), os.__dict__["kill"],
+  vars(os)["kill"] and a shell kill through os.system; a value a caller
+  passes, such as the witness, which the check calls and which can run
+  any code; a method of self that a subclass overrides, such as
+  assertLess; a module global or builtin that a caller rebinds, such as
+  GROUP_STUB, or a function of os or the client, as the tests here
+  rebind os.killpg; the body of a decorator; and the code outside those
+  functions, the client, whose group kill, the behaviour under test, is
+  the 1 signal that a run of the group-kill test sends, and the standard
+  library.
+- The check takes the text of own_end with str, compares end_bound
+  with own_end when given, and adds check and own_end, or end_bound in
+  its place when smaller, to clock readings, so a value with methods of
+  its own runs them in the test. str runs before
+  the check reads GROUP_STUB, so a method of own_end can change the
+  stub's source, for example by rebinding GROUP_STUB, and so add code to
+  the stub. The callers in the test file pass numbers.
+- After the release, by the finally clause or by the kernel when the
+  test process ends, a stub process that has not yet reached its first
+  read of lifeline ends only when it reaches that read, so it outlives
+  the release, and a killed test process, by the rest of its start-up,
+  which nothing in the test bounds. This is derived from the stub's
+  order. The leader and the member are past that read once the ready
+  byte has been read, so this arises only for a release that comes
+  before the test has read that byte: during the poll, or after a poll
+  that ran out without it.
+- While the test process is alive but neither closes lifeline nor ends,
+  as when it is stopped, each stub process lives until its own end,
+  own_end seconds after it enters its wait, 90 in the group-kill test.
+  It enters that wait only after start-up, its first read of lifeline
+  and, for the member, the fork, so its life from its start is that
+  start-up plus own_end seconds, and nothing in the test bounds the
+  start-up.
+- The first-wait timing passes a client whose real wait gives up early
+  by less than the time the gate's 2 clock reads and the call add. The
+  call's share includes the wait's overrun past its own deadline, which
+  the code does not bound, so the margin is set by the host and is more
+  than the 2 clock reads take.
+- A process that inherits the write end of lifeline and outlives the
+  test would keep the stub alive up to its own end. Only a fork without
+  exec in the test process could do that: the descriptor is not
+  inheritable across exec, and the test file forks only inside the
+  stub's source.
+- A stub process that closed its copy of alive before it ended would
+  hide from the check. The stub is the test's own code, and its calls
+  are pinned, so this arises only from an altered stub.
+- A process that SIGKILL cannot end keeps alive open, and the check then
+  fails.
+- When the client gives up without reaping, the finally clause reaps the
+  leader after the release if it ends within the 5 second reap grace. A
+  leader that has not ended by then, or one left when the test process
+  ends without unwinding, stays unreaped until Python's own collection
+  of finished children or the process that adopts it reaps it. A leader
+  that has ended holds no descriptor while it waits to be reaped; one
+  still running, such as a stopped one, holds the descriptors it has
+  open, the write end of alive among them once it has opened it.
+- No signal ends the stub while it ignores or blocks that signal. Unless
+  the test thread blocks it, SIGPIPE or SIGXFSZ can end the stub before
+  Python ignores it, and SIGTERM, SIGINT or SIGHUP can end it before its
+  source ignores it if the test process does not ignore it. Examples of
+  a signal that ends it early, not a complete list: SIGKILL, and SIGUSR1
+  when the test neither ignores nor blocks SIGUSR1. Without such a
+  signal, it ends on the release or at its own end, unless it is
+  stopped, as by SIGSTOP.
+- A correct client still fails the test if the child is not ready within
+  60 seconds. It also fails each test that runs the check if the test
+  process is delayed past 1 of the bounds the check asserts, or so long,
+  at any point after the client starts the stub, before or after the
+  test reads the ready byte, that the stub reaches its own end before
+  the client's first wait times out. The run bound leaves out the poll,
+  so it does not measure a delay during the poll.
+- The design needs FIFOs in the temporary folder, select on them, and
+  the Linux behaviour that a FIFO reader opened while a writer exists
+  sees end of file when the last writer closes. The behaviour stated
+  here is that on Linux; for other platforms and for the Python 3.9
+  floor it is not established.
+
+- Add .github/squash/282.txt as the committed squash message read by
+  the Pull request text gate.
