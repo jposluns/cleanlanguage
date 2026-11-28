@@ -1,0 +1,126 @@
+Fit the full download within its 28000-character limit (#295)
+
+The full Clean Language download,
+site/downloads/cleanlanguage-instructions.md, is subject to a hard
+third-party limit of 28000 characters that cannot be raised. It held
+28923 characters. This change removes 11 duplicated passages from the
+skill sources and regenerates, which brings it to 27594 characters,
+406 under the limit. This closes TODO 312.
+
+Each cut passed a meaning test: every condition, criterion and
+emphasis it carried stays stated in the download.
+
+cleanlanguage/skills/cleanlanguage/SKILL.md:
+
+- Core style, the bullet on marking a clause with `that`: the closing
+  clause on why `the exception` misreads. The condition, the rule and
+  both examples stay.
+- Core style, the bullet on keeping the user's vocabulary: the clause
+  on rewriting a phrase the user rejects as generated.
+  anti-patterns.md states that rule in full.
+- Removal list, formulaic executive phrasing: its 3 example phrases.
+  anti-patterns.md lists each with a replacement.
+
+cleanlanguage/skills/cleanlanguage/references/qa-checklist.md:
+
+- Accuracy, the citation bullet: precedence rule 4 in SKILL.md holds
+  the same list word for word.
+- Directness, the 2 example phrases of the intensifier bullet: both
+  stay in anti-patterns.md.
+- Mechanics, the spelling-variant bullet: SKILL.md states the default,
+  the condition for another variant and the consistency requirement.
+- Mechanics, the `ensure` bullet: SKILL.md states the rule with the
+  same recast as its example.
+- Mechanics, the numerals bullet: SKILL.md states both criteria with
+  worked examples.
+- Mechanics, the closing-offer bullet: the SKILL.md rule also excludes
+  generic invitations, so it is the wider rule.
+
+cleanlanguage/skills/cleanlanguage/references/examples.md:
+
+- Delete the framing: the second weak and preferred pair, on the
+  threat landscape. The principle sentence and 2 pairs stay, and
+  anti-patterns.md names the same cut.
+- Replace executive template phrasing: the abstract-noun pair.
+  SKILL.md states that rewrite as a rule, and anti-patterns.md as a
+  table row.
+
+Rename: the byte-equal twin that tools/build-portable-text.py writes
+is now cleanlanguage-instructions-28k.md, because each size-labelled
+file must be within its label; the 29k file is removed. In
+site/_redirects, written by redirects_body() in
+tools/set-release-links.py, a new 302 rule sends the old twin path to
+the 28k file, and the alias /downloads/cleanlanguage-29k.md now
+targets the 28k file. site/_headers, site-src/site.json,
+site/README.md, .aiqt/gensrc.json and the portable-text-sync workflow
+comment name the 28k file, and site-src/pages/instructions.html
+relabels its full-download button from 29k to 28k.
+
+The check: tools/check-portable-text-sync.sh now fails when the full
+file holds more than 28000 characters by wc -m, down from 29000. Its
+case 10 in tools/test-portable-text-release-date.sh pads a fixture to
+28000 characters, which passes, and to 28001, which fails with the
+label line. tools/test-release-links.py now expects 15 fixed redirect
+lines and 5 renames, and tools/test-skill-release-date.py names the
+28k twin. Because site/_redirects is 1 line longer,
+tools/test-install-page.py expects a rule its cases append at line 38
+and reads the first 15 lines as the release lines. This change also
+edits the gate, tools/check-install-page.py, in comments only: 1 line
+of its docstring and 1 comment line now name the touch-icon redirect
+by its rule in site/_redirects, not by its line number.
+tools/test-install-page.py re-pins GATE_SHA256 to the new digest of
+the gate, recorded after reading that diff.
+
+Regenerated with the repository tools, never by hand: both downloads
+by tools/build-portable-text.py; site/index.html and the index.html
+under site/install, site/instructions, site/examples and
+site/checklist by tools/build-site.py, after their modified dates in
+site-src/site.json moved to 2026-11-27; site/sitemap.xml by
+tools/generate-sitemap.py --write; and
+tools/portable-text-skill-source.sha256 by
+tools/check-portable-text-sync.sh --update --force.
+
+Add this message as .github/squash/295.txt, the committed squash
+message that the Pull request text gate reads.
+
+Deliberately unchanged: the hand-maintained 11k and 8k renderings, at
+10998 and 7996 characters, which already carry the governing rules in
+condensed form, hence --force; the canonical download URL; the
+checklist dash bullet, which tools/check-skill-consistency.py
+requires to match SKILL.md; the checklist bullet on adding a missing
+`that`, which holds its own exclusion; and
+site-src/pages/standard.html, which quotes 2 removed phrases whose
+rules stay in SKILL.md. No second bound is added to
+tools/build-portable-text.py, so the limit lives in 1 place.
+
+Checks, each run from the repository root, a Python tool with
+python3 -I; each exits 0:
+
+- wc -m site/downloads/cleanlanguage-instructions*.md gives the full
+  file and the 28k twin the same count, and the 11k and 8k files the
+  counts above.
+- tools/build-portable-text.py --check prints nothing.
+- bash tools/check-portable-text-sync.sh prints that the portable
+  files are reconciled with the skill source.
+- bash tools/test-portable-text-release-date.sh ends with "All
+  Released-line sync gate cases passed."
+- tools/test-skill-release-date.py (76 tests),
+  tools/test-skill-release-date-client.py (45),
+  tools/test-release-links.py (93), tools/test-page-metadata.py (154),
+  tools/test-web-metadata.py (65), tools/test-sitemap.py (41) and
+  tools/test-headers.py (60) each end OK.
+- tools/test-check-skill-consistency.py passes 213 cases,
+  tools/test-instructions-page.py 119 and tools/test-build-site.py
+  1122.
+- tools/check-skill-consistency.py, tools/check-instructions-page.py,
+  tools/build-site.py --check, tools/check-release-links.py,
+  tools/check-links.py, tools/generate-sitemap.py,
+  tools/check-headers.py, tools/test-pages-build.py, bash
+  tools/pages-build.sh, tools/check-inline-code.py,
+  tools/check-skill-discovery.py, tools/check-install-page.py,
+  tools/test-install-page.py (623 cases) and
+  tools/test-run-all-checks.py each pass.
+
+tools/check-page-metadata.py and tools/test-no-qa-labels.py read git
+history, so they need a git checkout; this change was prepared in a
+plain export, where both fail at their git calls.

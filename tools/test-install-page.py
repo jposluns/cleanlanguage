@@ -474,7 +474,7 @@ GATE = REPO_ROOT / "tools" / "check-install-page.py"
 # The sha256 of the bytes of tools/check-install-page.py, recorded after a reviewer read them. gate_bytes() compares the
 # gate's bytes with it before this test runs any code of the gate. Record a new digest only after reading the diff of
 # the gate since the bytes that this digest names; a new digest accepts whatever that diff holds.
-GATE_SHA256 = "88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7"
+GATE_SHA256 = "1f2ea1cad4dfa9f76dae48d2925affae1dca38b0688327ceefbbabd4c9202b3f"
 
 
 def gate_bytes(path: Path = GATE, digest: str = GATE_SHA256) -> bytes:
@@ -608,7 +608,7 @@ REDIRECT = ("which this gate reads, failing closed, as able to match an install 
             "a rule that matches such a path can send the reader away")
 # The gate's words for a source of site/_redirects under LOADED_SEGMENTS that is not an exact path, that a file of the
 # tree occupies or lies beneath, and that cannot be evaluated; for a rule there that does not send its source to a
-# pinned logo with the status 301, before the reason that target_problem() gives; and the 14 release lines of the
+# pinned logo with the status 301, before the reason that target_problem() gives; and the 15 release lines of the
 # committed file, before its logo redirects.
 NOT_EXACT = REDIRECT + " from the page or serve other content. Under a loaded segment only an exact path passes"
 OCCUPIED = "compared in any letter case; under a loaded segment only a path that no file, folder or link"
@@ -616,11 +616,11 @@ UNEVALUATED = "which could not be evaluated: "
 TARGET = (REDIRECT + " from the page or serve other content. Under a loaded segment a rule passes only when it sends "
           "its source with the status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py "
           "pins, and ")
-RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:14])
+RELEASE_LINES = "".join((REPO_ROOT / REDIRECTS).read_text(encoding="utf-8").splitlines(keepends=True)[:15])
 # The gate's words for a line of site/_redirects that holds a character other than the line feed at which a reading
 # may end a line or a field, and each such character, named: str.splitlines() ends a line at each of the first 10, and
 # str.split() a field at each but the last 3, which are other control characters and a byte order mark.
-BREAK = ("site/_redirects line 37 holds the character U+{:04X}; a line of site/_redirects may hold no control "
+BREAK = ("site/_redirects line 38 holds the character U+{:04X}; a line of site/_redirects may hold no control "
          "character, line or paragraph separator, byte order mark or whitespace but the space")
 BREAKS = (
     ("a lone carriage return", "\r"), ("a carriage return before a line feed", "\r\n"), ("a vertical tab", "\x0b"),
@@ -1812,7 +1812,7 @@ CASES = [
     # No rule of site/_redirects may have a source that can match an install page, read as reaches_install reads a
     # pattern of site/_headers: a redirect sends the reader away, and a rewrite (200) serves other content there.
     ("a redirect from every install page to the home page", append(REDIRECTS, "/install/* / 302\n"),
-        (1, "site/_redirects line 37 has the source /install/*, " + REDIRECT)),
+        (1, "site/_redirects line 38 has the source /install/*, " + REDIRECT)),
     ("a rewrite of a family page to the home page", append(REDIRECTS, "/install/claude/ / 200\n"), (1, REDIRECT)),
     ("a redirect under a placeholder", append(REDIRECTS, "/:page/* / 301\n"), (1, REDIRECT)),
     ("a redirect from /INSTALL to the home page, indented", append(REDIRECTS, "  /INSTALL / 302\n"), (1, REDIRECT)),
@@ -1826,7 +1826,7 @@ CASES = [
     # segment of LOADED_SEGMENTS (assets), in any letter case.
     ("a rewrite of baseline.css to fonts.css",
         append(REDIRECTS, "/assets/baseline/baseline.css /assets/baseline/fonts.css 200\n"),
-        (1, "site/_redirects line 37 has the source /assets/baseline/baseline.css, " + REDIRECT)),
+        (1, "site/_redirects line 38 has the source /assets/baseline/baseline.css, " + REDIRECT)),
     ("a redirect of copy.js to rail.js", append(REDIRECTS, "/assets/baseline/copy.js /assets/baseline/rail.js 302\n"),
         (1, REDIRECT)),
     ("a redirect of every asset, in capitals", append(REDIRECTS, "/ASSETS/* / 302\n"), (1, REDIRECT)),
@@ -1841,12 +1841,12 @@ CASES = [
     # site/ occupies and that lies beneath no file, compared in any letter case, and it sends that source with the
     # status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py pins, as written, with no
     # further field.
-    ("1 exact redirect of a dropped logo, after the 14 release lines alone",
+    ("1 exact redirect of a dropped logo, after the 15 release lines alone",
         write(REDIRECTS, RELEASE_LINES + "/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
         0),
     ("the committed redirects with all 22 logo lines, beside the whole committed site", whole_site, 0),
     ("a redirect of every asset", append(REDIRECTS, "/assets/* /assets/baseline/logos/aiqt.svg 302\n"),
-        (1, "site/_redirects line 37 has the source /assets/*, " + REDIRECT)),
+        (1, "site/_redirects line 38 has the source /assets/*, " + REDIRECT)),
     ("a redirect of every logo", append(REDIRECTS, "/assets/baseline/logos/* /assets/baseline/logos/aiqt.svg 301\n"),
         (1, NOT_EXACT)),
     ("a redirect of every logo under a placeholder",
@@ -1858,7 +1858,7 @@ CASES = [
     # A placeholder at the start of a segment that is not the last, which can match baseline.css's own folder.
     ("a redirect of baseline.css under a placeholder in a segment that is not the last",
         append(REDIRECTS, "/assets/:d/baseline.css /assets/baseline/logos/aiqt.svg 301\n"),
-        (1, "site/_redirects line 37 has the source /assets/:d/baseline.css, " + NOT_EXACT)),
+        (1, "site/_redirects line 38 has the source /assets/:d/baseline.css, " + NOT_EXACT)),
     # A placeholder as the whole of a segment after a segment of 7 or more characters, and a splat that ends a segment
     # of 21, each in place of 2 or more characters of the path of the font that the install pages load through
     # site/assets/baseline/fonts.css.
@@ -1889,7 +1889,7 @@ CASES = [
     # 1 case for each condition on what follows the source (target_problem()), each with an exact source that nothing
     # in the copy occupies, so that only that condition fails the rule.
     ("a dropped logo sent to another host", target("https://other.example/x.svg 301"),
-        (1, "site/_redirects line 37 has the source /assets/baseline/logos/aiqt-zz.svg, " + TARGET
+        (1, "site/_redirects line 38 has the source /assets/baseline/logos/aiqt-zz.svg, " + TARGET
             + "its destination https://other.example/x.svg is not a path from the site's root")),
     ("a dropped logo sent to a pinned logo under a full URL",
         target("https://cleanlanguage.ai/assets/baseline/logos/aiqt.svg 301"),
@@ -2014,14 +2014,14 @@ CASES = [
     # fails, in any letter case, whatever its destination and status. The gate reads the first segment of the source,
     # after any https:// and host, so a source below the file and a source on the site's own host fail too.
     ("a redirect of /favicon.ico to another host", append(REDIRECTS, "/favicon.ico https://other.example/x.ico 301\n"),
-        (1, "site/_redirects line 37 has the source /favicon.ico, " + REQUESTED)),
+        (1, "site/_redirects line 38 has the source /favicon.ico, " + REQUESTED)),
     ("a rewrite of /FAVICON.ICO to another file", append(REDIRECTS, "/FAVICON.ICO /x.ico 200\n"),
-        (1, "site/_redirects line 37 has the source /FAVICON.ICO, " + REQUESTED)),
+        (1, "site/_redirects line 38 has the source /FAVICON.ICO, " + REQUESTED)),
     ("a redirect of /favicon.ico/x, a path below the file", append(REDIRECTS, "/favicon.ico/x /y 301\n"),
-        (1, "site/_redirects line 37 has the source /favicon.ico/x, " + REQUESTED)),
+        (1, "site/_redirects line 38 has the source /favicon.ico/x, " + REQUESTED)),
     ("a redirect of https://cleanlanguage.ai/favicon.ico, the file on a host",
         append(REDIRECTS, "https://cleanlanguage.ai/favicon.ico /y 301\n"),
-        (1, "site/_redirects line 37 has the source https://cleanlanguage.ai/favicon.ico, " + REQUESTED)),
+        (1, "site/_redirects line 38 has the source https://cleanlanguage.ai/favicon.ico, " + REQUESTED)),
     # Every src on the 6 pages must be a path under LOADED_SEGMENTS, the first segments that check 7 reads in each
     # header and redirect rule.
     ("the rail's img loaded from another first segment",
@@ -4037,7 +4037,7 @@ LOCKED_CASES = [
     ("a dropped logo that cannot be evaluated, its folder set to mode 000",
         both(append(REDIRECTS, "/assets/old/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
              lambda root: (root / LOCKED_FOLDER).mkdir()),
-        (1, "site/_redirects line 37 has the source /assets/old/aiqt-card.svg, " + UNEVALUATED
+        (1, "site/_redirects line 38 has the source /assets/old/aiqt-card.svg, " + UNEVALUATED
             + f"the folder {LOCKED_FOLDER} could not be listed")),
 ]
 # The probe that runs the gate for each case of CASE_FOLDER_CASES. It loads the copy of the gate by CHECKED_LOAD, wraps

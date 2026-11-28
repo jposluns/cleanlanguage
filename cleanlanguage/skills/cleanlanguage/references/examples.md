@@ -26,14 +26,6 @@ The vendor contract expires on 31 March.
 
 ### Weak
 
-As we navigate today's fast-moving threat landscape, the firewall rules have not been reviewed since January.
-
-### Preferred
-
-The firewall rules have not been reviewed since January.
-
-### Weak
-
 This section outlines the 3 issues we found: missing backups, an expired certificate, and an open admin port.
 
 ### Preferred
@@ -103,14 +95,6 @@ The agenda looks highly relevant to my work, particularly the sessions on regula
 The agenda covers 3 areas I work on: regulatory interoperability, cyber resilience, and audit readiness.
 
 Keep the same topics and state the writer's connection to them, rather than asserting relevance with an intensifier.
-
-### Abstract-noun frame
-
-My main areas of interest are AI governance and cybersecurity.
-
-### Preferred, as a direct statement
-
-I am interested in AI governance and cybersecurity.
 
 ## Incident status
 

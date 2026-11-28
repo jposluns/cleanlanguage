@@ -5,10 +5,10 @@
 #
 # The size-labelled family in site/downloads/:
 #   cleanlanguage-instructions.md      the canonical file; always byte-equal to the largest
-#                                      size-labelled rendering (29k for now).
-#   cleanlanguage-instructions-29k.md  the largest rendering; GENERATED from the skill by
+#                                      size-labelled rendering (28k for now).
+#   cleanlanguage-instructions-28k.md  the largest rendering; GENERATED from the skill by
 #                                      tools/build-portable-text.py, byte-equal to
-#                                      cleanlanguage-instructions.md (<= 29000 chars).
+#                                      cleanlanguage-instructions.md (<= 28000 chars).
 #   cleanlanguage-instructions-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
 #   cleanlanguage-instructions-8k.md   a hand-maintained further-condensed rendering (<= 8000
 #                                      chars) for assistants that cap instruction length.
@@ -25,7 +25,7 @@
 # skill and all files, that the skill carries a well-formed Released line when
 # its version sorts above the undated baseline and that every file carries the
 # same Released value as the skill (or none when the skill has none), that
-# cleanlanguage-instructions.md and cleanlanguage-instructions-29k.md are byte-equal, and that every
+# cleanlanguage-instructions.md and cleanlanguage-instructions-28k.md are byte-equal, and that every
 # size-labelled file is within its label.
 #
 # Usage:
@@ -38,11 +38,11 @@ cd "${repo_root}"
 
 recorded_file="tools/portable-text-skill-source.sha256"
 canonical="site/downloads/cleanlanguage-instructions.md"
-twin29="site/downloads/cleanlanguage-instructions-29k.md"
+twin28="site/downloads/cleanlanguage-instructions-28k.md"
 eleven="site/downloads/cleanlanguage-instructions-11k.md"
 eight="site/downloads/cleanlanguage-instructions-8k.md"
 hand_maintained=("${eleven}" "${eight}")
-all_files=("${canonical}" "${twin29}" "${eleven}" "${eight}")
+all_files=("${canonical}" "${twin28}" "${eleven}" "${eight}")
 opening="This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to."
 
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
@@ -172,10 +172,10 @@ check_common() {
     fi
   done
   # The canonical file mirrors the largest rendering byte-for-byte.
-  if ! cmp -s "${canonical}" "${twin29}"; then
-    echo "${canonical} is not byte-equal to ${twin29}." >&2; return 1
+  if ! cmp -s "${canonical}" "${twin28}"; then
+    echo "${canonical} is not byte-equal to ${twin28}." >&2; return 1
   fi
-  # Every size-labelled file must stay within its label. The 29k twin is
+  # Every size-labelled file must stay within its label. The 28k twin is
   # byte-equal to the canonical file (checked above), so 1 count covers both.
   # Each count is that of wc -m; where wc -m gives bytes, the gate compares a
   # file's bytes, not its characters, with its label. On a UTF-8 file, GNU
@@ -188,7 +188,7 @@ check_common() {
   n="$(wc -m < "${eleven}")"
   [ "${n}" -le 11000 ] || { echo "${eleven} is ${n} chars, over its 11000 label." >&2; return 1; }
   n="$(wc -m < "${canonical}")"
-  [ "${n}" -le 29000 ] || { echo "${canonical} is ${n} chars, over its 29000 label." >&2; return 1; }
+  [ "${n}" -le 28000 ] || { echo "${canonical} is ${n} chars, over its 28000 label." >&2; return 1; }
 }
 
 mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/skills/cleanlanguage/SKILL.md"; find cleanlanguage/skills/cleanlanguage/references -type f -name '*.md' | sort)

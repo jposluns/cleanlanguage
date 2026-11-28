@@ -4,8 +4,8 @@
 Reads cleanlanguage/skills/cleanlanguage/SKILL.md and its references and writes a single
 self-contained rendering, site/downloads/cleanlanguage-instructions.md, for pasting or
 attaching to an assistant that cannot install a skill. The same bytes are also
-written to site/downloads/cleanlanguage-instructions-29k.md: cleanlanguage-instructions.md is the canonical
-name and always mirrors the largest size-labelled rendering, 29k for now. The
+written to site/downloads/cleanlanguage-instructions-28k.md: cleanlanguage-instructions.md is the canonical
+name and always mirrors the largest size-labelled rendering, 28k for now. The
 files are generated, never hand-edited; the sync gate checks them byte-for-byte.
 
 The instructions page, site/instructions/index.html, embeds cleanlanguage-instructions.md. It
@@ -15,7 +15,7 @@ or reads the page.
 
 Modes:
   (default)   write site/downloads/cleanlanguage-instructions.md and its byte-equal
-              size-labelled twin cleanlanguage-instructions-29k.md atomically
+              size-labelled twin cleanlanguage-instructions-28k.md atomically
   --check     regenerate in memory, byte-compare both files, print the first
               difference, and exit 1 on any drift
 """
@@ -29,8 +29,8 @@ SKILL = os.path.join(ROOT, "cleanlanguage", "skills", "cleanlanguage", "SKILL.md
 REFDIR = os.path.join(ROOT, "cleanlanguage", "skills", "cleanlanguage", "references")
 OUT = os.path.join(ROOT, "site", "downloads", "cleanlanguage-instructions.md")
 # cleanlanguage-instructions.md is the canonical name; it always mirrors the largest
-# size-labelled rendering byte-for-byte. That is 29k for now.
-OUT29 = os.path.join(ROOT, "site", "downloads", "cleanlanguage-instructions-29k.md")
+# size-labelled rendering byte-for-byte. That is 28k for now.
+OUT28 = os.path.join(ROOT, "site", "downloads", "cleanlanguage-instructions-28k.md")
 
 OPENING = ("This is the Clean Language skill, written out as rules. Apply it "
            "to the writing in this conversation unless I tell you not to.")
@@ -149,7 +149,7 @@ def main():
     content = generate()
     if "--check" in args:
         ok = True
-        for target in (OUT, OUT29):
+        for target in (OUT, OUT28):
             try:
                 on_disk = read(target)
             except FileNotFoundError:
@@ -166,8 +166,8 @@ def main():
     if args:
         fail("unknown arguments %s; the modes are no argument and --check" % " ".join(args))
     write_atomic(OUT, content)
-    write_atomic(OUT29, content)
-    print("build-portable-text: wrote %s and %s" % (OUT, OUT29))
+    write_atomic(OUT28, content)
+    print("build-portable-text: wrote %s and %s" % (OUT, OUT28))
 
 
 if __name__ == "__main__":
