@@ -1,0 +1,58 @@
+Move the pinned Claude Code CLI to 2.1.318 (#294)
+
+CLAUDE_CODE_VERSION at line 61 of .github/workflows/plugin-validate.yml
+moves from 2.1.310 to 2.1.318. That line is the only pin of the Claude
+Code CLI: the Plugin manifests job installs the CLI at that version
+(line 75), and the plugin_manifests step of tools/run_all_checks.sh
+reads the pin with sed (line 66) and refuses to validate when claude
+--version on the host reports another version (lines 75 to 82). The
+maintainer decided on 2026-11-27 to move the pin to 2.1.318, the
+version that the host CLI reports, so that CI and the local full gate
+validate the manifests with the same CLI.
+
+The change also writes the numeral 3 in place of a word at line 3 of
+that workflow, as the house rule of numerals for quantities requires,
+and adds this message as .github/squash/294.txt.
+
+8 lines keep 2.1.310 on purpose, because none of them is the pin:
+
+- 6 comments and docstrings that describe the workflow shape check and
+  give 2.1.310 as an example of a dotted version number, at
+  .github/workflows/plugin-validate.yml:36,
+  .github/workflows/ci-status-test.yml:20,
+  .github/workflows/agent-plugin-manifest.yml:20,
+  .github/workflows/skill-discovery.yml:17, tools/ci-status.py:104 and
+  tools/test-ci-status.sh:1846;
+- 2 fixtures of tools/test-run-all-checks.py, crlf.yml (line 539) and
+  two-pins.yml (line 541), files from which read_pin must take no pin,
+  where the version is only test data.
+
+tools/run_all_checks.sh does not change, so SCRIPT_SHA256 in
+tools/test-run-all-checks.py keeps its value.
+
+Checks, each run from the repository root:
+
+python3 -I tools/test-run-all-checks.py exits 0 and prints this on 1
+line:
+
+    OK: 19 workflows, 83 run steps, 72 command lines in
+    tools/run_all_checks.sh, 10 behaviour cases, 17 reading cases
+
+So read_pin finds exactly 1 pin in plugin-validate.yml.
+
+bash tools/test-ci-status.sh exits 0 and ends with:
+
+    all ci-status github-actions fail-safe tests pass
+
+Among its lines is this one, which shows that the workflow, with the
+new pin, still passes the shape check:
+
+    ok   required check Plugin manifests follows plugin-validate.yml
+
+This search lists the 8 lines above and no other:
+
+    grep -rnI --exclude-dir=squash '2\.1\.310' .github tools
+
+-I skips binary files, such as a cached .pyc file, and
+--exclude-dir=squash leaves out .github/squash, where this message
+names the old version 3 times.
