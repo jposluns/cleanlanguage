@@ -17,7 +17,7 @@ name: Plugin manifests
 #      without --strict the step exits 0 and proves nothing.
 #
 # The CLI version is PINNED. The repository pins actions/checkout to a commit SHA
-# for the same reason: a dependency release must not fail an unrelated pull request,
+# for the same reason: a dependency release must not red an unrelated pull request,
 # and a given commit should validate the same way months from now. The cost of a pin
 # is that it goes stale, and a stale validator produces a FALSE GREEN while users
 # install with current versions. That risk is covered by plugin-drift.yml, which runs
