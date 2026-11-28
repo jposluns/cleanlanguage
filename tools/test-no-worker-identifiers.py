@@ -162,7 +162,8 @@ that is not a file in this tree, such as a pull request title, description, or c
 reached, and tools/check-pr-text.py carries no identifier pattern today. The digest of a hit or
 of a path name lets a reader who already holds a guess of the address confirm the guess; it does
 not reveal the address. A path name is held back only from the output of this suite: git, and
-any other step of a workflow that lists or names files, can still print it. On a red run,
+any other step of a workflow that lists or names files, can still print it, so the rule, not
+the scan, keeps an address out of a path name. On a red run,
 unittest also prints a traceback for each failed case, which holds the absolute path of this
 file in the checkout, and a failed self-check can
 print the values that it compared, the path of its temporary folder among them, so a checkout
@@ -172,8 +173,8 @@ is out of scope for this rule's enforcement. Each of the 3 forms that name no ad
 label, the bare account handle, and the numeric account identifier, is pinned by its own
 subtest, named for the form, of test_each_residual_text_form_gives_no_candidate, and compressed
 or encoded content is pinned by its own case,
-test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest for each compression or
-encoding. Each place that this residual names as not read is pinned by its own case:
+test_compressed_or_encoded_content_gives_no_candidate. Each place that this residual names as
+not read is pinned by its own case:
 test_an_untracked_file_is_not_read,
 test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read,
 test_the_content_of_a_submodule_is_not_read,
@@ -186,8 +187,8 @@ Accepted false failures: a legitimate new third-party address is caught and need
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
 or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
 also ends a shorter domain that is not reserved, such as 1 at mail.corp.example.com or 1
-that appends the label example to an ordinary domain, is caught, since that shorter candidate
-is not exempt, and is reworded to a reserved domain with no such shorter domain; and an action
+that appends the label example to an ordinary domain, is caught and is reworded to a reserved
+domain with no such shorter domain; and an action
 pinned to a version tag in which a dot is followed directly by 2 or more letters, such as
 v1.2.3-alpha.beta.1 or v2.0.0-rc.ab, is caught, since a domain then ends after those letters,
 unless every domain that the tag ends is exempt, as in v1.2.3-pre.test.1, whose letters form a
@@ -365,9 +366,13 @@ def stored_blobs(root, names, git=GIT):
     replace objects off, so no attribute, filter, encoding, or state of the working copy changes
     the bytes. An object that cannot be read as a blob gives 1 fixed word in place of its bytes:
     missing, when git reports no such object; not a blob, when the object is of another type; or
-    unexpected reply, when the reply does not answer for that object as requested, in which case
-    every later object gives it too. A git cat-file that fails raises
-    subprocess.CalledProcessError, and a git that cannot be started raises OSError.
+    unexpected reply, when the reply does not answer for that object as requested. A header of 2
+    fields other than missing gives unexpected reply for that object only, and the read goes on
+    to the next object. Any other reply that does not answer stops the read, so that object and
+    every later object give unexpected reply: a reply that ends before the object is answered, a
+    header that names another object or that has too many or too few fields, a size that is no
+    number, or a body that is cut short or that no line feed ends. A git cat-file that fails
+    raises subprocess.CalledProcessError, and a git that cannot be started raises OSError.
     """
     request = b"".join(name.encode("ascii") + b"\n" for name in names)
     reply = subprocess.run([git, "--no-replace-objects", "-C", str(root), "cat-file", "--batch"],
