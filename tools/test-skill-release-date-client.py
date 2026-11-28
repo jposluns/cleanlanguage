@@ -25,6 +25,7 @@ import importlib.util
 import io
 import json
 import os
+import select
 import shutil
 import signal
 import subprocess
@@ -421,6 +422,130 @@ class GrammarTest(unittest.TestCase):
         )
 
 
+# The group-kill check's bounds, in seconds: how long the readiness poll may
+# hold the client's first wait, how long the client's run, less that poll,
+# may take, how long the group may take to end after the client returns,
+# and the stub's own end, which each of its processes reaches that long
+# after it enters its wait for the release.
+POLL_SECONDS = 60
+RUN_SECONDS = 15
+CHECK_SECONDS = 10
+OWN_END_SECONDS = 90
+
+# The stub child of the group-kill check. Its source ignores SIGTERM, SIGINT
+# and SIGHUP, and Python ignores SIGPIPE and SIGXFSZ at start-up. When the
+# client starts it, it keeps every signal that the test thread blocks as
+# blocked, and every signal other than SIGCHLD, SIGPIPE and SIGXFSZ that the
+# test process ignores as ignored. The client changes those 3 dispositions
+# before exec: its reset_sigchld resets SIGCHLD to its default in its own
+# process, the test process, before it starts the child, and its Popen, with
+# its default restore_signals, resets SIGPIPE and SIGXFSZ to their default
+# action in the child. SIGCHLD's default action, like ignoring it, leaves the
+# stub running. So, unless the test thread blocks it, SIGPIPE or SIGXFSZ can
+# end the stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can end
+# it before its source ignores it if the test process does not ignore it.
+# Examples of a signal that ends it early, not a complete list: SIGKILL, and
+# SIGUSR1 when the test neither ignores nor blocks SIGUSR1. It first reads
+# its own end, in seconds, with float from the file own_end, which the check
+# writes beside it,
+# so a plain int or float passed as own_end reaches it only as a number; a
+# value with methods of its own can still change its source, as the comment
+# in check_group_kill states. A text that float does not take raises at that
+# read, before the stub opens either FIFO, so the stub never writes the ready
+# byte. Its leader forks 1 member into its group and then writes 1 byte to
+# the FIFO alive, so the member holds the write end of alive when the test
+# reads that byte, and the test reads end of file on alive only once every
+# process holding that write end, the leader and the member, has ended. Each
+# process then waits for end of file on the FIFO lifeline, whose only write
+# end the test holds, or for its own end, and exits. The test closes lifeline
+# when its check ends, and the kernel closes it when the test process ends in
+# any other way, SIGKILL included. Each open is non-blocking, so a stub that
+# finds no reader of alive fails at once rather than block. On Linux, select
+# reports nothing for a FIFO read end opened while no writer has it open, so a
+# stub that opens lifeline after the test has closed it would wait at its
+# select until its own end. It therefore makes 1 read of lifeline first: a
+# read that returns, as a read does with end of file when no writer has the
+# FIFO open, rather than fail with BlockingIOError, finds no writer, and the
+# stub exits at once.
+#
+# The bounds this order gives, derived from the source below. Start-up
+# here and in the check means interpreter start-up and then the read of
+# own_end, which come before the first read of lifeline. A process reaches
+# its wait only after start-up and the first read, and the member only
+# after the fork, so its own end comes own_end seconds after it enters that
+# wait, not after it starts, and nothing in the test bounds start-up. After
+# the release, a process past the first read sees end of file at its wait
+# and exits at once; a process not yet at that read exits there when it
+# gets to it, so it outlives the release by the rest of its start-up,
+# however long that is. The leader writes the ready byte only after the
+# first read and the fork, so once the test has read that byte, the leader
+# and the member are past the read. test_the_check_names_no_signal_function
+# pins this order.
+GROUP_STUB = (
+    "import os, select, signal\n"
+    "for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):\n"
+    "    signal.signal(number, signal.SIG_IGN)\n"
+    "with open('own_end') as file:\n"
+    "    own_end = float(file.read())\n"
+    "lifeline = os.open('lifeline', os.O_RDONLY | os.O_NONBLOCK)\n"
+    "try:\n"
+    "    os.read(lifeline, 1)\n"
+    "    os._exit(0)\n"
+    "except BlockingIOError:\n"
+    "    pass\n"
+    "alive = os.open('alive', os.O_WRONLY | os.O_NONBLOCK)\n"
+    "if os.fork() != 0:\n"
+    "    os.write(alive, b'r')\n"
+    "select.select([lifeline], [], [], own_end)\n"
+    "os._exit(0)\n"
+)
+
+# Names through which Python code sends a signal, examples, not a complete
+# list: os, signal and subprocess functions and Popen methods that send one to
+# a process or a thread, and abort, alarm, raise_signal and setitimer, which
+# send one to the caller itself. The group-kill check names none of them.
+SIGNAL_NAMES = ("abort", "alarm", "kill", "killpg", "pidfd_send_signal", "pthread_kill", "raise_signal",
+                "send_signal", "setitimer", "terminate")
+
+# The calls of GROUP_STUB, in source order.
+STUB_CALLS = (
+    "signal.signal(number, signal.SIG_IGN)",
+    "open('own_end')",
+    "float(file.read())",
+    "file.read()",
+    "os.open('lifeline', os.O_RDONLY | os.O_NONBLOCK)",
+    "os.read(lifeline, 1)",
+    "os._exit(0)",
+    "os.open('alive', os.O_WRONLY | os.O_NONBLOCK)",
+    "os.fork()",
+    "os.write(alive, b'r')",
+    "select.select([lifeline], [], [], own_end)",
+    "os._exit(0)",
+)
+
+
+def end_of_file(fd: int, deadline: float) -> float | None:
+    """Wait until ``deadline``, a time.monotonic value, for end of file on
+    ``fd``, the non-blocking read end of a FIFO whose writers have opened it,
+    and return the time it was seen, a clock reading taken after the read
+    that returned it, or None if it was not seen by the deadline. A reading
+    later than the deadline counts as not seen, so an end of file that came
+    late, or that the process saw late because it was not scheduled, is
+    never taken. A byte read on the way is dropped."""
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        readable, _write, _error = select.select([fd], [], [], remaining)
+        if readable:
+            try:
+                if os.read(fd, 1) == b"":
+                    seen = time.monotonic()
+                    return seen if seen <= deadline else None
+            except BlockingIOError:
+                pass
+
+
 class BoundsTest(unittest.TestCase):
     """T5: the child's output and time are bounded."""
 
@@ -488,31 +613,684 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual(caught.exception.reason, f"wrote stdout up to the output cap of {cap} bytes")
 
     def test_a_child_that_does_not_end_is_killed_with_its_group(self):
+        """The client kills the whole group of a child past its timeout.
+
+        This test asserts nothing about the client's reap: the check's
+        finally clause reaps a child that the client left unreaped, so a
+        client that skips its wait for the child after the kill passes it.
+        2 other tests fail such a client:
+        test_a_client_that_kills_only_the_leader_fails_the_check, whose
+        SIGTERM subtest expects the reason "could not be reaped", and
+        test_a_child_that_a_kill_does_not_end_is_left_unreaped, which
+        asserts that reason in full."""
+        # The stub's own end comes after the latest end of file the check
+        # can take. Derived: started is read before the client starts the
+        # stub, so each stub process enters its wait after started, and its
+        # own end comes after started + OWN_END_SECONDS. The check takes end
+        # of file only as end_of_file returns it, a clock reading taken
+        # after the read that saw it and no later than returned +
+        # CHECK_SECONDS, and before that it asserts that returned - started,
+        # less the poll, is under RUN_SECONDS. The poll lasts POLL_SECONDS
+        # at most, plus its last step, 1 real wait of 0.05 seconds and 1
+        # read, whose length the code does not bound. So the check takes no
+        # end of file seen after started + POLL_SECONDS + RUN_SECONDS +
+        # CHECK_SECONDS, 85 seconds, plus that step, and the 5 seconds left
+        # before the own end cover the step. Should the step take longer,
+        # the own-end assertion fails a group that ended on its own rather
+        # than pass it.
+        self.assertGreater(OWN_END_SECONDS, POLL_SECONDS + RUN_SECONDS + CHECK_SECONDS)
+        self.check_group_kill()
+
+    def check_group_kill(self, check: float = CHECK_SECONDS, own_end: float = OWN_END_SECONDS, witness=None,
+                         end_bound: float | None = None, starts: list | None = None):
+        # The stub child (GROUP_STUB) forks a member into its group and
+        # writes the ready byte to the FIFO alive, and its 2 processes then
+        # wait for the release, end of file on the FIFO lifeline, or for their
+        # own end, own_end seconds after each enters that wait, which the
+        # stub reads from the file own_end that this check writes. The client's
+        # first wait is held back until the ready byte is read, polled for at
+        # most POLL_SECONDS, so a busy host cannot fire the 1 second timeout
+        # before the member exists, and a child that is not ready when the
+        # poll ends fails the check. The client must ask that first wait for
+        # exactly its 1 second timeout; the wait itself, the group kill and
+        # the reap are the real ones. The first real wait must also last at
+        # least that timeout, timed from a clock read just before the call
+        # to one just after its return. Derived: a real wait that times out
+        # returns only once the clock has reached its entry plus the
+        # timeout, so a correct client never fails this, and a client whose
+        # real wait gives up early fails it unless the time the 2 clock
+        # reads and the call add makes up the whole shortfall. The call adds
+        # its entry and return and the wait's overrun past its own
+        # deadline, its last sleep running over and the waitpid and clock
+        # read after it. The code bounds none of these, so a client that
+        # gives up early by more than the 2 clock reads take can still pass,
+        # by a margin that the host sets. The client's
+        # run, from started to returned, less the poll that holds its first
+        # wait, must end within RUN_SECONDS.
+        #
+        # The client's reason is checked first, so a client that fails for
+        # another reason is reported with that reason. alive must then read
+        # end of file, seen by a clock reading no later than check seconds
+        # after the client returns, which shows that no process of the
+        # group still holds it: the client
+        # killed the member too, not only the leader. That end of file must
+        # also come less than own_end seconds after the client's start, or
+        # less than end_bound seconds when a caller passes a smaller
+        # end_bound, so however late the child gets ready, the group's own
+        # end is never taken for the kill.
+        #
+        # The check sends no signal, so it never names a process by an id
+        # that may have been reused. Its finally clause closes lifeline,
+        # which ends any process of the group that the client left, and then
+        # reaps a child that the client left unreaped; the verdict depends on
+        # neither. When the test process ends without unwinding, as on
+        # SIGKILL or SIGTERM, the kernel closes lifeline. After either
+        # release a stub process ends as GROUP_STUB's comment derives: at
+        # once if it is past its first read of lifeline, as the leader and the
+        # member are once the ready byte has been read, and otherwise when it
+        # reaches that read, which nothing in the test bounds.
+        # witness, when given, is called with the path of alive before the
+        # stub starts, so that a caller can open a reader of its own.
+        #
+        # own_end reaches the stub only as the text of the file own_end,
+        # written with str after witness is called, and the stub reads it
+        # with float, so a plain int or float passed as own_end reaches the
+        # stub only as a number. A text that float does not take raises in
+        # the stub before it opens either FIFO, so the check fails.
+        # end_bound, when given and smaller than own_end, takes the place of
+        # own_end in the own-end assertion only; a larger end_bound leaves
+        # own_end as the bound. The stub still reads own_end.
+        # starts, when given, is a list to which the check appends started,
+        # the clock reading it adds the bound to, so a caller can measure
+        # from the same instant as the own-end assertion.
+        #
+        # Residual, not checked, of this check and of its tripwire,
+        # test_the_check_names_no_signal_function:
+        # - What the tripwire's first 2 assertions miss: an edit that changes
+        #   what self.stub finds without an entry in the classes they read or
+        #   an attribute of the tripwire's own instance, such as a
+        #   __getattribute__ method or an assignment to self.__class__; a class
+        #   derived from BoundsTest that does not exist when the tripwire runs,
+        #   such as one in another module; an attribute set on an instance
+        #   other than the tripwire's own, such as one that a subclass's setUp
+        #   sets where the tripwire runs as BoundsTest.<test name>, not on that
+        #   subclass as the whole file runs it; a replacement whose qualified
+        #   name and first line, which a value gives for itself, are those of
+        #   the def statement; a binding of check_group_kill, end_of_file or
+        #   stub by a name given as a string anywhere other than those classes,
+        #   that instance and the module's end_of_file; a change made after the
+        #   tripwire runs or undone before it; an edit that rebinds a name or
+        #   function the tripwire calls, such as class_bindings, SUBCLASSES,
+        #   BoundsTest, a builtin or a function of ast, or that replaces the
+        #   tripwire; an edit that changes the interpreter's own records, as
+        #   through ctypes; and an entry hidden by a route that the walk does
+        #   not model, such as a metaclass whose mro method puts BoundsTest in
+        #   the order of a class that does not have it among its bases, or a
+        #   dict subclass, set as the tripwire's instance __dict__, whose items
+        #   method leaves out an entry. Code in the test file runs in the
+        #   process that the tripwire checks, so no check there holds against
+        #   all such code.
+        # - What the tripwire's name scan misses: every route to a signal other
+        #   than a name in SIGNAL_NAMES in the functions it reads. Such an edit
+        #   passes the tripwire unless it also fails 1 of its other 3
+        #   assertions: it changes the stub's calls, which the STUB_CALLS pin
+        #   rejects, as it rejects os.__dict__["kill"](os.getppid(), 0) added
+        #   to the stub, or it binds check_group_kill, end_of_file or stub in a
+        #   way the first 2 assertions reject, as they reject a subclass of
+        #   BoundsTest whose stub, bound by a def statement, calls
+        #   getattr(os, "kill"). Passes of the name scan, examples, not a
+        #   complete list: in check_group_kill, getattr(os, "kill") with a
+        #   literal name, getattr with a computed name, such as
+        #   getattr(os, "ki" + "ll"), os.__dict__["kill"], vars(os)["kill"] and
+        #   a shell kill through os.system; a value a caller passes, such as
+        #   the witness, which the check calls and which can run any code; a
+        #   method of self that a subclass overrides, such as assertLess; a
+        #   module global or builtin that a caller rebinds, such as GROUP_STUB,
+        #   or a function of os or the client, as the tests here rebind
+        #   os.killpg; the body of a decorator; and the code outside those
+        #   functions, the client, whose group kill, the behaviour under test,
+        #   is the 1 signal that a run of the group-kill test sends, and the
+        #   standard library.
+        # - The check takes the text of own_end with str, compares end_bound
+        #   with own_end when given, and adds check and own_end, or end_bound
+        #   in its place when smaller, to clock readings, so a value with
+        #   methods of its own runs them in the test. str
+        #   runs before the check reads GROUP_STUB, so a method of own_end can
+        #   change the stub's source, for example by rebinding GROUP_STUB, and
+        #   so add code to the stub. The callers in the test file pass
+        #   numbers.
+        # - After the release, by the finally clause or by the kernel when the
+        #   test process ends, a stub process that has not yet reached its
+        #   first read of lifeline ends only when it reaches that read, so it
+        #   outlives the release, and a killed test process, by the rest of its
+        #   start-up, which nothing in the test bounds. This is derived from
+        #   the stub's order. The leader and the member are past that read once
+        #   the ready byte has been read, so this arises only for a release
+        #   that comes before the test has read that byte: during the poll, or
+        #   after a poll that ran out without it.
+        # - While the test process is alive but neither closes lifeline nor
+        #   ends, as when it is stopped, each stub process lives until its own
+        #   end, own_end seconds after it enters its wait, 90 in the group-kill
+        #   test. It enters that wait only after start-up, its first read of
+        #   lifeline and, for the member, the fork, so its life from its start
+        #   is that start-up plus own_end seconds, and nothing in the test
+        #   bounds the start-up.
+        # - The first-wait timing passes a client whose real wait gives up
+        #   early by less than the time the gate's 2 clock reads and the call
+        #   add. The call's share includes the wait's overrun past its own
+        #   deadline, which the code does not bound, so the margin is set by
+        #   the host and is more than the 2 clock reads take.
+        # - A process that inherits the write end of lifeline and outlives the
+        #   test would keep the stub alive up to its own end. Only a fork
+        #   without exec in the test process could do that: the descriptor is
+        #   not inheritable across exec, and the test file forks only inside
+        #   the stub's source.
+        # - A stub process that closed its copy of alive before it ended would
+        #   hide from the check. The stub is the test's own code, and its calls
+        #   are pinned, so this arises only from an altered stub.
+        # - A process that SIGKILL cannot end keeps alive open, and the check
+        #   then fails.
+        # - When the client gives up without reaping, the finally clause reaps
+        #   the leader after the release if it ends within the 5 second reap
+        #   grace. A leader that has not ended by then, or one left when the
+        #   test process ends without unwinding, stays unreaped until Python's
+        #   own collection of finished children or the process that adopts it
+        #   reaps it. A leader that has ended holds no descriptor while it
+        #   waits to be reaped; one still running, such as a stopped one, holds
+        #   the descriptors it has open, the write end of alive among them once
+        #   it has opened it.
+        # - No signal ends the stub while it ignores or blocks that signal.
+        #   Unless the test thread blocks it, SIGPIPE or SIGXFSZ can end the
+        #   stub before Python ignores it, and SIGTERM, SIGINT or SIGHUP can
+        #   end it before its source ignores it if the test process does not
+        #   ignore it. Examples of a signal that ends it early, not a complete
+        #   list: SIGKILL, and SIGUSR1 when the test neither ignores nor blocks
+        #   SIGUSR1. Without such a signal, it ends on the release or at its
+        #   own end, unless it is stopped, as by SIGSTOP.
+        # - A correct client still fails the test if the child is not ready
+        #   within 60 seconds. It also fails each test that runs the check if
+        #   the test process is delayed past 1 of the bounds the check
+        #   asserts, or so long, at any point after the client starts the
+        #   stub, before or after the test reads the ready byte, that the
+        #   stub reaches its own end before the client's first wait times
+        #   out. The run bound leaves out the poll, so it does not measure a
+        #   delay during the poll.
+        # - The design needs FIFOs in the temporary folder, select on them, and
+        #   the Linux behaviour that a FIFO reader opened while a writer exists
+        #   sees end of file when the last writer closes. The behaviour stated
+        #   here is that on Linux; for other platforms and for the Python 3.9
+        #   floor it is not established.
+        real_wait = client.wait_child
+        real_popen = subprocess.Popen
+        children = []
+        seen = set()
+        ready_seen = []
+        first_timeouts = []
+        first_waits = []
+        poll_began = []
+        ready_at = []
         with tempfile.TemporaryDirectory() as tmp:
-            tool = self.stub(tmp, (
-                "import os, time\n"
-                "pid = os.fork()\n"
-                "if pid == 0:\n"
-                "    time.sleep(60)\n"
-                "    os._exit(0)\n"
-                "open('sleeper.pid', 'w').write(str(pid))\n"
-                "time.sleep(60)\n"
-            ))
-            started = time.monotonic()
-            with self.assertRaises(client.Unavailable) as caught:
-                client.run_extractor("baseline", {}, timeout=1, tool=tool)
-            self.assertLess(time.monotonic() - started, 15)
-            self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
-            sleeper = int((Path(tmp) / "sleeper.pid").read_text())
-            deadline = time.monotonic() + 10
-            while True:
+            alive_path = Path(tmp) / "alive"
+            lifeline_path = Path(tmp) / "lifeline"
+            held = []
+            try:
+                os.mkfifo(alive_path)
+                os.mkfifo(lifeline_path)
+                held.append(os.open(alive_path, os.O_RDONLY | os.O_NONBLOCK))
+                alive = held[0]
+                # A non-blocking write end of a FIFO opens only while a read
+                # end is open, so a read end is held just long enough for it.
+                reader = os.open(lifeline_path, os.O_RDONLY | os.O_NONBLOCK)
                 try:
-                    os.kill(sleeper, 0)
-                except ProcessLookupError:
-                    break
-                if time.monotonic() > deadline:
-                    self.fail(f"the sleeper {sleeper} outlived the timeout")
-                time.sleep(0.05)
+                    held.append(os.open(lifeline_path, os.O_WRONLY | os.O_NONBLOCK))
+                finally:
+                    os.close(reader)
+                if witness is not None:
+                    witness(alive_path)
+                (Path(tmp) / "own_end").write_text(str(own_end), encoding="utf-8")
+                tool = self.stub(tmp, GROUP_STUB)
+
+                def popen(*args, **kwargs):
+                    children.append(real_popen(*args, **kwargs))
+                    return children[-1]
+
+                def ready() -> bool:
+                    try:
+                        return os.read(alive, 1) == b"r"
+                    except BlockingIOError:
+                        return False
+
+                def wait_when_ready(proc, timeout):
+                    if proc.pid not in seen:
+                        seen.add(proc.pid)
+                        poll_began.append(time.monotonic())
+                        deadline = poll_began[0] + POLL_SECONDS
+                        got_ready = ready()
+                        while not got_ready and time.monotonic() < deadline:
+                            if real_wait(proc, 0.05):
+                                return True
+                            got_ready = ready()
+                        ready_seen.append(got_ready)
+                        first_timeouts.append(timeout)
+                        ready_at.append(time.monotonic())
+                        ended = real_wait(proc, timeout)
+                        first_waits.append(time.monotonic() - ready_at[0])
+                        return ended
+                    return real_wait(proc, timeout)
+
+                started = time.monotonic()
+                if starts is not None:
+                    starts.append(started)
+                with mock.patch.object(client.subprocess, "Popen", popen), \
+                        mock.patch.object(client, "wait_child", wait_when_ready):
+                    with self.assertRaises(client.Unavailable) as caught:
+                        client.run_extractor("baseline", {}, timeout=1, tool=tool)
+                returned = time.monotonic()
+                self.assertEqual(caught.exception.reason, "was not seen to end within 1 seconds")
+                self.assertEqual(ready_seen, [True], "the child was not ready when the poll ended")
+                self.assertEqual(first_timeouts, [1], "the client's first wait was not its 1 second timeout")
+                self.assertGreaterEqual(first_waits[0], 1, "the client's first wait gave up before its 1 second timeout")
+                self.assertLess(returned - started - (ready_at[0] - poll_began[0]), RUN_SECONDS)
+                ended = end_of_file(alive, returned + check)
+                if ended is None:
+                    self.fail(f"a process of the child's group outlived the client's kill: alive did not reach "
+                              f"end of file within {check} seconds after the client returned")
+                bound = own_end if end_bound is None else min(end_bound, own_end)
+                self.assertLess(ended, started + bound,
+                                "the group may have ended on its own, so its end does not show the kill")
+            finally:
+                # The release: lifeline first, then alive. A child that the
+                # client left unreaped is reaped here if it ends within the
+                # reap grace; this sends no signal, and the verdict does not
+                # depend on it.
+                for fd in reversed(held):
+                    os.close(fd)
+                for proc in children:
+                    if proc.returncode is None:
+                        with contextlib.suppress(subprocess.TimeoutExpired):
+                            proc.wait(timeout=client.REAP_GRACE_SECONDS)
+
+    def test_a_client_that_kills_only_the_leader_fails_the_check(self):
+        # The check runs against 2 stand-ins for the client's group kill,
+        # each called while the child is still unreaped: a kill of the
+        # leader alone, which leaves the member running, and a SIGTERM to the
+        # group, which the stub ignores. Each run must fail, the first at the
+        # end of file check and the second at the reason, since the client
+        # then gives up after the reap grace. A reader of alive that this
+        # test opens before the run must then see end of file before the
+        # stub's own end could come, so the release, not that own end, ended
+        # what the client left. Derived from the order: the test reads the
+        # clock when it opens that reader, before the check starts the stub,
+        # and each stub process reaches its own end OWN_END_SECONDS after it
+        # enters its wait, so an end of file seen no later than that reading
+        # plus OWN_END_SECONDS came before any own end. Only a stub process
+        # past its first read of lifeline opens alive, and such a process
+        # exits as soon as the release comes. A stub not past that read at
+        # the release exits there without opening alive, and on Linux select
+        # reports nothing for a FIFO reader that no writer has opened since
+        # it was opened, so end_of_file sees no end of file and this
+        # assertion then fails rather than pass.
+        real_killpg = os.killpg
+        for label, kill, message in (
+            ("a kill of the leader only", lambda group, sig: os.kill(group, sig),
+             "a process of the child's group outlived the client's kill"),
+            ("SIGTERM to the group", lambda group, sig: real_killpg(group, signal.SIGTERM),
+             "could not be reaped"),
+        ):
+            with self.subTest(label):
+                witnesses = []
+                try:
+                    with mock.patch.object(client.os, "killpg", kill):
+                        with self.assertRaises(AssertionError) as caught:
+                            self.check_group_kill(check=2, witness=lambda path: witnesses.append(
+                                (os.open(path, os.O_RDONLY | os.O_NONBLOCK), time.monotonic())))
+                    self.assertIn(message, str(caught.exception))
+                    self.assertEqual(len(witnesses), 1)
+                    fd, opened = witnesses[0]
+                    self.assertIsNotNone(end_of_file(fd, opened + OWN_END_SECONDS),
+                                         "a process of the group outlived the failed check")
+                finally:
+                    for fd, _opened in witnesses:
+                        os.close(fd)
+
+    def test_an_end_of_file_after_the_own_end_bound_does_not_pass(self):
+        # The own-end assertion must fail an end of file that comes no
+        # earlier than its bound after the client's start, since such an end
+        # could be the group's own end, as for a child that gets ready so
+        # late that the stub's own end falls inside the check. Each subtest
+        # runs the check against the real client and the stub with its own
+        # end of OWN_END_SECONDS, so no subtest lets the stub's own end fall
+        # inside the check. Each must fail at the own-end assertion, with no
+        # dependence on how long any step takes:
+        # - A smaller bound, an end_bound of 0.5 seconds: the check asserts
+        #   that the client's first real wait lasted at least 1 second and
+        #   reads the end of file only after the client returns, so the end
+        #   of file it takes comes at least 1 second after started, past
+        #   the bound.
+        # - The default bound, own_end, with no end_bound, and a larger
+        #   bound, an end_bound of 2 * OWN_END_SECONDS, which the check
+        #   limits to own_end: the check's end_of_file is replaced for the
+        #   run by a stand-in that takes the real one's reading, so a group
+        #   that outlives the kill still fails at the end of file check,
+        #   and returns the check's started reading, which the check
+        #   appends to starts, plus OWN_END_SECONDS: the same instant and
+        #   value whose sum is the check's default bound. The reading the
+        #   check takes is that bound exactly, the same float, so the
+        #   assertion fails it, while a bound raised above own_end by
+        #   1 second or by 0.5 seconds takes that reading for the kill and
+        #   fails this test, as a test mutant for each raise shows; a
+        #   smaller raise may pass this test.
+        # Like each test that runs the check, it can still fail on a delay of
+        # the test process, as the residual list in check_group_kill states.
+        real_end_of_file = end_of_file
+        starts = []
+
+        def end_at_the_bound(fd, deadline):
+            seen = real_end_of_file(fd, deadline)
+            return None if seen is None else starts[-1] + OWN_END_SECONDS
+
+        for label, end_bound, stand_in in (
+            ("a smaller bound", 0.5, real_end_of_file),
+            ("the default bound", None, end_at_the_bound),
+            ("a larger bound", 2 * OWN_END_SECONDS, end_at_the_bound),
+        ):
+            with self.subTest(label):
+                with mock.patch.object(sys.modules[__name__], "end_of_file", stand_in):
+                    with self.assertRaises(AssertionError) as caught:
+                        self.check_group_kill(end_bound=end_bound, starts=starts)
+                self.assertIn("the group may have ended on its own", str(caught.exception))
+
+    def test_an_interrupted_check_releases_its_group(self):
+        # The client's group kill raises KeyboardInterrupt, as a Ctrl-C at
+        # that point would, so the client neither kills nor reaps the child.
+        # The interrupt must pass through the check, and a reader of alive
+        # that this test opens before the run must see end of file before
+        # the stub's own end could come, so the check's finally clause
+        # released the group; that bound is derived as in
+        # test_a_client_that_kills_only_the_leader_fails_the_check. Only the
+        # injected interrupt is caught; any other, such as a real Ctrl-C, is
+        # raised again.
+        injected = []
+
+        def interrupt(group, sig):
+            injected.append(KeyboardInterrupt("injected"))
+            raise injected[-1]
+
+        witnesses = []
+        try:
+            try:
+                with mock.patch.object(client.os, "killpg", interrupt):
+                    self.check_group_kill(witness=lambda path: witnesses.append(
+                        (os.open(path, os.O_RDONLY | os.O_NONBLOCK), time.monotonic())))
+            except KeyboardInterrupt as error:
+                if not injected or error is not injected[-1]:
+                    raise
+            else:
+                self.fail("the injected interrupt did not pass through the check")
+            self.assertEqual(len(witnesses), 1)
+            fd, opened = witnesses[0]
+            self.assertIsNotNone(end_of_file(fd, opened + OWN_END_SECONDS),
+                                 "a process of the group outlived the interrupted check")
+        finally:
+            for fd, _opened in witnesses:
+                os.close(fd)
+
+    def test_a_stub_started_after_the_release_ends_at_once(self):
+        # A stub that opens lifeline only after the test has closed it, as
+        # when an interrupt ends the check before the stub starts, would get
+        # no report from select at its wait and live until its own end. Its
+        # first read sees end of file there, so it must find no writer and
+        # exit there, before it opens alive. A reader of alive is held, so
+        # that a stub past that read opens alive, forks and writes the ready
+        # byte rather than fail at that open. The test waits for the stub's
+        # run to end and then reads alive: no byte shows that the stub
+        # exited at its first read. The outcome rests on that order, not on
+        # how long the stub's start-up takes. The own end is 10 seconds, so a
+        # stub that waits for it still ends, without being signalled, and
+        # this test then fails at the ready byte.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.mkfifo(Path(tmp) / "alive")
+            os.mkfifo(Path(tmp) / "lifeline")
+            alive = os.open(Path(tmp) / "alive", os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                reader = os.open(Path(tmp) / "lifeline", os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    os.close(os.open(Path(tmp) / "lifeline", os.O_WRONLY | os.O_NONBLOCK))
+                finally:
+                    os.close(reader)
+                (Path(tmp) / "own_end").write_text("10", encoding="utf-8")
+                tool = self.stub(tmp, GROUP_STUB)
+                proc = subprocess.run([sys.executable, "-I", str(tool)], cwd=tmp, capture_output=True)
+                wrote = os.read(alive, 1)
+            finally:
+                os.close(alive)
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+        self.assertEqual(wrote, b"", "the stub went past its first read of lifeline")
+
+    def test_an_end_of_file_seen_after_its_deadline_is_not_taken(self):
+        # end_of_file reads the clock after the read that returns end of
+        # file, and must return None when that reading is past the deadline,
+        # since a time after the deadline would let a late end of file pass
+        # the check. A select that returns 0.2 seconds late stands in for
+        # the scheduling delay of a busy host: end_of_file reads a stand-in
+        # clock that only that select moves, 0.2 seconds at each return, so
+        # the outcome rests on that clock alone, not on how long any step
+        # takes. End of file is there from the start, so with a 0.05 second
+        # deadline the reading is past it. The control, the same delay with
+        # a 5 second deadline, must give a time no later than that deadline.
+        real_select = select.select
+        clock = [0.0]
+
+        def late_select(*args):
+            result = real_select(*args)
+            clock[0] += 0.2
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fifo"
+            os.mkfifo(path)
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+                with mock.patch.object(select, "select", late_select), \
+                        mock.patch.object(time, "monotonic", lambda: clock[0]):
+                    self.assertIsNone(end_of_file(fd, time.monotonic() + 0.05),
+                                      "an end of file seen after the deadline was taken")
+                    deadline = time.monotonic() + 5
+                    ended = end_of_file(fd, deadline)
+                self.assertIsNotNone(ended, "an end of file seen before the deadline was not taken")
+                self.assertLessEqual(ended, deadline)
+            finally:
+                os.close(fd)
+
+    def test_the_check_names_no_signal_function(self):
+        # A tripwire, not a proof. The check's design needs no signal: it
+        # sees the group only through alive and ends it by closing lifeline.
+        # This reads the syntax tree of check_group_kill with the functions
+        # it defines, end_of_file, BoundsTest.stub and GROUP_STUB, and
+        # asserts, in this order: that the only bindings of BOUND_NAMES that
+        # bindings finds anywhere in the test file's syntax are 1 def
+        # statement for each name; that class_bindings finds only
+        # BoundsTest's own check_group_kill and stub, each the function its
+        # def statement made, judged by qualified name and first line, that
+        # the module's end_of_file is, judged so, the function its def
+        # statement made, and that own_bindings finds no attribute named 1
+        # of BOUND_NAMES that the test's own instance holds of its own; that
+        # GROUP_STUB makes exactly STUB_CALLS, in that order, the order its
+        # bounds rest on; and that no name, attribute or import in any of
+        # them is in SIGNAL_NAMES.
+        # The first assertion fails an edit that adds a binding that
+        # bindings counts or removes 1 of the 3 def statements. The second
+        # fails an edit that, in a form that
+        # test_the_tripwire_sees_each_binding_of_its_names has a case for,
+        # gives BoundsTest, a class that has it among its bases, directly or
+        # through other such classes, or a class in their method resolution
+        # orders another entry named 1 of BOUND_NAMES, replaces 1 of
+        # BoundsTest's 2 entries or the module's end_of_file with a value
+        # whose qualified name or first line differs, or gives this test's
+        # instance such an attribute. It reads those classes and that
+        # instance through the descriptors of type and TestCase, lists each
+        # namespace with its items method, compares classes by identity and
+        # names as plain str, so these overrides, each of which those cases
+        # make, hide no entry from it: a class's __subclasses__; a
+        # metaclass's __subclasses__, __mro__, __dict__, __eq__ or
+        # __getattribute__, the last also giving a false __qualname__; an
+        # entry whose name is a str subclass; and an instance's __dict__
+        # property. It does not hold against all code in this file, which
+        # can hide an entry by routes that the walk does not model, such as
+        # these 2: a metaclass whose mro method puts BoundsTest in the order
+        # of a class that does not have it among its bases, so that
+        # type.__subclasses__ does not list that class; and a dict subclass,
+        # set as this test's instance __dict__, whose items method leaves
+        # out an entry.
+        # So a stub bound in this file on BoundsTest or a class that has it
+        # among its bases by a def or async def statement or by an
+        # assignment, a lambda among them, fails the first, and one bound
+        # there by a name given as a string, as setattr, type and a mixin's
+        # namespace take it, fails the second if it is in place when this
+        # test runs. The case test,
+        # test_the_tripwire_sees_each_binding_of_its_names, has a case for
+        # each of these forms, for each form that bindings names, and for
+        # each such override. The name scan fails an edit that uses a signal
+        # function by 1 of the names in SIGNAL_NAMES there, such as
+        # os.kill(os.getpid(), 0) added to the check.
+        # What the first 2 assertions miss and what the name scan misses are
+        # the first 2 items of the residual list in check_group_kill's
+        # comment.
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        roots = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in BOUND_NAMES]
+        self.assertEqual(bindings(tree), [(name, "FunctionDef") for name in BOUND_NAMES])
+        lines = {node.name: min([node.lineno] + [decorator.lineno for decorator in node.decorator_list])
+                 for node in roots}
+        self.assertEqual(
+            (class_bindings(BoundsTest), described(end_of_file), own_bindings(self)),
+            ([("BoundsTest", name, "BoundsTest." + name, lines[name]) for name in ("check_group_kill", "stub")],
+             ("end_of_file", lines["end_of_file"]), []))
+        stub_tree = ast.parse(GROUP_STUB)
+        stub_calls = sorted((node for node in ast.walk(stub_tree) if isinstance(node, ast.Call)),
+                            key=lambda node: (node.lineno, node.col_offset))
+        self.assertEqual(tuple(ast.unparse(node) for node in stub_calls), STUB_CALLS)
+        nodes = [node for root in roots + [stub_tree] for node in ast.walk(root)]
+        names = [getattr(node, "id", None) or getattr(node, "attr", None) for node in nodes
+                 if isinstance(node, (ast.Name, ast.Attribute))]
+        names += [name for node in nodes if isinstance(node, ast.alias) for name in (node.name, node.asname)]
+        self.assertEqual(sorted(set(names) & set(SIGNAL_NAMES)), [])
+
+    def test_the_tripwire_sees_each_binding_of_its_names(self):
+        # A case for each form of binding stub that the tripwire's first 2
+        # assertions are meant to see, each form that bindings names among
+        # them, for each override that the tripwire's comment says they
+        # read past, and for 1 form that they miss. Each form is source text,
+        # run with exec on a stand-in, Base, a TestCase whose stub is a lambda,
+        # so that it adds no binding to this file's syntax and no class
+        # derived from BoundsTest. Each case gives what bindings counts in
+        # the form, each (class, qualified name) that class_bindings finds
+        # from Base, and what own_bindings finds on an instance of Sub after
+        # its setUp. The match cases run only where match parses, on Python
+        # 3.10 or later.
+        base = "class Base(TestCase):\n    stub = lambda self: 0\n\n"
+        indirect = "def indirect(self):\n    return 1\n\n"
+        hide = "\nsetattr(Sub, 'st' + 'ub', indirect)\n"
+        found = [("Base", "Base.<lambda>")]
+        sub = found + [("Sub", "indirect")]
+        forms = {
+            "def": ("class Sub(Base):\n    def stub(self):\n        return 1\n",
+                    [("stub", "FunctionDef")], found + [("Sub", "Sub.stub")], []),
+            "async def": ("class Sub(Base):\n    async def stub(self):\n        return 1\n",
+                          [("stub", "AsyncFunctionDef")], found + [("Sub", "Sub.stub")], []),
+            "class": ("class Sub(Base):\n    class stub:\n        pass\n",
+                      [("stub", "ClassDef")], found + [("Sub", "Sub.stub")], []),
+            "assignment": (indirect + "class Sub(Base):\n    stub = indirect\n", [("stub", "Name")], sub, []),
+            "annotated assignment": (indirect + "class Sub(Base):\n    stub: object = indirect\n",
+                                     [("stub", "Name")], sub, []),
+            "augmented assignment": ("class Sub(Base):\n    stub = 0\n    stub += 1\n",
+                                     [("stub", "Name"), ("stub", "Name")], found + [("Sub", "int")], []),
+            ":=": (indirect + "class Sub(Base):\n    (stub := indirect)\n", [("stub", "Name")], sub, []),
+            "tuple target": (indirect + "class Sub(Base):\n    stub, other = indirect, 0\n",
+                             [("stub", "Name")], sub, []),
+            "starred target": ("class Sub(Base):\n    *stub, = (1,)\n",
+                               [("stub", "Name")], found + [("Sub", "list")], []),
+            "attribute": (indirect + "class Sub(Base):\n    pass\n\nSub.stub = indirect\n",
+                          [("stub", "Attribute")], sub, []),
+            "lambda": ("class Sub(Base):\n    stub = lambda self: 1\n",
+                       [("stub", "Name")], found + [("Sub", "Sub.<lambda>")], []),
+            "deletion": ("class Sub(Base):\n    stub = 1\n    del stub\n",
+                         [("stub", "Name"), ("stub", "Name")], found, []),
+            "for target": ("class Sub(Base):\n    for stub in (1,):\n        pass\n",
+                           [("stub", "Name")], found + [("Sub", "int")], []),
+            "with target": ("class Sub(Base):\n    with memoryview(b'') as stub:\n        pass\n",
+                            [("stub", "Name")], found + [("Sub", "memoryview")], []),
+            "comprehension target": ("class Sub(Base):\n    values = [stub for stub in (1,)]\n",
+                                     [("stub", "Name")], found, []),
+            "except target": ("class Sub(Base):\n    try:\n        raise ValueError\n"
+                              "    except ValueError as stub:\n        pass\n",
+                              [("stub", "ExceptHandler")], found, []),
+            "match capture": ("class Sub(Base):\n    match 1:\n        case stub:\n            pass\n",
+                              [("stub", "MatchAs")], found + [("Sub", "int")], []),
+            "match star": ("class Sub(Base):\n    match (1,):\n        case (*stub,):\n            pass\n",
+                           [("stub", "MatchStar")], found + [("Sub", "list")], []),
+            "match rest": ("class Sub(Base):\n    match {}:\n        case {**stub}:\n            pass\n",
+                           [("stub", "MatchMapping")], found + [("Sub", "dict")], []),
+            "import": ("class Sub(Base):\n    from os import getpid as stub\n",
+                       [("stub", "alias")], found + [("Sub", "getpid")], []),
+            "parameter": ("class Sub(Base):\n    def method(self, stub=1):\n        return stub\n",
+                          [("stub", "arg")], found, []),
+            "keyword argument": ("class Sub(Base):\n    values = dict(stub=1)\n", [("stub", "keyword")], found, []),
+            "setattr": (indirect + "class Sub(Base):\n    pass\n" + hide, [], sub, []),
+            "type": (indirect + "Sub = type('Sub', (Base,), {'st' + 'ub': indirect})\n", [], sub, []),
+            "mixin": (indirect + "class Mixin:\n    pass\n\nsetattr(Mixin, 'st' + 'ub', indirect)\n\n"
+                      "class Sub(Mixin, Base):\n    pass\n",
+                      [], found + [("Mixin", "indirect")], []),
+            "base": (indirect + "class Sub(Base):\n    pass\n\nsetattr(Base, 'st' + 'ub', indirect)\n",
+                     [], [("Base", "indirect")], []),
+            "instance": (indirect + "class Sub(Base):\n    def setUp(self):\n"
+                         "        setattr(self, 'st' + 'ub', indirect)\n",
+                         [], found, ["stub"]),
+            "str subclass name": (indirect + "class Name(str):\n    def __eq__(self, other):\n        return False\n\n"
+                                  "    __hash__ = str.__hash__\n\n"
+                                  "Sub = type('Sub', (Base,), {Name('st' + 'ub'): indirect})\n",
+                                  [], sub, []),
+            "__subclasses__": (indirect + "class Hidden(Base):\n    @classmethod\n    def __subclasses__(cls):\n"
+                               "        return []\n\nclass Sub(Hidden):\n    pass\n" + hide, [], sub, []),
+            "metaclass __subclasses__": (indirect + "class Meta(type):\n    def __subclasses__(cls):\n"
+                                         "        return []\n\nclass Hidden(Base, metaclass=Meta):\n    pass\n\n"
+                                         "class Sub(Hidden):\n    pass\n" + hide, [], sub, []),
+            "metaclass __mro__": (indirect + "class Meta(type):\n    __mro__ = property(lambda cls: (cls,))\n\n"
+                                  "class Mixin:\n    pass\n\nsetattr(Mixin, 'st' + 'ub', indirect)\n\n"
+                                  "class Sub(Mixin, Base, metaclass=Meta):\n    pass\n",
+                                  [], found + [("Mixin", "indirect")], []),
+            "metaclass __dict__": (indirect + "class Meta(type):\n    __dict__ = property(lambda cls: {})\n\n"
+                                   "class Sub(Base, metaclass=Meta):\n    pass\n" + hide, [], sub, []),
+            "metaclass __eq__": (indirect + "class Meta(type):\n    def __eq__(cls, other):\n        return True\n\n"
+                                 "    __hash__ = type.__hash__\n\nclass Sub(Base, metaclass=Meta):\n    pass\n" + hide,
+                                 [], sub, []),
+            "metaclass __getattribute__": (
+                indirect + "class Meta(type):\n    def __getattribute__(cls, name):\n"
+                "        fake = {'__subclasses__': lambda: [], '__mro__': (), '__dict__': {}, '__qualname__': 'Base'}\n"
+                "        return fake[name] if name in fake else type.__getattribute__(cls, name)\n\n"
+                "class Sub(Base, metaclass=Meta):\n    pass\n" + hide, [], sub, []),
+            "instance __dict__": (indirect + "class Sub(Base):\n    __dict__ = property(lambda self: {})\n\n"
+                                  "    def setUp(self):\n        setattr(self, 'st' + 'ub', indirect)\n",
+                                  [], found, ["stub"]),
+            "__getattribute__, missed": (
+                indirect + "class Sub(Base):\n    def __getattribute__(self, name):\n"
+                "        return (lambda: 1) if name == 'st' + 'ub' else object.__getattribute__(self, name)\n",
+                [], found, []),
+        }
+        for form, (source, counted, owners, own) in forms.items():
+            with self.subTest(form):
+                if form.startswith("match") and sys.version_info < (3, 10):
+                    self.skipTest("match parses only on Python 3.10 or later")
+                namespace = {"TestCase": unittest.TestCase}
+                exec(compile(base + source, form, "exec"), namespace)
+                instance = namespace["Sub"]()
+                instance.setUp()
+                self.assertEqual(
+                    (bindings(ast.parse(source)), [(row[0], row[2]) for row in class_bindings(namespace["Base"])],
+                     own_bindings(instance)),
+                    (counted, owners, own))
+                if form.endswith("missed"):
+                    self.assertEqual(instance.stub(), 1, "the missed form does not change what stub finds")
 
     def test_bound_constants_equal_the_gates(self):
         gate = _load("crc_gate_bounds", GATE)
@@ -751,6 +1529,87 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual(code, 16)
         self.assertEqual(err.count("e" * client.STDERR_LIMIT), 1)
         self.assertNotIn("e" * (client.STDERR_LIMIT + 1), err)
+
+
+# The functions the tripwire reads, each bound in this file only by its def.
+BOUND_NAMES = ("check_group_kill", "end_of_file", "stub")
+
+
+# The interpreter's own records of a class and of a test's instance, read
+# through the descriptors that type and unittest.TestCase define rather than
+# by attribute lookup, which a class or its metaclass can override: the
+# classes that list a class among their bases, its method resolution order,
+# its namespace, its qualified name, and the attributes an instance holds of
+# its own.
+SUBCLASSES = type.__subclasses__
+MRO = type.__dict__["__mro__"].__get__
+NAMESPACE = type.__dict__["__dict__"].__get__
+QUALNAME = type.__dict__["__qualname__"].__get__
+INSTANCE_DICT = NAMESPACE(unittest.TestCase)["__dict__"].__get__
+
+
+def bindings(tree: ast.AST) -> list:
+    """Each (name, node type) for a node of ``tree`` that has 1 of
+    BOUND_NAMES as its id, attr, name, asname, rest or arg and is not a
+    read. Among them, each with a case in
+    test_the_tripwire_sees_each_binding_of_its_names: a def, async def or
+    class statement; an assignment to a name, plain, annotated, augmented,
+    by :=, or as part of a tuple or a starred target; an assignment to an
+    attribute; a lambda so assigned; a deletion; a for, with,
+    comprehension, except or match target; an import; a parameter; and a
+    keyword argument. A name given only as a string, as to setattr or in a
+    dict, is not counted."""
+    return sorted((value, type(node).__name__) for node in ast.walk(tree)
+                  if not isinstance(getattr(node, "ctx", None), ast.Load)
+                  for value in (getattr(node, field, None) for field in ("id", "attr", "name", "asname", "rest", "arg"))
+                  if value in BOUND_NAMES)
+
+
+def described(value) -> tuple:
+    """The qualified name of ``value`` and the first line of its code, the
+    line of its def statement or of its first decorator, or 0 for a value
+    with no code."""
+    code = getattr(value, "__code__", None)
+    return getattr(value, "__qualname__", type(value).__name__), getattr(code, "co_firstlineno", 0)
+
+
+def entries(namespace) -> list:
+    """Each (name, qualified name, first line) for an entry of ``namespace``,
+    as its items method lists them, whose name is a plain str equal to 1 of
+    BOUND_NAMES, or is not a plain str, whatever it compares equal to."""
+    return [(name if type(name) is str else object.__repr__(name),) + described(value)
+            for name, value in namespace.items() if type(name) is not str or name in BOUND_NAMES]
+
+
+def class_bindings(root: type) -> list:
+    """Each (class, name, qualified name, first line) for an entry that
+    entries finds in the namespace of ``root``, of each class that exists
+    when this runs and has it among its bases, directly or through other
+    such classes, or of each class in the method resolution order of any of
+    them, however the entry was bound. It reads each class through
+    SUBCLASSES, MRO, NAMESPACE and QUALNAME and tells classes apart by
+    identity, so the overrides of a class or of its metaclass that
+    test_the_tripwire_sees_each_binding_of_its_names has a case for change
+    neither which classes nor which entries it finds. Other routes can: a
+    metaclass whose mro method puts ``root`` in the order of a class that
+    does not have it among its bases hides that class and its entries,
+    since SUBCLASSES does not list it. The qualified name and first line of
+    an entry come from the entry's value."""
+    classes = [root]
+    for cls in classes:
+        classes.extend(sub for sub in SUBCLASSES(cls) if not any(sub is known for known in classes))
+    owners = []
+    for cls in classes:
+        owners.extend(owner for owner in MRO(cls) if not any(owner is known for known in owners))
+    return sorted((QUALNAME(owner),) + entry for owner in owners for entry in entries(NAMESPACE(owner)))
+
+
+def own_bindings(instance: unittest.TestCase) -> list:
+    """The name of each entry that entries finds among the attributes that
+    ``instance`` holds of its own, read through INSTANCE_DICT and listed by
+    the items method of the object found there. A dict subclass set as the
+    instance's __dict__ can override that method and so hide an entry."""
+    return sorted(entry[0] for entry in entries(INSTANCE_DICT(instance)))
 
 
 class InheritedSigchldTest(unittest.TestCase):

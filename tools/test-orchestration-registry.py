@@ -1545,12 +1545,17 @@ class EnumeratorOperandShape(unittest.TestCase):
 class SpecialFileInputs(unittest.TestCase):
     # Every file the gate itself opens must be a regular file. A FIFO with no writer used to
     # block the gate forever, so each run here carries a timeout and a timeout is a failure.
+    # The bound covers the whole gate run, interpreter start-up included, which a loaded host can
+    # stretch, so it is 60 seconds, not 20. A run that ends at this bound shows only that the gate
+    # did not exit in time, not why.
+    TIMEOUT = 60
+
     def _run_bounded(self, gate, reg):
         try:
             return subprocess.run([sys.executable, "-I", str(gate), str(reg)], capture_output=True, text=True,
-                                  timeout=20)
+                                  timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the gate blocked on a special file instead of failing promptly")
+            self.fail("the gate did not exit within {} s for {!r}".format(self.TIMEOUT, str(reg)))
 
     def _assert_refused(self, r):
         self.assertEqual(r.returncode, 1, r.stdout)

@@ -1,0 +1,112 @@
+Widen the code_form() self-check of the flow-mode test (#285)
+
+Close TODOs 261, 262 and 263, residuals accepted when pull request 276
+merged. tools/test-check-flow-mode.py changes, and this message is
+added as .github/squash/285.txt. The check is unchanged, so CODE_SHA256
+keeps its value.
+
+TODO 261: some variants of code_form() that strip or rewrite more than
+the check's docstrings and the sha256 values of PARAGRAPHS passed the
+registry case, because no row tried the condition that they relax.
+FORM_PAIRS gains 12 pairs: a string first in the body of a for, a
+while, a with and a try; bytes, an assignment of a string and a return
+of a string, each first in a function; a string after the docstring of
+a function; 2 keyword arguments of a call swapped; and a sha256 in a
+list bound to PARAGRAPHS_OLD, in a list bound to PARAGRAPHS by an
+annotated assignment and in a list bound to an attribute named
+PARAGRAPHS. The last 2 try isinstance(node, ast.Assign) in code_form()
+and isinstance(node, ast.Name) in is_name(). The only statement of
+each source of the pair of 2 keyword arguments of a call swapped is an
+expression that is a call, so the pair tries
+isinstance(first.value, ast.Constant) in code_form() on a module: a
+code_form() that removes the first statement of a module whenever it
+is an expression fails it. The pair also tries that code_form() keeps
+apart 2 sources that differ only in the order of 2 keyword arguments
+of a call, so a code_form() that sorts them fails it. The module
+docstring and the comment above FORM_PAIRS say that each pair tries a
+condition of code_form() that the check's own source does not.
+MUTATIONS gains 3 rows on the check's own text: a comparison operator
+changed, the name __name__ changed and the upper bound of a slice
+changed.
+
+TODO 262: the 2 MUTATIONS rows that edited the name or the opening
+text of a row of PARAGRAPHS tried only the name of its first row and
+the opening text of its second. 44 rows built from NAMED join the
+name row, which changes the header to the heading, and replace the
+opening-text row. Each of the 7 rows of NAMED gets 6: a full stop put
+at the end of its name, the case of the first letter of its name
+changed, a full stop put at the end of its opening text, a space put
+at the end of its opening text, the first space inside its opening
+text doubled, and that space deleted. A full stop put at the end of a
+name edits none of its letters. The 7 rows that change the case of
+the first letter of a name each edit only that letter, so a
+code_form() that drops the letters of each name of NAMED fails each
+of those 7 rows. The name row edits letters after the first and is
+the row of main, byte for byte, so it keeps that catch of main: a
+code_form() that fails it on main fails it here too. Each of the 2
+opening texts that end with a space gets 1 more row that deletes that
+space. For the opening text of the cycle steps that row makes the
+same replacement as the removed opening-text row, byte for byte,
+under a new label, so it keeps the coverage of main and adds no
+catch. Of those 2 rows, only the one for the opening text of the
+CODEX ROLE LIMIT is a new edit.
+
+TODO 263: the squash message of pull request 276 says that every edit
+of the check's code fails the test until CODE_SHA256 is updated. Only
+an edit that changes the check's syntax tree, once its docstrings and
+the sha256 values of PARAGRAPHS are left out and the tree is unparsed,
+does. Unparsing leaves out the line and column positions that the tree
+holds, so an edit that leaves the unparsed tree as it is keeps the
+digest. An edit of a comment, of layout, of the quotes of a string, of
+how a number is written or of parentheses that change no grouping can
+leave that tree as it is, and each of those kinds of edit can also
+change it. The edits that change it form a class, of which these are
+examples, not a complete list: such an edit can change it inside
+the = field of an f-string or inside an interpolation of a template
+string; parentheses put around the name that an annotated assignment
+targets, or around the targets of a del, can change it; an edit of an
+encoding declaration, which is a comment, can change it when a string
+in the source is not ASCII; and re-indenting a block that holds a
+string written over more than 1 line can change it. The test's module
+docstring, the comment on CODE_SHA256 and the docstring of code_form()
+now say that unparsing leaves out those positions, that an edit that
+leaves the unparsed tree as it is keeps the digest, that an edit of
+each of those kinds can leave it as it is and can change it, and that
+the edits that change it form a class. The module docstring and the
+docstring of code_form() name the examples above as examples, and the
+comment on CODE_SHA256 points to the docstring of code_form() for
+them. The comment of the registry case says that unparsing leaves out
+those positions and that an edit that keeps the unparsed tree keeps
+the digest. The same paragraph of the squash message of pull request
+276 says that the pin shows only that the check's code is the code
+last reviewed against the registries, and the module docstring said
+so too. The module docstring now says that the pin shows only that
+the sha256 of that unparsed tree equals CODE_SHA256, and so not that
+the check's bytes are those last reviewed against the registries.
+The docstring of code_form() names the docstrings that it
+removes as those of a module, a function, an async function and a
+class, and says that the only values that it makes PLACEHOLDER are
+string constants of 64 lowercase hexadecimal digits, each the third
+item of a tuple display of 3 items that is an item of a list display
+that is the value of a statement of the module's body, when that
+statement is an assignment statement without an annotation, not an
+augmented assignment, with the name PARAGRAPHS as its only target. It
+says that a statement nested inside another, such as an if, is not a
+statement of the module's body, and that an assignment expression is
+not a statement. PRESERVED gains 3 rows, edits of the check that must
+keep the digest: the quotes of a string changed, a number written in
+hexadecimal and parentheses that change no grouping added.
+
+Each row is evidence for its own edit only. A code_form() that hides
+or keeps only what no row edits still passes, such as one that also
+removes a string first in the body of an except clause or of an async
+for. Of the 7 names of NAMED, only the name of the header has a row
+that edits a letter after the first, and that row also changes the
+number of letters in the name; as on main, no row edits a letter
+after the first of a name of NAMED and keeps the number of letters,
+so a code_form() that replaces each letter after the first of each of
+the 7 names with x, that of the header included, passes.
+An edit of the check that changes its bytes but not that unparsed
+tree keeps the digest. The digest's value depends on how the Python
+that runs the test unparses a syntax tree; .python-version names
+3.14.4.

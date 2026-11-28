@@ -199,13 +199,24 @@ case below fails on that change of code until CODE_SHA256 is updated, and the ch
 states this limit.
 
 The registry cases hold the sites of the check that the cases above drive.
-test_every_site_has_a_driver compares the check's code, without its docstrings and the sha256
-values of PARAGRAPHS, with CODE_SHA256, so a change to that code fails until the digest is
-updated; the update in the diff is the reviewer's cue to check the registries. The digest is the
-sha256 of the syntax tree that the check's bytes parse to, unparsed, so comments and layout are
-left out too, and its value depends on how the Python that runs the test unparses a syntax tree.
-The case also requires the codec of the encoding that tokenize.detect_encoding finds for those
-bytes to be UTF-8, with or without a byte order mark. When Python runs a file, it reads the line
+test_every_site_has_a_driver compares a digest of the check's code with CODE_SHA256. The digest
+is the sha256 of the syntax tree that the check's bytes parse to, without its docstrings and the
+sha256 values of PARAGRAPHS, unparsed, and unparsing leaves out the line and column positions
+that the tree holds. So a change to that unparsed tree fails until the digest is updated; the
+update in the diff is the reviewer's cue to check the registries. An edit that leaves the
+unparsed tree as it is changes the check's bytes but keeps the digest, so the CODE_SHA256 pin
+does not fail on it. An edit of a comment, of layout, of the quotes of a string, of how a number
+is written or of parentheses that change no grouping can leave that tree as it is, and each of
+those kinds of edit can also change it. The edits that change it form a class, and these are
+examples of it, not a complete list: such an edit can change it inside the = field of an
+f-string or inside an interpolation of a template string;
+parentheses put around the name that an annotated assignment targets, or around the targets of
+a del, can change it; an edit of an encoding declaration, which is a comment, can change it when
+a string in the source is not ASCII; and re-indenting a block that holds a string written over
+more than 1 line can change it. The digest's value depends on how
+the Python that runs the test unparses a syntax tree. The case also requires
+the codec of the encoding that tokenize.detect_encoding finds for those bytes to be UTF-8, with
+or without a byte order mark. When Python runs a file, it reads the line
 that holds an encoding declaration, and any line before it, before it applies the declaration,
 while compile() of the bytes applies it to every line, so under a declaration of another encoding
 the code that Python runs can differ from the tree that the digest holds; under UTF-8 Python
@@ -214,20 +225,37 @@ line feed pair, and any other carriage return, as a line feed, both when it look
 declaration and when it parses, so the case reads the bytes with those line ends made line feeds
 to find the encoding and to apply the rows below. Each of MUTATIONS, a single textual replacement
 of the check's source, must change the digest, and each of PRESERVED, the module docstring or a
-function docstring reworded, a comment reworded, a sha256 of PARAGRAPHS updated and a blank line
-added, must keep it; a row of either that edits a sha256 of PARAGRAPHS is tried on each sha256
-that the check's PARAGRAPHS holds, and on no other value. FORM_PAIRS holds pairs of sources in
-forms that the check does not hold, each trying a condition of code_form() that the check's own
-source does not: code_form() must make 2 sources equal that differ only in the docstring of a
-class or of an async function, in a function of its docstring alone against one of pass alone,
-or in an empty module against a blank line, and keep apart 2 that differ only in a string first
-in the body of an if, in a number or a call first in a function, in a sha256 that is the third
-item of a row in a form that code_form() must not rewrite, a row of a PARAGRAPHS bound together
-with a second name, bound to a tuple or bound inside a function, a row of a list bound to
-another name, a row that is a list or a row of 4 items, or in a third item of a row of
-PARAGRAPHS that is a name, a number, or 63 or 65 hexadecimal digits. So a code_form() that fails
-1 of those rows fails the case. Each row is evidence for its own edit only: a code_form() that
-hides or keeps only what no row edits passes. The same case finds, in the
+function docstring reworded, a comment reworded, a sha256 of PARAGRAPHS updated, a blank line
+added, the quotes of a string changed, a number written in hexadecimal and parentheses that
+change no grouping added, must keep it; a row of either that edits a sha256 of PARAGRAPHS is
+tried on each sha256 that the check's PARAGRAPHS holds, and on no other value. MUTATIONS holds,
+among its rows, a comparison operator changed, the name __name__ changed and the upper bound of
+a slice changed, and, for each of the 7 rows of PARAGRAPHS that NAMED lists, 1 row that puts a
+full stop at the end of its name, 1 that changes the case of the first letter of its name, 1
+that puts a full stop at the end of its opening text, 1 that puts a space at the end of its
+opening text, 1 that doubles the first space inside its opening text and 1 that deletes that
+space, and, for each opening text that ends with a space, 1 row that deletes that space.
+FORM_PAIRS holds pairs of sources in forms that the check does not hold. Each pair tries a
+condition of code_form() that the check's own source does not. The only statement of each source
+of the pair of 2 keyword arguments of a call swapped is an expression that is a call, so the pair
+tries the condition isinstance(first.value, ast.Constant) of code_form() on a module: a
+code_form() that removes the first statement of a module whenever it is an expression fails it.
+The pair also tries that code_form() keeps apart 2 sources that differ only in the order of 2
+keyword arguments of a call, so a code_form() that sorts them fails it. code_form()
+must make 2 sources equal that differ only in the docstring of a class or of an async function,
+in a function of its docstring alone against one of pass alone, or in an empty module against a
+blank line, and keep apart 2 that differ only in a string first in the body of an if, a for, a
+while, a with or a try, in a number, a call, bytes, an assignment of a string or a return of a
+string first in a function, in a string after the docstring of a function, in the order of 2
+keyword arguments of a call, in a sha256 that is the third item of a row in a form that
+code_form() must not rewrite, a row of a PARAGRAPHS bound together with a second name, bound by
+an annotated assignment, bound to a tuple or bound inside a function, a row of a list bound to
+an attribute named PARAGRAPHS, to another name or to a longer name that starts with PARAGRAPHS,
+a row that is a list or a row of 4 items, or in a third item of a row of PARAGRAPHS that is a
+name, a number, or 63 or 65 hexadecimal digits. So a code_form() that
+fails 1 of those rows fails the case. Each row is evidence for its own edit only: a code_form()
+that hides or keeps only what no row edits passes, such as one that also removes a string first
+in the body of an except clause or of an async for. The same case finds, in the
 check's syntax tree, 4 sets of sites, each site keyed by its function's name, its ordinal there
 among the sites of the same form and its form, never by line number, the form of a call being the
 whole call with its arguments: the calls that strip, split or substitute text, with each other
@@ -246,11 +274,14 @@ OUTPUT_KINDS once, and the read routes name each of the 3 reads of READS. The re
 are those that its branch of outcome's try gives, standard input for the branch taken on "-" and
 a path and the default path for the other, and its driver names each of those reads as an item
 of READS. Every run that the test makes through launch() fails on any byte on standard error.
-The pin shows only that the check's code is the code last reviewed against the registries:
-whether each registered case would fail on a change of meaning at its site, every input that no
-case writes, and the environments that the test does not create rest on review and on mutants
-run by hand, not on any assertion of this test. The code does not bound counts or line numbers,
-and the test holds their values only as far as the cases above write them.
+The CODE_SHA256 pin shows only that the sha256 of the syntax tree that the check's bytes parse
+to, without its docstrings and the sha256 values of PARAGRAPHS, unparsed, equals CODE_SHA256. An
+edit that leaves that unparsed tree as it is keeps the digest, so the pin does not show that the
+check's bytes are those last reviewed against the registries. Whether each registered case would
+fail on a change of meaning at its site, every input that no case writes, and the environments
+that the test does not create rest on review and on mutants run by hand, not on any assertion of
+this test. The code does not bound counts or line numbers, and the test holds their values only
+as far as the cases above write them.
 test_each_kind_of_output_names_each_kind_of_name is a
 coverage counter of the cross product of OUTPUT_KINDS and NAME_KINDS: for "-" on standard input,
 and for SPACED_NAME and UNDECODED_NAME through a path and through the default path, it compares
@@ -765,11 +796,16 @@ def space_at(paragraph, opening):
     return after(paragraph, opening, r"\w \w") + 1
 
 
-# The sha256 of code_form() of the check's bytes. test_every_site_has_a_driver compares the
-# check's code, without its docstrings and the sha256 values of PARAGRAPHS, with this value, so a
-# change to that code fails until this line is updated; the update in the diff is the reviewer's
-# cue to check the registries below against the new code. The value depends on how the Python
-# that runs the test unparses a syntax tree.
+# The sha256 of code_form() of the check's bytes: the check's syntax tree, without its docstrings
+# and the sha256 values of PARAGRAPHS, unparsed, which leaves out the line and column positions
+# that the tree holds. test_every_site_has_a_driver compares that sha256 with this value, so a
+# change to that unparsed tree fails until this line is updated; the update in the diff is the
+# reviewer's cue to check the registries below against the new code. An edit that leaves the
+# unparsed tree as it is keeps this value. An edit of a comment, of layout, of the quotes of a
+# string, of how a number is written or of parentheses that change no grouping can leave that tree
+# as it is, and each of those kinds of edit can also change it; the edits that change it form a
+# class, and the docstring of code_form() names examples of it, not a complete list. The value
+# depends on how the Python that runs the test unparses a syntax tree.
 CODE_SHA256 = "bca3b3045e2fc6f5039f7baa0da7d0d3abcf371c5a82fd255bc68d4093dce27f"
 # The value that code_form() puts in place of each sha256 of PARAGRAPHS that it leaves out. It is
 # 64 lowercase hexadecimal digits, as each value that it replaces is. A constant that code_form()
@@ -784,7 +820,14 @@ DIGEST = "<a sha256 of PARAGRAPHS>"
 # carriage return and line feed pair and each other carriage return made a line feed, each of
 # which must occur there exactly once. Each of MUTATIONS must change code_form()'s digest and
 # each of PRESERVED must keep it, so a code_form() that keeps the digest for 1 of those mutations,
-# or changes it for 1 of those edits, fails. Each row is evidence for its own edit only.
+# or changes it for 1 of those edits, fails. Each row is evidence for its own edit only. 1 fixed
+# row changes the name of the first row of PARAGRAPHS, the header, to the heading, an edit of
+# letters after its first. The other rows that edit the name or the opening text of a row of
+# PARAGRAPHS are built from NAMED, 6 for each of its 7 rows: a full stop put at the end of its
+# name, the case of the first letter of its name changed, a full stop put at the end of its
+# opening text, a space put at the end of its opening text, the first space inside its opening
+# text doubled and that space deleted; and 1 more for each opening text that ends with a space:
+# that space deleted.
 MUTATIONS = [
     ("a match capture cuts the text before it is split", "    lines = LINE_END.split(text)\n",
      "    match text[:8000000]:\n        case text:\n            pass\n"
@@ -813,8 +856,28 @@ MUTATIONS = [
      "\"" + DIGEST + "\"", "\"" + "F" * 64 + "\""),
     ("a text inside a function changed", "[PATH]\"]", "[FILE]\"]"),
     ("the name of a row of PARAGRAPHS changed", "(\"the header\", ", "(\"the heading\", "),
-    ("the opening text of a row of PARAGRAPHS changed", "\"1. REFRESH: \"", "\"1. REFRESH:\""),
-]
+    ("a comparison operator changed", "    if len(modes) != 1:", "    if len(modes) > 1:"),
+    ("a name that starts with an underscore changed", "if __name__ ==", "if __file__ =="),
+    ("the upper bound of a slice changed", "lines[start - 1:number - 1]",
+     "lines[start - 1:number]"),
+] + [("the name of {} changed, a row of PARAGRAPHS".format(name), "(\"{}\", ".format(name),
+      "(\"{}.\", ".format(name)) for name, _ in NAMED] + [
+    ("the case of the first letter of the name of {} changed, a row of PARAGRAPHS".format(name),
+     "(\"{}\", ".format(name), "(\"{}\", ".format(name[0].swapcase() + name[1:]))
+    for name, _ in NAMED] + [
+    ("the opening text of {} changed, a row of PARAGRAPHS".format(name), "\"{}\"".format(opening),
+     "\"{}.\"".format(opening)) for name, opening in NAMED] + [
+    ("a space put at the end of the opening text of {}, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{} \"".format(opening)) for name, opening in NAMED] + [
+    ("the first space inside the opening text of {} doubled, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening.replace(" ", "  ", 1)))
+    for name, opening in NAMED] + [
+    ("the first space inside the opening text of {} deleted, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening.replace(" ", "", 1)))
+    for name, opening in NAMED] + [
+    ("the space at the end of the opening text of {} deleted, a row of PARAGRAPHS".format(name),
+     "\"{}\"".format(opening), "\"{}\"".format(opening[:-1]))
+    for name, opening in NAMED if opening.endswith(" ")]
 PRESERVED = [
     ("the module docstring reworded", "#!/usr/bin/env python3\n\"\"\"",
      "#!/usr/bin/env python3\n\"\"\"Reworded. "),
@@ -825,15 +888,29 @@ PRESERVED = [
     ("a sha256 of PARAGRAPHS updated, as the check's own report asks",
      "\"" + DIGEST + "\"", "\"" + "f" * 64 + "\""),
     ("a blank line added", "\n\n\ndef digest(paragraph):", "\n\n\n\ndef digest(paragraph):"),
+    ("the quotes of a string changed", "\" \".join(paragraph.split())",
+     "' '.join(paragraph.split())"),
+    ("a number written in hexadecimal", "        return 1, [\"usage",
+     "        return 0x1, [\"usage"),
+    ("parentheses that change no grouping added", "    found = findings(text, source)",
+     "    found = (findings(text, source))"),
 ]
 # The self-check of code_form() on forms that the check does not hold, so that no replacement of
-# its source can try them; each pair tries a condition of code_form() that the check's own source
-# does not. True marks a pair that code_form() must make equal: its 2 sources differ only in a
-# docstring, in a body of a docstring alone against a body of pass alone, or in a blank line.
+# its source can try them. Each pair tries a condition of code_form() that the check's own source
+# does not. The only statement of each source of the pair of 2 keyword arguments of a call
+# swapped is an expression that is a call, so the pair tries the condition
+# isinstance(first.value, ast.Constant) of code_form() on a module: a code_form() that removes
+# the first statement of a module whenever it is an expression fails it. The pair also tries
+# that code_form() keeps apart 2 sources that differ only in the order of 2 keyword arguments of
+# a call, so a code_form() that sorts them fails it. True marks a pair that code_form() must make
+# equal: its 2 sources differ only in a docstring, in a body of a docstring alone against a body
+# of pass alone, or in a blank line.
 # False marks a pair that it must keep apart: its 2 sources differ only in a part that is
-# neither a docstring nor a sha256 of PARAGRAPHS, which is a constant of 64 lowercase hexadecimal
-# digits that is the third item of a 3-item tuple row of the list that an assignment at the top
-# level binds to the name PARAGRAPHS alone.
+# neither a docstring nor a sha256 of PARAGRAPHS, which is a string constant of 64 lowercase
+# hexadecimal digits that is the third item of a 3-item tuple display that is an item of the list
+# display that is the value of an assignment statement of the module's body itself, not nested
+# inside another statement, without an annotation, not augmented and with the name PARAGRAPHS as
+# its only target.
 FORM_PAIRS = [
     ("a class docstring reworded", b"class Note:\n    \"\"\"A.\"\"\"\n",
      b"class Note:\n    \"\"\"B.\"\"\"\n", True),
@@ -844,10 +921,29 @@ FORM_PAIRS = [
     ("an empty module and a module of a blank line", b"", b"\n", True),
     ("a string first in the body of an if changed", b"if note:\n    \"A.\"\n",
      b"if note:\n    \"B.\"\n", False),
+    ("a string first in the body of a for changed", b"for note in notes:\n    \"A.\"\n",
+     b"for note in notes:\n    \"B.\"\n", False),
+    ("a string first in the body of a while changed", b"while note:\n    \"A.\"\n",
+     b"while note:\n    \"B.\"\n", False),
+    ("a string first in the body of a with changed", b"with note:\n    \"A.\"\n",
+     b"with note:\n    \"B.\"\n", False),
+    ("a string first in the body of a try changed", b"try:\n    \"A.\"\nfinally:\n    pass\n",
+     b"try:\n    \"B.\"\nfinally:\n    pass\n", False),
     ("a number first in a function changed", b"def note():\n    1\n", b"def note():\n    2\n",
      False),
     ("a call first in a function changed", b"def note():\n    note()\n",
      b"def note():\n    note(1)\n", False),
+    ("bytes first in a function changed", b"def note():\n    b\"A.\"\n",
+     b"def note():\n    b\"B.\"\n", False),
+    ("an assignment of a string first in a function changed", b"def note():\n    x = \"A.\"\n",
+     b"def note():\n    x = \"B.\"\n", False),
+    ("a return of a string first in a function changed", b"def note():\n    return \"A.\"\n",
+     b"def note():\n    return \"B.\"\n", False),
+    ("a string after the docstring of a function changed",
+     b"def note():\n    \"\"\"A.\"\"\"\n    \"B.\"\n",
+     b"def note():\n    \"\"\"A.\"\"\"\n    \"C.\"\n", False),
+    ("2 keyword arguments of a call swapped", b"note(one=first(), two=second())\n",
+     b"note(two=second(), one=first())\n", False),
     ("a sha256 of a PARAGRAPHS bound together with a second name changed",
      b"PARAGRAPHS = TABLE = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
      b"PARAGRAPHS = TABLE = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
@@ -857,9 +953,18 @@ FORM_PAIRS = [
     ("a sha256 of a PARAGRAPHS bound inside a function changed",
      b"def note():\n    PARAGRAPHS = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
      b"def note():\n    PARAGRAPHS = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a PARAGRAPHS bound by an annotated assignment changed",
+     b"PARAGRAPHS: list = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"PARAGRAPHS: list = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a list bound to an attribute named PARAGRAPHS changed",
+     b"note.PARAGRAPHS = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"note.PARAGRAPHS = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
     ("a sha256 of a list bound to another name changed",
      b"TABLE = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
      b"TABLE = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
+    ("a sha256 of a list bound to a longer name that starts with PARAGRAPHS changed",
+     b"PARAGRAPHS_OLD = [(\"a\", \"b\", \"" + b"1" * 64 + b"\")]\n",
+     b"PARAGRAPHS_OLD = [(\"a\", \"b\", \"" + b"2" * 64 + b"\")]\n", False),
     ("a sha256 of a row of PARAGRAPHS that is a list changed",
      b"PARAGRAPHS = [[\"a\", \"b\", \"" + b"1" * 64 + b"\"]]\n",
      b"PARAGRAPHS = [[\"a\", \"b\", \"" + b"2" * 64 + b"\"]]\n", False),
@@ -1170,10 +1275,26 @@ def pattern_sites(tree):
 def code_form(source):
     """The code in source, the bytes of a module, as CODE_SHA256 holds the check's: source parsed
     as compile() parses bytes, with each docstring removed, which is the first statement of the
-    module, of a function or of a class when that statement is a string constant, and with the
-    third item of each row of PARAGRAPHS made PLACEHOLDER when that item is a constant of 64
-    lowercase hexadecimal digits, then unparsed. Comments and layout are not in the syntax tree,
-    so they are left out too."""
+    module, of a function, of an async function or of a class when that statement is a string
+    constant, and with each sha256 of PARAGRAPHS made PLACEHOLDER, then unparsed. A sha256 of
+    PARAGRAPHS is a string constant of 64 lowercase hexadecimal digits that is the third item of
+    a tuple display of 3 items that is an item of a list display that is the value of a statement
+    of the module's body, when that statement is an assignment statement without an annotation,
+    not an augmented assignment, with the name PARAGRAPHS as its only target. A statement of the
+    module's body is an item of that body, not a statement nested inside another, such as an if,
+    and an assignment expression is not a statement; no other value is made PLACEHOLDER.
+    Unparsing leaves out the line and column positions that the tree holds, so 2 sources whose
+    trees differ only in those positions give the same form, and an edit that leaves the unparsed
+    tree as it is keeps the
+    form, and so the digest. An edit of a comment, of layout, of the quotes of a string, of how
+    a number is written or of parentheses that change no grouping can leave that tree as it is,
+    and each of those kinds of edit can also change it. The edits that change it form a class,
+    and these are examples of it, not a complete list: such an edit can change it inside
+    the = field of an f-string or inside an interpolation of a template string; parentheses
+    put around the name that an annotated assignment targets, or around the targets of a del,
+    can change it; an edit of an encoding declaration, which is a comment, can change it when a
+    string in the source is not ASCII; and re-indenting a block that holds a string written over
+    more than 1 line can change it."""
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -2215,10 +2336,13 @@ class Verdicts(unittest.TestCase):
                 os.close(folder)
 
     def test_every_site_has_a_driver(self):
-        # The case compares the check's code, parsed from its bytes, without its docstrings and
-        # the sha256 values of PARAGRAPHS, with CODE_SHA256, so a change to that code fails until
-        # the digest is updated; the update in the diff is the reviewer's cue to check the
-        # registries. It requires the codec that Python finds for those bytes to be UTF-8, with or
+        # The case compares the digest of the check's syntax tree, parsed from its bytes, without
+        # its docstrings and the sha256 values of PARAGRAPHS, unparsed, with CODE_SHA256.
+        # Unparsing leaves out the line and column positions that the tree holds, so a change to
+        # that unparsed tree fails until the digest is updated; the update in the diff is the
+        # reviewer's cue to check the registries; an edit that keeps the unparsed tree keeps the
+        # digest. It requires the
+        # codec that Python finds for those bytes to be UTF-8, with or
         # without a byte order mark, so that Python decodes the file that it runs as compile()
         # decodes the bytes. Python reads a carriage return and line feed pair, and any other
         # carriage return, as a line feed, both when it looks for an encoding declaration and when
