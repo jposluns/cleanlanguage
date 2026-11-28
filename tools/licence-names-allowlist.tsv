@@ -1,0 +1,51 @@
+# The tracked lines that name a licence term, as tools/check-licence-names.py searches for
+# them. 1 row per kind of line in a file: path, count, owner, marker, separated by tabs.
+# The count is the number of matching lines of that path that hold the marker, matched with
+# its letter case; every matching line of a path must hold the marker of exactly 1 row.
+# Owner: unit-2 or unit-3 changes the line in that unit of TODO 243; keep stays as it is.
+# The gate refuses an owner other than unit-2, unit-3 or keep; whether the owner is right is reviewed.
+# path	count	owner	marker
+.aiqt/pin.toml	1	keep	license = "CC-BY-SA-4.0"
+.baseline/SPECIFICATION.md	1	keep	public domain or Creative Commons licences
+.github/squash/279.txt	1	keep	still name CC BY-SA 4.0
+.github/squash/279.txt	1	keep	git grep -c -i -E 'BY-SA|ShareAlike|Creative Commons'
+.github/squash/279.txt	1	keep	name Creative Commons but not as this
+cleanlanguage/.claude-plugin/plugin.json	1	unit-2	"license": "CC-BY-SA-4.0"
+cleanlanguage/plugin.json	1	unit-2	"license": "CC-BY-SA-4.0"
+cleanlanguage/skills/cleanlanguage/SKILL.md	1	unit-2	Licence: CC BY-SA 4.0
+site-src/pages/home.html	1	unit-3	free to use under CC BY-SA 4.0
+site-src/pages/install.html	1	unit-3	CC BY-SA 4.0
+site-src/pages/license.html	4	unit-3	CC BY-SA 4.0
+site-src/pages/license.html	1	keep	public domain or Creative Commons licences
+site-src/site.json	1	unit-3	CC BY-SA 4.0, summarized in plain language
+site/assets/baseline/LICENSE	3	keep	CREATIVE COMMONS
+site/assets/baseline/LICENSE	2	keep	Creative Commons
+site/channels/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/checklist/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/demo/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/disclosure/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/downloads/cleanlanguage-instructions-11k.md	1	unit-2	Licence: CC BY-SA 4.0
+site/downloads/cleanlanguage-instructions-29k.md	1	unit-2	Licence: CC BY-SA 4.0
+site/downloads/cleanlanguage-instructions-8k.md	1	unit-2	Licence: CC BY-SA 4.0
+site/downloads/cleanlanguage-instructions.md	1	unit-2	Licence: CC BY-SA 4.0
+site/examples/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/index.html	1	unit-3	free to use under CC BY-SA 4.0
+site/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/chatgpt/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/claude/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/copilot/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/gemini/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/index.html	1	unit-3	CC BY-SA 4.0
+site/install/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/install/other-ai/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/instructions/index.html	1	unit-2	Licence: CC BY-SA 4.0
+site/instructions/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/license/index.html	8	unit-3	CC BY-SA 4.0
+site/license/index.html	1	keep	public domain or Creative Commons licences
+site/license/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/patterns/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/standard/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+site/verify/index.html	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+tools/build-site.py	1	unit-3	"license": "https://creativecommons.org/licenses/by-sa/4.0/"
+tools/test-build-site.py	3	unit-3	free to use under CC BY-SA 4.0
+tools/test-skill-release-date.py	1	unit-2	Licence: CC BY-SA 4.0

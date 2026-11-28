@@ -93,6 +93,8 @@ plugin_manifests() {
 # agent-plugin-manifest.yml
 run python3 -I tools/test-agent-plugin-manifest.py
 run python3 -I tools/check-agent-plugin-manifest.py
+run python3 -I tools/test-check-licence-names.py
+run python3 -I tools/check-licence-names.py
 # ci-status-test.yml
 run bash tools/test-ci-status.sh
 # install-page.yml

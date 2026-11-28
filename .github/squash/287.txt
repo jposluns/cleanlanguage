@@ -1,0 +1,230 @@
+Add a licence-name gate with an allowlist (#287)
+
+Add tools/check-licence-names.py, its allowlist
+tools/licence-names-allowlist.tsv and its tests
+tools/test-check-licence-names.py. The gate lists the tracked files with
+git ls-files --stage -z, run with a fixed argument list and no shell,
+reads each from the work tree as bytes, splits it at line feeds only,
+and finds each line that holds 1 of its 3 search terms in any ASCII
+letter case; its docstring names the terms. Git gets the gate's
+environment without GIT_DIR, GIT_INDEX_FILE and GIT_COMMON_DIR, the 3
+settings that would point it at another repository or index than the one
+it finds at the root. The gate fails on a matching line that no row of
+its path claims (unclaimed); on a matching line that holds the markers
+of 2 or more well-formed rows of its path (ambiguous), which none of
+those rows claims, so a broad marker cannot quietly take lines of
+another kind; on a well-formed row whose claimed lines differ in number
+from its count (stale), fewer or more, which includes a row whose lines
+are gone, though a row of a path that cannot be read is not reported
+stale, since its lines are unknown; and on a malformed row, which claims
+nothing and whose marker makes no line ambiguous: a row with a number of
+fields other than 4, a carriage return, a count that is not canonical
+ASCII decimal, an owner other than unit-2, unit-3 or keep, an empty
+marker, a path that is not tracked, a path of a named exception, or the
+path and marker of an earlier row that has 4 fields and no carriage
+return, whether or not that earlier row is well formed. It compares a
+count as text, so a wrong count of any length gives a named problem. The
+gate fails closed, exiting 1 and naming the cause, and turns no error
+into an empty or clean result: when the system has no O_NOFOLLOW or the
+root cannot be opened as a folder, and then it runs no git and reads no
+file; when git ls-files cannot run, fails or lists nothing; when it
+gives an entry that cannot be read (one with no tab, or without exactly
+3 fields before its tab); when an entry is unmerged (a stage other than
+0); when a tracked path has a mode other than 100644 or 100755, such as
+a symbolic link (120000) or a submodule (160000); when a tracked path is
+not a regular file in the work tree (which includes a path that is
+absolute, a path with a part that is empty, 1 dot or 2 dots, and a path
+with a parent at any depth that is a symbolic link or anything else but
+a folder) or cannot be opened or read; when a folder or the file that
+the gate opened for a tracked path is no longer in its place after the
+read; and when the allowlist cannot be read or is not UTF-8. When git
+ls-files lists entries and the gate can read none of them, it names each
+entry and no other cause. The work tree is the root folder as the gate
+opens it, once, before git runs. Git starts in that open folder, and
+every read of a tracked file, the allowlist included, starts from its
+descriptor: each tracked path is opened 1 part at a time, each part
+inside the folder opened before it and none through a symbolic link
+(O_NOFOLLOW, which the system applies at each open). So neither a
+symbolic link in the work tree, made before or during the run, nor a
+root replaced after the open can lead a read outside it, and while no
+other process moves a folder or file of the work tree, each read is of
+the entry at its tracked path in the work tree. The gate does not
+prevent a read outside the work tree by a process that moves a folder or
+file that the gate opened out of it during the run: an opened folder or
+file is read wherever it is moved, and a process that can move it can as
+well put any bytes at the tracked paths. After the read the gate checks
+that each folder and the file that it opened is still in its place, the
+entry at its name in the folder before it, and refuses the bytes that it
+read when one is not. The cases that remain are in the list below. On a
+system without O_NOFOLLOW the gate refuses to run, since without it no
+path can be opened without following a symbolic link. The root and each
+folder and file below it are opened without waiting (O_NONBLOCK), so a
+FIFO in the place of any of them is refused, with or without
+O_DIRECTORY, and not waited on. File content is data: no line of a file
+is run, parsed as code or printed whole. It makes git's message and an
+error's text 1 line and cuts them to 300 characters; then, in each field
+that it shows, it writes a backslash and each character outside
+printable ASCII once as a backslash escape. Its own 3 files are its
+named exceptions; each must be tracked and must hold a matching line.
+The allowlist has 1 row per kind of line in a file: path, count, owner
+and a literal marker. The gate refuses an owner other than unit-2,
+unit-3 or keep; whether a row's owner is the right one is reviewed, and
+the gate does not check it.
+
+The gate's docstring states what it does not cover. Not covered:
+another spelling of a licence, such as one in words without the 3
+terms, a term split over 2 lines or a lookalike character outside
+ASCII; untracked and ignored files; the index copy of a file whose
+work-tree copy differs (in CI they are equal); a folder or file of the
+work tree that is a mount point, such as a bind mount over a tracked
+file, and a file that is a hard link, each read where it stands; a
+folder or file that another process moves out of the work tree after
+the gate opens it, whose bytes the gate reads
+wherever it is, and refuses only when that folder or file is not back
+in its place at the check after the read, since that check sees only
+where it is then; the reads of git ls-files, of the repository that
+git finds from the open root folder, its index and its configuration,
+which can lie outside the work tree; whether a line is a true
+statement of a licence; whether the owner of a row is right, which is
+reviewed prose; and the named exceptions' own lines. A row counts
+lines per file, so fixing 1 line and adding another of the same kind
+in the same file passes.
+
+The tests build throwaway git repositories and run the gate with no
+setting of git taken from the caller's environment or configuration.
+Each refusal case that runs the gate, but the case that pins the rule
+of the helper that checks a refusal, first runs it on the unchanged
+repository, which must pass, then makes the change that it tests, to the
+repository, to the gate's PATH or, through a launcher, to the gate's
+process, in 1 or more steps, such as tracking a file and then deleting
+it from the work tree. It then requires exit 1, exactly 1 summary line
+on standard output (for --list, only path:count lines and then a total
+line), and problem lines that match, 1 for 1, the cause and any
+consequence that the case names with its reason, with none left over.
+Where a cause is also the start of the line of another cause, or a line
+must show no text of a file, the problem lines are compared whole. Each
+subtest makes its change to the unchanged repository. The helper that
+checks a refusal fails the case when no run of the gate passed earlier
+in that case on the repository as it was built, the same index and the
+same bytes in each tracked file. No run of the gate may write a
+character outside printable ASCII. 1 case requires the gate to
+escape a tracked path that holds an escape byte, a backslash, DEL and
+characters outside ASCII in the problem lines for a file deleted from
+the work tree, a tracked symbolic link, a parent that is a file, an
+unmerged entry, a line that holds the markers of 2 rows, and a stale
+row. 1 case pins the rule of the helper that checks a refusal: the
+helper must fail when no run of the gate passed before it, when the only
+run that passed was on a changed index, and when the only run that
+passed was on changed bytes of a tracked file, and must check the
+refusal after a run that passed on the repository as it was built. 10
+cases call the gate's file reader in a separate python3 -I process that
+loads the gate by file path: 1 reads a regular file as a control; 6
+replace os.lstat or os.fdopen in that process alone to reach an open
+descriptor that is not a regular file, a symbolic link that appears
+after the lstat check, a symbolic link to a folder outside the work
+tree, a file and a FIFO, each in place of a parent after the lstat
+check, and a read error, once with the system's text and once with a
+text of whitespace, characters outside printable ASCII, a backslash and
+more than 300 characters; 1 replaces os.open to move a folder at depth
+1, a folder at depth 2, the folder at depth 1 that holds it, a file, and
+a folder at depth 1 whose name holds an escape byte, a backslash, DEL
+and characters outside ASCII out of the work tree, each just after the
+gate opens it, and then replaces os.fdopen to make each of those moves
+while the gate reads the file; 1 makes the same moves just after the
+gate opens each entry and then puts in the place of the moved entry a
+new entry of the same kind, and then a symbolic link to the moved entry;
+and 1 removes os.O_NOFOLLOW, once with README.md and once with a path
+that holds those characters. The process opens the root with the gate's
+own opener; in the case that removes os.O_NOFOLLOW that opener refuses,
+and the process then opens the root with os.open, so the reader's own
+refusal is reached too. The replacements of os.lstat, os.fdopen and
+os.open reach what a race or a failing disk could cause. The problem
+line of that last text is compared whole: the text must come out as 1
+line, cut to 300 characters and then escaped. A parent link sits at
+depth 1 and at depth 2, and each parent case runs once with
+os.O_DIRECTORY and once with it removed, as on a system without it, so
+the gate must open each parent without following a link, and must refuse
+a parent that is not a folder when it opens it and, without
+os.O_DIRECTORY, when it checks the folder that it opened. A parent link
+must be refused with the error that opening a link without following it
+gives, NotADirectoryError with os.O_DIRECTORY and ELOOP without it,
+while a real folder at the same depth, read the same way, gives its
+file's bytes. 9 cases give the gate a stand-in git, a Python script
+alone on its PATH: 1 exits 3 with a message like that text; 1 lists the
+repository's 4 files and paths that are not plain relative, 1 of them
+leading out of the work tree, to the gate and to --list; 1 lists the
+repository's 4 files and, before it exits, replaces the root with a
+symbolic link to a copy whose allowlist holds a malformed row and
+records its working folder, to the gate and to --list; 1 lists the
+repository's 4 files and records the folder that it starts in, after a
+launcher has replaced the root in the same way, to the gate and to
+--list; 1 lists the repository's 4 files, an entry whose mode and an
+entry whose stage each hold an escape byte, a backslash and a byte
+outside ASCII, to the gate and to --list; and 4 list 3 entries that
+cannot be read, 1 with no tab, 1 with 2 fields before its tab and 1 with
+4, to the gate and to --list, 2 beside the repository's 4 files and 2
+alone. The problem line of the first, compared whole, must show the
+message the same way. 1 case runs the gate through a python3 -I launcher
+that first removes os.O_NOFOLLOW, to the gate and to --list. 4 cases run
+the gate through another python3 -I launcher that changes the gate's
+process alone, each to the gate and to --list: 1 replaces the root after
+the gate opens it and before git starts, in the stand-in case above; 1
+moves a folder at depth 1, the folder at depth 1 above a folder at depth
+2 and a file out of the work tree, each just after the gate opens it and
+again while the gate reads the file; 1 removes os.O_DIRECTORY, with a
+file and then a FIFO as the root; and 1 makes the change into the root
+folder fail before git starts, as on a root folder of mode 0600 that the
+gate can open and git cannot enter. 1 case loads the test file in a
+python3 -I process whose PATH is a relative folder that holds git, and
+requires the git that it finds to be an absolute path.
+
+3 cases, in RepeatedText, build no repository and run no gate; they read
+texts from the work tree. Each row of BLOCKS names a block by its
+opening and closing words, and each row of PARAGRAPHS names a whole
+paragraph by the words that start it; those opening words must occur
+once in each text that states the row. 1 case requires each block and
+paragraph to be word for word the same in the tracked texts that its row
+names: the gate's docstring, the test docstring and
+.github/squash/287.txt. 1 requires PR-BODY.md, from its third line, and
+SQUASH-MSG, which state every row, to match those texts. 1 requires
+SQUASH-MSG to equal .github/squash/287.txt byte for byte. Each run of
+whitespace counts as 1 space, and the backticks of PR-BODY.md are
+dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is
+not there, as in CI, and names it; a case that reads a tracked text that
+is not there ends in an error. 1 case, in TextRules, builds no
+repository and runs no gate either. It requires a row of PARAGRAPHS to
+name this paragraph, and it runs those 3 cases on texts and rows of its
+own, with other line breaks in each text, backticks in PR-BODY.md and
+opening words in its first line. Each must pass on those texts as
+written; a case that compares a text must fail when a word of a block,
+a word inside a paragraph or the last word of a paragraph differs in
+it, when a text for review lacks a block, when opening words occur
+twice or do not start their paragraph and, for the tracked texts, when
+2 rows have the same name; the byte
+comparison must fail when SQUASH-MSG gains 1 byte; and each case must
+skip and name each text for review that is not there, and end in an
+error when a tracked text that it reads is not there, also when no text
+for review is there.
+
+The Agent Plugins manifest workflow runs the tests and the gate as 2
+new steps, and tools/run_all_checks.sh runs them as 2 new run lines.
+tools/test-run-all-checks.py records the new digest of that script.
+.github/squash/287.txt holds this message.
+
+Checks a reviewer can rerun from the repository root, with their
+expected outcomes:
+
+    python3 -I tools/check-licence-names.py
+
+exits 0, and at the head of this change its last line is
+"check-licence-names: checked: 59 lines in 35 files; 0 problem(s)".
+
+    python3 -I tools/check-licence-names.py --list
+
+exits 0 and prints 1 line of path and count per file, then the line
+"total: 59 lines in 35 files".
+
+    python3 -I tools/test-check-licence-names.py
+    python3 -I tools/test-run-all-checks.py
+
+each exit 0.

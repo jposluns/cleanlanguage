@@ -1,0 +1,2010 @@
+#!/usr/bin/env python3
+"""Tests for tools/check-licence-names.py, the licence-name gate.
+
+Each case outside RepeatedText, TextRules and Startup, below, builds a throwaway git repository in
+a temporary folder (git init and git add; no commit and no identity are needed, since the gate
+reads the index and the work tree). The repository
+holds the gate's 3 files: a copy of the gate and of this test from this test's own folder, and an
+allowlist with 1 row, README.md, 1, keep, CC BY-SA 4.0, for README.md, whose 1 matching line holds
+that marker. Wherever a case runs the gate, it runs as a separate process, python3 -I, with
+--root, but in 1 case, which runs it without --root; in 1 case it runs through a python3 -I
+launcher that first removes os.O_NOFOLLOW, and in 4 through another python3 -I launcher (below).
+The gate, git and the
+probe process below each run in the temporary folder and get an environment built from fixed
+values alone, so no variable of the caller's environment, such as XDG_CONFIG_HOME, HOME or a
+variable whose name starts with GIT_, is passed on to them: PATH, the folder of the git found on
+the caller's PATH, made an absolute path; HOME, an empty folder in the temporary folder; the git
+configuration of the machine and of the user left out (GIT_CONFIG_NOSYSTEM=1 and
+GIT_CONFIG_GLOBAL set to the null device); git's messages in the C locale (LC_ALL=C); and the
+search for a repository stopped at the temporary folder (GIT_CEILING_DIRECTORIES). git init
+takes no template (--template=), so no hook, exclude file or description of a template reaches
+the repository. The caller's environment is read for 3 things only. The tests build settings
+from 2 of them: where git is, whose folder is the PATH of each process but the 3 named below, and
+where Python's tempfile makes the temporary folder, which holds HOME and the repository. The third
+is the locale (LANG, LANGUAGE and each variable whose name starts with LC_), which python3 -I does
+not ignore. The suite, run as a script, replaces it: unless it already runs so, it starts itself
+again as python3 -I -X utf8, in Python's UTF-8 mode, with LC_ALL=C in place of each of those
+variables. So this process runs in the C locale and writes every file name of a case in UTF-8,
+whatever the caller's locale. The folder in which a
+case builds a repository, the temporary
+folder or, in 2 cases, a folder named case inside it, is the value of GIT_CEILING_DIRECTORIES and
+the working folder of each process that the case starts with an environment built from the one
+of that repository; the git that the gate starts works in the root folder that the gate opened.
+3 other processes get no such environment. The one that the case for a git found through a
+relative PATH entry starts works in a folder named relative inside the temporary folder and gets
+PATH alone, the relative folder bin there, which holds a link to the git found. The 2 that the
+case for the locale starts each run the suite to run only the 2 cases that require this process
+to write file names in UTF-8 and to run in the C locale, each in a temporary folder of its own:
+1, run as python3 -I -X utf8=0, gets LC_ALL=C alone, under which, on Linux, Python writes file
+names in ASCII; the other gets LANG=C.UTF-8 alone, a UTF-8 locale that is not the C locale. The
+case requires each to exit 0, which each does only when the suite starts itself again. Each
+stand-in git below and
+each probe process records the environment that it gets, and the case requires it to equal those
+values exactly.
+
+Every refusal case that runs the gate, but the case that pins the rule of the helper below, first
+runs it on the unchanged repository, a control that must exit 0 and print exactly the summary
+line, or for a case of --list exactly the list; the helper that checks a refusal fails the case
+when no run of the gate passed earlier in that case on the repository as it was built, the same
+index and the same bytes in each tracked file. It then
+makes the change that it tests, to the repository, to the PATH that the gate is given or, through
+a launcher, to the gate's process; a change can take more than 1 step, such as tracking a file
+and then deleting it from the work tree, or tracking 2 files. It then requires exit 1; problem
+lines that match, 1 for 1, the cause and any consequence the case names, each consequence with
+the reason it follows, each matched as a part of its line, with no problem line left over, and
+compared whole where a cause is also the start of the line of another cause or a line must show
+no text of a file; and on standard output exactly 1 summary line whose problem count is the
+number of problem lines, or for --list only path:count lines and then 1 total line. Each subtest
+makes its change to the unchanged repository, since it undoes or overwrites the change of the
+subtest before it. So each case fails when the gate does not refuse
+the change, when it names another cause or an extra problem, and when it refuses the unchanged
+repository. Every run of the gate must also write nothing outside printable ASCII, so a control
+byte that reaches the output unescaped, in any field, fails the case. 1 case requires the gate to
+escape a tracked path that holds an escape byte, a backslash, DEL and characters outside ASCII in
+the problem lines for a file deleted from the work tree, a tracked symbolic link, a parent that is
+a file, an unmerged entry, a line that holds the markers of 2 rows, and a stale row. 1 case pins
+the rule of the helper that checks a refusal: the helper must fail when no run of the gate passed
+before it, when the only run that passed was on a changed index, and when the only run that
+passed was on changed bytes of a tracked file, and must check the refusal after a run that passed
+on the repository as it was built.
+
+The controls of their own: the unchanged repository reports 1 line in 1 file and 0 problems;
+--list prints README.md:1 and the total, and does not parse the allowlist; with a second matching
+line in README.md and a row of count 2, the gate reports 2 lines in 1 file and 0 problems, and
+--list prints README.md:2 and a total of 2 lines in 1 file; with no matching line outside the
+named exceptions and an allowlist with no row, the gate reports 0 lines in 0 files and 0
+problems, and --list prints a total of 0 lines in 0 files; a line ends only at a
+line feed, so carriage returns, other control bytes, binary and non-UTF-8 bytes stay in their
+line; near misses of the 3 terms match nothing; an untracked file is not read; an executable
+tracked file is read like any other; a marker is literal text, so a marker that a regular
+expression would read in another way claims the line that holds it; a row of each of the 3
+owners, unit-2, unit-3 and keep, is accepted; an unknown option exits 2;
+run without --root, the gate checks the repository that holds it, both with and without --list;
+--list passes with an allowlist that is not UTF-8; git settings in the caller's environment that
+would ignore README.md or point git at another repository change no result; GIT_DIR,
+GIT_INDEX_FILE and GIT_COMMON_DIR in the gate's own environment, which would point git at another
+repository or index, change no result; and git init leaves .git with no hook, exclude file or
+description, which only a template gives, even when GIT_TEMPLATE_DIR names a template that a
+git init without --template= copies. 1 case loads the test file in a python3 -I process whose
+PATH is a relative folder that holds git, and requires the git that it finds to be an absolute
+path. 3 cases, in Startup, run no gate: 1 requires this process to write file names in UTF-8; 1
+requires it to run in the C locale, with LC_ALL=C as its only variable of the locale, in UTF-8
+mode; and 1 runs those 2 cases in the suite started under each locale above and requires them to
+pass.
+
+10 cases call the gate's file reader in a separate python3 -I process that loads the gate by file
+path: 1 reads a regular file as a control; 6 replace os.lstat or os.fdopen in that process alone
+to reach an open descriptor that is not a regular file, a symbolic link that appears after the
+lstat check, a symbolic link to a folder outside the work tree, a file and a FIFO, each in place
+of a parent after the lstat check, and a read error, once with the system's text and once with a
+text of whitespace, characters outside printable ASCII, a backslash and more than 300 characters;
+1 replaces os.open to move a folder at depth 1, a folder at depth 2, the folder at depth 1 that
+holds it, a file, and a folder at depth 1 whose name holds an escape byte, a backslash, DEL and
+characters outside ASCII out of the work tree, each just after the gate opens it, and then
+replaces os.fdopen to make each of those moves while the gate reads the file; 1 makes the same
+moves just after the gate opens each entry and then puts in the place of the moved entry a new
+entry of the same kind, and then a symbolic link to the moved entry; and 1 removes os.O_NOFOLLOW,
+once with README.md and once with a path that holds those characters. The process opens the root
+with the gate's own opener; in the case that removes os.O_NOFOLLOW that opener refuses, and the
+process then opens the root with os.open, so the reader's own refusal is reached too. The
+replacements of os.lstat, os.fdopen and os.open reach what a race or a failing disk could cause.
+The problem line of that last text is compared whole: the text must come out as 1 line, cut to 300
+characters and then escaped. A parent link
+sits at depth 1 and at depth 2, and each parent case runs once with os.O_DIRECTORY and once with
+it removed, as on a system without it, so the gate must open each parent without following a
+link, and must refuse a parent that is not a folder when it opens it and, without
+os.O_DIRECTORY, when it checks the folder that it opened. A parent link must be refused with the
+error that opening a link without following it gives, NotADirectoryError with os.O_DIRECTORY and
+ELOOP without it, while a real folder at the same depth, read the same way, gives its file's
+bytes. 9 cases give the
+gate a stand-in git, a Python script alone on its PATH: 1 exits 3 with a message like that text;
+1 lists the repository's 4 files and paths that are not plain relative, 1 of them leading out of
+the work tree, to the gate and to --list; 1 lists the repository's 4 files and, before it exits,
+replaces the root with a symbolic link to a copy whose allowlist holds a malformed row and
+records its working folder, to the gate and to --list; 1 lists the repository's 4 files and
+records the folder that it starts in, after a launcher has replaced the root in the same way, to
+the gate and to --list; 1 lists the repository's 4 files, an entry whose mode and an entry whose
+stage each hold an escape byte, a backslash and a byte outside ASCII, to the gate and to --list;
+and 4 list 3 entries that cannot be read, 1 with no tab, 1 with 2 fields before its tab and 1
+with 4, to the gate and to --list, 2 beside the repository's 4 files and 2 alone. The problem
+line of the first, compared whole, must show the message the
+same way. 1 case runs the gate through a python3 -I launcher that first removes os.O_NOFOLLOW, to
+the gate and to --list. 4 cases run the gate through another python3 -I launcher that changes the gate's
+process alone, each to the gate and to --list: 1 replaces the root after the gate opens it and
+before git starts, in the stand-in case above; 1 moves a folder at depth 1, the folder at depth 1
+above a folder at depth 2 and a file out of the work tree, each just after the gate opens it and
+again while the gate reads the file; 1 removes os.O_DIRECTORY, with a file and then a FIFO as the
+root; and 1 makes the change into the root folder fail before git starts, as on a root folder of
+mode 0600 that the gate can open and git cannot enter.
+A case for a file whose mode the runner can still read after chmod 000, as root can, is
+skipped and says so.
+
+3 cases, in RepeatedText, build no repository and run no gate; they read texts from the work
+tree. Each row of BLOCKS names a block by its opening and closing words, and each row of
+PARAGRAPHS names a whole paragraph by the words that start it; those opening words must occur
+once in each text that states the row. 1 case requires each block and paragraph to be word for
+word the same in the tracked texts that its row names: the gate's docstring, the test docstring
+and .github/squash/287.txt. 1 requires PR-BODY.md, from its third line, and SQUASH-MSG, which
+state every row, to match those texts. 1 requires SQUASH-MSG to equal .github/squash/287.txt
+byte for byte. Each run of whitespace counts as 1 space, and the backticks of PR-BODY.md are
+dropped. A case that reads PR-BODY.md or SQUASH-MSG skips it when it is not there, as in CI, and
+names it; a case that reads a tracked text that is not there ends in an error. 1 case, in
+TextRules, builds no repository and runs no gate either. It requires a row of PARAGRAPHS to name
+this paragraph, and it runs those 3 cases on texts and rows of its own, with other line breaks in
+each text, backticks in PR-BODY.md and opening words in its first line. Each must pass on those
+texts as written; a case that compares a text must fail when a word of a block, a word inside a
+paragraph or the last word of a paragraph differs in it, when a text for review lacks a block,
+when opening words occur twice or do not start their paragraph and, for the tracked texts, when 2
+rows have the same name; the byte comparison must fail when SQUASH-MSG gains 1 byte; and each
+case must skip and name each text for review that is not there, and end in an error when a
+tracked text that it reads is not there, also when no text for review is there.
+
+Exit 0 when every case passes; 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import ast
+import errno
+import json
+import locale
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+HERE = Path(__file__).resolve().parent
+# Where git is, found once on the caller's PATH: with the temporary folder that tempfile picks, the
+# only value from which the tests build a setting; the locale, the only other value of the caller's
+# environment that is read, the suite run as a script replaces with LC_ALL=C in UTF-8 mode (see the end
+# of this file). Its folder is the PATH of each process.
+FOUND_GIT = shutil.which("git")
+# Made absolute, since a relative entry of the caller's PATH would be read again from the working folder
+# of each process, which is the temporary folder.
+FOUND_GIT = FOUND_GIT and os.path.abspath(FOUND_GIT)
+GATE = HERE / "check-licence-names.py"
+SELF = HERE / "test-check-licence-names.py"
+ALLOWLIST = "tools/licence-names-allowlist.tsv"
+NAMED_EXCEPTIONS = ("tools/check-licence-names.py", ALLOWLIST, "tools/test-check-licence-names.py")
+ROW = "README.md\t1\tkeep\tCC BY-SA 4.0"
+HEADER = "# path\tcount\towner\tmarker\n"
+README = b"# Example\n\nLicence: CC BY-SA 4.0\n"
+PREFIX = "check-licence-names: "
+SUMMARY = re.compile(r"check-licence-names: checked: \d+ lines in \d+ files; (\d+) problem\(s\)\n")
+CONTROL_OUT = PREFIX + "checked: 1 lines in 1 files; 0 problem(s)\n"
+BAD_COUNT = "is not canonical ASCII decimal: digits 0 to 9 only, from 1, with no sign, space or leading zero"
+TERM = b"CC BY-SA 4.0"
+# Each byte run here ends a line for some reader (str.splitlines, a vertical-tab split and others),
+# but not for the gate, which splits at a line feed only.
+SEPARATORS = (b"\x0b", b"\x0c", b"\x1c", b"\x1d", b"\x1e", b"\x85", "\u2028".encode(), "\u2029".encode())
+# An error's text and git's message of whitespace (tab, carriage return, line feed, vertical tab,
+# 0x1c, U+00A0, U+2028), an escape byte, non-ASCII letters, a backslash and more than 300 characters.
+ODD_TAIL = "\t\x1b[31m\r\n  d\xe9j\xe0 \\ vu\x0b\x1c\xa0\N{LINE SEPARATOR}" + "\xe9" * 400
+ODD_SHOWN = "\\x1b[31m d\\xe9j\\xe0 \\\\ vu "
+ODD_RAW_LENGTH = 16
+# What a stand-in git lists: the 4 files of the repository, as git ls-files --stage -z would, then
+# an entry with no tab, an entry with 2 fields before its tab and an entry with 4.
+LISTING = b"".join(b"100644 " + b"0" * 40 + b" 0\t" + path.encode("ascii") + b"\0"
+                   for path in ("README.md", *NAMED_EXCEPTIONS))
+BAD_ENTRIES = (b"100644 n\x1bo 0\0" + b"100644 bad\tmi\x1bss.md\0"
+               + b"100644 " + b"0" * 40 + b" 0 more\tsur\x1bplus.md\0")
+BAD_ENTRY_PROBLEMS = (PREFIX + "git ls-files gave an entry that cannot be read: 100644 n\\x1bo 0",
+                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 bad\\x09mi\\x1bss.md",
+                      PREFIX + "git ls-files gave an entry that cannot be read: 100644 " + "0" * 40
+                      + " 0 more\\x09sur\\x1bplus.md")
+NOT_PLAIN = " the tracked path is not a regular file in the work tree, since it is not a plain relative path"
+# A part of a path with an escape byte, a backslash, DEL (0x7f), a Latin-1 letter, a character of the BMP
+# and 1 above it, and that part as the gate shows it.
+ODD_PART = "a\x1bb\\c\x7f\xe9\N{LINE SEPARATOR}\U0001f600"
+ODD_PART_SHOWN = "a\\x1bb\\\\c\\x7f\\xe9\\u2028\\U0001f600"
+
+
+def as_shown(text: str) -> str:
+    """text with ODD_PART written as the gate shows it; every other part of a case's paths is printable ASCII."""
+    return text.replace(ODD_PART, ODD_PART_SHOWN)
+
+
+def escaped(text: str) -> str:
+    """text as the gate's docstring says that a field is shown, for a path that the temporary folder
+    fixes, whose characters the case cannot write out; the fixed escapes are written out in full."""
+    out = []
+    for char in text:
+        code = ord(char)
+        if char == "\\":
+            out.append("\\\\")
+        elif " " <= char <= "~":
+            out.append(char)
+        else:
+            out.append(f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}" if code < 0x10000 else f"\\U{code:08x}")
+    return "".join(out)
+
+
+PROBE = """
+import errno, importlib.util, json, os, sys
+ODD_ERROR = """ + repr(ODD_TAIL) + """
+from pathlib import Path
+environment = dict(os.environ)
+gate_path, mode, root, name, decoy = sys.argv[1:6]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("gate", gate_path)
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+real_lstat, real_fdopen = os.lstat, os.fdopen
+if mode in ("descriptor", "swap"):
+    os.lstat = lambda path, *args, **kwargs: real_lstat(decoy)
+if mode in ("parent", "parent-bare"):
+    # Each part before the last passes the lstat check as the folder decoy does.
+    last = name.rsplit("/", 1)[-1]
+    os.lstat = lambda path, *args, **kwargs: real_lstat(path, *args, **kwargs) if path == last else real_lstat(decoy)
+if mode == "parent-bare" and hasattr(os, "O_DIRECTORY"):
+    del os.O_DIRECTORY
+if mode in ("read-error", "odd-error"):
+    text = os.strerror(errno.EIO) if mode == "read-error" else ODD_ERROR
+    class Failing:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def read(self, *args):
+            raise OSError(errno.EIO, text)
+    os.fdopen = lambda *args, **kwargs: Failing(real_fdopen(*args, **kwargs))
+if mode == "no-nofollow":
+    del os.O_NOFOLLOW
+if mode in ("move", "replace", "relink", "move-read"):
+    # Just after the gate opens the entry decoy, inside a folder, or with move-read when the gate
+    # starts to read the file, the entry moves to the folder away beside the root, and the file that
+    # the gate reads gets bytes that name a term. Then, with replace, a new entry of the same kind
+    # takes the name of decoy, and with relink, a symbolic link to the moved entry does.
+    real_open, moved = os.open, []
+    def move():
+        moved.append(decoy)
+        away = Path(root).parent / "away" / os.path.basename(decoy)
+        os.rename(decoy, away)
+        with open(away / os.path.relpath(os.path.join(root, name), decoy), "r+b") as moved_file:
+            moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
+        if mode == "replace" and away.is_dir():
+            os.mkdir(decoy)
+        elif mode == "replace":
+            Path(decoy).write_bytes(b"inside\\n")
+        elif mode == "relink":
+            os.symlink(away, decoy)
+    def opening(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if (mode != "move-read" and not moved and kwargs.get("dir_fd") is not None
+                and path == os.path.basename(decoy)):
+            move()
+        return fd
+    os.open = opening
+if mode == "move-read":
+    # The move happens inside the read, after every open and before the bytes come back, so only a
+    # check made after the read can see it.
+    class Moving:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def read(self, *args):
+            if not moved:
+                move()
+            return self.handle.read(*args)
+    os.fdopen = lambda *args, **kwargs: Moving(real_fdopen(*args, **kwargs))
+problems = []
+descriptor = gate.open_root(Path(root), problems)
+if descriptor is None:
+    # As a caller that did not use the gate's opener would, so the reader's own refusal is reached too.
+    descriptor = os.open(root, os.O_RDONLY)
+data = gate.read_file(descriptor, name, problems)
+os.close(descriptor)
+print(json.dumps({"data": None if data is None else data.decode("latin-1"), "problems": problems,
+                  "environment": environment}))
+"""
+# Runs the gate, named by its first argument, after it removes os.O_NOFOLLOW, as on a system without it.
+WITHOUT_NOFOLLOW = ("import os, runpy, sys\ndel os.O_NOFOLLOW\nsys.argv = sys.argv[1:]\n"
+                    "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+NO_NOFOLLOW = "this system has no O_NOFOLLOW, so no path can be opened without following a symbolic link"
+# Runs the gate, named by its fifth argument, after it changes the gate's process alone as its first
+# argument, the mode, says; the second is the root, and the third and fourth are read by the mode.
+LAUNCHER = """
+import errno, os, runpy, subprocess, sys
+from pathlib import Path
+mode, root, name, other = sys.argv[1:5]
+sys.argv = sys.argv[5:]
+if mode == "swap-root":
+    # Just before git starts, the root folder moves to the folder name, and a symbolic link to the
+    # folder other takes its place, so a git started at the root's path would work in other.
+    real_run = subprocess.run
+    def run(*args, **kwargs):
+        os.rename(root, name)
+        os.symlink(other, root)
+        return real_run(*args, **kwargs)
+    subprocess.run = run
+if mode in ("move", "move-read"):
+    # Just after the gate opens other, a folder or file of the root, or with move-read when the gate
+    # starts to read the tracked file name, other moves to the folder away beside the root, and the
+    # tracked file name that it is or holds gets bytes that name a term.
+    real_open, real_fdopen, moved, reading = os.open, os.fdopen, [], []
+    def move():
+        moved.append(other)
+        away = Path(root).parent / "away" / os.path.basename(other)
+        os.rename(os.path.join(root, other), away)
+        with open(away / os.path.relpath(name, other), "r+b") as moved_file:
+            moved_file.write(b"OUTSIDE BYTES CC BY-SA 4.0\\n")
+    def opening(path, *args, **kwargs):
+        fd = real_open(path, *args, **kwargs)
+        if not moved and kwargs.get("dir_fd") is not None:
+            if mode == "move" and path == os.path.basename(other):
+                move()
+            elif mode == "move-read" and path == os.path.basename(name):
+                reading.append(fd)
+        return fd
+    os.open = opening
+if mode == "move-read":
+    class Moving:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def read(self, *args):
+            if not moved:
+                move()
+            return self.handle.read(*args)
+    def fdopening(fd, *args, **kwargs):
+        handle = real_fdopen(fd, *args, **kwargs)
+        return Moving(handle) if fd in reading and not moved else handle
+    os.fdopen = fdopening
+if mode == "no-directory" and hasattr(os, "O_DIRECTORY"):
+    del os.O_DIRECTORY
+if mode == "no-entry":
+    # As on a root folder that the gate can open and not enter, such as one of mode 0600.
+    def fchdir(fd):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+    os.fchdir = fchdir
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+CANNOT_ENTER = (PREFIX + "cannot run git ls-files, since the change into the root folder that the gate opened failed "
+                "before git started, so no tracked file can be listed: SubprocessError")
+
+
+class Repo:
+    """A throwaway git repository of 4 files: the gate's 3 files, the allowlist among them, and README.md."""
+
+    def __init__(self, base: Path):
+        self.base = base
+        self.root = base / "repo"
+        (self.root / "tools").mkdir(parents=True)
+        shutil.copyfile(GATE, self.root / "tools" / "check-licence-names.py")
+        shutil.copyfile(SELF, self.root / "tools" / "test-check-licence-names.py")
+        self.write(ALLOWLIST, (HEADER + ROW + "\n").encode("utf-8"))
+        self.write("README.md", README)
+        if FOUND_GIT is None:
+            raise AssertionError("no git is on the caller's PATH")
+        home = base / "home"
+        home.mkdir()
+        # Built from fixed values alone, so no variable of the caller's environment, such as
+        # XDG_CONFIG_HOME, whose git/ignore git would read, HOME, GIT_DIR or GIT_CONFIG_COUNT,
+        # reaches git, the gate or the probe.
+        self.env = {
+            "PATH": str(Path(FOUND_GIT).parent),
+            "HOME": str(home),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CEILING_DIRECTORIES": str(base),
+            "LC_ALL": "C",
+        }
+        self.git("init", "-q", "--template=")
+        self.git("add", "-A")
+
+    def write(self, rel: str, data: bytes) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def git(self, *args: str, stdin: bytes = b"") -> str:
+        done = subprocess.run(["git", "-C", str(self.root), *args], input=stdin, capture_output=True,
+                              env=self.env, cwd=self.base, timeout=60)
+        if done.returncode != 0:
+            raise AssertionError(f"git {' '.join(args)} failed: {done.stderr.decode('utf-8', 'replace')}")
+        return done.stdout.decode("utf-8", "replace")
+
+    def set_rows(self, *rows: str) -> None:
+        self.write(ALLOWLIST, (HEADER + "".join(row + "\n" for row in rows)).encode("utf-8"))
+        self.git("add", ALLOWLIST)
+
+    def add_row(self, row: str) -> None:
+        self.set_rows(ROW, row)
+
+    def track(self, rel: str, data: bytes) -> None:
+        self.write(rel, data)
+        self.git("add", "--", rel)
+
+    def state(self) -> tuple:
+        """The index as git ls-files --stage lists it and the bytes of each tracked file, or None for
+        a tracked path that is not a regular file in the work tree."""
+        listing = self.git("ls-files", "--stage", "-z")
+        contents = []
+        for entry in listing.split("\0"):
+            path = self.root / entry.partition("\t")[2]
+            contents.append(path.read_bytes() if entry and path.is_file() and not path.is_symlink() else None)
+        return listing, tuple(contents)
+
+    def track_executable(self, rel: str, data: bytes) -> None:
+        """Track rel as an executable file, and fail unless git lists it with mode 100755."""
+        self.write(rel, data)
+        (self.root / rel).chmod(0o755)
+        self.git("add", "--", rel)
+        listed = self.git("ls-files", "--stage", "--", rel)
+        if not listed.startswith("100755 "):
+            raise AssertionError(f"git does not track {rel} as executable: {listed!r}")
+
+    def gate(self, *args: str, env: dict | None = None, default_root: bool = False, without_nofollow: bool = False,
+             launch: tuple = ()):
+        # With default_root, the copy of the gate in the repository runs without --root.
+        command = ([str(self.root / "tools" / "check-licence-names.py")] if default_root
+                   else [str(GATE), "--root", str(self.root)])
+        if without_nofollow:
+            command = ["-c", WITHOUT_NOFOLLOW, *command]
+        if launch:
+            # The mode, the root and the 2 values that the mode reads, then the gate.
+            command = ["-c", LAUNCHER, *launch, *command]
+        done = subprocess.run([sys.executable, "-I", *command, *args], capture_output=True, env=env or self.env,
+                              cwd=self.base, stdin=subprocess.DEVNULL, timeout=120)
+        return (done.returncode, done.stdout.decode("utf-8", "replace"),
+                done.stderr.decode("utf-8", "replace"))
+
+
+class GateCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Repo(Path(self.tmp.name))
+        self.stand_in = None
+        # Whether a run of the gate has passed in this case on the repository as Repo built it.
+        self.built, self.passed_on_built = self.repo.state(), False
+
+    def built_environment(self, path: str) -> dict:
+        """The environment that each process of the case must get, with path as its PATH. It is
+        written out here apart from Repo, so a change to the environment that Repo builds fails."""
+        return {"PATH": path, "HOME": str(self.repo.base / "home"), "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CEILING_DIRECTORIES": str(self.repo.base), "LC_ALL": "C"}
+
+    def run_gate(self, *args: str, env: dict | None = None, default_root: bool = False, without_nofollow: bool = False,
+                 launch: tuple = ()):
+        code, out, err = self.repo.gate(*args, env=env, default_root=default_root, without_nofollow=without_nofollow,
+                                        launch=launch)
+        shown = [char for char in out + err if char != "\n" and not " " <= char <= "~"]
+        self.assertEqual(shown, [], f"the output holds characters outside printable ASCII:\n{out}{err}")
+        if env is not None and env is self.stand_in:
+            record = self.repo.base / "git-environment.json"
+            self.assertTrue(record.exists(), "the gate did not run the stand-in git")
+            given = json.loads(record.read_text(encoding="utf-8"))
+            record.unlink()
+            self.assertEqual(given, self.built_environment(str(self.repo.base / "fake-git")),
+                             "the stand-in git got another environment")
+        return code, out, err
+
+    def passes(self, out_text: str = CONTROL_OUT, *args: str, env: dict | None = None, default_root: bool = False,
+               launch: tuple = ()):
+        code, out, err = self.run_gate(*args, env=env, default_root=default_root, launch=launch)
+        self.assertEqual((code, err), (0, ""), f"the gate must pass:\n{out}{err}")
+        self.assertEqual(out, out_text)
+        if not self.passed_on_built and self.repo.root.is_dir() and self.repo.state() == self.built:
+            self.passed_on_built = True
+
+    def control(self):
+        self.passes()
+
+    def refused(self, cause: str, *args: str, env: dict | None = None, also: tuple = (), out_text: str = "",
+                without_nofollow: bool = False, launch: tuple = ()):
+        """Exit 1 and problem lines that are exactly cause and also, each matched as a substring once."""
+        self.assertTrue(self.passed_on_built, "the case refuses a change before any run of the gate passed on "
+                        "the unchanged repository")
+        code, out, err = self.run_gate(*args, env=env, without_nofollow=without_nofollow, launch=launch)
+        self.assertEqual(code, 1, f"the gate must refuse this change:\n{out}{err}")
+        lines = err.splitlines()
+        self.assertTrue(all(line.startswith(PREFIX) for line in lines), f"a line is not a problem line:\n{err}")
+        wanted, left = [cause, *also], list(lines)
+        for text in wanted:
+            match = next((line for line in left if text in line), None)
+            self.assertIsNotNone(match, f"no problem line names {text!r}:\n{err}")
+            left.remove(match)
+        self.assertEqual(left, [], f"problem lines that the case does not name:\n{err}")
+        if "--list" in args:
+            *listed, total = out.splitlines()
+            self.assertRegex(total, r"^total: \d+ lines in \d+ files$")
+            self.assertTrue(all(re.fullmatch(r".+:\d+", line) for line in listed), out)
+        else:
+            summary = SUMMARY.fullmatch(out)
+            self.assertIsNotNone(summary, f"standard output is not exactly 1 summary line:\n{out}")
+            self.assertEqual(int(summary.group(1)), len(lines), out)
+        if out_text:
+            self.assertEqual(out, out_text)
+        return err
+
+    def fake_git(self, stdout: bytes, stderr: bytes, code: int, then: str = "") -> dict:
+        """The gate's environment with a stand-in git alone on PATH: a script that records the
+        environment it gets, writes stdout and stderr, runs the Python lines then and exits with code,
+        whatever its arguments."""
+        folder = self.repo.base / "fake-git"
+        folder.mkdir()
+        script = folder / "git"
+        record = self.repo.base / "git-environment.json"
+        script.write_text(f"#!{sys.executable} -I\nimport json, os, sys\n"
+                          f"with open({str(record)!r}, 'w', encoding='utf-8') as out:\n"
+                          "    json.dump(dict(os.environ), out)\n"
+                          f"sys.stdout.buffer.write({stdout!r})\n"
+                          f"sys.stderr.buffer.write({stderr!r})\n{then}sys.exit({code})\n", encoding="utf-8")
+        script.chmod(0o755)
+        self.stand_in = dict(self.repo.env, PATH=str(folder))
+        return self.stand_in
+
+    def probe(self, mode: str, name: str, decoy: str):
+        done = subprocess.run([sys.executable, "-I", "-c", PROBE, str(GATE), mode, str(self.repo.root), name,
+                               str(self.repo.root / decoy)], capture_output=True, stdin=subprocess.DEVNULL,
+                              env=self.repo.env, cwd=self.repo.base, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        result = json.loads(done.stdout)
+        self.assertEqual(result.pop("environment"), self.built_environment(str(Path(FOUND_GIT).parent)),
+                         "the probe process got another environment")
+        return result
+
+
+class Controls(GateCase):
+    def test_unchanged_repository_passes(self):
+        self.control()
+
+    def test_list_prints_each_file_and_the_total(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_does_not_parse_the_allowlist(self):
+        self.repo.set_rows("README.md\t5\tkeep\tCC BY-SA 4.0", "README.md\t0\tkeep")
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_passes_with_an_allowlist_that_is_not_utf8(self):
+        self.repo.write(ALLOWLIST, (HEADER + ROW + "\n# \xff\n").encode("latin-1"))
+        self.repo.git("add", ALLOWLIST)
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_a_file_with_2_matching_lines_counts_each(self):
+        # The line total and the file total differ here, so the summary, the count of the file and the
+        # total line are each pinned to what they count.
+        self.repo.track("README.md", README + b"Licence: CC BY-SA 4.0\n")
+        self.repo.set_rows("README.md\t2\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 2 lines in 1 files; 0 problem(s)\n")
+        self.passes("README.md:2\ntotal: 2 lines in 1 files\n", "--list")
+
+    def test_no_matching_line_and_no_row_passes(self):
+        # No tracked line outside the named exceptions names a licence term and the allowlist has no
+        # row; its comment holds the matching line that a named exception must hold. Nothing is found
+        # and nothing is claimed, so the gate passes.
+        self.repo.track("README.md", b"# Example\n")
+        self.repo.write(ALLOWLIST, (HEADER + "# a row claims lines such as CC BY-SA 4.0\n").encode("utf-8"))
+        self.repo.git("add", ALLOWLIST)
+        self.passes(PREFIX + "checked: 0 lines in 0 files; 0 problem(s)\n")
+        self.passes("total: 0 lines in 0 files\n", "--list")
+
+    def test_default_root_is_the_repository_that_holds_the_gate(self):
+        # The copy of the gate in the repository runs with no --root, alone and with --list, so its default
+        # root must be the repository of its own file.
+        self.passes(default_root=True)
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", default_root=True)
+
+    def test_marker_is_literal_text(self):
+        # As a regular expression, [CC] BY-SA would need a C before " BY-SA", which this line does not hold.
+        self.repo.track("bracket.md", b"Licence: [CC] BY-SA\n")
+        self.repo.add_row("bracket.md\t1\tkeep\t[CC] BY-SA")
+        self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+
+    def test_each_owner_is_accepted(self):
+        for owner in ("unit-2", "unit-3", "keep"):
+            with self.subTest(owner=owner):
+                self.repo.set_rows(f"README.md\t1\t{owner}\tCC BY-SA 4.0")
+                self.control()
+
+    def test_git_found_through_a_relative_path_entry(self):
+        # This test, loaded in a process whose PATH is a relative folder that holds git, must make the
+        # git that it finds an absolute path, which each process of a case can run from its own folder.
+        place = self.repo.base / "relative"
+        (place / "bin").mkdir(parents=True)
+        os.symlink(FOUND_GIT, place / "bin" / "git")
+        loader = ("import importlib.util, sys\nsys.dont_write_bytecode = True\n"
+                  "spec = importlib.util.spec_from_file_location('suite', sys.argv[1])\n"
+                  "suite = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(suite)\n"
+                  "print(suite.FOUND_GIT)\n")
+        done = subprocess.run([sys.executable, "-I", "-c", loader, str(SELF)], capture_output=True, cwd=place,
+                              env={"PATH": "bin"}, stdin=subprocess.DEVNULL, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        found = done.stdout.decode("utf-8", "replace").strip()
+        self.assertTrue(os.path.isabs(found), found)
+        self.assertEqual(os.path.realpath(found), os.path.realpath(FOUND_GIT))
+
+    def test_git_location_settings_of_the_gate_change_no_result(self):
+        # Each setting points git at an index or repository whose listing differs from the root's: a copy
+        # of the index and of .git taken while extra.md, whose line no row claims, was tracked, and a
+        # folder that is not a repository. If git used it, the gate would report extra.md or fail.
+        self.repo.track("extra.md", b"CC BY-SA 4.0\n")
+        shutil.copyfile(self.repo.root / ".git" / "index", self.repo.base / "other-index")
+        shutil.copytree(self.repo.root / ".git", self.repo.base / "other-git")
+        self.repo.git("rm", "-q", "-f", "--", "extra.md")
+        self.control()
+        settings = {"GIT_INDEX_FILE": str(self.repo.base / "other-index"), "GIT_DIR": str(self.repo.base / "other-git"),
+                    "GIT_COMMON_DIR": str(self.repo.base / "home")}
+        for name, value in settings.items():
+            with self.subTest(setting=name):
+                env = dict(self.repo.env, **{name: value})
+                self.passes(env=env)
+                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", env=env)
+
+    def test_carriage_returns_alone_do_not_end_a_line(self):
+        self.repo.track("notes.txt", b"CC BY-SA 4.0\rBY-SA again\rCC BY-SA 4.0\r")
+        self.repo.add_row("notes.txt\t1\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+
+    def test_other_control_binary_and_non_utf8_bytes_do_not_end_a_line(self):
+        self.repo.track("ctl.txt", b"plain\n" + b"".join(sep + TERM for sep in SEPARATORS) + b"\n")
+        self.repo.track("bin.dat", b"\x00\xff\xfe\n\x00" + TERM + b"\x00\xff\n\x00\n")
+        self.repo.set_rows(ROW, "ctl.txt\t1\tkeep\tCC BY-SA 4.0", "bin.dat\t1\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 3 lines in 3 files; 0 problem(s)\n")
+
+    def test_near_misses_of_the_terms_match_nothing(self):
+        near = ("BY SA", "BY_SA", "BYSA", "BY-S A", "BY\u2010SA", "Share Alike", "Share-Alike", "\u017fhareAlike",
+                "CreativeCommons", "Creative  Commons", "Creative\tCommons", "Creative Common", "Apache-2.0", "MIT")
+        self.repo.track("near.txt", "".join(text + "\n" for text in near).encode("utf-8"))
+        self.control()
+
+    def test_untracked_file_is_not_read(self):
+        self.repo.write("untracked.md", b"ShareAlike\n")
+        self.control()
+
+    def test_executable_file_is_read(self):
+        self.repo.track_executable("tool.sh", b"#!/bin/sh\n# CC BY-SA 4.0\n")
+        self.repo.add_row("tool.sh\t1\tkeep\tCC BY-SA 4.0")
+        self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+        self.passes("README.md:1\ntool.sh:1\ntotal: 2 lines in 2 files\n", "--list")
+
+    def test_unknown_option_exits_2(self):
+        code, out, err = self.run_gate("--bogus")
+        self.assertEqual((code, out), (2, ""), err)
+        self.assertIn("unrecognized arguments: --bogus", err)
+
+    def test_read_file_returns_a_regular_file(self):
+        self.assertEqual(self.probe("plain", "README.md", "README.md"),
+                         {"data": README.decode("latin-1"), "problems": []})
+
+    def test_root_replaced_while_git_lists(self):
+        # The stand-in git runs after the gate opens the root and after git has started in it. It moves
+        # the root folder aside, puts a link in its place to a copy whose README.md holds a line that no
+        # row claims and whose allowlist holds a malformed row, and records its working folder. A gate
+        # that opened the root, or the allowlist, again by its path would read that copy and report the
+        # line or the row. Git is already in its working folder when it moves the root, so this case
+        # cannot tell where git started; test_root_replaced_before_git_starts does.
+        self.control()
+        replacement, held = self.repo.base / "replacement", self.repo.base / "held"
+        shutil.copytree(self.repo.root, replacement, ignore=shutil.ignore_patterns(".git"))
+        (replacement / "README.md").write_bytes(README + b"ShareAlike\n")
+        (replacement / ALLOWLIST).write_bytes((HEADER + ROW + "\nREADME.md\t1\tunit-9\tShareAlike\n").encode("utf-8"))
+        record = self.repo.base / "git-folder.txt"
+        swap = (f"import os\nos.rename({str(self.repo.root)!r}, {str(held)!r})\n"
+                f"os.symlink({str(replacement)!r}, {str(self.repo.root)!r})\n"
+                f"open({str(record)!r}, 'w', encoding='utf-8').write(os.getcwd())\n")
+        env = self.fake_git(LISTING, b"", 0, then=swap)
+        for args, out_text in (((), CONTROL_OUT), (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
+            with self.subTest(args=args):
+                try:
+                    self.passes(out_text, *args, env=env)
+                    self.assertEqual(Path(record.read_text(encoding="utf-8")).resolve(), held.resolve(),
+                                     "git did not work in the root folder that the gate opened")
+                finally:
+                    # Undo the swap, so the next subtest meets the unchanged repository.
+                    record.unlink(missing_ok=True)
+                    if self.repo.root.is_symlink():
+                        self.repo.root.unlink()
+                        held.rename(self.repo.root)
+
+    def test_root_replaced_before_git_starts(self):
+        # After the gate opens the root and before git starts, the launcher moves the root folder aside
+        # and puts a link in its place to a copy, without .git, whose README.md holds a line that no row
+        # claims and whose allowlist holds a malformed row. The stand-in git records the folder that it
+        # starts in, which a gate that started git at the root's path would make that copy.
+        self.control()
+        replacement, held = self.repo.base / "replacement", self.repo.base / "held"
+        shutil.copytree(self.repo.root, replacement, ignore=shutil.ignore_patterns(".git"))
+        (replacement / "README.md").write_bytes(README + b"ShareAlike\n")
+        (replacement / ALLOWLIST).write_bytes((HEADER + ROW + "\nREADME.md\t1\tunit-9\tShareAlike\n").encode("utf-8"))
+        record = self.repo.base / "git-folder.txt"
+        env = self.fake_git(LISTING, b"", 0, then=f"open({str(record)!r}, 'w', encoding='utf-8').write(os.getcwd())\n")
+        launch = ("swap-root", str(self.repo.root), str(held), str(replacement))
+        for args, out_text in (((), CONTROL_OUT), (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
+            with self.subTest(args=args):
+                try:
+                    self.passes(out_text, *args, env=env, launch=launch)
+                    self.assertEqual(Path(record.read_text(encoding="utf-8")).resolve(), held.resolve(),
+                                     "git did not start in the root folder that the gate opened")
+                finally:
+                    # Undo the swap, so the next subtest meets the unchanged repository.
+                    record.unlink(missing_ok=True)
+                    if self.repo.root.is_symlink():
+                        self.repo.root.unlink()
+                        held.rename(self.repo.root)
+
+    def test_git_settings_of_the_caller_change_no_result(self):
+        # If any of these reached git, git add -A would leave README.md out, through the excludes file
+        # under XDG_CONFIG_HOME or HOME or the core.excludesFile of GIT_CONFIG_COUNT, or git would look
+        # for the repository at GIT_DIR, so the repository built under them would not pass.
+        caller = self.repo.base / "caller"
+        for folder in (caller / "git", caller / ".config" / "git"):
+            folder.mkdir(parents=True)
+            (folder / "ignore").write_bytes(b"*.md\n")
+        (caller / "exclude").write_bytes(b"*.md\n")
+        settings = {"XDG_CONFIG_HOME": str(caller), "HOME": str(caller), "GIT_DIR": str(caller / "none"),
+                    "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.excludesFile",
+                    "GIT_CONFIG_VALUE_0": str(caller / "exclude")}
+        with mock.patch.dict(os.environ, settings):
+            self.repo = Repo(self.repo.base / "case")
+            self.control()
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_git_init_takes_no_template(self):
+        # A template gives .git its hooks, its info/exclude, which git add reads, and its description.
+        made = sorted(entry.name for entry in (self.repo.root / ".git").iterdir())
+        self.assertEqual([name for name in made if name in ("branches", "description", "hooks", "info")], [], made)
+        # A populated template that git init copies when it is not given --template=, so the result
+        # does not depend on the template that the installed git has.
+        template = self.repo.base / "template"
+        (template / "hooks").mkdir(parents=True)
+        (template / "info").mkdir()
+        (template / "description").write_bytes(b"from the template\n")
+        (template / "info" / "exclude").write_bytes(b"*.md\n")
+
+        class Templated(Repo):
+            def git(self, *args: str, stdin: bytes = b"") -> str:
+                self.env = dict(self.env, GIT_TEMPLATE_DIR=str(template))
+                return super().git(*args, stdin=stdin)
+
+        copied = self.repo.base / "copied"
+        copied.mkdir()
+        done = subprocess.run(["git", "-C", str(copied), "init", "-q"], capture_output=True, cwd=self.repo.base,
+                              env=dict(self.repo.env, GIT_TEMPLATE_DIR=str(template)), timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((copied / ".git" / "description").read_bytes(), b"from the template\n")
+        templated = Templated(self.repo.base / "case")
+        made = sorted(entry.name for entry in (templated.root / ".git").iterdir())
+        self.assertEqual([name for name in made if name in ("branches", "description", "hooks", "info")], [], made)
+
+
+class Refusals(GateCase):
+    def test_unclaimed_line_in_another_file(self):
+        self.control()
+        self.repo.track("other.md", b"CC BY-SA 4.0\n")
+        self.refused("other.md:1: names a licence term and no allowlist row claims it")
+
+    def test_each_term_in_another_letter_case(self):
+        self.control()
+        for number, term in enumerate((b"by-sa", b"SHAREALIKE", b"creative COMMONS"), 1):
+            with self.subTest(term=term):
+                name = f"case{number}.md"
+                self.repo.track(name, b"plain\n" + term + b"\n")
+                try:
+                    self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
+                finally:
+                    self.repo.git("rm", "-q", "-f", name)
+                self.control()
+
+    def test_term_inside_other_letters_or_digits(self):
+        # The search is for a substring, so a term with a letter or digit on each side still matches.
+        self.control()
+        for number, term in enumerate((b"xBY-SAx", b"9ShareAlike9", b"aCreative Commonsz"), 1):
+            with self.subTest(term=term):
+                name = f"inside{number}.md"
+                self.repo.track(name, b"plain\n" + term + b"\n")
+                try:
+                    self.refused(f"{name}:2: names a licence term and no allowlist row claims it")
+                finally:
+                    self.repo.git("rm", "-q", "-f", name)
+                self.control()
+
+    def test_unclaimed_line_in_an_executable_file(self):
+        self.control()
+        self.repo.track_executable("tool.sh", b"#!/bin/sh\n# CC BY-SA 4.0\n")
+        self.refused("tool.sh:2: names a licence term and no allowlist row claims it",
+                     out_text=PREFIX + "checked: 2 lines in 2 files; 1 problem(s)\n")
+
+    def test_line_ends_only_at_a_line_feed(self):
+        self.control()
+        self.repo.track("ctl.txt", b"plain\n" + b"".join(sep + TERM for sep in SEPARATORS) + b"\nplain\n")
+        self.repo.track("bin.dat", b"\x00\xff\xfe\n\x00" + TERM + b"\x00\xff\n\x00\n")
+        self.refused("ctl.txt:2: names a licence term and no allowlist row claims it",
+                     also=("bin.dat:2: names a licence term and no allowlist row claims it",),
+                     out_text=PREFIX + "checked: 3 lines in 3 files; 2 problem(s)\n")
+
+    def test_line_matching_no_marker_of_its_file(self):
+        self.control()
+        self.repo.track("README.md", README + b"ShareAlike\n")
+        self.refused("README.md:4: names a licence term and no allowlist row claims it",
+                     out_text=PREFIX + "checked: 2 lines in 1 files; 1 problem(s)\n")
+
+    def test_marker_is_matched_with_its_letter_case(self):
+        self.control()
+        # A line that no row claims leaves its row, of count 1, claiming 0 lines, so the row is stale too.
+        with self.subTest(case="marker in lower case, line in upper case"):
+            self.repo.set_rows("README.md\t1\tkeep\tcc by-sa 4.0")
+            try:
+                self.refused("README.md:3: names a licence term and no allowlist row claims it",
+                             also=("allowlist row 2 (keep, marker 'cc by-sa 4.0') is stale: it claims 0 line(s), "
+                                   "the allowlist says 1",))
+            finally:
+                self.repo.set_rows(ROW)
+            self.control()
+        with self.subTest(case="marker in upper case, line in lower case"):
+            self.repo.track("README.md", b"# Example\n\nLicence: cc by-sa 4.0\n")
+            self.refused("README.md:3: names a licence term and no allowlist row claims it",
+                         also=("allowlist row 2 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s), "
+                               "the allowlist says 1",))
+            self.repo.track("README.md", README)
+            self.control()
+
+    def test_marker_is_not_a_pattern(self):
+        # As a regular expression, the dot of 4.0 would match the x of 4x0 and claim the line.
+        self.control()
+        self.repo.track("dotted.md", b"Licence: CC BY-SA 4x0\n")
+        self.repo.add_row("dotted.md\t1\tkeep\tCC BY-SA 4.0")
+        self.refused("dotted.md:1: names a licence term and no allowlist row claims it",
+                     also=("dotted.md: allowlist row 3 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s), "
+                           "the allowlist says 1",))
+
+    def test_removed_line_leaves_a_stale_row(self):
+        self.control()
+        # An empty file is read and holds no line, so its row is stale, unlike the row of a file that cannot be read.
+        for data in (b"# Example\n", b""):
+            with self.subTest(data=data):
+                self.repo.track("README.md", data)
+                self.refused("is stale: it claims 0 line(s), the allowlist says 1")
+
+    def test_count_off_by_one(self):
+        self.control()
+        self.repo.set_rows("README.md\t2\tkeep\tCC BY-SA 4.0")
+        self.refused("is stale: it claims 1 line(s), the allowlist says 2")
+
+    def test_new_line_of_a_claimed_kind_leaves_a_stale_row(self):
+        self.control()
+        self.repo.track("README.md", README + b"Licence: CC BY-SA 4.0\n")
+        self.refused("README.md: allowlist row 2 (keep, marker 'CC BY-SA 4.0') is stale: it claims 2 line(s), "
+                     "the allowlist says 1", out_text=PREFIX + "checked: 2 lines in 1 files; 1 problem(s)\n")
+
+    def test_count_of_any_length_is_read(self):
+        self.control()
+        count = "1" + "0" * 5000
+        self.repo.set_rows(f"README.md\t{count}\tkeep\tCC BY-SA 4.0")
+        self.refused(f"is stale: it claims 1 line(s), the allowlist says {count}")
+
+    def test_two_markers_on_one_line(self):
+        self.control()
+        self.repo.add_row("README.md\t1\tunit-3\tBY-SA 4.0")
+        # A line that holds the markers of 2 rows is claimed by neither, so each row, of count 1, claims 0
+        # lines and is stale.
+        self.refused("README.md:3: holds the markers of allowlist rows 2, 3, so it is ambiguous and no row claims it",
+                     also=("allowlist row 2 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s)",
+                           "allowlist row 3 (unit-3, marker 'BY-SA 4.0') is stale: it claims 0 line(s)"))
+
+    def test_three_markers_on_one_line(self):
+        # A line that holds the markers of 3 rows is claimed by none, as with 2. The problem lines are
+        # compared whole, so a line that showed any of the file's text would fail.
+        self.control()
+        self.repo.set_rows(ROW, "README.md\t1\tunit-3\tBY-SA 4.0", "README.md\t1\tunit-2\tLicence:")
+        stale = "README.md: allowlist row {} ({}, marker '{}') is stale: it claims 0 line(s), the allowlist says 1"
+        lines = (PREFIX + "README.md:3: holds the markers of allowlist rows 2, 3, 4, so it is ambiguous and no row "
+                 "claims it", PREFIX + stale.format(2, "keep", "CC BY-SA 4.0"),
+                 PREFIX + stale.format(3, "unit-3", "BY-SA 4.0"), PREFIX + stale.format(4, "unit-2", "Licence:"))
+        err = self.refused(lines[0], also=lines[1:], out_text=PREFIX + "checked: 1 lines in 1 files; 4 problem(s)\n")
+        self.assertEqual(err, "".join(line + "\n" for line in lines))
+
+    def test_malformed_rows(self):
+        self.control()
+        cases = [
+            ("README.md\t1\tkeep", "it has 3 tab-separated field(s), not 4"),
+            ("README.md\t1\tkeep\tLicence:\tmore", "it has 5 tab-separated field(s), not 4"),
+            ("README.md\t1\tkeep\tLicence:\r", "it holds a carriage return"),
+            ("README.md\t1\tunit-9\tLicence:", "the owner 'unit-9' is none of unit-2, unit-3, keep"),
+            ("README.md\t1\tkeep\t", "the marker is empty"),
+            (ROW, "it repeats the path and marker of row 2"),
+            ("missing.md\t1\tkeep\tLicence:", "missing.md is not a tracked path"),
+        ]
+        cases += [(f"{path}\t1\tkeep\tLicence:", f"{path} is a named exception") for path in NAMED_EXCEPTIONS]
+        counts = (("0", "0"), ("01", "01"), ("00", "00"), ("+1", "+1"), ("-1", "-1"), (" 1", " 1"), ("1 ", "1 "),
+                  ("", ""), ("1x", "1x"), ("1_0", "1_0"), ("1.0", "1.0"), ("0x1", "0x1"), ("1e3", "1e3"),
+                  ("\u0661", "\\u0661"), ("1\u0663", "1\\u0663"), ("\uff11", "\\uff11"), ("\u00b9", "\\xb9"))
+        cases += [(f"README.md\t{count}\tkeep\tLicence:", f"the count '{shown}' {BAD_COUNT}") for count, shown in counts]
+        for row, cause in cases:
+            with self.subTest(row=row):
+                self.repo.add_row(row)
+                self.refused(f"{ALLOWLIST}:3: malformed row: {cause}")
+
+    def test_repeat_of_a_malformed_row(self):
+        self.control()
+        self.repo.set_rows(ROW, "README.md\t0\tkeep\tLicence:", "README.md\t1\tkeep\tLicence:")
+        self.refused(f"{ALLOWLIST}:3: malformed row: the count '0' {BAD_COUNT}",
+                     also=(f"{ALLOWLIST}:4: malformed row: it repeats the path and marker of row 3",))
+
+    def test_row_without_4_fields_or_with_a_carriage_return_is_no_earlier_row(self):
+        self.control()
+        cases = (("README.md\t1\r\tkeep\tCC BY-SA 4.0", "it holds a carriage return"),
+                 ("README.md\t1\tkeep\tCC BY-SA 4.0\tmore", "it has 5 tab-separated field(s), not 4"))
+        for row, cause in cases:
+            with self.subTest(row=row):
+                # The well-formed row after it repeats no earlier row, so it claims the README.md line.
+                self.repo.set_rows(row, ROW)
+                self.refused(f"{ALLOWLIST}:2: malformed row: {cause}")
+
+    def test_shown_fields_are_escaped_once(self):
+        self.control()
+        # An escape byte, a backslash, DEL (0x7f), a Latin-1 letter, a character of the BMP and 1 above it.
+        name = "a\x1bb\\c\x7f\u00e9\u2028\U0001f600.md"
+        shown = "a\\x1bb\\\\c\\x7f\\xe9\\u2028\\U0001f600.md"
+        with self.subTest(field="path"):
+            self.repo.track(name, b"CC BY-SA 4.0\n")
+            try:
+                self.refused(f"{PREFIX}{shown}:1: names a licence term and no allowlist row claims it")
+                self.passes(f"README.md:1\n{shown}:1\ntotal: 2 lines in 2 files\n", "--list")
+            finally:
+                self.repo.git("rm", "-q", "-f", "--", name)
+            self.control()
+        rows = (
+            ("README.md\t1\tkeep\tx\x1by",
+             f"{PREFIX}README.md: allowlist row 3 (keep, marker 'x\\x1by') is stale: it claims 0 line(s), "
+             "the allowlist says 1"),
+            ("README.md\t1\x1b\tkeep\tLicence:", f"{PREFIX}{ALLOWLIST}:3: malformed row: the count '1\\x1b' {BAD_COUNT}"),
+            ("README.md\t1\tke\x1bep\tLicence:",
+             f"{PREFIX}{ALLOWLIST}:3: malformed row: the owner 'ke\\x1bep' is none of unit-2, unit-3, keep"),
+            ("mi\x1bss.md\t1\tkeep\tLicence:", f"{PREFIX}{ALLOWLIST}:3: malformed row: mi\\x1bss.md is not a tracked path"),
+        )
+        for row, line in rows:
+            with self.subTest(row=row):
+                self.repo.add_row(row)
+                self.refused(line)
+        self.repo.set_rows(ROW)
+        self.control()
+        with self.subTest(field="mode and stage"):
+            # A stand-in git lists an entry whose mode, and 1 whose stage, holds an escape byte, a backslash
+            # and a byte that is not ASCII, which the gate reads as U+FFFD; stage.md is in the work tree.
+            self.repo.write("stage.md", b"no term\n")
+            listing = (LISTING + b"10\x1b\\\xff644 " + b"0" * 40 + b" 0\tmode.md\0"
+                       + b"100644 " + b"0" * 40 + b" \x1b\\\xff\tstage.md\0")
+            mode_line = (f"{PREFIX}mode.md: tracked with mode 10\\x1b\\\\\\ufffd644, not as a regular file (a "
+                         "symbolic link or a submodule), so the gate cannot read it")
+            stage_line = (f"{PREFIX}stage.md: an unmerged index entry (stage \\x1b\\\\\\ufffd), so the gate cannot "
+                          "tell which version is tracked")
+            env = self.fake_git(listing, b"", 0)
+            # The stage is read as git lists the entries, before any file is read, so its line comes first.
+            for args, out_text in (((), PREFIX + "checked: 1 lines in 1 files; 2 problem(s)\n"),
+                                   (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
+                err = self.refused(stage_line, *args, also=(mode_line,), env=env, out_text=out_text)
+                self.assertEqual(err, stage_line + "\n" + mode_line + "\n")
+            (self.repo.root / "stage.md").unlink()
+        with self.subTest(field="root"):
+            # A root path, which no folder holds, with an escape byte, a backslash and a letter outside ASCII.
+            odd = str(self.repo.base / "r\x1bo\\ot\xe9")
+            cause = f"{PREFIX}{escaped(odd)}: cannot open the root folder: FileNotFoundError"
+            self.refused(cause, "--root", odd, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+            self.refused(cause, "--list", "--root", odd, out_text="total: 0 lines in 0 files\n")
+
+    def test_tracked_path_is_escaped_in_each_problem_line(self):
+        # Each problem line here shows a tracked path that holds ODD_PART, so a line that showed the path
+        # without its escapes fails. The first line ends with an error's text, which holds the path as
+        # well, so it is matched from its start; each other line is compared whole.
+        self.control()
+        name, shown = f"{ODD_PART}.md", f"{ODD_PART_SHOWN}.md"
+        with self.subTest(line="a file deleted from the work tree"):
+            self.repo.track(name, b"no term\n")
+            (self.repo.root / name).unlink()
+            try:
+                self.refused(f"{PREFIX}{shown}: cannot read the tracked file: FileNotFoundError")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
+            self.control()
+        with self.subTest(line="a tracked symbolic link"):
+            os.symlink("README.md", self.repo.root / name)
+            self.repo.git("add", "--", name)
+            line = (f"{PREFIX}{shown}: tracked with mode 120000, not as a regular file (a symbolic link or a "
+                    "submodule), so the gate cannot read it")
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
+                (self.repo.root / name).unlink()
+            self.control()
+        with self.subTest(line="a parent that is a file"):
+            path = f"{ODD_PART}/notes.md"
+            self.repo.track(path, b"no term\n")
+            shutil.rmtree(self.repo.root / ODD_PART)
+            (self.repo.root / ODD_PART).write_bytes(b"no term\n")
+            line = (f"{PREFIX}{ODD_PART_SHOWN}/notes.md: the tracked path is not a regular file in the work tree, "
+                    f"since its parent {ODD_PART_SHOWN} is not a folder in the work tree")
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                (self.repo.root / ODD_PART).unlink()
+                self.repo.git("rm", "-q", "--cached", "--", path)
+            self.control()
+        with self.subTest(line="an unmerged entry"):
+            self.repo.track(name, b"no term\n")
+            blob = self.repo.git("hash-object", "-w", name).strip()
+            info = f"0 {'0' * 40}\t{name}\n100644 {blob} 1\t{name}\n".encode("utf-8")
+            self.repo.git("update-index", "--index-info", stdin=info)
+            line = (f"{PREFIX}{shown}: an unmerged index entry (stage 1), so the gate cannot tell which version is "
+                    "tracked")
+            try:
+                self.assertEqual(self.refused(line), line + "\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", name)
+                (self.repo.root / name).unlink()
+            self.control()
+        with self.subTest(line="a line that holds the markers of 2 rows, and their stale rows"):
+            self.repo.track(name, b"CC BY-SA 4.0\n")
+            self.repo.set_rows(ROW, f"{name}\t1\tkeep\tCC BY-SA 4.0", f"{name}\t1\tunit-3\tBY-SA 4.0")
+            lines = (f"{PREFIX}{shown}:1: holds the markers of allowlist rows 3, 4, so it is ambiguous and no row "
+                     "claims it",
+                     f"{PREFIX}{shown}: allowlist row 3 (keep, marker 'CC BY-SA 4.0') is stale: it claims 0 line(s), "
+                     "the allowlist says 1",
+                     f"{PREFIX}{shown}: allowlist row 4 (unit-3, marker 'BY-SA 4.0') is stale: it claims 0 line(s), "
+                     "the allowlist says 1")
+            err = self.refused(lines[0], also=lines[1:])
+            self.assertEqual(err, "".join(line + "\n" for line in lines))
+
+    def test_refusal_helper_needs_a_pass_on_the_repository_as_built(self):
+        # Each change below, a file whose line no row claims, is 1 that the gate refuses, so a helper
+        # without its rule would check the refusal and pass. The helper must fail first: with no run of
+        # the gate before it, after a run that passed on a changed index alone, and after a run that
+        # passed on changed bytes of a tracked file alone.
+        guard = "before any run of the gate passed on the unchanged repository"
+        unclaimed = "other.md:1: names a licence term and no allowlist row claims it"
+        befores = {
+            "no run of the gate": lambda: None,
+            "a pass on a changed index": lambda: self.repo.git("update-index", "--chmod=+x", "--", "README.md"),
+            "a pass on changed bytes of a tracked file": lambda: self.repo.write("README.md", README + b"plain\n"),
+        }
+        for before, change in befores.items():
+            with self.subTest(before=before):
+                try:
+                    change()
+                    if before != "no run of the gate":
+                        self.passes()
+                    self.repo.track("other.md", b"CC BY-SA 4.0\n")
+                    with self.assertRaises(AssertionError) as caught:
+                        self.refused(unclaimed)
+                    self.assertIn(guard, str(caught.exception))
+                finally:
+                    # Back to the repository as Repo built it. The bytes come back first, since update-index
+                    # also reads README.md from the work tree.
+                    self.repo.git("rm", "-q", "--cached", "--ignore-unmatch", "--", "other.md")
+                    (self.repo.root / "other.md").unlink(missing_ok=True)
+                    self.repo.write("README.md", README)
+                    self.repo.git("update-index", "--chmod=-x", "--", "README.md")
+                self.assertEqual(self.repo.state(), self.built)
+        # After a run that passed on the repository as built, the helper checks the refusal.
+        self.control()
+        self.repo.track("other.md", b"CC BY-SA 4.0\n")
+        self.refused(unclaimed)
+
+    def test_missing_allowlist(self):
+        self.control()
+        (self.repo.root / ALLOWLIST).unlink()
+        # The allowlist is read 2 times, as a named exception and as the allowlist, and with no row
+        # left the README.md line is unclaimed.
+        self.refused("the allowlist cannot be read",
+                     also=(f"{ALLOWLIST}: cannot read the tracked file: FileNotFoundError",
+                           f"{ALLOWLIST}: cannot read the tracked file: FileNotFoundError",
+                           "README.md:3: names a licence term and no allowlist row claims it"))
+
+    def test_allowlist_not_utf8(self):
+        self.control()
+        self.repo.write(ALLOWLIST, (HEADER + ROW + "\n# \xff\n").encode("latin-1"))
+        self.repo.git("add", ALLOWLIST)
+        # With the allowlist refused, no row claims the README.md line.
+        self.refused("the allowlist is not UTF-8",
+                     also=("README.md:3: names a licence term and no allowlist row claims it",))
+
+    def test_tracked_file_deleted_from_the_work_tree(self):
+        self.control()
+        self.repo.track("gone.md", b"no term\n")
+        (self.repo.root / "gone.md").unlink()
+        self.refused("gone.md: cannot read the tracked file: FileNotFoundError")
+
+    def test_tracked_symbolic_link(self):
+        self.control()
+        os.symlink("README.md", self.repo.root / "link.md")
+        self.repo.git("add", "link.md")
+        self.refused("link.md: tracked with mode 120000")
+
+    def test_work_tree_symbolic_link_at_a_regular_entry(self):
+        self.control()
+        outside = self.repo.base / "outside.md"
+        outside.write_bytes(README + b"ShareAlike\n")
+        (self.repo.root / "README.md").unlink()
+        os.symlink(outside, self.repo.root / "README.md")
+        # Compared whole, since the cause is also the start of the line of another cause.
+        line = f"{PREFIX}README.md: the tracked path is not a regular file in the work tree"
+        err = self.refused(line, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+        self.assertEqual(err, line + "\n")
+
+    def test_parent_that_is_not_a_folder_in_the_work_tree(self):
+        # The file that a parent link would reach holds no term, so a gate that read through the link
+        # would report the row of the tracked file as stale in place of this cause.
+        self.control()
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"no term\n")
+        (self.repo.root / "elsewhere").mkdir()
+        (self.repo.root / "elsewhere" / "notes.md").write_bytes(b"no term\n")
+        cases = (("sub/notes.md", "sub", "a link to a folder outside the work tree"),
+                 ("deep/sub/notes.md", "deep/sub", "a link to a folder outside the work tree"),
+                 ("sub/notes.md", "sub", "a link to a folder inside the work tree"),
+                 ("deep/sub/notes.md", "deep", "a file"))
+        for path, parent, kind in cases:
+            with self.subTest(path=path, parent=parent, kind=kind):
+                try:
+                    self.repo.track(path, b"ShareAlike\n")
+                    self.repo.add_row(f"{path}\t1\tkeep\tShareAlike")
+                    self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+                    shutil.rmtree(self.repo.root / parent)
+                    if kind == "a file":
+                        (self.repo.root / parent).write_bytes(b"no term\n")
+                    else:
+                        target = outside if "outside" in kind else Path("elsewhere")
+                        os.symlink(target, self.repo.root / parent)
+                    self.refused(f"{PREFIX}{path}: the tracked path is not a regular file in the work tree, since "
+                                 f"its parent {parent} is not a folder in the work tree",
+                                 out_text=PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n")
+                finally:
+                    # The parent is a link or a file once the change is made, and a folder before it.
+                    entry = self.repo.root / parent
+                    if entry.is_symlink() or entry.is_file():
+                        entry.unlink()
+                    else:
+                        shutil.rmtree(entry, ignore_errors=True)
+                    self.repo.git("rm", "-q", "--cached", "--ignore-unmatch", "--", path)
+                    self.repo.set_rows(ROW)
+                self.control()
+
+    def test_list_fails_on_a_parent_that_is_not_a_folder(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.repo.track("sub/notes.md", b"ShareAlike\n")
+        self.passes("README.md:1\nsub/notes.md:1\ntotal: 2 lines in 2 files\n", "--list")
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"no term\n")
+        shutil.rmtree(self.repo.root / "sub")
+        os.symlink(outside, self.repo.root / "sub")
+        self.refused(f"{PREFIX}sub/notes.md: the tracked path is not a regular file in the work tree, since its "
+                     "parent sub is not a folder in the work tree", "--list",
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
+    def test_path_that_is_not_plain_relative(self):
+        # Each path would reach a file with a matching line if the gate opened it as written: 1 outside
+        # the work tree, 1 the copy of the gate, 1 a file with a name outside ASCII and the others
+        # README.md. The only part of tools//check-licence-names.py that is refused is its empty part, and
+        # the absolute paths are written in the file system's encoding, whatever the temporary folder holds.
+        self.control()
+        (self.repo.base / "outside.md").write_bytes(b"CC BY-SA 4.0\n")
+        (self.repo.root / "d\xe9j\xe0.md").write_bytes(b"CC BY-SA 4.0\n")
+        paths = ("../outside.md", str(self.repo.root / "README.md"), str(self.repo.root / "d\xe9j\xe0.md"),
+                 "./README.md", "tools//../README.md", "tools//check-licence-names.py", "tools/../README.md")
+        listing = LISTING + b"".join(b"100644 " + b"0" * 40 + b" 0\t" + os.fsencode(path) + b"\0"
+                                     for path in paths)
+        env = self.fake_git(listing, b"", 0)
+        causes = [f"{PREFIX}{escaped(path)}:{NOT_PLAIN}" for path in paths]
+        self.refused(causes[0], also=tuple(causes[1:]), env=env,
+                     out_text=PREFIX + f"checked: 1 lines in 1 files; {len(paths)} problem(s)\n")
+        self.refused(causes[0], "--list", also=tuple(causes[1:]), env=env,
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
+    def test_work_tree_fifo_at_a_regular_entry(self):
+        self.control()
+        (self.repo.root / "README.md").unlink()
+        os.mkfifo(self.repo.root / "README.md")
+        # Compared whole, since the cause is also the start of the line of another cause.
+        line = f"{PREFIX}README.md: the tracked path is not a regular file in the work tree"
+        err = self.refused(line, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+        self.assertEqual(err, line + "\n")
+
+    def test_tracked_submodule_entry(self):
+        self.control()
+        self.repo.git("update-index", "--add", "--cacheinfo", f"160000,{'1' + '0' * 39},sub")
+        self.refused("sub: tracked with mode 160000")
+
+    def test_folder_in_place_of_a_tracked_file(self):
+        self.control()
+        self.repo.track("place.md", b"no term\n")
+        (self.repo.root / "place.md").unlink()
+        (self.repo.root / "place.md").mkdir()
+        # Compared whole, since the cause is also the start of the line of another cause.
+        line = f"{PREFIX}place.md: the tracked path is not a regular file in the work tree"
+        err = self.refused(line)
+        self.assertEqual(err, line + "\n")
+
+    def test_descriptor_that_is_not_a_regular_file(self):
+        os.mkfifo(self.repo.root / "fifo")
+        self.assertEqual(self.probe("descriptor", "fifo", "README.md"),
+                         {"data": None, "problems": ["fifo: the tracked path is not a regular file in the work tree"]})
+
+    def test_symbolic_link_after_the_lstat_check(self):
+        os.symlink("README.md", self.repo.root / "link.md")
+        result = self.probe("swap", "link.md", "README.md")
+        self.assertIsNone(result["data"])
+        self.assertEqual(len(result["problems"]), 1, result)
+        self.assertTrue(result["problems"][0].startswith(
+            f"link.md: cannot read the tracked file: OSError: [Errno {errno.ELOOP}]"), result)
+
+    def test_parent_link_after_the_lstat_check(self):
+        # Each link leads to a folder outside the work tree whose notes.md holds a term, so a reader
+        # that followed it would return those bytes.
+        outside = self.repo.base / "outside"
+        outside.mkdir()
+        (outside / "notes.md").write_bytes(b"OUTSIDE BYTES CC BY-SA 4.0\n")
+        (self.repo.root / "deep").mkdir()
+        os.symlink(outside, self.repo.root / "sub")
+        os.symlink(outside, self.repo.root / "deep" / "sub")
+        # The controls: real folders at the same depths, read through the same replaced os.lstat.
+        (self.repo.root / "real" / "sub").mkdir(parents=True)
+        (self.repo.root / "real" / "notes.md").write_bytes(b"inside\n")
+        (self.repo.root / "real" / "sub" / "notes.md").write_bytes(b"inside\n")
+        # Opened without following it, a link is refused as not a folder with os.O_DIRECTORY, and as a
+        # link (ELOOP) without it, so a read error of another kind does not pass.
+        refusals = {"parent": f"NotADirectoryError: [Errno {errno.ENOTDIR}]",
+                    "parent-bare": f"OSError: [Errno {errno.ELOOP}]"}
+        for mode, refusal in refusals.items():
+            for name, real in (("sub/notes.md", "real/notes.md"), ("deep/sub/notes.md", "real/sub/notes.md")):
+                with self.subTest(mode=mode, name=real):
+                    self.assertEqual(self.probe(mode, real, "tools"), {"data": "inside\n", "problems": []})
+                with self.subTest(mode=mode, name=name):
+                    result = self.probe(mode, name, "tools")
+                    self.assertIsNone(result["data"], result)
+                    self.assertEqual(len(result["problems"]), 1, result)
+                    self.assertTrue(result["problems"][0].startswith(f"{name}: cannot read the tracked file: {refusal}"),
+                                    result)
+
+    def test_parent_file_after_the_lstat_check(self):
+        # A file and a FIFO with no writer, each in place of a parent after the lstat check.
+        (self.repo.root / "flat").write_bytes(b"no term\n")
+        os.mkfifo(self.repo.root / "pipe")
+        for parent in ("flat", "pipe"):
+            with self.subTest(mode="parent", parent=parent):
+                # Opened as a folder, the entry is refused at once.
+                result = self.probe("parent", f"{parent}/notes.md", "tools")
+                self.assertIsNone(result["data"], result)
+                self.assertEqual(len(result["problems"]), 1, result)
+                self.assertTrue(result["problems"][0].startswith(
+                    f"{parent}/notes.md: cannot read the tracked file: NotADirectoryError: [Errno {errno.ENOTDIR}]"),
+                    result)
+            with self.subTest(mode="parent-bare", parent=parent):
+                # Without os.O_DIRECTORY the entry opens, the FIFO without waiting for a writer since the
+                # gate opens it with O_NONBLOCK, and the check of what was opened refuses it.
+                self.assertEqual(self.probe("parent-bare", f"{parent}/notes.md", "tools"),
+                                 {"data": None, "problems": [f"{parent}/notes.md: the tracked path is not a regular "
+                                                             f"file in the work tree, since its parent {parent} is not "
+                                                             "a folder in the work tree"]})
+
+    def test_entry_moved_out_after_the_open(self):
+        # Each entry moves out of the work tree just after the gate opens it, or with move-read while
+        # the gate reads the file, and the file then holds bytes that name a term, so a reader that did
+        # not check each entry after the read would return those bytes. With move-read the move comes
+        # after every open, so a reader that checked before the read would return them too. The folder
+        # deep, above the folder sub that holds the file, is checked too. The folder ODD_PART pins the
+        # escaping of the path and of the moved entry in the problem line.
+        cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep/sub"), ("deep/sub/notes.md", "deep"),
+                 ("sub/notes.md", "sub/notes.md"), (f"{ODD_PART}/notes.md", ODD_PART))
+        for mode, (name, moved) in [(mode, case) for mode in ("move", "move-read") for case in cases]:
+            with self.subTest(mode=mode, name=name, moved=moved):
+                for folder in ("sub", "deep", "away", ODD_PART):
+                    shutil.rmtree(self.repo.root / folder, ignore_errors=True)
+                    shutil.rmtree(self.repo.base / folder, ignore_errors=True)
+                (self.repo.base / "away").mkdir()
+                (self.repo.root / name).parent.mkdir(parents=True)
+                (self.repo.root / name).write_bytes(b"inside\n")
+                self.assertEqual(self.probe("plain", name, name), {"data": "inside\n", "problems": []})
+                self.assertEqual(self.probe(mode, name, moved),
+                                 {"data": None, "problems": [f"{as_shown(name)}: the work tree changed while the gate "
+                                                             f"read the file, since {as_shown(moved)} is no longer "
+                                                             "where the gate opened it"]})
+
+    def test_entry_replaced_after_the_open(self):
+        # As in test_entry_moved_out_after_the_open, and then a new entry of the same kind, or a symbolic
+        # link to the moved entry, takes its name, so a reader that checked only that an entry is at the
+        # name, or that followed a link there, would return the bytes outside the work tree.
+        cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep/sub"), ("deep/sub/notes.md", "deep"),
+                 ("sub/notes.md", "sub/notes.md"), (f"{ODD_PART}/notes.md", ODD_PART))
+        for mode in ("replace", "relink"):
+            for name, moved in cases:
+                with self.subTest(mode=mode, name=name, moved=moved):
+                    for folder in ("sub", "deep", "away", ODD_PART):
+                        for place in (self.repo.root / folder, self.repo.base / folder):
+                            if place.is_symlink():
+                                place.unlink()
+                            shutil.rmtree(place, ignore_errors=True)
+                    (self.repo.base / "away").mkdir()
+                    (self.repo.root / name).parent.mkdir(parents=True)
+                    (self.repo.root / name).write_bytes(b"inside\n")
+                    self.assertEqual(self.probe("plain", name, name), {"data": "inside\n", "problems": []})
+                    self.assertEqual(self.probe(mode, name, moved),
+                                     {"data": None, "problems": [f"{as_shown(name)}: the work tree changed while the "
+                                                                 f"gate read the file, since {as_shown(moved)} is no "
+                                                                 "longer where the gate opened it"]})
+
+    def test_entry_moved_out_while_the_gate_runs(self):
+        # The launcher moves the entry out of the work tree just after the gate opens it, or with
+        # move-read while the gate reads the file, through the whole gate and --list, so each must
+        # report the move and exit 1.
+        self.control()
+        cases = (("sub/notes.md", "sub"), ("deep/sub/notes.md", "deep"), ("sub/notes.md", "sub/notes.md"))
+        for mode, (name, moved) in [(mode, case) for mode in ("move", "move-read") for case in cases]:
+            for args, out_text in (((), PREFIX + "checked: 1 lines in 1 files; 1 problem(s)\n"),
+                                   (("--list",), "README.md:1\ntotal: 1 lines in 1 files\n")):
+                with self.subTest(mode=mode, name=name, moved=moved, args=args):
+                    for folder in ("sub", "deep", "away"):
+                        shutil.rmtree(self.repo.root / folder, ignore_errors=True)
+                        shutil.rmtree(self.repo.base / folder, ignore_errors=True)
+                    (self.repo.base / "away").mkdir()
+                    self.repo.git("rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", "sub", "deep")
+                    self.repo.track(name, b"ShareAlike\n")
+                    self.repo.set_rows(ROW, f"{name}\t1\tkeep\tShareAlike")
+                    self.passes(PREFIX + "checked: 2 lines in 2 files; 0 problem(s)\n")
+                    self.passes(f"README.md:1\n{name}:1\ntotal: 2 lines in 2 files\n", "--list")
+                    self.refused(f"{PREFIX}{name}: the work tree changed while the gate read the file, since {moved} "
+                                 "is no longer where the gate opened it", *args,
+                                 launch=(mode, str(self.repo.root), name, moved), out_text=out_text)
+
+    def test_reader_without_o_nofollow(self):
+        # The opener and the reader each refuse, so neither falls back to an open that follows a link. The
+        # path that holds ODD_PART pins the escaping of the path in the reader's problem line.
+        for name in ("README.md", f"{ODD_PART}.md"):
+            with self.subTest(name=name):
+                problems = [f"{NO_NOFOLLOW}, and the gate runs no git and reads no file",
+                            f"{as_shown(name)}: cannot read the tracked file: {NO_NOFOLLOW}"]
+                self.assertEqual(self.probe("no-nofollow", name, "README.md"), {"data": None, "problems": problems})
+
+    def test_read_error(self):
+        self.assertEqual(self.probe("read-error", "README.md", "README.md"),
+                         {"data": None, "problems": [f"README.md: cannot read the tracked file: OSError: [Errno "
+                                                     f"{errno.EIO}] {os.strerror(errno.EIO)}"]})
+
+    def test_error_text_is_one_line_cut_and_escaped(self):
+        # The text is made 1 line and cut to 300 characters before it is escaped, so no escape is cut.
+        prefix = f"[Errno {errno.EIO}] "
+        detail = prefix + ODD_SHOWN + "\\xe9" * (300 - len(prefix) - ODD_RAW_LENGTH)
+        self.assertEqual(self.probe("odd-error", "README.md", "README.md"),
+                         {"data": None, "problems": [f"README.md: cannot read the tracked file: OSError: {detail}"]})
+
+    def test_unmerged_entry_at_each_stage(self):
+        self.control()
+        blob = self.repo.git("hash-object", "-w", "README.md").strip()
+        for stage in ("1", "2", "3"):
+            with self.subTest(stage=stage):
+                info = f"0 {'0' * 40}\tREADME.md\n100644 {blob} {stage}\tREADME.md\n".encode("ascii")
+                self.repo.git("update-index", "--index-info", stdin=info)
+                try:
+                    self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot "
+                                 "tell which version is tracked")
+                finally:
+                    self.repo.git("add", "README.md")
+                self.control()
+
+    def test_named_exception_untracked(self):
+        self.control()
+        for path in NAMED_EXCEPTIONS:
+            with self.subTest(path=path):
+                self.repo.git("rm", "--cached", "-q", path)
+                try:
+                    self.refused(f"{PREFIX}{path}: a named exception that git does not track")
+                finally:
+                    self.repo.git("add", path)
+                self.control()
+
+    def test_named_exception_without_a_matching_line(self):
+        self.control()
+        contents = {ALLOWLIST: (HEADER + "README.md\t1\tkeep\tLicence:\n").encode("utf-8")}
+        # An empty file is read and holds no matching line, unlike a file that cannot be read; an empty
+        # allowlist has no row, so the line of README.md is unclaimed as well.
+        unclaimed = {ALLOWLIST: (PREFIX + "README.md:3: names a licence term and no allowlist row claims it",)}
+        for path in NAMED_EXCEPTIONS:
+            for data, also in ((contents.get(path, b"print('no term')\n"), ()), (b"", unclaimed.get(path, ()))):
+                with self.subTest(path=path, empty=not data):
+                    before = (self.repo.root / path).read_bytes()
+                    self.repo.track(path, data)
+                    try:
+                        self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", also=also)
+                    finally:
+                        self.repo.track(path, before)
+                    self.control()
+
+    def test_not_a_git_repository(self):
+        self.control()
+        shutil.rmtree(self.repo.root / ".git")
+        self.refused(f"{PREFIX}git ls-files exited 128, so no tracked file can be listed: fatal: not a git repository")
+
+    def test_system_without_o_nofollow(self):
+        self.control()
+        cause = f"{PREFIX}{NO_NOFOLLOW}, and the gate runs no git and reads no file"
+        self.refused(cause, without_nofollow=True, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+        self.refused(cause, "--list", without_nofollow=True, out_text="total: 0 lines in 0 files\n")
+
+    def put_at_root(self, kind: str) -> None:
+        """Move the root folder aside and put a file that names a term, or a FIFO with no writer, at its path."""
+        self.repo.root.rename(self.repo.base / "held")
+        if kind == "a file":
+            self.repo.root.write_bytes(b"CC BY-SA 4.0\n")
+        else:
+            os.mkfifo(self.repo.root)
+
+    def restore_root(self) -> None:
+        self.repo.root.unlink()
+        (self.repo.base / "held").rename(self.repo.root)
+
+    def test_root_that_is_not_a_folder(self):
+        # Opened as a folder, a file or a FIFO is refused at once, so the gate never waits on a FIFO.
+        self.control()
+        cause = f"{PREFIX}{escaped(str(self.repo.root))}: cannot open the root folder: NotADirectoryError"
+        for kind in ("a file", "a FIFO"):
+            with self.subTest(kind=kind):
+                self.put_at_root(kind)
+                try:
+                    self.refused(cause, out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+                    self.refused(cause, "--list", out_text="total: 0 lines in 0 files\n")
+                finally:
+                    self.restore_root()
+                self.control()
+
+    def test_root_that_is_not_a_folder_without_o_directory(self):
+        # Without os.O_DIRECTORY a file or a FIFO opens as the root, the FIFO without waiting for a writer
+        # since the gate opens it with O_NONBLOCK, and the check of what was opened refuses it.
+        launch = ("no-directory", str(self.repo.root), "", "")
+        self.passes(launch=launch)
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list", launch=launch)
+        cause = f"{PREFIX}{escaped(str(self.repo.root))}: cannot open the root folder: it is not a folder"
+        for kind in ("a file", "a FIFO"):
+            for args, out_text in (((), PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n"),
+                                   (("--list",), "total: 0 lines in 0 files\n")):
+                with self.subTest(kind=kind, args=args):
+                    self.put_at_root(kind)
+                    try:
+                        err = self.refused(cause, *args, launch=launch, out_text=out_text)
+                        self.assertEqual(err, cause + "\n")
+                    finally:
+                        self.restore_root()
+                    self.passes(launch=launch)
+
+    def test_root_that_git_cannot_start_in(self):
+        # The launcher makes the change into the root folder fail, as on a root folder of mode 0600, which
+        # the gate can open and git cannot enter, whoever runs the case.
+        self.control()
+        launch = ("no-entry", str(self.repo.root), "", "")
+        for args, out_text in (((), PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n"),
+                               (("--list",), "total: 0 lines in 0 files\n")):
+            with self.subTest(args=args):
+                self.refused(CANNOT_ENTER, *args, launch=launch, out_text=out_text)
+
+    def test_git_cannot_run(self):
+        self.control()
+        empty = self.repo.base / "no-commands"
+        empty.mkdir()
+        self.refused(f"{PREFIX}cannot run git ls-files, so no tracked file can be listed: FileNotFoundError",
+                     env=dict(self.repo.env, PATH=str(empty)))
+
+    def test_git_message_is_one_line_cut_and_escaped(self):
+        self.control()
+        # The byte 0xff is read as U+FFFD; with "fatal: " that makes 8 characters before the odd tail.
+        detail = "\\" + "ufffdfatal: " + ODD_SHOWN + "\\xe9" * (300 - 8 - ODD_RAW_LENGTH)
+        line = f"{PREFIX}git ls-files exited 3, so no tracked file can be listed: {detail}"
+        err = self.refused(line, env=self.fake_git(b"", b"\xfffatal:" + ODD_TAIL.encode("utf-8"), 3),
+                           out_text=PREFIX + "checked: 0 lines in 0 files; 1 problem(s)\n")
+        self.assertEqual(err, line + "\n")
+
+    def test_entry_of_git_ls_files_that_cannot_be_read(self):
+        self.control()
+        self.refused(BAD_ENTRY_PROBLEMS[0], also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
+                     out_text=PREFIX + "checked: 1 lines in 1 files; 3 problem(s)\n")
+
+    def test_only_entries_that_cannot_be_read(self):
+        # git listed entries, so the gate names each and not an empty listing as a cause.
+        self.control()
+        self.refused(BAD_ENTRY_PROBLEMS[0], also=BAD_ENTRY_PROBLEMS[1:], env=self.fake_git(BAD_ENTRIES, b"", 0),
+                     out_text=PREFIX + "checked: 0 lines in 0 files; 3 problem(s)\n")
+
+    def test_empty_index(self):
+        self.control()
+        self.repo.git("rm", "-r", "--cached", "-q", ".")
+        self.refused("git ls-files lists no tracked file")
+
+    def test_list_fails_on_an_unreadable_file(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        os.symlink("README.md", self.repo.root / "link.md")
+        self.repo.git("add", "link.md")
+        self.refused("link.md: tracked with mode 120000", "--list")
+
+    def test_list_fails_on_a_named_exception(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.repo.git("rm", "--cached", "-q", ALLOWLIST)
+        self.refused(f"{ALLOWLIST}: a named exception that git does not track", "--list")
+
+    def test_list_fails_on_an_entry_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.refused(BAD_ENTRY_PROBLEMS[0], "--list", also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(LISTING + BAD_ENTRIES, b"", 0),
+                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+
+    def test_list_fails_on_only_entries_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.refused(BAD_ENTRY_PROBLEMS[0], "--list", also=BAD_ENTRY_PROBLEMS[1:],
+                     env=self.fake_git(BAD_ENTRIES, b"", 0), out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_when_git_cannot_run(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        empty = self.repo.base / "no-commands"
+        empty.mkdir()
+        self.refused(f"{PREFIX}cannot run git ls-files, so no tracked file can be listed: FileNotFoundError", "--list",
+                     env=dict(self.repo.env, PATH=str(empty)), out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_outside_a_git_repository(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        shutil.rmtree(self.repo.root / ".git")
+        self.refused(f"{PREFIX}git ls-files exited 128, so no tracked file can be listed: fatal: not a git repository",
+                     "--list", out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_on_an_empty_index(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        self.repo.git("rm", "-r", "--cached", "-q", ".")
+        self.refused(f"{PREFIX}git ls-files lists no tracked file, so there is nothing to compare", "--list",
+                     out_text="total: 0 lines in 0 files\n")
+
+    def test_list_fails_on_an_unmerged_entry(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        blob = self.repo.git("hash-object", "-w", "README.md").strip()
+        for stage in ("1", "2", "3"):
+            with self.subTest(stage=stage):
+                info = f"0 {'0' * 40}\tREADME.md\n100644 {blob} {stage}\tREADME.md\n".encode("ascii")
+                self.repo.git("update-index", "--index-info", stdin=info)
+                try:
+                    self.refused(f"{PREFIX}README.md: an unmerged index entry (stage {stage}), so the gate cannot "
+                                 "tell which version is tracked", "--list",
+                                 out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                finally:
+                    self.repo.git("add", "README.md")
+                self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_fails_on_a_file_that_cannot_be_read(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        with self.subTest(path="gone.md"):
+            self.repo.track("gone.md", b"no term\n")
+            (self.repo.root / "gone.md").unlink()
+            try:
+                self.refused(f"{PREFIX}gone.md: cannot read the tracked file: FileNotFoundError", "--list",
+                             out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+            finally:
+                self.repo.git("rm", "-q", "--cached", "--", "gone.md")
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        with self.subTest(path=ALLOWLIST):
+            # --list reads the allowlist only as a named exception, so it reports 1 problem.
+            before = (self.repo.root / ALLOWLIST).read_bytes()
+            (self.repo.root / ALLOWLIST).unlink()
+            self.refused(f"{PREFIX}{ALLOWLIST}: cannot read the tracked file: FileNotFoundError", "--list",
+                         out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+            self.repo.write(ALLOWLIST, before)
+            self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_list_fails_on_a_named_exception_without_a_matching_line(self):
+        self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+        contents = {ALLOWLIST: (HEADER + "README.md\t1\tkeep\tLicence:\n").encode("utf-8")}
+        for path in NAMED_EXCEPTIONS:
+            # An empty file is read and holds no matching line, unlike a file that cannot be read.
+            for data in (contents.get(path, b"print('no term')\n"), b""):
+                with self.subTest(path=path, empty=not data):
+                    before = (self.repo.root / path).read_bytes()
+                    self.repo.track(path, data)
+                    try:
+                        self.refused(f"{PREFIX}{path}: a named exception that holds no matching line", "--list",
+                                     out_text="README.md:1\ntotal: 1 lines in 1 files\n")
+                    finally:
+                        self.repo.track(path, before)
+                    self.passes("README.md:1\ntotal: 1 lines in 1 files\n", "--list")
+
+    def test_file_content_is_data(self):
+        self.control()
+        # The gate runs in the temporary folder, so the relative touch of the name and the absolute touch
+        # of the content would each make the 1 file that the case checks.
+        marker = self.repo.base / "ran"
+        name = "$(touch ran);x.md"
+        self.repo.track(name, f"`touch {marker}` $(touch {marker}) --root / CC BY-SA 4.0\n".encode("utf-8"))
+        line = PREFIX + "$(touch ran);x.md:1: names a licence term and no allowlist row claims it"
+        err = self.refused(line, out_text=PREFIX + "checked: 2 lines in 2 files; 1 problem(s)\n")
+        self.assertFalse(marker.exists(), "a file's name or content ran as a command")
+        # Compared whole, so a problem line that showed any of the file's text would fail.
+        self.assertEqual(err, line + "\n")
+
+    def test_unreadable_file(self):
+        self.control()
+        path = self.repo.root / "README.md"
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o644)
+        try:
+            with open(path, "rb"):
+                readable = True
+        except PermissionError:
+            readable = False
+        if readable:
+            self.skipTest("this process can read a file of mode 000, as root can")
+        # The README.md row is not reported stale, since the lines of a file that cannot be read are unknown.
+        self.refused("README.md: cannot read the tracked file: PermissionError")
+
+
+# The squash message of the change that last edited a block below; a later change that edits a block
+# names its own squash message here, so the record of an earlier change stays as it was merged.
+SQUASH_TEXT = HERE.parent / ".github" / "squash" / "287.txt"
+DESCRIPTION = HERE.parent / "PR-BODY.md"
+SQUASH_COPY = HERE.parent / "SQUASH-MSG"
+# The blocks that RepeatedText holds the same in each text that states them: for each, its name, its
+# opening words, its closing words and the tracked texts that must state it: gate, the gate's docstring;
+# tests, this file's docstring; and squash, SQUASH_TEXT. Each text for review, PR-BODY.md and SQUASH-MSG,
+# must state every block.
+BLOCKS = (
+    ("the first sentence of the change", "lists the tracked files with", "in any ASCII letter case",
+     ("squash",)),
+    ("the git settings", "Git gets the gate's environment without", "than the one it finds at the root.",
+     ("gate", "squash")),
+    ("the failure rules", "The gate fails on a matching line", "whether or not that earlier row is well formed.",
+     ("gate", "squash")),
+    ("the count", "It compares a count as text", "gives a named problem.", ("squash",)),
+    ("the fail-closed causes", "The gate fails closed,", "it names each entry and no other cause.",
+     ("gate", "squash")),
+    ("the confinement claim and its remaining cases", "The work tree is the root folder as the gate opens it",
+     "and not waited on.", ("gate", "squash")),
+    ("the file content", "File content is data:", "printed whole", ("gate", "squash")),
+    ("the escaping", "It makes git's message and an error's text 1 line", "once as a backslash escape.",
+     ("squash",)),
+    ("the named exceptions", "Its own 3 files are its named exceptions;", "must hold a matching line.",
+     ("squash",)),
+    ("the row fields", "1 row per kind of line in a file:", "a literal marker.", ("squash",)),
+    ("the owner check", "The gate refuses an owner other than", "the gate does not check it.", ("squash",)),
+    ("the lead of not covered", "The gate's docstring states", "what it does not cover.", ("squash",)),
+    ("not covered", "Not covered:", "in the same file passes.", ("gate", "squash")),
+    ("the tests' setting", "with no setting of git taken", "environment or configuration.", ("squash",)),
+    ("the refusal cases", "Each refusal case that runs the gate", "outside printable ASCII.", ("squash",)),
+    ("the refusal helper", "helper that checks a refusal fails the case", "the same bytes in each tracked file.",
+     ("tests", "squash")),
+    ("the escaped path case", "1 case requires the gate to escape a tracked path", "and a stale row.",
+     ("tests", "squash")),
+    ("the refusal helper case", "1 case pins the rule of the helper", "as it was built.", ("tests", "squash")),
+    ("the reader cases", "10 cases call the gate's file reader", "gives its file's bytes.", ("tests", "squash")),
+    ("the stand-in cases", "9 cases give the gate a stand-in git", "must show the message the same way.",
+     ("tests", "squash")),
+    ("the launcher without O_NOFOLLOW", "1 case runs the gate through a python3 -I launcher", "to --list.",
+     ("tests", "squash")),
+    ("the launcher cases", "4 cases run the gate through another python3 -I launcher", "git cannot enter.",
+     ("tests", "squash")),
+    ("the relative PATH case", "1 case loads the test file", "to be an absolute path.", ("tests", "squash")),
+    ("the digest", "tools/test-run-all-checks.py records the new digest", "of that script.", ("squash",)),
+)
+# The paragraphs that RepeatedText holds the same, each compared whole: for each, its name, its opening
+# words, which must start it, and the tracked texts that must state it, named as in BLOCKS. Each text for
+# review must state every paragraph.
+PARAGRAPHS = (
+    ("the text cases", "3 cases, in RepeatedText,", ("tests", "squash")),
+)
+
+
+def plain(text: str, markdown: bool = False) -> str:
+    """text with each run of whitespace as 1 space, and without backticks when it is Markdown."""
+    return " ".join((text.replace("`", "") if markdown else text).split())
+
+
+def paragraphs(text: str) -> list:
+    """The paragraphs of text: each run of lines between lines of whitespace alone or an end of the text."""
+    found, current = [], []
+    for line in text.split("\n"):
+        if line.strip():
+            current.append(line)
+        elif current:
+            found.append("\n".join(current))
+            current = []
+    if current:
+        found.append("\n".join(current))
+    return found
+
+
+def docstring(path: Path) -> str:
+    return ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")), clean=False) or ""
+
+
+class RepeatedText(unittest.TestCase):
+    """Each block and paragraph that a row of BLOCKS or PARAGRAPHS names is the same, word for word, in
+    every text that states it, and SQUASH-MSG equals SQUASH_TEXT byte for byte."""
+
+    def paragraph(self, name: str, source: str, raw: str, start: str, markdown: bool = False) -> str:
+        """The whole paragraph of raw that starts with start, which must occur once in raw, made plain."""
+        count = plain(raw, markdown).count(start)
+        self.assertEqual(count, 1,
+                         f"{source}: the opening words of {name}, {start!r}, occur {count} times, not once")
+        starting = [plain(part, markdown) for part in paragraphs(raw) if plain(part, markdown).startswith(start)]
+        self.assertEqual(len(starting), 1, f"{source}: no paragraph starts with the opening words of {name}, "
+                         f"{start!r}")
+        return starting[0]
+
+    def pieces(self, source: str, raw: str, markdown: bool = False, kind: str | None = None) -> dict:
+        """{name: block or paragraph} for each row that names kind as a tracked text, or for every row
+        when kind is None, as a text for review states them all."""
+        text = plain(raw, markdown)
+        found = {}
+        for name, start, end, sources in BLOCKS:
+            if kind is None or kind in sources:
+                found[name] = self.block(name, source, text, start, end)
+        for name, start, sources in PARAGRAPHS:
+            if kind is None or kind in sources:
+                found[name] = self.paragraph(name, source, raw, start, markdown)
+        return found
+
+    def block(self, name: str, source: str, text: str, start: str, end: str) -> str:
+        count = text.count(start)
+        self.assertEqual(count, 1,
+                         f"{source}: the opening words of {name}, {start!r}, occur {count} times, not once")
+        begin = text.index(start)
+        close = text.find(end, begin + len(start))
+        self.assertNotEqual(close, -1, f"{source}: {name} has no closing words {end!r} after {start!r}")
+        return text[begin:close + len(end)]
+
+    def same(self, name: str, copies: dict) -> None:
+        (first, reference), *others = copies.items()
+        for source, copy in others:
+            if copy != reference:
+                words, theirs = reference.split(), copy.split()
+                at = next((i for i, pair in enumerate(zip(words, theirs)) if pair[0] != pair[1]),
+                          min(len(words), len(theirs)))
+                self.fail(f"{name} differs between {first} and {source} at word {at + 1}: "
+                          f"{' '.join(words[at:at + 8])!r} against {' '.join(theirs[at:at + 8])!r}")
+
+    def tracked_blocks(self) -> dict:
+        """{name: {text: block or paragraph}} for the 3 tracked texts: the 2 docstrings and SQUASH_TEXT."""
+        texts = {"gate": ("the docstring of " + GATE.name, docstring(GATE)),
+                 "tests": ("the docstring of " + SELF.name, docstring(SELF)),
+                 "squash": (SQUASH_TEXT.name, SQUASH_TEXT.read_text(encoding="utf-8"))}
+        copies = {}
+        for kind, (source, raw) in texts.items():
+            for name, piece in self.pieces(source, raw, kind=kind).items():
+                copies.setdefault(name, {})[source] = piece
+        return copies
+
+    def test_each_block_is_the_same_in_the_tracked_texts(self):
+        names = [row[0] for row in BLOCKS + PARAGRAPHS]
+        self.assertEqual(len(names), len(set(names)), "2 rows of BLOCKS and PARAGRAPHS have the same name")
+        for name, copies in self.tracked_blocks().items():
+            with self.subTest(block=name):
+                self.same(name, copies)
+
+    def test_each_block_is_the_same_in_the_texts_for_review(self):
+        for path, markdown in ((DESCRIPTION, True), (SQUASH_COPY, False)):
+            with self.subTest(text=path.name):
+                if not path.exists():
+                    self.skipTest(f"{path.name} is not at the repository root")
+                found = self.tracked_blocks()
+                text = path.read_text(encoding="utf-8")
+                if markdown:
+                    # The description is the body of the pull request, from the third line of PR-BODY.md.
+                    text = "".join(text.splitlines(keepends=True)[2:])
+                for name, piece in self.pieces(path.name, text, markdown).items():
+                    copies = dict(found[name])
+                    copies[path.name] = piece
+                    self.same(name, copies)
+
+    def test_squash_message_equals_its_committed_copy(self):
+        if not SQUASH_COPY.exists():
+            self.skipTest(f"{SQUASH_COPY.name} is not at the repository root")
+        self.assertEqual(SQUASH_COPY.read_bytes(), SQUASH_TEXT.read_bytes(),
+                         f"{SQUASH_COPY.name} differs from {SQUASH_TEXT.relative_to(HERE.parent)}")
+
+
+# The texts and rows on which TextRules runs the cases of RepeatedText, by path from the root of a
+# temporary folder: a block that the gate's docstring and the squash message state, a paragraph that
+# the test docstring and the squash message state, each with other line breaks in each text, and in
+# PR-BODY.md backticks and the block's opening words in its first line, which is not read.
+RULE_TEXTS = {
+    "tools/gate.py": '"""Lead of the gate.\n\nOpen words of the block run\nto its close words.\n"""\n',
+    "tools/tests.py": '"""Lead of the tests.\n\nPara words start this paragraph\nand end it here.\n"""\n',
+    ".github/squash/287.txt": ("Title of the squash (#1)\n\nOpen words of the block run to its close words.\n\n"
+                               "Para words start this paragraph and end\nit here.\n"),
+    "PR-BODY.md": ("Open words in a title\n\nOpen words of the `block` run to\nits close words.\n\n"
+                   "Para words start `this` paragraph\nand end it here.\n"),
+    "SQUASH-MSG": ("Title of the squash (#1)\n\nOpen words of the block run to its close words.\n\n"
+                   "Para words start this paragraph and end\nit here.\n"),
+}
+RULE_BLOCKS = (("the block", "Open words", "close words.", ("gate", "squash")),)
+RULE_PARAGRAPHS = (("the paragraph", "Para words", ("tests", "squash")),)
+TEXT_CASES = ("test_each_block_is_the_same_in_the_tracked_texts",
+              "test_each_block_is_the_same_in_the_texts_for_review",
+              "test_squash_message_equals_its_committed_copy")
+PASSES, FAILS, ERRS = ("pass", ()), ("fail", ()), ("error", ())
+DESCRIPTION_SKIP = "PR-BODY.md is not at the repository root"
+SQUASH_COPY_SKIP = "SQUASH-MSG is not at the repository root"
+
+
+class TextRules(unittest.TestCase):
+    """The cases of RepeatedText, run on texts and rows of their own, keep the rules that the module
+    docstring names for TextRules."""
+
+    def outcomes(self, texts: dict, blocks: tuple = RULE_BLOCKS, paragraphs: tuple = RULE_PARAGRAPHS) -> list:
+        """(outcome, skip reasons) of each case of RepeatedText, run in this process on texts, where None
+        leaves a text out, and on blocks and paragraphs."""
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            (base / "tools").mkdir()
+            for rel, text in texts.items():
+                if text is not None:
+                    (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (base / rel).write_text(text, encoding="utf-8")
+            found = []
+            with mock.patch.multiple(sys.modules[__name__], HERE=base / "tools", GATE=base / "tools" / "gate.py",
+                                     SELF=base / "tools" / "tests.py",
+                                     SQUASH_TEXT=base / ".github" / "squash" / "287.txt",
+                                     DESCRIPTION=base / "PR-BODY.md", SQUASH_COPY=base / "SQUASH-MSG",
+                                     BLOCKS=blocks, PARAGRAPHS=paragraphs):
+                for name in TEXT_CASES:
+                    result = unittest.TestResult()
+                    RepeatedText(name).run(result)
+                    outcome = "error" if result.errors else "fail" if result.failures else "pass"
+                    found.append((outcome, tuple(sorted(reason for _, reason in result.skipped))))
+        return found
+
+    def test_the_text_cases_keep_their_rules(self):
+        self.assertIn(("the text cases", "3 cases, in RepeatedText,", ("tests", "squash")), PARAGRAPHS,
+                      "no row of PARAGRAPHS names the paragraph that states the text cases")
+        # The control: every case passes on the texts as written.
+        self.assertEqual(self.outcomes(RULE_TEXTS), [PASSES, PASSES, PASSES])
+
+        def changed(rel: str, old: str, new: str, *more: str) -> dict:
+            texts = dict(RULE_TEXTS)
+            for name in (rel, *more):
+                self.assertEqual(texts[name].count(old), 1, (name, old))
+                texts[name] = texts[name].replace(old, new)
+            return texts
+
+        changes = {
+            "a word of a block differs": (changed("tools/gate.py", "of the block", "of a block"),
+                                          [FAILS, FAILS, PASSES]),
+            # Each text for review: a word of a block, a word inside a paragraph and the last word of a
+            # paragraph, so each kind of piece is compared in each text; SQUASH-MSG also fails the byte
+            # comparison. The 2 cases that compare words compare only the pieces that a row names, so a
+            # word changed outside them, such as in the first line of PR-BODY.md, fails neither; the byte
+            # comparison reads SQUASH-MSG and .github/squash/287.txt whole, so a word changed anywhere in 1
+            # of them, and not in the other, fails it.
+            "a word of a block differs in a text for review": (
+                changed("PR-BODY.md", "of the `block`", "of a `block`"), [PASSES, FAILS, PASSES]),
+            "a word of a block differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "of the block", "of a block"), [PASSES, FAILS, FAILS]),
+            "a word inside a paragraph differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "this paragraph", "that paragraph"), [PASSES, FAILS, FAILS]),
+            "the last word of a paragraph differs in SQUASH-MSG": (
+                changed("SQUASH-MSG", "it here.", "it there."), [PASSES, FAILS, FAILS]),
+            "the last word of a paragraph differs in a tracked text": (
+                changed("tools/tests.py", "it here.", "it there."), [FAILS, FAILS, PASSES]),
+            "the last word of a paragraph differs in a text for review": (
+                changed("PR-BODY.md", "it here.", "it there."), [PASSES, FAILS, PASSES]),
+            # A word inside a paragraph, which leaves its opening words and its last word as they were.
+            "a word inside a paragraph differs in a tracked text": (
+                changed("tools/tests.py", "this paragraph", "that paragraph"), [FAILS, FAILS, PASSES]),
+            "a word inside a paragraph differs in a text for review": (
+                changed("PR-BODY.md", "`this` paragraph", "`that` paragraph"), [PASSES, FAILS, PASSES]),
+            "a text for review lacks a block": (
+                changed("PR-BODY.md", "Open words of the `block` run to\nits close words.\n\n", ""),
+                [PASSES, FAILS, PASSES]),
+            "opening words occur twice": (changed("tools/gate.py", '\n"""\n', '\n\nOpen words again.\n"""\n'),
+                                          [FAILS, FAILS, PASSES]),
+            # The opening words of a paragraph again, in a paragraph that they do not start, so the paragraph
+            # that they start is as it was and only the rule that they occur once fails.
+            "opening words of a paragraph occur twice in a tracked text": (
+                changed("tools/tests.py", '\n"""\n', '\n\nThen Para words again.\n"""\n'), [FAILS, FAILS, PASSES]),
+            "opening words of a paragraph occur twice in a text for review": (
+                changed("PR-BODY.md", "it here.\n", "it here.\n\nThen Para words again.\n"), [PASSES, FAILS, PASSES]),
+            "opening words do not start their paragraph": (
+                changed("tools/tests.py", "Para words", "So Para words", ".github/squash/287.txt", "PR-BODY.md",
+                        "SQUASH-MSG"), [FAILS, FAILS, PASSES]),
+            "SQUASH-MSG gains 1 byte": (changed("SQUASH-MSG", "it here.\n", "it here. \n"), [PASSES, PASSES, FAILS]),
+            "the texts for review are not there": (dict(RULE_TEXTS, **{"PR-BODY.md": None, "SQUASH-MSG": None}),
+                                                   [PASSES, ("pass", (DESCRIPTION_SKIP, SQUASH_COPY_SKIP)),
+                                                    ("pass", (SQUASH_COPY_SKIP,))]),
+            "the gate's docstring is not there": (dict(RULE_TEXTS, **{"tools/gate.py": None}), [ERRS, ERRS, PASSES]),
+            "the test docstring is not there": (dict(RULE_TEXTS, **{"tools/tests.py": None}), [ERRS, ERRS, PASSES]),
+            "the squash message is not there": (dict(RULE_TEXTS, **{".github/squash/287.txt": None}),
+                                                [ERRS, ERRS, ERRS]),
+            "the squash message and the texts for review are not there": (
+                dict(RULE_TEXTS, **{".github/squash/287.txt": None, "PR-BODY.md": None, "SQUASH-MSG": None}),
+                [ERRS, ("pass", (DESCRIPTION_SKIP, SQUASH_COPY_SKIP)), ("pass", (SQUASH_COPY_SKIP,))]),
+        }
+        for change, (texts, wanted) in changes.items():
+            with self.subTest(change=change):
+                self.assertEqual(self.outcomes(texts), wanted)
+        with self.subTest(change="2 rows have the same name"):
+            self.assertEqual(self.outcomes(RULE_TEXTS, RULE_BLOCKS + RULE_BLOCKS), [FAILS, PASSES, PASSES])
+        with self.subTest(change="2 rows of PARAGRAPHS have the same name"):
+            self.assertEqual(self.outcomes(RULE_TEXTS, paragraphs=RULE_PARAGRAPHS + RULE_PARAGRAPHS),
+                             [FAILS, PASSES, PASSES])
+
+
+class Startup(unittest.TestCase):
+    """The suite runs in the C locale in UTF-8 mode, so it writes the file names of its cases in UTF-8,
+    whatever the caller's locale."""
+
+    def test_file_names_are_written_in_utf8(self):
+        self.assertEqual(sys.getfilesystemencoding(), "utf-8")
+
+    def test_process_runs_in_the_c_locale(self):
+        # Written out here apart from FIXED_ENVIRONMENT, so a change to the restart below fails.
+        variables = {name: value for name, value in os.environ.items()
+                     if name.startswith("LC_") or name in ("LANG", "LANGUAGE")}
+        self.assertEqual(variables, {"LC_ALL": "C"}, "the variables of the locale are not LC_ALL=C alone")
+        self.assertEqual(sys.flags.utf8_mode, 1, "this process does not run in Python's UTF-8 mode")
+        self.assertEqual(locale.setlocale(locale.LC_CTYPE), "C")
+
+    def test_suite_starts_again_in_utf8_mode_under_another_locale(self):
+        # Under LC_ALL=C with Python's UTF-8 mode turned off, Python on Linux writes file names in ASCII;
+        # LANG=C.UTF-8 is a UTF-8 locale that is not the C locale. So the 2 cases above pass in each of
+        # these processes only when the suite starts itself again with LC_ALL=C in UTF-8 mode.
+        callers = ((("-X", "utf8=0"), {"LC_ALL": "C"}), ((), {"LANG": "C.UTF-8"}))
+        for flags, env in callers:
+            with self.subTest(env=env), tempfile.TemporaryDirectory() as folder:
+                done = subprocess.run([sys.executable, "-I", *flags, str(SELF),
+                                       "Startup.test_file_names_are_written_in_utf8",
+                                       "Startup.test_process_runs_in_the_c_locale"], capture_output=True,
+                                      env=env, cwd=folder, stdin=subprocess.DEVNULL, timeout=60)
+                report = done.stderr.decode("utf-8", "replace")
+                self.assertEqual(done.returncode, 0, report)
+                self.assertIn("Ran 2 tests", report)
+
+
+# The caller's environment with LC_ALL=C in place of each variable of the locale: the environment in
+# which the suite, run as a script, runs its cases.
+UNLOCALIZED = {name: value for name, value in os.environ.items()
+               if not name.startswith("LC_") and name not in ("LANG", "LANGUAGE")}
+FIXED_ENVIRONMENT = dict(UNLOCALIZED, LC_ALL="C")
+
+
+if __name__ == "__main__":
+    if not sys.flags.utf8_mode or dict(os.environ) != FIXED_ENVIRONMENT:
+        # The caller's locale would set the encoding in which this process writes the file names of the
+        # cases, which need not hold every name a case uses; the C locale in UTF-8 mode fixes the locale
+        # and makes those names UTF-8. Started so, the suite does not start itself again.
+        os.execve(sys.executable, [sys.executable, "-I", "-X", "utf8", str(SELF), *sys.argv[1:]],
+                  FIXED_ENVIRONMENT)
+    result = unittest.main(exit=False, verbosity=1).result
+    sys.exit(0 if result.wasSuccessful() else 1)
