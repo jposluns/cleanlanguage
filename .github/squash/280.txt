@@ -1,0 +1,672 @@
+Test that the enumerator gets and enforces its declared timeout (#280)
+
+This message compares the tree it merges with main as of #275 (Refresh
+the vendored AIQT hooks plugin), the commit of main that the branch
+merged first, not one commit of the branch with another. The branch
+later merged 2 later commits of main, so the tree also holds main's
+own changes from main as of #275 (Refresh the vendored AIQT hooks
+plugin) to the later of them; each comparison below leaves those
+changes out, and this message does not list them, apart from how the
+last merge resolves tools/test-orch-stage2-hooks.py. The branch
+started from main as of #271 (State the full download's character
+count as saved); against main as of #271 (State the full download's
+character count as saved) the tree also differs by main's own changes
+from main as of #271 (State the full download's character count as
+saved) to main as of #275 (Refresh the vendored AIQT hooks plugin), in
+26 more files, the hook among them.
+
+In main as of #275 (Refresh the vendored AIQT hooks plugin),
+T15EnumeratorTimeout in tools/test-orch-stage2-hooks.py
+holds 2 tests. test_sleeping_enumerator_times_out_and_denies declares
+an enumerator that sleeps 30 s under a declared timeout of 1 s, runs
+the hook through run_hook with a 120 s limit on the call, and requires
+exit 2, ENUMERATOR_ERROR and 'failed to run' in stderr, and that the
+whole Stop hook call ended within 15 s. test_stage1_contrast requires,
+for the stage 1 registry, which declares no enumerator, the hook's
+NO_ENUMERATOR deny, exit 2 with NO_ENUMERATOR in stderr, and no
+'failed to run'. So a host slow enough to stretch the call to 15 s
+failed the correct hook, and no test checked whether the enumerator
+was still running when the hook returned or which timeout value the
+hook passed.
+
+The 15 s bound is gone. Both enumerator tests and the 2 stage 1 tests
+run the unchanged hook through REAPER_PROG, a python3 -I wrapper that
+is the Linux child subreaper, so every process that the hook starts
+stays its descendant. It waits up to 120 s for the hook to exit and
+kills it if it has not, notes whether a process that the hook started
+is still alive, then sends SIGKILL to each of its children, reaps them
+and repeats until it has no child left or the 30 s cleanup bound,
+which it checks before each pass, has passed, and writes a JSON
+report. It signals only its own unreaped children, so no signal can
+reach an unrelated process.
+
+What can outlive a test: every process under the wrapper when the
+wrapper ends before its cleanup has finished, which happens when the
+test's limit on the wrapper call kills it, when another signal ends
+it, such as one that the hook sends it, or when an error ends it; the
+wrapper's children still alive when cleanup stops at the 30 s bound,
+which the report lists, and their descendants; and a process that the
+hook gets another program, such as a service manager, to start.
+Cleanup stops at its bound with a child alive when a process survives
+SIGKILL that long, such as one in uninterruptible sleep, or when the
+wrapper itself does not run for that long, such as when it is stopped
+or kept off the CPU, and then it may have sent no SIGKILL. In each
+case but the last the test fails. The test's limit on the wrapper
+call is 240 s for the 4 tests that run the hook, 90 s past the
+wrapper's bounds of 120 s and 30 s, and 60 s for the 2 wrapper tests,
+20 s past their bounds of 10 s and 30 s; in a wrapper test the
+processes under the wrapper include the stand-in hook's child and
+grandchild, which sleep 90 s. Without the prctl call or
+/proc/self/task/*/children the wrapper exits with a message and the
+tests fail.
+
+test_wrapper_kills_processes_in_another_session and
+test_wrapper_kills_a_hook_that_does_not_exit run a stand-in hook that
+takes a shared lock and starts a child in another session, which
+starts a grandchild; the stand-in exits at once, or sleeps past a 10 s
+hook bound. Once the wrapper returns, each requires that it can take
+the lock exclusively, so none of the 3 processes is alive.
+
+The 4 tests that run the hook run the hook file in a process whose
+subprocess.run is replaced by RECORDING_HOOK_PROG, a recorder that
+logs the argv and timeout argument of each call. In strip mode it
+makes each real call without the timeout. In keep mode it makes the
+real call unchanged for the declared enumerator argv only, and also
+logs its outcome, 'returned' or the type name of the exception that
+it raised, which it raises again; it makes every other call without
+the timeout. In the enforcement test the hook's only other call is git
+rev-parse --show-toplevel in _recovery_toplevel, with a 5 s timeout;
+if that timeout fired, as it can on a loaded host, _orch_stop_family
+would allow the stop without running the enumerator, and the test
+would fail. In both modes the recorder also adds an audit hook that
+logs, to a second file, each audit event that starts a process
+(subprocess.Popen, os.system, os.exec, os.posix_spawn, os.spawn,
+os.fork and _posixsubprocess.fork_exec), with the argv of each
+subprocess.Popen event. A process that native code starts without an
+audit event is not logged. FIRST_FORK_FAILS_PROG is the recorder with
+a start that makes the first os.fork call of the hook's process raise
+the os.fork audit event and then BlockingIOError, as CPython's os.fork
+does when fork() fails; every later call forks.
+
+test_sleeping_enumerator_times_out_and_denies declares an enumerator,
+SLEEPING_ENUM_FIXTURE, that is 1 process that records its start when
+its environment names a file for that and then sleeps 100 s, under a
+declared timeout of 1 s, and runs the hook in keep mode. The test asks
+the enumerator to do nothing but that record before the timeout fires,
+and it sleeps 100 s, so a call that passes it a 1 s timeout raises
+TimeoutExpired once that timeout fires, unless the enumerator cannot
+be started or the 120 s bound kills the hook first. The test
+requires, in this order, that the wrapper call ended within 240 s and
+the wrapper wrote its report, that no process that the hook started
+was alive when cleanup stopped, at once or after 30 s, and that the
+hook exited within 120 s; then exactly 1 call with the declared argv,
+timeout 1 and outcome TimeoutExpired; then no process that the hook
+started still running when it ended; then exit 2, ENUMERATOR_ERROR
+and 'failed to run'. Its time bounds are the 240 s, 30 s and 120 s
+ones; every other check is logical, and no timeout of the hook but the
+enumerator's can fire. A correct hook leaves no process running, so
+cleanup has nothing to do, and for such a hook only the 240 s and
+120 s bounds can make a check's result depend on load.
+
+test_declared_timeout_reaches_the_enumerator_call runs the hook in
+strip mode for each declared timeout of 0.001, 1, 7.5 and 60 s and
+requires the same 3 time bounds and report, then exactly 1 call with
+the declared argv and that timeout argument, and that the enumerator
+ran once.
+
+test_stage1_contrast runs the hook in strip mode for the stage 1
+registry and requires the same 3 time bounds and report, then no
+process left running, then that the hook's only subprocess.run call
+was the git call in _recovery_toplevel, then that the process starts
+logged were that call's and the children that the hook's main() forks
+to check that it can read a child's exit status, and no other, then
+exit 2, NO_ENUMERATOR and no 'failed to run'. The children are 1 when
+the first probe reads its child's status; when it refuses, main() of
+the fail-open stop guard restores SIGCHLD to SIG_DFL, probes again and
+notes the restore on stderr, and probe_forks then expects 1 more os.fork
+event unless the first probe refused before it called os.fork. So the
+hook started no other process by subprocess, os.system, os.exec*,
+os.posix_spawn, os.spawn* or os.fork, and left none running.
+test_stage1_contrast_after_the_first_probe_fork_fails makes the same
+checks through FIRST_FORK_FAILS_PROG, where the start check expects 2
+os.fork events, and requires the restore note after the reason that
+the probe could not fork. In main as of #275 (Refresh the vendored
+AIQT hooks plugin) test_stage1_contrast runs the hook through
+run_hook, without the recorder or the wrapper, and fails a correct
+hook when that call's 5 s timeout fires.
+test_stage1_contrast_when_sigchld_is_ignored runs test_stage1_contrast
+in a nested python3 -I process of the file that SIGCHLD_IGNORED_PROG
+starts with SIGCHLD ignored, within a 300 s bound, 60 s past the
+nested wrapper call's 240 s, and requires that it ran 1 test and
+exited 0. A process that ignores SIGCHLD reads the exit status of each
+process that it starts as 0 and passes the disposition on across
+exec, so with the process that starts the file ignoring SIGCHLD the
+test before this change read the hook's exit 2 deny as exit 0, as did
+other tests of the file. The file now sets SIGCHLD to SIG_DFL when it
+loads, before it starts any process. The test misses a start with
+SIGCHLD at SIG_DFL and SA_NOCLDWAIT set, which it does not arrange.
+
+Outside the T15EnumeratorTimeout section the test file differs from
+main as of #275 (Refresh the vendored AIQT hooks plugin) only by the
+import of signal, the setting of SIGCHLD to SIG_DFL with its comment,
+the TEST_TIME_LIMITS table, the comment above it and the check of
+time limits after it, which wraps assertLess, assertLessEqual and run
+of unittest.TestCase and threading.Thread.join when the file loads,
+1 call of that check in run_doctor_recorded with 1 sentence of its
+docstring, the comment above Stage2Harness, the Stage2TimeLimitProbe,
+TimeLimitSinkProbe and TimeLimitTeardownProbe classes with the
+function and the program that they use, the HookRangeProbe class
+with PART_RANGES and
+hook_statement_lines, the 3 statements that read the sites of time
+limits before the audit hook is added, with their comment, the stage
+1 line range that the
+comment of assert_no_enumerator_deny cites, and hook line citations,
+with the words beside 3 of them, in comments, in the module docstring
+and in strings of PRECHECK_SITES, corrected to start and end on the
+statements that the words beside them name; the code of run_hook and
+of every other test, and the hook, are as in main as of #275 (Refresh
+the vendored AIQT hooks plugin), and each test runs with those
+wrappers and that call. A review of each range that the file cites,
+against the statements of the hook and the words beside it, found
+those ranges, the section header's 22831-22835 among them, which now
+ends on 22836. HookRangeProbe requires each range that the file or
+tools/test-orch-stage1-hooks.py cites to start on the first line of a
+statement or except clause of the hook and end on the last line of
+one, apart from 10 that cite part of a statement on purpose; it does
+not check that a range names what the words beside it name. Every
+other test that runs the hook, or the doctor, keeps the hook's own
+timeouts: the 5 s one of the git call in _recovery_toplevel, the 5 s
+or 10 s one of any other git call, the declared enumerator timeout,
+ENUM_TIMEOUT, 60 s, in the stage 2 fixture, and for orch_yield_tool and
+orch_ask_guard the 8 s PreToolUse deadline.
+Such a test fails a correct hook when one of them fires and that
+changes what the test checks, and passes when it requires only what
+the hook also does after that timeout, as T04NotBefore's
+test_future_blocks requires only exit 0. These tests also set limits
+of their own, which TEST_TIME_LIMITS lists by the class and function
+of the site that applies each, 21 entries with the least value that
+each site applies. The least is 4.5 s, at
+DoctorScopeMargin._assert_refused_near, which puts NEAR on the time
+from just before a case sets its lease mtime 4.5 s from a freshness
+bound of the hook to the return of the doctor call; the others are
+60 s, 119 s, 120 s, 240 s and 300 s, and 60 s or 240 s through
+run_reaped.
+So, deriving from the 2 lists, a correct hook can fail such a test
+when the doctor call of a DoctorScopeMargin case takes 4.5 s, while
+its git call is still inside its 5 s timeout, and otherwise only when
+1 git call takes 5 s, or 10 s for a 10 s call, a declared enumerator
+takes its declared timeout, a PreToolUse action takes 8 s, or 1 call
+reaches its limit, which is at least the value that TEST_TIME_LIMITS
+gives its site. A fixture time that a slow host could carry across a
+bound of the hook is not counted, apart from DoctorScopeMargin's. The
+comment above Stage2Harness gives both lists, with the hook line of
+each hook timeout, the reason the tests
+keep the hook's timeouts, which is that they check the installed hook
+as the platform runs it, and this bound.
+
+Each limit is checked when it is applied, whatever way its value was
+bound. A limit is applied at 1 of 3 sinks: a launch through
+run_doctor_recorded, through which the file's audit hook forces
+every launch of the test process; the bound b of an assertLess or
+assertLessEqual call, which every such call in the process is taken
+to be; and the timeout of threading.Thread.join. The file wraps the 2
+asserts and Thread.join, each with its own parameters, and
+run_doctor_recorded gives its timeout to the check before the run
+starts. The site of a limit is the innermost frame that runs a
+function at the top level of the file or a method defined in a class
+of the file, keyed by class and function and told by the identity of
+its code, which the file maps from each function's __qualname__ once
+it is defined; code nested in such a function has its site. The
+sinks and the wrapper of unittest.TestCase.run have none, so a limit
+applied where no other frame runs the file's code, such as by a
+cleanup that is a sink or by a test of another module, has no site
+and is checked against the floor only. The check
+uses neither co_qualname nor the f_locals proxy, as the CI job runs
+the python3 of ubuntu-latest, whose version the workflow does not
+pin. Before the sink runs it refuses a value that is not an int or a
+float; anywhere in the process, a value below 4.5 s, the least value
+of the table, also where no frame has a site; and, at a site of a
+Stage2Harness test, a site that the table does not list or a value
+below the value that it gives the site. It compares by not value >=
+floor, so it refuses NaN. Each test in the process gets a cleanup that
+fails it for each refusal recorded while it ran, also one raised in
+a thread or caught by the test. tearDownModule fails the run for a
+refusal that no cleanup read, of those raised before it reads them,
+and, once every test of the file, as a new unittest.TestLoader finds
+them, has run in the process, so not in a run that a -k option
+narrows, for each entry whose site admitted no limit or whose value
+is not the least value admitted at its site. A refusal raised after
+that, while no test runs, such as in a thread still running once
+tearDownModule has run, is read by nothing: in a thread it stops only
+that thread, and the run's result and exit status are as they would
+be without it.
+Not checked: a limit that reaches none of the 3 sinks, such as an
+elapsed time compared in an if statement or the timeout of
+signal.alarm, code that bypasses the wrappers, apart from launches, a
+limit on a path that no run takes, and a limit inside a program
+string of the file. Stage2TimeLimitProbe requires each entry to be a
+site of a Stage2Harness test, and the comment above Stage2Harness,
+with V the least value, to hold "least of them is" exactly once, as
+"The least of them is V s, at L.", where L names the sites of exactly
+the entries that hold V, each once, in any order, and to follow each
+"least of them is" and "least test limit is" in it with " V s". It
+plants 13 comments and tables that must each give a mismatch, such as
+a comment that names another site as the holder of the least value
+and names the holder in another sentence, one that states a second
+least value, and one that states the least value again in a line
+that it comments out, and 5 controls that must give none. It also
+requires time_limit_full_run, which tells tearDownModule whether
+every test has run, to take the 1 test that a name pattern on
+unittest.defaultTestLoader selects, as a -k option gives it, as no
+full run and every test of the file as one, with and without that
+pattern. TimeLimitSinkProbe runs 29 planted cases in
+the process: 17 forms that bind a limit of 1 s without a plain call,
+such as super(), an alias, getattr, functools.partial, type(self), an
+override's default, a match class pattern, inspect.getmembers,
+operator.methodcaller and gc.get_objects, and 9 more refusals, each of
+which must fail its case before its sink applies the limit, and 3
+controls at 60 s through run_reaped and at 4.5 s, each of which must
+pass with its limit admitted. In a planted case run in a thread of
+its own, whose cleanup calls a sink directly, 60 s at Thread.join and
+at assertLess must be admitted at no site, and 4.4 s at Thread.join
+refused at the floor. TimeLimitTeardownProbe holds 1 test, which
+requires that it is the last test of the file that a
+unittest.TestLoader finds. It calls tearDownModule with TESTS_RUN,
+TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for the call and
+TIME_LIMIT_LOCK, which is reentrant, held until it restores them, so
+a limit that a thread applies meanwhile waits for the lock and is
+recorded in the restored lists: with every test of the file run, it
+must fail with the mismatch of an entry whose site admitted a greater
+least limit and of one whose site admitted none; with 1 test missing,
+or with that test alone, it must fail for neither; and limits that
+agree with the table must fail neither run. Once every test of the
+file has run, as in a full run, the test requires each entry to be
+the least limit admitted at its site, so a wrong entry fails the test
+itself, not only tearDownModule; a run that -k narrows does not reach
+that check. The T15EnumeratorTimeout section header states that the
+hook exits within 120 s, not that it never hangs, so in
+tools/test-no-qa-labels.py only 2 allowlist entries, which hold the
+exact text of that line and of the comment that cites the
+NO_ENUMERATOR check and its return and the stage 1 test of that deny,
+differ from main as of #275 (Refresh the vendored AIQT hooks plugin).
+In tools/test-orch-stage1-hooks.py only 1 entry of the WHOLE table of
+WholeFunctionCitations, 4 hook line ranges in comments and 1 sentence
+of the docstring of WholeFunctionCitations differ from main as
+of #275 (Refresh the vendored AIQT hooks plugin): the comment of
+test_stage1_contrast cites the whole of _child_status_refusal by its
+line range in the hook, and that test requires each whole-function
+citation in a tools file to be counted in WHOLE; the 4 ranges now
+start and end on the statements that they name, and the sentence
+states that the count takes any first line from the def line to the
+first line of the body after any docstring. The branch also adds
+.github/squash/280.txt, which holds this message and which the pull
+request text check reads.
+
+The enforcement test fails a hook that passes no timeout argument, as
+it waits the 100 s sleep out, on the call check if the hook still
+exits within 120 s and on the "exited" check, which comes first, if it
+does not; a hook that passes a timeout argument other than 1, on the
+call check if the hook still exits within 120 s, as with a fixed 20 s,
+60 s or 180 s, max(timeout, 30) or timeout * 2, and on the "exited"
+check if it does not; a hook that runs the enumerator again after a
+timeout, which records 2 or more calls, on the call check if the hook
+still exits within 120 s and on the "exited" check if it does not; a
+hook that starts the enumerator with Popen, waits the declared timeout
+and never stops it, in or out of a new session, as it records no call
+(it also leaves the enumerator running, but the test stops at the call
+check, before its check for a process left running); a hook that takes
+the timeout as success or gives another verdict; a hook that stalls
+long enough not to exit within 120 s; and a change to the hook's check
+of the declared value that rejects 1, as the hook then passes its 60 s
+fallback.
+
+The recorder test fails a hook that passes the same timeout whatever
+is declared, such as 1 s, 20 s or 60 s, for at least 3 of the 4
+values, and fails timeout * 2 and no timeout argument for all 4. The
+value 0.001 fails a floor above it, such as max(timeout, 1) or
+max(timeout, 30); 60 fails a cap below it, such as min(timeout, 30);
+and 7.5 fails rounding to a whole number. It also fails a change to
+the hook's check of the declared value that rejects 0.001, 1 or 7.5,
+such as one that accepts only an int, for that value, as the hook then
+passes its 60 s fallback. It does not catch a change that rejects 60,
+as the hook then passes its 60 s fallback for the declared 60, the
+same value.
+
+The enforcement test passes a hook that passes 1 s whatever is
+declared, or that changes only values other than 1, such as
+round(timeout); the recorder test fails each such change to 0.001, 7.5
+or 60.
+
+Hook variants that neither enumerator test catches:
+- a stall after the timeout, or before the hook starts the enumerator,
+  that still lets the hook exit within 120 s, such as a 5 s sleep in
+  the except handler or before the enumerator starts. The 15 s bound
+  on the whole call in main as of #275 (Refresh the vendored AIQT hooks
+  plugin) caught such a stall only when the whole call then passed
+  15 s, which a 5 s stall after the 1 s timeout need not bring about,
+  and it also failed the correct hook once a loaded host stretched the
+  call past 15 s;
+- a floor of 0.001 or below, such as max(timeout, 0.001);
+- a cap of a declared timeout between 60 s and 600 s, such as
+  min(timeout, 60) or min(timeout, 300), which the declared-timeout
+  test no longer catches, as it declares at most ENUM_TIMEOUT, 60 s,
+  since write_registry refuses a declared timeout over it;
+- a cap of 600 or above, such as min(timeout, 600), which changes
+  nothing, as the hook's check already rejects a value above 600;
+- rounding to 3 or more decimal places, such as round(timeout, 3);
+- a change to a declared value other than 0.001, 1, 7.5 and 60, such
+  as 60 s for any value from 10 to 599;
+- a change to the 60 s fallback, such as 30 s, and a change to which
+  values the check rejects (not a number, 0 or below, or above 600)
+  that still accepts 0.001, 1, 7.5 and 60, such as one that rejects
+  JSON true, which the unchanged hook takes as a timeout of 1 s, or one
+  that rejects each value over 60;
+- a change to the check that rejects 60 and still accepts 0.001, 1 and
+  7.5, such as 0 < timeout < 60, as the hook then passes its 60 s
+  fallback for the declared 60, the same value;
+- a hook that stops only the enumerator's own process, as the
+  unchanged hook's timeout does, against one that also stops the
+  processes that the enumerator starts: the sleeping enumerator is 1
+  process, so the tests say nothing about processes that an enumerator
+  starts.
+
+Other limits:
+- The tests do not time the effective timeout. Enforcement rests on
+  subprocess.run honouring its timeout argument, and is seen once, as
+  TimeoutExpired, in a run where the enumerator sleeps 100 s.
+- A hook that starts the enumerator other than through subprocess.run
+  records no call and fails both enumerator tests, even if it enforces
+  the declared value.
+- The stage 1 tests pass a hook whose extra process native code starts
+  without an audit event, unless that process is still running when
+  the hook ends, and a hook that gets another program, such as a
+  service manager, to start a process. Their start check takes the
+  hook's restore note as the account of what its first probe met, so
+  it passes a hook that writes that note and forks as the note states.
+
+The enforcement test counts no heartbeat. A heartbeat design runs an
+enumerator that writes 1 line a second, requires fewer than 5 lines,
+and requires that the hook spent less than 0.5 s after the enumerator
+ended, read from the hook's /proc/<pid>/schedstat. To take that
+reading, it requires the enumerator to write the hook's process id to
+a FIFO before the declared 1 s runs out. A review run of that design
+reported that a correct hook failed that requirement on 1 CPU shared
+with 48 busy loops, and that a copy that passes round(timeout), the
+same 1 s for this test, failed the 0.5 s bound under heavy load. This
+message does not rest on a reproduction of either report; it rests on
+the design, in which a correct hook passes only if the enumerator wins
+a race against the hook's 1 s deadline and the hook keeps within a
+small time margin.
+
+The enforcement test asks the enumerator to do nothing but record its
+start, which no check of that test reads, before the timeout fires,
+and the enumerator sleeps 100 s, so no check needs the enumerator to
+do work within the 1 s, and apart from its 3 time bounds the test
+asserts only outcomes. For a hook that calls subprocess.run, the line
+count fails a hook that keeps the enumerator alive long enough to
+write 5 lines, about 4 s, such as one that passes a timeout of that
+length or more, or none; the enforcement test fails every timeout
+argument other than 1, and no timeout argument. The maintainer chose
+a heartbeat test for the kill plus a test that the hook passes exactly
+the declared timeout; the tree keeps both roles, a kill test and an
+exact value test, and has no heartbeat count.
+
+This message supersedes the messages of the branch's commits: it is the
+message that lands on main, and it states what the branch changes. It
+does not check those messages against their diffs, and it does not list
+or correct their statements. Some of those statements are not borne out
+by their diffs, and later messages of the branch correct some of them,
+so a reader should take a statement of one of those messages as borne
+out only where this message makes it too. Below, the branch's 29 commits
+up to and including the one that carries this message are numbered from
+1, its first, to 29, that one, with the merge commit that merges main as
+of #275 (Refresh the vendored AIQT hooks plugin) as 9, and the merge
+commits that merge the 2 later commits of main as 24 and 25. Commit 21,
+"Rerun the required checks on an unchanged tree", changes no file, and
+commit 23, "Name the real subject of the last revision and refill the
+squash text", is a text fix. Commit 26, "Describe the second join of
+main and its coverage gap", is a text fix; commit 27, "Count the text
+commits and correct the 60 s claim", corrects this message, the
+description of the pull request and the comments of the 2 enumerator
+tests in tools/test-orch-stage2-hooks.py; commit 28, "Correct the text
+commit subjects and match the residual lists", corrects this message,
+the description of the pull request and the comment of the
+T15EnumeratorTimeout section of that file; and commit 29, "Align the 2
+texts on each fact", corrects this message, the description of the
+pull request and the comment of the T15EnumeratorTimeout section of
+that file. Up to commit 29, no other commit is on the branch.
+
+Commit 25 resolves 3 conflict blocks in
+tools/test-orch-stage2-hooks.py, where main's changes refuse a
+declared enumerator whose program is not 1 of ENUM_PROGRAMS, and a
+declared timeout over ENUM_TIMEOUT, 60 s, and widen the bounds of the
+doctor and hook calls that can run the stage 2 enumerator to
+RUN_TIMEOUT, 120 s. In the head of
+test_sleeping_enumerator_times_out_and_denies it keeps this branch's
+test, with main's SLEEPING_ENUM_FIXTURE as the enumerator, and drops
+main's comment on its 90 s bound; at the end of that test and in
+test_declared_timeout_reaches_the_enumerator_call it keeps this
+branch's test and drops main's 90 s bound on the elapsed time, which
+the wider 120 s hook bound replaces; and in run_doctor_recorded it
+joins both docstrings and checks the limit before main's code makes
+the run's file of enumerator starts. The sleeping enumerator is now
+the pinned SLEEPING_ENUM_FIXTURE, which sleeps 100 s in place of
+3600 s, so a hook that waits the sleep out fails the call check if it
+still exits within 120 s, and the earlier "exited" check if not. The
+declared timeouts are capped at ENUM_TIMEOUT,
+60 s, in place of 600 s, and the writing enumerator runs as a -c
+program. TEST_TIME_LIMITS moves to the widened bounds, 120 s in place
+of 30 s or 60 s at 5 sites and 240 s in place of 60 s at 1, and gains
+main's 2 sites of EnumeratorBounds, at 119 s and 120 s, so it holds
+21 entries, the least still 4.5 s; the comment above Stage2Harness
+states them. 2 planted forms of TimeLimitSinkProbe bind the TIMEOUT
+that main's DoctorCheckpointWrites._doctor reads, as it takes no
+timeout argument. No run reported below is of commit 25's tree.
+
+Runs, with python3 -I (3.14.4) on a copy of commit 20, whose tree
+commit 21 keeps, with the change of commit 22 applied, on a Linux host
+with 96 CPUs whose load was not read, the 3 whole-file runs below
+running at the same time:
+- tools/test-orch-stage2-hooks.py ran once, 158 tests: it passed, and
+  TimeLimitTeardownProbe passed alone, 1 test;
+- against copies of the changed file that each change 1 thing, with
+  the new test run alone: without the table check in tearDownModule,
+  it failed 2 of its 3 subtests of a full run, the 2 with a mismatch;
+  with tearDownModule taking every run as full, it failed 3 of its 4
+  subtests of a run that is not full, the 3 with a mismatch, and
+  tearDownModule failed on 19 entries; each of those 2 runs exited 1;
+  with the entry for Doctor._audit_bounded set to 30, it passed and
+  the run exited 0;
+- with a thread made to apply 0.1 s at Thread.join just after each of
+  the 7 calls of tearDownModule by the new test, while the 3 lists are
+  still replaced, the new test failed on the 7 refusals; with the file
+  of commit 20, none of them reached the restored lists and it passed;
+- against copies of the file of commit 19, each run as a whole file:
+  without the table check in tearDownModule, it passed, 157 tests;
+  with tearDownModule taking every run as full, it failed only
+  test_stage1_contrast_when_sigchld_is_ignored, of 157 tests, as the
+  nested run of that test failed in tearDownModule;
+- tools/test-orch-stage1-hooks.py passed, 32 tests;
+- tools/test-no-qa-labels.py passed, 63 tests, in a copy with the .git
+  folder, and its probe of the description, this message and the
+  messages of commits 21 and 22 found no hit.
+Reported for commit 20 and not repeated, apart from the runs above,
+with python3 -I (3.14.4) on a copy of commit 19 with the change of
+commit 20 applied, on a Linux host that other work loaded, no added
+load during the whole-file runs:
+- tools/test-orch-stage2-hooks.py ran once, 158 tests, with 1-minute
+  load averages of 79.76 before the run and 82.29 after it: it passed,
+  and TimeLimitTeardownProbe passed alone, 1 test;
+- against copies of the changed file that each change 1 thing: without
+  the table check in tearDownModule, the new test, run alone, failed
+  the 2 of its 3 subtests of a full run with a mismatch; with
+  tearDownModule taking every run as full, it failed the 3 of its 4
+  subtests of a run that is not full with a mismatch, and
+  tearDownModule failed on 19 entries; with the entry for
+  Doctor._audit_bounded set to 30, the new test passed alone and failed
+  in a run of the whole file, 158 tests, as tearDownModule did; each
+  of those runs exited 1 but the run alone of the copy with the wrong
+  entry, which exited 0;
+- against copies of the file of commit 19 with the same first 2
+  changes, the 2 probe classes passed their 9 tests, and the 2 tests
+  named for the full-run check passed, with only tearDownModule failing
+  on 19 entries;
+- tools/test-orch-stage1-hooks.py passed, 32 tests;
+- tools/test-no-qa-labels.py passed, 63 tests, in a copy with the .git
+  folder, and its probe of the description, this message and the message
+  of commit 20 found no hit.
+Reported for commit 19 and not repeated, apart from the runs above,
+with python3 -I (3.14.4) on a copy of it, on a Linux host that other
+work loaded, no added load during the whole-file run:
+- tools/test-orch-stage2-hooks.py ran once, 157 tests, with 1-minute
+  load averages of 79.54 before the run and 61.04 after it: it passed;
+- tools/test-orch-stage1-hooks.py passed, 32 tests;
+- tools/test-no-qa-labels.py passed, 63 tests, in a copy with the .git
+  folder, and its probe of the description, this message and the message
+  of commit 19 found no hit.
+Reported for commit 19 and not repeated, apart from the runs above,
+with python3 -I (3.14.4) on a copy of commit 18 with the change of
+commit 19 applied, on a Linux host that other work loaded, no added load
+during the whole-file runs:
+- tools/test-orch-stage2-hooks.py ran 3 times, one after another, 157
+  tests each, with 1-minute load averages of 31.93 before the first run
+  and 42.10, 48.13 and 50.68 after each: all 3 passed, and its
+  tearDownModule held each entry of TEST_TIME_LIMITS to its site;
+- tools/test-orch-stage1-hooks.py passed, 32 tests;
+- tools/test-no-qa-labels.py passed, 63 tests, in a copy with the .git
+  folder, and its probe of the description, the squash message and the
+  message of commit 19 then found no hit;
+- against copies of the merged file that each change 1 thing, each run
+  beside an unchanged copy, which passed each time: with the full-run
+  check asking unittest.defaultTestLoader again, the new test of
+  commit 18 failed with a name pattern on that loader, and
+  tearDownModule failed on 18 entries that the run did not reach; with
+  the launch, the 2 asserts or Thread.join unwrapped, the planted cases
+  of that sink failed (23, 4 and 2 of 29), and the cases of that sink in
+  the test of a limit with no other frame of the file (0, 1 and 2 of 3);
+  without the cleanup, the caught and the thread cases failed and
+  tearDownModule reported 27 unread refusals; with the floor raised or
+  lowered by 0.5 s, the 4.5 s controls or the 4.4 s cases failed, with
+  subtests of the floor; with the check doing nothing, all 29 failed,
+  and the 3 cases of that test; with 1 entry set below what its site
+  applies, only tearDownModule failed, in a whole run; with the wrapper
+  of unittest.TestCase.run given a site again, the 2 cases of that test
+  at 60 s and the check that the wrapper has no site failed, and its
+  4.4 s case passed; with the comment's "least of them is" not counted,
+  its value not checked after each statement of a least value, "least
+  test limit is" not read, its sites not compared, or its sites compared
+  as a set, the probe test failed on the planted comments and tables
+  that only that check refuses (1, 1, 1, 7 and 1);
+- the 18th planted form, 1 s through the class, which is no longer named
+  a control, was refused and started no wrapper in each unchanged run,
+  and failed its case with the launch unwrapped or the check doing
+  nothing;
+- in a copy of commit 3 whose hook sleeps 5 s after the enumerator times
+  out, its enumerator-timeout test passed, as it did with the unchanged
+  hook.
+Reported for commit 18 and not repeated, apart
+from the runs above: tools/test-orch-stage2-hooks.py ran 3 times, 157
+tests each, with 1-minute load averages of 31.49 before the first run
+and 38.29, 31.55 and 29.64 after each, and all 3 passed; the same file
+with -k on Stage2TimeLimitProbe and on TimeLimitSinkProbe ran 5 and 4
+tests, OK, and exited 0, and the file before that commit's change ran 4
+tests each, OK, and exited 1, as tearDownModule failed the run for 19
+and 18 entries whose site the run did not reach; with the file of
+commit 15 and with that commit's file, a refusal raised in a thread
+after tearDownModule had run failed nothing, and the run exited 0; with
+-k on 1 test, the file of commit 15 exited 1 on all 19 entries; and,
+with a git first on PATH that sleeps 6 s before rev-parse
+--show-toplevel, the enforcement test of commit 9 failed its call check
+with hook exit 0, and passed with the real git, and that commit's file
+passed it with that git.
+Reported for commit 17 and not repeated,
+apart from the runs above: tools/test-orch-stage2-hooks.py ran 3
+times, 156 tests each, with 1-minute load averages of 19.56 before
+the first run and 58.55, 72.21 and 24.79 after each: 2 runs passed;
+in the other, a case of DoctorEventFields'
+test_the_doctor_verdict_equals_the_hook_verdict_for_each_event_field
+failed when the hook's 8 s PreToolUse deadline fired, a case of the
+bound above, and DoctorEventFields then passed alone, 3 tests; before
+1 docstring of that change was reworded, the file passed 3 more
+times; with 22819-22823 put back in a copy of the stage 1 file,
+HookRangeProbe failed; with the merged file before that commit's
+change, a comment that names another site as the holder of the least
+value and names the holder in another sentence, one that also states
+a least value of 3 s, one whose least value is 9 s and that states
+4.5 s in a line that it comments out, one that names a second site or
+the site twice, and one whose bound states a least test limit of 3 s
+each gave no mismatch; with that change each gave a mismatch, and 4
+controls gave none before and after.
+Reported for commit 16 and not repeated:
+tools/test-orch-stage2-hooks.py ran 3 times, 156 tests each, 2 runs
+passed, and in the other T08YieldTool's
+test_three_denials_on_an_unchanged_basis_release_with_findings failed
+when the hook's 8 s PreToolUse deadline fired, a case of the bound
+above, and T08YieldTool then passed alone, 7 tests; with the merged
+file before that commit's change, a test of another module that
+applied 60 s at Thread.join or assertLess, or at Thread.join in a
+cleanup, was refused as applied at a site of a Stage2Harness test
+that the table does not list, and a comment naming
+DoctorScopeMargin._assert_refused_nearby or
+XDoctorScopeMargin._assert_refused_near in place of the site of the
+least entry gave no mismatch; with that change, each 60 s limit was
+admitted at no site and each comment gave 1 mismatch; and copies of
+that commit's file with the comment matched as a substring again, or
+without the check before or after a name, failed the probe test on
+the planted comments that only a whole match refuses (2, 1 and 1).
+Reported for commit 15 and not repeated:
+tools/test-orch-stage2-hooks.py passed twice, 155 tests each;
+HookRangeProbe failed a copy of the stage 1 file with 22819-22823 put
+back; and, started with SIGCHLD ignored, the file as of 2 commits
+before that commit passed all 21 tests of T15EnumeratorTimeout,
+T01StopActionable, T09AskGuard and T14PosturePins, and a copy of it
+without the SIGCHLD reset failed 3 of the 7 tests of
+T15EnumeratorTimeout and 11 of the 14 tests of the other 3.
+Reported for commit 14 and not repeated:
+tools/test-orch-stage2-hooks.py passed twice, 151 tests each; before
+that commit the probe let through, with no mismatch, a ** in a dict
+display at a call that binds wall_clock_bound, a dict passed by
+position and forwarded with **, and an except clause that rebinds a
+class attribute or a base; each copy of that commit's file that undoes
+1 change of the probe failed the probe test on the forms of that
+change only; HookRangeProbe failed a copy with 32991-33005 put back
+and one with an entry of PART_RANGES removed, and passed one whose
+anchor os.open range starts on the anchor's path again, as it checks
+boundaries only; and, started with SIGCHLD ignored, the file as of 2
+commits before that commit ran the 5 tests of T15EnumeratorTimeout
+that it held and failed 2.
+Reported for commit 13 and not repeated:
+tools/test-orch-stage2-hooks.py ran 3 times, 2 runs passed, 150 tests
+each, and in the other T08YieldTool's
+test_declared_roster_denies_with_actionable_work failed when the
+hook's 8 s PreToolUse deadline fired, a case of the bound above, and
+T08YieldTool then passed alone, 7 tests; with SIGCHLD ignored by the
+process that started the file, a copy of that commit without the
+SIGCHLD reset failed 3 tests of T15EnumeratorTimeout, of the 7 that
+it holds, and 11 of 14 tests of T01StopActionable, T09AskGuard and
+T14PosturePins, and that commit's file passed all 21 tests of those 4
+classes; and, of copies made before 1 comment was reflowed, a copy
+without the SIGCHLD reset failed the nested test and passed
+test_stage1_contrast, a copy whose probe reads no call's bindings,
+with run_standin's entry removed from the table, failed the probe
+test on the 4 binding forms only, and a copy with the section
+header's old range was reported by a statement-boundary check of the
+cited ranges and failed the allowlist test of
+tools/test-no-qa-labels.py, while that commit's file passed each of
+those checks.
+Reported for an earlier version of that commit and not repeated: each
+of 22 copies of the test file that reverts 1 of the probe's readings
+or refusals failed the probe test on that form; a copy whose start
+check counts 1 probe fork failed the test of the failed first fork and
+passed test_stage1_contrast; and a hook copy that forks 1 more child
+and writes no note failed both stage 1 tests that the branch then
+held.
+Reported for an earlier head of the branch and not repeated: the whole
+file passed under 48 busy-loop processes and T15EnumeratorTimeout
+under 96; with the git call in _recovery_toplevel given a timeout that
+fires at once, or a git on PATH that sleeps 6 s, test_stage1_contrast
+passed and its version in main as of #275 (Refresh the vendored AIQT
+hooks plugin) failed with hook exit 0; and the
+enforcement test failed hook copies with a fixed 20 s, a fixed 180 s
+and a check that rejects 1, and passed one that accepts only an int,
+which the recorder test failed for 0.001 and 7.5.
