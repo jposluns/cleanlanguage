@@ -347,13 +347,16 @@ stop, a semicolon or a colon followed by a space. The 2 squash messages are not 
 other in this way; fourth, they must be equal byte for byte. The header, the script's other comment lines, this
 docstring, the test's comment lines and the committed squash message are read in every checkout,
 CI included, and the case fails when a folder that holds .git lacks the committed squash message.
-PR-BODY.md and SQUASH-MSG are not committed, so a checkout lacks them. A folder that lacks
-PR-BODY.md or SQUASH-MSG, or that holds neither .git nor the committed squash message, as a copy of
-the tools can, skips each missing text in a subtest that says so and compares every other text. A
-review export of a later pull request holds that pull request's texts as PR-BODY.md and SQUASH-MSG,
-so the case compares them only when SQUASH-MSG ends its subject with (#290); otherwise it skips
-each of them in a subtest that names every check it skips and compares every other text. It
-is the only case that reads the script's text, and it reads only its comment lines.
+PR-BODY.md and SQUASH-MSG are not committed, so a checkout lacks them. A folder that holds neither
+.git nor the committed squash message, as a copy of the tools can, skips that message in a subtest
+that says so and names every check it skips, and a folder that lacks PR-BODY.md or SQUASH-MSG skips
+each missing one in the same way. A review export of a later pull request holds that pull request's
+texts as PR-BODY.md and SQUASH-MSG, so the case compares each of these 2 that the folder holds only
+when SQUASH-MSG ends its subject with (#290); when SQUASH-MSG ends its subject otherwise or is
+missing, it skips each of them that the folder holds in a subtest that says it is not a text of
+PR 290 and names every check it skips, so a folder that lacks SQUASH-MSG skips its PR-BODY.md too.
+The case compares every text that it does not skip. It is the only case that reads the script's
+text, and it reads only its comment lines.
 
 1 more case, the export case, runs the text case alone in a temporary folder that holds only copies
 of the script and the test, with a PR-BODY.md and a SQUASH-MSG that repeat none of the texts. The run
