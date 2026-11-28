@@ -234,6 +234,16 @@ and, in turn, a branch, which only the leak check lists. The run must fail with 
 listing, with the script's message that git wrote other text than the listing, after git's warning
 that names the ref, and print the version line only in the run with the branch.
 
+1 more case, the grep case, runs the dry run with a grep stand-in, first on PATH, that records each
+of its runs among the git calls and exits 2, as grep does when it cannot read a file, when it is
+given both the text and the file that the run names, and otherwise runs grep. Step 4 makes 7
+searches for a text that must be absent, at its 4 calls of assert_lacks: 3 in each of the 2 pages
+and 1 in site-src/site.json. The 7 runs name, in turn, each of those 7 searches: the old zip name,
+the old version and the sentinel date in each page, and the sentinel date in site-src/site.json.
+Each run must fail with exit 1 at that search, after the version line, with the script's message
+that it could not search that file, and record nothing after it other than the exit cleanup's git
+worktree remove.
+
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
 HEAD, since its parent, tree, identity, dates and message are. It then points a lightweight tag and
@@ -337,10 +347,21 @@ stop, a semicolon or a colon followed by a space. The 2 squash messages are not 
 other in this way; fourth, they must be equal byte for byte. The header, the script's other comment lines, this
 docstring, the test's comment lines and the committed squash message are read in every checkout,
 CI included, and the case fails when a folder that holds .git lacks the committed squash message.
-PR-BODY.md and SQUASH-MSG are not committed, so a checkout lacks them. A folder that lacks
-PR-BODY.md or SQUASH-MSG, or that holds neither .git nor the committed squash message, as a copy of
-the tools can, skips each missing text in a subtest that says so and compares every other text. It
-is the only case that reads the script's text, and it reads only its comment lines.
+PR-BODY.md and SQUASH-MSG are not committed, so a checkout lacks them. A folder that holds neither
+.git nor the committed squash message, as a copy of the tools can, skips that message in a subtest
+that says so and names every check it skips, and a folder that lacks PR-BODY.md or SQUASH-MSG skips
+each missing one in the same way. A review export of a later pull request holds that pull request's
+texts as PR-BODY.md and SQUASH-MSG, so the case compares each of these 2 that the folder holds only
+when SQUASH-MSG ends its subject with (#290); when SQUASH-MSG ends its subject otherwise or is
+missing, it skips each of them that the folder holds in a subtest that says it is not a text of
+PR 290 and names every check it skips, so a folder that lacks SQUASH-MSG skips its PR-BODY.md too.
+The case compares every text that it does not skip. It is the only case that reads the script's
+text, and it reads only its comment lines.
+
+1 more case, the export case, runs the text case alone in a temporary folder that holds only copies
+of the script and the test, with a PR-BODY.md and a SQUASH-MSG that repeat none of the texts. The run
+must pass, skipping both with that message, when the subject of SQUASH-MSG ends with (#291), and
+fail on them when it ends with (#290).
 
 Every git and bash process runs with a fixed environment: HOME and TMPDIR in the temporary folder,
 the global and system git configuration pointed at the null device, the commit identity and the
@@ -380,6 +401,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -1544,6 +1566,44 @@ class FailClosedCases(unittest.TestCase):
                     self.assertEqual(temporary_files(fixture.tmp), [],
                                      "the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR")
 
+    def test_a_grep_that_cannot_search_for_an_absent_text_fails(self):
+        # (the pattern, the file searched): step 4 searches for each of these to show it is gone. Here grep
+        # cannot read the file on that 1 search, so it exits 2, which the script must report and stop on,
+        # not take for a missing match and go on to pass.
+        real = shutil.which("grep", path=os.environ.get("PATH", os.defpath))
+        self.assertIsNotNone(real, "no grep on PATH")
+        for text, path in (("cleanlanguage-1.0.0.zip", "site/install/index.html"),
+                           ("cleanlanguage-1.0.0.zip", "site/verify/index.html"),
+                           ("version 1.0.0\\b", "site/install/index.html"),
+                           ("version 1.0.0\\b", "site/verify/index.html"),
+                           ("2020-01-01", "site/install/index.html"),
+                           ("2020-01-01", "site/verify/index.html"),
+                           ("2020-01-01", "site-src/site.json")):
+            with self.subTest(text=text, path=path), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env)
+                (wrapper / "grep").write_text(
+                    "#!/bin/sh\n"
+                    f"printf 'grep %s\\n' \"$*\" >> {shlex.quote(str(wrapper / 'events'))}\n"
+                    "text=no\n"
+                    "file=no\n"
+                    "for arg in \"$@\"; do\n"
+                    f"  if [ \"${{arg}}\" = {shlex.quote(text)} ]; then text=yes; fi\n"
+                    f"  if [ \"${{arg}}\" = {shlex.quote(path)} ]; then file=yes; fi\n"
+                    "done\n"
+                    "if [ \"${text}\" = yes ] && [ \"${file}\" = yes ]; then\n"
+                    f"  printf 'grep: %s: the stand-in cannot read it\\n' {shlex.quote(path)} >&2\n"
+                    "  exit 2\n"
+                    "fi\n"
+                    f"exec {shlex.quote(real)} \"$@\"\n", encoding="utf-8")
+                (wrapper / "grep").chmod(0o755)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                self.assertIn(f"grep: {path}: the stand-in cannot read it", err)
+                self.assert_stops(code, out, err, f"release-dry-run: could not search {path} for a text that must "
+                                  "be absent from it (grep exit 2)", True)
+                self.assert_ends_at(wrapper, lambda event: event.startswith("grep ")
+                                    and event.endswith(f" {text} {path}"))
+
 
 class SignalCases(unittest.TestCase):
     def test_a_signal_during_the_attribute_source_check_leaves_no_file(self):
@@ -2189,6 +2249,8 @@ DESCRIPTION = REPO_ROOT / "PR-BODY.md"
 SQUASH_MESSAGE = REPO_ROOT / "SQUASH-MSG"
 COMMITTED = ".github/squash/290.txt"
 EXPORTED = {"PR-BODY.md": DESCRIPTION, "SQUASH-MSG": SQUASH_MESSAGE}
+# The end of the subject of the squash message of PR 290, which marks PR-BODY.md and SQUASH-MSG as its texts.
+OWN_SUBJECT_END = "(#290)"
 # The 2 squash messages and the description, which repeat what the other texts state.
 HOUSE = (COMMITTED, "PR-BODY.md", "SQUASH-MSG")
 # (name, the text that states the block, first words, last words, the texts that repeat it) of each
@@ -2350,11 +2412,24 @@ class RepeatedTextCases(unittest.TestCase):
             with self.subTest(text=COMMITTED):
                 self.assertFalse((REPO_ROOT / ".git").exists(),
                                  f"{COMMITTED} is missing from a folder that holds .git, as a checkout does")
-                self.skipTest(f"{COMMITTED} is not in this folder, which holds no .git, so its copies are not "
-                              "compared; every other text is")
+                self.skipTest(f"{COMMITTED} is not in this folder, which holds no .git, so it is left out of the "
+                              "repeated blocks, the repeated sentences, the check for changed copies and the byte "
+                              "comparison of the 2 squash messages; every other text is compared")
+        # PR-BODY.md and SQUASH-MSG at the top are the texts of PR 290 only when SQUASH-MSG ends its subject
+        # with OWN_SUBJECT_END; a review export of a later pull request holds that pull request's texts there.
+        subject = SQUASH_MESSAGE.read_text(encoding="utf-8").split("\n", 1)[0] if SQUASH_MESSAGE.is_file() else None
         for place, path in EXPORTED.items():
-            if path.is_file():
+            if path.is_file() and subject is not None and subject.endswith(OWN_SUBJECT_END):
                 texts[place] = path.read_text(encoding="utf-8")
+            elif path.is_file():
+                checks = ("the repeated blocks, the repeated sentences, the check for changed copies and the byte "
+                          "comparison of the 2 squash messages" if place == "SQUASH-MSG" else
+                          "the repeated blocks, the repeated sentences and the check for changed copies")
+                reason = ("is missing" if subject is None else
+                          f"does not end its subject with {OWN_SUBJECT_END}")
+                with self.subTest(text=place):
+                    self.skipTest(f"{place} at the top of the repository is not a text of PR 290, since SQUASH-MSG "
+                                  f"there {reason}, so it is left out of {checks}; every other text is compared")
             else:
                 with self.subTest(text=place):
                     self.skipTest(f"{place} is not at the top of the repository, as in a checkout, so it is left "
@@ -2390,6 +2465,35 @@ class RepeatedTextCases(unittest.TestCase):
             with self.subTest(check="the 2 squash messages"):
                 self.assertEqual(COMMITTED_SQUASH.read_bytes(), SQUASH_MESSAGE.read_bytes(),
                                  f"{COMMITTED} and SQUASH-MSG differ")
+
+    def test_the_texts_at_the_top_are_compared_only_when_they_are_those_of_pr_290(self):
+        # (the subject of SQUASH-MSG, whether the text case must pass): the text case runs alone in a folder
+        # that holds only the script and the test, with a PR-BODY.md and a SQUASH-MSG that repeat none of the
+        # texts. Another pull request's texts must be skipped, each in a subtest that says so; texts whose
+        # subject ends with (#290) must be compared, and fail.
+        case = "RepeatedTextCases.test_each_repeated_text_is_the_same_in_every_text_that_holds_it"
+        for subject, passes in (("Change another thing (#291)", True), ("Change another thing (#290)", False)):
+            with self.subTest(subject=subject), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                (root / "tools").mkdir()
+                shutil.copyfile(DRY_RUN, root / "tools" / DRY_RUN.name)
+                shutil.copyfile(__file__, root / "tools" / Path(__file__).name)
+                (root / "PR-BODY.md").write_text("A text that repeats none of the texts.\n", encoding="utf-8")
+                (root / "SQUASH-MSG").write_text(f"{subject}\n\nA text that repeats none of the texts.\n",
+                                                 encoding="utf-8")
+                result = subprocess.run([sys.executable, "-I", str(root / "tools" / Path(__file__).name), case],
+                                        cwd=root, capture_output=True, text=True, timeout=120,
+                                        start_new_session=True)
+                if passes:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for place in EXPORTED:
+                        self.assertIn(f"{place} at the top of the repository is not a text of PR 290, since "
+                                      f"SQUASH-MSG there does not end its subject with {OWN_SUBJECT_END}",
+                                      result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn("PR-BODY.md holds no paragraph that starts with", result.stderr)
+                    self.assertIn("SQUASH-MSG holds the sentence 0 times", result.stderr)
 
 
 if __name__ == "__main__":
