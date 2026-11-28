@@ -44,15 +44,18 @@ terminal escape sequence, and each backslash written as a backslash
 escape, so each failure is 1 line. A red run prints every failure in
 full, 1 to a line after a count, never through a list comparison that
 unittest shortens. A failed git ls-files or git cat-file call, a git
-that cannot start, an empty listing, and a blob that cannot be read are
-failures, never a skip, and each gives only a fixed category with the
-exit code of git, the errno name or type of the error, or a fixed word
-for the blob (missing, not a blob, or unexpected reply), never a
-diagnostic of git, the message of an exception, the error text of the
-system, or the path of the repository or of git; a failed git call
-names no path, and a blob that cannot be read is named by its
-repository path, or, when its path name holds a match, only by a
-digest of the path name, as every failure names its file.
+that cannot start, an empty listing, a listing that is not as
+requested, and a blob that cannot be read are failures, never a skip,
+and each gives only a fixed category with the exit code of git, the
+errno name or type of the error, or a fixed word for the listing
+(unexpected reply) or for the blob (missing, not a blob, or unexpected
+reply), never a diagnostic of git, the message of an exception, the
+error text of the system, or the path of the repository or of git; a
+failed git call names no path, and a blob that cannot be read is named
+by its repository path, or, when its path name holds a match, only by a
+digest of the path name, as every failure names its file. Each parse
+of a reply of git gives a fixed word on a malformed reply, never an
+exception.
 Each caught example in the suite is assembled at run time, so its
 source holds no matchable text.
 
