@@ -330,7 +330,7 @@ What it verifies
    no file under ``site/`` occupies may be the source of such a rule, and a
    reader then gets a pinned logo in its place; a redirect of another path
    that a browser may request from the site's root without a link, such as
-   ``/apple-touch-icon.png``, which committed line 14 of
+   ``/apple-touch-icon.png``, which a committed rule of
    ``site/_redirects`` redirects, passes, since the redirect reading
    judges only ``REQUESTED_FILES`` among such paths; and a rule of
    ``site/_headers`` for ``/favicon.ico`` is held only to the checks that
@@ -1176,7 +1176,7 @@ EXACT_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 # Check 7: the files that this gate judges among those that a browser may request from the site's root without a link,
 # as it requests /favicon.ico for a page, each named as the whole first segment of a path; a redirect source whose
 # first segment, after any https:// and host, is 1 of them, in any letter case, fails (redirect_problems()). It is
-# not every such file: a redirect of another, such as /apple-touch-icon.png, which committed line 14 of
+# not every such file: a redirect of another, such as /apple-touch-icon.png, which a committed rule of
 # site/_redirects redirects, is not judged, a residual that the module docstring names.
 REQUESTED_FILES = ("favicon.ico",)
 # Check 7: the folder, as a path from the site's root, that holds every destination that a rule of site/_redirects

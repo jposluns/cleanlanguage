@@ -474,7 +474,7 @@ GATE = REPO_ROOT / "tools" / "check-install-page.py"
 # The sha256 of the bytes of tools/check-install-page.py, recorded after a reviewer read them. gate_bytes() compares the
 # gate's bytes with it before this test runs any code of the gate. Record a new digest only after reading the diff of
 # the gate since the bytes that this digest names; a new digest accepts whatever that diff holds.
-GATE_SHA256 = "88f416948b41fcf9464de097d68cfa9f34e6a4e2a3284ce215582d220fe2d5d7"
+GATE_SHA256 = "1f2ea1cad4dfa9f76dae48d2925affae1dca38b0688327ceefbbabd4c9202b3f"
 
 
 def gate_bytes(path: Path = GATE, digest: str = GATE_SHA256) -> bytes:
@@ -1841,7 +1841,7 @@ CASES = [
     # site/ occupies and that lies beneath no file, compared in any letter case, and it sends that source with the
     # status 301 to a file under /assets/baseline/logos/ that tools/check-baseline-pin.py pins, as written, with no
     # further field.
-    ("1 exact redirect of a dropped logo, after the 14 release lines alone",
+    ("1 exact redirect of a dropped logo, after the 15 release lines alone",
         write(REDIRECTS, RELEASE_LINES + "/assets/baseline/logos/aiqt-card.svg /assets/baseline/logos/aiqt.svg 301\n"),
         0),
     ("the committed redirects with all 22 logo lines, beside the whole committed site", whole_site, 0),
