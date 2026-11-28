@@ -52,8 +52,9 @@ site/_redirects, written by redirects_body() in
 tools/set-release-links.py, a new 302 rule sends the old twin path to
 the 28k file, and the alias /downloads/cleanlanguage-29k.md now
 targets the 28k file. site/_headers, site-src/site.json,
-site-src/pages/instructions.html, site/README.md, .aiqt/gensrc.json
-and the portable-text-sync workflow comment name the 28k file.
+site/README.md, .aiqt/gensrc.json and the portable-text-sync workflow
+comment name the 28k file, and site-src/pages/instructions.html
+relabels its full-download button from 29k to 28k.
 
 The check: tools/check-portable-text-sync.sh now fails when the full
 file holds more than 28000 characters by wc -m, down from 29000. Its
