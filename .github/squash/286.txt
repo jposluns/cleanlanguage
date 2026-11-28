@@ -1,0 +1,197 @@
+test-release-package-dist: pin trace-reader TODOs 269 to 273 (#286)
+
+Case 27 of tools/test-release-package-dist.py now holds the 5 gaps
+that TODOs 269 to 273 record for the trace reader, each with a case
+that fails without it. Its docstrings state a rule for what the
+reader refuses, with examples, and point to the reader functions as
+the code that makes its refusals. The packager and the reader are
+unchanged.
+
+- fork() = 101 is read as the call, and its child starts in the
+  folder of its maker. A child of fork() = 101 or vfork() = 101 keeps
+  that folder when its maker enters another by chdir after the call,
+  also when strace left the call unfinished and resumed it with the
+  id of the child at the next line, and when a line of the child
+  interrupted the call and it is resumed with the id of the child.
+- For each of clone, clone3, fork and vfork, in each of the 9 forms
+  in which strace cuts a call short and when it ends with the result
+  ? and the note <unavailable>, 1 later process with no maker is
+  read by its absolute paths, and a second ends the case, as does a
+  relative path in that process. The second ends it for each of
+  these first calls of the first: a chdir or an fchdir whose result
+  is 0, an unread call, a clone, clone3, fork or vfork that made a
+  process, and an unlink, a chdir or a fork that failed. After 2, 3
+  or 4 such calls of the same name in the same form, as many such
+  processes are read and 1 more ends the case; after a fork and a
+  vfork that each ended with the result ?, 2 are read and a third
+  ends it.
+- A new test checks that rule on generated traces: each order of at
+  most 4 calls cut short, C, and 1 to 5 processes with no maker, N,
+  in which only the last N may find no C left for it, with each of
+  180 call attributes and 1 first call, and with each of 177 first
+  calls and 1 call attribute; and 1 call and 2 processes with each
+  pair of them. A call attribute is clone, clone3, fork or vfork, or
+  clone or clone3 with CLONE_FS, in each of the 10 forms above, by a
+  process whose folder is known, by 1 whose shared folder is not
+  known or by a process with no maker. A first call is an unread
+  call in each of the 9 forms, or a call of each name that the test
+  asks strace for, or clone or clone3 with CLONE_FS, done, failed or
+  in each of the 10 forms. All the C of a trace take 1 call
+  attribute, and all its N 1 first call. A trace also holds such
+  calls and processes that are not C or N: before each C by a
+  process with no maker, a clone that strace detached from and the
+  process with no maker that it lets start, which makes the C; and
+  each N whose first call is such a call. So a trace holds up to 9
+  such calls and up to 9 such processes, but in none of these traces
+  does the rule leave more than 4 such calls untaken at the same
+  time, and in none does a process make a call after its own call
+  cut short. A reader that breaks the rule only in a trace that the
+  test does not generate passes it, such as 1 that breaks it only
+  while more than 4 such calls are untaken.
+- A process with no maker ends the case after a clone, clone3, fork
+  or vfork whose result is 0, and after an unread call of ??? or of
+  each name that the test asks strace for but fork and vfork, clone(
+  and clone3( among them, in each of the 9 forms.
+- An unlink read with its arguments that ends as "= ? <unavailable>"
+  counts as a removal, in its line and in its resumption. After a
+  chdir that ends that way in a shared folder, an absolute path is
+  read and a relative path ends the case with the error that names
+  it. That strace writes this form for a call whose arguments it
+  read is not verified, and the comment and the module docstring say
+  so.
+- fchdir into a descriptor with no path, or with a relative path,
+  ends the case.
+- renameat2 gives both of its paths, each read against its own
+  descriptor, in a case where the 2 descriptors and the folder of
+  the process name 3 different folders.
+- New subtests hold refusals that no case on main held, among them
+  those of a trace with no call, a resumption with no call open or
+  under another name, a path not in hex escapes, a line with no
+  process id, an unread call cut short while a call is open, a line
+  with no space or with a tab after the process id, with a space or
+  a tab before it, or whose process id has a sign, a call with no
+  space before or after its = or with 2 spaces after it, a result in
+  hexadecimal or with a plus sign, a result of ? with text right
+  after it, with no space between them, a path in a string that
+  strace cut short, or in a string with an octal escape, a letter
+  escape or a hex escape of 1 digit, a descriptor whose path strace
+  cut short, or 1 in hexadecimal, with a plus sign or written as
+  at_fdcwd in small letters, a resumption with 2 spaces or with no
+  space after <... or before resumed, a call, a call that strace
+  detached from or a resumption whose name holds a capital letter,
+  and a relative path in a thread that a clone or clone3 with
+  CLONE_FS made while the folder of its maker was not known.
+- The error of each raise statement of the reader functions is
+  checked whole by 1 or more subtests, as is the error for a line of
+  a process after each kind of call at which the reader finds that
+  the process ended. Some refusals share the text of their error, so
+  such a check does not show which of them ended the case: a
+  resumption with no call open and 1 under another name; a call cut
+  short and 1 that strace detached from while another call of its
+  process is open; 3 refusals in trace_call of a call that the test
+  cannot read; a line of a process after a call that strace
+  detached from, 1 after an unread call left unfinished and 1 after
+  an unread call that ended with the result ?; a relative path in a
+  process with no maker, 1 in a folder that a chdir or fchdir that
+  strace cut short left not known, 1 in a child that a process whose
+  folder was not known made without CLONE_FS and 1 in a thread that
+  such a process made with CLONE_FS, which shares that folder; and a
+  process that no traced call made when no call cut short came
+  before it and 1 when each such call has let 1 start. The
+  docstrings say so. Each of these refusals is checked whole by 1 or
+  more subtests, among them a relative path after a chdir or an
+  fchdir that strace detached from or that ended with the result ?
+  in a shared folder, 1 in a child that a clone, clone3, fork or
+  vfork made without CLONE_FS in a process with no maker or after
+  such a chdir or fchdir, and 1 in a thread that clone or clone3
+  with CLONE_FS made in each of those 3 kinds of process.
+- Among the examples of refusals in the module docstring are 2 for
+  relative paths, not a list of all that end the case: 1 of a
+  process with no maker, with no descriptor or with AT_FDCWD, in a
+  removal whose result is 0, ? or not given, or in a chdir whose
+  result is 0, before a chdir or fchdir whose result is 0 gives that
+  process a folder; and 1 of any process, in such a removal, against
+  a descriptor whose path strace -y does not give, gives as relative
+  or gives as that of a removed folder. Subtests hold both at each
+  path of each removal, both paths of rename, renameat and renameat2
+  among them, with the result 0 and in each of the 10 forms: the
+  first at each path with no descriptor or against AT_FDCWD, and the
+  second at each path of unlinkat, renameat and renameat2 in the
+  first process, in a process that a call made and in a process
+  with no maker; and they hold the chdir. Another ends the case at a
+  rename with 1 argument with an IndexError, the error that the
+  module docstring gives as an example of another error. The module
+  docstring states the rule of the new test and points to its
+  docstring, which states the traces that it checks. The module
+  docstring and the docstring of the folder test state that a
+  relative path is read against the folder that its descriptor
+  names, but against the folder of its process for AT_FDCWD, and
+  subtests of the folder test hold this at each path of each
+  removal.
+- The test derives each path of each removal, and the descriptor
+  that it is read against, from the arguments of the call as its
+  manual page names them, not from the reader's table of removals,
+  which a mutant of the reader may change. A subtest of the refusal
+  test and 1 of the folder test fail if a name of that table, a path
+  that it gives, the positions of the arguments that give that path
+  and its descriptor, or a descriptor form of that path has no
+  subtest.
+  Each takes the forms and the kinds of process that it wants from
+  lists of its own, not from the tables that write the subtests, so
+  that an entry dropped from such a table fails it; the refusal test
+  takes the results from a list that names each form, not from the
+  tables of forms that write its subtests.
+- Each subtest whose trace resumes a call with the result ? says
+  "resumed with ?" in its label.
+- A new test compares whole, with its value at this head, each
+  pattern, text, set and table at module level that decides what
+  the reader reads, each pattern by its source and its flags and
+  each member of a table in order where it has an order and each
+  value with its type, and also the calls that the test asks strace
+  for and the text of an unread call that some tests write, which
+  no reader function loads; the constants that the code of a reader
+  function loads, each with its type, in the order of the places of
+  the source that load 1, by the line and then the column where the
+  place starts, among them the call names and the results that
+  traced_removals tests a call for, written as a tuple or as a set,
+  so that an edit that makes 1 place load a constant that another
+  place of the same function loads fails it too; and the defaults
+  of each reader function. It finds the collections at module level
+  by the syntax tree of the module, whatever their name: each name
+  that an assignment at module level binds to a value whose
+  expression holds a set, frozenset, tuple, list or dict, or a
+  pattern of re.compile, must be pinned with its value or listed in
+  NON_READER_VALUES, the values that decide nothing, each with a
+  reason, and no reader function may load a name of that list; so
+  a new such value under any name, such as EXEC_CALLS = {"execve"},
+  fails the test, and a subtest holds that the finder gives such a
+  name for each line of NEW_COLLECTIONS. A value
+  that a function builds at run time, or that a statement other
+  than an assignment binds, is not found this way, nor is a text, a
+  number or another name with no such collection or pattern in its
+  expression; of these, only the names that start with TRACE_ are
+  held, by name. The pin of the order of the constants rests on
+  CPython 3.14.4, the version that .python-version names and the
+  only version that was run: on which values its compiler makes
+  constants, and on the place, the line and column where it starts
+  and ends, that it gives each instruction that loads 1, which the
+  pin uses only to order the constants, so that an edit that moves
+  a constant to another place and keeps that order is held only as
+  far as the traces hold it, not by the pin; under -X
+  no_debug_ranges, which drops the columns, the pin fails, and on
+  another version READER_CONSTANTS may need to change. A list of
+  traces holds only the forms that it names: 19
+  edits to those patterns and to FORKING_CALLS, each of which makes
+  the reader read a form that it refuses here, are expected to pass
+  the other tests of case 27 and to fail this test. An edit to other
+  code of the reader functions is held only as far as the traces of
+  the other tests hold it.
+
+Checks: python3 -I tools/test-release-package-dist.py TraceReaderTests
+is expected to give 6 tests, OK, here and 3 tests, OK, on main. Each
+of the 91 reader mutants that the pull request description lists is
+expected to pass case 27 on main, and each but cap-4 and
+allowance-from-fifth, which break the rule only while more than 4
+such calls are untaken, to fail it here. In a git checkout with
+strace, the full run is expected to leave cases 1 to 26 as they are
+on main.
