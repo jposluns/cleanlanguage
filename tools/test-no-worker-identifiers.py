@@ -102,9 +102,10 @@ a git ls-files or a git cat-file that fails gives its exit code; a git that cann
 gives the errno name of the error, such as ENOENT, or, when the error carries no errno that the
 errno module names, the name of the type of the error; a blob that cannot be read gives missing,
 when git holds no such object, not a blob, when the object is of another type, or unexpected
-reply, when git cat-file does not answer for that object as requested; an empty listing gives no
-detail. So no failure line holds a diagnostic of git, a message of an exception, an error text of
-the system, or the path of the repository root or of the git program, whatever address such text
+reply, when git cat-file does not answer for that object as requested, a header whose size has
+more digits than Python will convert to an integer included; an empty listing gives no detail.
+So no failure line holds a diagnostic of git, a message of an exception, an error text of the
+system, or the path of the repository root or of the git program, whatever address such text
 holds. An unreadable blob is named by its path, or by the digest of its path name when that name
 holds a hit.
 
@@ -161,9 +162,8 @@ neither decompresses nor decodes, unless that content holds the address as it is
 that is not a file in this tree, such as a pull request title, description, or comment, is not
 reached, and tools/check-pr-text.py carries no identifier pattern today. The digest of a hit or
 of a path name lets a reader who already holds a guess of the address confirm the guess; it does
-not reveal the address. A path name is held back only from the output of this suite: git, and
-any other step of a workflow that lists or names files, can still print it, so the rule, not
-the scan, keeps an address out of a path name. On a red run,
+not reveal the address. The suite holds a path name back only from its own output, and the scan
+cannot keep a name out of the output of git or any other tool. On a red run,
 unittest also prints a traceback for each failed case, which holds the absolute path of this
 file in the checkout, and a failed self-check can
 print the values that it compared, the path of its temporary folder among them, so a checkout
@@ -173,8 +173,8 @@ is out of scope for this rule's enforcement. Each of the 3 forms that name no ad
 label, the bare account handle, and the numeric account identifier, is pinned by its own
 subtest, named for the form, of test_each_residual_text_form_gives_no_candidate, and compressed
 or encoded content is pinned by its own case,
-test_compressed_or_encoded_content_gives_no_candidate. Each place that this residual names as
-not read is pinned by its own case:
+test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest for each compression or
+encoding. Each place that this residual names as not read is pinned by its own case:
 test_an_untracked_file_is_not_read,
 test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read,
 test_the_content_of_a_submodule_is_not_read,
@@ -187,8 +187,8 @@ Accepted false failures: a legitimate new third-party address is caught and need
 decision; an email-shaped text that is no address is caught and is reworded to a reserved domain,
 or is added to ALLOWLIST after review; a fixture address at a reserved domain whose domain run
 also ends a shorter domain that is not reserved, such as 1 at mail.corp.example.com or 1
-that appends the label example to an ordinary domain, is caught and is reworded to a reserved
-domain with no such shorter domain; and an action
+that appends the label example to an ordinary domain, is caught, since that shorter candidate
+is not exempt, and is reworded to a reserved domain with no such shorter domain; and an action
 pinned to a version tag in which a dot is followed directly by 2 or more letters, such as
 v1.2.3-alpha.beta.1 or v2.0.0-rc.ab, is caught, since a domain then ends after those letters,
 unless every domain that the tag ends is exempt, as in v1.2.3-pre.test.1, whose letters form a
@@ -371,8 +371,9 @@ def stored_blobs(root, names, git=GIT):
     to the next object. Any other reply that does not answer stops the read, so that object and
     every later object give unexpected reply: a reply that ends before the object is answered, a
     header that names another object or that has too many or too few fields, a size that is no
-    number, or a body that is cut short or that no line feed ends. A git cat-file that fails
-    raises subprocess.CalledProcessError, and a git that cannot be started raises OSError.
+    number, a size with more digits than Python will convert to an integer, 4300 by default, or a
+    body that is cut short or that no line feed ends. A git cat-file that fails raises
+    subprocess.CalledProcessError, and a git that cannot be started raises OSError.
     """
     request = b"".join(name.encode("ascii") + b"\n" for name in names)
     reply = subprocess.run([git, "--no-replace-objects", "-C", str(root), "cat-file", "--batch"],
@@ -388,7 +389,10 @@ def stored_blobs(root, names, git=GIT):
             blobs[name] = "missing" if header[1] == b"missing" else "unexpected reply"
             position = header_end + 1
             continue
-        size = int(header[2]) if header[2].isdigit() else -1
+        try:
+            size = int(header[2]) if header[2].isdigit() else -1
+        except ValueError:
+            size = -1
         body_end = header_end + 1 + size
         if size < 0 or reply[body_end:body_end + 1] != b"\n":
             break
@@ -1250,8 +1254,9 @@ class FixtureRepository(unittest.TestCase):
         Each subtest feeds stored_blobs() 1 reply for 2 objects, first and second, and names the
         fail-closed path that it takes: a reply that ends before an object is answered, a header
         that names another object, a header with too many or too few fields, a header of 2 fields
-        other than missing, a size that is no number, and a body that is cut short or that no line
-        feed ends. Each fails when its path gives bytes, an empty clean blob among them, in place
+        other than missing, a size that is no number, a size with more digits than Python will
+        convert to an integer, and a body that is cut short or that no line feed ends. Each fails
+        when its path gives bytes, an empty clean blob among them, or raises an error, in place
         of unexpected reply. A reply that does not answer stops the read, so every later object
         gives unexpected reply too; a header of 2 fields does not.
         """
@@ -1272,6 +1277,10 @@ class FixtureRepository(unittest.TestCase):
                  {first: "unexpected reply", second: b"text\n"}),
                 ("a size that is no number", answered + second.encode("ascii") + b" blob x\n\n",
                  {first: b"text\n", second: "unexpected reply"}),
+                ("a size with more digits than Python will convert to an integer",
+                 first.encode("ascii") + b" blob " + b"1" * 4301 + b"\ntext\n\n"
+                 + second.encode("ascii") + b" blob 5\ntext\n\n",
+                 {first: "unexpected reply", second: "unexpected reply"}),
                 ("a body that is cut short", answered + second.encode("ascii") + b" blob 50\ntext\n",
                  {first: b"text\n", second: "unexpected reply"}),
                 ("a body that no line feed ends", answered + second.encode("ascii") + b" blob 4\ntextX",

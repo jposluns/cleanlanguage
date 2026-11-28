@@ -112,13 +112,13 @@ decodes, unless that content holds the address as it is; surfaces that are not f
 this tree, such as a pull request title, description, or comment, are not reached by the
 scan, and `tools/check-pr-text.py` carries no identifier pattern today. The suite pins each
 of the 3 forms in this list that name no address with its own subtest, named for the form,
-compressed or encoded content with its own case, and each place in this list that is not
+compressed or encoded content with its own case, which has 1 subtest for each compression or encoding, and each place in this list that is not
 read with its own case; a surface that is not a file in this tree is outside its input, so
 no case pins it. The digest of a
 match or of a path name lets a reader who already holds a guess of the address confirm the
-guess, though it does not reveal the address. A path name is held back only from the output
-of the scan: git, and any other step of a workflow that lists or names files, can still
-print it, so the rule, not the scan, keeps an address out of a path name. On a red run,
+guess, though it does not reveal the address. The suite holds a path name back only from its
+own output, and the scan cannot keep a name out of the output of git or any other tool. On a
+red run,
 unittest also prints a traceback for each failed case, which holds the absolute path of the
 suite file in the checkout, and a failed self-check can print the values that it compared,
 the path of its temporary folder among them, so a checkout path or a temporary folder path
@@ -131,7 +131,8 @@ maintainer decision; email-shaped text that is no address is caught and is rewor
 reserved documentation domain, or is added to `ALLOWLIST` after review; a fixture address
 at a reserved domain that also holds a shorter domain that is not reserved, such as 1 at
 `mail.corp.example.com` or 1 that appends the label `example` to an ordinary domain, is
-caught and is reworded to a reserved domain with no such shorter domain; and an action
+caught, since that shorter candidate is not exempt, and is reworded to a reserved domain with no
+such shorter domain; and an action
 pinned to a version tag in which a dot is followed directly by 2 or more letters, such as
 `v1.2.3-alpha.beta.1` or `v2.0.0-rc.ab`, is caught, since a domain then ends after those
 letters, unless every domain that the tag ends is exempt, as in `v1.2.3-pre.test.1`, whose
