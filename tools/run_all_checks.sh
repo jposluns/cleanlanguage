@@ -112,6 +112,7 @@ run python3 -I tools/check-manifest-icon.py
 run python3 -I tools/check-orchestration-registry.py
 run python3 -I tools/test-orchestration-registry.py
 run python3 -I tools/test-no-qa-labels.py
+run python3 -I tools/test-no-worker-identifiers.py
 run python3 -I tools/test-orch-stage1-hooks.py
 run python3 -I tools/test-orch-enumerate-backlog.py
 run python3 -I tools/test-orch-migrate-todo.py
@@ -153,6 +154,7 @@ run python3 -I tools/test-skill-version-consumers.py
 run python3 -I tools/test-release-skill-workflow.py
 run python3 -I tools/test-release-package-dist.py
 run bash tools/test-version-selectors.sh
+run python3 -I tools/test-release-dry-run-refs.py
 run tools/release-dry-run.sh
 # site-draft.yml
 run python3 -I tools/test-baseline-pin.py

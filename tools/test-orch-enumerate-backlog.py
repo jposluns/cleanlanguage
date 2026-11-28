@@ -7,7 +7,9 @@ subprocess under python3 -I against synthetic fixtures only, and validate every 
 enumeration with the hook function `validate_enumeration` (aiqt_hooks.py:22754-22812), imported from
 the vendored hook by path in a separate python3 -I process, so the contract under test is the one
 the hook enforces, not a copy of it. One test also runs the enumerator through the hook function
-`_orch_enumerate` with a relative script path and cwd = the repo root, as the registry declares it.
+`_orch_enumerate` with a relative script path and cwd = the repo root, as the registry declares it,
+and another runs an enumerator that does not end through the same function, to show that its timeout
+still ends a hang.
 
 Fail-closed cases assert exit 1, an empty stdout, and a stderr that names the offending line, since a
 non-zero exit is ENUMERATOR_ERROR in the hook (aiqt_hooks.py:22837-22839) and an empty enumeration
@@ -112,13 +114,17 @@ items, err = mod.validate_enumeration(json.loads(sys.stdin.read()))
 print(json.dumps({"items": items, "error": err}))
 """
 
-# Runs the enumerator through the hook function _orch_enumerate exactly as the registry declares it.
+# Runs the enumerator through the hook function _orch_enumerate exactly as the registry declares it. The
+# timeout is 60 seconds, the hook's own default (aiqt_hooks.py:22831), not 5: the hook starts
+# that clock when it starts the enumerator (`subprocess.run` at aiqt_hooks.py:22833), so it also covers
+# the interpreter start-up, and a loaded host must not turn a normal end into ENUMERATOR_ERROR.
+# test_hook_ends_an_enumerator_that_does_not_end shows that this timeout still ends a hang.
 ENUMERATE_PROG = """
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("aiqt_hooks_under_test", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-reg = {"enumerator": {"argv": json.loads(sys.argv[3]), "timeout": 5}}
+reg = {"enumerator": {"argv": json.loads(sys.argv[3]), "timeout": 60}}
 status, detail = mod._orch_enumerate(reg, sys.argv[2])
 print(json.dumps({"status": status, "detail": detail}))
 """
@@ -392,14 +398,18 @@ class Golden(EnumeratorHarness):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["source"], {"locator": str(path)})
 
-    def test_generated_at_utc_is_within_five_seconds_of_the_test_clock(self):
+    def test_generated_at_utc_is_stamped_while_the_enumerator_runs(self):
+        # The stamp must fall inside the run, however long a loaded host makes the run take: a fixed
+        # window around the clock before the run also counted the interpreter start-up. The enumerator
+        # stamps whole seconds (isoformat timespec="seconds" truncates), so the lower bound is the
+        # clock before the run truncated to the second.
         before = datetime.now(timezone.utc)
         out = self.enumerate_ok(self.fixture())
         after = datetime.now(timezone.utc)
         gen = datetime.fromisoformat(out["generated_at_utc"].replace("Z", "+00:00"))
         self.assertIsNotNone(gen.tzinfo)
-        self.assertLessEqual(abs((gen - before).total_seconds()), 5)
-        self.assertLessEqual(abs((after - gen).total_seconds()), 5)
+        self.assertLessEqual(before.replace(microsecond=0), gen, "the stamp is older than the run")
+        self.assertLessEqual(gen, after, "the stamp is later than the run")
 
     def test_hook_runs_the_enumerator_from_the_repo_root(self):
         if not HOOK.exists():
@@ -412,6 +422,21 @@ class Golden(EnumeratorHarness):
         res = json.loads(r.stdout)
         self.assertEqual(res["status"], "ok", res["detail"])
         self.assertEqual([it["id"] for it in res["detail"]], [it["id"] for it in self.expected_items()])
+
+    def test_hook_ends_an_enumerator_that_does_not_end(self):
+        # The control for the 60 second timeout of ENUMERATE_PROG: the hook must end a 90 second sleep at
+        # 60 seconds and report it. A hook that waited the sleep out would report output that is not
+        # JSON instead, and it would still end before the 120 second bound on this run.
+        if not HOOK.exists():
+            self.fail("vendored hook not found: {}".format(HOOK))
+        argv = [sys.executable, "-I", "-c", "import time; time.sleep(90)"]
+        r = subprocess.run([sys.executable, "-I", "-c", ENUMERATE_PROG, str(HOOK), str(REPO_ROOT),
+                            json.dumps(argv)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = json.loads(r.stdout)
+        self.assertEqual(res["status"], "ENUMERATOR_ERROR", res["detail"])
+        self.assertIn("enumerator failed to run", res["detail"])
+        self.assertIn("timed out after 60 seconds", res["detail"])
 
     def test_hook_reports_enumerator_error_on_a_malformed_backlog(self):
         if not HOOK.exists():
@@ -903,17 +928,21 @@ class Isolation(EnumeratorHarness):
 
 class InputFileType(EnumeratorHarness):
     """The backlog path must be a regular file. A FIFO with no writer, a symlink to a
-    FIFO, a directory and /dev/null each exit 1 within a short timeout, naming the path and the file
+    FIFO, a directory and /dev/null each exit 1 within TIMEOUT, naming the path and the file
     type, in both modes; a regular file and a symlink to one still enumerate."""
 
-    TIMEOUT = 20
+    # The bound covers the whole enumerator run, interpreter start-up included, also where it must
+    # enumerate a file larger than 1 read chunk, so it is the 60 seconds that ENUMERATE_PROG gives the
+    # enumerator, not 20. A run that ends at this bound shows only that the enumerator did not exit in
+    # time, not why.
+    TIMEOUT = 60
 
     def run_bounded(self, *args):
         try:
             return subprocess.run([sys.executable, "-I", str(SCRIPT), *[str(a) for a in args]],
                                   capture_output=True, text=True, timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the enumerator did not exit within {} s for {!r}: the open blocked"
+            self.fail("the enumerator did not exit within {} s for {!r}"
                       .format(self.TIMEOUT, [str(a) for a in args]))
 
     def assert_type_refused(self, path, kind):
@@ -1178,7 +1207,9 @@ class ErrorPosition(EnumeratorHarness):
     """Every failure the enumerator can produce names its position. In the table()
     fixture the header is line 5 and the first row line 7."""
 
-    TIMEOUT = 20
+    # The bound covers the whole enumerator run, interpreter start-up included, as in InputFileType, so
+    # it is the 60 seconds that ENUMERATE_PROG gives the enumerator, not 20.
+    TIMEOUT = 60
 
     def run_bounded(self, *args):
         try:
@@ -1799,7 +1830,10 @@ class RuntimeGuard(EnumeratorHarness):
     until the whole input is read, then the end of input. A KeyboardInterrupt gets the same
     positioned line with exit 130."""
 
-    TIMEOUT = 20
+    # The bound covers the whole run of the enumerator or of the harness that loads it, interpreter
+    # start-up included, as in InputFileType, so it is the 60 seconds that ENUMERATE_PROG gives the
+    # enumerator, not 20.
+    TIMEOUT = 60
 
     def assert_guarded(self, code, stderr, position, needle):
         self.assertEqual(code, 1, "expected exit 1: {!r}".format(stderr))

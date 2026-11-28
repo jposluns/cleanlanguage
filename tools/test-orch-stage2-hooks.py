@@ -13,9 +13,9 @@ with a JSON stdin payload, then asserts the exit code, any stdout verdict JSON, 
 hook wrote under the temporary store. It NEVER touches the real /opt/cleanlanguage/private store, so it
 runs in CI.
 
-The backlog is produced by a minimal FIXTURE enumerator written into each test temp directory: it reads a
-JSON list of AEI items and prints the AEI v1 envelope (version 1, generated_at_utc from the clock, a
-source locator, the items). It deliberately does not depend on the project enumerator
+The backlog is produced by a minimal FIXTURE enumerator, a -c program that the registry argv carries:
+it reads a JSON list of AEI items and prints the AEI v1 envelope (version 1, generated_at_utc from the
+clock, a source locator, the items). It deliberately does not depend on the project enumerator
 tools/orch-enumerate-backlog.py, which has its own suite; this file tests what the HOOK does with an
 enumeration, not how TODO.md is parsed.
 
@@ -47,8 +47,8 @@ cannot-evaluate, exit 2, within a short timeout and naming the path and the file
 is not run, and a class probe scans the doctor source so that every path it opens goes through its
 checked helper. Before any hook reader is called, a registry file or a declared read path
 (the mode and lease paths, the record paths, the enumerator operands) that exists and is not a regular
-file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within a
-short timeout, with no enumerator run and no hook state written. The writes-nothing test
+file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within
+RUN_TIMEOUT, with no enumerator run and no hook state written. The writes-nothing test
 runs a fresh copy of the doctor and the hook, in a tree that never held a __pycache__, and asserts no
 bytecode file appears anywhere under it. The fixed hook state files each command opens
 with a plain blocking open are checked the same way before the reader that opens them: for preflight
@@ -131,7 +131,7 @@ mutation of each kind.
 The DoctorCheckpointWrites cases prove that the doctor previews the hook writes inside the context
 build whose failure changes the verdict, without making them: with an empty backlog, a live lease
 and no init marker, a failed marker write makes the real hook deny the Stop and the scheduling call
-(aiqt_hooks.py:23387-23397), and the doctor reports the same DENY (the failure is injected
+(aiqt_hooks.py:23387-23399), and the doctor reports the same DENY (the failure is injected
 identically into both, since the hook writer leaves no file arrangement in which the checkpoint
 rewrite succeeds and the marker write fails); an entry of any type at a legacy fixed temporary
 path (<name>.tmp) is ignored by the hook writer, which creates a randomly named file of its own,
@@ -160,9 +160,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
 import tokenize
@@ -170,6 +172,13 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# A process that ignores SIGCHLD cannot read a child's exit status: the kernel reaps each child as it
+# exits, so subprocess gives it the status 0, and each process that it starts keeps the ignored
+# disposition across exec. This file reads the exit status of the processes that it starts, and of
+# theirs, so it sets SIGCHLD to SIG_DFL before it starts any, whatever disposition it inherited
+# (T15EnumeratorTimeout.test_stage1_contrast_when_sigchld_is_ignored).
+signal.signal(signal.SIGCHLD, signal.SIG_DFL)
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -180,9 +189,47 @@ ZERO64 = "0" * 64
 # (tools/orch_doctor.py, _preflight).
 NOT_RUN_WRITES = "writes: the doctor itself wrote nothing, and the enumerator was not run"
 
-# The fixture enumerator: argv[1] is a JSON file holding the items list. It prints one AEI v1 envelope
-# that validate_enumeration accepts (aiqt_hooks.py:22754-22812) and exits 0.
-ENUM_FIXTURE = """import json
+# The environment variable in which run_doctor_recorded names a file of each launch's own, and the
+# statements with which every enumerator that a case declares through Stage2Harness.write_registry
+# begins, so that it records each of its starts in that file before anything else runs. The hook
+# starts the enumerator with the hook's own environment (`subprocess.run` at aiqt_hooks.py:22833 passes
+# no env), and the doctor runs the hook in its own process, so a launch of either passes the file on to
+# the enumerator. Of the enumerators that the hook would start, write_registry accepts only one whose
+# argv is exactly this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS, each a separate
+# element, followed by any operands, and whose timeout, as the hook reads it, is at most ENUM_TIMEOUT
+# (declared_enumerator_defect). Each program of ENUM_PROGRAMS begins with these statements. It writes
+# unchecked an enumerator that the hook refuses before it starts anything. The residuals are stated
+# above enumerator_bound_defect.
+ENUM_RUNS_VAR = "ORCH_STAGE2_ENUMERATOR_RUNS"
+ENUM_RUN_MARK = """import os
+_runs = os.environ.get("ORCH_STAGE2_ENUMERATOR_RUNS")
+if _runs:
+    with open(_runs, "a", encoding="utf-8") as _record:
+        _record.write("run\\n")
+"""
+
+
+def runs_enum_run_mark_first(program):
+    """Whether the first statements of program, read from its syntax tree, are those of ENUM_RUN_MARK,
+    and the program compiles, so that the program records its start before any other statement runs.
+    A program that holds the mark only as text, or that runs other statements before it, does not;
+    neither does one that does not parse, or one that parses but does not compile, such as the mark
+    followed by a top-level return, a top-level break or a misplaced future import, since the
+    interpreter refuses it before any of its statements runs. program is the source text (str) of a
+    -c program, the argv element that the interpreter compiles."""
+    try:
+        body = ast.parse(program).body
+        compile(program, "<enumerator>", "exec", dont_inherit=True)
+    except (SyntaxError, ValueError):
+        return False
+    mark = ast.parse(ENUM_RUN_MARK).body
+    return [ast.dump(node) for node in body[:len(mark)]] == [ast.dump(node) for node in mark]
+
+
+# The fixture enumerator, a -c program (so sys.argv[0] is "-c"): sys.argv[1] is a JSON file holding the
+# items list. It records its start (ENUM_RUN_MARK), prints 1 AEI v1 envelope that validate_enumeration
+# accepts (aiqt_hooks.py:22754-22812) and exits 0.
+ENUM_FIXTURE = ENUM_RUN_MARK + """import json
 import sys
 from datetime import datetime, timezone
 
@@ -194,12 +241,80 @@ print(json.dumps({"version": 1, "generated_at_utc": datetime.now(timezone.utc).i
 """
 
 
-# The fixture enumerator, also appending one line to the file named by argv[2] each time it runs, so
+# The fixture enumerator, also appending 1 line to the file named by sys.argv[2] each time it runs, so
 # a test can observe that the declared enumerator ran and that its write is its own.
 WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
     "path = sys.argv[1]\n",
     "path = sys.argv[1]\nwith open(sys.argv[2], \"a\", encoding=\"utf-8\") as mark:\n"
     "    mark.write(\"ran\\n\")\n", 1)
+
+# The enumerator of the enumerator timeout case: it records its start, then sleeps past any timeout.
+SLEEPING_ENUM_FIXTURE = ENUM_RUN_MARK + "import time\ntime.sleep(100)\n"
+
+# The only programs that write_registry accepts in a declared enumerator that the hook would start,
+# compared as exact text. Each begins with the statements of ENUM_RUN_MARK and compiles
+# (runs_enum_run_mark_first), and after them names neither the record nor the environment
+# (program_leaves_record); EnumeratorBounds checks both of each. They are short, they are read in
+# review, and after the mark none of them opens, removes or writes any path but its own operands, so an
+# accepted program leaves the count to the mark. In such an enumerator, a program that is not 1 of
+# these is refused however it begins, since a check of a program's text cannot see every way in which
+# a program can reach the record (EnumeratorBounds.SEARCHES).
+ENUM_PROGRAMS = (ENUM_FIXTURE, WRITING_ENUM_FIXTURE, SLEEPING_ENUM_FIXTURE)
+
+
+def program_leaves_record(program):
+    """Whether program, after the statements of ENUM_RUN_MARK, names none of the names that the mark
+    binds (_runs, _record), no os.environ, os.getenv or os.putenv, and no string that holds
+    ENUM_RUNS_VAR, read from its syntax tree; so it cannot reach the record that the mark appends to
+    other than by a path that it builds from no name of the mark and no variable of the environment."""
+    body = ast.parse(program).body[len(ast.parse(ENUM_RUN_MARK).body):]
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(node, ast.Name) and node.id in ("_runs", "_record", "environ", "getenv", "putenv"):
+            return False
+        if isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv", "putenv"):
+            return False
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ENUM_RUNS_VAR in node.value:
+            return False
+    return True
+
+
+def declared_enumerator_defect(enumerator):
+    """The defect of a declared enumerator, as the hook reads it from the registry file (the value that
+    json.loads gives for the text written, so a tuple is read as the list that json writes, and a str
+    subclass as its text); None when it has none. An argv that the hook would start (a list of non-empty
+    strings, aiqt_hooks.py:22826-22829) must be exactly this interpreter (sys.executable), "-I", "-c",
+    1 of ENUM_PROGRAMS and then any operands, each element compared on its own; and its timeout, as the
+    hook reads it (aiqt_hooks.py:22830-22831), must be at most ENUM_TIMEOUT, so enumerator_bound_defect
+    holds a launch to enough. An argv that the hook refuses starts no enumerator and has no defect. This
+    is the 1 place that decides the shape: write_registry calls it on every registry that it writes."""
+    argv = enumerator.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
+        return None
+    if not (len(argv) > 3 and argv[0] == sys.executable and argv[1] == "-I" and argv[2] == "-c"
+            and argv[3] in ENUM_PROGRAMS):
+        return "the enumerator {!r} is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS".format(argv)
+    timeout = enumerator.get("timeout")
+    timeout = timeout if isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60
+    if timeout > ENUM_TIMEOUT:
+        return "the enumerator timeout {!r} is over ENUM_TIMEOUT".format(timeout)
+    return None
+
+# The enumerator timeout of every fixture registry whose enumerator should end normally. The hook starts
+# this clock when it starts the enumerator (`subprocess.run` at aiqt_hooks.py:22833), so it also covers
+# the interpreter start-up, which a loaded host can stretch past 5 seconds and turn a normal end into
+# ENUMERATOR_ERROR. 60 seconds is the hook's own default (aiqt_hooks.py:22831). The gate caps a
+# committed value at 8 seconds (ENUMERATOR_TIMEOUT_MAX); these registries are never gated. The timeout
+# test sets its own 1 second timeout for an enumerator that does not end.
+ENUM_TIMEOUT = 60
+
+# The bound on a test run that can start the enumerator of a fixture registry once: run_hook, run_doctor
+# and the bounded doctor and hook runs (Doctor.SPECIAL_TIMEOUT, DoctorCheckpointWrites.TIMEOUT and
+# DoctorStandInRestore.TIMEOUT). It exceeds ENUM_TIMEOUT by ENUM_MARGIN, so the hook's own timeout ends
+# an enumerator that hangs, and the case reads what the hook reports, before this bound ends the run.
+# A run that can start it twice has twice this bound. run_doctor_recorded holds the timeout of every
+# launch to that margin for each enumerator run that the launch recorded (enumerator_bound_defect).
+RUN_TIMEOUT = 120
+ENUM_MARGIN = 60
 
 # Runs in a separate python3 -I process: load the doctor by path, replace the hook resume audit with
 # a writer that rewrites the barrier with new content but a ts from before the run, and return the
@@ -318,6 +433,312 @@ def tree_state(path):
     return out
 
 
+# Every time limit that applies to a test in this process, checked when it is applied. A limit is
+# applied at 1 of 3 sinks: a launch through run_doctor_recorded, whose timeout argument is the limit
+# (_admit refuses every other launch in this interpreter, so every process that a test starts takes
+# its limit there); the bound of an assertLess or assertLessEqual call, its argument b, by position or
+# by keyword, which every such call in this process is taken to be; and the timeout of
+# threading.Thread.join. When the module loads, it wraps unittest.TestCase.assertLess and
+# assertLessEqual and threading.Thread.join, each with its own parameters, and run_doctor_recorded
+# makes 1 call, so that each sink gives _time_limit_applied the limit that it is about to apply,
+# whatever way the value was bound. A timeout of None at a launch or a join sets no
+# limit and is not checked. The site of a limit is the innermost frame of the call stack that runs the
+# code of a function at the top level of this file or of a method defined in the body of a class of
+# this file, at any depth, keyed by that class ("" at the top level) and that function, each told by
+# the identity of its code; code nested in such a function, such as a lambda, a nested function or a
+# method of a class that it defines, has its site, and the sinks and the wrapper of
+# unittest.TestCase.run have none, so a limit applied where no other frame runs the code of this file,
+# such as by a cleanup that is a sink or by a test of another module, has no site. A site of a
+# Stage2Harness test is a site whose class is "", Stage2Harness, a class that derives from it, or a
+# class of the file that such a class derives from (TIME_LIMIT_SCOPE). _time_limit_applied refuses,
+# raising TimeLimitViolation before the sink runs: a value that is not an int or a float; anywhere in
+# the process, a value below TIME_LIMIT_FLOOR, the least value of this table, also where no frame has
+# a site, which is checked against that floor only; and, at a site of a Stage2Harness test, a site
+# that this table does not list, or a value below the value that it gives the site. It compares by
+# "not value >= floor", so it refuses NaN. It records each limit that it is given, and each refusal,
+# and unittest.TestCase.run is wrapped so that each test in the process gets a cleanup that fails it
+# for each refusal recorded while it ran: also one raised in a thread, which stops only that thread,
+# and one that the test caught. A refusal raised after the cleanup of the test that started its thread
+# fails the test that is running then. When none is, tearDownModule fails the run for it if it was
+# raised before tearDownModule read TIME_LIMIT_REFUSALS; one raised later while no test runs, such as
+# in a thread that is still running once tearDownModule has run, is read by nothing, so it fails the
+# run only as its own TimeLimitViolation does, which in a thread stops only that thread, and the run's
+# result and exit status are then as they would be without it. Once every test of this module, as a
+# new unittest.TestLoader finds them, has run in this process (time_limit_full_run), so not in a run
+# that a -k option narrows, tearDownModule also fails the run for each entry whose site admitted no
+# limit, and for each entry whose value is not the least value admitted at
+# its site, so each value below is the least that its site applies in a whole run. Not checked: a limit
+# that reaches none of the 3 sinks, such as an elapsed time compared in an if statement or bounded by
+# another assertion, such as assertGreater, or the timeout of signal.alarm, select.select, the get of
+# a queue or the acquire of a lock; code that bypasses the wrappers, such as code that reloads
+# unittest.case, or native code, apart from launches, which _admit polices; a limit on a path that no
+# run takes, until a run takes it; and a limit inside a program string of this file, such as the hook
+# bound and the cleanup bound of REAPER_PROG, which runs in another process.
+TEST_TIME_LIMITS = {
+    ("Stage2Harness", "run_hook"): 120,
+    ("Stage2Harness", "run_doctor"): 120,
+    ("T15EnumeratorTimeout", "run_reaped"): 60,
+    ("T15EnumeratorTimeout", "test_stage1_contrast_when_sigchld_is_ignored"): 300,
+    ("Doctor", "test_preflight_writes_nothing"): 120,
+    ("Doctor", "_doctor_bounded"): 120,
+    ("Doctor", "test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib"): 60,
+    ("Doctor", "test_a_failed_reexecution_exits_2_with_a_message"): 60,
+    ("Doctor", "test_usage_error"): 60,
+    ("Doctor", "test_help_text_says_the_doctor_writes_nothing_and_the_enumerator_runs"): 60,
+    ("Doctor", "test_resume_audit_rewrite_with_a_ts_outside_the_run_is_unverified"): 120,
+    ("Doctor", "test_resume_audit_refuses_a_barrier_that_it_cannot_read_back"): 120,
+    ("Doctor", "_audit_bounded"): 60,
+    ("DoctorPrecheckSites", "_hook_bounded"): 120,
+    ("DoctorPrecheckSites", "_assert_hook_reader"): 120,
+    ("DoctorScopeMargin", "_assert_refused_near"): 4.5,
+    ("DoctorCheckpointWrites", "_doctor"): 120,
+    ("DoctorCheckpointWrites", "_faulted"): 240,
+    ("DoctorStandInRestore", "_run"): 120,
+    ("EnumeratorBounds", "test_a_launch_under_its_bound_fails_its_case"): 119,
+    ("EnumeratorBounds", "test_the_pin_holds_in_a_fresh_interpreter"): 120,
+}
+# The least value of TEST_TIME_LIMITS, which _time_limit_applied requires of every limit in the process.
+TIME_LIMIT_FLOOR = min(TEST_TIME_LIMITS.values())
+# Filled once every definition of the module is made (_time_limit_sites): {id of a code object: (that
+# code object, its site)}, and the classes, by name, whose sites are sites of a Stage2Harness test.
+TIME_LIMIT_SITES = {}
+TIME_LIMIT_SCOPE = set()
+# Each limit given to _time_limit_applied, as (sink, site, value, refusal or None), in the order given;
+# the refusals that no cleanup has read yet; and the ids of the tests that have run in this process.
+# Each change of the 3 is made with TIME_LIMIT_LOCK held. It is reentrant, so TimeLimitTeardownProbe
+# can hold it while it replaces the 3 for a call of tearDownModule, which takes it too.
+TIME_LIMIT_CHECKS = []
+TIME_LIMIT_REFUSALS = []
+TESTS_RUN = set()
+TIME_LIMIT_LOCK = threading.RLock()
+
+
+class TimeLimitViolation(AssertionError):
+    """A time limit that _time_limit_applied refuses, as the comment on TEST_TIME_LIMITS states."""
+
+
+def time_limit_refusal(site, value):
+    """Why _time_limit_applied refuses value at site ((class, function), or None where no frame has a
+    site), as the comment on TEST_TIME_LIMITS states; None when it admits it."""
+    if not isinstance(value, (int, float)):
+        return "not an int or a float"
+    if not value >= TIME_LIMIT_FLOOR:
+        return "below TIME_LIMIT_FLOOR, {:g} s".format(TIME_LIMIT_FLOOR)
+    if site is not None and site[0] in TIME_LIMIT_SCOPE:
+        if site not in TEST_TIME_LIMITS:
+            return "a site of a Stage2Harness test that TEST_TIME_LIMITS does not list"
+        if not value >= TEST_TIME_LIMITS[site]:
+            return "below {:g} s, the value that TEST_TIME_LIMITS gives its site".format(TEST_TIME_LIMITS[site])
+    return None
+
+
+def _time_limit_applied(sink, value, getframe=sys._getframe):
+    """Check value, the time limit that sink ("launch", "assertLess", "assertLessEqual" or "join") is
+    about to apply, at the site of the frames of its caller, as the comment on TEST_TIME_LIMITS states:
+    record it in TIME_LIMIT_CHECKS, and when time_limit_refusal refuses it, record the refusal in
+    TIME_LIMIT_REFUSALS and raise TimeLimitViolation."""
+    if value is None and sink in ("launch", "join"):
+        return
+    frame, site = getframe(2), None
+    while frame is not None:
+        found = TIME_LIMIT_SITES.get(id(frame.f_code))
+        if found is not None and found[0] is frame.f_code:
+            site = found[1]
+            break
+        frame = frame.f_back
+    refusal = time_limit_refusal(site, value)
+    text = "{} limit {!r} at {}: {}".format(sink, value, "no site" if site is None else
+                                            "{}.{}".format(*site) if site[0] else site[1], refusal)
+    with TIME_LIMIT_LOCK:
+        TIME_LIMIT_CHECKS.append((sink, site, value, refusal))
+        if refusal is not None:
+            TIME_LIMIT_REFUSALS.append(text)
+    if refusal is not None:
+        raise TimeLimitViolation(text)
+
+
+def _checked_sink(sink, method):
+    """method, a sink of the standard library, wrapped with its own parameters to give
+    _time_limit_applied the limit that it is about to apply: the timeout of threading.Thread.join, or
+    the bound b of assertLess or assertLessEqual."""
+    if sink == "join":
+        def checked(thread, timeout=None):
+            _time_limit_applied(sink, timeout)
+            return method(thread, timeout)
+    else:
+        def checked(case, a, b, msg=None):
+            _time_limit_applied(sink, b)
+            return method(case, a, b, msg)
+    checked.__name__, checked.__qualname__, checked.__doc__ = method.__name__, method.__qualname__, method.__doc__
+    return checked
+
+
+def _checked_run(run):
+    """unittest.TestCase.run, wrapped to add the test's id to TESTS_RUN and to give the test, before it
+    runs, the cleanup that fails it for each time limit refused while it ran."""
+    def checked(case, result=None):
+        with TIME_LIMIT_LOCK:
+            TESTS_RUN.add(case.id())
+            start = len(TIME_LIMIT_REFUSALS)
+        case.addCleanup(_fail_refused_time_limits, case, start)
+        return run(case, result)
+    checked.__name__, checked.__qualname__, checked.__doc__ = run.__name__, run.__qualname__, run.__doc__
+    return checked
+
+
+def _fail_refused_time_limits(case, start):
+    with TIME_LIMIT_LOCK:
+        refused = TIME_LIMIT_REFUSALS[start:]
+        del TIME_LIMIT_REFUSALS[start:]
+    if refused:
+        case.fail("{} time limit(s) refused while this test ran: {!r}".format(len(refused), refused))
+
+
+unittest.TestCase.assertLess = _checked_sink("assertLess", unittest.TestCase.assertLess)
+unittest.TestCase.assertLessEqual = _checked_sink("assertLessEqual", unittest.TestCase.assertLessEqual)
+threading.Thread.join = _checked_sink("join", threading.Thread.join)
+unittest.TestCase.run = _checked_run(unittest.TestCase.run)
+
+
+def _time_limit_sites(namespace, sinks):
+    """({id of a code object: (that code object, its site)}, the names of the classes of the sites of
+    Stage2Harness tests, "" included) for this module's namespace, as the comment on TEST_TIME_LIMITS
+    states: each function at its top level, and each method defined in the body of a class of it at any
+    depth, told by its __qualname__, with each code object nested in it; the code of each function of
+    sinks, the sinks and the wrapper of unittest.TestCase.run, and the code nested in it, has no site."""
+    module = namespace["__name__"]
+    classes, pending = [], [value for value in namespace.values() if isinstance(value, type)]
+    while pending:
+        cls = pending.pop()
+        if cls.__module__ == module and not any(cls is seen for seen in classes):
+            classes.append(cls)
+            pending += [value for value in vars(cls).values() if isinstance(value, type)]
+    harness = namespace["Stage2Harness"]
+    scope = {""} | {base.__name__ for cls in classes if issubclass(cls, harness)
+                    for base in cls.__mro__ if any(base is seen for seen in classes)}
+    unsited, codes = set(), [sink.__code__ for sink in sinks]
+    while codes:
+        code = codes.pop()
+        unsited.add(id(code))
+        codes += [const for const in code.co_consts if isinstance(const, types.CodeType)]
+    sites = {}
+    for owner, members in [(None, namespace)] + [(cls, vars(cls)) for cls in classes]:
+        for value in list(members.values()):
+            function = getattr(value, "__func__", value)
+            if not isinstance(function, types.FunctionType) or function.__module__ != module:
+                continue
+            if function.__qualname__ != ("" if owner is None else owner.__qualname__ + ".") + function.__name__:
+                continue
+            site = ("" if owner is None else owner.__name__, function.__name__)
+            codes = [function.__code__]
+            while codes:
+                code = codes.pop()
+                if id(code) not in unsited and id(code) not in sites:
+                    sites[id(code)] = (code, site)
+                codes += [const for const in code.co_consts if isinstance(const, types.CodeType)]
+    return sites, scope
+
+
+def time_limit_table_mismatches(checks, table):
+    """What differs between table, in the form of TEST_TIME_LIMITS, and checks, in the form of
+    TIME_LIMIT_CHECKS: each entry whose site admitted no limit, and each entry whose value is not the
+    least limit admitted at its site; [] when nothing does."""
+    least = {}
+    for _sink, site, value, refusal in checks:
+        if refusal is None and site in table:
+            least[site] = min(least.get(site, value), value)
+    out = []
+    for site, value in sorted(table.items()):
+        if site not in least:
+            out.append("{!r}: its site admitted no limit in this run".format(site))
+        elif least[site] != value:
+            out.append("{!r}: TEST_TIME_LIMITS gives {:g}, the least limit admitted at its site is {:g}".format(
+                site, value, least[site]))
+    return out
+
+
+def time_limit_full_run(module, run):
+    """Whether run, a set of test ids, holds every test of module as a new unittest.TestLoader finds
+    them, whatever name patterns unittest.defaultTestLoader has: a -k option of unittest.main gives it
+    its patterns, so in a run that -k narrows it finds only the tests that the run selects."""
+    pending, ids = [unittest.TestLoader().loadTestsFromModule(module)], set()
+    while pending:
+        for test in pending.pop():
+            if isinstance(test, unittest.TestSuite):
+                pending.append(test)
+            else:
+                ids.add(test.id())
+    return ids <= run
+
+
+def tearDownModule():
+    """Fail the run for each time limit refusal that no cleanup read, of those recorded before it reads
+    TIME_LIMIT_REFUSALS (one recorded later is read by nothing, as the comment on TEST_TIME_LIMITS
+    states) and, once every test of this module has run in this process (time_limit_full_run), so not
+    in a run that a -k option narrows, for each entry of TEST_TIME_LIMITS that
+    time_limit_table_mismatches reports."""
+    with TIME_LIMIT_LOCK:
+        problems = ["refused outside a test: {}".format(text) for text in TIME_LIMIT_REFUSALS]
+        del TIME_LIMIT_REFUSALS[:]
+    if time_limit_full_run(sys.modules[__name__], TESTS_RUN):
+        problems += time_limit_table_mismatches(TIME_LIMIT_CHECKS, TEST_TIME_LIMITS)
+    if problems:
+        raise AssertionError("time limits: {}".format(problems))
+
+
+# Timeouts of the hook. A test of a Stage2Harness class that runs the hook, through run_hook or a
+# program of this file that loads the hook and calls its functions, or that runs the doctor, which
+# loads the hook too, runs the unchanged hook with its own timeouts, as the platform runs it; this
+# file does not shorten or remove them there. Such a test fails a correct hook when one of them fires
+# and that changes what the test checks, and passes when the test requires only what the hook also
+# does after that timeout, as T04NotBefore.test_future_blocks requires only exit 0, which the hook
+# also gives when the git call of _recovery_toplevel times out. The timeouts are:
+# - the 5 s timeout of the git call in _recovery_toplevel (aiqt_hooks.py:10540), which each orch_
+#   action that a test runs, and the doctor, make to find the repo root; on a timeout they get no
+#   root, which the hook takes as out of scope;
+# - the timeout of any other git call of the hook, such as the 5 s one in _orch_resume_probes
+#   (32780) and the 10 s ones in _orch_merge_pending_findings (32853) and _orch_register_authority
+#   (32938, 32947 and 32952), which the resume audit can reach;
+# - the timeout that the registry declares for the enumerator, which the hook passes at
+#   aiqt_hooks.py:22833, ENUM_TIMEOUT, 60 s, in stage2() (also 60 s, the hook's fallback at
+#   aiqt_hooks.py:22831, where a T14PosturePins case declares "fast"), on which the hook reports
+#   ENUMERATOR_ERROR;
+# - for a PreToolUse action run through run_hook (orch_yield_tool and orch_ask_guard here), the 8 s
+#   deadline (PRETOOL_BUDGET_SECONDS, HOOK_TIMEOUT_SECONDS 10 less 2.0, aiqt_hooks.py:347-348) in
+#   which main() runs it and past which it fails closed, exit 2.
+# Reason: these tests check what the installed hook does when it runs as the platform runs it, and a
+# recorder that dropped the timeouts would no longer run it so.
+# Limits of the tests. Such a test also sets time limits of its own, which TEST_TIME_LIMITS lists by
+# the site that applies each, with the least value that the site applies, and against which
+# _time_limit_applied checks each limit when it is applied. The least of them is 4.5 s, at
+# DoctorScopeMargin._assert_refused_near. That site puts NEAR on the time from just before it sets the
+# lease mtime NEAR seconds from a freshness bound of the hook to the return of the doctor call, as a
+# later check could see the lease on the other side of that bound. The others are 120 s, RUN_TIMEOUT,
+# on 1 doctor or hook program call that can run the stage-2 enumerator (Doctor.SPECIAL_TIMEOUT, which
+# DoctorPrecheckSites and DoctorScopeMargin take too, DoctorCheckpointWrites.TIMEOUT and
+# DoctorStandInRestore.TIMEOUT), 240 s on the fault-injection call of DoctorCheckpointWrites, which
+# can run it twice, 60 s or 120 s on 1 other call, 119 s, 120 s, 179 s and 180 s on the launches of
+# EnumeratorBounds.test_a_launch_under_its_bound_fails_its_case, each 1 s under or at the bound that
+# enumerator_bound_defect requires, and 60 s or 240 s on a wrapper call of
+# T15EnumeratorTimeout, whose REAPER_PROG also bounds the hook at 120 s, or 10 s for the stand-in
+# hook, and its own cleanup at 30 s, and 300 s on its nested run of test_stage1_contrast.
+# DoctorCheckpointWrites.PROMPT, 15, is read by no check.
+# Bound, derived from the 2 lists: the least hook timeout above is 5 s and the least test limit is
+# 4.5 s. So such a test can fail a correct hook on a host slow enough that the doctor call of a
+# DoctorScopeMargin case, with the os.utime before it, takes 4.5 s, while its git call in
+# _recovery_toplevel is still inside its 5 s timeout; otherwise only when 1 git call takes 5 s, or
+# 10 s for a 10 s call, a declared enumerator takes its declared timeout, a PreToolUse action takes
+# 8 s, or 1 call reaches its limit, which is at least the value that TEST_TIME_LIMITS gives its site.
+# The bound counts these timeouts and limits only. A fixture time that a slow host could carry across a
+# bound of the hook is not counted: DoctorScopeMargin sets its lease 4.5 s from a bound by design,
+# which NEAR covers, and whether any other fixture time is within reach of a slow host is not
+# established. Whether a timeout that fires can also let such a test pass a wrong hook is not
+# established. A process that the hook leaves running after a run_hook call is neither detected nor
+# stopped. The 2 wrapper tests of T15EnumeratorTimeout do not run the hook, and its other 4 tests run
+# it through RECORDING_HOOK_PROG under REAPER_PROG, so in them no timeout of the hook can fire but the
+# enumerator's in the enforcement test, and the wrapper kills what the hook leaves running, within
+# the limits that REAPER_PROG and run_reaped state; a fifth runs test_stage1_contrast in a nested
+# process of this file that starts with SIGCHLD ignored.
 class Stage2Harness(unittest.TestCase):
     """A throwaway git repo, a temporary stand-in store, and a fixture enumerator, torn down per test."""
 
@@ -337,8 +758,6 @@ class Stage2Harness(unittest.TestCase):
         # (`_orch_pointer_resolves` at aiqt_hooks.py:33009-33032).
         (self.repo / "docs").mkdir()
         (self.repo / "docs" / "evidence.md").write_text("evidence\n", encoding="utf-8")
-        self.enum_script = self._tmp / "enum_fixture.py"
-        self.enum_script.write_text(ENUM_FIXTURE, encoding="utf-8")
         self.backlog = self._tmp / "backlog.json"
         self.set_items([])
         self.write_mode("attended")
@@ -379,8 +798,8 @@ class Stage2Harness(unittest.TestCase):
         which T6 and T12 add). drop removes keys; overrides replace or add them."""
         reg = self.stage1()
         reg.update({
-            "enumerator": {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)],
-                           "timeout": 5},
+            "enumerator": {"argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)],
+                           "timeout": ENUM_TIMEOUT},
             "yield_tools": ["ScheduleWakeup", "CronCreate"],
             "mode": {"path": self._p("operating-mode.md")},
             "staleness": {"task_hours": 24, "external_hours": 72},
@@ -393,9 +812,27 @@ class Stage2Harness(unittest.TestCase):
 
     # --- fixture builders ----------------------------------------------------------------------------
     def write_registry(self, obj):
+        """Write obj as the registry, after failing the case when its enumerator, read back from the
+        text to be written as the hook reads it, has a defect (declared_enumerator_defect). Of the
+        enumerators that the hook would start, it accepts only one whose argv is exactly this
+        interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS, each a separate element, followed
+        by any operands, and whose timeout, as the hook reads it, is at most ENUM_TIMEOUT. The program
+        is the argv element itself, so the check reads the text that the interpreter compiles; no file
+        is read. Every program file in an enumerator that the hook would start is refused, since what
+        the interpreter runs for a file operand depends on the operand's name and content, on how the
+        path resolves, and on the file at each run, not only on the text that a check reads. An
+        enumerator that the hook refuses before it starts anything (one that is not an object, or whose
+        argv is not a list of non-empty strings) is written unchecked."""
+        text = json.dumps(obj)
+        written = json.loads(text)
+        enumerator = written.get("enumerator") if isinstance(written, dict) else None
+        if isinstance(enumerator, dict):
+            defect = declared_enumerator_defect(enumerator)
+            if defect is not None:
+                self.fail(defect)
         aiqt = self.repo / ".aiqt"
         aiqt.mkdir(exist_ok=True)
-        (aiqt / "orchestration.json").write_text(json.dumps(obj), encoding="utf-8")
+        (aiqt / "orchestration.json").write_text(text, encoding="utf-8")
 
     def set_items(self, items):
         self.backlog.write_text(json.dumps(items), encoding="utf-8")
@@ -451,11 +888,11 @@ class Stage2Harness(unittest.TestCase):
         payload.setdefault("cwd", str(self.repo))
         return run_doctor_recorded(self, [sys.executable, "-I", str(HOOK), action],
                                    input=json.dumps(payload), capture_output=True, text=True,
-                                   env=self._env(), timeout=120)
+                                   env=self._env(), timeout=RUN_TIMEOUT)
 
     def run_doctor(self, *args):
         return run_doctor_recorded(self, [sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
-                                   capture_output=True, text=True, env=self._env(), timeout=120)
+                                   capture_output=True, text=True, env=self._env(), timeout=RUN_TIMEOUT)
 
     def stop(self, **payload):
         return self.run_hook("orch_stop_guard", payload)
@@ -505,7 +942,7 @@ class Stage2Harness(unittest.TestCase):
         return [str(p) for p in self._tmp.rglob(name)]
 
     def assert_no_enumerator_deny(self, r):
-        # Stage-1 T1:639-646 posture (`NO_ENUMERATOR` aiqt_hooks.py:22819-22823, `enum_status` 23095-23100).
+        # Stage-1 T1:650-658 posture (`NO_ENUMERATOR` aiqt_hooks.py:22820-22825, `enum_status` 23095-23100).
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("NO_ENUMERATOR", r.stderr)
 
@@ -634,7 +1071,7 @@ class T05Checkpoint(Stage2Harness):
         self.write_registry(self.stage2())
         self.arm_lease()
         # Window 1: item 9 open and actionable; the checkpoint and its init marker are written
-        # (aiqt_hooks.py:23372-23396).
+        # (aiqt_hooks.py:23376-23392).
         self.set_items([item("9")])
         r = self.stop()
         self.assertEqual(r.returncode, 2, r.stderr)
@@ -699,7 +1136,7 @@ class T06Attestations(Stage2Harness):
         if anchor:
             # An untracked register is verified against its anchor, an object whose seq is the
             # number of rows (an int of at least 1) and whose digest is the sha256 of the last row
-            # (`_orch_register_tip` aiqt_hooks.py:32898-32904 and `a.get("seq")` at :32991-33005).
+            # (`_orch_register_tip` aiqt_hooks.py:32898-32904 and `a.get("seq")` at :32995-33005).
             # An empty register has no anchor of that shape, so it keeps the zero form, which the
             # hook holds (see the empty-register case).
             tip = ({"seq": len(lines), "digest": hashlib.sha256(lines[-1].encode("utf-8")).hexdigest()}
@@ -726,7 +1163,7 @@ class T06Attestations(Stage2Harness):
 
     def test_empty_register_zero_anchor_holds(self):
         # A seq of 0 is not a valid anchor (the seq must be an int of at least 1,
-        # `isinstance(n, int)` at aiqt_hooks.py:32991-33005), so the surface is held
+        # `isinstance(n, int)` at aiqt_hooks.py:32997-33001), so the surface is held
         # fail-closed: the snapshot reads unreadable with no refs, never ok.
         self._arm([])
         snap = self.state_json("attestations-validated.json")
@@ -932,10 +1369,10 @@ class T09AskGuard(Stage2Harness):
 
     def test_json_mode_record_reads_as_unattended(self):
         # The host operating-mode file is one JSON line. The vendored reader accepts a structured
-        # operating-mode record whose mode key names the mode (`_orch_mode_object_ok` at
-        # aiqt_hooks.py:22395 and `_orch_mode_detail` at :22503), so a JSON record that says
-        # unattended denies the question and records it as pending, as the text line does
-        # (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23840-23845).
+        # operating-mode record whose mode key names the mode (`_orch_mode_object_ok` admits its keys
+        # at aiqt_hooks.py:22403-22404, and `_orch_mode_detail` classifies its mode at 22557-22559),
+        # so a JSON record that says unattended denies the question and records it as pending, as the
+        # text line does (`AskUserQuestion BLOCKED` at aiqt_hooks.py:23840-23846).
         self.write_registry(self.stage2())
         Path(self._p("operating-mode.md")).write_text(
             '{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
@@ -1147,10 +1584,12 @@ class T14PosturePins(Stage2Harness):
         self.assertIn("not a list of non-empty strings", r.stderr)
 
     def test_enumerator_timeout_malformed_still_runs(self):
-        # A malformed timeout silently becomes 60 (`timeout <= 600 else 60` at
-        # aiqt_hooks.py:22831); the enumerator still runs.
+        # The hook reads a timeout that is not an int or a float (a bool counts as an int, so a JSON true
+        # is kept, as a 1 second timeout), is not over 0 or is over 600 as 60
+        # (`isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60` at aiqt_hooks.py:22831),
+        # so the timeout "fast" silently becomes 60 and the enumerator still runs.
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog)], "timeout": "fast"}))
+            "argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)], "timeout": "fast"}))
         self.arm_lease()
         self.set_items([item("42")])
         r = self.stop()
@@ -1196,27 +1635,1385 @@ class T14PosturePins(Stage2Harness):
 
 
 # =====================================================================================================
-# T15. Enumerator timeout yields ENUMERATOR_ERROR, never a hang (aiqt_hooks.py:22831-22835)
+# T15. Enumerator timeout yields ENUMERATOR_ERROR; the hook exits within 120 s (aiqt_hooks.py:22831-22836)
 # =====================================================================================================
+# The sleeping enumerator of these tests is SLEEPING_ENUM_FIXTURE, 1 of ENUM_PROGRAMS, since
+# write_registry accepts no other program in a declared enumerator that the hook would start
+# (declared_enumerator_defect): 1 process that records its start (ENUM_RUN_MARK) and then sleeps 100 s,
+# far past the 1 s timeout that the enforcement test declares and below the 120 s hook bound. It does
+# nothing else, so a test that uses it asks it to do nothing but record its start before the declared
+# timeout fires. A hook that waits the sleep out sees it end by itself after 100 s, and the call check
+# of the enforcement test refuses that call, as its outcome is not TimeoutExpired, if the hook still
+# exits within the 120 s hook bound; if the hook does not, the "exited" check of that test, which
+# comes first, refuses the hook.
+
+# Runs in a separate python3 -I process: argv[1] is the report file, argv[2] the hook bound and argv[3]
+# the cleanup bound, both in seconds, and argv[4:] the command that runs the hook. It makes itself the
+# child subreaper (Linux prctl PR_SET_CHILD_SUBREAPER), so every process that the hook starts stays
+# its descendant: a process whose parent exits becomes its child, and the kernel makes that move
+# before it reports the parent's exit, so the reading below does not depend on timing. It runs the
+# command in a new session with this process's stdin and waits up to the hook bound for it to exit,
+# and kills it with SIGKILL if it has not. It then notes whether a process that the hook started is
+# still alive. To clean up, it reads its own children from /proc/self/task/*/children, sends each
+# SIGKILL, reaps each that has ended, and repeats until it has no child left: once a process ends,
+# its children become children of this process and are killed in the next pass. It signals only its
+# own children, and a child keeps its process id until it is reaped, so no signal can reach an
+# unrelated process. The cleanup bound counts from the reap just after the hook has ended, and each
+# pass checks it before it sends any signal, so cleanup stops with a child still alive if the bound
+# passes first: when a process outlasts SIGKILL that long, such as one in uninterruptible sleep, or
+# when the wrapper itself does not run for that long, such as when it is stopped or kept off the CPU,
+# in which case it can stop before it has signalled any child. It then lists its children that are
+# still alive in the report and leaves them, and their descendants, running. It writes the report as
+# JSON: "exited" (the hook exited within its bound), "left_running" (a process that the hook started
+# was alive once the hook had ended) and "not_reaped" (the process ids of its children still alive
+# when cleanup stopped), and then passes on the hook's stdout, stderr and exit status. A process that
+# the hook gets some other program to start, such as a service manager, is not its descendant, and
+# the wrapper does not reach it.
+REAPER_PROG = """
+import ctypes, glob, json, os, signal, subprocess, sys, tempfile, time
+
+report, hook_bound, cleanup_bound = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(36, 1, 0, 0, 0) != 0:
+    sys.exit("prctl PR_SET_CHILD_SUBREAPER failed, errno {}".format(ctypes.get_errno()))
+if not os.path.exists("/proc/self/task/{}/children".format(os.getpid())):
+    sys.exit("/proc/self/task/{}/children is missing".format(os.getpid()))
+
+
+def children():
+    pids = set()
+    for path in glob.glob("/proc/self/task/*/children"):
+        with open(path, encoding="ascii") as fh:
+            pids.update(int(pid) for pid in fh.read().split())
+    return sorted(pids)
+
+
+def reap():
+    # Reaps every child that has ended; returns False once no child is left.
+    while True:
+        try:
+            pid = os.waitpid(-1, os.WNOHANG)[0]
+        except ChildProcessError:
+            return False
+        if pid == 0:
+            return True
+
+
+with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    proc = subprocess.Popen(sys.argv[4:], stdout=out, stderr=err, start_new_session=True)
+    try:
+        proc.wait(timeout=hook_bound)
+        exited = True
+    except subprocess.TimeoutExpired:
+        exited = False
+        proc.kill()
+        proc.wait()
+    left = alive = reap()
+    deadline = time.monotonic() + cleanup_bound
+    while alive and time.monotonic() < deadline:
+        for pid in children():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.01)
+        alive = reap()
+    with open(report, "w", encoding="utf-8") as fh:
+        json.dump({"exited": exited, "left_running": left,
+                   "not_reaped": children() if alive else []}, fh)
+    out.seek(0)
+    err.seek(0)
+    sys.stdout.buffer.write(out.read())
+    sys.stderr.buffer.write(err.read())
+sys.exit(proc.returncode)
+"""
+
+# A stand-in hook for the wrapper's own tests: argv[1] is a lock file, argv[2] a ready file and argv[3]
+# "exit" or "hang". It takes a shared flock on the lock file and starts a child that calls setsid,
+# so the child is in another session and process group, and that child starts a grandchild; the
+# child and the grandchild inherit the lock and sleep 90 s. Once the grandchild has started, the
+# stand-in writes "ready" to the ready file, and then it exits at once ("exit") or sleeps 90 s
+# ("hang"). The lock stays taken while any of the 3 processes is alive, so a test that can take it
+# exclusively knows that none is.
+STANDIN_HOOK = """
+import fcntl, os, sys, time
+
+lock, ready, mode = sys.argv[1:4]
+fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_SH)
+r, w = os.pipe()
+if os.fork() == 0:
+    os.setsid()
+    if os.fork() == 0:
+        os.write(w, b"x")
+    time.sleep(90)
+    os._exit(0)
+os.close(w)
+os.read(r, 1)
+with open(ready, "w", encoding="utf-8") as fh:
+    fh.write("ready\\n")
+if mode == "hang":
+    time.sleep(90)
+"""
+
+# Runs in a separate python3 -I process: argv[1] is the hook file, argv[2] the record file, argv[3]
+# the hook action, argv[4] the mode, "strip" or "keep", and with "keep" argv[5] the enumerator argv
+# as JSON. It replaces subprocess.run with a recorder that appends a JSON line for each call: the
+# argv, and the timeout argument or "absent" when none is passed. With "strip", and with "keep" for
+# each call whose argv is not the enumerator argv, it writes the line and then makes the real call
+# with the same arguments except the timeout, so a slow host cannot cut the call short. With "keep",
+# for each call whose argv is the enumerator argv, it makes the real call with the same arguments,
+# timeout included, and writes the line once the call has ended, adding "outcome": "returned", or
+# the type name of the exception that the call raised, such as "TimeoutExpired", which it then raises
+# again unchanged. So in neither mode can a timeout of the hook other than the enumerator's fire. In
+# the enforcement test the hook's only other call is git rev-parse --show-toplevel in
+# _recovery_toplevel, with a 5 s timeout; if that timeout fired, as it can on a loaded host,
+# _orch_stop_family would allow the stop without running the enumerator, and the test would fail.
+# test_stage1_contrast runs the hook in "strip" mode, and there the same git call is the hook's only
+# call; if its timeout fired, the hook would allow the stop without its NO_ENUMERATOR deny. In both
+# modes it also adds an audit hook that appends a JSON line to the file named by argv[2] with
+# ".starts" added for each audit event that starts a process (START_EVENTS, the events of
+# LAUNCH_EVENTS but ctypes.dlopen, which loads native code and starts no process itself): the event
+# name, and for subprocess.Popen the argv. A call of subprocess.run raises 1 subprocess.Popen event
+# and then 1 os.posix_spawn or _posixsubprocess.fork_exec event, so a process that the hook starts
+# other than through subprocess.run, by subprocess.Popen, os.system, os.exec*, os.posix_spawn,
+# os.spawn* or os.fork, adds a line that no call of the run record matches. A process that native
+# code starts without an audit event adds none. It runs the unchanged hook file as __main__, so the
+# hook reads its stdin payload and exits as it does when the platform runs it.
+RECORDING_HOOK_PROG = """
+import json, runpy, subprocess, sys
+
+hook, record, action, mode = sys.argv[1:5]
+enumerator = json.loads(sys.argv[5]) if mode == "keep" else None
+real_run = subprocess.run
+START_EVENTS = ("subprocess.Popen", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.fork",
+                "_posixsubprocess.fork_exec")
+
+
+def write(row, path=record):
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, default=repr) + "\\n")
+
+
+def record_start(event, args):
+    if event.startswith(START_EVENTS):
+        write({"event": event, "argv": args[1] if event == "subprocess.Popen" else None},
+              record + ".starts")
+
+
+def recording_run(*args, **kwargs):
+    row = {"argv": args[0] if args else kwargs.get("args"), "timeout": kwargs.get("timeout", "absent")}
+    if mode == "strip" or json.loads(json.dumps(row["argv"], default=repr)) != enumerator:
+        kwargs.pop("timeout", None)
+        write(row)
+        return real_run(*args, **kwargs)
+    try:
+        result = real_run(*args, **kwargs)
+    except BaseException as exc:
+        row["outcome"] = type(exc).__name__
+        raise
+    else:
+        row["outcome"] = "returned"
+        return result
+    finally:
+        write(row)
+
+
+subprocess.run = recording_run
+sys.addaudithook(record_start)
+sys.argv = [hook, action]
+runpy.run_path(hook, run_name="__main__")
+"""
+
+# RECORDING_HOOK_PROG with a start that makes the first call of os.fork in the hook's process do what
+# CPython's os.fork does when fork() fails: raise the os.fork audit event, then BlockingIOError
+# (EAGAIN). Every later call forks. So main()'s first child-status probe refuses with "could not fork"
+# after 1 os.fork event, and main(), as orch_stop_guard fails open, restores SIGCHLD to SIG_DFL and
+# probes again, which forks.
+FIRST_FORK_FAILS_PROG = """
+import errno, os, sys
+
+real_fork = os.fork
+forks = []
+
+
+def first_fork_fails():
+    forks.append(1)
+    if len(forks) == 1:
+        sys.audit("os.fork")
+        raise BlockingIOError(errno.EAGAIN, os.strerror(errno.EAGAIN))
+    return real_fork()
+
+
+os.fork = first_fork_fails
+""" + RECORDING_HOOK_PROG
+
+# Runs in a separate python3 -I process: argv[1] is a Python executable and argv[2:] the arguments
+# that it runs with -I. It sets SIGCHLD to SIG_IGN, writes "SIGCHLD ignored" to stdout once
+# signal.getsignal reads that back, and execs the executable, which keeps the ignored disposition
+# across exec, as a process does that a parent that ignores SIGCHLD starts.
+SIGCHLD_IGNORED_PROG = """
+import os, signal, sys
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+if signal.getsignal(signal.SIGCHLD) is signal.SIG_IGN:
+    print("SIGCHLD ignored", flush=True)
+os.execv(sys.argv[1], [sys.argv[1], "-I"] + sys.argv[2:])
+"""
+
+# The end of the note that main() writes to stderr when its first child-status probe
+# (_child_status_refusal) has refused, it has restored SIGCHLD to SIG_DFL and its second probe has read
+# a child's status (aiqt_hooks.py:38211), after the reason that the first probe gave; and the reasons
+# that the first probe gives before it calls os.fork, as SIGCHLD is not at SIG_DFL (aiqt_hooks.py:38120
+# and 38121).
+PROBE_RESTORED_NOTE = ("; SIGCHLD restored to SIG_DFL for this hook process and the probe then read "
+                       "its child's status")
+PROBE_REFUSALS_BEFORE_FORK = ("SIGCHLD is ignored (SIG_IGN) in this process",
+                              "SIGCHLD is not at its default disposition in this process")
+
+
+def probe_forks(stderr):
+    """The os.fork events that main()'s child-status probes raise in a hook run, from the run's stderr:
+    1 when it holds no restore note, as the first probe then read its child's status; with 1 note, 1
+    for the second probe, and 1 more when the reason before the note is not one that the first probe
+    gives before it calls os.fork (it could not fork, its child was reaped before it, or its child's
+    status could not be read or was not 77); None when the note is there more than once."""
+    notes = [line for line in stderr.splitlines() if line.endswith(PROBE_RESTORED_NOTE)]
+    if not notes:
+        return ["os.fork"]
+    if len(notes) > 1:
+        return None
+    reason = notes[0][:-len(PROBE_RESTORED_NOTE)]
+    return ["os.fork"] if reason.endswith(PROBE_REFUSALS_BEFORE_FORK) else ["os.fork", "os.fork"]
+
+
 class T15EnumeratorTimeout(Stage2Harness):
+    HOOK_BOUND = 120
+    CLEANUP_BOUND = 30
+    WALL_CLOCK_BOUND = 240
+    STANDIN_HOOK_BOUND = 10
+    STANDIN_WALL_CLOCK_BOUND = 60
+    NESTED_WALL_CLOCK_BOUND = 300
+    # The largest value is ENUM_TIMEOUT, as write_registry refuses a declared timeout over it.
+    DECLARED_TIMEOUTS = (0.001, 1, 7.5, ENUM_TIMEOUT)
+
+    def run_reaped(self, cmd, report, hook_bound=None, wall_clock_bound=None):
+        """Run cmd through REAPER_PROG with the JSON stdin payload and return (the completed wrapper,
+        or None if it reached the wall-clock bound, and the report, or None if the wrapper wrote
+        none). The hook bound defaults to HOOK_BOUND and the wall-clock bound to WALL_CLOCK_BOUND,
+        which leaves the wrapper 90 s beyond its 2 bounds; the 2 wrapper tests pass 10 s and 60 s,
+        which leaves it 20 s. What can outlive the test: every process under the wrapper when the
+        wrapper ends before its cleanup has finished, which happens when the wall-clock bound kills
+        it (that bound kills only the wrapper; in a wrapper test those processes include the
+        stand-in hook's child and grandchild), when another signal ends it, such as one that the
+        hook sends it, or when an error ends it; the children that REAPER_PROG lists as still alive
+        when cleanup stops at its bound, and their descendants; and a process that the hook gets
+        another program, such as a service manager, to start. In each case but the last the test
+        fails, as this method then returns no completed wrapper, no report, or a report that lists
+        a child."""
+        hook_bound = self.HOOK_BOUND if hook_bound is None else hook_bound
+        try:
+            r = run_doctor_recorded(self, [sys.executable, "-I", "-c", REAPER_PROG, str(report),
+                                           str(hook_bound), str(self.CLEANUP_BOUND), *cmd],
+                                    input=json.dumps({"cwd": str(self.repo)}), capture_output=True,
+                                    text=True, env=self._env(),
+                                    timeout=wall_clock_bound or self.WALL_CLOCK_BOUND)
+        except subprocess.TimeoutExpired:
+            r = None
+        rep = json.loads(report.read_text(encoding="utf-8")) if report.exists() else None
+        return r, rep
+
+    def assert_reaped(self, r, rep, hook_bound=None):
+        """The wrapper ended within the wall-clock bound, wrote its report, left no process alive,
+        and the hook exited within its bound."""
+        if r is None:
+            self.fail("the wrapper hit the {} s wall-clock bound".format(self.WALL_CLOCK_BOUND))
+        if rep is None:
+            self.fail("the wrapper wrote no report; exit {}, stderr: {}".format(r.returncode,
+                                                                                 r.stderr))
+        self.assertEqual(rep["not_reaped"], [], "processes that the hook started outlasted SIGKILL "
+                         "for {} s".format(self.CLEANUP_BOUND))
+        self.assertTrue(rep["exited"], "the hook did not exit within {} s and was killed".format(
+            self.HOOK_BOUND if hook_bound is None else hook_bound))
+
+    def assert_lock_free(self, lock):
+        import fcntl
+        fd = os.open(str(lock), os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.fail("a process that the stand-in hook started outlived the wrapper")
+        finally:
+            os.close(fd)
+
+    def run_standin(self, mode):
+        lock = self._tmp / "standin.lock"
+        ready = self._tmp / "standin.ready"
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", STANDIN_HOOK, str(lock), str(ready),
+                                  mode], self._tmp / "standin-report.json",
+                                 hook_bound=self.STANDIN_HOOK_BOUND,
+                                 wall_clock_bound=self.STANDIN_WALL_CLOCK_BOUND)
+        self.assertEqual(ready.read_text(encoding="utf-8") if ready.exists() else "", "ready\n",
+                         "precondition: the stand-in hook started its child and grandchild")
+        self.assert_lock_free(lock)
+        return r, rep
+
+    def test_wrapper_kills_processes_in_another_session(self):
+        # Catches: the stand-in hook exits at once and leaves a child in another session and process
+        # group, and that child's child, both alive. Once the wrapper has returned, the test requires
+        # that it can take the stand-in's lock exclusively, so none of the 3 processes is alive, and
+        # then a report with "left_running" true, "exited" true and "not_reaped" empty. A wrapper
+        # that kills only the hook's process group, as the earlier one did, misses both processes
+        # and then waits for them to end; the 60 s wall-clock bound kills it, and the lock check
+        # fails. A wrapper that kills its children once and does not repeat misses the grandchild.
+        r, rep = self.run_standin("exit")
+        self.assertIsNotNone(r, "the wrapper hit the {} s wall-clock bound".format(
+            self.STANDIN_WALL_CLOCK_BOUND))
+        self.assertEqual(rep, {"exited": True, "left_running": True, "not_reaped": []})
+
+    def test_wrapper_kills_a_hook_that_does_not_exit(self):
+        # Catches: the stand-in hook leaves the same 2 processes and then sleeps 90 s itself, past
+        # the 10 s hook bound. Once the wrapper has returned, the test requires that it can take the
+        # lock exclusively and then a report with "exited" false and "not_reaped" empty. A wrapper
+        # that waits for the hook without a bound, as the earlier one did, is killed by the 60 s
+        # wall-clock bound while the hook and its 2 processes are alive, and the lock check fails.
+        r, rep = self.run_standin("hang")
+        self.assertIsNotNone(r, "the wrapper hit the {} s wall-clock bound".format(
+            self.STANDIN_WALL_CLOCK_BOUND))
+        self.assertEqual(rep, {"exited": False, "left_running": True, "not_reaped": []})
+
     def test_sleeping_enumerator_times_out_and_denies(self):
-        self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", "-c", "import time; time.sleep(30)"], "timeout": 1}))
+        # Catches: the sleeping enumerator runs under a declared timeout of 1 s, and the unchanged
+        # hook runs through RECORDING_HOOK_PROG in its "keep" mode, itself run through REAPER_PROG.
+        # The recorder keeps the timeout argument of the enumerator call only, so no other timeout of
+        # the hook, such as the 5 s one of its git call in _recovery_toplevel, can fire.
+        # Once the wrapper call ends, the test requires, in this order:
+        # - that the wrapper call ended within the 240 s wall-clock bound (temporal) and that the
+        #   wrapper wrote its report (logical);
+        # - that "not_reaped" is empty, so no process that the hook started was alive when cleanup
+        #   stopped, which it does once no process is left or once the 30 s cleanup bound has passed
+        #   (temporal; a hook that leaves no process running leaves cleanup nothing to do, and the
+        #   list is then empty without it);
+        # - that the hook exited within the 120 s hook bound (temporal);
+        # - that the calls whose argv is the declared enumerator argv are exactly 1 call, with the
+        #   timeout argument 1 and the outcome TimeoutExpired (logical);
+        # - that no process that the hook started was still running when it ended (logical);
+        # - exit 2, ENUMERATOR_ERROR and 'failed to run' in stderr (logical).
+        # The test asks the enumerator to do nothing but record its start before the timeout fires,
+        # and the enumerator sleeps 100 s, so a call that passes it a timeout of 1 s raises
+        # TimeoutExpired once that timeout fires, unless the enumerator cannot be started or the
+        # 120 s bound kills the hook first. A correct hook leaves no process running, so for such a
+        # hook only the 240 s and 120 s bounds can make a check's result depend on how loaded the
+        # host is. A hook that passes no timeout argument waits the 100 s sleep out and fails the
+        # call check if it still exits within the 120 s bound, as its call then records no timeout
+        # argument and the outcome "returned", and fails the "exited" check first if it does not. A
+        # hook that passes a timeout argument other than 1 fails the call check if it still exits
+        # within the 120 s bound, as with a fixed 20 s, 60 s or 180 s, max(timeout, 30) or
+        # timeout * 2, and fails the "exited" check first if it does not. A hook that runs the
+        # enumerator again after a timeout records 2 or more calls and fails the call check if it
+        # still exits within 120 s, and fails the
+        # "exited" check first if its runs take it past 120 s. A hook that starts the enumerator
+        # with Popen and returns without stopping it, in or out of a new session, records no call
+        # and fails the call check, and the test ends there: such a hook also leaves the enumerator
+        # running, but the "left_running" check comes after the call check and is not reached. A
+        # hook that takes the timeout as success or gives another verdict fails the last check. The
+        # wrapper kills every process that the hook started and left running, within the limits
+        # that REAPER_PROG and run_reaped state.
+        # Misses: the test does not time the effective timeout. Enforcement rests on subprocess.run
+        # honouring its timeout argument, seen once here as TimeoutExpired. A hook that passes 1 s
+        # whatever is declared, or changes only values other than 1, such as round(timeout), passes;
+        # test_declared_timeout_reaches_the_enumerator_call catches each such change to 0.001, 7.5
+        # or 60. A stall after the timeout, or before the hook starts the enumerator, passes if the
+        # hook still exits within 120 s; the 15 s bound on the whole call that this test had at
+        # d649a24 caught such a stall only when the whole call then passed 15 s, which a 5 s stall
+        # after the 1 s timeout need not bring about, and it also failed the correct hook when a
+        # loaded host took the whole call past 15 s. PR 284 widened that bound to 90 s (TODO 254),
+        # measured from before the hook starts and below the enumerator's sleep; the 120 s hook bound
+        # is wider still, also covers the hook's start-up, and, as with the 90 s bound, a hook that
+        # waits the sleep out fails, here by the call check if it still exits within 120 s and by
+        # the "exited" check first if it does not. A hook that starts the enumerator other
+        # than through subprocess.run records no call and fails here even if it stops the
+        # enumerator at the declared time. The unchanged hook's timeout stops only the enumerator's
+        # own process, and the sleeping enumerator is 1 process, so this test says nothing about
+        # processes that an enumerator starts. This test declares only 1 s, so of the changes to the
+        # hook's check of the declared value (a number, above 0, at most 600) it catches only one
+        # that rejects 1: such a hook passes the 60 s fallback as the timeout and fails the call check
+        # if it still exits within 120 s, and the "exited" check first if it does not.
+        record = self._tmp / "run-calls-enforced.jsonl"
+        argv = [sys.executable, "-I", "-c", SLEEPING_ENUM_FIXTURE]
+        self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": 1}))
         self.arm_lease()
-        started = time.monotonic()
-        r = self.stop()
-        elapsed = time.monotonic() - started
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG, str(HOOK),
+                                  str(record), "orch_stop_guard", "keep", json.dumps(argv)],
+                                 self._tmp / "reaper-report.json")
+        self.assert_reaped(r, rep)
+        rows = [json.loads(line) for line in
+                (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
+        calls = [(row["timeout"], row.get("outcome")) for row in rows if row["argv"] == argv]
+        self.assertEqual(calls, [(1, "TimeoutExpired")], "timeout arguments and outcomes of the "
+                         "enumerator calls for a declared 1 s: {}; hook exit {}, stderr: {}".format(
+                             calls, r.returncode, r.stderr))
+        self.assertFalse(rep["left_running"], "a process that the hook started was still running "
+                         "when the hook call ended; exit {}, stderr: {}".format(r.returncode,
+                                                                                r.stderr))
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("ENUMERATOR_ERROR", r.stderr)
         self.assertIn("failed to run", r.stderr)
-        self.assertLess(elapsed, 15, "the declared timeout bounds the hook")
+
+    def test_declared_timeout_reaches_the_enumerator_call(self):
+        # The unchanged hook runs through RECORDING_HOOK_PROG in its "strip" mode, itself run through
+        # REAPER_PROG, once for each value in DECLARED_TIMEOUTS, with the writing fixture, a -c
+        # program of ENUM_PROGRAMS, as the enumerator under that declared timeout. For each value
+        # the test requires, in this order,
+        # that the wrapper call ended within the 240 s wall-clock bound (temporal) and that the
+        # wrapper wrote its report (logical), that no process that the hook started was alive when
+        # cleanup stopped, once no process was left or once the 30 s cleanup bound had passed
+        # (temporal; a hook that leaves no process running leaves cleanup nothing to do), and that
+        # the hook exited within the 120 s hook bound (temporal), then that the calls whose argv is
+        # the declared enumerator argv passed exactly that value: 1 call, with the timeout argument
+        # equal to the declared value, then that the enumerator ran once (both logical). The test
+        # does not check "left_running". No 2 of the 4 values are equal, so a hook that passes the
+        # same timeout whatever is declared, such as a fixed 1 s, 20 s or 60 s,
+        # fails for at least 3 of them, and a hook that passes timeout * 2, timeout * 3 or no
+        # timeout argument fails for all 4. The value 0.001 fails a floor above it, such as
+        # max(timeout, 1) or max(timeout, 30), 60 fails a cap below it, and 7.5 fails rounding to
+        # a whole number. The recorder makes the real call without the timeout, so the fixture
+        # always runs to its end and the test checks no elapsed time apart from the 3 bounds above,
+        # of which the 120 s and 240 s bounds include the fixture's run; the fixture's mark file
+        # must then hold 'ran\n', so the recorded call ran the real enumerator and nothing else ran
+        # it. Residuals: the test does not check that the timeout is enforced or the hook's verdict
+        # (test_sleeping_enumerator_times_out_and_denies checks both, and the single call, for a
+        # declared 1 s); a hook that starts the enumerator other than through subprocess.run
+        # records no call and fails here even if it enforces the declared value. It passes a hook
+        # that passes each declared value unchanged and changes others, so it misses: a floor of
+        # 0.001 or below, such as max(timeout, 0.001); a cap of 60 or above, such as
+        # min(timeout, 60) or min(timeout, 300), which changes only a value over 60, which the test
+        # cannot declare, as write_registry refuses a declared timeout over ENUM_TIMEOUT (60 s) (a
+        # cap of 600 or above, such as min(timeout, 600), changes nothing, as the hook's check
+        # already rejects a value above 600); rounding to 3 or more decimal places, such as
+        # round(timeout, 3); a change to a value that the test does not declare, such as 60 s for
+        # any value from 10 to 599; and a hook that runs the enumerator again after a timeout, as
+        # no call here times out (test_sleeping_enumerator_times_out_and_denies catches that). No
+        # declared value is one that the hook's check rejects (not a number, 0 or below, or above
+        # 600), so it also misses a change to the 60 s fallback for such a value, such as 30 s, and
+        # a change to which values the check rejects that still accepts 0.001, 1, 7.5 and 60, such
+        # as one that rejects JSON true, which the unchanged hook takes as 1 s, or one that rejects
+        # each value over 60. A change that rejects 0.001, 1 or 7.5, such as one that accepts only
+        # an int, fails for that value, as the hook then passes the 60 s fallback. It also misses a
+        # change that rejects 60 and still accepts 0.001, 1 and 7.5, such as 0 < timeout < 60, as
+        # the hook then passes the 60 s fallback for the declared 60, the same value.
+        for declared in self.DECLARED_TIMEOUTS:
+            with self.subTest(declared=declared):
+                mark = self._tmp / "enumerator-ran-{}.txt".format(declared)
+                record = self._tmp / "run-calls-{}.jsonl".format(declared)
+                argv = [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(mark)]
+                self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": declared}))
+                self.arm_lease()
+                r, rep = self.run_reaped([sys.executable, "-I", "-c", RECORDING_HOOK_PROG,
+                                          str(HOOK), str(record), "orch_stop_guard", "strip"],
+                                         self._tmp / "reaper-report-{}.json".format(declared))
+                self.assert_reaped(r, rep)
+                rows = [json.loads(line) for line in
+                        (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
+                timeouts = [row["timeout"] for row in rows if row["argv"] == argv]
+                self.assertEqual(timeouts, [declared], "timeout arguments of the enumerator call "
+                                 "for a declared {}: {}; hook exit {}, stderr: {}".format(
+                                     declared, timeouts, r.returncode, r.stderr))
+                self.assertEqual(mark.read_text(encoding="utf-8") if mark.exists() else "", "ran\n",
+                                 "the recorded call did not run the enumerator once")
 
     def test_stage1_contrast(self):
+        # The stage 1 registry declares no enumerator. The unchanged hook runs through
+        # RECORDING_HOOK_PROG in its "strip" mode, itself run through REAPER_PROG, so no timeout of
+        # the hook can fire, and the wrapper kills every process that the hook started and left
+        # running, within the limits that REAPER_PROG and run_reaped state. Once the wrapper call
+        # ends, the test requires, in this order:
+        # - that the wrapper call ended within the 240 s wall-clock bound (temporal), that the
+        #   wrapper wrote its report (logical), that "not_reaped" is empty, so no process that the
+        #   hook started was alive when cleanup stopped, which it does once no process is left or
+        #   once the 30 s cleanup bound has passed (temporal), and that the hook exited within the
+        #   120 s hook bound (temporal);
+        # - that no process that the hook started was still running when it ended (logical);
+        # - that the hook's only subprocess.run call was git rev-parse --show-toplevel in
+        #   _recovery_toplevel, whose timeout argument the recorder dropped (logical);
+        # - that the process starts that the recorder's audit hook saw are that call's and the
+        #   child-status probes': 1 subprocess.Popen event with the same argv and 1 os.posix_spawn
+        #   or _posixsubprocess.fork_exec event, and the os.fork events of the children that main()
+        #   forks to check that it can read a child's exit status (_child_status_refusal at
+        #   aiqt_hooks.py:38112-38139; the child exits at once with status 77 and main() waits for
+        #   it), and no other (logical). Those are the events that probe_forks reads from stderr: 1
+        #   when the first probe reads its child's status; when it refuses, main() of this fail-open
+        #   mode restores SIGCHLD to SIG_DFL, probes again and notes the restore, and then 1 for
+        #   the second probe and 1 more when the first refused after it called os.fork, as when the
+        #   fork failed, and none more when it refused as SIGCHLD was not at SIG_DFL;
+        # - exit 2, NO_ENUMERATOR and no 'failed to run' in stderr (logical).
+        # So the hook started no process but its git call and those children by subprocess,
+        # os.system, os.exec*, os.posix_spawn, os.spawn* or os.fork, and left none running. A hook
+        # that also starts a process by one of those routes, such as an enumerator, and leaves it
+        # running fails the "left_running" check, and one whose process has ended fails the start
+        # check. test_stage1_contrast_after_the_first_probe_fork_fails makes the same checks when
+        # the first probe's fork fails, and test_stage1_contrast_when_sigchld_is_ignored runs this
+        # test in a process of this file that starts with SIGCHLD ignored. Run through run_hook,
+        # without the recorder, the hook allows the stop when the git call's 5 s timeout fires, as it
+        # can on a loaded host, and the test would then fail a correct hook. Misses: a process that
+        # native code starts without an audit event passes the start check, though the "left_running"
+        # check still fails it if it outlives the hook; a process that the hook gets another program,
+        # such as a service manager, to start is seen by neither check; and the start check takes the
+        # hook's restore note as the account of what its first probe met, so it passes a hook that
+        # writes that note and forks as it states.
+        self._stage1_contrast(RECORDING_HOOK_PROG, "stage1")
+
+    def test_stage1_contrast_after_the_first_probe_fork_fails(self):
+        # Catches: a start check that counts 1 os.fork event of the child-status probes whatever the
+        # first probe met, which fails a correct hook whose first probe could not fork. The hook runs
+        # as in test_stage1_contrast, with RECORDING_HOOK_PROG started by FIRST_FORK_FAILS_PROG, so
+        # the first os.fork call of the hook's process raises its audit event and then
+        # BlockingIOError. The test makes the checks of test_stage1_contrast, under which the start
+        # check requires 2 os.fork events, and then requires the restore note after the reason
+        # "could not fork (BlockingIOError)" in stderr, so main() probed again and its second probe
+        # read the child's status.
+        r = self._stage1_contrast(FIRST_FORK_FAILS_PROG, "first-fork-fails")
+        self.assertIn("the child-status probe could not fork (BlockingIOError)" + PROBE_RESTORED_NOTE,
+                      r.stderr)
+
+    def test_stage1_contrast_when_sigchld_is_ignored(self):
+        # Catches: a test file that keeps the SIGCHLD disposition that it inherits. When the process
+        # that starts this file ignores SIGCHLD, so does the test process, which then reads the exit
+        # status of each process that it starts as 0, and so do the wrapper and the hook, as they
+        # keep it across exec; test_stage1_contrast then failed a correct hook, reading exit 0 for
+        # its exit 2 deny. The test runs test_stage1_contrast in a nested python3 -I process of this
+        # file, started through SIGCHLD_IGNORED_PROG, so it starts with SIGCHLD ignored, and
+        # requires, in this order, that the call ended within the 300 s NESTED_WALL_CLOCK_BOUND, 60 s
+        # past the 240 s bound of the nested test's wrapper call (temporal), that SIGCHLD_IGNORED_PROG
+        # read SIG_IGN back before the exec, and that the nested run ran 1 test and exited 0
+        # (logical). Misses: a start in which SIGCHLD is at SIG_DFL with SA_NOCLDWAIT set, which this
+        # test does not arrange.
+        try:
+            r = run_doctor_recorded(self, [sys.executable, "-I", "-c", SIGCHLD_IGNORED_PROG,
+                                           sys.executable, str(Path(__file__).resolve()),
+                                           "T15EnumeratorTimeout.test_stage1_contrast"],
+                                    capture_output=True, text=True,
+                                    timeout=self.NESTED_WALL_CLOCK_BOUND)
+        except subprocess.TimeoutExpired:
+            self.fail("the nested run hit the {} s wall-clock bound".format(
+                self.NESTED_WALL_CLOCK_BOUND))
+        self.assertEqual(r.stdout, "SIGCHLD ignored\n",
+                         "precondition: the nested run starts with SIGCHLD ignored; stderr: {}".format(
+                             r.stderr))
+        self.assertIn("Ran 1 test", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def _stage1_contrast(self, prog, name):
+        """Run the hook for the stage 1 registry through prog, which is RECORDING_HOOK_PROG or ends
+        with it, in its "strip" mode under REAPER_PROG, make the checks that test_stage1_contrast
+        states, in its order, and return the completed wrapper."""
+        record = self._tmp / "run-calls-{}.jsonl".format(name)
+        starts_record = Path(str(record) + ".starts")
         self.write_registry(self.stage1())
         self.arm_lease()
-        r = self.stop()
+        r, rep = self.run_reaped([sys.executable, "-I", "-c", prog, str(HOOK), str(record),
+                                  "orch_stop_guard", "strip"],
+                                 self._tmp / "reaper-report-{}.json".format(name))
+        self.assert_reaped(r, rep)
+        self.assertFalse(rep["left_running"], "a process that the hook started was still running "
+                         "when the hook call ended; exit {}, stderr: {}".format(r.returncode,
+                                                                                r.stderr))
+        git_argv = ["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"]
+        rows = [json.loads(line) for line in
+                (record.read_text(encoding="utf-8") if record.exists() else "").splitlines()]
+        calls = [row["argv"] for row in rows]
+        self.assertEqual(calls, [git_argv],
+                         "calls of the hook for the stage 1 registry: {}; hook exit {}, stderr: {}"
+                         .format(calls, r.returncode, r.stderr))
+        starts = [json.loads(line) for line in (starts_record.read_text(encoding="utf-8")
+                                                if starts_record.exists() else "").splitlines()]
+        popen = [row["argv"] for row in starts if row["event"] == "subprocess.Popen"]
+        spawns = [row["event"] for row in starts
+                  if row["event"] in ("os.posix_spawn", "_posixsubprocess.fork_exec")]
+        others = [row["event"] for row in starts
+                  if row["event"] not in ("subprocess.Popen", "os.posix_spawn",
+                                          "_posixsubprocess.fork_exec")]
+        self.assertEqual((popen, len(spawns), others), ([git_argv], 1, probe_forks(r.stderr)),
+                         "process starts of the hook for the stage 1 registry: {}; hook exit {}, "
+                         "stderr: {}".format(starts, r.returncode, r.stderr))
         self.assert_no_enumerator_deny(r)
         self.assertNotIn("failed to run", r.stderr)
+        return r
+
+
+class EnumeratorBounds(Stage2Harness):
+    """run_doctor_recorded holds the timeout of every launch, when the launch has run, to at least
+    ENUM_TIMEOUT for each enumerator start that the launch recorded, plus ENUM_MARGIN
+    (enumerator_bound_defect), so the hook's own timeout ends an enumerator that hangs, and the case
+    reads what the hook reports, before the bound ends the run. It reads the timeout that the launch
+    was given, however the case bound it. These cases require that a start reaches the record through
+    the hook and through the doctor, that a launch 1 second under its bound fails its case and a launch
+    at its bound passes, for 1 start and for 2, also when check=True fails after the start, that a
+    launch with no running case fails at once, with the exception that the launch raised as the cause,
+    also when the launch printed a doctor refusal as well, that each of ENUM_PROGRAMS records its start
+    first and leaves the record alone after it, and that each branch of those 2 checks
+    (runs_enum_run_mark_first and program_leaves_record) refuses a program of its own, that
+    write_registry checks the enumerator as the hook reads it from the file written, so a tuple or a
+    str subclass is checked as the text that json writes, and refuses an enumerator that the hook
+    would start and whose argv is not exactly this interpreter (sys.executable), -I, -c and 1 of
+    ENUM_PROGRAMS, each a separate element, followed by any operands (one run by another interpreter
+    or without -I, one whose -I and -c are joined, swapped or apart, and one whose program is not 1 of
+    ENUM_PROGRAMS: one without the statements of ENUM_RUN_MARK, also when its timeout is absent or one
+    that the hook reads as 60, one that holds them only as text or after an exit, one that begins with
+    them but does not compile, and one that begins with them and then removes the record or adds a
+    start), or whose timeout, as the hook reads it, is over ENUM_TIMEOUT, that for each of the
+    interpreter, -I, -c and the program it refuses a named value that begins with, ends with or holds
+    an accepted value, and a named value that an accepted value begins or ends with, that it refuses
+    every program-file form found so far, each with a recording file in place, that write_registry,
+    declared_enumerator_defect, runs_enum_run_mark_first and program_leaves_record each have exactly
+    the body of PINNED_CHECKS, and that ENUM_PROGRAMS is its 3 reviewed programs, by sha256, both in
+    the test process and in a new python3 -I process that parses the text of this file and does not
+    import it (PIN_PROGRAM), which also requires that its scan of the file finds no binding of a name
+    that those bodies read, of the forms that the scan models, but its definition, though code of the
+    file can defeat that scan by routes that it does not model, as stated above PIN_PROGRAM, and that
+    write_registry refuses every near miss that near_misses generates for each element and each other
+    path to the interpreter that the case builds. The named rows and the near misses are finite: each
+    refuses the values it holds and shows nothing about any other value. The exact checks are required
+    by the pin of PINNED_CHECKS, and what the pin does not see, among it a rebinding that names its
+    target only at run time, is stated above PIN_PROGRAM. This suite no longer drives a program-file
+    enumerator through the hook: the hook passes the argv to subprocess.run unchanged
+    (aiqt_hooks.py:22833), so what the hook does with it does not depend on its form. What the check
+    does not see is stated above enumerator_bound_defect."""
+
+    # A child that runs the program that its operands name twice, and one that runs it once and exits 1.
+    TWICE = ("import subprocess, sys\n"
+             "for _ in range(2):\n"
+             "    subprocess.run(sys.argv[1:], check=True, stdout=subprocess.DEVNULL)\n")
+    FAILS = ("import subprocess, sys\n"
+             "subprocess.run(sys.argv[1:], check=True, stdout=subprocess.DEVNULL)\n"
+             "sys.exit(1)\n")
+
+    def test_each_launch_records_the_enumerator_starts_that_it_made(self):
+        # A stage-2 Stop and a stage-2 preflight each start the fixture enumerator once, the first through
+        # the hook and the second through the doctor; a stage-1 Stop starts none.
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        take_enumerator_launches(self)
+        self.assertEqual(self.stop().returncode, 0)
+        self.assertEqual(self.run_doctor("preflight", "stop").returncode, 0)
+        self.write_registry(self.stage1())
+        self.assert_no_enumerator_deny(self.stop())
+        self.assertEqual([(timeout, runs) for _argv, timeout, runs in take_enumerator_launches(self)],
+                         [(RUN_TIMEOUT, 1), (RUN_TIMEOUT, 1), (RUN_TIMEOUT, 0)])
+
+    def test_a_launch_under_its_bound_fails_its_case(self):
+        once = [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)]
+        twice = [sys.executable, "-I", "-c", self.TWICE] + once
+        fails = [sys.executable, "-I", "-c", self.FAILS] + once
+        need_once, need_twice = ENUM_TIMEOUT + ENUM_MARGIN, 2 * ENUM_TIMEOUT + ENUM_MARGIN
+
+        class Probe(unittest.TestCase):
+            argv, timeout, check = once, None, False
+
+            def test_launch(inner):
+                try:
+                    run_doctor_recorded(inner, inner.argv, capture_output=True, text=True,
+                                        timeout=inner.timeout, check=inner.check)
+                except subprocess.CalledProcessError:
+                    inner.assertTrue(inner.check, "the launch failed")
+
+        rows = (("1 start, 1 s under", once, need_once - 1, False, "under 1 enumerator start(s)"),
+                ("1 start, at the bound", once, need_once, False, None),
+                ("2 starts, 1 s under", twice, need_twice - 1, False, "under 2 enumerator start(s)"),
+                ("2 starts, at the bound", twice, need_twice, False, None),
+                ("1 start, no timeout", once, None, False, None),
+                ("1 start, then check=True fails", fails, need_once - 1, True, "under 1 enumerator start(s)"))
+        for name, argv, timeout, check, wanted in rows:
+            with self.subTest(launch=name):
+                Probe.argv, Probe.timeout, Probe.check = argv, timeout, check
+                result = unittest.TestResult()
+                Probe("test_launch").run(result)
+                self.assertEqual(result.errors, [])
+                self.assertEqual(len(result.failures), 0 if wanted is None else 1, result.failures)
+                if wanted is not None:
+                    self.assertIn(wanted, result.failures[0][1])
+        with self.subTest(launch="no running case"):
+            with self.assertRaisesRegex(AssertionError, "no running case.*under 1 enumerator start"):
+                run_doctor_recorded(None, once, capture_output=True, text=True, timeout=need_once - 1)
+            run_doctor_recorded(None, once, capture_output=True, text=True, timeout=need_once)
+        # The bound failure keeps the exception that the launch raised as its cause.
+        with self.subTest(launch="no running case, then check=True fails"):
+            wanted = "no running case.*under 1 enumerator start"
+            with self.assertRaisesRegex(AssertionError, wanted) as caught:
+                run_doctor_recorded(None, fails, capture_output=True, text=True, timeout=need_once - 1,
+                                    check=True)
+            self.assertIsInstance(caught.exception.__cause__, subprocess.CalledProcessError)
+        # The same when the launch also printed a doctor refusal, which no case can register: the bound
+        # failure keeps the exception of the launch as its cause, and the failed registration is its
+        # context. The refusal reaches the child as an operand, so no literal here holds it.
+        prints = ("import subprocess, sys\n"
+                  "subprocess.run(sys.argv[2:], check=True, stdout=subprocess.DEVNULL)\n"
+                  "print(sys.argv[1])\n"
+                  "sys.exit(1)\n")
+        with self.subTest(launch="no running case, a doctor refusal, then check=True fails"):
+            with self.assertRaisesRegex(AssertionError, wanted) as caught:
+                run_doctor_recorded(None, [sys.executable, "-I", "-c", prints, REFUSAL_PREFIX] + once,
+                                    capture_output=True, text=True, timeout=need_once - 1, check=True)
+            self.assertIsInstance(caught.exception.__cause__, subprocess.CalledProcessError)
+            self.assertIsInstance(caught.exception.__context__, AssertionError)
+            self.assertIn("printed a doctor refusal", str(caught.exception.__context__))
+
+    def test_each_accepted_program_records_first_and_leaves_its_record(self):
+        # Each program that write_registry accepts records its start before any other statement runs
+        # and, after that, names neither the record nor the environment; the check refuses a program
+        # that removes the record, adds a start or reads the environment after the mark. Through the
+        # hook, the 2 fixture programs that end each record exactly 1 start.
+        for program in ENUM_PROGRAMS:
+            self.assertTrue(runs_enum_run_mark_first(program), program)
+            self.assertTrue(program_leaves_record(program), program)
+        for program in (self.ERASES, self.FORGES, self.READS_ENVIRONMENT):
+            self.assertTrue(runs_enum_run_mark_first(program), program)
+            self.assertFalse(program_leaves_record(program), program)
+        # The check reads names, so a program can reach the record without them; that is why, in an
+        # enumerator that the hook would start, write_registry accepts no program but 1 of ENUM_PROGRAMS,
+        # which refuses this one.
+        self.assertTrue(program_leaves_record(self.SEARCHES), "precondition: no name of the record")
+        self.assertNotIn(self.SEARCHES, ENUM_PROGRAMS)
+        # Each branch of the 2 checks refuses a program of its own: runs_enum_run_mark_first refuses
+        # the record followed by a statement that does not compile, and program_leaves_record refuses
+        # the record followed by a program that holds exactly 1 of the names, 1 of the attributes or a
+        # string that holds ENUM_RUNS_VAR, a row for each member of each list. The lists are written
+        # here, not read from the check, so a member dropped from the check fails its row.
+        for tail in ("return\n", "break\n", "from __future__ import annotations\n"):
+            self.assertFalse(runs_enum_run_mark_first(ENUM_RUN_MARK + tail), tail)
+        names = ("_runs", "_record", "environ", "getenv", "putenv")
+        attributes = ("environ", "getenv", "putenv")
+        rows = ((("name", "_runs"), "_runs.strip()\n"), (("name", "_record"), "_record.close()\n"),
+                (("name", "environ"), "from os import environ\nenviron.clear()\n"),
+                (("name", "getenv"), "from os import getenv\ngetenv(\"HOME\")\n"),
+                (("name", "putenv"), "from os import putenv\nputenv(\"A\", \"1\")\n"),
+                (("attribute", "environ"), "os.environ.clear()\n"),
+                (("attribute", "getenv"), "os.getenv(\"HOME\")\n"),
+                (("attribute", "putenv"), "os.putenv(\"A\", \"1\")\n"),
+                (("string", ENUM_RUNS_VAR), "_name = \"" + ENUM_RUNS_VAR + "\"\n"))
+        self.assertEqual({member for member, _tail in rows},
+                         {("name", name) for name in names} | {("attribute", name) for name in attributes}
+                         | {("string", ENUM_RUNS_VAR)}, "precondition: a row for each member")
+        for member, tail in rows:
+            nodes = list(ast.walk(ast.parse(tail)))
+            hits = ({("name", node.id) for node in nodes if isinstance(node, ast.Name) and node.id in names}
+                    | {("attribute", node.attr) for node in nodes
+                       if isinstance(node, ast.Attribute) and node.attr in attributes}
+                    | {("string", ENUM_RUNS_VAR) for node in nodes if isinstance(node, ast.Constant)
+                       and isinstance(node.value, str) and ENUM_RUNS_VAR in node.value})
+            self.assertEqual(hits, {member}, "precondition: the row holds only its own member")
+            program = ENUM_RUN_MARK + tail
+            with self.subTest(member=member):
+                self.assertTrue(runs_enum_run_mark_first(program), program)
+                self.assertFalse(program_leaves_record(program), program)
+        marker = self._tmp / "enumerator-ran.txt"
+        self.arm_lease()
+        for argv in ([sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)],
+                     [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(marker)]):
+            with self.subTest(program=argv[3][len(ENUM_RUN_MARK):][:40]):
+                self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": ENUM_TIMEOUT}))
+                take_enumerator_launches(self)
+                self.assertEqual(self.stop().returncode, 0)
+                self.assertEqual([runs for _argv, _timeout, runs in take_enumerator_launches(self)], [1])
+
+    # 3 programs that begin with the record and then reach it: 1 removes it, 1 adds a start that did not
+    # happen, and 1 opens the file that the environment names.
+    ERASES = ENUM_FIXTURE.replace("import json\n", "os.remove(_runs)\nimport json\n", 1)
+    FORGES = ENUM_FIXTURE.replace(
+        "import json\n", "open(_runs, \"a\", encoding=\"utf-8\").write(\"run\\n\")\nimport json\n", 1)
+    READS_ENVIRONMENT = ENUM_FIXTURE.replace(
+        "import json\n", "open(os.environ[\"" + ENUM_RUNS_VAR + "\"], \"w\").close()\nimport json\n", 1)
+    # A program that begins with the record and removes it, found by the name of its folder
+    # (_new_starts_folder), so program_leaves_record finds nothing; only ENUM_PROGRAMS refuses it.
+    SEARCHES = ENUM_FIXTURE.replace(
+        "import json\n", "import glob, tempfile\n"
+        "for _found in glob.glob(tempfile.gettempdir() + \"/orch-stage2-starts-*/starts\"):\n"
+        "    os.remove(_found)\nimport json\n", 1)
+
+    # The words of the refusal of a declared enumerator that the hook would start and whose argv is not
+    # exactly this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS, each a separate element,
+    # followed by any operands (declared_enumerator_defect).
+    REFUSED = "is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS"
+
+    def test_write_registry_refuses_an_enumerator_that_would_not_be_held(self):
+        # 2 programs that hold ENUM_RUN_MARK as text but do not run it first: as a string constant, and
+        # after an exit.
+        as_text = "_text = '''" + ENUM_RUN_MARK + "'''\n"
+        after_exit = "import sys\nsys.exit(0)\n" + ENUM_RUN_MARK
+        for program in (as_text, after_exit):
+            self.assertIn(ENUM_RUN_MARK, program, "precondition: the record is in the program text")
+        # 3 programs whose syntax tree begins with the statements of ENUM_RUN_MARK but that do not
+        # compile, so the interpreter refuses each before the record runs.
+        uncompiled = {name: ENUM_RUN_MARK + tail for name, tail in (
+            ("a top-level return", "return\n"), ("a top-level break", "break\n"),
+            ("a misplaced future import", "from __future__ import annotations\n"))}
+        mark = [ast.dump(node) for node in ast.parse(ENUM_RUN_MARK).body]
+        for program in uncompiled.values():
+            self.assertEqual([ast.dump(node) for node in ast.parse(program).body][:len(mark)], mark,
+                             "precondition: the syntax tree begins with the record")
+        fixture = [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog)]
+
+        class EqualToAll(str):
+            """A str that equals every value but that json writes as its own text."""
+
+            def __eq__(self, other):
+                return True
+
+            __hash__ = str.__hash__
+
+        rows = (("a -c program without the record", [sys.executable, "-I", "-c", "pass"], ENUM_TIMEOUT,
+                 self.REFUSED),
+                ("a tuple argv, which json writes as a list that the hook runs",
+                 (sys.executable, "-I", "-c", "pass"), ENUM_TIMEOUT, self.REFUSED),
+                ("a str subclass that equals -c but is written as -cpass",
+                 [sys.executable, "-I", EqualToAll("-cpass")] + fixture[3:], ENUM_TIMEOUT, self.REFUSED),
+                ("a joined -c and command before the program", [sys.executable, "-I", "-cpass"] + fixture[3:],
+                 ENUM_TIMEOUT, self.REFUSED),
+                ("-I and -c joined", [sys.executable, "-Ic"] + fixture[3:], ENUM_TIMEOUT, self.REFUSED),
+                ("-c before -I", [sys.executable, "-c", "-I"] + fixture[3:], ENUM_TIMEOUT, self.REFUSED),
+                ("another option in place of -I", [sys.executable, "-u"] + fixture[2:], ENUM_TIMEOUT,
+                 self.REFUSED),
+                ("an option between -I and -c", fixture[:2] + ["-u"] + fixture[2:], ENUM_TIMEOUT,
+                 self.REFUSED),
+                ("the record followed by a removal of the record",
+                 [sys.executable, "-I", "-c", self.ERASES, str(self.backlog)], ENUM_TIMEOUT, self.REFUSED),
+                ("the record followed by a start that did not happen",
+                 [sys.executable, "-I", "-c", self.FORGES, str(self.backlog)], ENUM_TIMEOUT, self.REFUSED),
+                ("the record followed by an open of the file that the environment names",
+                 [sys.executable, "-I", "-c", self.READS_ENVIRONMENT, str(self.backlog)], ENUM_TIMEOUT,
+                 self.REFUSED),
+                ("the record followed by a removal of the record found by its folder name",
+                 [sys.executable, "-I", "-c", self.SEARCHES, str(self.backlog)], ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program that holds the record only as text", [sys.executable, "-I", "-c", as_text],
+                 ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program that holds the record after an exit",
+                 [sys.executable, "-I", "-c", after_exit], ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program run without -I", [sys.executable] + fixture[2:], ENUM_TIMEOUT, self.REFUSED),
+                ("a -c program run by another interpreter", ["python3"] + fixture[1:], ENUM_TIMEOUT,
+                 self.REFUSED),
+                ("a timeout over ENUM_TIMEOUT", fixture, ENUM_TIMEOUT + 1, "over ENUM_TIMEOUT"))
+        rows += tuple(("the record followed by " + name, [sys.executable, "-I", "-c", program], ENUM_TIMEOUT,
+                       self.REFUSED) for name, program in uncompiled.items())
+        # For each of the interpreter, -I, -c and the program, these rows hold a value that begins with,
+        # ends with or holds an accepted value, and a value that an accepted value begins or ends with,
+        # so a check that took an accepted value as a prefix, a suffix or a part of the value, or the
+        # value as a prefix, a suffix or a part of an accepted value, accepts at least 1 of these rows.
+        # They catch those loosenings only; test_the_checks_on_the_path_to_acceptance_are_pinned pins the
+        # exact comparison itself, and test_write_registry_refuses_every_generated_near_miss drives near
+        # misses of other kinds.
+        first_line = ENUM_FIXTURE.split("\n", 1)[0] + "\n"
+        unmarked = ENUM_FIXTURE[len(ENUM_RUN_MARK):]
+        interpreter_name = os.path.basename(sys.executable)
+        self.assertTrue(os.path.isabs(sys.executable) and interpreter_name != sys.executable,
+                        "precondition: the interpreter path has a directory")
+        self.assertTrue(ENUM_FIXTURE.startswith(first_line) and first_line != ENUM_FIXTURE
+                        and not runs_enum_run_mark_first(first_line),
+                        "precondition: the first line is a part of the fixture without the record")
+        self.assertTrue(ENUM_FIXTURE.endswith(unmarked) and not runs_enum_run_mark_first(unmarked),
+                        "precondition: the rest is a part of the fixture without the record")
+        rest = fixture[2:]
+        loose = (
+            ("a path that begins with this interpreter's path", [sys.executable + "-other"] + fixture[1:]),
+            ("a relative path that ends with this interpreter's path", ["." + sys.executable] + fixture[1:]),
+            ("a path with which this interpreter's path begins", [sys.executable[:-1]] + fixture[1:]),
+            ("the name of this interpreter without its directory", [interpreter_name] + fixture[1:]),
+            ("a command joined to -I before -c and an accepted program",
+             [sys.executable, "-Icpass"] + rest),
+            ("an -X option whose value is -I, which leaves isolation off", [sys.executable, "-X-I"] + rest),
+            ("- in place of -I", [sys.executable, "-"] + rest),
+            ("I in place of -I", [sys.executable, "I"] + rest),
+            ("an -X option whose value is -c, in place of -c", fixture[:2] + ["-X-c"] + fixture[3:]),
+            ("- in place of -c", fixture[:2] + ["-"] + fixture[3:]),
+            ("c in place of -c", fixture[:2] + ["c"] + fixture[3:]),
+            ("an accepted program followed by a removal of the record",
+             fixture[:3] + [ENUM_FIXTURE + "os.remove(_runs)\n"] + fixture[4:]),
+            ("an exit followed by an accepted program",
+             fixture[:3] + ["import sys\nsys.exit(0)\n" + ENUM_FIXTURE] + fixture[4:]),
+            ("the first line of an accepted program alone", fixture[:3] + [first_line] + fixture[4:]),
+            ("an accepted program without its record", fixture[:3] + [unmarked] + fixture[4:]))
+        rows += tuple((name, argv, ENUM_TIMEOUT, self.REFUSED) for name, argv in loose)
+        for name, argv, timeout, wanted in rows:
+            with self.subTest(enumerator=name):
+                with self.assertRaisesRegex(self.failureException, wanted):
+                    self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": timeout}))
+        # The hook reads an absent timeout, and one that is not an int or a float (a bool counts as an
+        # int), is not over 0 or is over 600, as 60 and still starts the enumerator
+        # (aiqt_hooks.py:22830-22831), so write_registry checks the argv whatever the timeout holds: it
+        # refuses a -c program without the record and accepts the fixture with each of those, an absent
+        # timeout included. It refuses each timeout that the hook reads as over ENUM_TIMEOUT, whole or
+        # not, up to 600, and accepts each that it reads as at most ENUM_TIMEOUT.
+        absent = object()
+        for timeout in (absent, None, "fast", "120", 0, -1, 601):
+            unmarked_enumerator = {"argv": [sys.executable, "-I", "-c", "pass"]}
+            if timeout is not absent:
+                unmarked_enumerator["timeout"] = timeout
+            with self.subTest(timeout="absent" if timeout is absent else timeout):
+                with self.assertRaisesRegex(self.failureException, self.REFUSED):
+                    self.write_registry(self.stage2(enumerator=unmarked_enumerator))
+                self.write_registry(self.stage2(enumerator=dict(unmarked_enumerator, argv=fixture)))
+        for timeout in (ENUM_TIMEOUT + 1, ENUM_TIMEOUT + 2, 600, ENUM_TIMEOUT + 0.5, ENUM_TIMEOUT + 1.5):
+            with self.subTest(timeout=timeout):
+                with self.assertRaisesRegex(self.failureException, "over ENUM_TIMEOUT"):
+                    self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": timeout}))
+        for timeout in (1, ENUM_TIMEOUT - 0.5, ENUM_TIMEOUT, float(ENUM_TIMEOUT)):
+            with self.subTest(timeout=timeout):
+                self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": timeout}))
+        # The fixture registry passes, so does the sleeping program of ENUM_PROGRAMS, and so does the
+        # fixture argv as a tuple, since the hook reads the list that json writes; an argv that the hook
+        # refuses starts nothing and is not held.
+        self.write_registry(self.stage2())
+        self.write_registry(self.stage2(enumerator={
+            "argv": [sys.executable, "-I", "-c", SLEEPING_ENUM_FIXTURE], "timeout": 1}))
+        self.write_registry(self.stage2(enumerator={"argv": tuple(fixture), "timeout": ENUM_TIMEOUT}))
+        self.write_registry(self.stage2(enumerator={"argv": "python3 -I enum.py", "timeout": 600}))
+
+    # Every function on the path from write_registry to its acceptance of a declared enumerator, and the
+    # 2 checks that EnumeratorBounds applies to each program of ENUM_PROGRAMS, each with its parameters
+    # and, as source text, the statements of its whole body after its docstring: write_registry (the
+    # read back, the branch that calls the check, the handling of its result and the write),
+    # declared_enumerator_defect (the argv as the hook reads it, the comparison of each of its first 4
+    # elements with == or, for the program, by membership in ENUM_PROGRAMS, and the timeout as the hook
+    # reads it, aiqt_hooks.py:22830-22831), runs_enum_run_mark_first and program_leaves_record.
+    # test_the_checks_on_the_path_to_acceptance_are_pinned requires each body exactly, compared as
+    # syntax trees, so any edit to 1 of its statements, and any statement added or removed anywhere in
+    # it, fails it, whatever values the edit would accept. It reads the function that each name holds
+    # when the case runs, and requires that every Stage2Harness class of this file resolves
+    # write_registry and fail, as class attributes, to the functions of Stage2Harness and
+    # unittest.TestCase. It also requires, as the test process holds them when the case runs, that each
+    # module that the bodies read is the module itself, that no global of this file shadows a builtin,
+    # that ENUM_TIMEOUT and ENUM_RUNS_VAR have the values below, and that ENUM_RUN_MARK and each of the
+    # 3 programs of ENUM_PROGRAMS, in order, have the sha256 of their UTF-8 text below, so a program
+    # added, removed, reordered or changed in the text fails it. Code of this file can rebind those
+    # names at run time in ways that this case does not see; PIN_PROGRAM below checks the text in a new
+    # process, and states what neither case sees. Neither sees an edit made to the pin and to the code
+    # together, or a change outside this file to a name that the bodies read (the builtins module, an
+    # attribute of the ast or json module, or sys.executable rebound while the suite runs);
+    # test_write_registry_refuses_every_generated_near_miss and the named rows drive write_registry, so
+    # they see such a change only when it accepts a value that they hold.
+    PINNED_CHECKS = (
+        ("write_registry", "self, obj", '''
+text = json.dumps(obj)
+written = json.loads(text)
+enumerator = written.get("enumerator") if isinstance(written, dict) else None
+if isinstance(enumerator, dict):
+    defect = declared_enumerator_defect(enumerator)
+    if defect is not None:
+        self.fail(defect)
+aiqt = self.repo / ".aiqt"
+aiqt.mkdir(exist_ok=True)
+(aiqt / "orchestration.json").write_text(text, encoding="utf-8")
+'''),
+        ("declared_enumerator_defect", "enumerator", '''
+argv = enumerator.get("argv")
+if not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv):
+    return None
+if not (len(argv) > 3 and argv[0] == sys.executable and argv[1] == "-I" and argv[2] == "-c"
+        and argv[3] in ENUM_PROGRAMS):
+    return "the enumerator {!r} is not this interpreter, -I, -c and 1 of ENUM_PROGRAMS".format(argv)
+timeout = enumerator.get("timeout")
+timeout = timeout if isinstance(timeout, (int, float)) and 0 < timeout <= 600 else 60
+if timeout > ENUM_TIMEOUT:
+    return "the enumerator timeout {!r} is over ENUM_TIMEOUT".format(timeout)
+return None
+'''),
+        ("runs_enum_run_mark_first", "program", '''
+try:
+    body = ast.parse(program).body
+    compile(program, "<enumerator>", "exec", dont_inherit=True)
+except (SyntaxError, ValueError):
+    return False
+mark = ast.parse(ENUM_RUN_MARK).body
+return [ast.dump(node) for node in body[:len(mark)]] == [ast.dump(node) for node in mark]
+'''),
+        ("program_leaves_record", "program", '''
+body = ast.parse(program).body[len(ast.parse(ENUM_RUN_MARK).body):]
+for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+    if isinstance(node, ast.Name) and node.id in ("_runs", "_record", "environ", "getenv", "putenv"):
+        return False
+    if isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv", "putenv"):
+        return False
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and ENUM_RUNS_VAR in node.value:
+        return False
+return True
+'''))
+    PINNED_MODULES = ("ast", "json", "sys")
+    PINNED_BUILTINS = ("SyntaxError", "ValueError", "all", "compile", "dict", "float", "int", "isinstance",
+                       "len", "list", "str")
+    PINNED_VALUES = (("ENUM_TIMEOUT", 60), ("ENUM_RUNS_VAR", "ORCH_STAGE2_ENUMERATOR_RUNS"))
+    ENUM_RUN_MARK_SHA256 = "10c11bf2a18766e23aa9fafa66cd3cccbdce9e1c52a361da13031a49d24e981a"
+    ENUM_PROGRAMS_SHA256 = ("9c88bd9211b6e35dd6b52e512ab8690f215060899bf0141ff4a1abe0a7d17a21",
+                            "315b094aebc85e63844978cf269182615c347eadb7375fbc9fa537426eb57773",
+                            "a273ed8a976cc9643664fe1970d32ef904f6f210b9eaf87613e36b52cba43aad")
+
+    def test_the_checks_on_the_path_to_acceptance_are_pinned(self):
+        names = globals()
+        functions = {name: Stage2Harness.write_registry if name == "write_registry" else names[name]
+                     for name, _parameters, _body in self.PINNED_CHECKS}
+        read = set()
+        for name, parameters, body in self.PINNED_CHECKS:
+            function = functions[name]
+            self.assertIsInstance(function, types.FunctionType, name)
+            self.assertIs(function.__globals__, names, name)
+            self.assertFalse(hasattr(function, "__wrapped__"), "the check {} is wrapped".format(name))
+            tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+            self.assertEqual(len(tree.body), 1, name)
+            node = tree.body[0]
+            self.assertIsInstance(node, ast.FunctionDef, name)
+            self.assertEqual(node.name, function.__code__.co_name)
+            self.assertEqual(node.decorator_list, [], "the check {} is decorated".format(name))
+            self.assertEqual(ast.dump(node.args),
+                             ast.dump(ast.parse("def f({}):\n    pass\n".format(parameters)).body[0].args), name)
+            docstring = node.body[0]
+            self.assertTrue(isinstance(docstring, ast.Expr) and isinstance(docstring.value, ast.Constant)
+                            and isinstance(docstring.value.value, str),
+                            "precondition: the check {} has a docstring".format(name))
+            self.assertEqual([ast.dump(statement) for statement in node.body[1:]],
+                             [ast.dump(statement) for statement in ast.parse(body).body],
+                             "{} is not as PINNED_CHECKS holds it".format(name))
+            bound = {argument.arg for argument in node.args.args}
+            bound |= {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)
+                      and not isinstance(sub.ctx, ast.Load)}
+            read |= {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)
+                     and isinstance(sub.ctx, ast.Load)} - bound
+        for case in [value for value in names.values()
+                     if isinstance(value, type) and issubclass(value, Stage2Harness)]:
+            self.assertIs(case.write_registry, Stage2Harness.write_registry, case.__name__)
+            self.assertIs(case.fail, unittest.TestCase.fail, case.__name__)
+        pinned = (set(self.PINNED_MODULES) | set(self.PINNED_BUILTINS) | dict(self.PINNED_VALUES).keys()
+                  | {"ENUM_RUN_MARK", "ENUM_PROGRAMS"} | functions.keys())
+        self.assertEqual(read - pinned, set(), "a pinned check reads a name that is not pinned")
+        for module in self.PINNED_MODULES:
+            self.assertIs(names[module], __import__(module))
+        for builtin in self.PINNED_BUILTINS:
+            self.assertNotIn(builtin, names, "a global shadows the builtin " + builtin)
+        for name, value in self.PINNED_VALUES:
+            self.assertIs(type(names[name]), type(value), name)
+            self.assertEqual(names[name], value, name)
+        self.assertIs(type(names["ENUM_RUN_MARK"]), str)
+        self.assertEqual(hashlib.sha256(names["ENUM_RUN_MARK"].encode("utf-8")).hexdigest(),
+                         self.ENUM_RUN_MARK_SHA256, "ENUM_RUN_MARK is not as pinned")
+        programs = names["ENUM_PROGRAMS"]
+        self.assertIs(type(programs), tuple)
+        self.assertTrue(all(type(program) is str for program in programs),
+                        "ENUM_PROGRAMS is not a tuple of str")
+        self.assertEqual(tuple(hashlib.sha256(program.encode("utf-8")).hexdigest() for program in programs),
+                         self.ENUM_PROGRAMS_SHA256, "ENUM_PROGRAMS is not its 3 reviewed programs")
+
+    # The pin above runs in the test process, where code of this file can rebind at run time any name
+    # that the pin or the checks read, so no check in this process can hold them: a check replaced by a
+    # function of the same source that closes over another ENUM_PROGRAMS, a code object given other
+    # names, a global rebound for the cases of 1 class, write_registry bound on an instance, or
+    # unittest.TestCase.fail rebound each passes it. PIN_PROGRAM checks the pin again in a new python3 -I
+    # process that parses the text of this file, which it reads from the path that it is given, and
+    # does not import it, so the names of the test process reach what it computes only through what
+    # the test process gives it, which includes its program, that path, the interpreter and the
+    # environment; the test process also reads its result. It requires the bodies of PINNED_CHECKS as
+    # written; it runs the module-level assignments of ENUM_RUNS_VAR, ENUM_RUN_MARK, the 3 programs,
+    # ENUM_PROGRAMS and ENUM_TIMEOUT alone, with no builtins, and requires the values and sha256 of the
+    # pin; it compiles the 3 module-level checks with those values, the modules of PINNED_MODULES (ast,
+    # json and sys) as that process imports them and the builtins of that process, and requires that
+    # they accept each program and refuse a 4th program and a timeout over ENUM_TIMEOUT; and it scans
+    # the syntax tree of the file for the forms of binding listed here of a name that the path reads
+    # (the 4 checks, those values, the modules ast, json, sys and unittest, the builtins of
+    # PINNED_BUILTINS, Stage2Harness and fail) or of the attribute write_registry or fail, and requires
+    # that it finds none but the 1 definition of each check, of each of those values and of
+    # Stage2Harness, and the 1 plain module-level import of each module. These are the forms, and the
+    # only ones, that it finds: the name as a bare name that is stored or deleted, which covers the
+    # target of an assignment, an augmented or annotated assignment, del, for, with, := or a
+    # comprehension, and the name of a type statement; the name of a def, async def, class, type
+    # parameter or except clause, or a name that a match pattern binds (a capture, an as, a star or a
+    # mapping rest); a parameter, of a lambda as well; an import that binds the name by its own text
+    # (import of the name or of a submodule of it, or from ... import of the name, or any import as the
+    # name), but not a star import (from ... import *), which can bind it and which the scan does not
+    # see; a global or nonlocal statement that names it; a store or del of the attribute
+    # write_registry or fail of any object; a store or del of the code, globals, closure, defaults,
+    # keyword defaults, dictionary or __wrapped__ of a check written as its name or as an attribute
+    # write_registry or fail; a store or del of any attribute of a module written as the bare name ast,
+    # json, sys or unittest; a subscript store or del whose key is the name or attribute as a string
+    # constant; a call of setattr, delattr, __setattr__ or __delattr__ whose first or second argument is
+    # the name or attribute as a string constant, or the code, globals and so on as a string constant
+    # with a check as above; and a call of update, setdefault, pop, __setitem__ or __delitem__ that
+    # names it as a keyword, as a string constant first argument, or as a constant key of a dictionary
+    # display first argument. No check that runs from this file holds against all code of this file:
+    # that code runs in the test process, so it can edit this case, what it starts or how it reads the
+    # result, and it can defeat the scan by any route that the scan does not model, so of bindings the
+    # case shows only that the file holds none of the forms above. Routes that defeat it include a
+    # store through the module object of this file (sys.modules[__name__].ENUM_PROGRAMS = ...),
+    # setattr(json, "loads", ...) or setattr(sys, "executable", ...), whose attribute is not 1 that the
+    # scan names, a store through another name for a module (import json under another name, then a
+    # store of its loads), a store into the dictionary of a module (json.__dict__["loads"] = ...), and
+    # a __getattribute__ of a case class that gives write_registry another value on its instances:
+    # each, scoped to 1 case, passes both pins while write_registry, as that case reaches it, accepts a
+    # program outside ENUM_PROGRAMS or an argv[0] other than the interpreter's own path. So do a
+    # binding that names its target only at run time (a name built from parts, a variable passed to
+    # setattr, exec or eval of a built string, a mapping built elsewhere), a store through an alias of
+    # a check (another name bound to the function) and native code. Neither pin sees an edit made to
+    # PIN_PROGRAM or to the pin together with the code.
+    PIN_PROGRAM = r'''
+import ast, hashlib, sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    tree = ast.parse(fh.read(), path)
+found = []
+
+
+def finish():
+    for text in found:
+        print("pin: " + text)
+    print("pin: {} defect(s)".format(len(found)))
+    sys.exit(1 if found else 0)
+
+
+def single(body, kind, name):
+    hits = [node for node in body if isinstance(node, kind) and (
+        node.name == name if kind is not ast.Assign else len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name)]
+    if len(hits) != 1:
+        found.append("{} has {} definition(s) at its level".format(name, len(hits)))
+        return None
+    return hits[0]
+
+
+harness = single(tree.body, ast.ClassDef, "Stage2Harness")
+bounds = single(tree.body, ast.ClassDef, "EnumeratorBounds")
+if harness is None or bounds is None:
+    finish()
+pin = {}
+for name in ("PINNED_CHECKS", "PINNED_MODULES", "PINNED_BUILTINS", "PINNED_VALUES", "ENUM_RUN_MARK_SHA256",
+             "ENUM_PROGRAMS_SHA256"):
+    node = single(bounds.body, ast.Assign, name)
+    pin[name] = None if node is None else ast.literal_eval(node.value)
+if found:
+    finish()
+CHECKS = [name for name, _parameters, _body in pin["PINNED_CHECKS"]]
+VALUES = ["ENUM_RUNS_VAR", "ENUM_RUN_MARK", "ENUM_FIXTURE", "WRITING_ENUM_FIXTURE", "SLEEPING_ENUM_FIXTURE",
+          "ENUM_PROGRAMS", "ENUM_TIMEOUT"]
+MODULES = list(pin["PINNED_MODULES"]) + ["unittest"]
+NAMES = set(CHECKS) | set(VALUES) | set(MODULES) | set(pin["PINNED_BUILTINS"]) | {"Stage2Harness", "fail"}
+ATTRIBUTES = {"write_registry", "fail"}
+FUNCTION_ATTRIBUTES = {"__code__", "__globals__", "__closure__", "__defaults__", "__kwdefaults__",
+                       "__dict__", "__wrapped__"}
+definitions = {name: single(harness.body if name == "write_registry" else tree.body, ast.FunctionDef, name)
+               for name in CHECKS}
+values = {name: single(tree.body, ast.Assign, name) for name in VALUES}
+imports = {}
+for node in tree.body:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.asname is None and alias.name in MODULES:
+                imports.setdefault(alias.name, []).append(alias)
+for module in MODULES:
+    if len(imports.get(module, [])) != 1:
+        found.append("{} has {} import(s) at module level".format(module, len(imports.get(module, []))))
+allowed = {id(node) for node in definitions.values() if node is not None}
+allowed |= {id(node.targets[0]) for node in values.values() if node is not None}
+allowed |= {id(alias) for aliases in imports.values() for alias in aliases} | {id(harness)}
+
+# The bodies of PINNED_CHECKS, as the in-process pin compares them.
+for name, parameters, body in pin["PINNED_CHECKS"]:
+    node = definitions[name]
+    if node is None:
+        continue
+    if node.decorator_list:
+        found.append("{} is decorated".format(name))
+    if ast.dump(node.args) != ast.dump(ast.parse("def f({}):\n    pass\n".format(parameters)).body[0].args):
+        found.append("{} has other parameters".format(name))
+    if [ast.dump(statement) for statement in node.body[1:]] != [ast.dump(statement)
+                                                                 for statement in ast.parse(body).body]:
+        found.append("{} is not as PINNED_CHECKS holds it".format(name))
+
+# Each binding of a name or attribute that the path reads, other than its 1 definition.
+def where(node, text):
+    found.append("line {}: {}".format(getattr(node, "lineno", "?"), text))
+
+
+def checked(node):
+    return (isinstance(node, ast.Name) and node.id in CHECKS) or (
+        isinstance(node, ast.Attribute) and node.attr in ATTRIBUTES)
+
+
+def constant(node):
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+binders = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar)
+type_parameters = tuple(getattr(ast, kind) for kind in ("TypeVar", "ParamSpec", "TypeVarTuple")
+                        if hasattr(ast, kind))
+for node in ast.walk(tree):
+    if id(node) in allowed:
+        continue
+    if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) and node.id in NAMES:
+        where(node, "binds " + node.id)
+    elif isinstance(node, binders + type_parameters) and getattr(node, "name", None) in NAMES:
+        where(node, "binds " + node.name)
+    elif isinstance(node, ast.MatchMapping) and node.rest in NAMES:
+        where(node, "binds " + node.rest)
+    elif isinstance(node, ast.arg) and node.arg in NAMES:
+        where(node, "binds the parameter " + node.arg)
+    elif isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) in NAMES:
+        where(node, "imports " + (node.asname or node.name))
+    elif isinstance(node, (ast.Global, ast.Nonlocal)) and set(node.names) & NAMES:
+        where(node, "declares " + ", ".join(sorted(set(node.names) & NAMES)))
+    elif isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load) and (
+            node.attr in ATTRIBUTES or (node.attr in FUNCTION_ATTRIBUTES and checked(node.value))
+            or (isinstance(node.value, ast.Name) and node.value.id in MODULES)):
+        where(node, "stores the attribute " + node.attr)
+    elif isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load) and (
+            constant(node.slice) in NAMES | ATTRIBUTES):
+        where(node, "stores the key " + constant(node.slice))
+    elif isinstance(node, ast.Call):
+        callee = node.func.id if isinstance(node.func, ast.Name) else (
+            node.func.attr if isinstance(node.func, ast.Attribute) else None)
+        texts = [constant(argument) for argument in node.args[:2]]
+        if callee in ("setattr", "delattr", "__setattr__", "__delattr__") and (
+                set(texts) & (NAMES | ATTRIBUTES) or (set(texts) & FUNCTION_ATTRIBUTES
+                                                      and any(checked(a) for a in node.args[:2]))):
+            where(node, "calls {} naming {}".format(callee, ", ".join(sorted(
+                set(texts) & (NAMES | ATTRIBUTES | FUNCTION_ATTRIBUTES)))))
+        elif callee in ("update", "setdefault", "pop", "__setitem__", "__delitem__"):
+            keys = {keyword.arg for keyword in node.keywords} | set(texts[:1])
+            for argument in node.args[:1]:
+                if isinstance(argument, ast.Dict):
+                    keys |= {constant(key) for key in argument.keys if key is not None}
+            if keys & (NAMES | ATTRIBUTES):
+                where(node, "calls {} naming {}".format(
+                    callee, ", ".join(sorted(keys & (NAMES | ATTRIBUTES)))))
+
+# The values, run alone with no builtins, and the pinned checks, compiled with those values, the
+# modules of PINNED_MODULES and the builtins of this process.
+namespace = {"__builtins__": {}}
+try:
+    for name in VALUES:
+        if values[name] is not None:
+            exec(compile(ast.Module(body=[values[name]], type_ignores=[]), path, "exec", dont_inherit=True),
+                 namespace)
+except Exception as exc:
+    found.append("the values do not run alone: {!r}".format(exc))
+    finish()
+for name, value in pin["PINNED_VALUES"]:
+    if type(namespace.get(name)) is not type(value) or namespace.get(name) != value:
+        found.append("{} is not as pinned".format(name))
+mark, programs = namespace.get("ENUM_RUN_MARK"), namespace.get("ENUM_PROGRAMS")
+if type(mark) is not str or hashlib.sha256(mark.encode("utf-8")).hexdigest() != pin["ENUM_RUN_MARK_SHA256"]:
+    found.append("ENUM_RUN_MARK is not as pinned")
+if type(programs) is not tuple or not all(type(program) is str for program in programs) or tuple(
+        hashlib.sha256(program.encode("utf-8")).hexdigest()
+        for program in programs) != pin["ENUM_PROGRAMS_SHA256"]:
+    found.append("ENUM_PROGRAMS is not its 3 reviewed programs")
+if found:
+    finish()
+run = {name: namespace[name] for name in VALUES}
+run.update({module: __import__(module) for module in pin["PINNED_MODULES"]})
+module = ast.Module(body=[definitions[name] for name in CHECKS if name != "write_registry"], type_ignores=[])
+exec(compile(module, path, "exec", dont_inherit=True), run)
+for program in programs:
+    argv = [sys.executable, "-I", "-c", program]
+    if not (run["runs_enum_run_mark_first"](program) and run["program_leaves_record"](program)
+            and run["declared_enumerator_defect"]({"argv": argv, "timeout": run["ENUM_TIMEOUT"]}) is None):
+        found.append("a program of ENUM_PROGRAMS is refused")
+    if run["declared_enumerator_defect"]({"argv": argv, "timeout": run["ENUM_TIMEOUT"] + 1}) is None:
+        found.append("a timeout over ENUM_TIMEOUT is accepted")
+if run["declared_enumerator_defect"]({"argv": [sys.executable, "-I", "-c", programs[0] + "pass\n"]}) is None:
+    found.append("a 4th program is accepted")
+finish()
+'''
+
+    def test_the_pin_holds_in_a_fresh_interpreter(self):
+        result = run_doctor_recorded(self, [sys.executable, "-I", "-c", self.PIN_PROGRAM,
+                                            str(Path(__file__).resolve())],
+                                     capture_output=True, text=True, timeout=RUN_TIMEOUT)
+        self.assertEqual((result.returncode, result.stdout), (0, "pin: 0 defect(s)\n"), result.stderr)
+
+    @staticmethod
+    def near_misses(value):
+        """Values that differ from value, generated from it: for each position, value without that
+        character, with that character's code point with its lowest bit flipped, with that character's
+        case swapped, with a space before that character, and, when that character is 1 of "!" to "~"
+        (the printable ASCII characters other than the space), with that character in its full-width
+        form, its code point plus 0xFEE0; value with a space after it; value upper-cased, lower-cased
+        and case-swapped; and value with a space, a tab, a line feed, a carriage return and a line
+        feed, a vertical tab, a form feed or a no-break space before it, after it, and both. Each is
+        non-empty and differs from value. So a check that compares a part of the value, strips or folds
+        it, or normalizes its characters accepts at least 1 of them."""
+        found = []
+        for i, char in enumerate(value):
+            head, tail = value[:i], value[i + 1:]
+            found += [head + tail, head + chr(ord(char) ^ 1) + tail, head + char.swapcase() + tail,
+                      head + " " + char + tail]
+            if "!" <= char <= "~":
+                found.append(head + chr(ord(char) + 0xFEE0) + tail)
+        found += [value + " ", value.upper(), value.lower(), value.swapcase()]
+        for space in (" ", "\t", "\n", "\r\n", "\v", "\f", "\xa0"):
+            found += [space + value, value + space, space + value + space]
+        return [near for near in dict.fromkeys(found) if near and near != value]
+
+    def test_write_registry_refuses_every_generated_near_miss(self):
+        # For each of the interpreter, -I, -c and each program of ENUM_PROGRAMS, write_registry refuses
+        # every value that near_misses generates from it, and for the interpreter each of the 5 paths
+        # below that differs from sys.executable and names the same file. The values are generated, not
+        # chosen for 1 loosening, but they are finite: a check that accepted some other value would pass
+        # this case.
+        directory, name = os.path.split(sys.executable)
+        aliases = [os.path.join(directory, ".", name), directory + "//" + name,
+                   os.path.join(directory, "..", os.path.basename(directory), name),
+                   os.path.realpath(sys.executable), os.path.relpath(sys.executable)]
+        aliases = [alias for alias in aliases
+                   if alias != sys.executable and os.path.samefile(alias, sys.executable)]
+        self.assertGreaterEqual(len(aliases), 2, "precondition: at least 2 other paths name this interpreter")
+        accepted, tried = [], 0
+        for program in ENUM_PROGRAMS:
+            fixture = [sys.executable, "-I", "-c", program, str(self.backlog)]
+            self.write_registry(self.stage2(enumerator={"argv": fixture, "timeout": ENUM_TIMEOUT}))
+            elements = [(3, [near for near in self.near_misses(program) if near not in ENUM_PROGRAMS])]
+            if program is ENUM_FIXTURE:
+                elements += [(0, self.near_misses(sys.executable) + aliases), (1, self.near_misses("-I")),
+                             (2, self.near_misses("-c"))]
+            for position, values in elements:
+                for value in values:
+                    argv = list(fixture)
+                    argv[position] = value
+                    tried += 1
+                    try:
+                        self.write_registry(self.stage2(enumerator={"argv": argv, "timeout": ENUM_TIMEOUT}))
+                    except self.failureException as refusal:
+                        if self.REFUSED not in str(refusal):
+                            accepted.append((position, value, str(refusal)))
+                    else:
+                        accepted.append((position, value))
+        self.assertGreater(tried, 1000, "precondition: the near misses were generated")
+        self.assertEqual(accepted, [], "write_registry accepted a near miss")
+
+    def test_write_registry_refuses_every_program_file(self):
+        # What the interpreter runs for a file operand depends on the operand's name and content, on how
+        # the path resolves, and on the file at each run, so write_registry refuses every program file
+        # in an enumerator that the hook would start.
+        # Each row has a recording program file in place, so a check that read that file would accept
+        # it, and the refusal is of the form, not of the file. The rows are the forms found so far: a
+        # plain file, a relative file under the root, an option word (-u, -- or -) in the operand
+        # position, a directory, a .pyc name and a trailing slash.
+        recording = self.repo / "enum_recording.py"
+        pyc = self.repo / "enum_recording.pyc"
+        package = self.repo / "enum_package"
+        package.mkdir()
+        for path in (recording, pyc, package / "__main__.py"):
+            path.write_text(ENUM_FIXTURE, encoding="utf-8")
+            self.assertTrue(runs_enum_run_mark_first(path.read_text(encoding="utf-8")),
+                            "precondition: {} records its runs".format(path.name))
+        rest = [str(self.backlog)]
+        rows = (("a plain recording program file", [str(recording)] + rest),
+                ("a relative recording program file under the root", [recording.name] + rest),
+                ("-u before a recording program file", ["-u", str(recording)] + rest),
+                ("-- before a recording program file", ["--", str(recording)] + rest),
+                ("- before a recording program file", ["-", str(recording)] + rest),
+                ("a directory that holds a recording __main__.py", [str(package)] + rest),
+                ("a recording source file with a .pyc name", [str(pyc)] + rest),
+                ("a recording program file with a trailing slash", [str(recording) + "/"] + rest))
+        for name, operands in rows:
+            with self.subTest(enumerator=name):
+                with self.assertRaisesRegex(self.failureException, self.REFUSED):
+                    self.write_registry(self.stage2(enumerator={
+                        "argv": [sys.executable, "-I"] + operands, "timeout": ENUM_TIMEOUT}))
 
 
 # =====================================================================================================
@@ -1266,7 +3063,7 @@ class Doctor(Stage2Harness):
             with self.subTest(kind=kind):
                 r = run_doctor_recorded(self, [sys.executable, "-I", str(copy), "preflight", kind,
                                                "--root", str(self.repo)],
-                                        capture_output=True, text=True, env=self._env(), timeout=120)
+                                        capture_output=True, text=True, env=self._env(), timeout=RUN_TIMEOUT)
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
                 self.assertIn("judged verdict: DENY", r.stdout)
                 self.assertIn("verdict without the escape sentinel: DENY", r.stdout)
@@ -1275,7 +3072,8 @@ class Doctor(Stage2Harness):
         self.assertEqual(tree_state(self._tmp), before, "preflight changed a file or directory")
 
     # --- a declared read path that is not a regular file is cannot-evaluate, before any hook reader
-    SPECIAL_TIMEOUT = 30
+    # A preflight under this bound can run the stage-2 enumerator, so the bound is RUN_TIMEOUT.
+    SPECIAL_TIMEOUT = RUN_TIMEOUT
 
     def _doctor_bounded(self, *args):
         try:
@@ -1361,12 +3159,27 @@ class Doctor(Stage2Harness):
     def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
         # The hook runs the enumerator (`subprocess.run` at aiqt_hooks.py:22833), which takes the
         # backlog as an operand; the hook itself never opens it, so the refusal names no hook reader.
-        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[3]", str(self.backlog),
+        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[4]", str(self.backlog),
                                      "fifo", "preflight", "stop")
+
+    def test_preflight_special_file_at_the_c_option_is_cannot_evaluate(self):
+        # The doctor checks each element of the argv from argv[2] on as an operand path
+        # (_ctx_read_paths, orch_doctor.py:623-625), as for a committed registry, whose argv[2] the
+        # registry gate requires to be a script (check-orchestration-registry.py:589-591). So for the
+        # -c registries of this suite it also checks <root>/-c, and refuses a special file there,
+        # running no enumerator, where the hook runs the enumerator. This case pins that refusal.
+        self._assert_special_refused("ctx.enumerator_operand", "enumerator.argv[2]", str(self.repo / "-c"),
+                                     "directory", "preflight", "stop")
+        marker = self._tmp / "enumerator-ran.txt"
+        self.arm_lease()
+        r = self.stop()
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("42 (42: no blocker recorded)", r.stderr)
+        self.assertTrue(marker.exists(), "the hook did not run the enumerator")
 
     def test_resume_audit_special_handoff_is_cannot_evaluate(self):
         # The resume probes read the declared handoff
-        # (`_orch_record_surface_read` at aiqt_hooks.py:32758-32760), which opens it with
+        # (`_orch_record_surface_read` at aiqt_hooks.py:32760), which opens it with
         # O_NONBLOCK (32703); the doctor refuses a FIFO there as cannot-evaluate, and its report says
         # that the hook would not block on it, never that it would open it with a blocking open.
         r = self._assert_special_refused("audit.handoff", "record.handoff", self._p("session-handoff.md"),
@@ -1384,8 +3197,8 @@ class Doctor(Stage2Harness):
     # `_orch_append_jsonl` at 22162, escape-spoof.json at 33212, forced-exit.jsonl at 33160 and
     # `_orch_read_jsonl` at 22173, and forced-exit-surfaced.json at 33172). Its rewrites open no fixed
     # temporary path: _orch_write_json_atomic, via 33191 and, with attestations declared, via 33124,
-    # opens a new random <name>.<16 hex>.tmp at 22266-22267, so the doctor checks neither old fixed
-    # path (test_resume_audit_ignores_the_old_fixed_temporary_paths).
+    # names a new random <name>.<16 hex>.tmp at 22266 and opens it at 22267-22268, so the doctor
+    # checks neither old fixed path (test_resume_audit_ignores_the_old_fixed_temporary_paths).
     AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
                          "forced-exit-surfaced.json")
 
@@ -1467,7 +3280,7 @@ class Doctor(Stage2Harness):
 
     def test_resume_audit_ignores_the_old_fixed_temporary_paths(self):
         # Contrast: the hook's _orch_write_json_atomic opens a new random <name>.<16 hex>.tmp with
-        # O_EXCL (aiqt_hooks.py:22266-22267), via 33124 for the attestation snapshot and via 33191
+        # O_EXCL (aiqt_hooks.py:22267-22268), via 33124 for the attestation snapshot and via 33191
         # for the surfaced set, so a FIFO at the old fixed attestations-validated.json.tmp or
         # forced-exit-surfaced.json.tmp neither blocks the audit nor makes the doctor refuse it.
         for name in ("attestations-validated.json.tmp", "forced-exit-surfaced.json.tmp"):
@@ -1522,7 +3335,7 @@ class Doctor(Stage2Harness):
         self.assertFalse(marker.exists(), "the audit ran the enumerator")
         p = self._doctor_bounded("preflight", "stop")
         self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
-        assert_refusal(self, p.stdout, "ctx.enumerator_operand", "declared enumerator.argv[3]",
+        assert_refusal(self, p.stdout, "ctx.enumerator_operand", "declared enumerator.argv[4]",
                        self.backlog, "FIFO")
         self.assertFalse(marker.exists(), "the refused preview ran the enumerator")
 
@@ -1642,12 +3455,10 @@ class Doctor(Stage2Harness):
 
     # --- the doctor decides scope first and, out of scope, runs no enumerator ----------------
     def _arm_writing_enumerator(self, **overrides):
-        script = self._tmp / "enum_writing.py"
-        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         marker = self._tmp / "enumerator-ran.txt"
         reg = self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}, **overrides)
+            "argv": [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(marker)],
+            "timeout": ENUM_TIMEOUT}, **overrides)
         return reg, marker
 
     def test_preflight_out_of_scope_runs_no_enumerator(self):
@@ -1676,7 +3487,7 @@ class Doctor(Stage2Harness):
 
     def test_preflight_idle_out_of_the_roster_runs_no_enumerator(self):
         # The scheduling hook returns before it enumerates for a tool outside the roster
-        # (`reg.get("yield_tools")` at aiqt_hooks.py:23687-23690).
+        # (`reg.get("yield_tools")` at aiqt_hooks.py:23688-23690).
         reg, marker = self._arm_writing_enumerator(yield_tools=["CronCreate"])
         self.write_registry(reg)
         self.arm_lease()
@@ -1726,7 +3537,7 @@ class Doctor(Stage2Harness):
         self.set_items([item("1", state="closed")])
         r = run_doctor_recorded(self, [sys.executable, str(copy), "preflight", "stop", "--root",
                                        str(self.repo)],
-                                capture_output=True, text=True, env=env, timeout=120)
+                                capture_output=True, text=True, env=env, timeout=RUN_TIMEOUT)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("effective verdict: ALLOW", r.stdout)
 
@@ -1803,12 +3614,10 @@ class Doctor(Stage2Harness):
     # --- the doctor writes nothing itself; the declared enumerator runs as the hook runs it ---
     def test_preflight_discloses_that_the_declared_enumerator_runs(self):
         self.assertIn("mark.write", WRITING_ENUM_FIXTURE, "precondition: the fixture writes")
-        script = self._tmp / "enum_writing.py"
-        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
         marker = self._tmp / "enumerator-ran.txt"
         self.write_registry(self.stage2(enumerator={
-            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
-            "timeout": 5}))
+            "argv": [sys.executable, "-I", "-c", WRITING_ENUM_FIXTURE, str(self.backlog), str(marker)],
+            "timeout": ENUM_TIMEOUT}))
         self.arm_lease()
         self.set_items([item("1", state="closed")])
         r = self.run_doctor("preflight", "stop")
@@ -1902,7 +3711,7 @@ class Doctor(Stage2Harness):
         self.assertIn("effective verdict: ALLOW_WITH_FINDINGS (the fail-open allow", r.stdout)
         self.assertNotIn("effective verdict: DENY", r.stdout)
         # The real hook on the same state: exit 0 with the fail-open warning, not the exit 2 deny
-        # (`_orch_record_denial` at aiqt_hooks.py:23590-23597).
+        # (`_orch_record_denial` at aiqt_hooks.py:23591-23597).
         h = self.stop()
         self.assertEqual(h.returncode, 0, h.stderr)
         self.assertIn("the denial counter could not be persisted",
@@ -1920,7 +3729,7 @@ class Doctor(Stage2Harness):
     def test_preflight_stop_with_a_read_only_turn_state_reports_the_deny_as_the_hook_does(self):
         # The hook saves turn-state.json through its atomic writer, which replaces the file from a
         # temporary file in the state directory and never opens the target (aiqt_hooks.py:22362,
-        # `os.replace` at :22266-22287), so a mode-0444 turn-state.json in a writable state
+        # `os.replace` at :22287), so a mode-0444 turn-state.json in a writable state
         # directory does not stop the save: the hook denies, and the doctor must predict the saved
         # counter and the DENY on the same state. The fail-open leg of the same check, a state
         # directory the hook cannot write, is the case above; together they hold the doctor's
@@ -2107,18 +3916,19 @@ PRECHECK_SITES = {
         "raised FileNotFoundError (a present local file returns whatever its content, an lstat "
         "fault returns bad)",
         "_orch_registry 22084-22121: lstat 22087, next file 22088-22089, "
-        "fault `cannot stat registry path` 22090-22095, os.open 22098, return via json.loads 22099-22121; "
+        "fault `cannot stat registry path` 22090-22095, os.open 22098, "
+        "the read and returns after the open, through json.loads, 22099-22121; "
         "order _ORCH_REGISTRY_FILES 21652"),
     "scope.lease": (
         "preflight", True,
         "os.stat succeeds, the lease is non-empty and fresh, holder_is_session_id is set and a "
         "session id is given",
-        "_orch_scope_live 22611-22644: stat 22617, size and freshness 22618-22632, holder 22633, "
+        "_orch_scope_live 22611-22645: stat 22617, size and freshness 22618-22632, holder 22633, "
         "session_id 22637-22638, open 22640"),
     "scope.mode": (
         "preflight", True,
-        "no earlier return: not a live lease (st.st_size 22632-22644) and not an unstattable holder lease "
-        "(22649-22652)",
+        "no earlier return: not a live lease (st.st_size 22632-22649) and not an unstattable holder lease "
+        "(22650-22652)",
         "_orch_scope_live 22654, _orch_mode_read os.open 22445"),
     "ctx.turn_state": (
         "preflight", True,
@@ -2149,7 +3959,7 @@ PRECHECK_SITES = {
         "preflight", True,
         "as the register, and os.stat succeeds on the register (git tracking is not modelled)",
         "_orch_register_authority 32921-32924 hold on a failed register open, returned by "
-        "_orch_attestation_refs at 22948-22950; anchor os.open 32962-32968"),
+        "_orch_attestation_refs at 22948-22950; anchor os.open 32968-32969"),
     "ctx.guard_events": (
         "preflight", True,
         "as the anchor (the guard-events pointer in a register row is not modelled)",
@@ -2175,14 +3985,14 @@ PRECHECK_SITES = {
         "attestations is declared and os.stat succeeds on the register (git tracking is not "
         "modelled)",
         "_orch_register_authority 32921-32924 hold on a failed register open; "
-        "anchor os.open 32962-32968 via _orch_validate_attestations 33097"),
+        "anchor os.open 32968-32969 via _orch_validate_attestations 33097"),
     "audit.mistakes_register": (
         "--resume-audit", False, "mistakes_register is declared", "33132-33134, open 32876"),
     "audit.guard_events": (
         "--resume-audit", False,
         "always checked: both opens depend on file content (a guard-events pointer, findings to "
         "record)",
-        "_orch_pointer_resolves 33020 via 33111 and 33144; _orch_guard_event 22162 via 33333-33334"),
+        "_orch_pointer_resolves 33020 via 33111 and 33144; _orch_guard_event 22162 via 33334-33335"),
     "audit.escape_spoof": (
         "--resume-audit", False, "always (lexists, then open)",
         "_orch_pending_artefact_findings 33211-33212"),
@@ -2292,13 +4102,14 @@ PRECHECK_OPENS = {
 
 # The words with which the doctor names the path of each pre-check site in its refusal ("cannot
 # evaluate: the <label> <path> ..."), which the reach case of each site checks. An enumerator operand is
-# named by its index in the declared argv, and the fixture enumerator takes the backlog as argv[3].
+# named by its index in the declared argv, and the fixture enumerator, a -c program in argv[3], takes
+# the backlog as argv[4].
 PRECHECK_LABELS = {
     "registry.file": "registry file",
     "scope.lease": "declared lease.path",
     "scope.mode": "declared mode.path",
     "ctx.turn_state": "hook state file turn-state.json",
-    "ctx.enumerator_operand": "declared enumerator.argv[3]",
+    "ctx.enumerator_operand": "declared enumerator.argv[4]",
     "ctx.ledger": "hook state file dispatch-ledger.jsonl",
     "ctx.pending_decisions": "declared record.pending_decisions",
     "ctx.attestation_snapshot": "hook state file attestations-validated.json",
@@ -2519,16 +4330,141 @@ def run_doctor_recorded(case, argv, **kwargs):
     (TimeoutExpired) or fails check=True (CalledProcessError), before that exception goes on. The
     design names only the timeout; a doctor that refuses exits 2, so a run with check=True raises before
     it returns, and a case that caught that exception would otherwise hold an output that nothing
-    registered."""
+    registered. Before the run starts, it gives its timeout argument to _time_limit_applied, as the
+    comment on TEST_TIME_LIMITS states, so a refused limit starts no run and makes no file of starts.
+    The run's environment also names, in ENUM_RUNS_VAR, a new file of the run's own, in
+    which each enumerator that the run starts records its start (ENUM_RUN_MARK); however the run ends,
+    the recorder counts those starts and holds the timeout that the run was given to them
+    (_hold_enumerator_bound). With no running case, a run with a defect raises AssertionError at once,
+    and when subprocess.run raised an exception, that exception is its cause (__cause__), so it stays
+    visible; when the registration of that exception's output failed as well, the cause is still the
+    exception of subprocess.run, and the AssertionError of the registration is the context
+    (__context__) of the bound failure."""
     if not kwargs.get("capture_output") and kwargs.get("stdout") is not subprocess.PIPE:
         raise ValueError("run_doctor_recorded needs the stdout of {!r} captured".format(argv))
+    _time_limit_applied("launch", kwargs.get("timeout"))
+    # A call such as tempfile.mkdtemp(...) compiles otherwise in this module than in the source of this
+    # function alone, which the namesake check of DoctorRefusalCoverage compiles, so the calls of module
+    # functions are in the helpers.
+    folder = _new_starts_folder()
+    kwargs["env"] = _env_naming_starts(kwargs.get("env"), folder)
+    launched = None
     try:
-        r = subprocess.run(argv, **kwargs)
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
-        _register_refusal(case, exc.stdout)
+        try:
+            r = subprocess.run(argv, **kwargs)
+        except BaseException as exc:
+            launched = exc
+            if isinstance(exc, (subprocess.TimeoutExpired, subprocess.CalledProcessError)):
+                _register_refusal(case, exc.stdout)
+            raise
+    except BaseException:
+        _hold_enumerator_bound(case, argv, kwargs.get("timeout"), folder, launched)
         raise
+    _hold_enumerator_bound(case, argv, kwargs.get("timeout"), folder, None)
     _register_refusal(case, r.stdout)
     return r
+
+
+def _new_starts_folder():
+    """A new folder outside every case tree, for the file of the starts of 1 launch."""
+    return tempfile.mkdtemp(prefix="orch-stage2-starts-")
+
+
+def _env_naming_starts(env, folder):
+    """A copy of env (of os.environ for None) that names the file of starts in folder in ENUM_RUNS_VAR."""
+    named = dict(os.environ if env is None else env)
+    named[ENUM_RUNS_VAR] = os.path.join(folder, "starts")
+    return named
+
+
+# The residuals of the bound check that run_doctor_recorded makes. It counts only the starts that an
+# enumerator records: of the declared enumerators that the hook would start, Stage2Harness.write_registry
+# accepts only one whose argv is exactly this interpreter (sys.executable), -I, -c and 1 of ENUM_PROGRAMS,
+# each a separate element, followed by any operands, and whose timeout, as the hook reads it, is at most
+# ENUM_TIMEOUT (declared_enumerator_defect), and refuses every program file. The record is a file that
+# any process of this user can write, so its count holds only because each accepted program leaves
+# the record alone after the mark (program_leaves_record), and a program that the 1 launcher starts
+# directly, not through a registry, is trusted as the code of this file is. Code that the interpreter
+# runs before any program under -I (site: .pth import lines and sitecustomize) is not seen, a registry
+# written another way is not seen, a child that starts the enumerator with an environment that drops
+# ENUM_RUNS_VAR is not counted (EnumeratorBounds shows that the hook and the doctor pass it on), and a
+# start that ends before its program runs is not counted.
+# The doctor checks each element of the argv from argv[2] on as an operand path, as for a committed
+# registry, whose argv[2] the registry gate requires to be a script, so for these registries it also
+# checks -c and the program; a special file at <root>/-c makes it refuse where the hook runs the
+# enumerator (Doctor.test_preflight_special_file_at_the_c_option_is_cannot_evaluate pins that; the
+# refusal runs no enumerator). It holds a launch
+# only for the starts that it made when a case ran it: a launch that could start the enumerator but did
+# not in that run, or that no case runs, is not held, and a start recorded after the recorder has read
+# the file, by an enumerator that outlives a launch whose timeout ended it, is not counted. A launch
+# with no timeout is not held, since no bound of the test can end it before the hook's own timeout
+# does. The bound is ENUM_TIMEOUT for each start, and write_registry refuses a declared enumerator
+# timeout over ENUM_TIMEOUT, as the hook reads it.
+def enumerator_bound_defect(argv, timeout, starts):
+    """The defect of a launch with argv that was given timeout (None for none) and in which an
+    enumerator recorded starts starts: a timeout under starts times ENUM_TIMEOUT, plus ENUM_MARGIN;
+    None when there is no such defect."""
+    need = starts * ENUM_TIMEOUT + ENUM_MARGIN
+    if starts and timeout is not None and timeout < need:
+        shown = [part if len(part) <= 80 else part[:77] + "..." for part in map(str, argv)]
+        return ("{!r}: timeout {} s, under {} enumerator start(s) of ENUM_TIMEOUT ({} s) plus "
+                "ENUM_MARGIN ({} s), {} s".format(shown, timeout, starts, ENUM_TIMEOUT, ENUM_MARGIN, need))
+    return None
+
+
+def _enumerator_starts(path):
+    """The number of starts recorded in path, 0 when nothing created it."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().count("run\n")
+    except FileNotFoundError:
+        return 0
+
+
+def _hold_enumerator_bound(case, argv, timeout, folder, cause):
+    """Count the starts recorded in folder, remove it, and keep the launch for the cleanup of case
+    (enumerator_launches); with case None, or a case that unittest is not running, whose cleanup would
+    never run, a launch with a defect (enumerator_bound_defect) fails at once (AssertionError), with
+    cause, the exception that the launch raised (None for none), as its cause."""
+    try:
+        starts = _enumerator_starts(os.path.join(folder, "starts"))
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    if getattr(case, "_outcome", None) is None:
+        defect = enumerator_bound_defect(argv, timeout, starts)
+        if defect is None:
+            return
+        message = "a run with no running case: {}".format(defect)
+        if cause is None:
+            raise AssertionError(message)
+        raise AssertionError(message) from cause
+    enumerator_launches(case).append((argv, timeout, starts))
+
+
+def enumerator_launches(case):
+    """The launches of case as (argv, timeout, starts); the first call for a case adds the cleanup that
+    fails it for each launch with a defect (enumerator_bound_defect)."""
+    found = case.__dict__.get("_enumerator_launches")
+    if found is None:
+        found = case._enumerator_launches = []
+        case.addCleanup(_fail_short_enumerator_bounds, case)
+    return found
+
+
+def take_enumerator_launches(case):
+    """The launches of case so far, which its cleanup then no longer holds."""
+    found = list(enumerator_launches(case))
+    del case._enumerator_launches[:]
+    return found
+
+
+def _fail_short_enumerator_bounds(case):
+    launches = case.__dict__.pop("_enumerator_launches", [])
+    defects = [defect for defect in (enumerator_bound_defect(*launch) for launch in launches)
+               if defect is not None]
+    if defects:
+        case.fail("{} run(s) with a timeout under the bound for their enumerator starts: {}"
+                  .format(len(defects), defects))
 
 
 def _register_refusal(case, stdout):
@@ -2779,7 +4715,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def _argv_cannot_run(self):
         # A non-string element: _orch_enumerate returns ENUMERATOR_ERROR unrun (aiqt_hooks.py:22827-22829).
-        return {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog), 5],
+        return {"argv": [sys.executable, "-I", "-c", ENUM_FIXTURE, str(self.backlog), 5],
                 "timeout": 5}
 
     def _rows_file(self, path, rows):
@@ -2848,7 +4784,7 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
 
     def case_mode_behind_live_lease(self):
-        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22632-22644),
+        # A present, non-empty, fresh lease makes scope live (`st.st_size` at 22632-22649),
         # before _orch_mode.
         self._reg()
         self.arm_lease()
@@ -3079,7 +5015,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
     def _arrange_audit_finding(self):
         # No handoff: a declared handoff that cannot be read is a finding (aiqt_hooks.py:32763-32765),
-        # so the audit records a guard event (33333-33334).
+        # so the audit records a guard event (33334-33335).
         Path(self._p("session-handoff.md")).unlink(missing_ok=True)
 
     def _assert_hook_reader(self, site, args, payload, path):
@@ -3489,7 +5425,7 @@ class DoctorEventFields(Stage2Harness):
     def test_a_stop_kind_scheduling_deny_stands_with_an_unsaved_counter(self):
         # `counter_warn` at aiqt_hooks.py:23724-23747: the scheduling path ignores a failed counter
         # save, so its DENY stands on the stop kind too, unlike the Stop event
-        # (`_orch_record_denial` at aiqt_hooks.py:23590-23597).
+        # (`_orch_record_denial` at aiqt_hooks.py:23591-23597).
         if os.geteuid() == 0:
             self.skipTest("root writes a mode-0444 file, so the save cannot fail here")
         self._arm()
@@ -3519,7 +5455,9 @@ class DoctorCheckpointWrites(Stage2Harness):
     writing, so its verdict equals that of the real hook on the same state. Each case arranges a
     fresh tree per kind, runs the doctor first (it writes nothing) and then the hook."""
 
-    TIMEOUT = 30
+    # Each preflight runs the stage-2 enumerator, so the bound is RUN_TIMEOUT. The fault-injection run,
+    # a preflight and then a hook call, runs it twice and has twice the bound.
+    TIMEOUT = RUN_TIMEOUT
     # A doctor that refuses a write that could block must do so well inside this bound.
     PROMPT = 15
 
@@ -3535,18 +5473,17 @@ class DoctorCheckpointWrites(Stage2Harness):
         self.set_items([])
         self.state_dir().mkdir(parents=True, exist_ok=True)
 
-    def _doctor(self, kind, timeout=None):
+    def _doctor(self, kind):
         args = ["preflight", kind]
         if kind == "idle":
             args += ["--wake-text", "recheck the work queue"]
-        timeout = self.TIMEOUT if timeout is None else timeout
         try:
             return run_doctor_recorded(self, [sys.executable, "-I", str(DOCTOR), *args, "--root",
                                               str(self.repo)],
                                        capture_output=True, text=True, env=self._env(),
-                                       timeout=timeout)
+                                       timeout=self.TIMEOUT)
         except subprocess.TimeoutExpired:
-            self.fail("the doctor did not exit within {} s".format(timeout))
+            self.fail("the doctor did not exit within {} s".format(self.TIMEOUT))
 
     def _hook(self, kind):
         r = self.stop() if kind == "stop" else self.schedule()
@@ -3603,7 +5540,7 @@ class DoctorCheckpointWrites(Stage2Harness):
 
     def test_a_failed_marker_write_denies_as_the_hook_does(self):
         # The hook rewrites the checkpoint, finds no marker, and its marker write fails, so it
-        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23387-23397). The pack writer
+        # injects a cannot-evaluate row and denies (aiqt_hooks.py:23387-23399). The pack writer
         # creates its temporary file under a random name and the two writes share one directory,
         # so no arrangement of files makes the checkpoint rewrite succeed and the marker write
         # fail; the failure is therefore injected, identically, into the doctor's prediction for
@@ -3688,7 +5625,7 @@ class DoctorCheckpointWrites(Stage2Harness):
         # Contrast: the state directory cannot be written, so the checkpoint rewrite fails first
         # and the hook never reaches the marker write (aiqt_hooks.py:23376-23387), though the
         # marker write would fail too; the hook allows and reports the failed rewrite with the
-        # allow (`_stop_warn` at :23621-23624, `_allow_note` at :23775-23779), and the doctor must
+        # allow (`_stop_warn` at :23622-23624, `_allow_note` at :23776-23779), and the doctor must
         # report the same.
         if os.geteuid() == 0:
             self.skipTest("root writes into a mode-0555 directory, so the rewrite cannot fail here")
@@ -3862,10 +5799,13 @@ class DoctorStandInRestore(Stage2Harness):
     hook._orch_guard_event for the context build only, and restores both however the build ends: a
     normal return, the not-previewed exception, or a KeyboardInterrupt raised inside the stand-in."""
 
+    # The context build runs the stage-2 enumerator, so the bound is RUN_TIMEOUT.
+    TIMEOUT = RUN_TIMEOUT
+
     def _run(self, case):
         r = run_doctor_recorded(self, [sys.executable, "-I", "-c", RESTORE_PROG, str(DOCTOR),
                                        str(self.repo), case],
-                                capture_output=True, text=True, env=self._env(), timeout=60)
+                                capture_output=True, text=True, env=self._env(), timeout=self.TIMEOUT)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         return json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -5032,6 +6972,646 @@ class DoctorSourceProbe(unittest.TestCase):
             self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
 
 
+def stage2_comment_mismatches(source, table):
+    """What differs between the comment directly above class Stage2Harness in source and table, in the
+    form of TEST_TIME_LIMITS, with the comment's lines joined by a space, V the least value of table as
+    "{:g}" gives it, and a phrase found in any case, with any white space between its words and no
+    letter, digit, underscore or dot before it: [] when the comment holds the phrase "least of them is"
+    exactly once, as "The least of them is V s, at L.", where L, up to the first full stop that a space
+    or the end of the comment follows, names the sites of exactly the entries that hold V, each once,
+    in any order, joined by ", and ", ", " or " and ", and when each phrase "least of them is" and
+    "least test limit is" in it is followed by " V s" and then by no letter, digit or underscore, alone
+    or after a dot."""
+    out = []
+    lines = source.splitlines()
+    end = next((n for n, line in enumerate(lines) if line.startswith("class Stage2Harness(")), 0)
+    start = end
+    while start > 0 and lines[start - 1].startswith("#"):
+        start -= 1
+    comment = " ".join(line[1:].strip() for line in lines[start:end])
+    least = min(table.values()) if table else None
+    value = "{:g}".format(least)
+    names = sorted("{}.{}".format(*key) if key[0] else key[1] for key, limit in table.items()
+                   if limit == least)
+    stated = list(re.finditer(r"(?i)(?<![\w.])least\s+(?:(of\s+them)|test\s+limit)\s+is", comment))
+    for found in stated:
+        if not re.match(r" " + re.escape(value) + r" s(?![\w]|\.\w)", comment[found.end():]):
+            out.append("the comment above Stage2Harness states another least value: {!r}".format(
+                comment[found.start():found.end() + 12]))
+    held = sum(1 for found in stated if found.group(1))
+    if held != 1:
+        out.append("the comment above Stage2Harness states 'least of them is' {} times, not once".format(held))
+    sites = re.search(r"The least of them is " + re.escape(value) + r" s, at (.*?)\.(?: |$)", comment)
+    if sites is None:
+        out.append("the comment above Stage2Harness does not state 'The least of them is {} s, at' and the "
+                   "sites that hold it".format(value))
+    elif sorted(re.split(r", and |, | and ", sites.group(1))) != names:
+        out.append("the comment above Stage2Harness names {!r} as the sites of the least value, not {!r}"
+                   .format(sites.group(1), names))
+    return out
+
+
+class Stage2TimeLimitProbe(unittest.TestCase):
+    """Class probe: each entry of TEST_TIME_LIMITS is a site of a Stage2Harness test, and the comment
+    above Stage2Harness states the least value of the table once, with the sites of exactly the entries
+    that hold it, and states no other least value, in the forms that stage2_comment_mismatches reads.
+    _time_limit_applied checks each limit against the table when it is applied, and tearDownModule
+    checks, once the whole file has run, that each entry is the least value admitted at its site."""
+
+    def test_each_entry_is_a_site_of_a_stage2harness_test(self):
+        sites = {key for _code, key in TIME_LIMIT_SITES.values()}
+        self.assertEqual([key for key in TEST_TIME_LIMITS if key not in sites or key[0] not in TIME_LIMIT_SCOPE],
+                         [], "an entry that names no function or method of this file, or no site of a "
+                         "Stage2Harness test")
+
+    def test_the_comment_states_the_least_limit(self):
+        source = Path(__file__).read_text(encoding="utf-8")
+        self.assertEqual(stage2_comment_mismatches(source, TEST_TIME_LIMITS), [])
+
+    def test_it_refuses_a_comment_or_a_table_that_disagrees(self):
+        # A comment that states another least value, or a second one, or states it again at another
+        # site or in a line that it comments out, that names, in place of the site that holds the least
+        # value, another site, such as one whose name holds the name of that site, or that names a
+        # second site or the same site twice as holding it, a table whose least value changes, a table
+        # whose least value moves to another site, and a table whose least value is held by a site that
+        # the comment does not name each disagree. Controls: a comment that also names the site in
+        # another sentence, 2 sites that hold the least value named in either order, and a least value
+        # that is an int.
+        source = Path(__file__).read_text(encoding="utf-8")
+        stated = "The least of them is 4.5 s"
+        named = "# DoctorScopeMargin._assert_refused_near. That"
+        bound = "the least test limit is\n# 4.5 s"
+        other = "# DoctorCheckpointWrites.PROMPT, 15, is read by no check."
+        near, doctor = ("DoctorScopeMargin", "_assert_refused_near"), ("Doctor", "_doctor_bounded")
+        end = source.index("\nclass Stage2Harness(")
+        begin = source.rindex("\n\n", 0, end)
+        for text in (stated, named, bound, other):
+            self.assertTrue(begin < source.find(text) < end,
+                            "precondition: {!r} first in the comment above Stage2Harness".format(text))
+        self.assertEqual(TEST_TIME_LIMITS.get(near), 4.5, "precondition: the entry that holds the least value")
+
+        def sited(text):
+            return source.replace(named, text, 1)
+
+        also = source.replace(other, other + " DoctorScopeMargin._assert_refused_near sets NEAR.", 1)
+        whole = source.replace(stated, "The least of them is 4 s", 1).replace(bound, "the least test limit is\n# 4 s", 1)
+        admitted = {
+            "the comment unchanged": (source, TEST_TIME_LIMITS),
+            "a comment that also names the site in another sentence": (also, TEST_TIME_LIMITS),
+            "2 sites named": (sited("# Doctor._doctor_bounded and DoctorScopeMargin._assert_refused_near. That"),
+                              {**TEST_TIME_LIMITS, doctor: 4.5}),
+            "2 sites named in the other order": (
+                sited("# DoctorScopeMargin._assert_refused_near and Doctor._doctor_bounded. That"),
+                {**TEST_TIME_LIMITS, doctor: 4.5}),
+            "a least value that is an int": (whole, {**TEST_TIME_LIMITS, near: 4}),
+        }
+        planted = {
+            "a comment that states another value": (source.replace(stated, "The least of them is 5 s", 1),
+                                                    TEST_TIME_LIMITS),
+            "a comment that states a second least value": (
+                source.replace(stated, "The least of them is 3 s. " + stated, 1), TEST_TIME_LIMITS),
+            "a comment whose bound states another least value": (
+                source.replace(bound, "the least test limit is\n# 3 s", 1), TEST_TIME_LIMITS),
+            "a comment that states the least value again, at another site": (
+                source.replace(other, other + " " + stated + ", at Doctor._doctor_bounded.", 1), TEST_TIME_LIMITS),
+            "a comment that states another value and the least value in a line that it comments out": (
+                source.replace(stated, "The least of them is 9 s", 1).replace(other, other + "\n# # " + stated, 1),
+                TEST_TIME_LIMITS),
+            "a comment that names a site whose name starts with that of the site": (
+                sited("# DoctorScopeMargin._assert_refused_nearby. That"), TEST_TIME_LIMITS),
+            "a comment that names a site whose name ends with that of the site": (
+                sited("# XDoctorScopeMargin._assert_refused_near. That"), TEST_TIME_LIMITS),
+            "a comment that names another site, and the site in another sentence": (
+                also.replace(named, "# Doctor._doctor_bounded. That", 1), TEST_TIME_LIMITS),
+            "a comment that names a second site": (
+                sited("# DoctorScopeMargin._assert_refused_near and Doctor._doctor_bounded. That"), TEST_TIME_LIMITS),
+            "a comment that names the site twice": (
+                sited("# DoctorScopeMargin._assert_refused_near and DoctorScopeMargin._assert_refused_near. That"),
+                TEST_TIME_LIMITS),
+            "a new least value": (source, {**TEST_TIME_LIMITS, near: 4.0}),
+            "the least value at another site": (source, {**TEST_TIME_LIMITS, near: 30, doctor: 4.5}),
+            "the least value also at another site": (source, {**TEST_TIME_LIMITS, doctor: 4.5}),
+        }
+        for kind, (text, table) in admitted.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(stage2_comment_mismatches(text, table), [])
+        for kind, (text, table) in planted.items():
+            with self.subTest(kind=kind):
+                self.assertNotEqual((text, table), (source, TEST_TIME_LIMITS), "precondition: the change")
+                self.assertNotEqual(stage2_comment_mismatches(text, table), [])
+
+    def test_a_full_run_holds_each_entry_to_its_site(self):
+        # time_limit_table_mismatches, which tearDownModule applies to TIME_LIMIT_CHECKS once every
+        # test of this module has run: an entry whose site admitted no limit, or whose value is not the
+        # least value admitted there, is reported; a refused limit counts for none.
+        table = {("A", "f"): 5, ("A", "g"): 5, ("A", "h"): 5}
+        checks = [("launch", ("A", "f"), 6, None), ("join", ("A", "f"), 5, None),
+                  ("launch", ("A", "g"), 1, "refused"), ("launch", ("A", "h"), 7, None)]
+        self.assertEqual(time_limit_table_mismatches(checks, table),
+                         ["('A', 'g'): its site admitted no limit in this run",
+                          "('A', 'h'): TEST_TIME_LIMITS gives 5, the least limit admitted at its site is 7"])
+
+    def test_only_a_full_run_holds_the_entries_to_their_sites(self):
+        # time_limit_full_run, which tells tearDownModule whether to apply time_limit_table_mismatches.
+        # A run that a -k option narrows gives unittest.defaultTestLoader its name patterns. With such
+        # a pattern on it, the 1 test that the pattern selects must not be a full run, and every test of
+        # the module must be one (control); with no pattern, the same 2 answers (controls).
+        module = sys.modules[__name__]
+
+        def found(loader):
+            pending, ids = [loader.loadTestsFromModule(module)], set()
+            while pending:
+                for test in pending.pop():
+                    if isinstance(test, unittest.TestSuite):
+                        pending.append(test)
+                    else:
+                        ids.add(test.id())
+            return ids
+
+        narrowed = unittest.TestLoader()
+        narrowed.testNamePatterns = ["*test_each_site_takes_its_floor*"]
+        selected, every = found(narrowed), found(unittest.TestLoader())
+        self.assertEqual(len(selected), 1, "precondition: the pattern selects 1 test")
+        self.assertTrue(selected < every, "precondition: the module holds other tests")
+        patterns = unittest.defaultTestLoader.testNamePatterns
+        for given in (narrowed.testNamePatterns, None):
+            with self.subTest(patterns=given):
+                unittest.defaultTestLoader.testNamePatterns = given
+                try:
+                    answers = time_limit_full_run(module, selected), time_limit_full_run(module, every)
+                finally:
+                    unittest.defaultTestLoader.testNamePatterns = patterns
+                self.assertEqual(answers, (False, True), "(the selected test, every test) as a full run")
+
+
+# The program that a planted case of TimeLimitSinkProbe runs through REAPER_PROG: it creates the file
+# that its operand names, so a launch that a check refuses leaves no such file.
+MARK_PROG = "import sys; open(sys.argv[1], 'w').close()"
+
+
+class TimeLimitSinkProbe(unittest.TestCase):
+    """Class probe: each sink gives _time_limit_applied the limit that it is about to apply, whatever way
+    a test binds it, and a refusal fails the test that ran it, also when it is raised in a thread or
+    caught, and a limit applied where no other frame runs the code of this file has no site and takes
+    TIME_LIMIT_FLOOR only. Each form is a planted case, a class defined in the test, run in this process
+    through unittest with its own setUp and tearDown."""
+
+    def test_each_form_is_checked_at_its_sink(self):
+        # Each form binds a limit of 1 s unless its name gives another value. A refused form must fail
+        # its case with the refusal that _time_limit_applied gives for that sink, value and site, and
+        # a launch through run_reaped must not start: REAPER_PROG would run MARK_PROG, which creates the
+        # form's marker file. A control must pass its case, its limit must be in TIME_LIMIT_CHECKS as
+        # admitted at its site, and a control through run_reaped must start, so a sink that is not
+        # checked fails a control too. Each of the first 17 forms binds the limit of a launch through
+        # run_reaped, DoctorCheckpointWrites._doctor or run_doctor_recorded other than by a call that
+        # names the method and the value plainly; the 18th is such a plain call, through the class. The
+        # forms after them apply 60 s and 30 s through run_reaped, NaN through run_reaped, 1 s to
+        # assertLess, assertLessEqual and Thread.join outside every Stage2Harness test, where only
+        # TIME_LIMIT_FLOOR applies, 4.5 s and 4.4 s there, and a refusal that the case catches or
+        # that is raised in a thread.
+        import functools
+        import gc
+        import operator
+        import string
+        folder = Path(tempfile.mkdtemp(prefix="orch-time-limits-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        here = ("TimeLimitSinkProbe", "test_each_form_is_checked_at_its_sink")
+        reaped = "launch limit 1 at T15EnumeratorTimeout.run_reaped: "
+        floor = "at TimeLimitSinkProbe.test_each_form_is_checked_at_its_sink: below TIME_LIMIT_FLOOR"
+        doctor = "launch limit 1 at DoctorCheckpointWrites._doctor: "
+        forms = []
+
+        def form(name, expected, launches=None):
+            # expected: a part of the refusal that the case must fail with, or the (sink, site, value)
+            # that a control must apply and have admitted; launches: whether REAPER_PROG must start.
+            def add(cls):
+                forms.append((name, cls, expected, launches))
+                return cls
+            return add
+
+        class Reaped(T15EnumeratorTimeout):
+            marker = None
+
+            def args(test):
+                return ([sys.executable, "-I", "-c", MARK_PROG, str(test.marker)],
+                        test._tmp / "planted-report.json")
+
+        @form("a dict display that a dict display of a ** argument unpacks", reaped, False)
+        class Unpacked(Reaped):
+            def planted(test):
+                test.run_reaped(*test.args(), **{**{"wall_clock_bound": 1}})
+
+        @form("a dict passed by position and forwarded with ** to run_doctor_recorded", "launch limit 1 " + floor,
+              False)
+        class Forwarded(Reaped):
+            def forward(test, argv, options):
+                return run_doctor_recorded(test, argv, capture_output=True, **options)
+
+            def planted(test):
+                test.forward(test.args()[0], {"timeout": 1})
+
+        # _doctor takes no timeout argument and launches with self.TIMEOUT, so the 2 forms of _doctor
+        # bind that attribute.
+        @form("a value that an except clause binds in a class body, as TIMEOUT, read by _doctor", doctor)
+        class Excepted(DoctorCheckpointWrites):
+            try:
+                raise LookupError(1)
+            except LookupError as caught:
+                TIMEOUT = caught.args[0]
+
+            def planted(test):
+                test._doctor("idle")
+
+        @form("super()", reaped, False)
+        class Super(Reaped):
+            def planted(test):
+                super().run_reaped(*test.args(), wall_clock_bound=1)
+
+        @form("an alias of the bound method", reaped, False)
+        class Alias(Reaped):
+            def planted(test):
+                run = test.run_reaped
+                run(*test.args(), wall_clock_bound=1)
+
+        @form("getattr with the name of the method", reaped, False)
+        class Named(Reaped):
+            def planted(test):
+                getattr(test, "run_reaped")(*test.args(), wall_clock_bound=1)
+
+        @form("functools.partial", reaped, False)
+        class Partial(Reaped):
+            def planted(test):
+                functools.partial(test.run_reaped, wall_clock_bound=1)(*test.args())
+
+        @form("another name for the instance", reaped, False)
+        class Other(Reaped):
+            def planted(test):
+                other = test
+                other.run_reaped(*test.args(), wall_clock_bound=1)
+
+        @form("type(self)", reaped, False)
+        class Typed(Reaped):
+            def planted(test):
+                type(test).run_reaped(test, *test.args(), wall_clock_bound=1)
+
+        @form("an override whose default is 1, passed on through super()", reaped, False)
+        class Override(Reaped):
+            def run_reaped(test, cmd, report, hook_bound=None, wall_clock_bound=1):
+                return super().run_reaped(cmd, report, hook_bound, wall_clock_bound)
+
+            def planted(test):
+                test.run_reaped(*test.args())
+
+        @form("a TIMEOUT of the instance, read by _doctor through super()", doctor)
+        class SuperDoctor(DoctorCheckpointWrites):
+            def planted(test):
+                test.TIMEOUT = 1
+                super()._doctor("idle")
+
+        @form("a class pattern of a match statement", reaped, False)
+        class Matched(Reaped):
+            def planted(test):
+                match test:
+                    case T15EnumeratorTimeout(run_reaped=run):
+                        run(*test.args(), wall_clock_bound=1)
+
+        @form("inspect.getmembers with a prefix of the name", reaped, False)
+        class Members(Reaped):
+            def planted(test):
+                for name, member in inspect.getmembers(test, inspect.ismethod):
+                    if name.startswith("run_re"):
+                        member(*test.args(), wall_clock_bound=1)
+
+        @form("string.Formatter.get_field with a built name", reaped, False)
+        class Field(Reaped):
+            def planted(test):
+                string.Formatter().get_field("0.run_" + "reaped", (test,), {})[0](*test.args(), wall_clock_bound=1)
+
+        @form("a method that returns the bound method", reaped, False)
+        class Returned(Reaped):
+            def runner(test):
+                return test.run_reaped
+
+            def planted(test):
+                test.runner()(*test.args(), wall_clock_bound=1)
+
+        @form("operator.methodcaller with a built name", reaped, False)
+        class Caller(Reaped):
+            def planted(test):
+                operator.methodcaller("run_" + "reaped", *test.args(), wall_clock_bound=1)(test)
+
+        @form("gc.get_objects matched by repr", reaped, False)
+        class Collected(Reaped):
+            def planted(test):
+                found = next(o for o in gc.get_objects() if isinstance(o, types.FunctionType)
+                             and repr(o).startswith("<function T15EnumeratorTimeout.run_reaped "))
+                found(test, *test.args(), wall_clock_bound=1)
+
+        @form("the method called through its class, by keyword", reaped, False)
+        class Plain(Reaped):
+            def planted(test):
+                T15EnumeratorTimeout.run_reaped(test, *test.args(), wall_clock_bound=1)
+
+        @form("60 s through run_reaped (control)",
+              ("launch", ("T15EnumeratorTimeout", "run_reaped"), 60), True)
+        class Admitted(Reaped):
+            def planted(test):
+                r, rep = test.run_reaped(*test.args(), wall_clock_bound=60)
+                test.assert_reaped(r, rep)
+
+        @form("30 s through run_reaped, above the floor and below the value of its site",
+              "launch limit 30 at T15EnumeratorTimeout.run_reaped: below 60 s", False)
+        class Short(Reaped):
+            def planted(test):
+                test.run_reaped(*test.args(), wall_clock_bound=30)
+
+        @form("NaN through run_reaped", "launch limit nan at T15EnumeratorTimeout.run_reaped: ", False)
+        class NotANumber(Reaped):
+            def planted(test):
+                test.run_reaped(*test.args(), wall_clock_bound=float("nan"))
+
+        @form("assertLess called through unittest.TestCase", "assertLess limit 1 " + floor)
+        class Bound(unittest.TestCase):
+            def planted(test):
+                unittest.TestCase.assertLess(test, 0, 1)
+
+        @form("an assertLessEqual bound passed by keyword", "assertLessEqual limit 1 " + floor)
+        class BoundByKeyword(unittest.TestCase):
+            def planted(test):
+                test.assertLessEqual(0, b=1)
+
+        @form("a positional timeout of Thread.join", "join limit 1 " + floor)
+        class Joined(unittest.TestCase):
+            def planted(test):
+                worker = threading.Thread(target=lambda: None)
+                worker.start()
+                worker.join(1)
+
+        @form("4.5 s, the floor, as an assertLess bound outside a Stage2Harness test (control)",
+              ("assertLess", here, 4.5))
+        class AtTheFloor(unittest.TestCase):
+            def planted(test):
+                test.assertLess(0, 4.5)
+
+        @form("4.4 s, below the floor, as an assertLess bound outside a Stage2Harness test",
+              "assertLess limit 4.4 " + floor)
+        class BelowTheFloor(unittest.TestCase):
+            def planted(test):
+                test.assertLess(0, 4.4)
+
+        @form("4.5 s, the floor, as the timeout of Thread.join outside a Stage2Harness test (control)",
+              ("join", here, 4.5))
+        class JoinedAtTheFloor(unittest.TestCase):
+            def planted(test):
+                worker = threading.Thread(target=lambda: None)
+                worker.start()
+                worker.join(4.5)
+
+        @form("a refusal that the test catches", reaped, False)
+        class Caught(Reaped):
+            def planted(test):
+                try:
+                    test.run_reaped(*test.args(), wall_clock_bound=1)
+                except AssertionError:
+                    pass
+
+        @form("a refusal in a thread whose target binds 1 s, which the test joins", reaped, False)
+        class Threaded(Reaped):
+            def planted(test):
+                hook, threading.excepthook = threading.excepthook, lambda args: None
+                try:
+                    worker = threading.Thread(target=test.run_reaped, args=test.args(),
+                                              kwargs={"wall_clock_bound": 1})
+                    worker.start()
+                    worker.join(60)
+                finally:
+                    threading.excepthook = hook
+
+        self.assertEqual(len(forms), 29, "precondition: every form above is listed")
+        for number, (name, cls, expected, launches) in enumerate(forms):
+            with self.subTest(form=name):
+                cls.marker = folder / "launched-{}".format(number)
+                start = len(TIME_LIMIT_CHECKS)
+                result = unittest.TestResult()
+                cls("planted").run(result)
+                checks = TIME_LIMIT_CHECKS[start:]
+                texts = "\n".join(text for _test, text in result.errors + result.failures)
+                if isinstance(expected, str):
+                    self.assertFalse(result.wasSuccessful(), "the form was not refused")
+                    self.assertIn(expected, texts)
+                else:
+                    self.assertTrue(result.wasSuccessful(), texts)
+                    self.assertIn(expected + (None,), checks, "the control was not checked and admitted")
+                if launches is not None:
+                    self.assertEqual(cls.marker.exists(), launches, "REAPER_PROG started" if not launches
+                                     else "REAPER_PROG did not start")
+
+    def test_each_site_takes_its_floor(self):
+        # time_limit_refusal for each kind of site: a listed site of a Stage2Harness test at and below
+        # its value, an unlisted one, a site outside every Stage2Harness test and no site at and below
+        # TIME_LIMIT_FLOOR, NaN, and a value that is not a number.
+        cases = [
+            (("T15EnumeratorTimeout", "run_reaped"), 60, None),
+            (("T15EnumeratorTimeout", "run_reaped"), 59.5, "below 60 s, the value that TEST_TIME_LIMITS gives"),
+            (("DoctorScopeMargin", "_assert_refused_near"), 4.5, None),
+            (("Stage2Harness", "planted"), 120, "a site of a Stage2Harness test that TEST_TIME_LIMITS does not"),
+            (("", "planted"), 120, "a site of a Stage2Harness test that TEST_TIME_LIMITS does not"),
+            (("DoctorRefusalCoverage", "planted"), 4.5, None),
+            (("DoctorRefusalCoverage", "planted"), 4.4, "below TIME_LIMIT_FLOOR, 4.5 s"),
+            (None, 4.5, None),
+            (None, 4.4, "below TIME_LIMIT_FLOOR, 4.5 s"),
+            (None, float("nan"), "below TIME_LIMIT_FLOOR, 4.5 s"),
+            (("T15EnumeratorTimeout", "run_reaped"), "60", "not an int or a float"),
+        ]
+        for site, value, wanted in cases:
+            with self.subTest(site=site, value=value):
+                refusal = time_limit_refusal(site, value)
+                if wanted is None:
+                    self.assertIsNone(refusal)
+                else:
+                    self.assertIn(wanted, refusal or "")
+
+    def test_a_limit_with_no_other_frame_of_the_file_takes_the_floor_only(self):
+        # A sink that a cleanup calls directly applies its limit with no frame of this file on the
+        # stack but the wrappers of the sink and of unittest.TestCase.run, as a test of another module
+        # does; the case runs in a thread of its own, so no frame of this test is on that stack either.
+        # Such a limit has no site and only TIME_LIMIT_FLOOR applies: 60 s at Thread.join and at
+        # assertLess must pass the case and be recorded as admitted at no site, and 4.4 s at
+        # Thread.join, a refusal, must fail it with the refusal at that floor.
+        class Cleanup(unittest.TestCase):
+            sink, value = None, None
+
+            def planted(test):
+                if test.sink == "join":
+                    worker = threading.Thread(target=lambda: None)
+                    worker.start()
+                    test.addCleanup(worker.join, test.value)
+                else:
+                    test.addCleanup(test.assertLess, 0, test.value)
+
+        floor = "below TIME_LIMIT_FLOOR, {:g} s".format(TIME_LIMIT_FLOOR)
+        for sink, value, refusal in (("join", 60, None), ("assertLess", 60, None), ("join", 4.4, floor)):
+            with self.subTest(sink=sink, value=value):
+                Cleanup.sink, Cleanup.value = sink, value
+                start, result = len(TIME_LIMIT_CHECKS), unittest.TestResult()
+                runner = threading.Thread(target=Cleanup("planted").run, args=(result,))
+                runner.start()
+                runner.join(60)
+                self.assertFalse(runner.is_alive(), "the case did not end within 60 s")
+                texts = "\n".join(text for _test, text in result.errors + result.failures)
+                if refusal is None:
+                    self.assertTrue(result.wasSuccessful(), texts)
+                    self.assertIn((sink, None, value, None), TIME_LIMIT_CHECKS[start:],
+                                  "the limit was not admitted at no site")
+                else:
+                    self.assertFalse(result.wasSuccessful(), "the limit was not refused")
+                    self.assertIn("{} limit {!r} at ".format(sink, value), texts)
+                    self.assertIn(refusal, texts)
+
+    def test_each_function_of_the_file_is_a_site(self):
+        # A method is the site of the class that defines it, also where another class takes it; code
+        # nested in a function has the site of that function; the sinks and the wrappers that the file
+        # installs in unittest and threading have no site; and the classes of the sites of
+        # Stage2Harness tests are "" and the classes related to Stage2Harness only.
+        def site(function):
+            found = TIME_LIMIT_SITES.get(id(function.__code__))
+            return found[1] if found is not None and found[0] is function.__code__ else None
+
+        self.assertEqual(site(DoctorScopeMargin._doctor_bounded), ("Doctor", "_doctor_bounded"))
+        self.assertEqual(site(T15EnumeratorTimeout.run_reaped), ("T15EnumeratorTimeout", "run_reaped"))
+        self.assertEqual(site(_git), ("", "_git"))
+        nested = [c for c in TimeLimitSinkProbe.test_each_form_is_checked_at_its_sink.__code__.co_consts
+                  if isinstance(c, types.CodeType)]
+        self.assertTrue(nested, "precondition: code nested in the method")
+        self.assertEqual({TIME_LIMIT_SITES[id(code)][1] for code in nested},
+                         {("TimeLimitSinkProbe", "test_each_form_is_checked_at_its_sink")})
+        for sink in (run_doctor_recorded, _time_limit_applied, unittest.TestCase.assertLess,
+                     unittest.TestCase.assertLessEqual, threading.Thread.join, unittest.TestCase.run):
+            with self.subTest(sink=sink.__qualname__):
+                self.assertIsNone(site(sink))
+        for name in ("", "Stage2Harness", "T15EnumeratorTimeout", "Doctor", "DoctorScopeMargin"):
+            self.assertIn(name, TIME_LIMIT_SCOPE)
+        for name in ("DoctorRefusalCoverage", "TimeLimitSinkProbe", "Stage2TimeLimitProbe"):
+            self.assertNotIn(name, TIME_LIMIT_SCOPE)
+
+
+class TimeLimitTeardownProbe(unittest.TestCase):
+    """Class probe: tearDownModule fails a full run for each entry of TEST_TIME_LIMITS that
+    time_limit_table_mismatches reports, and a run that is not full for none, and in a full run each
+    entry is the least limit admitted at its site. Its test is the last test of the file that a
+    unittest.TestLoader finds, so in a full run every other test of the file has run before it."""
+
+    def test_teardown_holds_the_entries_to_their_sites_only_in_a_full_run(self):
+        # tearDownModule, called with TESTS_RUN, TIME_LIMIT_CHECKS and TIME_LIMIT_REFUSALS replaced for
+        # the call and restored after it, with TIME_LIMIT_LOCK held from before the replacement until
+        # after the restore, so a limit that a thread applies meanwhile waits for the lock and is
+        # recorded in the lists that are restored, and TEST_TIME_LIMITS as it is: in a full run, with
+        # every test of the file in TESTS_RUN, it must fail with the mismatch of an entry whose site
+        # admitted a greater least limit and of an entry whose site admitted none; in a run that is
+        # not full, with 1 test of the file missing from TESTS_RUN or with this test only, it must
+        # fail for neither. Controls: limits that agree with the table must fail neither run. Then,
+        # once every test of the file has run in this process, as in a full run, where this test runs
+        # last, each entry must be the least limit admitted at its site, which tearDownModule checks
+        # only after this test.
+        module = sys.modules[__name__]
+
+        def ids(suite):
+            for test in suite:
+                if isinstance(test, unittest.TestSuite):
+                    yield from ids(test)
+                else:
+                    yield test.id()
+
+        every = list(ids(unittest.TestLoader().loadTestsFromModule(module)))
+        self.assertEqual(every[-1], self.id(), "precondition: this test is the last test of the file")
+        site = ("Doctor", "_audit_bounded")
+        value = TEST_TIME_LIMITS[site]
+        agree = [("launch", key, limit, None) for key, limit in TEST_TIME_LIMITS.items()]
+        missing = [check for check in agree if check[1] != site]
+        greater = missing + [("join", site, value + 30, None)]
+        stale = "{!r}: TEST_TIME_LIMITS gives {:g}, the least limit admitted at its site is {:g}".format(
+            site, value, value + 30)
+        unreached = "{!r}: its site admitted no limit in this run".format(site)
+        full, short, alone = set(every), set(every[1:]), {self.id()}
+
+        def teardown(run, checks):
+            names = ("TESTS_RUN", "TIME_LIMIT_CHECKS", "TIME_LIMIT_REFUSALS")
+            with TIME_LIMIT_LOCK:
+                saved = {name: globals()[name] for name in names}
+                globals().update(TESTS_RUN=set(run), TIME_LIMIT_CHECKS=list(checks), TIME_LIMIT_REFUSALS=[])
+                try:
+                    tearDownModule()
+                except AssertionError as error:
+                    return str(error)
+                finally:
+                    globals().update(saved)
+            return None
+
+        cases = {
+            "a full run whose limits agree with the table": (full, agree, None),
+            "a run without 1 test whose limits agree with the table": (short, agree, None),
+            "a full run whose least limit at a site is greater than its entry": (
+                full, greater, "time limits: {}".format([stale])),
+            "a full run in which a site admitted no limit": (full, missing, "time limits: {}".format([unreached])),
+            "a run without 1 test whose least limit at a site is greater than its entry": (short, greater, None),
+            "a run without 1 test in which a site admitted no limit": (short, missing, None),
+            "a run of this test alone in which a site admitted no limit": (alone, missing, None),
+        }
+        for kind, (run, checks, wanted) in cases.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(teardown(run, checks), wanted)
+        if time_limit_full_run(module, TESTS_RUN):
+            with TIME_LIMIT_LOCK:
+                checks = list(TIME_LIMIT_CHECKS)
+            self.assertEqual(time_limit_table_mismatches(checks, TEST_TIME_LIMITS), [],
+                             "an entry of TEST_TIME_LIMITS that is not the least limit admitted at its site")
+
+
+# The hook line ranges A-B that this file and tools/test-orch-stage1-hooks.py cite, as HOOK_CITATION
+# reads them, that do not start on the first line of a statement of the hook or end on the last line
+# of one, each with the lines that it cites on purpose. Every other range that the 2 files cite starts
+# and ends on a statement or an except clause of the hook.
+PART_RANGES = {
+    (22344, 22346): "the lexists check and the header of the with statement that opens turn-state.json",
+    (22618, 22632): "the freshness statements and the header of the if statement on the size",
+    (22630, 22632): "the fresh and cannot assignments and the header of the if statement on the size",
+    (23024, 23025): "the lines of a string",
+    (23303, 23305): "lines of a docstring",
+    (23321, 23324): "the lexists check and the header of the with statement that opens the checkpoint",
+    (23376, 23387): "the checkpoint write and the header of the elif statement on the marker",
+    (23433, 23436): "the if statement to the argument of classify_backlog that reads the pending record",
+    (33092, 33094): "the at_path assignment and the header of the if statement on it",
+    (33211, 33212): "the header of the if statement on lexists and of the with statement that opens it",
+}
+
+
+def hook_statement_lines(source):
+    """({the first line of each statement and except clause of source}, {the last line of each})."""
+    nodes = [n for n in ast.walk(ast.parse(source)) if isinstance(n, (ast.stmt, ast.ExceptHandler))]
+    return {n.lineno for n in nodes}, {n.end_lineno for n in nodes}
+
+
+class HookRangeProbe(unittest.TestCase):
+    """Class probe: each hook line range that this file or tools/test-orch-stage1-hooks.py cites starts
+    on the first line of a statement or an except clause of the hook and ends on the last line of one,
+    apart from PART_RANGES."""
+
+    def test_each_cited_range_starts_and_ends_on_a_statement(self):
+        starts, ends = hook_statement_lines(HOOK.read_text(encoding="utf-8"))
+        text = "\n".join(path.read_text(encoding="utf-8")
+                         for path in (Path(__file__), HERE / "test-orch-stage1-hooks.py"))
+        cited = {(int(a), int(b)) for a, b in HOOK_CITATION.findall(text) if b}
+        off = sorted(r for r in cited if r[0] not in starts or r[1] not in ends)
+        self.assertEqual(off, sorted(PART_RANGES),
+                         "a cited range that does not start or end on a statement, or a stale PART_RANGES")
+
+
+# Read once every definition of the module is made: the sites of time limits, the sinks and the wrapper
+# of unittest.TestCase.run without one.
+_sites, _scope = _time_limit_sites(globals(), (run_doctor_recorded, _time_limit_applied, _checked_sink,
+                                               _checked_run))
+TIME_LIMIT_SITES.update(_sites)
+TIME_LIMIT_SCOPE.update(_scope)
 # Added once every definition of the module is made; an audit hook cannot be removed.
 sys.addaudithook(_admit)
 

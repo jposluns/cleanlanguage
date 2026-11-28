@@ -1,6 +1,6 @@
 name: Plugin manifests
 
-# Validate the plugin manifests so a malformed manifest cannot reach main. Three
+# Validate the plugin manifests so a malformed manifest cannot reach main. 3
 # checks run, because none covers the others:
 #
 #   1. `claude plugin validate .` reads .claude-plugin/marketplace.json and, because
@@ -58,7 +58,7 @@ permissions:
   contents: read
 
 env:
-  CLAUDE_CODE_VERSION: "2.1.310"
+  CLAUDE_CODE_VERSION: "2.1.318"
 
 jobs:
   check:

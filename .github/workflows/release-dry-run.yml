@@ -2,9 +2,10 @@ name: Release dry run
 
 # Proves the local, side-effect-free part of the release path without publishing: packaging, the site
 # rewrite, the date stamps, and the gates the post-release site pull request
-# must pass. The Python version check and 6 test suites run in the checkout,
+# must pass. The Python version check and 7 test suites run in the checkout,
 # and the version-consumer tests among them also build in temporary worktrees
-# made from the checkout. The last step, tools/release-dry-run.sh, does the
+# made from the checkout, while the ref comparison tests build throwaway
+# repositories in a temporary folder. The last step, tools/release-dry-run.sh, does the
 # packaging, the rewrite, the stamping, and the gate checks in a throwaway git
 # worktree made from HEAD. This workflow holds read-only permissions, keeps no
 # credentials after checkout, uses no secrets, and pushes, tags, releases, and
@@ -87,6 +88,10 @@ jobs:
       - name: Version-selector contract
         shell: bash
         run: bash tools/test-version-selectors.sh
+
+      - name: Dry-run ref comparison contract
+        shell: bash
+        run: python3 -I tools/test-release-dry-run-refs.py
 
       - name: Run the release dry run
         shell: bash

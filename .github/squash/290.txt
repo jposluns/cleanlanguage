@@ -1,0 +1,147 @@
+Scope the release dry run's ref check to refs it can move (#290)
+
+Step 6 of tools/release-dry-run.sh no longer compares a hash of the
+whole git for-each-ref listing. It compares 2 snapshots of these refs,
+taken before the run and in step 6 from the worktree that holds the
+script: the branch that HEAD names, or the word detached; the commit
+that HEAD resolves to; and every tag and note with its object name. On
+a mismatch it prints both snapshots, so the failure names the ref that
+differs. A leak check then fails the run when a ref that git
+for-each-ref lists from that worktree contains the dry-run commit. The
+script's header states what step 6 proves, how the script makes and
+reads the dry-run commit, and which programs, attribute files and
+filter drivers its git calls keep out of reach. The run fails whenever
+one of the script's own checks fails, or a tool that the script calls
+refuses or fails, unless the script handles that outcome itself. So a
+check or a tool call that this change adds can fail a run that passed
+before. Examples of such checks, not a full list, are the leak check,
+the check that git refuses a GIT_ATTR_SOURCE that names no tree with
+exit 128 and its own message, and the check that the next sentence
+states. The run fails when a name holds an equals sign among the filter
+driver names that it turns off: the name inside each filter setting
+that git config lists from the script's worktree, the rest of each word
+of the info/attributes file that starts with filter=, and each value
+that git check-attr prints for the filter attribute of a path of the
+dry-run commit; so a word of the info/attributes file that starts with
+filter= and holds another equals sign fails the run, even in a comment.
+
+The new suite tools/test-release-dry-run-refs.py runs the whole
+script, with stand-ins for its tools, in throwaway folders; its
+docstring states how each of its 74 cases is built and what it
+requires. .github/workflows/release-dry-run.yml and
+tools/run_all_checks.sh run it before the dry run, and SCRIPT_SHA256
+in tools/test-run-all-checks.py records the sha256 of the changed
+tools/run_all_checks.sh. tools/test-version-selectors.sh now runs the
+dry run's version selector in its new form, after the script's own git
+settings, and requires each of its 4 structural checks to run once for
+each of its 3 sites. The change also adds .github/squash/290.txt, its
+squash message.
+
+A ref that git for-each-ref lists, moved by another worktree of the
+same repository during the run, changed the old hash and failed the
+dry run, although the dry run had moved nothing. TODO 279 asks for a
+comparison of only the refs that the dry run could itself move, after
+such a failure on the PR 284 gate; it does not record which ref moved
+there, so whether this change would have avoided that failure is
+unknown.
+
+This narrows a release-integrity check on purpose and needs the
+maintainer's acceptance. The script still publishes nothing: it holds
+no gh call and no git push. release-dry-run.yml keeps its permissions
+and its other steps. What step 6 no longer catches, and what it does
+not see, is the header's residual, the first of the copies below.
+
+The suite's text case requires the paragraphs and sentences below,
+copied from the script's comments and the suite's docstring, to appear
+here word for word:
+
+Residual: the proof does not catch the deletion of any ref outside
+tags and notes other than the branch the script's worktree has checked
+out, such as another branch, a remote-tracking ref, refs/stash or a
+refs/replace/ ref; or a move or creation of such a ref at a commit
+that does not contain the dry-run commit, at an annotated tag that
+peels to such a commit, or at an object that peels to no commit, such
+as a tree or a blob. It does not see the HEAD or the per-worktree refs
+of any worktree other than the script's worktree, the throwaway
+worktree included, or a ref outside refs/ other than HEAD, such as
+ORIG_HEAD, of any worktree, the script's worktree included, so such a
+ref put on the dry-run commit does not fail it. It does not see a
+write to a ref made after the after snapshot, such as a tag that
+another worktree makes then, other than a ref that the leak check,
+which follows that snapshot, finds to contain the dry-run commit. It
+does not see anything the exit cleanup does, or a ref moved and then
+restored between the 2 snapshots. None of these limits holds for a ref
+whose name git rejects, that git for-each-ref would list from the
+script's worktree and that is there when a listing of the run meets
+it, as the tag and note listing of each snapshot meets a tag or a note
+and the listing of the leak check meets any such ref: such a ref fails
+the run, whoever writes it and whenever, at the first listing that
+meets it, where the run ends, since git writes a warning to standard
+error while that listing runs.
+
+So no filter runs during a git call of the dry run, whatever the
+configuration that git reads in any worktree defines, other than a
+driver that the info/attributes file, or the tree that git archive
+archives, comes to name during the run.
+
+The git calls of the tools that the script runs are covered only by
+the lazy-fetch, attribute and filter settings.
+
+Residual of the test: stand-ins replace the packaging, the gates and
+the site rewrite, which the next step of release-dry-run.yml runs with
+the real tools, and the script runs with an environment that the test
+fixes, with a git stand-in first on PATH in the ref cases and a git
+wrapper there in some other cases, not with those of that workflow. A
+change to the script is caught only when it changes what a case
+observes, so a change that acts only outside the cases, such as one
+that tests for the stand-ins or for the workflow's environment, or that
+moves a ref no case writes or stops step 6 reading one, is not caught.
+The text case does not catch a paragraph added next to a block, words
+added next to a repeated sentence, a copy changed so far that its words
+are less than 85 percent alike to those of the sentence it copies, a
+fact restated in other words, a change in a text that it does not
+read, or a change to a text that the checkout lacks, as CI lacks
+PR-BODY.md and SQUASH-MSG. The cases run on 1 git version with its
+default ref backend.
+
+The tag and note listing of each snapshot and the listing of the leak
+check fail the run when git writes anything to standard error while it
+lists, as when git for-each-ref skips a ref whose name it rejects, with
+a warning, and still exits 0. A ref that another worktree writes during
+the run fails the proof only when it is a tag or a note, when it is the
+HEAD of the script's worktree or the branch that worktree has checked
+out, when it is a ref that git for-each-ref lists from the script's
+worktree, created or moved onto the dry-run commit or a descendant of
+it, or when git fails or writes to standard error while it lists the
+refs of a snapshot or of the leak check, as it does for a ref whose
+name it rejects; any other such write is outside the proof. In a
+shallow clone, the leak check, which reads with the shallow file turned
+off, finds the parents of a commit at the shallow boundary missing, so
+there it can fail the run on git's message about them or naming a ref
+that does not contain the dry-run commit; release-dry-run.yml checks
+out the whole history, so its run is not shallow. Before it goes on or
+fails, the run clears the name of the temporary file of the check of
+GIT_ATTR_SOURCE, so that the exit cleanup cannot remove a file that
+another process makes later under that name, and then tries to remove
+the file itself, and fails if that removal fails; a signal that ends
+the run between that clearing and that removal, or a failure of that
+removal, leaves the file behind, since the exit cleanup then has no
+name to remove.
+
+The suite's trace2 case reads git's trace2 log of a run. It requires
+every run of git that the script starts after the before snapshot,
+other than a run in the form of the reads of the 2 snapshots or of the
+leak check, to run with the attribute and filter settings, except 4,
+each in the argument form that the script gives it: the first 3, which
+run before those settings exist, and the check of GIT_ATTR_SOURCE,
+which sets its own. Each of those 4 is exempt from these settings only
+in the argument form and with the GIT_ATTR_SOURCE that the script gives
+it, and only once, so a later run in that form must run with them. A
+run in the form of those reads is a git symbolic-ref, rev-parse or
+for-each-ref given -C and the path of the main worktree first, or a git
+call given --contains; the case reads every such run as one of those
+reads, wherever the script makes it, so it does not show that the
+script makes such a call only in the 2 snapshots and the leak check.
+
+The checks that ran, and the line that each ended with, are in the
+description of pull request 290.
