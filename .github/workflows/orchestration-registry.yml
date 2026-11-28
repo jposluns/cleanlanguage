@@ -60,6 +60,23 @@ name: Orchestration registry
 # outside the 7 paragraphs passes. The step after it, tools/test-check-flow-mode.py, runs a
 # case for each of those verdicts.
 #
+# A further step (tools/test-no-worker-identifiers.py) reads every candidate address around
+# every at sign of the stored blob of each tracked entry, which the index names and git cat-file
+# gives, never the working copy, and of each tracked path name. 2 exemptions, each tested on
+# a candidate folded to lower case: (1) the candidate is exactly the maintainer's address; (2)
+# the domain of the candidate is reserved for documentation: its last label is invalid, test, or
+# example, or it is, or ends with a dot and then, example.com, example.org, or example.net. An
+# at sign passes only when every candidate that the scan reads at it is exempt, under either
+# exemption, or when it lies in a file on a line that the reviewed exact-line allowlist holds
+# for that file; a path name has no allowlist. So an address at mail.corp.example.com fails,
+# since mail.corp is not reserved. Only a hit in the content of a file, or in the stored target
+# text of a tracked symbolic link, names a line: the file or link, the line number, and a digest
+# of the match. A hit in a path name names no line, only a digest
+# of the path name and of the match; a stale allowlist entry names its file, its position, and a
+# digest of its text; and a fail-closed failure names no line and no digest of a match. No
+# failure holds the text of a match, and a path whose name holds a match is named only by a
+# digest of the path name.
+#
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
 # steers the run. tools/test-orchestration-registry.py checks this file for the flag.
@@ -96,6 +113,10 @@ jobs:
       - name: Check the scanned sources and tools/, site-src/ and .github/ for review-history labels
         shell: bash
         run: python3 -I tools/test-no-qa-labels.py
+
+      - name: Check every tracked file and the whole name of every tracked path for a worker or third-party email address
+        shell: bash
+        run: python3 -I tools/test-no-worker-identifiers.py
 
       - name: Run the stage-1 hook behaviour tests
         shell: bash

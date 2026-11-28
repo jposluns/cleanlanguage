@@ -110,6 +110,7 @@ run python3 -I tools/check-manifest-icon.py
 run python3 -I tools/check-orchestration-registry.py
 run python3 -I tools/test-orchestration-registry.py
 run python3 -I tools/test-no-qa-labels.py
+run python3 -I tools/test-no-worker-identifiers.py
 run python3 -I tools/test-orch-stage1-hooks.py
 run python3 -I tools/test-orch-enumerate-backlog.py
 run python3 -I tools/test-orch-migrate-todo.py
