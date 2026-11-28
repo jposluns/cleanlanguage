@@ -44,8 +44,9 @@ working copy changes what is scanned; a tracked symbolic link is scanned by its 
 target text, not by the file that it points to. It fails the Orchestration registry workflow
 and `tools/run_all_checks.sh` on a hit. It reads every candidate address around every at
 sign, so an exempt candidate cannot hide an overlapping address, and its work grows linearly
-with the size of a file. Only a hit in the content of a file names a line: that failure names
-the file, the line number, and a digest of the match. A hit in a path name names the path and
+with the size of a file. Only a hit in the content of a file, or in the stored target text of
+a tracked symbolic link, names a line: that failure names the file or link, the line number,
+and a digest of the match. A hit in a path name names the path and
 a digest of the match, and no line; a stale allowlist entry names its file, its position, and
 a digest of its text, and no line; and the fail-closed failures below name no line and no
 digest of a match. No failure holds the matched text or the line. A red run
@@ -100,7 +101,10 @@ passes it, because a committed pattern that names a real label would itself publ
 label; those forms rest on this rule, on the standing line that every QA and drafting brief
 carries, and on any scan the maintainer keeps outside the repository. An untracked file, the
 file that a tracked symbolic link points to, and the content of a submodule are not read; a
-tracked symbolic link is scanned only by its own target text. A file kept outside git, for
+tracked symbolic link is scanned only by its own target text. The scan reads what the index
+holds, so an edit of a tracked file that is not staged, and each stage of an unmerged entry
+but the highest that the index holds, are not read either: an address in either passes a
+local run, while CI checks out a clean commit and is not affected. A file kept outside git, for
 example by Git LFS, whose blob is a pointer, is scanned only as its stored pointer, so an
 address in the file that the pointer names passes. An address
 inside compressed or encoded binary content passes, since the scan neither decompresses nor

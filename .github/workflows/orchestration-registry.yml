@@ -69,8 +69,9 @@ name: Orchestration registry
 # at sign passes only when every candidate that the scan reads at it is exempt, under either
 # exemption, or when it lies in a file on a line that the reviewed exact-line allowlist holds
 # for that file; a path name has no allowlist. So an address at mail.corp.example.com fails,
-# since mail.corp is not reserved. Only a hit in the content of a file names a line: the file,
-# the line number, and a digest of the match. A hit in a path name names no line, only a digest
+# since mail.corp is not reserved. Only a hit in the content of a file, or in the stored target
+# text of a tracked symbolic link, names a line: the file or link, the line number, and a digest
+# of the match. A hit in a path name names no line, only a digest
 # of the path name and of the match; a stale allowlist entry names its file, its position, and a
 # digest of its text; and a fail-closed failure names no line and no digest of a match. No
 # failure holds the text of a match, and a path whose name holds a match is named only by a

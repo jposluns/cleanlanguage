@@ -75,10 +75,11 @@ sha256 of the path name, with the digest of the hit, and every other failure for
 hit in its content, an unreadable blob, or a stale allowlist entry) names the path by that same
 digest.
 
-Report. What each failure names: a hit in the content of a file names 3 items, the file, the line
-number, which is 1 more than the number of line feeds before the hit, and the first 16
-hexadecimal digits of the sha256 of the hit, the longest candidate of its at sign that is not
-exempt, and it is the only failure that names a line; a hit in a path name names the path and
+Report. What each failure names: a hit in the content of a file, or in the stored target text of
+a tracked symbolic link, names 3 items, the file or link, the line number, which is 1 more than
+the number of line feeds before the hit, and the first 16 hexadecimal digits of the sha256 of
+the hit, the longest candidate of its at sign that is not exempt, and it is the only failure
+that names a line; a hit in a path name names the path and
 the digest of the hit, and no line; a stale allowlist entry names its file, its position, and
 the same digest of its text, and no line; and the fail-closed failures below name no line and no
 digest of a hit: a blob that cannot be read names its path and a fixed category, and a git call
@@ -150,7 +151,10 @@ committed pattern that names a real label would itself publish the label; those 
 the rule, on the standing line that every QA and drafting brief carries, and on any scan the
 maintainer keeps outside the repository. An untracked file, the file that a tracked symbolic
 link points to, and the content of a submodule are not read; a tracked symbolic link is scanned
-only by its own target text. A file kept outside git, for example by Git LFS, whose blob is a
+only by its own target text. The scan reads what the index holds, so an edit of a tracked file
+that is not staged, and each stage of an unmerged entry but the highest that the index holds,
+are not read either: an address in either passes a local run, while CI checks out a clean commit
+and is not affected. A file kept outside git, for example by Git LFS, whose blob is a
 pointer, is scanned only as its stored pointer, so an address in the file that the pointer
 names passes. An address inside compressed or encoded binary content passes, since the scan
 neither decompresses nor decodes, unless that content holds the address as it is; a surface
@@ -172,7 +176,9 @@ test_compressed_or_encoded_content_gives_no_candidate, with 1 subtest for each c
 encoding. Each place that this residual names as not read is pinned by its own case:
 test_an_untracked_file_is_not_read,
 test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read,
-test_the_content_of_a_submodule_is_not_read, and
+test_the_content_of_a_submodule_is_not_read,
+test_an_edit_of_a_tracked_file_that_is_not_staged_is_not_read,
+test_each_stage_of_an_unmerged_entry_but_the_highest_is_not_read, and
 test_a_file_kept_outside_git_is_scanned_only_as_its_stored_pointer. A surface that is not a file
 in this tree is outside the input of the suite, so no case pins it.
 
@@ -1081,16 +1087,20 @@ class FixtureRepository(unittest.TestCase):
     def test_a_blob_read_that_fails_names_only_its_exit_code_or_errno_name_or_error_type(self):
         # A git cat-file that fails with a diagnostic that holds an address, and start errors whose
         # text holds it: each failure is the exit code alone, or the errno name, or the name of
-        # the type when the error has no errno name. The listing before it runs as usual.
+        # the type when the error has no errno, or has 1 that the errno table does not name. The
+        # listing before it runs as usual.
         self.add("a.txt", "text\n")
         program = str(self.address_folder() / "no-such-git")
+        self.assertNotIn(1 << 20, errno.errorcode)
         run = subprocess.run
         for error, text in ((subprocess.CalledProcessError(128, [GIT], output=b"", stderr=program.encode()),
                              "exit 128"),
                             (OSError(errno.EACCES, "denied for " + program, program),
                              "git could not be started: EACCES"),
-                            (OSError(program), "git could not be started: OSError")):
-            with self.subTest(text=text):
+                            (OSError(program), "git could not be started: OSError"),
+                            (OSError(1 << 20, "no errno name for " + program, program),
+                             "git could not be started: OSError")):
+            with self.subTest(text=text, errno=getattr(error, "errno", None)):
                 def blob_read_fails(args, **kwargs):
                     if "cat-file" in args:
                         raise error
@@ -1118,14 +1128,17 @@ class FixtureRepository(unittest.TestCase):
 
     def test_a_git_that_cannot_start_names_only_its_errno_name_or_error_type(self):
         # A real program path that holds an address, then start errors whose text holds it: each
-        # failure is the errno name, or the name of the type when the error has no errno name.
+        # failure is the errno name, or the name of the type when the error has no errno, or has 1
+        # that the errno table does not name.
         self.add("a.txt", "text\n")
         program = str(self.address_folder() / "no-such-git")
         failures, read = scan(self.root, {}, git=program)
         self.assertEqual((failures, read), (["git ls-files failed: git could not be started: ENOENT"], 0))
+        self.assertNotIn(1 << 20, errno.errorcode)
         for error, text in ((OSError(errno.EACCES, "denied for " + program, program), "EACCES"),
-                            (OSError(program), "OSError")):
-            with self.subTest(text=text):
+                            (OSError(program), "OSError"),
+                            (OSError(1 << 20, "no errno name for " + program, program), "OSError")):
+            with self.subTest(text=text, errno=error.errno):
                 self.assertIn("placeholder-mail", str(error))
                 with mock.patch.object(subprocess, "run", side_effect=error):
                     failures, read = scan(self.root, {})
@@ -1212,6 +1225,81 @@ class FixtureRepository(unittest.TestCase):
     def test_a_stored_object_that_is_no_blob_fails_naming_it(self):
         self.add_entry("100644", self.tree_object(), "odd.txt")
         self.assertEqual(scan(self.root, {}), (["odd.txt: unreadable: not a blob"], 0))
+
+    def batch_reply(self, reply):
+        """A patch of subprocess.run under which git cat-file --batch gives reply as its output.
+
+        Every other call runs as usual, so a listing before it reads the fixture.
+        """
+        run = subprocess.run
+
+        def reply_with(args, **kwargs):
+            if "cat-file" in args:
+                return subprocess.CompletedProcess(args, 0, stdout=reply, stderr=b"")
+            return run(args, **kwargs)
+        return mock.patch.object(subprocess, "run", side_effect=reply_with)
+
+    def test_each_malformed_or_short_batch_reply_gives_unexpected_reply(self):
+        """Each way that a reply of git cat-file fails to answer for an object gives unexpected reply.
+
+        Each subtest feeds stored_blobs() 1 reply for 2 objects, first and second, and names the
+        fail-closed path that it takes: a reply that ends before an object is answered, a header
+        that names another object, a header with too many or too few fields, a header of 2 fields
+        other than missing, a size that is no number, and a body that is cut short or that no line
+        feed ends. Each fails when its path gives bytes, an empty clean blob among them, in place
+        of unexpected reply. A reply that does not answer stops the read, so every later object
+        gives unexpected reply too; a header of 2 fields does not.
+        """
+        first, second, other = "1" * 40, "2" * 40, "3" * 40
+        answered = first.encode("ascii") + b" blob 5\ntext\n\n"
+        for path, reply, expected in (
+                ("a reply that ends before an object is answered", answered,
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("an empty reply", b"", {first: "unexpected reply", second: "unexpected reply"}),
+                ("a header that names another object", answered + other.encode("ascii") + b" blob 5\ntext\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a header with too many fields", answered + second.encode("ascii") + b" blob 5 x\ntext\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a header with too few fields", answered + second.encode("ascii") + b"\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a header of 2 fields other than missing",
+                 first.encode("ascii") + b" ambiguous\n" + second.encode("ascii") + b" blob 5\ntext\n\n",
+                 {first: "unexpected reply", second: b"text\n"}),
+                ("a size that is no number", answered + second.encode("ascii") + b" blob x\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a body that is cut short", answered + second.encode("ascii") + b" blob 50\ntext\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a body that no line feed ends", answered + second.encode("ascii") + b" blob 4\ntextX",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("every object after a reply that does not answer",
+                 first.encode("ascii") + b" blob x\n\n" + second.encode("ascii") + b" blob 5\ntext\n\n",
+                 {first: "unexpected reply", second: "unexpected reply"})):
+            with self.subTest(path=path):
+                with self.batch_reply(reply):
+                    self.assertEqual(stored_blobs(self.root, [first, second]), expected)
+
+    def test_a_short_batch_reply_fails_naming_the_file_it_leaves_unanswered(self):
+        # A reply that answers for the first blob only: the second file fails as unexpected reply,
+        # and is not read as an empty clean blob.
+        self.add("a.txt", "text\n")
+        self.add("b.txt", "more\n")
+        name = self.git_out("rev-parse", ":a.txt")
+        with self.batch_reply(name.encode("ascii") + b" blob 5\ntext\n\n"):
+            self.assertEqual(scan(self.root, {}), (["b.txt: unreadable: unexpected reply"], 1))
+
+    def test_a_replace_ref_does_not_change_what_is_scanned(self):
+        """A stored blob that holds an address fails though a replace ref names a clean blob for it.
+
+        The control: git cat-file with replace objects on gives the clean text for that blob. The
+        scan turns them off, so it reads the blob that the index names, the 1 that git publishes.
+        """
+        line, hit = self.address_line()
+        self.add("note.txt", line.decode("ascii"))
+        stored = self.git_out("rev-parse", ":note.txt")
+        clean = self.git_out("hash-object", "-w", "--stdin", data=b"text\n")
+        self.git("replace", stored, clean)
+        self.assertEqual(self.git_out("cat-file", "blob", stored), "text")
+        self.assertEqual(scan(self.root, {}), (["note.txt:1: email-shaped text, sha256 " + hit], 1))
 
     def test_a_failed_git_call_fails(self):
         # A folder that does not exist, so git -C fails wherever the temporary folder lies.
@@ -1306,6 +1394,35 @@ class FixtureRepository(unittest.TestCase):
         self.assertEqual(scan(self.root, {}), ([], 1))
         self.git("add", "--", "untracked.txt")
         self.assertEqual(scan(self.root, {}), (["untracked.txt:1: email-shaped text, sha256 " + hit], 2))
+
+    def test_an_edit_of_a_tracked_file_that_is_not_staged_is_not_read(self):
+        """An address in an edit of a tracked file that is not staged passes; the control: staged, it fails."""
+        line, hit = self.address_line()
+        self.add("note.txt", "text\n")
+        (self.root / "note.txt").write_bytes(line)
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        self.git("add", "--", "note.txt")
+        self.assertEqual(scan(self.root, {}), (["note.txt:1: email-shaped text, sha256 " + hit], 1))
+
+    def test_each_stage_of_an_unmerged_entry_but_the_highest_is_not_read(self):
+        """An unmerged entry is read only as the highest stage that the index holds for its path.
+
+        Stages 1 and 2 hold an address and stage 3 holds none: the scan passes. The control: with
+        the address in stage 3 as well, it fails.
+        """
+        line, hit = self.address_line()
+        held = self.git_out("hash-object", "-w", "--stdin", data=line)
+        clean = self.git_out("hash-object", "-w", "--stdin", data=b"text\n")
+
+        def unmerged(third):
+            info = "".join("100644 {} {}\tnote.txt\n".format(name, stage)
+                           for stage, name in ((1, held), (2, held), (3, third)))
+            self.git_out("update-index", "--index-info", data=info.encode("ascii"))
+            self.assertEqual(len(self.git_out("ls-files", "--stage").splitlines()), 3)
+        unmerged(clean)
+        self.assertEqual(scan(self.root, {}), ([], 1))
+        unmerged(held)
+        self.assertEqual(scan(self.root, {}), (["note.txt:1: email-shaped text, sha256 " + hit], 1))
 
     def test_the_file_that_a_tracked_symbolic_link_points_to_is_not_read(self):
         """A tracked link to an address-bearing file outside the repository passes.
