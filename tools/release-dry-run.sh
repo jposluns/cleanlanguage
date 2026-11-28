@@ -38,7 +38,10 @@
 # cleanup's git worktree remove included, runs with hooks, the core.fsmonitor
 # program and a pager turned off, whatever the configuration asks, and every
 # git process of the dry run runs with lazy fetching from a promisor remote
-# turned off. Every git process of the dry run that starts after the first 3
+# turned off. So in a partial clone, a git call of the dry run, its tools'
+# included, that needs an object the clone lacks, such as the git show that
+# reads the version at HEAD, fails the run where a fetch would have let it go
+# on. Every git process of the dry run that starts after the first 3
 # git calls that follow the before snapshot, its tools' included, reads no
 # attribute file other than the info/attributes file of the repository and,
 # in git archive, the .gitattributes files of the tree it archives and, in
@@ -658,6 +661,20 @@ python3 -I tools/check-instructions-page.py
 assert_contains() {
   grep -q "$2" "$1" || fail "expected $1 to contain: $2"
 }
+# assert_lacks FILE MESSAGE GREP_ARG...: fail with MESSAGE when grep, given
+# GREP_ARG... and then FILE, finds a match in FILE, and fail on any other exit
+# status of grep than 0 or 1, as grep exits 2 when it cannot read FILE, so an
+# error of grep is never read as no match.
+assert_lacks() {
+  local file="$1" message="$2" rc=0
+  shift 2
+  grep -q "$@" "${file}" || rc=$?
+  case "${rc}" in
+    0) fail "${message}" ;;
+    1) ;;
+    *) fail "could not search ${file} for a text that must be absent from it (grep exit ${rc})" ;;
+  esac
+}
 assert_contains site/_redirects "releases/download/${dry_tag}/cleanlanguage-${dry_version}.zip"
 assert_contains site/install/index.html "cleanlanguage-${dry_version}.zip"
 assert_contains site/verify/index.html "cleanlanguage-${dry_version}.zip.sha256"
@@ -666,9 +683,8 @@ assert_contains site/verify/index.html "published checksum for version ${dry_ver
 # No page may still name the release it replaced, in a URL or written out bare
 # (the install page's example download name, the verify page's hash commands).
 for page in site/install/index.html site/verify/index.html; do
-  if grep -qF "cleanlanguage-${version}.zip" "${page}"; then
-    fail "${page} still names cleanlanguage-${version}.zip after the rewrite"
-  fi
+  assert_lacks "${page}" "${page} still names cleanlanguage-${version}.zip after the rewrite" \
+    -F "cleanlanguage-${version}.zip"
 done
 # The generated pages name the new version everywhere: the download block, the
 # version labels, the checksum, the hash commands, and the install page's example
@@ -681,18 +697,17 @@ assert_contains site/install/index.html "for example <code>cleanlanguage-${dry_v
 assert_contains site/verify/index.html "<code class=\"sum\" id=\"published-checksum\">${checksum}</code>"
 assert_contains site/verify/index.html "sha256sum cleanlanguage-${dry_version}.zip"
 for page in site/install/index.html site/verify/index.html; do
-  grep -q "version ${version}\b" "${page}" \
-    && fail "${page} still names version ${version} after the flip"
+  assert_lacks "${page}" "${page} still names version ${version} after the flip" "version ${version}\b"
 done
 for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "article:modified_time\" content=\"${dry_date}\""
   assert_contains "${page}" "\"dateModified\": \"${dry_date}\""
-  grep -q "${seed_date}" "${page}" && fail "the sentinel date survived in ${page}; stamping did not run"
+  assert_lacks "${page}" "the sentinel date survived in ${page}; stamping did not run" "${seed_date}"
 done
 for name in install verify; do
   assert_contains site-src/site.json "\"id\": \"${name}\", .*\"modified\": \"${dry_date}\""
 done
-grep -q "${seed_date}" site-src/site.json && fail "the sentinel date survived in site-src/site.json; stamping did not run"
+assert_lacks site-src/site.json "the sentinel date survived in site-src/site.json; stamping did not run" "${seed_date}"
 # The writer rewrites site/_redirects whole, so the fixed redirects kept since
 # promotion must survive the flip.
 assert_contains site/_redirects "^/privacy https://posluns.ca/privacy/ 301$"

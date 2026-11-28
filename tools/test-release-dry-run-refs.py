@@ -234,6 +234,15 @@ and, in turn, a branch, which only the leak check lists. The run must fail with 
 listing, with the script's message that git wrote other text than the listing, after git's warning
 that names the ref, and print the version line only in the run with the branch.
 
+1 more case, the grep case, runs the dry run with a grep stand-in, first on PATH, that records each
+of its runs among the git calls and exits 2, as grep does when it cannot read a file, when it is
+given both the text and the file that the run names, and otherwise runs grep. The runs name, in
+turn, the 4 searches of step 4 for a text that must be absent: the old zip name, the old version
+and the sentinel date in the install page, and the sentinel date in site-src/site.json. Each run
+must fail with exit 1 at that search, after the version line, with the script's message that it
+could not search that file, and record nothing after it other than the exit cleanup's git worktree
+remove.
+
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
 HEAD, since its parent, tree, identity, dates and message are. It then points a lightweight tag and
@@ -1544,6 +1553,41 @@ class FailClosedCases(unittest.TestCase):
                     self.assertEqual(temporary_files(fixture.tmp), [],
                                      "the run left the file of its check of GIT_ATTR_SOURCE in TMPDIR")
 
+    def test_a_grep_that_cannot_search_for_an_absent_text_fails(self):
+        # (the pattern, the file searched): step 4 searches for each of these to show it is gone. Here grep
+        # cannot read the file on that 1 search, so it exits 2, which the script must report and stop on,
+        # not take for a missing match and go on to pass.
+        real = shutil.which("grep", path=os.environ.get("PATH", os.defpath))
+        self.assertIsNotNone(real, "no grep on PATH")
+        for text, path in (("cleanlanguage-1.0.0.zip", "site/install/index.html"),
+                           ("version 1.0.0\\b", "site/install/index.html"),
+                           ("2020-01-01", "site/install/index.html"),
+                           ("2020-01-01", "site-src/site.json")):
+            with self.subTest(text=text, path=path), tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                wrapper = refusing_git(fixture.tmp / "wrapper", fixture.env)
+                (wrapper / "grep").write_text(
+                    "#!/bin/sh\n"
+                    f"printf 'grep %s\\n' \"$*\" >> {shlex.quote(str(wrapper / 'events'))}\n"
+                    "text=no\n"
+                    "file=no\n"
+                    "for arg in \"$@\"; do\n"
+                    f"  if [ \"${{arg}}\" = {shlex.quote(text)} ]; then text=yes; fi\n"
+                    f"  if [ \"${{arg}}\" = {shlex.quote(path)} ]; then file=yes; fi\n"
+                    "done\n"
+                    "if [ \"${text}\" = yes ] && [ \"${file}\" = yes ]; then\n"
+                    f"  printf 'grep: %s: the stand-in cannot read it\\n' {shlex.quote(path)} >&2\n"
+                    "  exit 2\n"
+                    "fi\n"
+                    f"exec {shlex.quote(real)} \"$@\"\n", encoding="utf-8")
+                (wrapper / "grep").chmod(0o755)
+                code, out, err = run_script(fixture.script, fixture.env, wrapper)
+                self.assertIn(f"grep: {path}: the stand-in cannot read it", err)
+                self.assert_stops(code, out, err, f"release-dry-run: could not search {path} for a text that must "
+                                  "be absent from it (grep exit 2)", True)
+                self.assert_ends_at(wrapper, lambda event: event.startswith("grep ")
+                                    and event.endswith(f" {text} {path}"))
+
 
 class SignalCases(unittest.TestCase):
     def test_a_signal_during_the_attribute_source_check_leaves_no_file(self):
@@ -2350,8 +2394,9 @@ class RepeatedTextCases(unittest.TestCase):
             with self.subTest(text=COMMITTED):
                 self.assertFalse((REPO_ROOT / ".git").exists(),
                                  f"{COMMITTED} is missing from a folder that holds .git, as a checkout does")
-                self.skipTest(f"{COMMITTED} is not in this folder, which holds no .git, so its copies are not "
-                              "compared; every other text is")
+                self.skipTest(f"{COMMITTED} is not in this folder, which holds no .git, so it is left out of the "
+                              "repeated blocks, the repeated sentences, the check for changed copies and the byte "
+                              "comparison of the 2 squash messages; every other text is compared")
         for place, path in EXPORTED.items():
             if path.is_file():
                 texts[place] = path.read_text(encoding="utf-8")
