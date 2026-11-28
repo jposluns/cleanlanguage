@@ -6,22 +6,32 @@ missing from a partial clone, such as the git show that reads the
 version at HEAD, fails the run where a fetch would have let it go on
 (TODO 314).
 
-The 4 searches of step 4 for a text that must be absent now run through
-a new function, assert_lacks, which fails the run on a match and on any
+The 7 searches of step 4 for a text that must be absent, 3 in each of
+the 2 pages and 1 in site-src/site.json, now run through 4 calls of a
+new function, assert_lacks, which fails the run on a match and on any
 grep exit status other than 0 or 1. Before, grep exit 2 was read as no
 match and the run went on, against the header's rule that a tool that
 fails ends the run unless the script handles that outcome (TODO 315).
 
 tools/test-release-dry-run-refs.py gains the grep case, which makes a
-grep stand-in exit 2 on each of those searches in turn and requires the
-run to fail there with the script's message; the docstring states it.
-Its skip message for a missing .github/squash/290.txt now names every
-check it skips, as the sibling message does (TODO 316).
+grep stand-in exit 2 on 1 search of each of those 4 calls in turn and
+requires the run to fail there with the script's message; the docstring
+states it. Its skip message for a missing .github/squash/290.txt now
+names every check it skips, as the sibling message does (TODO 316).
+
+Its text case now compares PR-BODY.md and SQUASH-MSG at the top of the
+repository only when SQUASH-MSG ends its subject with (#290), as they
+are then the texts of PR 290; otherwise it skips each with a message
+that names every check it skips, so a review export of a later pull
+request no longer fails it. The new export case pins this and fails
+without the change.
+
+.github/squash/297.txt holds this squash message.
 
 Checks, each run from the repository root:
 
 python3 -I tools/test-release-dry-run-refs.py exits 0 with
-"Ran 75 tests" and "OK (skipped=2)".
+"Ran 76 tests" and "OK (skipped=2)".
 
 bash -n tools/release-dry-run.sh exits 0.
 
