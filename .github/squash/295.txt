@@ -64,7 +64,12 @@ label line. tools/test-release-links.py now expects 15 fixed redirect
 lines and 5 renames, and tools/test-skill-release-date.py names the
 28k twin. Because site/_redirects is 1 line longer,
 tools/test-install-page.py expects a rule its cases append at line 38
-and reads the first 15 lines as the release lines.
+and reads the first 15 lines as the release lines. This change also
+edits the gate, tools/check-install-page.py, in comments only: 1 line
+of its docstring and 1 comment line now name the touch-icon redirect
+by its rule in site/_redirects, not by its line number.
+tools/test-install-page.py re-pins GATE_SHA256 to the new digest of
+the gate, recorded after reading that diff.
 
 Regenerated with the repository tools, never by hand: both downloads
 by tools/build-portable-text.py; site/index.html and the index.html
