@@ -38,10 +38,11 @@
 # cleanup's git worktree remove included, runs with hooks, the core.fsmonitor
 # program and a pager turned off, whatever the configuration asks, and every
 # git process of the dry run runs with lazy fetching from a promisor remote
-# turned off. So in a partial clone, a git call of the dry run, its tools'
-# included, that needs an object the clone lacks, such as the git show that
-# reads the version at HEAD, fails the run where a fetch would have let it go
-# on. Every git process of the dry run that starts after the first 3
+# turned off (GIT_NO_LAZY_FETCH=1). So in a partial clone, a git call of the
+# dry run, its tools' included, that needs an object the clone lacks, such as
+# the git show that reads the version at HEAD, fails the run where a fetch
+# would have let it go on. Every git process of the dry run that starts after
+# the first 3
 # git calls that follow the before snapshot, its tools' included, reads no
 # attribute file other than the info/attributes file of the repository and,
 # in git archive, the .gitattributes files of the tree it archives and, in

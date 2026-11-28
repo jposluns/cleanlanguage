@@ -238,11 +238,11 @@ that names the ref, and print the version line only in the run with the branch.
 of its runs among the git calls and exits 2, as grep does when it cannot read a file, when it is
 given both the text and the file that the run names, and otherwise runs grep. Step 4 makes 7
 searches for a text that must be absent, at its 4 calls of assert_lacks: 3 in each of the 2 pages
-and 1 in site-src/site.json. The runs name, in turn, 1 search of each call: the old zip name, the
-old version and the sentinel date in the install page, and the sentinel date in site-src/site.json. Each run
-must fail with exit 1 at that search, after the version line, with the script's message that it
-could not search that file, and record nothing after it other than the exit cleanup's git worktree
-remove.
+and 1 in site-src/site.json. The 7 runs name, in turn, each of those 7 searches: the old zip name,
+the old version and the sentinel date in each page, and the sentinel date in site-src/site.json.
+Each run must fail with exit 1 at that search, after the version line, with the script's message
+that it could not search that file, and record nothing after it other than the exit cleanup's git
+worktree remove.
 
 1 more case, the held-commit case, runs the dry run once, which must pass, and finds the dry-run
 commit that the run left in the object store, which is the same object in a second run at the same
@@ -1570,8 +1570,11 @@ class FailClosedCases(unittest.TestCase):
         real = shutil.which("grep", path=os.environ.get("PATH", os.defpath))
         self.assertIsNotNone(real, "no grep on PATH")
         for text, path in (("cleanlanguage-1.0.0.zip", "site/install/index.html"),
+                           ("cleanlanguage-1.0.0.zip", "site/verify/index.html"),
                            ("version 1.0.0\\b", "site/install/index.html"),
+                           ("version 1.0.0\\b", "site/verify/index.html"),
                            ("2020-01-01", "site/install/index.html"),
+                           ("2020-01-01", "site/verify/index.html"),
                            ("2020-01-01", "site-src/site.json")):
             with self.subTest(text=text, path=path), tempfile.TemporaryDirectory() as name:
                 fixture = Fixture(Path(name))

@@ -14,10 +14,10 @@ match and the run went on, against the header's rule that a tool that
 fails ends the run unless the script handles that outcome (TODO 315).
 
 tools/test-release-dry-run-refs.py gains the grep case, which makes a
-grep stand-in exit 2 on 1 search of each of those 4 calls in turn and
-requires the run to fail there with the script's message; the docstring
-states it. Its skip message for a missing .github/squash/290.txt now
-names every check it skips, as the sibling message does (TODO 316).
+grep stand-in exit 2 on each of those 7 searches in turn and requires
+the run to fail there with the script's message; the docstring states
+it. Its skip message for a missing .github/squash/290.txt now names
+every check it skips, as the sibling message does (TODO 316).
 
 Its text case now compares PR-BODY.md and SQUASH-MSG at the top of the
 repository only when SQUASH-MSG ends its subject with (#290), as they
@@ -25,6 +25,10 @@ are then the texts of PR 290; otherwise it skips each with a message
 that names every check it skips, so a review export of a later pull
 request no longer fails it. The new export case pins this and fails
 without the change.
+
+The searches for a text that must be present, assert_contains, the
+residual paragraph of the test and the messages the run fails with on a
+match are deliberately unchanged.
 
 .github/squash/297.txt holds this squash message.
 
@@ -40,5 +44,5 @@ python3 -I tools/test-run-all-checks.py exits 0 and prints:
     OK: 19 workflows, 84 run steps, 73 command lines in
     tools/run_all_checks.sh, 10 behaviour cases, 17 reading cases
 
-With the script change reverted, the grep case fails in all 4 subtests,
+With the script change reverted, the grep case fails in all 7 subtests,
 since the run passes with exit 0.
