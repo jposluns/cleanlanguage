@@ -60,11 +60,14 @@ log. The suite takes each expected digest from a source apart from the helper th
 digest: a known-answer literal, an expected-digest helper that calls `hashlib` directly, or,
 in 1 case, `hashlib` called in the case itself. It fails closed: a git ls-files that fails, that
 cannot be started, or that lists no path, a git cat-file that fails or that cannot be
-started, and a tracked entry whose stored blob cannot be read, are failures, never a skip.
-Each such failure gives a fixed category with only the exit code of git, the errno name or
-type of the error, or a fixed word for a blob that cannot be read (missing, not a blob, or
-unexpected reply), never a diagnostic of git, the message of an exception, the error text of
-the system, or the path of the repository or of git. A failure of a git call names no path;
+started, a reply of either that the scan cannot read, and a tracked entry whose stored blob
+cannot be read, are failures, never a skip. Each such failure gives a fixed category with
+only the exit code of git, the errno name or type of the error, or a fixed word: unexpected
+reply for a reply that the scan cannot read, in the line git ls-files gave an unexpected
+reply or git cat-file gave an unexpected reply, which names the step, and missing, not a
+blob, or unexpected reply for a blob that cannot be read; never a diagnostic of git, the
+message of an exception, the error text of the system, or the path of the repository or of
+git. A failure of a git call names no path;
 a blob that cannot be read is named as every failure names its file. So no failure
 line copies an address that the scan catches, in a file or in a path name, or that such
 environment text holds.

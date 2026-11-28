@@ -83,8 +83,8 @@ that names a line; a hit in a path name names the path and
 the digest of the hit, and no line; a stale allowlist entry names its file, its position, and
 the same digest of its text, and no line; and the fail-closed failures below name no line and no
 digest of a hit: a blob that cannot be read names its path and a fixed category, and a git call
-that fails, that cannot be started, that lists no path, or whose listing is not as requested
-names no path either, only a fixed category. No failure holds the text of a hit or of its line,
+that fails, that cannot be started, that lists no path, or whose reply scan() cannot read names
+no path either, only a fixed category. No failure holds the text of a hit or of its line,
 and each names a path whose name holds a hit only by the digest of that name, so this suite
 copies no address that it catches, in a file or in a path name, into the CI log. Any other path
 is written as printable_path() gives it: each character that is not printable, such as a line
@@ -94,8 +94,8 @@ control character of a path name reaches the CI log. On a red run, the tree case
 failure in full, 1 to a line after a count, and never through a list comparison, which unittest
 shortens when it is long, so no failure is dropped from the CI log.
 
-It fails closed: a git ls-files that fails, that cannot be started, that lists no path, or whose
-reply is not a listing as requested, a git cat-file that fails or that cannot be started, and a
+It fails closed: a git ls-files that fails, that cannot be started, or that lists no path, a git
+cat-file that fails or that cannot be started, a reply of either that scan() cannot read, and a
 listed entry whose stored blob cannot be read, are failures, never a skip. Each such failure is
 a fixed category with only an exit code, a symbol from a fixed table, a fixed word, or the name
 of a type, never text from the environment: a git ls-files or a git cat-file that fails gives
@@ -103,16 +103,15 @@ its exit code; a git that cannot be started gives the errno name of the error, s
 or, when the error carries no errno that the errno module names, the name of the type of the
 error; a blob that cannot be read gives missing, when git holds no such object, not a blob, when
 the object is of another type, or unexpected reply, when git cat-file does not answer for that
-object as requested, a header whose size has more digits than Python will convert to an integer
-included; a git ls-files whose reply is not a listing as requested, such as 1 with an entry of
-too few fields, a byte outside ASCII in a field, an empty field, or a stray separator, gives
-unexpected reply; an empty listing gives no detail. Each parse of a reply of git, the listing
-and the blobs alike, gives a fixed word on any reply that it cannot read and never raises an
-error, so a malformed reply ends the scan in 1 of these failure lines, never in a traceback. So
-no failure line holds a diagnostic of git, a message of an exception, an error text of the
-system, or the path of the repository root or of the git program, whatever address such text
-holds. An unreadable blob is named by its path, or by the digest of its path name when that name
-holds a hit.
+object as requested; a listing that tracked_files() cannot read, and any other error that
+tracked_files() or stored_blobs() raises, such as 1 while it parses a reply, gives unexpected
+reply in 1 line that names the step, git ls-files or git cat-file, and holds no text of the
+error; an empty listing gives no detail. Each reader names in its docstring the malformations
+that it gives unexpected reply for. So scan() reports any reply of git that it cannot read as a
+fixed line, never as a traceback, and no failure line holds a diagnostic of git, a message of an
+exception, an error text of the system, or the path of the repository root or of the git
+program, whatever address such text holds. An unreadable blob is named by its path, or by the
+digest of its path name when that name holds a hit.
 
 Each caught example in the self-checks below is assembled at run time from parts, so this file's
 own source holds no text that candidates() takes as a candidate and the suite needs no entry for
@@ -234,6 +233,8 @@ UNREAD_MODES = ("160000",)
 OCTAL_BYTES = frozenset(b"01234567")
 HEX_BYTES = frozenset(b"0123456789abcdef")
 STAGES = (b"0", b"1", b"2", b"3")
+# The types of object that git cat-file --batch names in a header of 3 fields.
+OBJECT_TYPES = (b"blob", b"tree", b"commit", b"tag")
 GIT = "git"
 DIGEST_DIGITS = 16
 
@@ -356,14 +357,15 @@ def tracked_files(root, git=GIT):
 
     The object name is that of the stored blob that the index names for the path. Each path
     appears 1 time, in sorted order. A reply that is not a listing as requested gives the fixed
-    word unexpected reply in place of the list, never an error: a listing that no NUL ends, an
-    empty entry, an entry with no tab or with an empty path, an entry whose part before its
-    first tab is not 3 fields that 1 space each separates, a mode that is not 6 octal digits, an
-    object name that is not 40 or 64 lowercase hexadecimal digits, a stage other than 0, 1, 2,
-    or 3, or a path name that os.fsdecode() cannot decode. So an entry with too few or too many
-    fields, an empty field, a byte outside ASCII in a field, or a stray separator gives
-    unexpected reply. A git ls-files that fails raises subprocess.CalledProcessError, and a git
-    that cannot be started raises OSError.
+    word unexpected reply in place of the list: a listing that no NUL ends; an entry with an
+    empty path, an empty entry, an entry with no tab, and an entry that a stray NUL splits
+    included; an entry whose part before its first tab is not 3 fields that 1 space each
+    separates, such as 1 with too few or too many fields, an empty field, or a tab in place of a
+    space; a mode that is not 6 octal digits, by its length or by a byte, a byte outside ASCII
+    included; an object name that is not 40 or 64 lowercase hexadecimal digits, by its length or
+    by a byte, a byte outside ASCII included; a stage other than 0, 1, 2, or 3; or a path name
+    that os.fsdecode() cannot decode. A git ls-files that fails raises
+    subprocess.CalledProcessError, and a git that cannot be started raises OSError.
     """
     listed = subprocess.run([git, "-C", str(root), "ls-files", "--stage", "-z"],
                             capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
@@ -373,9 +375,9 @@ def tracked_files(root, git=GIT):
         return "unexpected reply"
     entries = {}
     for entry in listed[:-1].split(b"\0"):
-        info, tab, path = entry.partition(b"\t")
+        info, _, path = entry.partition(b"\t")
         fields = info.split(b" ")
-        if not tab or not path or len(fields) != 3:
+        if not path or len(fields) != 3:
             return "unexpected reply"
         mode, name, stage = fields
         if (len(mode) != 6 or not set(mode) <= OCTAL_BYTES or len(name) not in (40, 64)
@@ -395,15 +397,18 @@ def stored_blobs(root, names, git=GIT):
     1 call of git cat-file --batch reads every object from the object store at root, with
     replace objects off, so no attribute, filter, encoding, or state of the working copy changes
     the bytes. An object that cannot be read as a blob gives 1 fixed word in place of its bytes:
-    missing, when git reports no such object; not a blob, when the object is of another type; or
-    unexpected reply, when the reply does not answer for that object as requested. A header of 2
-    fields other than missing gives unexpected reply for that object only, and the read goes on
-    to the next object. Any other reply that does not answer stops the read, so that object and
-    every later object give unexpected reply: a reply that ends before the object is answered, a
-    header that names another object or that has too many or too few fields, a size that is no
-    number, a size with more digits than Python will convert to an integer, 4300 by default, or a
-    body that is cut short or that no line feed ends. A git cat-file that fails raises
-    subprocess.CalledProcessError, and a git that cannot be started raises OSError.
+    missing, when git reports no such object; not a blob, when the object is a tree, a commit, or
+    a tag; or unexpected reply, when the reply does not answer for that object as requested. A
+    header of 2 fields other than missing gives unexpected reply for that object only, and the
+    read goes on to the next object. Any other reply that does not answer stops the read, so that
+    object and every later object give unexpected reply: a reply that is empty or that ends
+    before the object is answered; a header that names another object, or that has too many or
+    too few fields, an empty field or a stray separator among them; a type that is empty, that
+    holds a byte outside ASCII, or that is no type of object that git names; a size that is no
+    number, digits outside ASCII among them, or that has more digits than Python will convert to
+    an integer, 4300 by default; or a body that is cut short or that no line feed ends. A git
+    cat-file that fails raises subprocess.CalledProcessError, and a git that cannot be started
+    raises OSError.
     """
     request = b"".join(name.encode("ascii") + b"\n" for name in names)
     reply = subprocess.run([git, "--no-replace-objects", "-C", str(root), "cat-file", "--batch"],
@@ -424,7 +429,7 @@ def stored_blobs(root, names, git=GIT):
         except ValueError:
             size = -1
         body_end = header_end + 1 + size
-        if size < 0 or reply[body_end:body_end + 1] != b"\n":
+        if header[1] not in OBJECT_TYPES or size < 0 or reply[body_end:body_end + 1] != b"\n":
             break
         blobs[name] = reply[header_end + 1:body_end] if header[1] == b"blob" else "not a blob"
         position = body_end + 1
@@ -480,12 +485,15 @@ def scan(root, allowlist, git=GIT):
     text: a hit in a path name as a digest of the path and of the hit, a hit in a file as
     path:line: and a digest, a blob that cannot be read with its fixed category, a stale
     allowlist entry, a git ls-files or a git cat-file that fails with its exit code, a git that
-    cannot be started with the category of its error, a git ls-files that lists no path, or a git
-    ls-files whose reply is not a listing as requested. No failure holds the text of a hit or of
-    its line, a path whose name holds a hit is named only by the digest of its name, any other
-    path is written by printable_path(), so each failure is 1 line with no control character, and
-    no failure holds a diagnostic of git, the message of an exception, the error text of the
-    system, or the path of root or of git.
+    cannot be started with the category of its error, a git ls-files that lists no path, or a
+    reply of git that scan() cannot read. scan() is the boundary for every reply of git: a listing
+    that tracked_files() gives as unexpected reply, and any other error that tracked_files() or
+    stored_blobs() raises, give the fixed line git ls-files gave an unexpected reply or git
+    cat-file gave an unexpected reply, for the step that raised it, with no text of the error. No
+    failure holds the text of a hit or of its line, a path whose name holds a hit is named only
+    by the digest of its name, any other path is written by printable_path(), so each failure is
+    1 line with no control character, and no failure holds a diagnostic of git, the message of
+    an exception, the error text of the system, or the path of root or of git.
     """
     try:
         entries = tracked_files(root, git)
@@ -493,6 +501,8 @@ def scan(root, allowlist, git=GIT):
         return ["git ls-files failed: exit {}".format(error.returncode)], 0
     except OSError as error:
         return ["git ls-files failed: git could not be started: {}".format(error_category(error))], 0
+    except Exception:
+        return ["git ls-files gave an unexpected reply"], 0
     if isinstance(entries, str):
         return ["git ls-files gave an unexpected reply"], 0
     if not entries:
@@ -504,6 +514,8 @@ def scan(root, allowlist, git=GIT):
         return ["git cat-file failed: exit {}".format(error.returncode)], 0
     except OSError as error:
         return ["git cat-file failed: git could not be started: {}".format(error_category(error))], 0
+    except Exception:
+        return ["git cat-file gave an unexpected reply"], 0
     failures = []
     read = 0
     used = set()
@@ -1289,16 +1301,18 @@ class FixtureRepository(unittest.TestCase):
 
         Each subtest feeds tracked_files() 1 reply and names the malformation that it holds: an
         entry with too few fields, with 1 field, or with too many fields; an empty field; a byte
-        outside ASCII in the mode or in the object name; a mode that is not 6 octal digits, an
-        object name that is not 40 or 64 lowercase hexadecimal digits, or a stage other than 0,
-        1, 2, or 3; a stray separator, a tab in place of a space or a NUL inside an entry; an
-        entry with no tab, an empty entry, or an empty path; a listing that no NUL ends; and a
-        path name that os.fsdecode() cannot decode, as on Windows, whose decoder refuses a byte
-        that is not valid UTF-8. Each expects the fixed word unexpected reply from
-        tracked_files() and the fixed failure line from scan(), and fails when its reply gives
-        a listing or raises an error. The control: a well-formed reply, whose path names hold a
-        space, a tab, a letter outside ASCII, and a byte that is not valid UTF-8, gives its
-        entries.
+        outside ASCII in the mode or in the object name; a mode with a digit that is not octal, a
+        mode that is not 6 digits long, an object name with a letter that is not lowercase
+        hexadecimal, an object name that is not 40 or 64 digits long, or a stage other than 0, 1,
+        2, or 3; a stray separator, a tab in place of a space or a NUL inside an entry; an entry
+        with no tab, an empty entry, or an empty path; a listing that no NUL ends; and a path
+        name that os.fsdecode() cannot decode, as on Windows, whose decoder refuses a byte that is
+        not valid UTF-8. Each expects the fixed word unexpected reply from tracked_files() and the
+        fixed failure line from scan(), and fails when its reply gives a listing or raises an
+        error. Each guard of tracked_files() has a subtest that only that guard turns away: a
+        mode of 5 octal digits, and an object name of 41 lowercase hexadecimal digits, pin the 2
+        length guards. The control: a well-formed reply, whose path names hold a space, a tab, a
+        letter outside ASCII, and a byte that is not valid UTF-8, gives its entries.
         """
         short, long = b"a" * 40, b"b" * 64
         good = (b"100644 " + short + b" 0\tdocs/a b\tc.txt\0" + b"120000 " + long + b" 0\tl\xc3\xa9\0"
@@ -1319,9 +1333,12 @@ class FixtureRepository(unittest.TestCase):
                 ("a mode with a byte outside ASCII", b"1006\xc3\xa9 " + short + b" 0\tp.txt\0", None),
                 ("an object name with a byte outside ASCII",
                  b"100644 " + b"a" * 38 + b"\xc3\xa9 0\tp.txt\0", None),
-                ("a mode that is not 6 octal digits", b"100648 " + short + b" 0\tp.txt\0", None),
-                ("an object name that is not 40 or 64 lowercase hexadecimal digits",
+                ("a mode with a digit that is not octal", b"100648 " + short + b" 0\tp.txt\0", None),
+                ("a mode that is not 6 digits long", b"10064 " + short + b" 0\tp.txt\0", None),
+                ("an object name with a letter that is not lowercase hexadecimal",
                  b"100644 " + b"A" * 40 + b" 0\tp.txt\0", None),
+                ("an object name that is not 40 or 64 digits long",
+                 b"100644 " + b"a" * 41 + b" 0\tp.txt\0", None),
                 ("a stage other than 0, 1, 2, or 3", b"100644 " + short + b" 4\tp.txt\0", None),
                 ("a stray separator, a tab in place of a space", b"100644\t" + short + b" 0\tp.txt\0", None),
                 ("a stray separator, a NUL inside an entry", b"100644 " + short + b" 0\tp\0.txt\0", None),
@@ -1356,12 +1373,13 @@ class FixtureRepository(unittest.TestCase):
         Each subtest feeds stored_blobs() 1 reply for 2 objects, first and second, and names the
         fail-closed path that it takes: a reply that ends before an object is answered, a header
         that names another object, a header with too many fields, an empty field or a stray
-        separator among them, or too few fields, a header of 2 fields other than missing, a size
-        that is no number, digits outside ASCII among them, a size with more digits than Python
-        will convert to an integer, and a body that is cut short or that no line feed ends. Each
-        fails when its path gives bytes, an empty clean blob among them, or raises an error, in
-        place of unexpected reply. A reply that does not answer stops the read, so every later
-        object gives unexpected reply too; a header of 2 fields does not.
+        separator among them, or too few fields, a header of 2 fields other than missing, a
+        header whose type is empty, holds a byte outside ASCII, or is no type of object that git
+        names, a size that is no number, digits outside ASCII among them, a size with more digits
+        than Python will convert to an integer, and a body that is cut short or that no line feed
+        ends. Each fails when its path gives bytes, an empty clean blob among them, not a blob,
+        or raises an error, in place of unexpected reply. A reply that does not answer stops the
+        read, so every later object gives unexpected reply too; a header of 2 fields does not.
         """
         first, second, other = "1" * 40, "2" * 40, "3" * 40
         answered = first.encode("ascii") + b" blob 5\ntext\n\n"
@@ -1385,6 +1403,14 @@ class FixtureRepository(unittest.TestCase):
                 ("a header of 2 fields other than missing",
                  first.encode("ascii") + b" ambiguous\n" + second.encode("ascii") + b" blob 5\ntext\n\n",
                  {first: "unexpected reply", second: b"text\n"}),
+                ("a header whose type is empty", answered + second.encode("ascii") + b"  5\ntext\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a header whose type holds a byte outside ASCII",
+                 answered + second.encode("ascii") + b" bl" + chr(0xF6).encode("utf-8") + b"b 5\ntext\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
+                ("a header whose type is no type of object that git names",
+                 answered + second.encode("ascii") + b" object 5\ntext\n\n",
+                 {first: b"text\n", second: "unexpected reply"}),
                 ("a size that is no number", answered + second.encode("ascii") + b" blob x\n\n",
                  {first: b"text\n", second: "unexpected reply"}),
                 ("a size with more digits than Python will convert to an integer",
@@ -1401,6 +1427,42 @@ class FixtureRepository(unittest.TestCase):
             with self.subTest(path=path):
                 with self.batch_reply(reply):
                     self.assertEqual(stored_blobs(self.root, [first, second]), expected)
+
+    def test_an_error_inside_a_reader_gives_the_fixed_line_of_its_step(self):
+        """scan() turns an error that a reader raises while it reads a reply into 1 fixed line.
+
+        Each subtest names a step, git ls-files or git cat-file, and gives that step a reply that
+        raises an arbitrary error, of a type that no reader names, as soon as the reader reads
+        it; the text of the error holds an address assembled at run time. Each expects the fixed
+        line of that step and fails when the error leaves scan() or when its text reaches the
+        line.
+        """
+        self.add("a.txt", "text\n")
+        text = "unforeseen for " + caught("worker-label-example", "placeholder-mail" + "." + "com")
+
+        class Unforeseen(Exception):
+            pass
+
+        class RaisingReply:
+            """A reply that raises Unforeseen whenever a reader reads it."""
+
+            def __bool__(self):
+                raise Unforeseen(text)
+
+            def __getattr__(self, name):
+                raise Unforeseen(text)
+
+        run = subprocess.run
+        for step in ("ls-files", "cat-file"):
+            with self.subTest(step=step):
+                def reply_with(args, **kwargs):
+                    if step in args:
+                        return subprocess.CompletedProcess(args, 0, stdout=RaisingReply(), stderr=b"")
+                    return run(args, **kwargs)
+                with mock.patch.object(subprocess, "run", side_effect=reply_with):
+                    failures, read = scan(self.root, {})
+                self.assertEqual((failures, read), (["git " + step + " gave an unexpected reply"], 0))
+                self.assert_no_address(failures)
 
     def test_a_short_batch_reply_fails_naming_the_file_it_leaves_unanswered(self):
         # A reply that answers for the first blob only: the second file fails as unexpected reply,
